@@ -31,3 +31,12 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Ruff
+.ruff_cache/
+
+# Claude Code (keep specs/)
+.claude/commands/
+.claude/steering/
+.claude/states/
+.claude/decision-log.md
