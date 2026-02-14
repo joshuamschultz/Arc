@@ -11,7 +11,7 @@ async def _search(params: dict, ctx: object) -> str:
 
 
 async def _calculate(params: dict, ctx: object) -> str:
-    return str(eval(params["expression"]))
+    return f"Result of: {params['expression']}"
 
 
 def _tools() -> list[Tool]:

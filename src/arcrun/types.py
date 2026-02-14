@@ -17,6 +17,7 @@ class Tool:
     description: str
     input_schema: dict[str, Any]
     execute: Callable[[dict[str, Any], ToolContext], Awaitable[str]]
+    timeout_seconds: float | None = None
 
 
 @dataclass

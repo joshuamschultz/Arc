@@ -56,15 +56,16 @@ class TestEventBus:
         assert len(received) == 1
         assert received[0].type == "x"
 
-    def test_on_event_callback_exception_propagates(self):
+    def test_on_event_callback_exception_isolated(self):
         from arcrun.events import EventBus
 
         def bad_handler(e):
             raise ValueError("handler error")
 
         bus = EventBus(run_id="r", on_event=bad_handler)
-        with pytest.raises(ValueError, match="handler error"):
-            bus.emit("test")
+        event = bus.emit("test")  # Should not raise
+        assert event.type == "test"
+        assert len(bus.events) == 1
 
     def test_events_property_returns_copy(self):
         from arcrun.events import EventBus

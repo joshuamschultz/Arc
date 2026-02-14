@@ -77,9 +77,23 @@ class TestToolRegistry:
         reg = ToolRegistry(tools=[tool], event_bus=bus)
         schemas = reg.list_schemas()
         assert len(schemas) == 1
-        assert schemas[0]["name"] == "s"
-        assert schemas[0]["description"] == "Tool s"
-        assert "input_schema" in schemas[0]
+        assert schemas[0].name == "s"
+        assert schemas[0].description == "Tool s"
+        assert schemas[0].parameters == {"type": "object"}
+
+    def test_replace_emits_replaced_event(self):
+        from arcrun.registry import ToolRegistry
+
+        bus = self._make_bus()
+        reg = ToolRegistry(tools=[_make_tool("dup")], event_bus=bus)
+        replacement = Tool(name="dup", description="replaced", input_schema={}, execute=_noop)
+        reg.add(replacement)
+        replaced_events = [e for e in bus.events if e.type == "tool.replaced"]
+        assert len(replaced_events) == 1
+        assert replaced_events[0].data["name"] == "dup"
+        # Should NOT emit tool.registered for replacement
+        registered_events = [e for e in bus.events if e.type == "tool.registered"]
+        assert len(registered_events) == 0
 
     def test_add_emits_registered_event(self):
         from arcrun.registry import ToolRegistry

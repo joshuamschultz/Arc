@@ -34,7 +34,10 @@ class EventBus:
         )
         self._events.append(event)
         if self._on_event is not None:
-            self._on_event(event)
+            try:
+                self._on_event(event)
+            except Exception:
+                pass  # Observer errors must not crash the engine
         return event
 
     @property

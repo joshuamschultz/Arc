@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Async execution engine for autonomous agents"
 requires-python = ">=3.11"
 dependencies = [
+    "arcllm",
     "jsonschema>=4.0",
 ]
 

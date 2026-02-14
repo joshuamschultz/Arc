@@ -14,19 +14,17 @@ from arcrun.strategies import STRATEGIES, _load_strategies, select_strategy
 from arcrun.types import LoopResult, SandboxConfig, Tool
 
 
-async def run(
-    model: Any,
+def _build_state(
     tools: list[Tool],
     system_prompt: str,
     task: str,
     *,
-    max_turns: int = 25,
-    allowed_strategies: list[str] | None = None,
-    sandbox: SandboxConfig | None = None,
     on_event: Callable[..., Any] | None = None,
+    sandbox: SandboxConfig | None = None,
     transform_context: Callable[..., Any] | None = None,
-) -> LoopResult:
-    """Blocking entry point. Runs until task complete or max_turns."""
+    tool_timeout: float | None = None,
+) -> tuple[RunState, Sandbox]:
+    """Shared setup for run() and run_async()."""
     if not tools:
         raise ValueError("tools must not be empty")
 
@@ -41,13 +39,38 @@ async def run(
         event_bus=bus,
         run_id=run_id,
         transform_context=transform_context,
+        tool_timeout=tool_timeout,
     )
 
     if not STRATEGIES:
         _load_strategies()
 
+    return state, sandbox_obj
+
+
+async def run(
+    model: Any,
+    tools: list[Tool],
+    system_prompt: str,
+    task: str,
+    *,
+    max_turns: int = 25,
+    allowed_strategies: list[str] | None = None,
+    sandbox: SandboxConfig | None = None,
+    on_event: Callable[..., Any] | None = None,
+    transform_context: Callable[..., Any] | None = None,
+    tool_timeout: float | None = None,
+) -> LoopResult:
+    """Blocking entry point. Runs until task complete or max_turns."""
+    state, sandbox_obj = _build_state(
+        tools, system_prompt, task,
+        on_event=on_event, sandbox=sandbox,
+        transform_context=transform_context, tool_timeout=tool_timeout,
+    )
+
     strategy_name = await select_strategy(allowed_strategies, model, state)
-    bus.emit("strategy.selected", {"strategy": strategy_name})
+    state.strategy_name = strategy_name
+    state.event_bus.emit("strategy.selected", {"strategy": strategy_name})
     strategy_fn = STRATEGIES[strategy_name]
     result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
     return result
@@ -58,31 +81,24 @@ async def run_async(
     tools: list[Tool],
     system_prompt: str,
     task: str,
-    **options: Any,
+    *,
+    max_turns: int = 25,
+    allowed_strategies: list[str] | None = None,
+    sandbox: SandboxConfig | None = None,
+    on_event: Callable[..., Any] | None = None,
+    transform_context: Callable[..., Any] | None = None,
+    tool_timeout: float | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
-    if not tools:
-        raise ValueError("tools must not be empty")
-
-    run_id = str(uuid.uuid4())
-    bus = EventBus(run_id=run_id, on_event=options.get("on_event"))
-    registry = ToolRegistry(tools=tools, event_bus=bus)
-    sandbox_obj = Sandbox(config=options.get("sandbox"), event_bus=bus)
-
-    state = RunState(
-        messages=[system_message(system_prompt), user_message(task)],
-        registry=registry,
-        event_bus=bus,
-        run_id=run_id,
-        transform_context=options.get("transform_context"),
+    state, sandbox_obj = _build_state(
+        tools, system_prompt, task,
+        on_event=on_event, sandbox=sandbox,
+        transform_context=transform_context, tool_timeout=tool_timeout,
     )
 
-    if not STRATEGIES:
-        _load_strategies()
-
-    max_turns = options.get("max_turns", 25)
-    strategy_name = await select_strategy(options.get("allowed_strategies"), model, state)
-    bus.emit("strategy.selected", {"strategy": strategy_name})
+    strategy_name = await select_strategy(allowed_strategies, model, state)
+    state.strategy_name = strategy_name
+    state.event_bus.emit("strategy.selected", {"strategy": strategy_name})
     strategy_fn = STRATEGIES[strategy_name]
 
     loop_task = asyncio.create_task(strategy_fn(model, state, sandbox_obj, max_turns))

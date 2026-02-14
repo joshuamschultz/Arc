@@ -27,3 +27,5 @@ class RunState:
     steer_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     followup_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     transform_context: Callable[..., Any] | None = None
+    tool_timeout: float | None = None
+    strategy_name: str = ""

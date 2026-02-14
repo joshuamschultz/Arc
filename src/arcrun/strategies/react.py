@@ -4,12 +4,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import jsonschema
-
 from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
+from arcrun.executor import execute_tool_call
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
-from arcrun.types import LoopResult, ToolContext
+from arcrun.types import LoopResult
 
 
 async def react_loop(
@@ -67,9 +66,9 @@ async def react_loop(
         # Build assistant message
         assistant_content: list[Any] = []
         if response.content:
-            assistant_content.append(TextBlock(response.content))
+            assistant_content.append(TextBlock(text=response.content))
         for tc in response.tool_calls:
-            assistant_content.append(ToolUseBlock(tc.id, tc.name, tc.arguments))
+            assistant_content.append(ToolUseBlock(id=tc.id, name=tc.name, arguments=tc.arguments))
         if assistant_content:
             state.messages.append(assistant_message(assistant_content))
 
@@ -93,50 +92,8 @@ async def react_loop(
                 tool_results.append(tool_result(tc.id, "operation cancelled: steered"))
                 continue
 
-            bus.emit("tool.start", {"name": tc.name, "arguments": tc.arguments})
-
-            allowed, reason = await sandbox.check(tc.name, tc.arguments)
-            if not allowed:
-                tool_results.append(tool_result(tc.id, f"Error: tool denied — {reason}"))
-                continue
-
-            tool_def = state.registry.get(tc.name)
-            if tool_def is None:
-                tool_results.append(tool_result(tc.id, f"Error: tool '{tc.name}' not found"))
-                continue
-
-            try:
-                jsonschema.validate(tc.arguments, tool_def.input_schema)
-            except jsonschema.ValidationError as ve:
-                tool_results.append(tool_result(tc.id, f"Error: invalid params — {ve.message}"))
-                continue
-
-            ctx = ToolContext(
-                run_id=state.run_id,
-                tool_call_id=tc.id,
-                turn_number=state.turn_count + 1,
-                event_bus=bus,
-                cancelled=state.cancel_event,
-            )
-            tool_start = time.time()
-            try:
-                result = await tool_def.execute(tc.arguments, ctx)
-            except Exception as exc:
-                bus.emit("tool.error", {
-                    "name": tc.name,
-                    "error": str(exc),
-                })
-                tool_results.append(tool_result(tc.id, f"Error: {exc}"))
-                continue
-
-            duration_ms = (time.time() - tool_start) * 1000
-            bus.emit("tool.end", {
-                "name": tc.name,
-                "result_length": len(result),
-                "duration_ms": duration_ms,
-            })
-            state.tool_calls_made += 1
-            tool_results.append(tool_result(tc.id, result))
+            result_msg, _ok = await execute_tool_call(tc, state, sandbox)
+            tool_results.append(result_msg)
 
             if not state.steer_queue.empty():
                 steer_msg = state.steer_queue.get_nowait()
@@ -171,7 +128,7 @@ def _build_result(state: RunState, content: str | None) -> LoopResult:
         turns=state.turn_count,
         tool_calls_made=state.tool_calls_made,
         tokens_used=state.tokens_used.copy(),
-        strategy_used="react",
+        strategy_used=state.strategy_name or "react",
         cost_usd=state.cost_usd,
         events=state.event_bus.events,
     )
