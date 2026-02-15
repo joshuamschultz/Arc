@@ -1,30 +1,23 @@
 ```
+  ┌─┐  ┬─┐  ┌─┐  ┬─┐  ┬ ┬  ┌┐┌
+  ├─┤  ├┬┘  │    ├┬┘  │ │  │││
+  ┴ ┴  ┴└─  └─┘  ┴└─  └─┘  ┘└┘
 
-   ╭───────────────────────────────────────────╮
-   │                                           │
-   │     ┌─┐┌─┐┌─┐┌─┐┌─┐┌─┐                    │
-   │     ├─┤├┬┘│  ├┬┘│ ││ │┌┐                  │
-   │     ┴ ┴┴└─└─┘┴└─└─┘┘└┘┘                   │
-   │                                           │
-   │     async execution engine for agents     │
-   │                                           │
-   │     model + tools + task  ──►  result     │
-   │     every action audited. always.         │
-   │                                           │
-   ├───────────────────────────────────────────┤
-   │                                           │
-   │     ┌───────────────────────────┐         │
-   │     │  YOUR AGENT               │         │
-   │     │  prompts · tools · config │         │
-   │     ├───────────────────────────┤         │
-   │     │  arcrun            ◄ here │         │
-   │     │  loop · sandbox · events  │         │
-   │     ├───────────────────────────┤         │
-   │     │  arcllm                   │         │
-   │     │  providers · transport    │         │
-   │     └───────────────────────────┘         │
-   │                                           │
-   ╰───────────────────────────────────────────╯
+  async execution engine for agents
+
+  model + tools + task  ──►  result
+  every action audited. always.
+
+  ┌───────────────────────────────┐
+  │  YOUR AGENT                   │
+  │  prompts · tools · config     │
+  ├───────────────────────────────┤
+  │  arcrun              ◄ here   │
+  │  loop · sandbox · events      │
+  ├───────────────────────────────┤
+  │  arcllm                       │
+  │  providers · transport        │
+  └───────────────────────────────┘
 ```
 
 # arcrun
@@ -35,7 +28,7 @@ arcrun is to agents what an engine is to a car. The car (your agent) decides whe
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Lines of Code](https://img.shields.io/badge/lines-<1000-brightgreen.svg)]()
+[![Lines of Code](https://img.shields.io/badge/lines-~900-brightgreen.svg)]()
 
 ---
 
@@ -46,7 +39,7 @@ Most agent frameworks do too much. They own your prompts, your config, your sess
 arcrun does one thing: **execute the loop**.
 
 - **5 lines to run** — `await run(model, tools, prompt, task)`
-- **Under 1,000 lines** — small enough for a model to reason about
+- **~900 lines** — small enough for a model to reason about
 - **Every action auditable** — events emit for everything, always, non-optional
 - **Deny-by-default sandbox** — tool calls checked before execution
 - **Zero opinions** — no agents, no sessions, no config format, no UI
@@ -112,7 +105,7 @@ run(model, tools, system_prompt, task)
   │
   ├── EMIT: loop.start
   │
-  ├── Strategy Selection (react / code / recursive)
+  ├── Strategy Selection (react / code)
   │   EMIT: strategy.selected
   │
   ├── LOOP ──────────────────────────────────────┐
@@ -197,8 +190,6 @@ Every action emits an event. Always. Non-negotiable. This is the audit trail.
 | `tool.start` / `tool.end` | Every tool execution |
 | `tool.denied` | Sandbox denied a call |
 | `tool.error` | Tool execution failed |
-| `spawn.start` / `spawn.end` | Sub-loop lifecycle |
-| `spawn.denied` | Budget exceeded |
 
 ```python
 # Real-time handler
@@ -315,36 +306,22 @@ result = await run(
 
 ### CodeExec
 
-Model writes Python code. `ExecuteTool` runs it in a sandboxed subprocess. Only available when you include the built-in `ExecuteTool`.
+Model writes Python code. `make_execute_tool()` creates a sandboxed subprocess tool. Only available when you include the built-in execute tool.
 
 ```python
-from arcrun.builtins import ExecuteTool
+from arcrun import make_execute_tool
 
 result = await run(
     model=model,
-    tools=[*my_tools, ExecuteTool()],
+    tools=[*my_tools, make_execute_tool()],
     ...,
     allowed_strategies=["code"],
 )
 ```
 
-### Recursive
+### Recursive (Planned)
 
-Model decomposes tasks into sub-problems. `SpawnTool` creates isolated sub-loops with fresh context. Parent gets a compact result — never the child's full conversation.
-
-```python
-from arcrun.builtins import SpawnTool
-
-result = await run(
-    model=model,
-    tools=[*my_tools, SpawnTool()],
-    ...,
-    allowed_strategies=["recursive"],
-    max_spawn_depth=3,
-    max_total_spawns=20,
-    max_cost_usd=5.00,
-)
-```
+Model decomposes tasks into sub-problems. `SpawnTool` will create isolated sub-loops with fresh context. Parent gets a compact result — never the child's full conversation. Not yet implemented.
 
 ### Strategy Selection
 
@@ -353,7 +330,7 @@ Allow multiple strategies and let the model choose based on the task:
 ```python
 result = await run(
     ...,
-    allowed_strategies=["react", "code", "recursive"],
+    allowed_strategies=["react", "code"],
 )
 # result.strategy_used tells you which it picked
 ```
@@ -370,20 +347,20 @@ arcrun/
 ├── events.py              # Event bus + Event dataclass
 ├── sandbox.py             # Permission boundary
 ├── registry.py            # Dynamic tool registry
+├── executor.py            # Shared tool execution pipeline
 ├── types.py               # Tool, LoopResult, SandboxConfig, ToolContext
+├── _messages.py           # Message construction helpers
 │
 ├── strategies/
 │   ├── __init__.py        # Strategy interface + selection
 │   ├── react.py           # ReAct loop
-│   ├── code.py            # CodeExec strategy
-│   └── recursive.py       # Recursive decomposition
+│   └── code.py            # CodeExec strategy
 │
 └── builtins/
-    ├── spawn.py           # Sub-loop with isolated context
     └── execute.py         # Sandboxed Python execution
 ```
 
-**Total budget: under 1,000 lines of Python.**
+**Total: ~900 lines of Python.**
 
 ### Layer Separation
 
@@ -395,11 +372,11 @@ arcrun/
 │  Passes tools + arcllm model into arcrun    │
 ├─────────────────────────────────────────────┤
 │  arcrun (this package)                      │
-│  Execution loop (ReAct / CodeExec / Recurse)│
+│  Execution loop (ReAct / CodeExec)          │
 │  Tool dispatch + validation                 │
 │  Event emission (every action, always)      │
 │  Sandbox (permission boundary)              │
-│  Spawn (context isolation)                  │
+│  Steering (mid-execution intervention)      │
 ├─────────────────────────────────────────────┤
 │  arcllm                                     │
 │  load_model("anthropic")                    │
@@ -433,7 +410,7 @@ arcrun is built for federal and enterprise deployment. Security is non-optional.
 ### Threat Model
 
 Formal analysis covers:
-- **OWASP Agentic AI (T1-T15)** — tool misuse, resource overload, spawn bombs, RCE, agent poisoning
+- **OWASP Agentic AI (T1-T15)** — tool misuse, resource overload, RCE, agent poisoning
 - **OWASP LLM Top 10 (2025)** — prompt injection, excessive agency, unbounded consumption
 - **NIST SP 800-53** — 12 controls mapped directly to arcrun features
 
@@ -445,18 +422,16 @@ Formal analysis covers:
 | **Param validation** | JSON Schema validation before every `execute()` |
 | **Sandbox checker** | Caller-provided callback for granular permission logic |
 | **Event audit trail** | Every action logged — non-optional, non-disableable |
-| **Spawn budgets** | Depth limit, total limit, cost ceiling — prevents spawn bombs |
+| **Tool timeouts** | Per-tool and global timeout enforcement |
 | **Dynamic tool denial** | New tools added mid-execution are denied by default |
 | **Cancel signal** | Tools receive cancellation signal for clean shutdown |
-| **Context isolation** | Child spawns get fresh context, cannot access parent conversation |
-| **Sandbox inheritance** | Children inherit parent sandbox — cannot expand permissions |
 
 ### NIST SP 800-53 Coverage
 
 | Control | Title | arcrun Feature |
 |---|---|---|
 | AC-3 | Access Enforcement | Sandbox deny-by-default |
-| AC-4 | Information Flow | Spawn context isolation |
+| AC-4 | Information Flow | Context transform isolation |
 | AC-6 | Least Privilege | Explicit tool allowlist |
 | AU-2 | Event Logging | Every action emits event |
 | AU-3 | Audit Content | Events include timestamp, run_id, tool, args, duration |
@@ -503,16 +478,14 @@ result = await run(
     sandbox=SandboxConfig(...),           # permission boundary
     on_event=my_handler,                  # callback for real-time events
     transform_context=my_pruner,          # context management hook
-    max_spawn_depth=3,                    # recursive spawn limit
-    max_total_spawns=20,                  # total spawn budget
-    max_cost_usd=5.00,                   # cost ceiling (USD)
+    tool_timeout=30.0,                    # default timeout for all tools (seconds)
 )
 ```
 
 ### `run_async()`
 
 ```python
-handle = await run_async(model, tools, prompt, task, **options)
+handle = await run_async(model, tools, system_prompt, task, **options)
 
 await handle.steer("new instructions")    # interrupt
 await handle.follow_up("also do this")    # queue for end_turn
@@ -529,6 +502,7 @@ Tool(
     description="What it does", # shown to model
     input_schema={...},         # JSON Schema for params
     execute=async_fn,           # async (params, ctx) -> str
+    timeout_seconds=None,       # per-tool timeout override (optional)
 )
 ```
 
@@ -553,7 +527,7 @@ class LoopResult:
     turns: int                  # loop iterations
     tool_calls_made: int        # total tool invocations
     tokens_used: dict           # {"input": N, "output": N, "total": N}
-    strategy_used: str          # "react" | "code" | "recursive"
+    strategy_used: str          # "react" | "code"
     cost_usd: float             # estimated cost
     events: list[Event]         # full audit trail
 ```
@@ -603,7 +577,7 @@ ruff format src/arcrun
 
 | Metric | Target |
 |---|---|
-| Total lines | < 1,000 |
+| Total lines | < 1,000 (~900 currently) |
 | Test coverage | >= 80% |
 | Cyclomatic complexity | <= 10 per function |
 | Critical vulnerabilities | 0 |
@@ -616,8 +590,8 @@ ruff format src/arcrun
 
 | Phase | Name | Goal | Status |
 |---|---|---|---|
-| 1 | Core Loop + ReAct | `run()` works end-to-end with events and sandbox | **Active** |
-| 2 | CodeExec | Model writes + executes Python in sandboxed subprocess | Planned |
+| 1 | Core Loop + ReAct | `run()` works end-to-end with events and sandbox | **Complete** |
+| 2 | CodeExec | Model writes + executes Python in sandboxed subprocess | **Complete** |
 | 3 | Recursive | Task decomposition via spawn with isolated context | Planned |
 | 4 | Hardening | Container sandbox, event integrity, adversarial testing, NIST docs | Planned |
 | 5 | RLM | Recursive Language Models for near-infinite context processing | Research |
@@ -637,6 +611,8 @@ All architectural decisions are logged with context, options, and reasoning. 25 
 - **Caller-provided sandbox checker** — arcrun makes zero assumptions about tool internals
 - **Steer + followUp** — two delivery modes for mid-execution intervention
 - **jsonschema for validation** — correctness on every tool call worth the dependency
+- **make_execute_tool() factory** — returns configured Tool, not a class — composable, testable
+- **CodeExec as prompt augmentation** — reuses react_loop with code-first system prompt prefix
 
 Full log: [`.claude/decision-log.md`](.claude/decision-log.md)
 
