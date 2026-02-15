@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:openai.com)",
+      "WebFetch(domain:almcorp.com)",
+      "WebFetch(domain:the-decoder.com)",
+      "WebFetch(domain:inkeep.com)",
+      "WebFetch(domain:www.eesel.ai)",
+      "WebFetch(domain:cobusgreyling.substack.com)",
+      "WebFetch(domain:futurumgroup.com)",
+      "WebFetch(domain:deeperinsights.com)",
+      "WebFetch(domain:fumics.in)",
+      "WebFetch(domain:vertu.com)",
+      "WebFetch(domain:docs.letta.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:ppaolo.substack.com)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:deepwiki.com)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "claude-mem",
+    "qmd"
+  ]
+}

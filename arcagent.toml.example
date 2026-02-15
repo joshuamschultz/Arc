@@ -1,0 +1,97 @@
+# ArcAgent Configuration
+# Copy to arcagent.toml and customize.
+# Environment variables override with ARCAGENT_ prefix (e.g., ARCAGENT_LLM__MODEL)
+
+[agent]
+name = "my-agent"
+org = "default"
+type = "executor"          # executor | planner | reviewer
+workspace = "./workspace"
+
+[llm]
+model = "anthropic/claude-sonnet-4-5-20250929"
+max_tokens = 4096
+temperature = 0.7
+
+[identity]
+did = ""                   # Auto-generated if empty
+key_dir = "~/.arcagent/keys"
+vault_path = ""            # Empty = file-based keys (dev mode)
+
+[vault]
+backend = ""               # "module:Class" format. Empty = disabled (dev mode)
+cache_ttl_seconds = 300
+
+[tools.policy]
+allow = []                 # Empty = allow all
+deny = []
+timeout_seconds = 30
+
+# Native tools (Python functions)
+# [tools.native.read_file]
+# module = "arcagent.tools.fs:read_file"
+# description = "Read a file from the workspace"
+
+# MCP servers
+# [tools.mcp_servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem"]
+# timeout_seconds = 30
+
+# HTTP tools
+# [tools.http.weather]
+# url = "https://api.weather.gov/points"
+# method = "GET"
+# timeout_seconds = 10
+
+# Process tools
+# [tools.process.git_status]
+# command = "git"
+# args = ["status"]
+# timeout_seconds = 10
+
+[telemetry]
+enabled = true
+service_name = "arcagent"
+log_level = "INFO"
+export_traces = false
+exporter_endpoint = ""     # e.g., "http://localhost:4317" for OTel Collector
+
+[context]
+max_tokens = 128000
+prune_threshold = 0.70     # Start masking old tool outputs
+compact_threshold = 0.85   # LLM summarization
+emergency_threshold = 0.95 # Force truncation
+estimate_multiplier = 1.1  # Conservative token estimate buffer
+
+# Eval model — used for entity extraction, policy evaluation, compaction
+# [eval]
+# provider = ""            # Empty = use same provider as agent
+# model = ""               # Empty = use agent's model
+# max_tokens = 1024
+# temperature = 0.2
+# timeout_seconds = 30
+# fallback_behavior = "skip"  # "skip" | "error"
+# max_concurrent = 2
+
+# Memory module settings
+# [memory]
+# context_budget_tokens = 2000
+# notes_budget_today_tokens = 1000
+# notes_budget_yesterday_tokens = 500
+# search_weight_bm25 = 0.7
+# search_weight_vector = 0.3
+# embedding_model = "all-MiniLM-L6-v2"
+# entity_extraction_enabled = true
+# policy_eval_interval_turns = 10
+
+# Session management
+# [session]
+# retention_count = 50     # Keep last N sessions
+# retention_days = 30      # Or sessions from last N days
+# compaction_summary_max_chars = 2000
+
+# Modules
+# [modules.memory]
+# enabled = true
+# priority = 100
