@@ -7,6 +7,7 @@ from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
+from arcrun.strategies.react import react_loop
 from arcrun.types import SandboxConfig, Tool
 
 from conftest import LLMResponse, Message, MockModel, ToolCall
@@ -51,8 +52,6 @@ def _make_state(
 class TestReactLoop:
     @pytest.mark.asyncio
     async def test_single_turn_end_turn(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         state = _make_state(bus)
         model = MockModel([LLMResponse(content="All done.", stop_reason="end_turn")])
@@ -65,8 +64,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_multi_turn_tool_call(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         state = _make_state(bus)
         model = MockModel([
@@ -86,8 +83,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_tool_denied_by_sandbox(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         state = _make_state(bus)
         cfg = SandboxConfig(allowed_tools=["other_tool"])
@@ -108,8 +103,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_tool_exception_caught(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         fail_tool = Tool(
             name="fail",
@@ -136,8 +129,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_param_validation_failure(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         strict_tool = Tool(
             name="strict",
@@ -165,8 +156,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_max_turns_hit(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         state = _make_state(bus)
         model = MockModel([
@@ -185,8 +174,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_text_and_tool_calls_preserved(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         state = _make_state(bus)
         model = MockModel([
@@ -205,8 +192,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_all_core_events_emitted(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         state = _make_state(bus)
         model = MockModel([
@@ -230,8 +215,6 @@ class TestReactLoop:
 
     @pytest.mark.asyncio
     async def test_transform_context_called(self):
-        from arcrun.strategies.react import react_loop
-
         bus = EventBus(run_id="test")
         calls = []
 

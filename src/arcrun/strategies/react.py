@@ -8,7 +8,27 @@ from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_re
 from arcrun.executor import execute_tool_call
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
+from arcrun.strategies import Strategy
 from arcrun.types import LoopResult
+
+
+class ReactStrategy(Strategy):
+    """Wraps the existing react_loop function."""
+
+    @property
+    def name(self) -> str:
+        return "react"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Iterative tool-calling loop. Reasons about the task, calls tools, "
+            "observes results, and repeats until complete. Best for multi-step "
+            "problems requiring tool interaction."
+        )
+
+    async def __call__(self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int) -> LoopResult:
+        return await react_loop(model, state, sandbox, max_turns)
 
 
 async def react_loop(
