@@ -19,6 +19,7 @@ def _build_state(
     system_prompt: str,
     task: str,
     *,
+    messages: list[Any] | None = None,
     on_event: Callable[..., Any] | None = None,
     sandbox: SandboxConfig | None = None,
     transform_context: Callable[..., Any] | None = None,
@@ -33,8 +34,15 @@ def _build_state(
     registry = ToolRegistry(tools=tools, event_bus=bus)
     sandbox_obj = Sandbox(config=sandbox, event_bus=bus)
 
+    # When session history provided, prepend fresh system prompt.
+    # System prompt is always rebuilt (never carried from old messages).
+    if messages is not None:
+        initial_messages = [system_message(system_prompt), *messages]
+    else:
+        initial_messages = [system_message(system_prompt), user_message(task)]
+
     state = RunState(
-        messages=[system_message(system_prompt), user_message(task)],
+        messages=initial_messages,
         registry=registry,
         event_bus=bus,
         run_id=run_id,
@@ -54,6 +62,7 @@ async def run(
     system_prompt: str,
     task: str,
     *,
+    messages: list[Any] | None = None,
     max_turns: int = 25,
     allowed_strategies: list[str] | None = None,
     sandbox: SandboxConfig | None = None,
@@ -64,6 +73,7 @@ async def run(
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
         tools, system_prompt, task,
+        messages=messages,
         on_event=on_event, sandbox=sandbox,
         transform_context=transform_context, tool_timeout=tool_timeout,
     )
@@ -82,6 +92,7 @@ async def run_async(
     system_prompt: str,
     task: str,
     *,
+    messages: list[Any] | None = None,
     max_turns: int = 25,
     allowed_strategies: list[str] | None = None,
     sandbox: SandboxConfig | None = None,
@@ -92,6 +103,7 @@ async def run_async(
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
         tools, system_prompt, task,
+        messages=messages,
         on_event=on_event, sandbox=sandbox,
         transform_context=transform_context, tool_timeout=tool_timeout,
     )

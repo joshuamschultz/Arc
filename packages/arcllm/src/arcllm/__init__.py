@@ -1,6 +1,13 @@
 """ArcLLM — Unified LLM abstraction layer for autonomous agents."""
 
 import importlib
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env for API keys. Vault replaces this in production.
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+load_dotenv()  # Also check cwd
 
 from arcllm.config import (
     DefaultsConfig,

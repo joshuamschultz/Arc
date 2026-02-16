@@ -114,6 +114,7 @@ class LLMResponse(BaseModel):
     thinking: str | None = None
     raw: Any = Field(default=None, repr=False, exclude=True)
     metadata: dict[str, Any] | None = None
+    cost_usd: float | None = None
 
 
 # ---------------------------------------------------------------------------

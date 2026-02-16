@@ -73,7 +73,7 @@ async def react_loop(
             state.tokens_used["input"] += getattr(usage, "input_tokens", 0)
             state.tokens_used["output"] += getattr(usage, "output_tokens", 0)
             state.tokens_used["total"] += getattr(usage, "total_tokens", 0)
-        state.cost_usd += getattr(response, "cost_usd", 0.0)
+        state.cost_usd += getattr(response, "cost_usd", None) or 0.0
 
         bus.emit("llm.call", {
             "model": str(type(model).__name__),

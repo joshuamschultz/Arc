@@ -113,6 +113,107 @@ class TestRun:
             await run(BadModel(), _tools(), "prompt", "task")
 
 
+class TestRunWithMessages:
+    """Tests for run() with the messages parameter (session history)."""
+
+    @pytest.mark.asyncio
+    async def test_messages_none_uses_default_behavior(self):
+        """messages=None should produce [system, user] as before."""
+        from arcrun.loop import run
+
+        model = MockModel([LLMResponse(content="Hi!", stop_reason="end_turn")])
+        result = await run(model, _tools(), "Be helpful.", "Say hello", messages=None)
+        assert result.content == "Hi!"
+        # Model received [system, user] (list is mutated after invoke, so check first two)
+        invoke_msgs = model.invoke_calls[0]["messages"]
+        assert invoke_msgs[0].role == "system"
+        assert invoke_msgs[0].content == "Be helpful."
+        assert invoke_msgs[1].role == "user"
+        assert invoke_msgs[1].content == "Say hello"
+
+    @pytest.mark.asyncio
+    async def test_messages_provided_uses_history(self):
+        """When messages provided, system prompt is prepended fresh."""
+        from arcrun.loop import run
+        from arcrun._messages import Message
+
+        history = [
+            Message(role="user", content="hello"),
+            Message(role="assistant", content="hi there"),
+            Message(role="user", content="how are you"),
+        ]
+
+        model = MockModel([LLMResponse(content="I'm good!", stop_reason="end_turn")])
+        result = await run(
+            model, _tools(), "Be helpful.", "how are you", messages=history,
+        )
+        assert result.content == "I'm good!"
+        # Model received: system + history (3 msgs) — check structure
+        invoke_msgs = model.invoke_calls[0]["messages"]
+        assert invoke_msgs[0].role == "system"
+        assert invoke_msgs[0].content == "Be helpful."
+        # History messages follow system prompt
+        assert invoke_msgs[1].role == "user"
+        assert invoke_msgs[1].content == "hello"
+        assert invoke_msgs[2].role == "assistant"
+        assert invoke_msgs[3].role == "user"
+        assert invoke_msgs[3].content == "how are you"
+
+    @pytest.mark.asyncio
+    async def test_messages_system_prompt_always_fresh(self):
+        """System prompt is always rebuilt, not carried from old messages."""
+        from arcrun.loop import run
+        from arcrun._messages import Message
+
+        # History includes an old system message — it should be ignored
+        # because run() prepends a fresh system message
+        history = [
+            Message(role="system", content="OLD system prompt"),
+            Message(role="user", content="hello"),
+            Message(role="assistant", content="hi"),
+        ]
+
+        model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
+        result = await run(
+            model, _tools(), "NEW system prompt", "hello", messages=history,
+        )
+        # First message should be the fresh system prompt
+        invoke_msgs = model.invoke_calls[0]["messages"]
+        assert invoke_msgs[0].role == "system"
+        assert invoke_msgs[0].content == "NEW system prompt"
+
+    @pytest.mark.asyncio
+    async def test_messages_empty_list_still_adds_system(self):
+        """Empty messages list should still prepend system prompt."""
+        from arcrun.loop import run
+
+        model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
+        result = await run(
+            model, _tools(), "System.", "task", messages=[],
+        )
+        invoke_msgs = model.invoke_calls[0]["messages"]
+        assert invoke_msgs[0].role == "system"
+        assert invoke_msgs[0].content == "System."
+
+    @pytest.mark.asyncio
+    async def test_run_async_with_messages(self):
+        """run_async() also accepts messages parameter."""
+        from arcrun.loop import run_async
+        from arcrun._messages import Message
+
+        history = [
+            Message(role="user", content="hi"),
+            Message(role="assistant", content="hello"),
+        ]
+
+        model = MockModel([LLMResponse(content="Done.", stop_reason="end_turn")])
+        handle = await run_async(
+            model, _tools(), "prompt", "task", messages=history,
+        )
+        result = await handle.result()
+        assert result.content == "Done."
+
+
 class TestRunAsync:
     @pytest.mark.asyncio
     async def test_returns_run_handle(self):
