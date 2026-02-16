@@ -1,0 +1,32 @@
+[provider]
+api_format = "openai-chat"
+base_url = "https://api.openai.com"
+api_key_env = "OPENAI_API_KEY"
+api_key_required = true
+default_model = "gpt-4o"
+default_temperature = 0.7
+vault_path = ""
+
+[models.gpt-4o]
+context_window = 128000
+max_output_tokens = 16384
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 2.50
+cost_output_per_1m = 10.00
+cost_cache_read_per_1m = 1.25
+cost_cache_write_per_1m = 2.50
+
+[models.gpt-4o-mini]
+context_window = 128000
+max_output_tokens = 16384
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 0.15
+cost_output_per_1m = 0.60
+cost_cache_read_per_1m = 0.075
+cost_cache_write_per_1m = 0.15

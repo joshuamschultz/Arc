@@ -1,0 +1,68 @@
+[provider]
+api_format = "openai-chat"
+base_url = "https://api.together.xyz"
+api_key_env = "TOGETHER_API_KEY"
+api_key_required = true
+default_model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+default_temperature = 0.7
+vault_path = ""
+
+[models."meta-llama/Llama-3.3-70B-Instruct-Turbo"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.88
+cost_output_per_1m = 0.88
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."meta-llama/Llama-3.1-8B-Instruct-Turbo"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.18
+cost_output_per_1m = 0.18
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."mistralai/Mixtral-8x7B-Instruct-v0.1"]
+context_window = 32000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.60
+cost_output_per_1m = 0.60
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."Qwen/Qwen2.5-72B-Instruct-Turbo"]
+context_window = 32000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 1.20
+cost_output_per_1m = 1.20
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."deepseek-ai/DeepSeek-V3"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 1.25
+cost_output_per_1m = 1.25
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0

@@ -1,0 +1,80 @@
+[provider]
+api_format = "openai-chat"
+base_url = "http://localhost:11434"
+api_key_env = "OLLAMA_API_KEY"
+api_key_required = false
+default_model = "llama3.2"
+default_temperature = 0.7
+vault_path = ""
+
+[models."llama3.2"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."llama3.1:8b"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."llama3.1:70b"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models.mistral]
+context_window = 32000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."qwen2.5:7b"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."deepseek-r1:8b"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = false
+supports_vision = false
+supports_thinking = true
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0

@@ -1,0 +1,36 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# pytest
+.pytest_cache/
+
+# Claude
+.claude/*
+!.claude/specs/
+CLAUDE.md
+docs/arcllm-prd.md
+
+# Work files
+architecture/

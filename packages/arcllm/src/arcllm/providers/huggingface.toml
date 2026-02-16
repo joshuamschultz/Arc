@@ -1,0 +1,44 @@
+[provider]
+api_format = "openai-chat"
+base_url = "https://api-inference.huggingface.co"
+api_key_env = "HF_TOKEN"
+api_key_required = true
+default_model = "meta-llama/Llama-3.3-70B-Instruct"
+default_temperature = 0.7
+vault_path = ""
+
+[models."meta-llama/Llama-3.3-70B-Instruct"]
+context_window = 128000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."mistralai/Mistral-7B-Instruct-v0.3"]
+context_window = 32000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."Qwen/Qwen2.5-72B-Instruct"]
+context_window = 32000
+max_output_tokens = 4096
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
