@@ -77,10 +77,22 @@ class ExtensionAPI:
         """Register a tool via the tool registry.
 
         Tags the tool source for cleanup during hot reload.
+        Accepts both RegisteredTool and arcrun.Tool objects.
         """
+        # Convert arcrun.Tool to RegisteredTool if needed
+        if not hasattr(tool, 'source') or not hasattr(tool, 'transport'):
+            from arcagent.core.tool_registry import RegisteredTool as RT, ToolTransport
+            tool = RT(
+                name=tool.name,
+                description=tool.description,
+                input_schema=tool.input_schema,
+                transport=ToolTransport.NATIVE,
+                execute=tool.execute,
+                timeout_seconds=getattr(tool, 'timeout_seconds', None),
+                source=f"{self._source_prefix}{self._extension_name}",
+            )
         # Ensure source is tagged for cleanup with the correct prefix
-        expected_prefix = self._source_prefix
-        if not tool.source.startswith(expected_prefix):
+        elif not tool.source.startswith(self._source_prefix):
             tool = RegisteredTool(
                 name=tool.name,
                 description=tool.description,
@@ -88,7 +100,7 @@ class ExtensionAPI:
                 transport=tool.transport,
                 execute=tool.execute,
                 timeout_seconds=tool.timeout_seconds,
-                source=f"{expected_prefix}{self._extension_name}",
+                source=f"{self._source_prefix}{self._extension_name}",
             )
         self._tool_registry.register(tool)
         self._tools_registered.append(tool.name)

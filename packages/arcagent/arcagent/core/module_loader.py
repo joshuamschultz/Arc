@@ -190,6 +190,7 @@ class ModuleLoader:
         available: dict[str, Any] = {
             "config": getattr(ctx.config, manifest.name, None),
             "eval_config": ctx.config.eval,
+            "llm_config": ctx.llm_config,
             "telemetry": ctx.telemetry,
             "workspace": ctx.workspace,
         }

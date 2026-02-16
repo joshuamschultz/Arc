@@ -183,7 +183,8 @@ class ContextManager:
         Called before each LLM call. Applies graduated token management:
         1. Estimate current usage
         2. If > prune_threshold: mask old tool outputs
-        3. If > emergency_threshold: force truncation
+        3. If > compact_threshold: trigger memory flush (async event)
+        4. If > emergency_threshold: force truncation
         """
         if not messages:
             return messages
@@ -200,6 +201,22 @@ class ContextManager:
 
         # Re-estimate after pruning
         ratio = self._estimate_ratio(result)
+
+        # Above compact threshold — trigger pre-compaction memory flush
+        if ratio >= self._config.compact_threshold and self._bus is not None:
+            # Emit event for memory module (async, non-blocking)
+            # Memory module will handle creating daily notes and saving context
+            import asyncio
+            try:
+                asyncio.create_task(
+                    self._bus.emit(
+                        "agent:pre_compaction",
+                        {"messages": result, "ratio": ratio},
+                    )
+                )
+            except RuntimeError:
+                # No event loop running (shouldn't happen in async context)
+                _logger.debug("Cannot emit pre_compaction event: no event loop")
 
         # Above emergency threshold — force truncation
         if ratio >= self._config.emergency_threshold:

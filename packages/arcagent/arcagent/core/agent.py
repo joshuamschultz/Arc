@@ -104,7 +104,14 @@ class ArcAgent:
     def __init__(self, config: ArcAgentConfig, *, config_path: Path | None = None) -> None:
         self._config = config
         self._config_path = config_path or Path("arcagent.toml")
-        self._workspace = Path(config.agent.workspace).resolve()
+
+        # Resolve workspace path relative to config file, not cwd
+        workspace_path = Path(config.agent.workspace)
+        if not workspace_path.is_absolute() and config_path:
+            self._workspace = (config_path.parent / workspace_path).resolve()
+        else:
+            self._workspace = workspace_path.resolve()
+
         self._reload_lock = asyncio.Lock()
         self._started = False
 
@@ -302,7 +309,13 @@ class ArcAgent:
             )
             raise
 
-        await bus.emit("agent:post_respond", {"result": result})
+        # Include messages and session_id for memory module
+        session_id = self._session.session_id if self._session else ""
+        messages_dict = [m.model_dump() if hasattr(m, "model_dump") else m for m in (messages or [])]
+        await bus.emit(
+            "agent:post_respond",
+            {"result": result, "messages": messages_dict, "session_id": session_id},
+        )
         return result
 
     async def run(self, task: str) -> Any:

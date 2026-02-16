@@ -1,0 +1,19 @@
+{
+  "loyalty_programs": {
+    "airline": {
+      "provider": "Delta",
+      "program": "SkyMiles",
+      "seat_preference": "Aisle"
+    },
+    "car_rental": {
+      "provider": "Hertz",
+      "program": "Gold Plus Rewards",
+      "vehicle_type": "Smaller SUV"
+    },
+    "hotel": {
+      "provider": "Marriott Bonvoy",
+      "target_price": "$100-250 per night",
+      "price_preference": "Closer to $100 if possible"
+    }
+  }
+}

@@ -212,10 +212,12 @@ class MarkdownMemoryModule:
         eval_config: EvalConfig,
         telemetry: Any,
         workspace: Path,
+        llm_config: Any | None = None,
         eval_model: Any | None = None,
     ) -> None:
         self._config = config
         self._eval_config = eval_config
+        self._llm_config = llm_config
         self._telemetry = telemetry
         self._workspace = workspace.resolve()
         self._eval_model = eval_model
@@ -240,7 +242,6 @@ class MarkdownMemoryModule:
         self._hook_active: bool = False
         self._session_messages: list[dict[str, Any]] = []
         self._turn_count: int = 0
-        self._llm_config: Any = None
         self._semaphore = asyncio.Semaphore(eval_config.max_concurrent)
         self._hybrid_search = HybridSearch(workspace, config)
 
@@ -251,7 +252,6 @@ class MarkdownMemoryModule:
     async def startup(self, ctx: ModuleContext) -> None:
         """Register all event handlers with the module bus."""
         bus = ctx.bus
-        self._llm_config = ctx.llm_config
         self._register_search_tool(ctx.tool_registry)
         bus.subscribe("agent:pre_tool", self._on_pre_tool, priority=10)
         bus.subscribe("agent:post_tool", self._on_post_tool, priority=100)
@@ -261,6 +261,7 @@ class MarkdownMemoryModule:
             priority=50,
         )
         bus.subscribe("agent:post_respond", self._on_post_respond, priority=100)
+        bus.subscribe("agent:pre_compaction", self._on_pre_compaction, priority=50)
         bus.subscribe("agent:shutdown", self._on_shutdown, priority=50)
 
     def _get_eval_model(self) -> Any:
@@ -449,6 +450,8 @@ class MarkdownMemoryModule:
 
     async def _on_post_respond(self, ctx: EventContext) -> None:
         """Fire async entity extraction and periodic policy evaluation."""
+        from datetime import date
+
         model = self._get_eval_model()
         if model is None:
             return
@@ -462,6 +465,17 @@ class MarkdownMemoryModule:
         # Accumulate messages for session-end policy evaluation
         self._session_messages = messages
 
+        # Ensure today's notes file exists (auto-create on first turn of day)
+        today = date.today()
+        notes_file = self._workspace / "notes" / f"{today.isoformat()}.md"
+        if not notes_file.exists():
+            notes_file.parent.mkdir(parents=True, exist_ok=True)
+            notes_file.write_text(
+                f"# Daily Notes - {today.isoformat()}\n\n",
+                encoding="utf-8",
+            )
+            _logger.debug("Auto-created daily notes file: %s", notes_file.name)
+
         # Entity extraction on every response
         if self._config.entity_extraction_enabled:
             self._spawn_background(self._entity_extractor.extract(messages, model))
@@ -473,6 +487,33 @@ class MarkdownMemoryModule:
             self._spawn_background(
                 self._policy_engine.evaluate(messages, model, session_id=session_id)
             )
+
+    async def _on_pre_compaction(self, ctx: EventContext) -> None:
+        """Handle pre-compaction memory flush (OpenClaw pattern).
+
+        Creates daily notes file if missing and logs the compaction event.
+        Agent will be reminded to save important context via identity.md instructions.
+        """
+        from datetime import date
+
+        ratio = ctx.data.get("ratio", 0.0)
+        _logger.info(
+            "Pre-compaction triggered at %.1f%% context usage - ensuring daily notes exist",
+            ratio * 100,
+        )
+
+        # Ensure today's notes file exists
+        today = date.today()
+        notes_file = self._workspace / "notes" / f"{today.isoformat()}.md"
+
+        if not notes_file.exists():
+            notes_file.parent.mkdir(parents=True, exist_ok=True)
+            notes_file.write_text(
+                f"# Daily Notes - {today.isoformat()}\n\n"
+                f"**Context approaching limit** - important information should be noted here.\n\n",
+                encoding="utf-8",
+            )
+            _logger.info("Created daily notes file: %s", notes_file.name)
 
     async def _on_shutdown(self, ctx: EventContext) -> None:
         """Run policy evaluation once at session end."""

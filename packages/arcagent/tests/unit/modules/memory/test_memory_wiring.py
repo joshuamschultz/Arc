@@ -82,6 +82,25 @@ class TestEvalModelLazyInit:
             mock_load.assert_called_once_with("anthropic/claude-haiku")
             assert model is not None
 
+    def test_llm_config_preserved_from_constructor(self, tmp_path: Path) -> None:
+        """llm_config passed to constructor is not clobbered (regression)."""
+        llm_cfg = LLMConfig(model="anthropic/claude-haiku")
+        module = MarkdownMemoryModule(
+            config=MemoryConfig(),
+            eval_config=EvalConfig(provider="", model=""),
+            telemetry=_make_telemetry(),
+            workspace=tmp_path,
+            llm_config=llm_cfg,
+        )
+        # Must survive construction — was previously overwritten to None
+        assert module._llm_config is llm_cfg
+
+        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+            mock_load.return_value = MagicMock()
+            model = module._get_eval_model()
+            mock_load.assert_called_once_with("anthropic/claude-haiku")
+            assert model is not None
+
     def test_get_eval_model_caches(self, tmp_path: Path) -> None:
         """Model is cached after first call."""
         module = _make_module(
