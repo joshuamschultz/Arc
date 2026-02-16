@@ -25,7 +25,7 @@ from arcagent.core.config import (
     ModuleEntry,
     TelemetryConfig,
 )
-from arcagent.core.module_bus import ModuleBus
+from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.memory.markdown_memory import MarkdownMemoryModule
 
@@ -47,6 +47,21 @@ def _make_bus(config: ArcAgentConfig | None = None) -> ModuleBus:
     return ModuleBus(config=config, telemetry=telemetry)
 
 
+def _make_module_ctx(bus: ModuleBus, workspace: Path) -> ModuleContext:
+    config = ArcAgentConfig(
+        agent=AgentConfig(name="test", workspace=str(workspace)),
+        llm=LLMConfig(model="test/model"),
+    )
+    return ModuleContext(
+        bus=bus,
+        tool_registry=MagicMock(),
+        config=config,
+        telemetry=_make_telemetry(),
+        workspace=workspace,
+        llm_config=config.llm,
+    )
+
+
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "workspace"
@@ -57,9 +72,7 @@ def workspace(tmp_path: Path) -> Path:
 class TestMemoryModuleStartupShutdown:
     """T5.1: Module loads via Module Bus and subscribes to events."""
 
-    async def test_module_registers_handlers(
-        self, workspace: Path
-    ) -> None:
+    async def test_module_registers_handlers(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
             config=MemoryConfig(),
@@ -68,7 +81,7 @@ class TestMemoryModuleStartupShutdown:
             workspace=workspace,
         )
 
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         assert bus.handler_count("agent:pre_tool") >= 1
         assert bus.handler_count("agent:post_tool") >= 1
@@ -77,9 +90,7 @@ class TestMemoryModuleStartupShutdown:
 
         await module.shutdown()
 
-    async def test_module_via_bus_lifecycle(
-        self, workspace: Path
-    ) -> None:
+    async def test_module_via_bus_lifecycle(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
             config=MemoryConfig(),
@@ -89,7 +100,7 @@ class TestMemoryModuleStartupShutdown:
         )
 
         bus.register_module(module)
-        await bus.startup()
+        await bus.startup(_make_module_ctx(bus, workspace))
 
         # Verify handlers registered
         assert bus.handler_count("agent:pre_tool") >= 1
@@ -108,17 +119,20 @@ class TestNotesAppendOnlyEndToEnd:
             telemetry=_make_telemetry(),
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         notes_dir = workspace / "notes"
         notes_dir.mkdir()
         note_path = notes_dir / "2026-02-15.md"
         note_path.write_text("existing content")
 
-        ctx = await bus.emit("agent:pre_tool", {
-            "tool": "write",
-            "args": {"path": str(note_path), "content": "overwrite"},
-        })
+        ctx = await bus.emit(
+            "agent:pre_tool",
+            {
+                "tool": "write",
+                "args": {"path": str(note_path), "content": "overwrite"},
+            },
+        )
 
         assert ctx.is_vetoed
         assert "append-only" in ctx.veto_reason.lower()
@@ -133,17 +147,20 @@ class TestNotesAppendOnlyEndToEnd:
             telemetry=_make_telemetry(),
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         notes_dir = workspace / "notes"
         notes_dir.mkdir()
         note_path = notes_dir / "2026-02-15.md"
         note_path.write_text("existing content")
 
-        ctx = await bus.emit("agent:pre_tool", {
-            "tool": "edit",
-            "args": {"path": str(note_path), "content": "append more"},
-        })
+        ctx = await bus.emit(
+            "agent:pre_tool",
+            {
+                "tool": "edit",
+                "args": {"path": str(note_path), "content": "append more"},
+            },
+        )
 
         assert not ctx.is_vetoed
         await module.shutdown()
@@ -156,17 +173,20 @@ class TestNotesAppendOnlyEndToEnd:
             telemetry=_make_telemetry(),
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         notes_dir = workspace / "notes"
         notes_dir.mkdir()
         note_path = notes_dir / "2026-02-15.md"
         note_path.write_text("existing content")
 
-        ctx = await bus.emit("agent:pre_tool", {
-            "tool": "bash",
-            "args": {"command": f"echo 'bad' > {note_path}"},
-        })
+        ctx = await bus.emit(
+            "agent:pre_tool",
+            {
+                "tool": "bash",
+                "args": {"command": f"echo 'bad' > {note_path}"},
+            },
+        )
 
         assert ctx.is_vetoed
         await module.shutdown()
@@ -175,9 +195,7 @@ class TestNotesAppendOnlyEndToEnd:
 class TestIdentityAuditEndToEnd:
     """T5.1.2: Identity self-editing produces audit trail via bus events."""
 
-    async def test_identity_edit_creates_audit(
-        self, workspace: Path
-    ) -> None:
+    async def test_identity_edit_creates_audit(self, workspace: Path) -> None:
         telemetry = _make_telemetry()
         bus = _make_bus()
         module = MarkdownMemoryModule(
@@ -186,25 +204,31 @@ class TestIdentityAuditEndToEnd:
             telemetry=telemetry,
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         identity_path = workspace / "identity.md"
         identity_path.write_text("Agent: original")
 
         # Pre-tool: capture before state
-        await bus.emit("agent:pre_tool", {
-            "tool": "write",
-            "args": {"path": str(identity_path), "content": "Agent: modified"},
-        })
+        await bus.emit(
+            "agent:pre_tool",
+            {
+                "tool": "write",
+                "args": {"path": str(identity_path), "content": "Agent: modified"},
+            },
+        )
 
         # Simulate the write happening
         identity_path.write_text("Agent: modified")
 
         # Post-tool: capture after state
-        await bus.emit("agent:post_tool", {
-            "tool": "write",
-            "args": {"path": str(identity_path)},
-        })
+        await bus.emit(
+            "agent:post_tool",
+            {
+                "tool": "write",
+                "args": {"path": str(identity_path)},
+            },
+        )
 
         # Audit trail should exist
         audit_file = workspace / "audit" / "identity-changes.jsonl"
@@ -230,7 +254,7 @@ class TestContextBudgetEndToEnd:
             telemetry=_make_telemetry(),
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         context_path = workspace / "context.md"
         # 10 tokens * 4 chars = 40 chars max
@@ -240,10 +264,13 @@ class TestContextBudgetEndToEnd:
             "path": str(context_path),
             "content": big_content,
         }
-        await bus.emit("agent:pre_tool", {
-            "tool": "write",
-            "args": args,
-        })
+        await bus.emit(
+            "agent:pre_tool",
+            {
+                "tool": "write",
+                "args": args,
+            },
+        )
 
         # Content should be truncated
         assert len(args["content"]) < 200
@@ -264,7 +291,7 @@ class TestAssemblePromptWithNotes:
             telemetry=_make_telemetry(),
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         # Create today's notes
         notes_dir = workspace / "notes"
@@ -284,9 +311,7 @@ class TestAssemblePromptWithNotes:
 class TestEntityExtractionIntegration:
     """T5.1.4: Entity extraction triggered by post_respond event."""
 
-    async def test_entity_extraction_path(
-        self, workspace: Path
-    ) -> None:
+    async def test_entity_extraction_path(self, workspace: Path) -> None:
         """Verify the entity extractor can be invoked through the module."""
         from arcagent.modules.memory.entity_extractor import EntityExtractor
 
@@ -297,14 +322,22 @@ class TestEntityExtractionIntegration:
             telemetry=telemetry,
         )
 
-        model = AsyncMock(return_value=json.dumps({
-            "entities": [{
-                "name": "ArcAgent",
-                "type": "project",
-                "aliases": ["Arc"],
-                "facts": [{"predicate": "type", "value": "AI framework", "confidence": 0.9}],
-            }]
-        }))
+        model = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "name": "ArcAgent",
+                            "type": "project",
+                            "aliases": ["Arc"],
+                            "facts": [
+                                {"predicate": "type", "value": "AI framework", "confidence": 0.9}
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "ArcAgent is an AI framework for building agents"},
@@ -324,9 +357,7 @@ class TestEntityExtractionIntegration:
 class TestHybridSearchIntegration:
     """T5.1.5: Hybrid search across notes and entities."""
 
-    async def test_search_finds_notes_content(
-        self, workspace: Path
-    ) -> None:
+    async def test_search_finds_notes_content(self, workspace: Path) -> None:
         from arcagent.modules.memory.hybrid_search import HybridSearch
 
         search = HybridSearch(workspace=workspace, config=MemoryConfig())
@@ -334,9 +365,7 @@ class TestHybridSearchIntegration:
         # Create searchable content
         notes_dir = workspace / "notes"
         notes_dir.mkdir()
-        (notes_dir / "2026-02-15.md").write_text(
-            "Meeting about ArcAgent architecture decisions"
-        )
+        (notes_dir / "2026-02-15.md").write_text("Meeting about ArcAgent architecture decisions")
 
         await search.reindex_if_needed()
         results = await search.search("ArcAgent architecture", top_k=5)
@@ -349,9 +378,7 @@ class TestHybridSearchIntegration:
 class TestPolicyEvaluationIntegration:
     """T5.1.6: ACE policy evaluation cycle."""
 
-    async def test_policy_evaluation_creates_bullets(
-        self, workspace: Path
-    ) -> None:
+    async def test_policy_evaluation_creates_bullets(self, workspace: Path) -> None:
         from arcagent.modules.memory.policy_engine import PolicyEngine
 
         engine = PolicyEngine(
@@ -361,11 +388,15 @@ class TestPolicyEvaluationIntegration:
             memory_config=MemoryConfig(),
         )
 
-        model = AsyncMock(return_value=json.dumps({
-            "additions": ["Always verify test results before claiming success"],
-            "updates": [],
-            "rewrites": [],
-        }))
+        model = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "additions": ["Always verify test results before claiming success"],
+                    "updates": [],
+                    "rewrites": [],
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "Run the tests"},
@@ -383,9 +414,7 @@ class TestPolicyEvaluationIntegration:
 class TestNonMemoryPathIgnored:
     """Verify events for non-memory paths are not intercepted."""
 
-    async def test_write_to_random_file_not_vetoed(
-        self, workspace: Path
-    ) -> None:
+    async def test_write_to_random_file_not_vetoed(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
             config=MemoryConfig(),
@@ -393,13 +422,16 @@ class TestNonMemoryPathIgnored:
             telemetry=_make_telemetry(),
             workspace=workspace,
         )
-        await module.startup(bus)
+        await module.startup(_make_module_ctx(bus, workspace))
 
         random_file = workspace / "some_code.py"
-        ctx = await bus.emit("agent:pre_tool", {
-            "tool": "write",
-            "args": {"path": str(random_file), "content": "print('hello')"},
-        })
+        ctx = await bus.emit(
+            "agent:pre_tool",
+            {
+                "tool": "write",
+                "args": {"path": str(random_file), "content": "print('hello')"},
+            },
+        )
 
         assert not ctx.is_vetoed
         await module.shutdown()

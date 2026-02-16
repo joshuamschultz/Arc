@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
-from arcagent.core.module_bus import EventContext, ModuleBus
+from arcagent.core.module_bus import EventContext, ModuleBus, ModuleContext
 
 
 @pytest.fixture()
@@ -29,6 +29,17 @@ def mock_telemetry() -> MagicMock:
 @pytest.fixture()
 def bus(config: ArcAgentConfig, mock_telemetry: MagicMock) -> ModuleBus:
     return ModuleBus(config=config, telemetry=mock_telemetry)
+
+
+def _make_module_ctx(bus: ModuleBus, config: ArcAgentConfig) -> ModuleContext:
+    return ModuleContext(
+        bus=bus,
+        tool_registry=MagicMock(),
+        config=config,
+        telemetry=MagicMock(),
+        workspace=MagicMock(),
+        llm_config=config.llm,
+    )
 
 
 class TestEventContext:
@@ -70,16 +81,12 @@ class TestEventContextImmutability:
     def test_data_is_snapshot(self) -> None:
         """EventContext data is a copy, not a reference to the original."""
         original = {"tool": "read_file"}
-        ctx = EventContext(
-            event="test", data=original, agent_did="test", trace_id="abc"
-        )
+        ctx = EventContext(event="test", data=original, agent_did="test", trace_id="abc")
         # Mutating original does not affect ctx
         original["tool"] = "evil_tool"
         assert ctx.data["tool"] == "read_file"
 
-    async def test_emit_data_not_mutated_by_handlers(
-        self, bus: ModuleBus
-    ) -> None:
+    async def test_emit_data_not_mutated_by_handlers(self, bus: ModuleBus) -> None:
         """Handlers cannot mutate emit caller's data dict."""
         original_data = {"tool": "read_file"}
 
@@ -164,9 +171,7 @@ class TestEmit:
 
 
 class TestErrorIsolation:
-    async def test_handler_exception_doesnt_crash_others(
-        self, bus: ModuleBus
-    ) -> None:
+    async def test_handler_exception_doesnt_crash_others(self, bus: ModuleBus) -> None:
         results: list[str] = []
 
         async def failing_handler(ctx: EventContext) -> None:
@@ -236,13 +241,13 @@ class TestVetoFlow:
 
 
 class TestModuleLifecycle:
-    async def test_startup_order(self, bus: ModuleBus) -> None:
+    async def test_startup_order(self, bus: ModuleBus, config: ArcAgentConfig) -> None:
         order: list[str] = []
 
         class ModuleA:
             name = "module_a"
 
-            async def startup(self, b: ModuleBus) -> None:
+            async def startup(self, ctx: ModuleContext) -> None:
                 order.append("a")
 
             async def shutdown(self) -> None:
@@ -251,7 +256,7 @@ class TestModuleLifecycle:
         class ModuleB:
             name = "module_b"
 
-            async def startup(self, b: ModuleBus) -> None:
+            async def startup(self, ctx: ModuleContext) -> None:
                 order.append("b")
 
             async def shutdown(self) -> None:
@@ -260,16 +265,16 @@ class TestModuleLifecycle:
         bus.register_module(ModuleA())  # type: ignore[arg-type]
         bus.register_module(ModuleB())  # type: ignore[arg-type]
 
-        await bus.startup()
+        await bus.startup(_make_module_ctx(bus, config))
         assert order == ["a", "b"]
 
-    async def test_shutdown_reverse_order(self, bus: ModuleBus) -> None:
+    async def test_shutdown_reverse_order(self, bus: ModuleBus, config: ArcAgentConfig) -> None:
         order: list[str] = []
 
         class ModuleA:
             name = "module_a"
 
-            async def startup(self, b: ModuleBus) -> None:
+            async def startup(self, ctx: ModuleContext) -> None:
                 pass
 
             async def shutdown(self) -> None:
@@ -278,7 +283,7 @@ class TestModuleLifecycle:
         class ModuleB:
             name = "module_b"
 
-            async def startup(self, b: ModuleBus) -> None:
+            async def startup(self, ctx: ModuleContext) -> None:
                 pass
 
             async def shutdown(self) -> None:
@@ -287,18 +292,20 @@ class TestModuleLifecycle:
         bus.register_module(ModuleA())  # type: ignore[arg-type]
         bus.register_module(ModuleB())  # type: ignore[arg-type]
 
-        await bus.startup()
+        await bus.startup(_make_module_ctx(bus, config))
         await bus.shutdown()
         assert order == ["b_down", "a_down"]
 
-    async def test_module_startup_failure_isolates(self, bus: ModuleBus) -> None:
+    async def test_module_startup_failure_isolates(
+        self, bus: ModuleBus, config: ArcAgentConfig
+    ) -> None:
         """One module failing startup doesn't prevent others."""
         results: list[str] = []
 
         class BadModule:
             name = "bad"
 
-            async def startup(self, b: ModuleBus) -> None:
+            async def startup(self, ctx: ModuleContext) -> None:
                 msg = "startup failed"
                 raise RuntimeError(msg)
 
@@ -308,7 +315,7 @@ class TestModuleLifecycle:
         class GoodModule:
             name = "good"
 
-            async def startup(self, b: ModuleBus) -> None:
+            async def startup(self, ctx: ModuleContext) -> None:
                 results.append("started")
 
             async def shutdown(self) -> None:
@@ -317,8 +324,44 @@ class TestModuleLifecycle:
         bus.register_module(BadModule())  # type: ignore[arg-type]
         bus.register_module(GoodModule())  # type: ignore[arg-type]
 
-        await bus.startup()
+        await bus.startup(_make_module_ctx(bus, config))
         assert "started" in results
+
+    async def test_module_shutdown_failure_isolates(
+        self, bus: ModuleBus, config: ArcAgentConfig
+    ) -> None:
+        """One module failing shutdown doesn't prevent others."""
+        results: list[str] = []
+
+        class BadModule:
+            name = "bad"
+
+            async def startup(self, ctx: ModuleContext) -> None:
+                pass
+
+            async def shutdown(self) -> None:
+                results.append("bad_shutdown_attempted")
+                msg = "shutdown failed"
+                raise RuntimeError(msg)
+
+        class GoodModule:
+            name = "good"
+
+            async def startup(self, ctx: ModuleContext) -> None:
+                pass
+
+            async def shutdown(self) -> None:
+                results.append("good_shutdown")
+
+        bus.register_module(BadModule())  # type: ignore[arg-type]
+        bus.register_module(GoodModule())  # type: ignore[arg-type]
+
+        await bus.startup(_make_module_ctx(bus, config))
+        await bus.shutdown()
+
+        # Both should attempt shutdown (reverse order)
+        assert "good_shutdown" in results
+        assert "bad_shutdown_attempted" in results
 
 
 class TestUnsubscribeByModulePrefix:

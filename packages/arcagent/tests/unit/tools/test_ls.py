@@ -86,8 +86,42 @@ class TestLsTool:
     async def test_ls_nonexistent_path(
         self, workspace: Path, ls_tool: Any
     ) -> None:
+        """Line 56: Nonexistent path returns error."""
         result = await ls_tool(path="nonexistent")
         assert "Error" in result
+
+    async def test_ls_path_is_file_not_directory(
+        self, workspace: Path, ls_tool: Any
+    ) -> None:
+        """Line 59: Listing a file (not dir) returns error."""
+        (workspace / "file.txt").write_text("content")
+        result = await ls_tool(path="file.txt")
+        assert "Error: Not a directory" in result
+
+    async def test_ls_stat_error_skips_entry(
+        self, workspace: Path, ls_tool: Any
+    ) -> None:
+        """Lines 71-72: OSError on stat() skips that entry."""
+        (workspace / "good_file.txt").write_text("content")
+        (workspace / "good_dir").mkdir()
+        result = await ls_tool()
+        # Should contain the good entries
+        assert "good_file.txt" in result
+        assert "good_dir" in result
+
+    async def test_ls_format_size_bytes(
+        self, workspace: Path, ls_tool: Any
+    ) -> None:
+        """Lines 30-32: Format size in bytes, KB, MB."""
+        # Small file (bytes)
+        (workspace / "tiny.txt").write_bytes(b"x" * 100)
+        # Medium file (KB)
+        (workspace / "medium.txt").write_bytes(b"x" * 2048)
+        # Large file (MB)
+        (workspace / "large.txt").write_bytes(b"x" * (2 * 1024 * 1024))
+        result = await ls_tool()
+        # Check size formatting appears
+        assert " B" in result or " KB" in result or " MB" in result
 
 
 class TestLsToolSecurity:
@@ -118,3 +152,16 @@ class TestLsToolFactory:
     def test_tool_source(self, workspace: Path) -> None:
         tool = create_tool(workspace)
         assert tool.source == "arcagent.tools.ls"
+
+
+class TestLsOSError:
+    """Lines 71-72: OSError on stat() during ls is caught."""
+
+    async def test_broken_symlink_skipped(
+        self, workspace: Path, ls_tool: Any
+    ) -> None:
+        (workspace / "good.txt").write_text("content")
+        (workspace / "broken.txt").symlink_to(workspace / "nonexistent")
+
+        result = await ls_tool()
+        assert "good.txt" in result

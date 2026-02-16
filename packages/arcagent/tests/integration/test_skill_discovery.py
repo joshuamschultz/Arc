@@ -84,11 +84,11 @@ class TestSkillDiscovery:
 
         await agent.shutdown()
 
-    @patch("arcagent.core.agent._load_model")
-    @patch("arcagent.core.agent._run_loop")
+    @patch("arcagent.core.agent.load_eval_model")
+    @patch("arcagent.core.agent.arcrun_run")
     async def test_skills_injected_into_system_prompt(
         self,
-        mock_run_loop: AsyncMock,
+        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
         workspace: Path,
@@ -99,7 +99,7 @@ class TestSkillDiscovery:
         _write_skill(skills_dir, "test-writer", "Write unit tests")
 
         mock_load_model.return_value = MagicMock()
-        mock_run_loop.return_value = MagicMock(content="done")
+        mock_arcrun_run.return_value = MagicMock(content="done")
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -107,7 +107,7 @@ class TestSkillDiscovery:
         await agent.run("test task")
 
         # System prompt should contain skill info
-        prompt = mock_run_loop.call_args.kwargs["system_prompt"]
+        prompt = mock_arcrun_run.call_args.kwargs["system_prompt"]
         assert "code-review" in prompt
         assert "test-writer" in prompt
         assert "Review code for quality" in prompt

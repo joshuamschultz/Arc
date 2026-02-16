@@ -67,6 +67,18 @@ def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
     return adapter_class
 
 
+def _ensure_global_config() -> Any:
+    """Load and cache global config + module settings on first access."""
+    global _global_config_cache
+    if _global_config_cache is None:
+        _global_config_cache = load_global_config()
+        for name, cfg in _global_config_cache.modules.items():
+            _module_settings_cache[name] = {
+                k: v for k, v in cfg.model_dump().items() if k != "enabled"
+            }
+    return _global_config_cache
+
+
 def _resolve_module_config(
     module_name: str,
     kwarg_value: bool | dict[str, Any] | None,
@@ -82,14 +94,7 @@ def _resolve_module_config(
     Returns:
         Module config dict if enabled, None if disabled.
     """
-    global _global_config_cache
-    if _global_config_cache is None:
-        _global_config_cache = load_global_config()
-        # Pre-extract module settings (avoids model_dump() per call)
-        for name, cfg in _global_config_cache.modules.items():
-            _module_settings_cache[name] = {
-                k: v for k, v in cfg.model_dump().items() if k != "enabled"
-            }
+    _ensure_global_config()
 
     # Get config.toml settings for this module
     module_cfg = _global_config_cache.modules.get(module_name)
@@ -102,9 +107,7 @@ def _resolve_module_config(
     if kwarg_value is True:
         return config_settings
     if isinstance(kwarg_value, dict):
-        # Kwarg dict overrides config.toml defaults
-        merged = {**config_settings, **kwarg_value}
-        return merged
+        return {**config_settings, **kwarg_value}
     # kwarg_value is None — use config.toml enabled flag
     if config_enabled:
         return config_settings
@@ -171,13 +174,7 @@ def load_model(
     model_name = model or config.provider.default_model
 
     # Resolve API key via vault if configured
-    global _global_config_cache
-    if _global_config_cache is None:
-        _global_config_cache = load_global_config()
-        for name, cfg in _global_config_cache.modules.items():
-            _module_settings_cache[name] = {
-                k: v for k, v in cfg.model_dump().items() if k != "enabled"
-            }
+    _ensure_global_config()
 
     global _vault_resolver_cache
     vault_cfg = _global_config_cache.vault

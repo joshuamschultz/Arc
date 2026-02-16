@@ -12,6 +12,7 @@ events:
     - agent:post_tool
     - agent:assemble_prompt
     - agent:post_respond
+    - agent:shutdown
   emits:
     - memory.background_error
     - identity.modified

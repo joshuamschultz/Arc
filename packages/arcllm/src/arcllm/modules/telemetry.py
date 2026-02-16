@@ -42,19 +42,18 @@ class TelemetryModule(BaseModule):
                 f"Valid keys: {sorted(_VALID_CONFIG_KEYS - {'enabled'})}"
             )
 
+        _cost_fields = (
+            "cost_input_per_1m", "cost_output_per_1m",
+            "cost_cache_read_per_1m", "cost_cache_write_per_1m",
+        )
+        for field in _cost_fields:
+            if config.get(field, 0.0) < 0:
+                raise ArcLLMConfigError(f"{field} must be >= 0")
+
         self._cost_input: float = config.get("cost_input_per_1m", 0.0)
         self._cost_output: float = config.get("cost_output_per_1m", 0.0)
         self._cost_cache_read: float = config.get("cost_cache_read_per_1m", 0.0)
         self._cost_cache_write: float = config.get("cost_cache_write_per_1m", 0.0)
-
-        if self._cost_input < 0:
-            raise ArcLLMConfigError("cost_input_per_1m must be >= 0")
-        if self._cost_output < 0:
-            raise ArcLLMConfigError("cost_output_per_1m must be >= 0")
-        if self._cost_cache_read < 0:
-            raise ArcLLMConfigError("cost_cache_read_per_1m must be >= 0")
-        if self._cost_cache_write < 0:
-            raise ArcLLMConfigError("cost_cache_write_per_1m must be >= 0")
 
         self._log_level: int = validate_log_level(config)
 

@@ -214,3 +214,111 @@ class TestSettingsOverlayTypeValidation:
         sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
         assert sm.get("model") == "valid/model"
         assert "unknown_key" not in sm._overlay
+
+
+class TestSettingsCorruptedToml:
+    """Tests for corrupted TOML handling."""
+
+    def test_load_corrupted_toml(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Corrupted TOML is gracefully ignored."""
+        config, toml_path = _make_config(tmp_path)
+        # Corrupt the TOML
+        toml_path.write_text(
+            '[agent]\nname = "test"\n\n[settings\nBROKEN TOML HERE'
+        )
+
+        # Should not crash, just use config defaults
+        sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
+        assert sm.get("model") == "anthropic/claude-sonnet"
+
+
+class TestSettingsPersistFormatting:
+    """Test TOML formatting for different value types."""
+
+    async def test_persist_float_value(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Float values are formatted without quotes."""
+        config, toml_path = _make_config(tmp_path)
+        sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
+        await sm.set("compaction_threshold", 0.92)
+
+        content = toml_path.read_text()
+        assert "compaction_threshold = 0.92" in content
+        assert 'compaction_threshold = "0.92"' not in content
+
+    async def test_persist_int_value(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Integer values are formatted without quotes."""
+        config, toml_path = _make_config(tmp_path)
+        sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
+        await sm.set("tool_timeout", 60)
+
+        content = toml_path.read_text()
+        assert "tool_timeout = 60" in content
+        assert 'tool_timeout = "60"' not in content
+
+    async def test_persist_to_nonexisting_file(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Persist creates file if it doesn't exist."""
+        config, _ = _make_config(tmp_path)
+        new_path = tmp_path / "new.toml"
+
+        sm = SettingsManager(config, mock_telemetry, mock_bus, new_path)
+        await sm.set("model", "openai/gpt-4o")
+
+        assert new_path.exists()
+        content = new_path.read_text()
+        assert "[settings]" in content
+        assert "openai/gpt-4o" in content
+
+    async def test_persist_replaces_existing_settings_section(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Persist replaces existing [settings] section."""
+        config, toml_path = _make_config(tmp_path)
+        # Pre-populate with settings section
+        content = toml_path.read_text()
+        content += '\n[settings]\nmodel = "old/model"\nlog_level = "ERROR"\n\n[other]\nkey = "value"\n'
+        toml_path.write_text(content)
+
+        sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
+        await sm.set("model", "new/model")
+
+        content = toml_path.read_text()
+        # Should have new model
+        assert "new/model" in content
+        # Should not have old model
+        assert "old/model" not in content
+        # Should preserve other sections
+        assert "[other]" in content
+        assert 'key = "value"' in content
+
+    async def test_persist_empty_overlay_is_noop(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Line 167: Empty overlay returns early without writing."""
+        config, toml_path = _make_config(tmp_path)
+        original = toml_path.read_text()
+        sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
+        # Don't set anything — overlay stays empty
+        sm._persist_to_toml()
+        assert toml_path.read_text() == original
+
+    async def test_persist_appends_to_content_without_trailing_newline(
+        self, tmp_path: Path, mock_bus: MagicMock, mock_telemetry: MagicMock
+    ) -> None:
+        """Line 194: Content without trailing newline gets one added."""
+        config, toml_path = _make_config(tmp_path)
+        # Write content without trailing newline and no [settings] section
+        toml_path.write_text('[agent]\nname = "test"')
+        sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
+        await sm.set("model", "test-model")
+
+        content = toml_path.read_text()
+        assert "[settings]" in content
+        assert "test-model" in content

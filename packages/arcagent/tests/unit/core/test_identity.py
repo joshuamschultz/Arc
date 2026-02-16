@@ -88,6 +88,18 @@ class TestFileStorage:
         sig = loaded.sign(b"test")
         assert identity.verify(b"test", sig)
 
+    def test_save_keys_without_signing_key_raises(self, tmp_path: Path) -> None:
+        """Verify-only identity cannot save keys."""
+        identity = AgentIdentity.generate(org="test", agent_type="executor")
+        verify_only = AgentIdentity(
+            did=identity.did,
+            public_key=identity.public_key,
+            _signing_key=None,
+        )
+        with pytest.raises(IdentityError) as exc_info:
+            verify_only.save_keys(tmp_path)
+        assert exc_info.value.code == "IDENTITY_NO_SIGNING_KEY"
+
     def test_key_file_permissions(self, tmp_path: Path) -> None:
         identity = AgentIdentity.generate(org="test", agent_type="executor")
         identity.save_keys(tmp_path)

@@ -135,21 +135,21 @@ class TestFullStartupShutdown:
 class TestRunWithMockLLM:
     """T4.2.2: agent.run() with mock LLM and native tools."""
 
-    @patch("arcagent.core.agent._load_model")
-    @patch("arcagent.core.agent._run_loop")
+    @patch("arcagent.core.agent.load_eval_model")
+    @patch("arcagent.core.agent.arcrun_run")
     async def test_run_full_pipeline(
         self,
-        mock_run_loop: AsyncMock,
+        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
         workspace: Path,
     ) -> None:
-        # Setup workspace files
+        # Setup workspace files (policy.md is injected by memory module, not read directly)
         (workspace / "identity.md").write_text("Agent: integration-agent")
-        (workspace / "policy.md").write_text("Policy: test-only")
+        (workspace / "context.md").write_text("Context: test-only")
 
         mock_load_model.return_value = MagicMock()
-        mock_run_loop.return_value = MagicMock(
+        mock_arcrun_run.return_value = MagicMock(
             content="task completed", tool_calls_made=1
         )
 
@@ -161,7 +161,7 @@ class TestRunWithMockLLM:
         mock_load_model.assert_called_once_with("test/model")
 
         # Run loop was called with correct args
-        call_kwargs = mock_run_loop.call_args
+        call_kwargs = mock_arcrun_run.call_args
         assert call_kwargs.kwargs["task"] == "test integration task"
         assert call_kwargs.kwargs["model"] is not None
         assert isinstance(call_kwargs.kwargs["tools"], list)
@@ -177,11 +177,11 @@ class TestRunWithMockLLM:
         assert result is not None
         await agent.shutdown()
 
-    @patch("arcagent.core.agent._load_model")
-    @patch("arcagent.core.agent._run_loop")
+    @patch("arcagent.core.agent.load_eval_model")
+    @patch("arcagent.core.agent.arcrun_run")
     async def test_run_with_native_tools(
         self,
-        mock_run_loop: AsyncMock,
+        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         tmp_path: Path,
     ) -> None:
@@ -205,7 +205,7 @@ class TestRunWithMockLLM:
         )
 
         mock_load_model.return_value = MagicMock()
-        mock_run_loop.return_value = MagicMock(content="done")
+        mock_arcrun_run.return_value = MagicMock(content="done")
 
         agent = ArcAgent(config=config)
         await agent.startup()
@@ -216,7 +216,7 @@ class TestRunWithMockLLM:
         await agent.run("use echo tool")
 
         # Tools should be passed to run_loop (4 built-in + 1 echo)
-        tools = mock_run_loop.call_args.kwargs["tools"]
+        tools = mock_arcrun_run.call_args.kwargs["tools"]
         tool_names = {t.name for t in tools}
         assert "echo" in tool_names
         assert {"read", "write", "edit", "bash"}.issubset(tool_names)
@@ -538,11 +538,11 @@ class TestGracefulShutdown:
 class TestPostRespondEvent:
     """Integration: agent.run() emits agent:post_respond with result."""
 
-    @patch("arcagent.core.agent._load_model")
-    @patch("arcagent.core.agent._run_loop")
+    @patch("arcagent.core.agent.load_eval_model")
+    @patch("arcagent.core.agent.arcrun_run")
     async def test_post_respond_emitted(
         self,
-        mock_run_loop: AsyncMock,
+        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
     ) -> None:
@@ -552,7 +552,7 @@ class TestPostRespondEvent:
             events.append(ctx.data)
 
         mock_load_model.return_value = MagicMock()
-        mock_run_loop.return_value = MagicMock(content="done")
+        mock_arcrun_run.return_value = MagicMock(content="done")
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()

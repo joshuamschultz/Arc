@@ -67,13 +67,7 @@ async def react_loop(
         response = await model.invoke(messages, tools=tools)
         latency_ms = (time.time() - call_start) * 1000
 
-        # Accumulate tokens/cost
-        if hasattr(response, "usage") and response.usage:
-            usage = response.usage
-            state.tokens_used["input"] += getattr(usage, "input_tokens", 0)
-            state.tokens_used["output"] += getattr(usage, "output_tokens", 0)
-            state.tokens_used["total"] += getattr(usage, "total_tokens", 0)
-        state.cost_usd += getattr(response, "cost_usd", None) or 0.0
+        _accumulate_usage(state, response)
 
         bus.emit("llm.call", {
             "model": str(type(model).__name__),
@@ -97,11 +91,9 @@ async def react_loop(
             if not state.followup_queue.empty():
                 followup_msg = state.followup_queue.get_nowait()
                 state.messages.append(user_message(followup_msg))
-                state.turn_count += 1
-                bus.emit("turn.end", {"turn_number": state.turn_count})
+                _end_turn(state, bus)
                 continue
-            state.turn_count += 1
-            bus.emit("turn.end", {"turn_number": state.turn_count})
+            _end_turn(state, bus)
             return _build_result(state, response.content)
 
         # Process tool calls
@@ -123,8 +115,7 @@ async def react_loop(
         for tr in tool_results:
             state.messages.append(tr)
 
-        state.turn_count += 1
-        bus.emit("turn.end", {"turn_number": state.turn_count})
+        _end_turn(state, bus)
 
     if state.turn_count >= max_turns:
         bus.emit("loop.max_turns", {
@@ -133,6 +124,22 @@ async def react_loop(
         })
 
     return _build_result(state, None)
+
+
+def _accumulate_usage(state: RunState, response: Any) -> None:
+    """Update token counts and cost from model response."""
+    usage = getattr(response, "usage", None)
+    if usage:
+        state.tokens_used["input"] += getattr(usage, "input_tokens", 0)
+        state.tokens_used["output"] += getattr(usage, "output_tokens", 0)
+        state.tokens_used["total"] += getattr(usage, "total_tokens", 0)
+    state.cost_usd += getattr(response, "cost_usd", None) or 0.0
+
+
+def _end_turn(state: RunState, bus: Any) -> None:
+    """Increment turn count and emit turn.end event."""
+    state.turn_count += 1
+    bus.emit("turn.end", {"turn_number": state.turn_count})
 
 
 def _build_result(state: RunState, content: str | None) -> LoopResult:

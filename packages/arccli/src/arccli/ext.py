@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
-import textwrap
 from pathlib import Path
 
 import click
@@ -184,7 +183,7 @@ def ext_validate(path: str) -> None:
     ext_path = Path(path).expanduser().resolve()
     if not ext_path.exists():
         raise click.ClickException(f"File not found: {ext_path}")
-    if not ext_path.suffix == ".py":
+    if ext_path.suffix != ".py":
         raise click.ClickException(f"Expected .py file: {ext_path}")
 
     # Try importing

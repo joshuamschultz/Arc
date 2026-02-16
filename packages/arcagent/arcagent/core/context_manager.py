@@ -27,7 +27,7 @@ _logger = logging.getLogger("arcagent.context_manager")
 _PROMPT_FILES = ["identity.md", "policy.md", "context.md"]
 
 # Section ordering for final prompt assembly
-_SECTION_ORDER = ["identity", "notes", "skills", "policy", "context"]
+_SECTION_ORDER = ["identity", "notes", "memory_guidance", "skills", "policy", "context"]
 
 # Approximate characters per token for estimation
 _CHARS_PER_TOKEN = 4
@@ -113,6 +113,12 @@ class ContextManager:
     def usage_ratio(self, text: str) -> float:
         """Calculate usage ratio (estimated tokens / max tokens)."""
         return self.estimate_tokens(text) / self._config.max_tokens
+
+    def token_ratio(self) -> float:
+        """Calculate ratio from accumulated provider-reported usage."""
+        if self._config.max_tokens == 0:
+            return 0.0
+        return self._reported_input_tokens / self._config.max_tokens
 
     def _estimate_ratio(self, messages: list[Any]) -> float:
         """Estimate token usage ratio for a message list."""

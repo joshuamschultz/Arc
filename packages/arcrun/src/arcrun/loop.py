@@ -50,10 +50,19 @@ def _build_state(
         tool_timeout=tool_timeout,
     )
 
-    if not STRATEGIES:
-        _load_strategies()
-
     return state, sandbox_obj
+
+
+async def _select_and_emit(
+    allowed_strategies: list[str] | None,
+    model: Any,
+    state: RunState,
+) -> Any:
+    """Select strategy, update state, emit event, return callable."""
+    name = await select_strategy(allowed_strategies, model, state)
+    state.strategy_name = name
+    state.event_bus.emit("strategy.selected", {"strategy": name})
+    return STRATEGIES[name]
 
 
 async def run(
@@ -78,12 +87,8 @@ async def run(
         transform_context=transform_context, tool_timeout=tool_timeout,
     )
 
-    strategy_name = await select_strategy(allowed_strategies, model, state)
-    state.strategy_name = strategy_name
-    state.event_bus.emit("strategy.selected", {"strategy": strategy_name})
-    strategy_fn = STRATEGIES[strategy_name]
-    result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
-    return result
+    strategy_fn = await _select_and_emit(allowed_strategies, model, state)
+    return await strategy_fn(model, state, sandbox_obj, max_turns)
 
 
 async def run_async(
@@ -108,11 +113,7 @@ async def run_async(
         transform_context=transform_context, tool_timeout=tool_timeout,
     )
 
-    strategy_name = await select_strategy(allowed_strategies, model, state)
-    state.strategy_name = strategy_name
-    state.event_bus.emit("strategy.selected", {"strategy": strategy_name})
-    strategy_fn = STRATEGIES[strategy_name]
-
+    strategy_fn = await _select_and_emit(allowed_strategies, model, state)
     loop_task = asyncio.create_task(strategy_fn(model, state, sandbox_obj, max_turns))
     return RunHandle(state=state, task=loop_task)
 

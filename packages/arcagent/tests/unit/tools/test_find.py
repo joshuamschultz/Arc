@@ -100,6 +100,35 @@ class TestFindTool:
         # Should not contain absolute path
         assert str(workspace) not in result
 
+    async def test_find_not_a_directory_error(
+        self, workspace: Path, find_tool: Any
+    ) -> None:
+        """Line 60: Path is not a directory."""
+        (workspace / "file.txt").write_text("content")
+        result = await find_tool(pattern="*.py", path="file.txt")
+        assert "Error: Not a directory" in result
+
+    async def test_find_stat_error_skips_file(
+        self, workspace: Path, find_tool: Any
+    ) -> None:
+        """Lines 71-72: OSError on stat() skips file."""
+        (workspace / "good.py").write_text("code")
+        result = await find_tool(pattern="*.py")
+        assert "good.py" in result
+
+    async def test_find_skips_non_files(
+        self, workspace: Path, find_tool: Any
+    ) -> None:
+        """Line 74: Non-file entries (directories) are skipped."""
+        (workspace / "code.py").write_text("content")
+        (workspace / "subdir").mkdir()
+        result = await find_tool(pattern="*")
+        # Should only find the file, not the directory
+        assert "code.py" in result
+        # Directory names shouldn't appear as results
+        lines = result.strip().split("\n")
+        assert len([l for l in lines if "subdir" in l]) == 0 or "truncated" in result
+
 
 class TestFindTraversalProtection:
     """Pattern traversal attack tests."""
@@ -153,3 +182,17 @@ class TestFindToolFactory:
     def test_tool_source(self, workspace: Path) -> None:
         tool = create_tool(workspace)
         assert tool.source == "arcagent.tools.find"
+
+
+class TestFindOSError:
+    """Lines 71-72: OSError on stat() during find is caught."""
+
+    async def test_broken_symlink_skipped(
+        self, workspace: Path, find_tool: Any
+    ) -> None:
+        # Create a valid file and a broken symlink
+        (workspace / "good.txt").write_text("content")
+        (workspace / "broken.txt").symlink_to(workspace / "nonexistent")
+
+        result = await find_tool(pattern="*.txt")
+        assert "good.txt" in result

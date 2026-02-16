@@ -280,3 +280,129 @@ class TestEdgeCases:
     async def test_message_count_zero_before_create(self, tmp_path: Path) -> None:
         sm = _make_session_manager(tmp_path)
         assert sm.message_count == 0
+
+    async def test_resume_nonexistent_file(self, tmp_path: Path) -> None:
+        """Resume session when file doesn't exist returns empty list."""
+        sm = _make_session_manager(tmp_path)
+        messages = await sm.resume_session("nonexistent-session")
+        assert messages == []
+        assert sm.session_id == "nonexistent-session"
+
+    async def test_resume_with_empty_lines(self, tmp_path: Path) -> None:
+        """Empty lines in JSONL are skipped."""
+        sessions_dir = tmp_path / "sessions"
+        sessions_dir.mkdir(parents=True)
+        jsonl_path = sessions_dir / "test.jsonl"
+        jsonl_path.write_text(
+            '{"type":"message","role":"user","content":"first"}\n'
+            '\n'
+            '{"type":"message","role":"assistant","content":"second"}\n'
+            '\n\n'
+            '{"type":"message","role":"user","content":"third"}\n'
+        )
+
+        sm = _make_session_manager(tmp_path)
+        messages = await sm.resume_session("test")
+        assert len(messages) == 3
+
+    async def test_compact_with_few_messages(self, tmp_path: Path) -> None:
+        """Compaction does nothing with fewer than 4 messages."""
+        sm = _make_session_manager(tmp_path)
+        await sm.create_session()
+        await sm.append_message({"role": "user", "content": "msg1"})
+        await sm.append_message({"role": "assistant", "content": "msg2"})
+
+        mock_model = AsyncMock()
+        mock_model.return_value = "Summary."
+
+        await sm.compact(mock_model, tmp_path)
+
+        # Should still have 2 messages
+        assert sm.message_count == 2
+
+    async def test_sanitize_context_truncation(self, tmp_path: Path) -> None:
+        """_sanitize_context_output truncates at 2000 chars."""
+        sm = _make_session_manager(tmp_path)
+        long_text = "a" * 3000
+        result = sm._sanitize_context_output(long_text)
+        assert len(result) <= 2000 + len("\n[truncated]")
+        assert "[truncated]" in result
+
+    async def test_cleanup_no_sessions_dir(self, tmp_path: Path) -> None:
+        """cleanup_old_sessions when sessions dir doesn't exist."""
+        sm = _make_session_manager(tmp_path)
+        # Don't create sessions dir
+        await sm.cleanup_old_sessions()
+        # Should not raise
+
+    async def test_pre_compact_flush_empty_messages(self, tmp_path: Path) -> None:
+        """Pre-compaction flush with no message content."""
+        sm = _make_session_manager(tmp_path)
+        await sm.create_session()
+
+        mock_model = AsyncMock()
+        mock_model.return_value = "Facts"
+
+        # Messages with no content
+        messages = [
+            {"type": "compaction_summary", "summary": "old summary"},
+        ]
+
+        await sm._pre_compact_flush(messages, tmp_path, mock_model)
+        # Model should not be called
+        mock_model.assert_not_called()
+
+    async def test_pre_compact_flush_model_failure(self, tmp_path: Path) -> None:
+        """Pre-compaction flush continues when model fails."""
+        sm = _make_session_manager(tmp_path)
+        await sm.create_session()
+
+        mock_model = AsyncMock()
+        mock_model.side_effect = Exception("Model failed")
+
+        messages = [
+            {"type": "message", "role": "user", "content": "hello"},
+        ]
+
+        # Should not raise
+        await sm._pre_compact_flush(messages, tmp_path, mock_model)
+
+    async def test_pre_compact_flush_appends_to_context(self, tmp_path: Path) -> None:
+        """Pre-compaction flush appends to existing context.md."""
+        context_path = tmp_path / "context.md"
+        context_path.write_text("# Existing context\n\nOld content")
+
+        sm = _make_session_manager(tmp_path)
+        await sm.create_session()
+
+        mock_model = AsyncMock()
+        mock_model.return_value = "New facts"
+
+        messages = [
+            {"type": "message", "role": "user", "content": "hello"},
+        ]
+
+        await sm._pre_compact_flush(messages, tmp_path, mock_model)
+
+        content = context_path.read_text()
+        assert "Existing context" in content
+        assert "Old content" in content
+        assert "Compaction Flush" in content
+        assert "New facts" in content
+
+
+class TestSummarizationFailure:
+    """Lines 265-267: Summarization exception returns fallback."""
+
+    async def test_summarize_fallback_on_exception(self, tmp_path: Path) -> None:
+        sm = _make_session_manager(tmp_path)
+        await sm.create_session()
+
+        mock_model = AsyncMock(side_effect=RuntimeError("LLM down"))
+        messages = [
+            {"type": "message", "role": "user", "content": "hello"},
+            {"type": "message", "role": "assistant", "content": "hi"},
+        ]
+
+        result = await sm._summarize_messages(messages, mock_model)
+        assert "[Compacted 2 messages]" in result

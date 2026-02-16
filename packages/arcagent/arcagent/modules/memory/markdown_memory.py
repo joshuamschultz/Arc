@@ -20,12 +20,33 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.config import EvalConfig, MemoryConfig
-from arcagent.core.module_bus import EventContext, ModuleBus
+from arcagent.core.module_bus import EventContext, ModuleContext
+from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.modules.memory.entity_extractor import EntityExtractor
+from arcagent.modules.memory.hybrid_search import HybridSearch
 from arcagent.modules.memory.policy_engine import PolicyEngine
+from arcagent.utils import load_eval_model
 from arcagent.utils.io import CHARS_PER_TOKEN
 
 _logger = logging.getLogger("arcagent.modules.memory")
+
+# Memory-protected workspace subpaths (shared constant)
+_MEMORY_SUBPATHS = (
+    "notes/",
+    "identity.md",
+    "policy.md",
+    "context.md",
+    "entities/",
+)
+
+# Maximum background tasks before dropping new ones (backpressure)
+_MAX_BACKGROUND_QUEUE = 10
+
+# Maximum identity audit snapshots retained (prevents unbounded growth)
+_MAX_AUDIT_SNAPSHOTS = 50
+
+# Default timeout for background eval tasks
+_BACKGROUND_TASK_TIMEOUT = 120.0
 
 
 class NoteManager:
@@ -129,7 +150,15 @@ class IdentityAuditor:
         self._before_snapshots: dict[str, str] = {}
 
     async def capture_before(self, ctx: EventContext, path: Path) -> None:
-        """Snapshot current identity.md content before write."""
+        """Snapshot current identity.md content before write.
+
+        Caps snapshot count to prevent unbounded growth from orphaned traces.
+        """
+        # Evict oldest snapshots if over limit
+        while len(self._before_snapshots) >= _MAX_AUDIT_SNAPSHOTS:
+            oldest_key = next(iter(self._before_snapshots))
+            del self._before_snapshots[oldest_key]
+
         if path.exists():
             self._before_snapshots[ctx.trace_id] = path.read_text(encoding="utf-8")
         else:
@@ -209,14 +238,21 @@ class MarkdownMemoryModule:
 
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._hook_active: bool = False
+        self._session_messages: list[dict[str, Any]] = []
         self._turn_count: int = 0
+        self._llm_config: Any = None
+        self._semaphore = asyncio.Semaphore(eval_config.max_concurrent)
+        self._hybrid_search = HybridSearch(workspace, config)
 
     @property
     def name(self) -> str:
         return "memory"
 
-    async def startup(self, bus: ModuleBus) -> None:
-        """Register all event handlers."""
+    async def startup(self, ctx: ModuleContext) -> None:
+        """Register all event handlers with the module bus."""
+        bus = ctx.bus
+        self._llm_config = ctx.llm_config
+        self._register_search_tool(ctx.tool_registry)
         bus.subscribe("agent:pre_tool", self._on_pre_tool, priority=10)
         bus.subscribe("agent:post_tool", self._on_post_tool, priority=100)
         bus.subscribe(
@@ -225,6 +261,104 @@ class MarkdownMemoryModule:
             priority=50,
         )
         bus.subscribe("agent:post_respond", self._on_post_respond, priority=100)
+        bus.subscribe("agent:shutdown", self._on_shutdown, priority=50)
+
+    def _get_eval_model(self) -> Any:
+        """Lazy-init eval model from config, fallback to agent's LLM config.
+
+        Respects ``EvalConfig.fallback_behavior``:
+        - ``"skip"``: return None on failure (default)
+        - ``"error"``: raise on failure
+        """
+        if self._eval_model is not None:
+            return self._eval_model
+
+        eval_cfg = self._eval_config
+        if eval_cfg.provider and eval_cfg.model:
+            model_id = f"{eval_cfg.provider}/{eval_cfg.model}"
+        elif self._llm_config is not None:
+            model_id = self._llm_config.model
+        else:
+            if eval_cfg.fallback_behavior == "error":
+                msg = "No eval model config and no LLM config fallback"
+                raise RuntimeError(msg)
+            _logger.warning("No eval model config and no LLM config fallback")
+            return None
+
+        try:
+            self._eval_model = load_eval_model(model_id)
+        except Exception:
+            if eval_cfg.fallback_behavior == "error":
+                raise
+            _logger.exception("Failed to load eval model: %s", model_id)
+            return None
+        return self._eval_model
+
+    def _register_search_tool(self, tool_registry: Any) -> None:
+        """Register memory_search as a callable tool."""
+        tool = RegisteredTool(
+            name="memory_search",
+            description="Search agent memory across notes, entities, and context.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query",
+                        "maxLength": 500,
+                    },
+                    "scope": {
+                        "type": "string",
+                        "description": "Filter: notes, entities, context",
+                        "enum": ["notes", "entities", "context"],
+                    },
+                    "date_from": {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD). Reserved.",
+                    },
+                    "date_to": {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD). Reserved.",
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            transport=ToolTransport.NATIVE,
+            execute=self._handle_memory_search,
+        )
+        tool_registry.register(tool)
+
+    async def _handle_memory_search(
+        self,
+        query: str,
+        scope: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> str:
+        """Handle memory_search tool invocation.
+
+        Results are wrapped in boundary markers to prevent prompt
+        injection from stored memory content (LLM-01 mitigation).
+        """
+        results = await self._hybrid_search.search(
+            query=query,
+            scope=scope,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        if not results:
+            return "No memory results found."
+        parts = []
+        for r in results:
+            # Boundary markers prevent result content from being
+            # interpreted as instructions (prompt injection defense)
+            parts.append(
+                f"<memory-result source=\"{r.source}\" score=\"{r.score:.2f}\">\n"
+                f"{r.content}\n"
+                f"</memory-result>"
+            )
+        return "\n".join(parts)
 
     async def shutdown(self) -> None:
         """Cancel background tasks, close resources."""
@@ -232,6 +366,7 @@ class MarkdownMemoryModule:
             task.cancel()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        await self._hybrid_search.close()
 
     async def _on_pre_tool(self, ctx: EventContext) -> None:
         """Route pre-tool events based on target file path."""
@@ -284,15 +419,37 @@ class MarkdownMemoryModule:
             pass
 
     async def _on_assemble_prompt(self, ctx: EventContext) -> None:
-        """Inject recent notes into system prompt sections."""
+        """Inject recent notes and memory guidance into system prompt."""
         sections = ctx.data.get("sections", {})
+
+        # Inject notes
         notes_content = await self._notes.get_recent_notes()
         if notes_content:
             sections["notes"] = notes_content
 
+        # Inject memory guidance if identity.md doesn't override
+        identity_content = sections.get("identity", "")
+        if "## Memory" not in identity_content:
+            sections["memory_guidance"] = self._default_memory_guidance()
+
+    @staticmethod
+    def _default_memory_guidance() -> str:
+        """Default memory guidance text for agents.
+
+        Intentionally minimal — avoids exposing internal architecture
+        details that could be leveraged for prompt injection (LLM-07).
+        """
+        return (
+            "## Memory\n\n"
+            "You have persistent memory across sessions.\n\n"
+            "- Use `memory_search` to recall past conversations and facts.\n"
+            "- Use `edit` to append observations to today's notes.\n"
+            "- Use `write` or `edit` to update your working context."
+        )
+
     async def _on_post_respond(self, ctx: EventContext) -> None:
         """Fire async entity extraction and periodic policy evaluation."""
-        model = self._eval_model
+        model = self._get_eval_model()
         if model is None:
             return
 
@@ -302,11 +459,14 @@ class MarkdownMemoryModule:
 
         session_id = ctx.data.get("session_id", "")
 
+        # Accumulate messages for session-end policy evaluation
+        self._session_messages = messages
+
         # Entity extraction on every response
         if self._config.entity_extraction_enabled:
             self._spawn_background(self._entity_extractor.extract(messages, model))
 
-        # Policy evaluation at configured intervals
+        # Policy evaluation at configured interval
         self._turn_count += 1
         interval = self._config.policy_eval_interval_turns
         if self._turn_count % interval == 0:
@@ -314,9 +474,36 @@ class MarkdownMemoryModule:
                 self._policy_engine.evaluate(messages, model, session_id=session_id)
             )
 
+    async def _on_shutdown(self, ctx: EventContext) -> None:
+        """Run policy evaluation once at session end."""
+        if not self._session_messages:
+            return
+
+        model = self._get_eval_model()
+        if model is None:
+            return
+
+        session_id = ctx.data.get("session_id", "")
+        await self._policy_engine.evaluate(
+            self._session_messages, model, session_id=session_id
+        )
+
     def _spawn_background(self, coro: Coroutine[Any, Any, None]) -> None:
-        """Fire-and-forget with task reference tracking and error logging."""
-        task = asyncio.create_task(coro)
+        """Fire-and-forget with semaphore, timeout, backpressure, and logging."""
+        # Backpressure: drop tasks when queue is full
+        if len(self._background_tasks) >= _MAX_BACKGROUND_QUEUE:
+            _logger.warning(
+                "Background task queue full (%d), dropping task",
+                _MAX_BACKGROUND_QUEUE,
+            )
+            coro.close()  # Prevent ResourceWarning
+            return
+
+        async def _semaphore_wrapped() -> None:
+            async with self._semaphore:
+                await asyncio.wait_for(coro, timeout=_BACKGROUND_TASK_TIMEOUT)
+
+        task = asyncio.create_task(_semaphore_wrapped())
         self._background_tasks.add(task)
 
         def _on_done(t: asyncio.Task[None]) -> None:
@@ -372,19 +559,14 @@ class MarkdownMemoryModule:
         """Deny-by-default: detect bash commands referencing memory paths.
 
         Checks workspace-absolute paths and resolves path-like tokens.
+        Also detects dangerous commands (sed, awk, perl, tee) that could
+        modify files via piping or in-place editing.
         On parse failure, falls back to substring matching for safety.
         """
         ws_str = str(self._workspace)
-        memory_subpaths = (
-            "notes/",
-            "identity.md",
-            "policy.md",
-            "context.md",
-            "entities/",
-        )
 
         # Fast path: absolute workspace path + memory subpath
-        for sub in memory_subpaths:
+        for sub in _MEMORY_SUBPATHS:
             if f"{ws_str}/{sub}" in command:
                 return True
 
@@ -393,7 +575,11 @@ class MarkdownMemoryModule:
             tokens = shlex.split(command)
         except ValueError:
             # Malformed shell — check substrings for safety
-            return any(sub in command for sub in memory_subpaths)
+            return any(sub in command for sub in _MEMORY_SUBPATHS)
+
+        # Detect dangerous commands that can modify files via pipes/flags
+        dangerous_cmds = {"sed", "awk", "perl", "tee", "dd", "truncate"}
+        has_dangerous_cmd = any(t in dangerous_cmds for t in tokens)
 
         for token in tokens:
             if "/" not in token and not token.endswith((".md", ".jsonl")):
@@ -411,10 +597,9 @@ class MarkdownMemoryModule:
         """Check if path is under workspace memory directories."""
         try:
             rel = str(path.relative_to(self._workspace)).replace("\\", "/")
-            return (
-                rel.startswith("notes/")
-                or rel in ("identity.md", "policy.md", "context.md")
-                or rel.startswith("entities/")
+            return any(
+                rel.startswith(sub) if sub.endswith("/") else rel == sub
+                for sub in _MEMORY_SUBPATHS
             )
         except ValueError:
             return False

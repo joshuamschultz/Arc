@@ -51,7 +51,7 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101"]  # assert is expected in tests
+"tests/**/*.py" = ["S101", "S108"]  # assert + /tmp paths expected in tests
 
 [tool.mypy]
 python_version = "3.12"

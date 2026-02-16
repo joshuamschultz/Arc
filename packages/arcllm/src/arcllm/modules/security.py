@@ -56,12 +56,9 @@ class SecurityModule(BaseModule):
                 f"Valid keys: {sorted(_VALID_CONFIG_KEYS - {'enabled'})}"
             )
 
-        self._pii_enabled: bool = config.get("pii_enabled", True)
-        self._signing_enabled: bool = config.get("signing_enabled", True)
-
         # Build PII detector (lazy — only if PII enabled)
         self._pii_detector: PiiDetector | None = None
-        if self._pii_enabled:
+        if config.get("pii_enabled", True):
             detector_type = config.get("pii_detector", "regex")
             custom_patterns = config.get("pii_custom_patterns", [])
             if detector_type not in _VALID_DETECTORS:
@@ -76,7 +73,7 @@ class SecurityModule(BaseModule):
         # Build signer (lazy — only if signing enabled)
         self._signer: RequestSigner | None = None
         self._signing_algorithm: str = config.get("signing_algorithm", "hmac-sha256")
-        if self._signing_enabled:
+        if config.get("signing_enabled", True):
             signing_key_env = config.get("signing_key_env", "ARCLLM_SIGNING_KEY")
             self._signer = create_signer(self._signing_algorithm, signing_key_env)
 
@@ -88,7 +85,7 @@ class SecurityModule(BaseModule):
     ) -> LLMResponse:
         with self._span("security"):
             # Phase 1: PII redaction on outbound messages
-            if self._pii_enabled and self._pii_detector is not None:
+            if self._pii_detector is not None:
                 with self._span("security.pii_redact_outbound"):
                     messages = self._redact_messages(messages)
 
@@ -96,12 +93,12 @@ class SecurityModule(BaseModule):
             response = await self._inner.invoke(messages, tools, **kwargs)
 
             # Phase 3: PII redaction on inbound response
-            if self._pii_enabled and self._pii_detector is not None:
+            if self._pii_detector is not None:
                 with self._span("security.pii_redact_inbound"):
                     response = self._redact_response(response)
 
             # Phase 4: Sign request and attach to response
-            if self._signing_enabled and self._signer is not None:
+            if self._signer is not None:
                 with self._span("security.sign"):
                     payload = canonical_payload(messages, tools, self.model_name)
                     signature = self._signer.sign(payload)

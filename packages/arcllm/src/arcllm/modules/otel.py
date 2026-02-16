@@ -81,6 +81,15 @@ def _setup_sdk(config: dict[str, Any]) -> None:
         insecure = config.get("insecure", False)
         timeout_ms = config.get("timeout_ms", 10000)
 
+        # Build TLS credential kwargs (shared by gRPC and HTTP)
+        tls_kwargs: dict[str, Any] = {}
+        if certificate_file:
+            tls_kwargs["certificate_file"] = certificate_file
+        if client_key_file:
+            tls_kwargs["client_key_file"] = client_key_file
+        if client_cert_file:
+            tls_kwargs["client_certificate_file"] = client_cert_file
+
         if protocol == "grpc":
             try:
                 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
@@ -91,20 +100,12 @@ def _setup_sdk(config: dict[str, Any]) -> None:
                     "OTLP gRPC exporter not installed. "
                     "Run: pip install arcllm[otel]"
                 )
-            # Read TLS certificate files for gRPC credentials
-            credentials_kwargs: dict[str, Any] = {}
-            if certificate_file:
-                credentials_kwargs["certificate_file"] = certificate_file
-            if client_key_file:
-                credentials_kwargs["client_key_file"] = client_key_file
-            if client_cert_file:
-                credentials_kwargs["client_certificate_file"] = client_cert_file
             exporter = OTLPSpanExporter(
                 endpoint=endpoint,
                 headers=headers or None,
                 insecure=insecure,
                 timeout=timeout_ms // 1000,
-                **credentials_kwargs,
+                **tls_kwargs,
             )
         else:  # http
             try:
@@ -116,19 +117,11 @@ def _setup_sdk(config: dict[str, Any]) -> None:
                     "OTLP HTTP exporter not installed. "
                     "Run: pip install arcllm[otel]"
                 )
-            # HTTP exporter uses certificate_file for TLS CA verification
-            http_kwargs: dict[str, Any] = {}
-            if certificate_file:
-                http_kwargs["certificate_file"] = certificate_file
-            if client_key_file:
-                http_kwargs["client_key_file"] = client_key_file
-            if client_cert_file:
-                http_kwargs["client_certificate_file"] = client_cert_file
             exporter = OTLPSpanExporter(
                 endpoint=endpoint,
                 headers=headers or None,
                 timeout=timeout_ms // 1000,
-                **http_kwargs,
+                **tls_kwargs,
             )
     elif exporter_type == "console":
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter
@@ -202,10 +195,8 @@ class OtelModule(BaseModule):
 
         # Validate sample_rate
         sample_rate = config.get("sample_rate", 1.0)
-        if sample_rate < 0.0:
-            raise ArcLLMConfigError("sample_rate must be >= 0.0")
-        if sample_rate > 1.0:
-            raise ArcLLMConfigError("sample_rate must be <= 1.0")
+        if not 0.0 <= sample_rate <= 1.0:
+            raise ArcLLMConfigError("sample_rate must be between 0.0 and 1.0")
 
         # Setup SDK if exporter is not 'none'
         if exporter != "none":

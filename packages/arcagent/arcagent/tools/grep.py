@@ -17,7 +17,6 @@ _MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 _BINARY_CHECK_SIZE = 8192  # Check first 8KB for null bytes
 _DEFAULT_MAX_RESULTS = 100
 _MAX_PATTERN_LENGTH = 1000  # Prevent ReDoS via long/complex patterns
-_REGEX_COMPILE_TIMEOUT_CHARS = 200  # Extra caution for patterns with quantifiers
 
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",

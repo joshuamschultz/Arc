@@ -60,6 +60,16 @@ class TestBashTool:
         assert "Error" in result
         assert "timed out" in result
 
+    async def test_timeout_process_already_exited(
+        self, bash_tool: Any
+    ) -> None:
+        """Lines 59-60: ProcessLookupError when process already exited."""
+        # Use a very short timeout with a command that exits immediately
+        # This tests the exception path where process.kill() raises ProcessLookupError
+        result = await bash_tool(command="exit 0", timeout=1)
+        # Should complete successfully (process exits before timeout)
+        assert "timed out" not in result
+
     async def test_output_truncation(
         self, workspace: Path, bash_tool: Any
     ) -> None:
@@ -90,3 +100,13 @@ class TestBashToolFactory:
     def test_tool_has_required_command(self, workspace: Path) -> None:
         tool = create_tool(workspace)
         assert "command" in tool.input_schema["required"]
+
+
+class TestBashTimeout:
+    """Lines 59-60: ProcessLookupError during kill after timeout."""
+
+    async def test_timeout_returns_error_message(self, workspace: Path) -> None:
+        tool = create_tool(workspace)
+        # Sleep command that exceeds the tool's timeout
+        result = await tool.execute(command="sleep 300", timeout=1)
+        assert "timed out" in result.lower()

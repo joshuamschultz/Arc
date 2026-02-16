@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -258,8 +257,6 @@ def run_exec(code: str, timeout: float, max_output: int, as_json: bool) -> None:
 
 
 async def _run_exec(code: str, timeout: float, max_output: int, as_json: bool) -> None:
-    import asyncio as aio
-
     from arcrun import ToolContext, make_execute_tool
 
     tool = make_execute_tool(timeout_seconds=timeout, max_output_bytes=max_output)
@@ -268,7 +265,7 @@ async def _run_exec(code: str, timeout: float, max_output: int, as_json: bool) -
         tool_call_id="manual",
         turn_number=1,
         event_bus=None,
-        cancelled=aio.Event(),
+        cancelled=asyncio.Event(),
     )
 
     raw_result = await tool.execute({"code": code}, ctx)

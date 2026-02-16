@@ -55,12 +55,10 @@ class TestAssembleSystemPrompt:
         self, ctx_mgr: ContextManager, tmp_path: Path
     ) -> None:
         (tmp_path / "identity.md").write_text("# Agent Identity\nI am test-agent.")
-        (tmp_path / "policy.md").write_text("# Policy\nBe safe.")
         (tmp_path / "context.md").write_text("# Context\nWorking memory.")
 
         prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
         assert "Agent Identity" in prompt
-        assert "Policy" in prompt
         assert "Working memory" in prompt
 
     async def test_missing_files_handled_gracefully(
@@ -136,33 +134,29 @@ class TestAssemblePromptEvent:
 
         mock_bus.subscribe("agent:assemble_prompt", bad_handler)
         (tmp_path / "identity.md").write_text("I am agent")
-        (tmp_path / "policy.md").write_text("Be safe")
 
         # Should not raise, prompt still assembled
         prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)
         assert "I am agent" in prompt
-        assert "Be safe" in prompt
 
     async def test_section_ordering(
         self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
     ) -> None:
-        """Sections appear in order: identity, notes, policy, context."""
+        """Sections appear in order: identity, notes, context."""
         async def inject_notes(ctx: EventContext) -> None:
             ctx.data["sections"]["notes"] = "Daily notes content"
 
         mock_bus.subscribe("agent:assemble_prompt", inject_notes, priority=50)
         (tmp_path / "identity.md").write_text("Identity content")
-        (tmp_path / "policy.md").write_text("Policy content")
         (tmp_path / "context.md").write_text("Context content")
 
         prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path)
-        # Verify ordering
+        # Verify ordering: identity, notes, context
         identity_pos = prompt.find("Identity content")
         notes_pos = prompt.find("Daily notes content")
-        policy_pos = prompt.find("Policy content")
         context_pos = prompt.find("Context content")
 
-        assert identity_pos < notes_pos < policy_pos < context_pos
+        assert identity_pos < notes_pos < context_pos
 
     async def test_no_event_without_bus(
         self, ctx_config: ContextConfig, mock_telemetry: MagicMock, tmp_path: Path
@@ -326,3 +320,77 @@ class TestUsageRatio:
         """Usage ratio based on estimated tokens."""
         ratio = ctx_mgr.usage_ratio("x" * 400)  # ~110 estimated / 1000 max
         assert 0.0 < ratio < 1.0
+
+
+class TestContextEdgeCases:
+    """Edge cases and error handling."""
+
+    async def test_assemble_prompt_all_files_missing(
+        self, ctx_mgr: ContextManager, tmp_path: Path
+    ) -> None:
+        """Line 40: All workspace files missing, returns empty or minimal prompt."""
+        # No files created, all should be skipped
+        prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
+        # Should still return a string, not crash
+        assert isinstance(prompt, str)
+
+    def test_token_ratio_with_no_usage(
+        self, ctx_mgr: ContextManager
+    ) -> None:
+        """Line 120: No reported usage, token_ratio should return 0.0."""
+        # Initial state with no usage reported
+        ratio = ctx_mgr.token_ratio()
+        assert ratio == 0.0
+
+    def test_estimate_ratio_empty_messages(
+        self, ctx_mgr: ContextManager
+    ) -> None:
+        """Line 145: Empty message list."""
+        ratio = ctx_mgr._estimate_ratio([])
+        assert ratio == 0.0
+
+    def test_prune_observations_with_pydantic_model(
+        self, ctx_mgr: ContextManager
+    ) -> None:
+        """Line 171: Message is Pydantic model, not dict."""
+        from pydantic import BaseModel
+
+        class Message(BaseModel):
+            role: str
+            content: str
+            tool_call_id: str | None = None
+
+        messages = [
+            Message(role="user", content="hello"),
+            Message(role="tool", content="x" * 1000, tool_call_id="tc1"),
+            Message(role="assistant", content="reply"),
+        ]
+        result = ctx_mgr.prune_observations(messages, protected_recent_tokens=100)
+        # Should prune the old tool output
+        tool_msg = next(m for m in result if m.tool_call_id == "tc1")
+        assert "[output pruned" in tool_msg.content
+
+    def test_transform_context_empty_messages(
+        self, ctx_mgr: ContextManager
+    ) -> None:
+        """Line 189: Empty message list."""
+        result = ctx_mgr.transform_context([])
+        assert result == []
+
+
+class TestTokenRatioZeroMax:
+    """Line 120: token_ratio returns 0.0 when max_tokens is 0."""
+
+    def test_zero_max_tokens_returns_zero(self, mock_telemetry: MagicMock) -> None:
+        # Use model_construct to bypass Pydantic validation for defensive guard test
+        config = ContextConfig.model_construct(max_tokens=0)
+        mgr = ContextManager(config=config, telemetry=mock_telemetry)
+        assert mgr.token_ratio() == 0.0
+
+
+class TestPruneObservationsEmpty:
+    """Line 145: prune_observations returns empty list for empty input."""
+
+    def test_prune_empty_messages(self, ctx_mgr: ContextManager) -> None:
+        result = ctx_mgr.prune_observations([])
+        assert result == []

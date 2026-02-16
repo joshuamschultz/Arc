@@ -82,17 +82,11 @@ class RegexPiiDetector:
         if not text:
             return []
 
-        all_matches: list[PiiMatch] = []
-        for pii_type, pattern in self._patterns:
-            for m in pattern.finditer(text):
-                all_matches.append(
-                    PiiMatch(
-                        pii_type=pii_type,
-                        start=m.start(),
-                        end=m.end(),
-                        matched_text=m.group(),
-                    )
-                )
+        all_matches = [
+            PiiMatch(pii_type=pii_type, start=m.start(), end=m.end(), matched_text=m.group())
+            for pii_type, pattern in self._patterns
+            for m in pattern.finditer(text)
+        ]
 
         if not all_matches:
             return []

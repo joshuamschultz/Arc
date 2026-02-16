@@ -267,6 +267,24 @@ class TestModuleAllowlist:
         registry.register_native_tools(entries)
         assert "echo" in registry.tools
 
+    def test_getattr_nonexistent_function(self) -> None:
+        """Line 172: getattr on module for nonexistent function."""
+        config = ArcAgentConfig(
+            agent=AgentConfig(name="test"),
+            llm=LLMConfig(model="test/model"),
+        )
+        registry = ToolRegistry(
+            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
+        )
+        entries = {
+            "nonexistent": NativeToolEntry(
+                module="arcagent.core.tool_registry:_nonexistent_func",
+                description="Nonexistent",
+            )
+        }
+        with pytest.raises(AttributeError):
+            registry.register_native_tools(entries)
+
     def test_disallowed_module_rejected(self) -> None:
         """Module not in allowed prefixes is rejected."""
         config = ArcAgentConfig(
@@ -378,3 +396,52 @@ class TestShutdown:
         registry.register(_make_tool("read_file"))
         await registry.shutdown()
         assert len(registry.tools) == 0
+
+
+class TestEchoTool:
+    """Line 53: Built-in _echo_tool function."""
+
+    def test_echo_tool_returns_echoed_text(self) -> None:
+        from arcagent.core.tool_registry import _echo_tool
+
+        assert _echo_tool("hello") == "echo: hello"
+
+    def test_echo_tool_default_empty(self) -> None:
+        from arcagent.core.tool_registry import _echo_tool
+
+        assert _echo_tool() == "echo: "
+
+
+class TestNativeToolAsyncWrapper:
+    """Line 172: _async_wrapper wraps sync functions."""
+
+    async def test_native_tool_wrapper_invokes_function(
+        self, registry: ToolRegistry
+    ) -> None:
+        native_tools = {
+            "echo": NativeToolEntry(
+                module="arcagent.core.tool_registry:_echo_tool",
+                description="Echo tool",
+            )
+        }
+        registry.register_native_tools(native_tools)
+        tool = registry._tools["echo"]
+        result = await tool.execute(text="world")
+        assert result == "echo: world"
+
+
+class TestWrappedExecuteKwargs:
+    """Line 228: wrapped_execute passes kwargs when args is None."""
+
+    async def test_kwargs_forwarded(self, registry: ToolRegistry) -> None:
+        tool = RegisteredTool(
+            name="kw_test",
+            description="test",
+            input_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+        )
+        registry.register(tool)
+        wrapped = registry._create_wrapped_execute(tool)
+        result = await wrapped(x="hello")
+        assert result == "ok"

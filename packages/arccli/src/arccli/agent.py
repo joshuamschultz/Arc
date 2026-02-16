@@ -258,41 +258,6 @@ def _discover_tools(agent_dir: Path) -> list[Any]:
     return all_tools
 
 
-def _make_event_logger(verbose: bool, show_events: bool = False):
-    """Create an on_event callback for arcrun."""
-    collected: list[Any] = []
-
-    def log_event(event: Any) -> None:
-        if show_events:
-            collected.append(event)
-        if not verbose:
-            return
-        if event.type == "tool.start":
-            click_echo(f"  [tool]   {event.data['name']}({event.data['arguments']})")
-        elif event.type == "tool.end":
-            click_echo(
-                f"  [tool]   {event.data['name']} -> "
-                f"{event.data['result_length']} chars "
-                f"({event.data['duration_ms']:.0f}ms)"
-            )
-        elif event.type == "tool.denied":
-            click_echo(f"  [denied] {event.data['name']}: {event.data['reason']}")
-        elif event.type == "tool.error":
-            click_echo(f"  [error]  {event.data['name']}: {event.data['error']}")
-        elif event.type == "llm.call":
-            click_echo(
-                f"  [llm]    stop={event.data['stop_reason']}, "
-                f"latency={event.data['latency_ms']:.0f}ms"
-            )
-        elif event.type == "turn.start":
-            click_echo(f"  [turn]   --- turn {event.data['turn_number']} ---")
-        elif event.type == "strategy.selected":
-            click_echo(f"  [strat]  {event.data['strategy']}")
-
-    log_event._collected = collected  # type: ignore[attr-defined]
-    return log_event
-
-
 def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     """Create the full Phase 1b workspace directory structure."""
     workspace = agent_dir / "workspace"
@@ -1369,14 +1334,7 @@ def chat(
         )
 
     if task:
-        if as_json:
-            asyncio.run(_chat_oneshot_arcagent(
-                agent_dir, task, model, verbose, as_json, max_turns,
-            ))
-        else:
-            asyncio.run(_chat_oneshot_arcagent(
-                agent_dir, task, model, verbose, as_json, max_turns,
-            ))
+        asyncio.run(_agent_run_once(agent_dir, task, model, verbose, as_json))
     else:
         if as_json:
             raise click.ClickException("--json only works with --task (one-shot mode).")
@@ -1393,38 +1351,6 @@ def chat(
             show_events=show_events,
             session_id=session_id,
         ))
-
-
-async def _chat_oneshot_arcagent(
-    agent_dir: Path,
-    task: str,
-    model_override: str | None,
-    verbose: bool,
-    as_json: bool,
-    max_turns: int,
-) -> None:
-    """One-shot chat via ArcAgent."""
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
-
-    if model_override:
-        config.llm.model = model_override
-
-    await arc_agent.startup()
-    try:
-        result = await arc_agent.run(task)
-
-        if as_json:
-            _print_result_json(result)
-        else:
-            if result.content:
-                click_echo(result.content)
-            if verbose:
-                click_echo(
-                    f"\n[{result.turns} turns, {result.tool_calls_made} tool calls, "
-                    f"${result.cost_usd:.4f}, strategy={result.strategy_used}]"
-                )
-    finally:
-        await arc_agent.shutdown()
 
 
 async def _chat_interactive_arcagent(
@@ -1910,24 +1836,6 @@ def _repl_status(arc_agent: Any, agent_dir: Path, cost: float, turns: int, tool_
     click_echo(f"  Tool calls: {tool_calls}")
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _assemble_system_prompt(workspace: Path) -> str:
-    """Build system prompt from workspace files (identity.md, policy.md, context.md)."""
-    prompt_files = ["identity.md", "policy.md", "context.md"]
-    sections: list[str] = []
-    for filename in prompt_files:
-        filepath = workspace / filename
-        if filepath.exists():
-            content = filepath.read_text(encoding="utf-8").strip()
-            if content:
-                section_name = filename.removesuffix(".md")
-                sections.append(f"--- {section_name} ---\n{content}")
-
-    return "\n\n".join(sections) if sections else "You are a helpful assistant."
 
 
 def _print_events(events: list[Any]) -> None:

@@ -62,6 +62,8 @@ class HybridSearch:
         query: str,
         top_k: int = 10,
         scope: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> list[SearchResult]:
         """Hybrid search across memory tiers.
 
@@ -69,6 +71,8 @@ class HybridSearch:
             query: Search query text.
             top_k: Maximum results to return.
             scope: Filter by source type ("notes", "entities", "context").
+            date_from: Start date filter (YYYY-MM-DD). Currently reserved.
+            date_to: End date filter (YYYY-MM-DD). Currently reserved.
         """
         await self.reindex_if_needed()
 

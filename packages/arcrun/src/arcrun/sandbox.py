@@ -14,6 +14,11 @@ class Sandbox:
         self._config = config
         self._event_bus = event_bus
 
+    def _deny(self, tool_name: str, reason: str) -> tuple[bool, str]:
+        """Emit denial event and return (False, reason)."""
+        self._event_bus.emit("tool.denied", {"name": tool_name, "reason": reason})
+        return False, reason
+
     async def check(self, tool_name: str, params: dict[str, Any]) -> tuple[bool, str]:
         """
         Returns (allowed, reason).
@@ -31,25 +36,14 @@ class Sandbox:
             return True, ""
 
         if self._config.allowed_tools is not None and tool_name not in self._config.allowed_tools:
-            reason = f"{tool_name}: not in allowed tools"
-            self._event_bus.emit(
-                "tool.denied", {"name": tool_name, "reason": reason}
-            )
-            return False, reason
+            return self._deny(tool_name, f"{tool_name}: not in allowed tools")
 
         if self._config.check is not None:
             try:
                 allowed, reason = await self._config.check(tool_name, params)
             except Exception:
-                reason = "check callback error"
-                self._event_bus.emit(
-                    "tool.denied", {"name": tool_name, "reason": reason}
-                )
-                return False, reason
+                return self._deny(tool_name, "check callback error")
             if not allowed:
-                self._event_bus.emit(
-                    "tool.denied", {"name": tool_name, "reason": reason}
-                )
-                return False, reason
+                return self._deny(tool_name, reason)
 
         return True, ""

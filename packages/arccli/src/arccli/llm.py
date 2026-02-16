@@ -1,7 +1,6 @@
 """ArcLLM CLI subcommands — config, providers, models, and calls."""
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -38,7 +37,7 @@ def version(as_json: bool) -> None:
     if as_json:
         print_json(data)
     else:
-        print_kv([(k, v) for k, v in data.items()])
+        print_kv(list(data.items()))
 
 
 # ---------------------------------------------------------------------------

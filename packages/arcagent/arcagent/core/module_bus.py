@@ -12,9 +12,14 @@ import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from arcagent.core.config import ArcAgentConfig
+from arcagent.core.config import ArcAgentConfig, LLMConfig
+
+if TYPE_CHECKING:
+    from arcagent.core.telemetry import AgentTelemetry
+    from arcagent.core.tool_registry import ToolRegistry
 
 _logger = logging.getLogger("arcagent.module_bus")
 
@@ -66,6 +71,23 @@ class _HandlerRegistration:
     timeout_seconds: float = _DEFAULT_HANDLER_TIMEOUT
 
 
+@dataclass(frozen=True)
+class ModuleContext:
+    """Dependency injection container for module startup.
+
+    Frozen: modules cannot reassign shared references, but the
+    objects themselves are mutable (e.g. modules can call
+    tool_registry.register()).
+    """
+
+    bus: ModuleBus
+    tool_registry: ToolRegistry
+    config: ArcAgentConfig
+    telemetry: AgentTelemetry
+    workspace: Path
+    llm_config: LLMConfig
+
+
 @runtime_checkable
 class Module(Protocol):
     """Protocol for modules that register with the bus."""
@@ -73,7 +95,7 @@ class Module(Protocol):
     @property
     def name(self) -> str: ...
 
-    async def startup(self, bus: ModuleBus) -> None: ...
+    async def startup(self, ctx: ModuleContext) -> None: ...
 
     async def shutdown(self) -> None: ...
 
@@ -185,11 +207,11 @@ class ModuleBus:
         """Register a module for lifecycle management."""
         self._modules.append(module)
 
-    async def startup(self) -> None:
-        """Call module.startup() for all registered modules in order."""
+    async def startup(self, ctx: ModuleContext) -> None:
+        """Call module.startup(ctx) for all registered modules in order."""
         for module in self._modules:
             try:
-                await module.startup(self)
+                await module.startup(ctx)
                 _logger.info("Module %s started", module.name)
             except Exception:
                 _logger.exception("Module %s failed to start", module.name)

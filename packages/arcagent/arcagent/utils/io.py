@@ -1,4 +1,4 @@
-"""Shared I/O utilities — async wrappers and atomic write.
+"""Shared I/O utilities.
 
 Centralizes file I/O patterns used across the memory module:
 - Token estimation constant
@@ -8,7 +8,6 @@ Centralizes file I/O patterns used across the memory module:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 from pathlib import Path
@@ -71,17 +70,3 @@ def sanitize_fts5_query(query: str) -> str:
     return " ".join(escaped)
 
 
-async def read_text_async(path: Path) -> str:
-    """Read a file's text content off the event loop."""
-    return await asyncio.to_thread(path.read_text, "utf-8")
-
-
-async def write_text_async(path: Path, content: str) -> None:
-    """Write text content off the event loop."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.to_thread(path.write_text, content, "utf-8")
-
-
-async def atomic_write_text_async(path: Path, content: str) -> None:
-    """Atomic write (tmp + rename) off the event loop."""
-    await asyncio.to_thread(atomic_write_text, path, content)

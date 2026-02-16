@@ -310,3 +310,140 @@ class TestMalformedModelResponse:
         ]
         # Should not raise
         await ext.extract(messages, model)
+
+    @pytest.mark.asyncio()
+    async def test_missing_entities_key_skipped(self, tmp_path: Path) -> None:
+        """Model response missing 'entities' key is handled."""
+        ext = _make_extractor(tmp_path)
+        model = AsyncMock(return_value=json.dumps({"other_field": "value"}))
+
+        messages = [
+            {"role": "user", "content": "My name is Josh and I work on ArcAgent"},
+            {"role": "assistant", "content": "Cool project!"},
+        ]
+        # Should not raise, should skip
+        await ext.extract(messages, model)
+
+        # No entities created
+        entities_dir = tmp_path / "entities"
+        assert not entities_dir.exists() or len(list(entities_dir.glob("*"))) == 0
+
+
+class TestSlugifyEdgeCases:
+    """Test _slugify with various edge cases."""
+
+    def test_slugify_empty_string_uses_hash(self, tmp_path: Path) -> None:
+        """Empty or non-ASCII-only names use hash-based slugs."""
+        ext = _make_extractor(tmp_path)
+        # Only special characters, no alphanumeric
+        slug = ext._slugify("!!!")
+        assert len(slug) == 12  # Hash-based slug
+
+    def test_slugify_cyrillic_name(self, tmp_path: Path) -> None:
+        """Non-ASCII names fall back to hash."""
+        ext = _make_extractor(tmp_path)
+        slug = ext._slugify("Владимир")
+        assert len(slug) == 12  # Hash-based
+
+
+class TestEntityExtractionEdgeCases:
+    """Test edge cases in entity extraction."""
+
+    @pytest.mark.asyncio()
+    async def test_entity_with_no_name_skipped(self, tmp_path: Path) -> None:
+        """Entity data missing 'name' field is skipped."""
+        ext = _make_extractor(tmp_path)
+        model = AsyncMock(return_value=json.dumps({
+            "entities": [{
+                "type": "concept",
+                "facts": [{"predicate": "is", "value": "test"}],
+            }]
+        }))
+
+        messages = [
+            {"role": "user", "content": "Tell me about the concept"},
+            {"role": "assistant", "content": "Here is the info"},
+        ]
+        await ext.extract(messages, model)
+
+        # No entity should be created
+        entities_dir = tmp_path / "entities"
+        assert not entities_dir.exists() or len(list(entities_dir.glob("*"))) == 0
+
+    @pytest.mark.asyncio()
+    async def test_malformed_facts_jsonl_handling(self, tmp_path: Path) -> None:
+        """Existing facts.jsonl with invalid JSON lines is handled."""
+        ext = _make_extractor(tmp_path)
+
+        # Pre-create entity with malformed facts
+        entity_dir = tmp_path / "entities" / "test-entity"
+        entity_dir.mkdir(parents=True)
+        facts_file = entity_dir / "facts.jsonl"
+        facts_file.write_text('{"predicate": "valid", "value": "ok"}\ninvalid json line\n')
+
+        index_file = tmp_path / "entities" / "index.json"
+        index_file.write_text(json.dumps({
+            "version": 1,
+            "entities": {
+                "test-entity": {
+                    "name": "Test Entity",
+                    "type": "concept",
+                    "aliases": [],
+                    "last_updated": "2026-02-15T10:00:00Z",
+                    "fact_count": 1,
+                }
+            }
+        }))
+
+        model = AsyncMock(return_value=json.dumps({
+            "entities": [{
+                "name": "Test Entity",
+                "type": "concept",
+                "aliases": [],
+                "facts": [{"predicate": "new", "value": "fact"}],
+            }]
+        }))
+
+        messages = [
+            {"role": "user", "content": "Tell me about Test Entity"},
+            {"role": "assistant", "content": "Here is new info"},
+        ]
+
+        # Should handle malformed line gracefully
+        await ext.extract(messages, model)
+
+        # New fact should be appended
+        lines = facts_file.read_text().strip().split("\n")
+        assert len(lines) >= 2  # Original valid + new fact
+
+
+class TestExtractNoRecentPair:
+    """Line 92: _get_recent_pair returns empty for non-user/assistant messages."""
+
+    async def test_extract_skips_system_only_messages(self, tmp_path: Path) -> None:
+        ext = EntityExtractor(
+            eval_config=EvalConfig(provider="test", model="test"),
+            workspace=tmp_path,
+            telemetry=_make_telemetry(),
+        )
+        model = AsyncMock()
+        # Only system messages — no user/assistant pair
+        await ext.extract([{"role": "system", "content": "You are helpful"}], model)
+        model.assert_not_called()
+
+
+class TestLoadIndexJsonDecodeError:
+    """Lines 254-255: Corrupted index.json returns default."""
+
+    def test_corrupted_index_returns_default(self, tmp_path: Path) -> None:
+        ext = EntityExtractor(
+            eval_config=EvalConfig(provider="test", model="test"),
+            workspace=tmp_path,
+            telemetry=_make_telemetry(),
+        )
+        entities_dir = tmp_path / "entities"
+        entities_dir.mkdir()
+        (entities_dir / "index.json").write_text("{bad json!!")
+
+        index = ext._load_index()
+        assert index == {"version": 1, "entities": {}}

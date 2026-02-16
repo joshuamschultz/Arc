@@ -206,7 +206,7 @@ class TestMemoryConfig:
         assert cfg.search_weight_vector == 0.3
         assert cfg.embedding_model == "all-MiniLM-L6-v2"
         assert cfg.entity_extraction_enabled is True
-        assert cfg.policy_eval_interval_turns == 10
+        assert cfg.policy_eval_interval_turns == 20
 
     def test_custom_weights(self) -> None:
         cfg = MemoryConfig(search_weight_bm25=0.5, search_weight_vector=0.5)
@@ -259,6 +259,17 @@ class TestEnvDenylist:
         monkeypatch.setenv("ARCAGENT_AGENT__NAME", "overridden")
         cfg = load_config(minimal_toml)
         assert cfg.agent.name == "overridden"
+
+    def test_env_override_non_dict_intermediate(
+        self, minimal_toml: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env override replaces non-dict intermediate with dict."""
+        # This tests line 261 where if target[part] is not a dict, replace it
+        monkeypatch.setenv("ARCAGENT_AGENT__NAME", "base")
+        # Set a deep nested value that would require creating intermediate dicts
+        monkeypatch.setenv("ARCAGENT_TELEMETRY__LOG_LEVEL", "DEBUG")
+        cfg = load_config(minimal_toml)
+        assert cfg.telemetry.log_level == "DEBUG"
 
 
 class TestMaxTokensValidator:

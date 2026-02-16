@@ -14,8 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from arcllm import LLMProvider, Message
-from arcllm import load_model as arcllm_load_model
+from arcllm import Message
 from arcrun import Event, LoopResult
 from arcrun import Tool as ArcRunTool
 from arcrun import run as arcrun_run
@@ -25,48 +24,15 @@ from arcagent.core.context_manager import ContextManager
 from arcagent.core.errors import ConfigError
 from arcagent.core.extensions import ExtensionLoader
 from arcagent.core.identity import AgentIdentity
-from arcagent.core.module_bus import ModuleBus
+from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.session_manager import SessionManager
 from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.skill_registry import SkillMeta, SkillRegistry
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_registry import ToolRegistry
+from arcagent.utils import load_eval_model
 
 _logger = logging.getLogger("arcagent.agent")
-
-
-def _load_model(model_id: str) -> LLMProvider:
-    """Load LLM model via ArcLLM.
-
-    Parses the ``provider/model`` format from config and
-    delegates to ``arcllm.load_model()``.
-    """
-    _logger.info("Loading model: %s", model_id)
-    provider, _, model_name = model_id.partition("/")
-    return arcllm_load_model(provider, model_name or None)
-
-
-async def _run_loop(
-    model: Any,
-    tools: list[ArcRunTool],
-    system_prompt: str,
-    task: str,
-    *,
-    messages: list[Any] | None = None,
-    on_event: Callable[..., Any] | None = None,
-    transform_context: Callable[..., Any] | None = None,
-) -> LoopResult:
-    """Run the agent loop via ArcRun."""
-    _logger.info("Running agent loop for task: %s", task[:80])
-    return await arcrun_run(
-        model=model,
-        tools=tools,
-        system_prompt=system_prompt,
-        task=task,
-        messages=messages,
-        on_event=on_event,
-        transform_context=transform_context,
-    )
 
 
 def _validate_vault_backend(backend_ref: str) -> None:
@@ -223,12 +189,13 @@ class ArcAgent:
             bus=self._bus,
         )
 
-        # 7. Session Manager
+        # 7. Session Manager (owns context)
         self._session = SessionManager(
             config=self._config.session,
             context_config=self._config.context,
             telemetry=self._telemetry,
             workspace=workspace,
+            context_manager=self._context,
         )
 
         # 8. Settings Manager
@@ -256,11 +223,19 @@ class ArcAgent:
         global_ext = Path(self._config.extensions.global_dir).expanduser()
         await self._extension_loader.discover_and_load(workspace, global_ext)
 
-        # 11. Register configured modules
-        self._register_modules(workspace)
+        # 11. Convention-based module loading (replaces _register_modules)
+        module_ctx = ModuleContext(
+            bus=self._bus,
+            tool_registry=self._tool_registry,
+            config=self._config,
+            telemetry=self._telemetry,
+            workspace=workspace,
+            llm_config=self._config.llm,
+        )
+        self._load_modules_by_convention(module_ctx)
 
-        # 12. Start modules and emit init event
-        await self._bus.startup()
+        # 12. Start modules with context
+        await self._bus.startup(module_ctx)
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
         await self._bus.emit("agent:extensions_loaded", {})
         await self._bus.emit("agent:skills_loaded", {})
@@ -290,7 +265,7 @@ class ArcAgent:
     def _ensure_model(self) -> Any:
         """Load and cache model on first use."""
         if self._model is None:
-            self._model = _load_model(self._config.llm.model)
+            self._model = load_eval_model(self._config.llm.model)
         return self._model
 
     async def _execute_loop(
@@ -310,7 +285,8 @@ class ArcAgent:
         await bus.emit("agent:pre_respond", {"task": task})
         try:
             async with telemetry.session_span(task):
-                result = await _run_loop(
+                _logger.info("Running agent loop for task: %s", task[:80])
+                result = await arcrun_run(
                     model=model,
                     tools=tools,
                     system_prompt=system_prompt,
@@ -355,7 +331,20 @@ class ArcAgent:
 
         response_text = getattr(result, "content", None) or ""
         await session.append_message({"role": "assistant", "content": response_text})
+
+        # Check compaction threshold after each turn
+        await self._maybe_compact(session)
         return result
+
+    async def _maybe_compact(self, session: SessionManager) -> None:
+        """Trigger compaction if context ratio exceeds compact_threshold."""
+        context = self._context
+        if context is None:
+            return
+        ratio = session.token_ratio()
+        if ratio >= self._config.context.compact_threshold:
+            eval_model = self._ensure_model()
+            await session.compact(eval_model, self._workspace)
 
     async def reload(self) -> None:
         """Re-discover extensions and skills. Hot reload.
@@ -456,28 +445,24 @@ class ArcAgent:
             module_name="skill_registry",
         )
 
-    def _register_modules(self, workspace: Path) -> None:
-        """Register configured modules with the Module Bus.
+    def _load_modules_by_convention(self, ctx: ModuleContext) -> None:
+        """Discover and register modules via convention-based loading.
 
-        Modules are loaded when their entry in config.modules is enabled.
-        Currently supports: memory (MarkdownMemoryModule).
+        Scans arcagent/modules/*/MODULE.yaml for enabled modules,
+        imports their entry_point classes, and registers with the bus.
         """
         bus = self._bus
         if bus is None:
             return
 
-        memory_entry = self._config.modules.get("memory")
-        if memory_entry is not None and memory_entry.enabled:
-            from arcagent.modules.memory import MarkdownMemoryModule
+        from arcagent.core.module_loader import ModuleLoader
 
-            module = MarkdownMemoryModule(
-                config=self._config.memory,
-                eval_config=self._config.eval,
-                telemetry=self._telemetry,
-                workspace=workspace,
-            )
-            bus.register_module(module)
-            _logger.info("Registered memory module")
+        loader = ModuleLoader()
+        modules_dir = Path(__file__).parent.parent / "modules"
+        loaded = loader.load_all(modules_dir, ctx)
+        for mod in loaded:
+            bus.register_module(mod)
+            _logger.info("Registered module: %s", mod.name)
 
     def _create_vault_resolver(self) -> Any:
         """Create vault resolver from config.

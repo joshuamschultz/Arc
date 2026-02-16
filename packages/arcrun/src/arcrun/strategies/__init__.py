@@ -105,8 +105,8 @@ async def select_strategy(
                     "reasoning": reasoning,
                 })
                 return chosen
-    except Exception:
-        pass
+    except Exception as exc:
+        bus.emit("strategy.selection.error", {"error": str(exc)})
 
     bus.emit("strategy.selection.fallback", {
         "attempted": allowed,

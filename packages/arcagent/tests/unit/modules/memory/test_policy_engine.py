@@ -429,3 +429,104 @@ class TestNextBulletId:
         assert engine._next_id() == "P01"
         assert engine._next_id() == "P02"
         assert engine._next_id() == "P03"
+
+
+class TestReflectionInvalidJSON:
+    """Test _reflect handling of invalid JSON from model."""
+
+    async def test_reflect_invalid_json_returns_none(self, tmp_path: Path) -> None:
+        """Invalid JSON from model returns None delta."""
+        engine = _make_engine(tmp_path)
+        model = AsyncMock(return_value="not valid json {{{")
+        messages = [{"role": "user", "content": "test"}]
+
+        delta, policy = await engine._reflect(messages, model)
+        assert delta is None
+        assert policy == ""  # No policy file exists
+
+    async def test_reflect_type_error_returns_none(self, tmp_path: Path) -> None:
+        """TypeError from json.loads returns None delta."""
+        engine = _make_engine(tmp_path)
+        model = AsyncMock(return_value=None)  # Will cause TypeError in json.loads
+        messages = [{"role": "user", "content": "test"}]
+
+        delta, policy = await engine._reflect(messages, model)
+        assert delta is None
+
+
+class TestRewritesWithScore:
+    """Test rewrites with score_delta."""
+
+    async def test_rewrite_with_score_delta(self, tmp_path: Path) -> None:
+        """Rewrites can include score_delta."""
+        engine = _make_engine(tmp_path)
+        policy_path = tmp_path / "policy.md"
+        bullet = (
+            "- [P01] Original {score:5, uses:1,"
+            " reviewed:2026-02-14, created:2026-01-01, source:s1}\n"
+        )
+        policy_path.write_text(f"# Policy\n\n{bullet}")
+
+        delta = PolicyDelta(
+            additions=[],
+            updates=[],
+            rewrites=[BulletRewrite(bullet_id="P01", new_text="Rewritten", score_delta=2)],
+            session_id="sess-rw",
+        )
+        await engine._curate(delta)
+
+        content = policy_path.read_text()
+        assert "Rewritten" in content
+        assert "score:7" in content  # 5 + 2
+
+
+class TestEmptyBulletList:
+    """Test edge case with empty bullet list."""
+
+    async def test_serialize_empty_list_has_header(self, tmp_path: Path) -> None:
+        """Serializing empty list includes header."""
+        engine = _make_engine(tmp_path)
+        result = engine._serialize_policy([])
+        assert "# Policy" in result
+        # Should have header and trailing newline
+        assert result.strip() == "# Policy"
+
+
+class TestReflectExistingPolicy:
+    """Line 166: _reflect reads existing policy file."""
+
+    async def test_reflect_reads_existing_policy(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        # Write existing policy
+        policy_path = tmp_path / "policy.md"
+        policy_path.write_text("# Policy\n- existing rule score:5\n")
+
+        model = AsyncMock(return_value=json.dumps({
+            "additions": ["new rule"],
+            "updates": [],
+            "rewrites": [],
+        }))
+
+        delta, current_text = await engine._reflect(
+            [{"role": "user", "content": "hello"}], model
+        )
+        assert "existing rule" in current_text
+        assert delta is not None
+        assert len(delta.additions) == 1
+
+
+class TestReflectEmptyResult:
+    """Line 204: _reflect returns None when no additions/updates/rewrites."""
+
+    async def test_reflect_returns_none_for_empty_delta(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        model = AsyncMock(return_value=json.dumps({
+            "additions": [],
+            "updates": [],
+            "rewrites": [],
+        }))
+
+        delta, _ = await engine._reflect(
+            [{"role": "user", "content": "hello"}], model
+        )
+        assert delta is None

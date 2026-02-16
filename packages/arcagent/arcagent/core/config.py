@@ -164,7 +164,7 @@ class MemoryConfig(BaseModel):
     search_weight_vector: float = 0.3
     embedding_model: str = "all-MiniLM-L6-v2"
     entity_extraction_enabled: bool = True
-    policy_eval_interval_turns: int = 10
+    policy_eval_interval_turns: int = 20
 
 
 class SessionConfig(BaseModel):
