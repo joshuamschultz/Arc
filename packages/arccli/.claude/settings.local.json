@@ -1,7 +1,0 @@
-{
-  "enabledMcpjsonServers": [
-    "claude-mem",
-    "qmd"
-  ],
-  "enableAllProjectMcpServers": true
-}

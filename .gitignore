@@ -51,6 +51,8 @@ Thumbs.db
 # Claude Code (keep only specs/)
 .claude/*
 !.claude/specs/
+**/.claude/*
+!**/.claude/specs/
 CLAUDE.md
 
 # Work files
