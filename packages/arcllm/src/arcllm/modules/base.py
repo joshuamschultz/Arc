@@ -7,7 +7,31 @@ from typing import Any
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
+from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool
+
+
+def validate_config_keys(
+    config: dict[str, Any],
+    valid_keys: set[str],
+    module_name: str,
+) -> None:
+    """Reject unrecognized config keys with a clear error message.
+
+    Args:
+        config: Module configuration dict.
+        valid_keys: Set of accepted key names (should include "enabled").
+        module_name: Human-readable module name for the error message.
+
+    Raises:
+        ArcLLMConfigError: If any config key is not in valid_keys.
+    """
+    unknown = set(config.keys()) - valid_keys
+    if unknown:
+        raise ArcLLMConfigError(
+            f"Unknown {module_name} config keys: {sorted(unknown)}. "
+            f"Valid keys: {sorted(valid_keys - {'enabled'})}"
+        )
 
 
 class BaseModule(LLMProvider):

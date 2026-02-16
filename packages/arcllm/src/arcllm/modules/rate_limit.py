@@ -63,9 +63,7 @@ class TokenBucket:
 _bucket_registry: dict[str, TokenBucket] = {}
 
 
-def _get_or_create_bucket(
-    provider: str, capacity: int, refill_rate: float
-) -> TokenBucket:
+def _get_or_create_bucket(provider: str, capacity: int, refill_rate: float) -> TokenBucket:
     """Return the shared bucket for *provider*, creating one if needed."""
     if provider not in _bucket_registry:
         _bucket_registry[provider] = TokenBucket(capacity, refill_rate)

@@ -1,6 +1,7 @@
 """ReAct strategy: Reason -> Act -> Observe -> Repeat."""
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -96,24 +97,52 @@ async def react_loop(
             _end_turn(state, bus)
             return _build_result(state, response.content)
 
-        # Process tool calls
-        tool_results: list[Any] = []
+        # Process tool calls — spawn_task calls run in parallel,
+        # all others run sequentially (preserving existing behavior)
+        tool_results_map: dict[int, Any] = {}
+        spawn_queue: dict[int, Any] = {}
         steered = False
-        for tc in response.tool_calls:
+
+        for idx, tc in enumerate(response.tool_calls):
             if steered or state.cancel_event.is_set():
-                tool_results.append(tool_result(tc.id, "operation cancelled: steered"))
+                tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
                 continue
 
-            result_msg, _ok = await execute_tool_call(tc, state, sandbox)
-            tool_results.append(result_msg)
+            if tc.name == "spawn_task":
+                spawn_queue[idx] = tc
+            else:
+                result_msg, _ok = await execute_tool_call(tc, state, sandbox)
+                tool_results_map[idx] = result_msg
+
+                if not state.steer_queue.empty():
+                    steer_msg = state.steer_queue.get_nowait()
+                    state.messages.append(user_message(steer_msg))
+                    steered = True
+
+        # Execute queued spawn_task calls concurrently
+        if spawn_queue and not steered:
+            indices = list(spawn_queue.keys())
+            coros = [execute_tool_call(spawn_queue[i], state, sandbox) for i in indices]
+            results = await asyncio.gather(*coros, return_exceptions=True)
+
+            for idx, result in zip(indices, results):
+                if isinstance(result, tuple):
+                    tool_results_map[idx] = result[0]
+                else:
+                    tc = spawn_queue[idx]
+                    tool_results_map[idx] = tool_result(tc.id, f"Error: {result}")
 
             if not state.steer_queue.empty():
                 steer_msg = state.steer_queue.get_nowait()
                 state.messages.append(user_message(steer_msg))
                 steered = True
+        elif spawn_queue and steered:
+            for idx, tc in spawn_queue.items():
+                tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
 
-        for tr in tool_results:
-            state.messages.append(tr)
+        # Append results in original order
+        for idx in sorted(tool_results_map.keys()):
+            state.messages.append(tool_results_map[idx])
 
         _end_turn(state, bus)
 

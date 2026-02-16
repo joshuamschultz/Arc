@@ -90,12 +90,14 @@ class OpenaiAdapter(BaseAdapter):
             if isinstance(b, TextBlock):
                 parts.append({"type": "text", "text": b.text})
             elif isinstance(b, ImageBlock):
-                parts.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{b.media_type};base64,{b.source}",
-                    },
-                })
+                parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{b.media_type};base64,{b.source}",
+                        },
+                    }
+                )
         if parts:
             return {"role": message.role, "content": parts}
         return {"role": message.role, "content": ""}
@@ -119,11 +121,13 @@ class OpenaiAdapter(BaseAdapter):
                                 b.text for b in block.content if isinstance(b, TextBlock)
                             ]
                             content = " ".join(text_parts) if text_parts else ""
-                        result.append({
-                            "role": "tool",
-                            "tool_call_id": block.tool_use_id,
-                            "content": content,
-                        })
+                        result.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": block.tool_use_id,
+                                "content": content,
+                            }
+                        )
                     # Skip non-ToolResultBlock content in tool messages
             else:
                 result.append(self._format_message(msg))
@@ -178,10 +182,7 @@ class OpenaiAdapter(BaseAdapter):
         message = choice["message"]
 
         content = message.get("content")
-        tool_calls = [
-            self._parse_tool_call(tc)
-            for tc in message.get("tool_calls", [])
-        ]
+        tool_calls = [self._parse_tool_call(tc) for tc in message.get("tool_calls", [])]
         stop_reason = self._map_stop_reason(choice["finish_reason"])
 
         return LLMResponse(

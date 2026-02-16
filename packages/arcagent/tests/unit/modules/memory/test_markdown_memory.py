@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
+_logger = logging.getLogger(__name__)
 
 from arcagent.core.config import (
     AgentConfig,
@@ -226,31 +229,51 @@ class TestReentrancyGuard:
 
 
 class TestBackgroundTaskTracking:
-    """T3.1.8: Background task set with done callbacks."""
+    """T3.1.8: Background task set with done callbacks (via shared spawn_background)."""
 
     @pytest.mark.asyncio()
     async def test_spawn_background_adds_to_set(self, tmp_path: Path) -> None:
+        from arcagent.utils.eval_helpers import spawn_background
+
         module = _make_module(tmp_path)
 
         async def dummy() -> None:
             await asyncio.sleep(0.1)
 
-        module._spawn_background(dummy())
+        spawn_background(
+            dummy(),
+            background_tasks=module._background_tasks,
+            semaphore=module._semaphore,
+            eval_config=module._eval_config,
+            telemetry=module._telemetry,
+            logger=_logger,
+        )
         assert len(module._background_tasks) == 1
 
     @pytest.mark.asyncio()
     async def test_done_callback_removes_from_set(self, tmp_path: Path) -> None:
+        from arcagent.utils.eval_helpers import spawn_background
+
         module = _make_module(tmp_path)
 
         async def quick() -> None:
             pass
 
-        module._spawn_background(quick())
+        spawn_background(
+            quick(),
+            background_tasks=module._background_tasks,
+            semaphore=module._semaphore,
+            eval_config=module._eval_config,
+            telemetry=module._telemetry,
+            logger=_logger,
+        )
         await asyncio.sleep(0.05)  # Let task complete
         assert len(module._background_tasks) == 0
 
     @pytest.mark.asyncio()
     async def test_error_in_background_logs_not_crashes(self, tmp_path: Path) -> None:
+        from arcagent.utils.eval_helpers import spawn_background
+
         telemetry = _make_telemetry()
         module = MarkdownMemoryModule(
             config={},
@@ -262,7 +285,15 @@ class TestBackgroundTaskTracking:
         async def failing() -> None:
             raise ValueError("test error")
 
-        module._spawn_background(failing())
+        spawn_background(
+            failing(),
+            background_tasks=module._background_tasks,
+            semaphore=module._semaphore,
+            eval_config=module._eval_config,
+            telemetry=telemetry,
+            audit_event_name="memory.background_error",
+            logger=_logger,
+        )
         await asyncio.sleep(0.05)
         # Task removed, audit event logged
         assert len(module._background_tasks) == 0
@@ -276,12 +307,20 @@ class TestShutdown:
 
     @pytest.mark.asyncio()
     async def test_shutdown_cancels_background_tasks(self, tmp_path: Path) -> None:
+        from arcagent.utils.eval_helpers import spawn_background
+
         module = _make_module(tmp_path)
 
         async def long_task() -> None:
             await asyncio.sleep(100)
 
-        module._spawn_background(long_task())
+        spawn_background(
+            long_task(),
+            background_tasks=module._background_tasks,
+            semaphore=module._semaphore,
+            eval_config=module._eval_config,
+            logger=_logger,
+        )
         assert len(module._background_tasks) == 1
         await module.shutdown()
         # Tasks should be cancelled and removed
@@ -502,6 +541,8 @@ class TestBackgroundTaskBackpressure:
 
     async def test_backpressure_drops_tasks(self, tmp_path: Path) -> None:
         """When background queue is full, new tasks are dropped."""
+        from arcagent.utils.eval_helpers import spawn_background
+
         module = _make_module(tmp_path)
 
         async def slow_task() -> None:
@@ -509,12 +550,24 @@ class TestBackgroundTaskBackpressure:
 
         # Fill queue to max
         for _ in range(10):
-            module._spawn_background(slow_task())
+            spawn_background(
+                slow_task(),
+                background_tasks=module._background_tasks,
+                semaphore=module._semaphore,
+                eval_config=module._eval_config,
+                logger=_logger,
+            )
 
         assert len(module._background_tasks) == 10
 
         # Next task should be dropped
-        module._spawn_background(slow_task())
+        spawn_background(
+            slow_task(),
+            background_tasks=module._background_tasks,
+            semaphore=module._semaphore,
+            eval_config=module._eval_config,
+            logger=_logger,
+        )
         # Still at max
         assert len(module._background_tasks) == 10
 

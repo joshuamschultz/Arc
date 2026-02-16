@@ -7,14 +7,15 @@ Validated internally by the module on construction.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from arcagent.modules.base_config import ModuleConfig
 
 
-class PolicyConfig(BaseModel):
+class PolicyConfig(ModuleConfig):
     """Policy module configuration.
 
     Controls the ACE-based self-learning policy engine:
     evaluation frequency, bullet limits, and text constraints.
+    Inherits ``extra="forbid"`` from ModuleConfig for typo detection.
     """
 
     eval_interval_turns: int = 20

@@ -152,6 +152,8 @@ class EvalConfig(BaseModel):
     timeout_seconds: int = 30
     fallback_behavior: str = "skip"  # "skip" | "error"
     max_concurrent: int = 2  # Semaphore limit
+    background_queue_size: int = 10  # Per-module background task queue depth
+    background_task_timeout: int = 120  # Seconds before background task timeout
 
 
 class SessionConfig(BaseModel):

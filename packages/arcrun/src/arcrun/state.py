@@ -23,6 +23,11 @@ class RunState:
     cost_usd: float = 0.0
     tool_calls_made: int = 0
     run_id: str = ""
+    depth: int = 0
+    max_depth: int = 3
+    parent_run_id: str = ""
+    token_budget: int | None = None
+    cost_budget: float | None = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     steer_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
     followup_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)

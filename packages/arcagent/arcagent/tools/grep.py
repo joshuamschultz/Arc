@@ -7,6 +7,7 @@ Skips binary files and enforces size limits to prevent OOM.
 from __future__ import annotations
 
 import re
+import stat as stat_module
 from pathlib import Path
 from typing import Any
 
@@ -94,11 +95,11 @@ def create_tool(
 
         matches: list[str] = []
         for file_path in file_iter:
-            if not file_path.is_file():
-                continue
             try:
                 stat = file_path.stat()
             except OSError:
+                continue
+            if not stat_module.S_ISREG(stat.st_mode):
                 continue
             if stat.st_size > _MAX_FILE_SIZE:
                 continue

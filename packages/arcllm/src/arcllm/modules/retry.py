@@ -59,7 +59,8 @@ class RetryModule(BaseModule):
 
         with self._span("arcllm.retry") as retry_span:
             for attempt in range(self._max_retries + 1):
-                with self._span("arcllm.retry.attempt", attributes={"arcllm.retry.attempt": attempt}) as attempt_span:
+                attrs = {"arcllm.retry.attempt": attempt}
+                with self._span("arcllm.retry.attempt", attributes=attrs) as attempt_span:
                     try:
                         return await self._inner.invoke(messages, tools, **kwargs)
                     except (ArcLLMAPIError, httpx.ConnectError, httpx.TimeoutException) as e:
@@ -101,5 +102,5 @@ class RetryModule(BaseModule):
         if isinstance(error, ArcLLMAPIError) and error.retry_after is not None:
             return min(error.retry_after, self._max_wait)
         backoff = self._backoff_base * (2**attempt)
-        jitter = random.uniform(0, backoff)
+        jitter = random.uniform(0, backoff)  # noqa: S311 — non-cryptographic jitter
         return min(backoff + jitter, self._max_wait)

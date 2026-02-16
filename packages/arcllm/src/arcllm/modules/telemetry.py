@@ -6,7 +6,7 @@ from typing import Any
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules._logging import log_structured, validate_log_level
-from arcllm.modules.base import BaseModule
+from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool, Usage
 
 logger = logging.getLogger(__name__)
@@ -34,17 +34,13 @@ class TelemetryModule(BaseModule):
 
     def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
         super().__init__(config, inner)
-
-        unknown = set(config.keys()) - _VALID_CONFIG_KEYS
-        if unknown:
-            raise ArcLLMConfigError(
-                f"Unknown TelemetryModule config keys: {sorted(unknown)}. "
-                f"Valid keys: {sorted(_VALID_CONFIG_KEYS - {'enabled'})}"
-            )
+        validate_config_keys(config, _VALID_CONFIG_KEYS, "TelemetryModule")
 
         _cost_fields = (
-            "cost_input_per_1m", "cost_output_per_1m",
-            "cost_cache_read_per_1m", "cost_cache_write_per_1m",
+            "cost_input_per_1m",
+            "cost_output_per_1m",
+            "cost_cache_read_per_1m",
+            "cost_cache_write_per_1m",
         )
         for field in _cost_fields:
             if config.get(field, 0.0) < 0:
@@ -60,8 +56,7 @@ class TelemetryModule(BaseModule):
     def _calculate_cost(self, usage: Usage) -> float:
         """Calculate USD cost from token counts and per-1M pricing."""
         cost = (
-            usage.input_tokens * self._cost_input
-            + usage.output_tokens * self._cost_output
+            usage.input_tokens * self._cost_input + usage.output_tokens * self._cost_output
         ) / 1_000_000
 
         if usage.cache_read_tokens:

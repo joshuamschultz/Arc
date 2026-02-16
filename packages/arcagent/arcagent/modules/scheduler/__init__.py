@@ -5,14 +5,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from arcagent.core.module_bus import ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.scheduler.config import SchedulerConfig
-from arcagent.modules.scheduler.scheduler import SchedulerEngine
-from arcagent.modules.scheduler.store import ScheduleStore
-from arcagent.modules.scheduler.tools import create_scheduler_tools
+
+if TYPE_CHECKING:
+    from arcagent.modules.scheduler.scheduler import SchedulerEngine
+    from arcagent.modules.scheduler.store import ScheduleStore
 
 _logger = logging.getLogger("arcagent.scheduler")
 
@@ -30,10 +31,13 @@ class SchedulerModule:
         telemetry: AgentTelemetry | None = None,
         workspace: Path = Path("."),
     ) -> None:
+        # Lazy import: ScheduleStore → models → croniter (optional dependency)
+        from arcagent.modules.scheduler.store import ScheduleStore as _Store
+
         self._config = SchedulerConfig(**(config or {}))
         self._telemetry = telemetry
         self._workspace = workspace
-        self._store = ScheduleStore(workspace / self._config.store_path)
+        self._store = _Store(workspace / self._config.store_path)
         self._engine: SchedulerEngine | None = None
 
     @property
@@ -42,6 +46,10 @@ class SchedulerModule:
 
     async def startup(self, ctx: ModuleContext) -> None:
         """Register tools, subscribe to events, start engine."""
+        # Lazy imports: croniter is an optional dependency required only at runtime
+        from arcagent.modules.scheduler.scheduler import SchedulerEngine as _Engine
+        from arcagent.modules.scheduler.tools import create_scheduler_tools
+
         # Create and register tools.
         tools = create_scheduler_tools(
             store=self._store,
@@ -63,7 +71,7 @@ class SchedulerModule:
                 return ""
             agent_run_fn = _noop
 
-        self._engine = SchedulerEngine(
+        self._engine = _Engine(
             store=self._store,
             config=self._config,
             telemetry=self._telemetry,

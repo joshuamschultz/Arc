@@ -73,17 +73,8 @@ estimate_multiplier = 1.1  # Conservative token estimate buffer
 # timeout_seconds = 30
 # fallback_behavior = "skip"  # "skip" | "error"
 # max_concurrent = 2
-
-# Memory module settings
-# [memory]
-# context_budget_tokens = 2000
-# notes_budget_today_tokens = 1000
-# notes_budget_yesterday_tokens = 500
-# search_weight_bm25 = 0.7
-# search_weight_vector = 0.3
-# embedding_model = "all-MiniLM-L6-v2"
-# entity_extraction_enabled = true
-# policy_eval_interval_turns = 10
+# background_queue_size = 10      # Per-module background task queue depth
+# background_task_timeout = 120   # Seconds before background task timeout
 
 # Session management
 # [session]
@@ -91,7 +82,45 @@ estimate_multiplier = 1.1  # Conservative token estimate buffer
 # retention_days = 30      # Or sessions from last N days
 # compaction_summary_max_chars = 2000
 
-# Modules
+# --- Modules ---
+# Each module has [modules.NAME] for enable/priority and
+# [modules.NAME.config] for module-specific settings.
+
+# Memory module
 # [modules.memory]
 # enabled = true
 # priority = 100
+#
+# [modules.memory.config]
+# context_budget_tokens = 2000
+# notes_budget_today_tokens = 1000
+# notes_budget_yesterday_tokens = 500
+# search_weight_bm25 = 0.7
+# search_weight_vector = 0.3
+# embedding_model = "all-MiniLM-L6-v2"
+# entity_extraction_enabled = true
+
+# Policy module
+# [modules.policy]
+# enabled = true
+# priority = 100
+#
+# [modules.policy.config]
+# eval_interval_turns = 20
+# max_bullets = 200
+# max_bullet_text_length = 500
+
+# Scheduler module
+# [modules.scheduler]
+# enabled = false
+# priority = 100
+#
+# [modules.scheduler.config]
+# min_interval_seconds = 60
+# max_schedules = 50
+# max_prompt_length = 500
+# default_timeout_seconds = 300
+# max_timeout_seconds = 3600
+# circuit_breaker_threshold = 3
+# check_interval_seconds = 30
+# store_path = "schedules.json"

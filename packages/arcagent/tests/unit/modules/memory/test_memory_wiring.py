@@ -61,7 +61,7 @@ class TestEvalModelLazyInit:
         # Store llm_config as if startup() was called
         module._llm_config = LLMConfig(model="openai/gpt-4o")
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with("anthropic/claude-haiku")
@@ -75,7 +75,7 @@ class TestEvalModelLazyInit:
         )
         module._llm_config = LLMConfig(model="anthropic/claude-haiku")
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with("anthropic/claude-haiku")
@@ -94,7 +94,7 @@ class TestEvalModelLazyInit:
         # Must survive construction — was previously overwritten to None
         assert module._llm_config is llm_cfg
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with("anthropic/claude-haiku")
@@ -108,7 +108,7 @@ class TestEvalModelLazyInit:
         )
         module._llm_config = LLMConfig(model="fallback/model")
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             sentinel = MagicMock()
             mock_load.return_value = sentinel
 
@@ -127,7 +127,7 @@ class TestEvalModelLazyInit:
         )
         module._llm_config = LLMConfig(model="fallback/model")
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_model = MagicMock()
             mock_load.return_value = mock_model
 
@@ -200,6 +200,10 @@ class TestSemaphoreLimitedBackgroundTasks:
 
     async def test_semaphore_limits_concurrency(self, tmp_path: Path) -> None:
         """Background tasks respect semaphore limit (max_concurrent=2)."""
+        import logging
+
+        from arcagent.utils.eval_helpers import spawn_background
+
         module = _make_module(
             tmp_path,
             eval_config=EvalConfig(max_concurrent=2),
@@ -215,9 +219,17 @@ class TestSemaphoreLimitedBackgroundTasks:
             await asyncio.sleep(0.05)
             active_count -= 1
 
+        logger = logging.getLogger(__name__)
+
         # Spawn 4 tasks — only 2 should run concurrently
         for _ in range(4):
-            module._spawn_background(counted_task())
+            spawn_background(
+                counted_task(),
+                background_tasks=module._background_tasks,
+                semaphore=module._semaphore,
+                eval_config=module._eval_config,
+                logger=logger,
+            )
 
         await asyncio.sleep(0.2)
         assert max_observed <= 2
@@ -236,7 +248,7 @@ class TestGetEvalModelFallback:
         )
         module._llm_config = None
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             try:
                 module._get_eval_model()
@@ -251,7 +263,7 @@ class TestGetEvalModelFallback:
             eval_config=EvalConfig(provider="test", model="model", fallback_behavior="error"),
         )
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_load.side_effect = RuntimeError("Load failed")
             try:
                 module._get_eval_model()
@@ -266,7 +278,7 @@ class TestGetEvalModelFallback:
             eval_config=EvalConfig(provider="test", model="model", fallback_behavior="skip"),
         )
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_load.side_effect = RuntimeError("Load failed")
             result = module._get_eval_model()
             assert result is None
@@ -333,7 +345,7 @@ class TestOnPostRespondEmptyMessages:
             eval_config=EvalConfig(provider="test", model="model"),
         )
 
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
+        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
             mock_model = MagicMock()
             mock_load.return_value = mock_model
 

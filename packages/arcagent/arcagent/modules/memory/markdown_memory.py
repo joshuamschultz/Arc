@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import shlex
-from collections.abc import Coroutine
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,7 @@ from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.entity_extractor import EntityExtractor
 from arcagent.modules.memory.hybrid_search import HybridSearch
-from arcagent.utils import load_eval_model
+from arcagent.utils.eval_helpers import get_eval_model, spawn_background
 from arcagent.utils.io import CHARS_PER_TOKEN
 
 _logger = logging.getLogger("arcagent.modules.memory")
@@ -39,14 +38,8 @@ _MEMORY_SUBPATHS = (
     "entities/",
 )
 
-# Maximum background tasks before dropping new ones (backpressure)
-_MAX_BACKGROUND_QUEUE = 10
-
 # Maximum identity audit snapshots retained (prevents unbounded growth)
 _MAX_AUDIT_SNAPSHOTS = 50
-
-# Default timeout for background eval tasks
-_BACKGROUND_TASK_TIMEOUT = 120.0
 
 
 class NoteManager:
@@ -255,35 +248,16 @@ class MarkdownMemoryModule:
         bus.subscribe("agent:pre_compaction", self._on_pre_compaction, priority=50)
 
     def _get_eval_model(self) -> Any:
-        """Lazy-init eval model from config, fallback to agent's LLM config.
-
-        Respects ``EvalConfig.fallback_behavior``:
-        - ``"skip"``: return None on failure (default)
-        - ``"error"``: raise on failure
-        """
-        if self._eval_model is not None:
-            return self._eval_model
-
-        eval_cfg = self._eval_config
-        if eval_cfg.provider and eval_cfg.model:
-            model_id = f"{eval_cfg.provider}/{eval_cfg.model}"
-        elif self._llm_config is not None:
-            model_id = self._llm_config.model
-        else:
-            if eval_cfg.fallback_behavior == "error":
-                msg = "No eval model config and no LLM config fallback"
-                raise RuntimeError(msg)
-            _logger.warning("No eval model config and no LLM config fallback")
-            return None
-
-        try:
-            self._eval_model = load_eval_model(model_id)
-        except Exception:
-            if eval_cfg.fallback_behavior == "error":
-                raise
-            _logger.exception("Failed to load eval model: %s", model_id)
-            return None
-        return self._eval_model
+        """Lazy-init eval model, caching result."""
+        result = get_eval_model(
+            cached_model=self._eval_model,
+            eval_config=self._eval_config,
+            llm_config=self._llm_config,
+            logger=_logger,
+        )
+        if result is not None:
+            self._eval_model = result
+        return result
 
     def _register_search_tool(self, tool_registry: Any) -> None:
         """Register memory_search as a callable tool."""
@@ -463,7 +437,15 @@ class MarkdownMemoryModule:
 
         # Entity extraction on every response
         if self._config.entity_extraction_enabled:
-            self._spawn_background(self._entity_extractor.extract(messages, model))
+            spawn_background(
+                self._entity_extractor.extract(messages, model),
+                background_tasks=self._background_tasks,
+                semaphore=self._semaphore,
+                eval_config=self._eval_config,
+                telemetry=self._telemetry,
+                audit_event_name="memory.background_error",
+                logger=_logger,
+            )
 
     async def _on_pre_compaction(self, ctx: EventContext) -> None:
         """Handle pre-compaction memory flush (OpenClaw pattern).
@@ -491,40 +473,6 @@ class MarkdownMemoryModule:
                 encoding="utf-8",
             )
             _logger.info("Created daily notes file: %s", notes_file.name)
-
-    def _spawn_background(self, coro: Coroutine[Any, Any, None]) -> None:
-        """Fire-and-forget with semaphore, timeout, backpressure, and logging."""
-        # Backpressure: drop tasks when queue is full
-        if len(self._background_tasks) >= _MAX_BACKGROUND_QUEUE:
-            _logger.warning(
-                "Background task queue full (%d), dropping task",
-                _MAX_BACKGROUND_QUEUE,
-            )
-            coro.close()  # Prevent ResourceWarning
-            return
-
-        async def _semaphore_wrapped() -> None:
-            async with self._semaphore:
-                await asyncio.wait_for(coro, timeout=_BACKGROUND_TASK_TIMEOUT)
-
-        task = asyncio.create_task(_semaphore_wrapped())
-        self._background_tasks.add(task)
-
-        def _on_done(t: asyncio.Task[None]) -> None:
-            self._background_tasks.discard(t)
-            if t.cancelled():
-                return
-            exc = t.exception()
-            if exc:
-                self._telemetry.audit_event(
-                    "memory.background_error",
-                    {
-                        "error": str(exc),
-                        "type": type(exc).__name__,
-                    },
-                )
-
-        task.add_done_callback(_on_done)
 
     def _resolve_path(self, tool_name: str, args: dict[str, Any]) -> Path | None:
         """Extract and canonicalize file path from tool args."""

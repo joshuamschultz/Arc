@@ -3,9 +3,8 @@
 import logging
 from typing import Any
 
-from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules._logging import _sanitize, log_structured, validate_log_level
-from arcllm.modules.base import BaseModule
+from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool
 
 logger = logging.getLogger(__name__)
@@ -33,13 +32,7 @@ class AuditModule(BaseModule):
 
     def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
         super().__init__(config, inner)
-
-        unknown = set(config.keys()) - _VALID_CONFIG_KEYS
-        if unknown:
-            raise ArcLLMConfigError(
-                f"Unknown AuditModule config keys: {sorted(unknown)}. "
-                f"Valid keys: {sorted(_VALID_CONFIG_KEYS - {'enabled'})}"
-            )
+        validate_config_keys(config, _VALID_CONFIG_KEYS, "AuditModule")
 
         self._include_messages: bool = config.get("include_messages", False)
         self._include_response: bool = config.get("include_response", False)
@@ -61,9 +54,7 @@ class AuditModule(BaseModule):
             if tools is not None:
                 audit_span.set_attribute("arcllm.audit.tools_provided", len(tools))
             if response.tool_calls:
-                audit_span.set_attribute(
-                    "arcllm.audit.tool_calls", len(response.tool_calls)
-                )
+                audit_span.set_attribute("arcllm.audit.tool_calls", len(response.tool_calls))
 
             log_structured(
                 logger,

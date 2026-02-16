@@ -8,7 +8,7 @@ import httpx
 
 from arcllm.config import ModelMetadata, ProviderConfig
 from arcllm.exceptions import ArcLLMConfigError, ArcLLMParseError
-from arcllm.types import LLMProvider, LLMResponse, Message, Tool
+from arcllm.types import LLMProvider
 
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
@@ -29,8 +29,7 @@ class BaseAdapter(LLMProvider):
         api_key = os.environ.get(env_var, "")
         if config.provider.api_key_required and not api_key:
             raise ArcLLMConfigError(
-                f"Missing environment variable '{env_var}' for provider. "
-                "Set it to your API key."
+                f"Missing environment variable '{env_var}' for provider. Set it to your API key."
             )
         self._api_key = api_key
 
@@ -55,7 +54,7 @@ class BaseAdapter(LLMProvider):
             try:
                 return json.loads(raw)
             except json.JSONDecodeError as e:
-                raise ArcLLMParseError(raw_string=raw, original_error=e)
+                raise ArcLLMParseError(raw_string=raw, original_error=e) from e
         raise ArcLLMParseError(
             raw_string=str(raw),
             original_error=TypeError(f"Unexpected arguments type: {type(raw)}"),
@@ -65,13 +64,9 @@ class BaseAdapter(LLMProvider):
         """Resolve max_tokens and temperature from kwargs, model meta, or config."""
         max_tokens = kwargs.get(
             "max_tokens",
-            self._model_meta.max_output_tokens
-            if self._model_meta
-            else DEFAULT_MAX_OUTPUT_TOKENS,
+            self._model_meta.max_output_tokens if self._model_meta else DEFAULT_MAX_OUTPUT_TOKENS,
         )
-        temperature = kwargs.get(
-            "temperature", self._config.provider.default_temperature
-        )
+        temperature = kwargs.get("temperature", self._config.provider.default_temperature)
         return max_tokens, temperature
 
     @staticmethod

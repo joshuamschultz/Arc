@@ -6,9 +6,9 @@ import json
 from typing import Any
 
 from arcllm._pii import PiiDetector, RegexPiiDetector, redact_text
-from arcllm._signing import canonical_payload, create_signer, RequestSigner
+from arcllm._signing import RequestSigner, canonical_payload, create_signer
 from arcllm.exceptions import ArcLLMConfigError
-from arcllm.modules.base import BaseModule
+from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.types import (
     ContentBlock,
     LLMProvider,
@@ -48,13 +48,7 @@ class SecurityModule(BaseModule):
 
     def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
         super().__init__(config, inner)
-
-        unknown = set(config.keys()) - _VALID_CONFIG_KEYS
-        if unknown:
-            raise ArcLLMConfigError(
-                f"Unknown SecurityModule config keys: {sorted(unknown)}. "
-                f"Valid keys: {sorted(_VALID_CONFIG_KEYS - {'enabled'})}"
-            )
+        validate_config_keys(config, _VALID_CONFIG_KEYS, "SecurityModule")
 
         # Build PII detector (lazy — only if PII enabled)
         self._pii_detector: PiiDetector | None = None
@@ -66,9 +60,7 @@ class SecurityModule(BaseModule):
                     f"Unsupported pii_detector type: {detector_type!r}. "
                     f"Supported: {sorted(_VALID_DETECTORS)}"
                 )
-            self._pii_detector = RegexPiiDetector(
-                custom_patterns=custom_patterns or None
-            )
+            self._pii_detector = RegexPiiDetector(custom_patterns=custom_patterns or None)
 
         # Build signer (lazy — only if signing enabled)
         self._signer: RequestSigner | None = None
@@ -177,9 +169,7 @@ class SecurityModule(BaseModule):
 
         return response
 
-    def _attach_signature(
-        self, response: LLMResponse, signature: str
-    ) -> LLMResponse:
+    def _attach_signature(self, response: LLMResponse, signature: str) -> LLMResponse:
         """Attach signing metadata to response."""
         metadata = dict(response.metadata) if response.metadata else {}
         metadata["request_signature"] = signature

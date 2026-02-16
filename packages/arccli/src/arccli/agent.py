@@ -957,6 +957,65 @@ def _run_validation(agent_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# serve — long-running daemon with scheduler
+# ---------------------------------------------------------------------------
+
+
+@agent.command("serve")
+@click.argument("path")
+@click.option("--verbose", is_flag=True, help="Log schedule fires and results.")
+def agent_serve(path: str, verbose: bool) -> None:
+    """Run agent as a long-lived daemon with active scheduler.
+
+    The agent stays warm and executes scheduled tasks (cron, interval,
+    one-time) until stopped with SIGTERM or SIGINT.
+
+    \b
+    Examples:
+      arc agent serve my-agent
+      arc agent serve my-agent --verbose
+    """
+    import signal
+
+    _load_env()
+    agent_dir = _resolve_agent_dir(path)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    shutdown_event = asyncio.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, shutdown_event.set)
+
+    try:
+        loop.run_until_complete(_serve(agent_dir, shutdown_event, verbose))
+    finally:
+        loop.close()
+
+
+async def _serve(agent_dir: Path, shutdown_event: asyncio.Event, verbose: bool) -> None:
+    """Async serve function — startup agent, wait for shutdown, cleanup."""
+    arc_agent, config, config_path = _load_arcagent(agent_dir)
+
+    if verbose:
+        import logging
+        logging.getLogger("arcagent.scheduler").setLevel(logging.DEBUG)
+
+    await arc_agent.startup()
+    agent_name = config.agent.name
+    click_echo(f"Serving agent: {agent_name}")
+    click_echo(f"Scheduler active. Press Ctrl+C to stop.")
+    click_echo("-" * 40)
+
+    try:
+        await shutdown_event.wait()
+    finally:
+        click_echo("\nShutting down...")
+        await arc_agent.shutdown()
+        click_echo("Done.")
+
+
+# ---------------------------------------------------------------------------
 # run — one-shot task execution through ArcAgent
 # ---------------------------------------------------------------------------
 

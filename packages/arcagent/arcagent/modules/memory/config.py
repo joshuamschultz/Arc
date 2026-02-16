@@ -7,14 +7,15 @@ Validated internally by the module on construction.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from arcagent.modules.base_config import ModuleConfig
 
 
-class MemoryConfig(BaseModel):
+class MemoryConfig(ModuleConfig):
     """Memory module configuration.
 
     All fields have defaults so the module works out-of-the-box
-    with zero configuration.
+    with zero configuration. Inherits ``extra="forbid"`` from
+    ModuleConfig for typo detection.
     """
 
     context_budget_tokens: int = 2000

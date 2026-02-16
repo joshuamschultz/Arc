@@ -5,10 +5,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env for API keys. Vault replaces this in production.
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
-load_dotenv()  # Also check cwd
-
 from arcllm.config import (
     DefaultsConfig,
     GlobalConfig,
@@ -41,6 +37,10 @@ from arcllm.types import (
     ToolUseBlock,
     Usage,
 )
+
+# Load .env for API keys. Vault replaces this in production.
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+load_dotenv()  # Also check cwd
 
 # Adapter classes are lazily imported to avoid loading httpx at import time.
 # Access via `from arcllm import AnthropicAdapter` still works — __getattr__
@@ -81,60 +81,53 @@ def __getattr__(name: str):
 
 
 __all__ = [
-    # Adapters (lazy — loaded on first access)
     "AnthropicAdapter",
+    "ArcLLMAPIError",
+    "ArcLLMConfigError",
+    "ArcLLMError",
+    "ArcLLMParseError",
+    "AuditModule",
     "BaseAdapter",
+    "BaseModule",
+    "ContentBlock",
     "DeepseekAdapter",
+    "DefaultsConfig",
+    "FallbackModule",
     "FireworksAdapter",
+    "GlobalConfig",
     "GroqAdapter",
     "HuggingfaceAdapter",
     "Huggingface_TgiAdapter",
-    "MistralAdapter",
-    "MoonshotAdapter",
-    "OllamaAdapter",
-    "OpenaiAdapter",
-    "TogetherAdapter",
-    "VllmAdapter",
-    # Modules (lazy — loaded on first access)
-    "AuditModule",
-    "BaseModule",
-    "FallbackModule",
-    "OtelModule",
-    "RateLimitModule",
-    "RetryModule",
-    "SecurityModule",
-    "TelemetryModule",
-    "VaultResolver",
-    # Config types
-    "DefaultsConfig",
-    "GlobalConfig",
-    "ModelMetadata",
-    "ModuleConfig",
-    "ProviderConfig",
-    "ProviderSettings",
-    "VaultConfig",
-    # Config loaders
-    "load_global_config",
-    "load_provider_config",
-    # Types
-    "StopReason",
-    "ContentBlock",
     "ImageBlock",
     "LLMProvider",
     "LLMResponse",
     "Message",
+    "MistralAdapter",
+    "ModelMetadata",
+    "ModuleConfig",
+    "MoonshotAdapter",
+    "OllamaAdapter",
+    "OpenaiAdapter",
+    "OtelModule",
+    "ProviderConfig",
+    "ProviderSettings",
+    "RateLimitModule",
+    "RetryModule",
+    "SecurityModule",
+    "StopReason",
+    "TelemetryModule",
     "TextBlock",
+    "TogetherAdapter",
     "Tool",
     "ToolCall",
     "ToolResultBlock",
     "ToolUseBlock",
     "Usage",
-    # Exceptions
-    "ArcLLMAPIError",
-    "ArcLLMConfigError",
-    "ArcLLMError",
-    "ArcLLMParseError",
-    # Public API
+    "VaultConfig",
+    "VaultResolver",
+    "VllmAdapter",
     "clear_cache",
+    "load_global_config",
     "load_model",
+    "load_provider_config",
 ]

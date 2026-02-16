@@ -42,9 +42,7 @@ _BUILTIN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
     (
         "PHONE",
-        re.compile(
-            r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"
-        ),
+        re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
     ),
     ("IPV4", re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")),
 ]
@@ -70,7 +68,7 @@ class RegexPiiDetector:
                 except re.error as e:
                     raise ArcLLMConfigError(
                         f"Invalid regex for custom PII pattern '{name}': {e}"
-                    )
+                    ) from e
                 self._patterns.append((name, compiled))
 
     def detect(self, text: str) -> list[PiiMatch]:

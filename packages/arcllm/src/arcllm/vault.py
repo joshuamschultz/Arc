@@ -63,11 +63,11 @@ class VaultResolver:
         module_path, class_name = backend_ref.rsplit(":", 1)
         try:
             module = importlib.import_module(module_path)
-        except ImportError:
+        except ImportError as e:
             raise ArcLLMConfigError(
                 f"Vault backend '{backend_ref}' not installed. "
                 f"Could not import module '{module_path}'."
-            )
+            ) from e
 
         backend_class = getattr(module, class_name, None)
         if backend_class is None:

@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from arcllm.exceptions import ArcLLMConfigError
-from arcllm.modules.base import BaseModule
+from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,82 @@ _VALID_CONFIG_KEYS = {
 _sdk_configured = False
 
 
+def reset_sdk() -> None:
+    """Reset the SDK configured flag (for test isolation)."""
+    global _sdk_configured
+    _sdk_configured = False
+
+
+def _build_tls_kwargs(config: dict[str, Any]) -> dict[str, Any]:
+    """Build TLS credential kwargs from config (shared by gRPC and HTTP)."""
+    kwargs: dict[str, Any] = {}
+    if config.get("certificate_file"):
+        kwargs["certificate_file"] = config["certificate_file"]
+    if config.get("client_key_file"):
+        kwargs["client_key_file"] = config["client_key_file"]
+    if config.get("client_cert_file"):
+        kwargs["client_certificate_file"] = config["client_cert_file"]
+    return kwargs
+
+
+def _create_otlp_exporter(config: dict[str, Any]) -> Any:
+    """Create an OTLP exporter (gRPC or HTTP) from config."""
+    protocol = config.get("protocol", "grpc")
+    endpoint = config.get("endpoint", "http://localhost:4317")
+    headers = config.get("headers", {})
+    insecure = config.get("insecure", False)
+    timeout_ms = config.get("timeout_ms", 10000)
+    tls_kwargs = _build_tls_kwargs(config)
+
+    if protocol == "grpc":
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter,
+            )
+        except ImportError as e:
+            raise ArcLLMConfigError(
+                "OTLP gRPC exporter not installed. Run: pip install arcllm[otel]"
+            ) from e
+        return OTLPSpanExporter(
+            endpoint=endpoint,
+            headers=headers or None,
+            insecure=insecure,
+            timeout=timeout_ms // 1000,
+            **tls_kwargs,
+        )
+
+    # HTTP protocol
+    try:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+    except ImportError as e:
+        raise ArcLLMConfigError(
+            "OTLP HTTP exporter not installed. Run: pip install arcllm[otel]"
+        ) from e
+    return OTLPSpanExporter(
+        endpoint=endpoint,
+        headers=headers or None,
+        timeout=timeout_ms // 1000,
+        **tls_kwargs,
+    )
+
+
+def _create_exporter(config: dict[str, Any]) -> Any:
+    """Create the appropriate span exporter from config."""
+    exporter_type = config.get("exporter", "otlp")
+
+    if exporter_type == "otlp":
+        return _create_otlp_exporter(config)
+
+    if exporter_type == "console":
+        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+
+        return ConsoleSpanExporter()
+
+    return None  # "none" — validated upstream, should not reach here
+
+
 def _setup_sdk(config: dict[str, Any]) -> None:
     """Configure OTel SDK TracerProvider, exporter, sampler, and processor.
 
@@ -49,10 +125,8 @@ def _setup_sdk(config: dict[str, Any]) -> None:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
-    except ImportError:
-        raise ArcLLMConfigError(
-            "OTel SDK not installed. Run: pip install arcllm[otel]"
-        )
+    except ImportError as e:
+        raise ArcLLMConfigError("OTel SDK not installed. Run: pip install arcllm[otel]") from e
 
     from opentelemetry import trace
 
@@ -61,76 +135,15 @@ def _setup_sdk(config: dict[str, Any]) -> None:
     resource_attrs.update(config.get("resource_attributes", {}))
     resource = Resource.create(resource_attrs)
 
-    # Sampler
-    sample_rate = config.get("sample_rate", 1.0)
-    sampler = TraceIdRatioBased(sample_rate)
-
-    # TracerProvider
+    # Sampler + Provider
+    sampler = TraceIdRatioBased(config.get("sample_rate", 1.0))
     provider = TracerProvider(resource=resource, sampler=sampler)
 
-    # Exporter
-    exporter_type = config.get("exporter", "otlp")
-    certificate_file = config.get("certificate_file")
-    client_key_file = config.get("client_key_file")
-    client_cert_file = config.get("client_cert_file")
+    # Exporter + Processor
+    exporter = _create_exporter(config)
+    if exporter is None:
+        return
 
-    if exporter_type == "otlp":
-        endpoint = config.get("endpoint", "http://localhost:4317")
-        protocol = config.get("protocol", "grpc")
-        headers = config.get("headers", {})
-        insecure = config.get("insecure", False)
-        timeout_ms = config.get("timeout_ms", 10000)
-
-        # Build TLS credential kwargs (shared by gRPC and HTTP)
-        tls_kwargs: dict[str, Any] = {}
-        if certificate_file:
-            tls_kwargs["certificate_file"] = certificate_file
-        if client_key_file:
-            tls_kwargs["client_key_file"] = client_key_file
-        if client_cert_file:
-            tls_kwargs["client_certificate_file"] = client_cert_file
-
-        if protocol == "grpc":
-            try:
-                from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-                    OTLPSpanExporter,
-                )
-            except ImportError:
-                raise ArcLLMConfigError(
-                    "OTLP gRPC exporter not installed. "
-                    "Run: pip install arcllm[otel]"
-                )
-            exporter = OTLPSpanExporter(
-                endpoint=endpoint,
-                headers=headers or None,
-                insecure=insecure,
-                timeout=timeout_ms // 1000,
-                **tls_kwargs,
-            )
-        else:  # http
-            try:
-                from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                    OTLPSpanExporter,
-                )
-            except ImportError:
-                raise ArcLLMConfigError(
-                    "OTLP HTTP exporter not installed. "
-                    "Run: pip install arcllm[otel]"
-                )
-            exporter = OTLPSpanExporter(
-                endpoint=endpoint,
-                headers=headers or None,
-                timeout=timeout_ms // 1000,
-                **tls_kwargs,
-            )
-    elif exporter_type == "console":
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
-
-        exporter = ConsoleSpanExporter()
-    else:
-        return  # Should not reach here due to validation
-
-    # Processor with batch tuning
     processor = BatchSpanProcessor(
         exporter,
         max_queue_size=config.get("max_queue_size", 2048),
@@ -168,37 +181,24 @@ class OtelModule(BaseModule):
 
     def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
         super().__init__(config, inner)
+        validate_config_keys(config, _VALID_CONFIG_KEYS, "OtelModule")
 
-        # Validate config keys
-        unknown = set(config.keys()) - _VALID_CONFIG_KEYS
-        if unknown:
-            raise ArcLLMConfigError(
-                f"Unknown OtelModule config keys: {sorted(unknown)}. "
-                f"Valid keys: {sorted(_VALID_CONFIG_KEYS - {'enabled'})}"
-            )
-
-        # Validate exporter
         exporter = config.get("exporter", "otlp")
         if exporter not in _VALID_EXPORTERS:
             raise ArcLLMConfigError(
-                f"Invalid exporter '{exporter}'. "
-                f"Valid exporters: {sorted(_VALID_EXPORTERS)}"
+                f"Invalid exporter '{exporter}'. Valid exporters: {sorted(_VALID_EXPORTERS)}"
             )
 
-        # Validate protocol
         protocol = config.get("protocol", "grpc")
         if protocol not in _VALID_PROTOCOLS:
             raise ArcLLMConfigError(
-                f"Invalid protocol '{protocol}'. "
-                f"Valid protocols: {sorted(_VALID_PROTOCOLS)}"
+                f"Invalid protocol '{protocol}'. Valid protocols: {sorted(_VALID_PROTOCOLS)}"
             )
 
-        # Validate sample_rate
         sample_rate = config.get("sample_rate", 1.0)
         if not 0.0 <= sample_rate <= 1.0:
             raise ArcLLMConfigError("sample_rate must be between 0.0 and 1.0")
 
-        # Setup SDK if exporter is not 'none'
         if exporter != "none":
             _setup_sdk(config)
 
@@ -209,22 +209,14 @@ class OtelModule(BaseModule):
         **kwargs: Any,
     ) -> LLMResponse:
         with self._span("arcllm.invoke") as span:
-            # Pre-call attributes
             span.set_attribute("gen_ai.system", self._inner.name)
             span.set_attribute("gen_ai.request.model", self._inner.model_name)
 
             response = await self._inner.invoke(messages, tools, **kwargs)
 
-            # Post-call attributes from response
-            span.set_attribute(
-                "gen_ai.usage.input_tokens", response.usage.input_tokens
-            )
-            span.set_attribute(
-                "gen_ai.usage.output_tokens", response.usage.output_tokens
-            )
+            span.set_attribute("gen_ai.usage.input_tokens", response.usage.input_tokens)
+            span.set_attribute("gen_ai.usage.output_tokens", response.usage.output_tokens)
             span.set_attribute("gen_ai.response.model", response.model)
-            span.set_attribute(
-                "gen_ai.response.finish_reasons", [response.stop_reason]
-            )
+            span.set_attribute("gen_ai.response.finish_reasons", [response.stop_reason])
 
             return response

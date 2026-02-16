@@ -48,12 +48,9 @@ class ProviderSettings(BaseModel):
     def _validate_https(cls, v: str) -> str:
         """Enforce HTTPS for remote hosts. Allow HTTP only for localhost."""
         if v.startswith("http://") and not any(
-            v.startswith(f"http://{host}")
-            for host in ("localhost", "127.0.0.1", "[::1]")
+            v.startswith(f"http://{host}") for host in ("localhost", "127.0.0.1", "[::1]")
         ):
-            raise ValueError(
-                f"base_url must use HTTPS for remote hosts. Got: {v}"
-            )
+            raise ValueError(f"base_url must use HTTPS for remote hosts. Got: {v}")
         return v
 
 
@@ -120,10 +117,10 @@ def _load_toml_file(path: Path, context: str) -> dict[str, Any]:
     try:
         with open(path, "rb") as f:
             return tomllib.load(f)
-    except FileNotFoundError:
-        raise ArcLLMConfigError(f"{context} not found: {path}")
+    except FileNotFoundError as e:
+        raise ArcLLMConfigError(f"{context} not found: {path}") from e
     except tomllib.TOMLDecodeError as e:
-        raise ArcLLMConfigError(f"Failed to parse {context}: {e}")
+        raise ArcLLMConfigError(f"Failed to parse {context}: {e}") from e
 
 
 def _validate_provider_name(provider_name: str) -> None:
@@ -164,13 +161,12 @@ def load_global_config() -> GlobalConfig:
     try:
         defaults = DefaultsConfig(**data.get("defaults", {}))
         modules = {
-            name: ModuleConfig(**settings)
-            for name, settings in data.get("modules", {}).items()
+            name: ModuleConfig(**settings) for name, settings in data.get("modules", {}).items()
         }
         vault = VaultConfig(**data.get("vault", {}))
         return GlobalConfig(defaults=defaults, modules=modules, vault=vault)
     except ValidationError as e:
-        raise ArcLLMConfigError(f"Invalid global config: {e}")
+        raise ArcLLMConfigError(f"Invalid global config: {e}") from e
 
 
 def load_provider_config(provider_name: str) -> ProviderConfig:
@@ -189,11 +185,8 @@ def load_provider_config(provider_name: str) -> ProviderConfig:
     try:
         provider_settings = ProviderSettings(**data.get("provider", {}))
         models = {
-            name: ModelMetadata(**metadata)
-            for name, metadata in data.get("models", {}).items()
+            name: ModelMetadata(**metadata) for name, metadata in data.get("models", {}).items()
         }
         return ProviderConfig(provider=provider_settings, models=models)
     except ValidationError as e:
-        raise ArcLLMConfigError(
-            f"Invalid provider config for '{provider_name}': {e}"
-        )
+        raise ArcLLMConfigError(f"Invalid provider config for '{provider_name}': {e}") from e

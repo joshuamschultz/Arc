@@ -32,9 +32,9 @@ def clear_cache() -> None:
 
     clear_buckets()
 
-    import arcllm.modules.otel as _otel_mod
+    from arcllm.modules.otel import reset_sdk
 
-    _otel_mod._sdk_configured = False
+    reset_sdk()
 
 
 def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
@@ -50,18 +50,16 @@ def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
     module_path = f"arcllm.adapters.{provider_name}"
     try:
         module = importlib.import_module(module_path)
-    except ImportError:
+    except ImportError as e:
         raise ArcLLMConfigError(
             f"No adapter module found for provider '{provider_name}'. "
             f"Expected module: {module_path}"
-        )
+        ) from e
 
     class_name = f"{provider_name.title()}Adapter"
     adapter_class = getattr(module, class_name, None)
     if adapter_class is None:
-        raise ArcLLMConfigError(
-            f"No adapter class '{class_name}' found in module '{module_path}'"
-        )
+        raise ArcLLMConfigError(f"No adapter class '{class_name}' found in module '{module_path}'")
 
     _adapter_class_cache[provider_name] = adapter_class
     return adapter_class
@@ -144,7 +142,8 @@ def load_model(
         - ``dict``: enable with custom settings (merged over defaults)
         - ``None`` (default): use config.toml enabled flag
 
-    Stacking order (outermost first): Otel → Telemetry → Audit → Security → Retry → Fallback → RateLimit → Adapter.
+    Stacking order (outermost first):
+        Otel → Telemetry → Audit → Security → Retry → Fallback → RateLimit → Adapter.
 
     Args:
         provider: Provider name (e.g., "anthropic", "openai").
@@ -187,9 +186,7 @@ def load_model(
             )
         vault_path = config.provider.vault_path
         api_key_env = config.provider.api_key_env
-        resolved_key = _vault_resolver_cache.resolve_api_key(
-            api_key_env, vault_path or None
-        )
+        resolved_key = _vault_resolver_cache.resolve_api_key(api_key_env, vault_path or None)
         # Set env var so adapter picks it up transparently
         os.environ[api_key_env] = resolved_key
 
@@ -237,12 +234,8 @@ def load_model(
         # Inject pricing from provider model metadata
         model_meta = config.models.get(model_name)
         if model_meta is not None:
-            telemetry_config.setdefault(
-                "cost_input_per_1m", model_meta.cost_input_per_1m
-            )
-            telemetry_config.setdefault(
-                "cost_output_per_1m", model_meta.cost_output_per_1m
-            )
+            telemetry_config.setdefault("cost_input_per_1m", model_meta.cost_input_per_1m)
+            telemetry_config.setdefault("cost_output_per_1m", model_meta.cost_output_per_1m)
             telemetry_config.setdefault(
                 "cost_cache_read_per_1m", model_meta.cost_cache_read_per_1m
             )

@@ -55,9 +55,7 @@ def create_signer(algorithm: str, signing_key_env: str) -> RequestSigner:
     """
     key_value = os.environ.get(signing_key_env)
     if key_value is None:
-        raise ArcLLMConfigError(
-            f"Signing key environment variable '{signing_key_env}' not set"
-        )
+        raise ArcLLMConfigError(f"Signing key environment variable '{signing_key_env}' not set")
 
     if algorithm == "hmac-sha256":
         return HmacSigner(key=key_value.encode("utf-8"))
@@ -65,17 +63,14 @@ def create_signer(algorithm: str, signing_key_env: str) -> RequestSigner:
     if algorithm == "ecdsa-p256":
         try:
             import cryptography  # noqa: F401
-        except ImportError:
+        except ImportError as e:
             raise ArcLLMConfigError(
                 f"signing_algorithm='{algorithm}' requires arcllm[signing] "
                 "(pip install arcllm[signing])"
-            )
+            ) from e
         # ECDSA implementation would go here once cryptography is available
-        raise ArcLLMConfigError(
-            "ECDSA signing is available but not yet fully implemented"
-        )
+        raise ArcLLMConfigError("ECDSA signing is available but not yet fully implemented")
 
     raise ArcLLMConfigError(
-        f"Unsupported signing algorithm: '{algorithm}'. "
-        "Supported: 'hmac-sha256', 'ecdsa-p256'"
+        f"Unsupported signing algorithm: '{algorithm}'. Supported: 'hmac-sha256', 'ecdsa-p256'"
     )

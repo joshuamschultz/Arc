@@ -296,6 +296,32 @@ Config ----------- TOML files (global defaults + per-provider metadata)
 
 ---
 
+## Simplicity by the Numbers
+
+ArcLLM is radically smaller than alternatives. This is a design choice, not a limitation.
+
+| Metric | ArcLLM | pi-ai | LiteLLM |
+|--------|--------|-------|---------|
+| **Source LOC** | ~2,900 | ~22,600 | ~475,000 |
+| **Source files** | 33 | 38 | 1,558 |
+| **Runtime deps** | 3 | 13 | 12+ |
+| **Providers** | 11 | 9 | 100+ |
+
+**LOC per provider**: ArcLLM averages ~60 lines per provider adapter. Most are 11-line thin aliases over the OpenAI-compatible base. pi-ai averages ~630 lines per provider. LiteLLM averages ~1,300 lines per provider.
+
+Why this matters:
+
+- **Auditable** — A security reviewer can read the entire LLM layer in an afternoon. Try that with 475K lines.
+- **Debuggable** — When something breaks, the call stack is shallow. No framework magic, no middleware chains you can't trace.
+- **Maintainable** — Fewer lines means fewer bugs. Every line in ArcLLM exists because it has to, not because a feature flag needed a feature flag.
+- **Fast** — 3 runtime dependencies means fast installs, small container images, and minimal attack surface. pi-ai requires `@anthropic-ai/sdk`, `openai`, `@google/genai`, `@aws-sdk/client-bedrock-runtime`, and 9 more packages. LiteLLM requires `openai`, `tiktoken`, `tokenizers`, `aiohttp`, `jinja2`, `jsonschema`, and more.
+
+The tradeoff is provider count: LiteLLM supports 100+ providers because it wraps provider SDKs. pi-ai wraps 4 provider SDKs (Anthropic, OpenAI, Google, AWS) to cover 9 API backends. ArcLLM supports 11 providers via direct HTTP — no SDKs, no transitive dependency trees. Adding a new OpenAI-compatible provider is an 11-line file and a TOML config.
+
+*LOC measured with `find src -name "*.py" | xargs wc -l` (ArcLLM) and `find src -name "*.ts" | xargs wc -l` (pi-ai), excluding tests. Competitor numbers from public GitHub repos as of February 2026.*
+
+---
+
 ## Configuration
 
 **Global defaults** (`src/arcllm/config.toml`):

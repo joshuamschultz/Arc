@@ -44,9 +44,7 @@ class AnthropicAdapter(BaseAdapter):
             "content-type": "application/json",
         }
 
-    def _extract_system(
-        self, messages: list[Message]
-    ) -> tuple[str | None, list[Message]]:
+    def _extract_system(self, messages: list[Message]) -> tuple[str | None, list[Message]]:
         """Separate system messages from the rest.
 
         Anthropic takes `system` as a top-level param, not in messages.

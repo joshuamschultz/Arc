@@ -1,10 +1,9 @@
 """Core ArcLLM types — the contract everything builds on."""
 
 from abc import ABC, abstractmethod
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # ContentBlock variants (discriminated on `type` field)
@@ -37,7 +36,7 @@ class ToolResultBlock(BaseModel):
 
 # Discriminated union — pydantic checks `type` field to pick the right model.
 ContentBlock = Annotated[
-    Union[TextBlock, ImageBlock, ToolUseBlock, ToolResultBlock],
+    TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock,
     Field(discriminator="type"),
 ]
 
@@ -95,9 +94,7 @@ class Usage(BaseModel):
 # Stop reason (normalized across providers)
 # ---------------------------------------------------------------------------
 
-StopReason = Literal[
-    "end_turn", "tool_use", "max_tokens", "stop_sequence", "content_filter"
-]
+StopReason = Literal["end_turn", "tool_use", "max_tokens", "stop_sequence", "content_filter"]
 
 
 # ---------------------------------------------------------------------------

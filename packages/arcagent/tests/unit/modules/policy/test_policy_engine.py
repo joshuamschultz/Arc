@@ -525,3 +525,52 @@ class TestReflectEmptyResult:
             [{"role": "user", "content": "hello"}], model
         )
         assert delta is None
+
+
+class TestSanitizeBulletText:
+    """H-02: Unicode normalization and zero-width character stripping."""
+
+    def test_strips_zero_width_characters(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        # Zero-width space + zero-width non-joiner + zero-width joiner
+        text = "hello\u200b\u200cworld"
+        result = engine._sanitize_bullet_text(text)
+        assert result == "helloworld"
+
+    def test_nfkc_normalization(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        # Fullwidth latin small letter A → a
+        text = "\uff41\uff42\uff43"
+        result = engine._sanitize_bullet_text(text)
+        assert result == "abc"
+
+    def test_strips_control_characters(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        text = "hello\x00\x01\x08world"
+        result = engine._sanitize_bullet_text(text)
+        assert result == "helloworld"
+
+    def test_preserves_tabs_and_newlines(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        text = "hello\tworld\nfoo"
+        result = engine._sanitize_bullet_text(text)
+        assert result == "hello\tworld\nfoo"
+
+    def test_enforces_length_limit(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        text = "x" * 1000
+        result = engine._sanitize_bullet_text(text)
+        assert len(result) == 500  # Default max_bullet_text_length
+
+    def test_strips_bom(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        text = "\ufeffhello"
+        result = engine._sanitize_bullet_text(text)
+        assert result == "hello"
+
+    def test_strips_direction_override(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
+        # Right-to-left override U+202E
+        text = "hello\u202eworld"
+        result = engine._sanitize_bullet_text(text)
+        assert result == "helloworld"

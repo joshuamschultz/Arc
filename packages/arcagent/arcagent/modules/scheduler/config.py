@@ -7,11 +7,14 @@ Validated internally by the module on construction.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from arcagent.modules.base_config import ModuleConfig
 
 
-class SchedulerConfig(BaseModel):
-    """Scheduler module configuration."""
+class SchedulerConfig(ModuleConfig):
+    """Scheduler module configuration.
+
+    Inherits ``extra="forbid"`` from ModuleConfig for typo detection.
+    """
 
     enabled: bool = False
     min_interval_seconds: int = 60
