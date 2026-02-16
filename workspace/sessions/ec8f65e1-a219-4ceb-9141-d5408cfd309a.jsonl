@@ -1,2 +1,0 @@
-{"type": "message", "role": "user", "content": "What is 2+2?", "timestamp": "2026-02-16T05:10:12.550515+00:00"}
-{"type": "message", "role": "assistant", "content": "2 + 2 = 4\n\nThis is a simple arithmetic calculation. No tools are needed for this basic math problem!", "timestamp": "2026-02-16T05:10:14.171776+00:00"}
