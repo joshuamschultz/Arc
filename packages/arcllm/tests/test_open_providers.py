@@ -39,6 +39,7 @@ CLOUD_PROVIDERS = [
     ("deepseek", "DEEPSEEK_API_KEY", True, "https://api.deepseek.com"),
     ("huggingface", "HF_TOKEN", True, "https://api-inference.huggingface.co"),
     ("mistral", "MISTRAL_API_KEY", True, "https://api.mistral.ai"),
+    ("moonshot", "MOONSHOT_API_KEY", True, "https://api.moonshot.ai"),
 ]
 
 ALL_PROVIDERS = LOCAL_PROVIDERS + CLOUD_PROVIDERS
@@ -54,6 +55,7 @@ EXPECTED_NAMES = {
     "mistral": "mistral",
     "huggingface": "huggingface",
     "huggingface_tgi": "huggingface_tgi",
+    "moonshot": "moonshot",
 }
 
 
