@@ -5,12 +5,12 @@ description = "Arc: Autonomous agent framework"
 requires-python = ">=3.12"
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/arcllm", "packages/arcrun", "packages/arccli"]
+exclude = ["packages/arcagent"]
 
 [tool.uv.sources]
 arcllm = { workspace = true }
 arcrun = { workspace = true }
-arcagent = { workspace = true }
 arccli = { workspace = true }
 
 [tool.ruff]

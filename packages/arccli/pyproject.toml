@@ -11,7 +11,7 @@ dependencies = [
     "click>=8.0",
     "arcllm",
     "arcrun",
-    "arcagent",
+    # "arcagent",  # re-enable when arcagent is ready on main
     "python-dotenv>=1.0",
 ]
 
