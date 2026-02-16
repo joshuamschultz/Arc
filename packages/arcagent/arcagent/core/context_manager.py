@@ -1,0 +1,225 @@
+"""Context Manager — system prompt assembly, token counting, pruning.
+
+Monitors token budget and applies graduated strategies:
+- Prune threshold (70%): Observation masking (replace old tool outputs)
+- Compact threshold (85%): LLM summarization (stub in Phase 3)
+- Emergency threshold (95%): Force truncation
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from pathlib import Path
+
+# TYPE_CHECKING-only import to avoid circular dependency
+from typing import TYPE_CHECKING, Any
+
+from arcagent.core.config import ContextConfig
+from arcagent.core.telemetry import AgentTelemetry
+
+if TYPE_CHECKING:
+    from arcagent.core.module_bus import ModuleBus
+
+_logger = logging.getLogger("arcagent.context_manager")
+
+# Workspace files that compose the system prompt (in order)
+_PROMPT_FILES = ["identity.md", "policy.md", "context.md"]
+
+# Section ordering for final prompt assembly
+_SECTION_ORDER = ["identity", "notes", "skills", "policy", "context"]
+
+# Approximate characters per token for estimation
+_CHARS_PER_TOKEN = 4
+
+
+def _msg_attr(msg: Any, key: str, default: Any = "") -> Any:
+    """Extract attribute from a message (dict or Pydantic model)."""
+    if isinstance(msg, dict):
+        return msg.get(key, default)
+    return getattr(msg, key, default)
+
+
+def _msg_content_str(msg: Any) -> str:
+    """Extract string content from a message, or empty string."""
+    content = _msg_attr(msg, "content", "")
+    return content if isinstance(content, str) else ""
+
+
+class ContextManager:
+    """Manages context window: prompt assembly, token tracking, pruning."""
+
+    def __init__(
+        self,
+        config: ContextConfig,
+        telemetry: AgentTelemetry | Any,
+        bus: ModuleBus | None = None,
+    ) -> None:
+        self._config = config
+        self._telemetry = telemetry
+        self._bus = bus
+        self._reported_input_tokens: int = 0
+        self._reported_output_tokens: int = 0
+
+    @property
+    def reported_input_tokens(self) -> int:
+        return self._reported_input_tokens
+
+    @property
+    def reported_output_tokens(self) -> int:
+        return self._reported_output_tokens
+
+    async def assemble_system_prompt(self, workspace: Path) -> str:
+        """Build system prompt from workspace files.
+
+        Reads identity.md, policy.md, context.md. If bus is present,
+        emits agent:assemble_prompt so modules can inject sections
+        (e.g. daily notes). Sections ordered: identity, notes, policy, context.
+        """
+        sections: dict[str, str] = {}
+        for filename in _PROMPT_FILES:
+            filepath = workspace / filename
+            if filepath.exists():
+                content = filepath.read_text(encoding="utf-8").strip()
+                if content:
+                    sections[filename.removesuffix(".md")] = content
+
+        # Let modules inject content via event
+        if self._bus is not None:
+            await self._bus.emit(
+                "agent:assemble_prompt",
+                {"sections": sections, "workspace": str(workspace)},
+            )
+
+        # Build final prompt from sections in defined order
+        parts: list[str] = []
+        for key in _SECTION_ORDER:
+            if sections.get(key):
+                parts.append(f"--- {key} ---\n{sections[key]}")
+
+        return "\n\n".join(parts)
+
+    def estimate_tokens(self, text: str) -> int:
+        """Estimate token count with conservative multiplier.
+
+        Uses character-based heuristic (~4 chars/token) with
+        configurable multiplier (default 1.1x).
+        """
+        if not text:
+            return 0
+        raw = len(text) / _CHARS_PER_TOKEN
+        return math.ceil(raw * self._config.estimate_multiplier)
+
+    def usage_ratio(self, text: str) -> float:
+        """Calculate usage ratio (estimated tokens / max tokens)."""
+        return self.estimate_tokens(text) / self._config.max_tokens
+
+    def _estimate_ratio(self, messages: list[Any]) -> float:
+        """Estimate token usage ratio for a message list."""
+        total_text = "".join(_msg_content_str(m) for m in messages)
+        return self.estimate_tokens(total_text) / self._config.max_tokens
+
+    def update_reported_usage(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        """Accumulate provider-reported token usage."""
+        self._reported_input_tokens += input_tokens
+        self._reported_output_tokens += output_tokens
+
+    def prune_observations(
+        self,
+        messages: list[Any],
+        protected_recent_tokens: int = 40000,
+    ) -> list[Any]:
+        """Replace old tool outputs with placeholders.
+
+        Observation masking (JetBrains Research): replaces old tool
+        outputs with '[output pruned — N tokens]' while preserving
+        tool call metadata and recent outputs.
+        """
+        if not messages:
+            return messages
+
+        # Calculate token budget for recent messages (from end)
+        # Everything within the protected_recent_tokens window is safe
+        recent_tokens = 0
+        protected_start = 0  # Default: protect all messages
+        for i in range(len(messages) - 1, -1, -1):
+            content = _msg_content_str(messages[i])
+            if content:
+                msg_tokens = self.estimate_tokens(content)
+                recent_tokens += msg_tokens
+                if recent_tokens > protected_recent_tokens:
+                    protected_start = i + 1
+                    break
+
+        # Prune old tool outputs (before protected zone)
+        result = []
+        for i, msg in enumerate(messages):
+            role = _msg_attr(msg, "role", "")
+            content = _msg_content_str(msg)
+            if i < protected_start and role == "tool" and content:
+                original_tokens = self.estimate_tokens(content)
+                if isinstance(msg, dict):
+                    pruned_msg = {**msg}
+                    pruned_msg["content"] = f"[output pruned — {original_tokens} tokens]"
+                else:
+                    pruned_msg = msg.model_copy(
+                        update={"content": f"[output pruned — {original_tokens} tokens]"}
+                    )
+                result.append(pruned_msg)
+            else:
+                result.append(msg)
+
+        return result
+
+    def transform_context(self, messages: list[Any]) -> list[Any]:
+        """Callback for arcrun.run(transform_context=...).
+
+        Called before each LLM call. Applies graduated token management:
+        1. Estimate current usage
+        2. If > prune_threshold: mask old tool outputs
+        3. If > emergency_threshold: force truncation
+        """
+        if not messages:
+            return messages
+
+        ratio = self._estimate_ratio(messages)
+
+        # Below prune threshold — no action
+        if ratio < self._config.prune_threshold:
+            return messages
+
+        # Above prune threshold — mask old tool outputs
+        protected = int(self._config.max_tokens * 0.4)
+        result = self.prune_observations(messages, protected_recent_tokens=protected)
+
+        # Re-estimate after pruning
+        ratio = self._estimate_ratio(result)
+
+        # Above emergency threshold — force truncation
+        if ratio >= self._config.emergency_threshold:
+            result = self._emergency_truncate(result)
+            _logger.warning("Emergency truncation applied: %.1f%% usage", ratio * 100)
+
+        return result
+
+    def _emergency_truncate(self, messages: list[Any]) -> list[Any]:
+        """Force-truncate oldest messages to get under emergency threshold.
+
+        Always preserves the most recent messages.
+        """
+        target_tokens = int(self._config.max_tokens * self._config.compact_threshold)
+
+        # Build from newest to oldest until we hit budget
+        kept: list[Any] = []
+        accumulated = 0
+        for msg in reversed(messages):
+            content = _msg_content_str(msg)
+            msg_tokens = self.estimate_tokens(content) if content else 0
+            if accumulated + msg_tokens <= target_tokens:
+                kept.append(msg)
+                accumulated += msg_tokens
+            else:
+                break
+
+        kept.reverse()
+        return kept
