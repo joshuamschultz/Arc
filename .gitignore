@@ -48,11 +48,9 @@ Thumbs.db
 *.key
 !*.key.pub
 
-# Claude Code (keep only specs/)
-.claude/*
-!.claude/specs/
-**/.claude/*
-!**/.claude/specs/
+# Claude Code
+.claude/
+**/.claude/
 CLAUDE.md
 
 # Work files
