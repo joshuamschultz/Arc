@@ -1,0 +1,9 @@
+{
+  "feature": "phase1b-agent-runtime",
+  "started": "2026-02-15",
+  "status": "in_progress",
+  "current_category": "architecture",
+  "current_decision": 1,
+  "decisions_made": [],
+  "notes": "Phase 1b: Extension system, skill registry, session persistence, compaction, additional tools, settings manager, CLI wiring. Informed by pi-coding-agent comparison research."
+}
