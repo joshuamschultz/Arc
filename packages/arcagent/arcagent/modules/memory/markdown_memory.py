@@ -19,12 +19,12 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from arcagent.core.config import EvalConfig, MemoryConfig
+from arcagent.core.config import EvalConfig
 from arcagent.core.module_bus import EventContext, ModuleContext
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
+from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.entity_extractor import EntityExtractor
 from arcagent.modules.memory.hybrid_search import HybridSearch
-from arcagent.modules.memory.policy_engine import PolicyEngine
 from arcagent.utils import load_eval_model
 from arcagent.utils.io import CHARS_PER_TOKEN
 
@@ -203,47 +203,38 @@ class MarkdownMemoryModule:
     - ContextGuard: context.md token budget enforcement
     - IdentityAuditor: identity.md audit trail
     - EntityExtractor: async LLM-driven entity extraction
-    - PolicyEngine: ACE-based self-learning policy
     """
 
     def __init__(
         self,
-        config: MemoryConfig,
-        eval_config: EvalConfig,
-        telemetry: Any,
-        workspace: Path,
+        config: dict[str, Any] | None = None,
+        eval_config: EvalConfig | None = None,
+        telemetry: Any = None,
+        workspace: Path = Path("."),
         llm_config: Any | None = None,
         eval_model: Any | None = None,
     ) -> None:
-        self._config = config
-        self._eval_config = eval_config
+        self._config = MemoryConfig(**(config or {}))
+        self._eval_config = eval_config or EvalConfig()
         self._llm_config = llm_config
         self._telemetry = telemetry
         self._workspace = workspace.resolve()
         self._eval_model = eval_model
 
         # Internal helpers
-        self._notes = NoteManager(workspace, config)
-        self._context_guard = ContextGuard(config.context_budget_tokens)
+        self._notes = NoteManager(workspace, self._config)
+        self._context_guard = ContextGuard(self._config.context_budget_tokens)
         self._identity_auditor = IdentityAuditor(workspace, telemetry)
         self._entity_extractor = EntityExtractor(
-            eval_config=eval_config,
+            eval_config=self._eval_config,
             workspace=workspace,
             telemetry=telemetry,
-        )
-        self._policy_engine = PolicyEngine(
-            eval_config=eval_config,
-            workspace=workspace,
-            telemetry=telemetry,
-            memory_config=config,
         )
 
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._hook_active: bool = False
-        self._session_messages: list[dict[str, Any]] = []
-        self._turn_count: int = 0
-        self._semaphore = asyncio.Semaphore(eval_config.max_concurrent)
-        self._hybrid_search = HybridSearch(workspace, config)
+        self._semaphore = asyncio.Semaphore(self._eval_config.max_concurrent)
+        self._hybrid_search = HybridSearch(workspace, self._config)
 
     @property
     def name(self) -> str:
@@ -262,7 +253,6 @@ class MarkdownMemoryModule:
         )
         bus.subscribe("agent:post_respond", self._on_post_respond, priority=100)
         bus.subscribe("agent:pre_compaction", self._on_pre_compaction, priority=50)
-        bus.subscribe("agent:shutdown", self._on_shutdown, priority=50)
 
     def _get_eval_model(self) -> Any:
         """Lazy-init eval model from config, fallback to agent's LLM config.
@@ -449,7 +439,7 @@ class MarkdownMemoryModule:
         )
 
     async def _on_post_respond(self, ctx: EventContext) -> None:
-        """Fire async entity extraction and periodic policy evaluation."""
+        """Fire async entity extraction after each response."""
         from datetime import date
 
         model = self._get_eval_model()
@@ -459,11 +449,6 @@ class MarkdownMemoryModule:
         messages = ctx.data.get("messages", [])
         if not messages:
             return
-
-        session_id = ctx.data.get("session_id", "")
-
-        # Accumulate messages for session-end policy evaluation
-        self._session_messages = messages
 
         # Ensure today's notes file exists (auto-create on first turn of day)
         today = date.today()
@@ -479,14 +464,6 @@ class MarkdownMemoryModule:
         # Entity extraction on every response
         if self._config.entity_extraction_enabled:
             self._spawn_background(self._entity_extractor.extract(messages, model))
-
-        # Policy evaluation at configured interval
-        self._turn_count += 1
-        interval = self._config.policy_eval_interval_turns
-        if self._turn_count % interval == 0:
-            self._spawn_background(
-                self._policy_engine.evaluate(messages, model, session_id=session_id)
-            )
 
     async def _on_pre_compaction(self, ctx: EventContext) -> None:
         """Handle pre-compaction memory flush (OpenClaw pattern).
@@ -514,20 +491,6 @@ class MarkdownMemoryModule:
                 encoding="utf-8",
             )
             _logger.info("Created daily notes file: %s", notes_file.name)
-
-    async def _on_shutdown(self, ctx: EventContext) -> None:
-        """Run policy evaluation once at session end."""
-        if not self._session_messages:
-            return
-
-        model = self._get_eval_model()
-        if model is None:
-            return
-
-        session_id = ctx.data.get("session_id", "")
-        await self._policy_engine.evaluate(
-            self._session_messages, model, session_id=session_id
-        )
 
     def _spawn_background(self, coro: Coroutine[Any, Any, None]) -> None:
         """Fire-and-forget with semaphore, timeout, backpressure, and logging."""

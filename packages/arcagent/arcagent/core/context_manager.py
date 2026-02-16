@@ -23,11 +23,8 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("arcagent.context_manager")
 
-# Workspace files that compose the system prompt (in order)
-_PROMPT_FILES = ["identity.md", "policy.md", "context.md"]
-
-# Section ordering for final prompt assembly
-_SECTION_ORDER = ["identity", "notes", "memory_guidance", "skills", "policy", "context"]
+# Core workspace files that compose the system prompt
+_CORE_PROMPT_FILES = ["identity.md", "context.md"]
 
 # Approximate characters per token for estimation
 _CHARS_PER_TOKEN = 4
@@ -72,12 +69,12 @@ class ContextManager:
     async def assemble_system_prompt(self, workspace: Path) -> str:
         """Build system prompt from workspace files.
 
-        Reads identity.md, policy.md, context.md. If bus is present,
-        emits agent:assemble_prompt so modules can inject sections
-        (e.g. daily notes). Sections ordered: identity, notes, policy, context.
+        Reads core files (identity.md, context.md), then emits
+        agent:assemble_prompt so modules can inject their own sections.
+        Final ordering: identity first, context last, rest alphabetically.
         """
         sections: dict[str, str] = {}
-        for filename in _PROMPT_FILES:
+        for filename in _CORE_PROMPT_FILES:
             filepath = workspace / filename
             if filepath.exists():
                 content = filepath.read_text(encoding="utf-8").strip()
@@ -91,11 +88,18 @@ class ContextManager:
                 {"sections": sections, "workspace": str(workspace)},
             )
 
-        # Build final prompt from sections in defined order
+        # Dynamic ordering: identity first, context last, rest sorted
         parts: list[str] = []
-        for key in _SECTION_ORDER:
-            if sections.get(key):
+        if sections.get("identity"):
+            parts.append(f"--- identity ---\n{sections['identity']}")
+
+        middle_keys = sorted(k for k in sections if k not in ("identity", "context"))
+        for key in middle_keys:
+            if sections[key]:
                 parts.append(f"--- {key} ---\n{sections[key]}")
+
+        if sections.get("context"):
+            parts.append(f"--- context ---\n{sections['context']}")
 
         return "\n\n".join(parts)
 

@@ -11,7 +11,6 @@ from arcagent.core.config import (
     EvalConfig,
     IdentityConfig,
     LLMConfig,
-    MemoryConfig,
     SessionConfig,
     TelemetryConfig,
     ToolConfig,
@@ -196,24 +195,6 @@ class TestEvalConfig:
         assert cfg.max_concurrent == 4
 
 
-class TestMemoryConfig:
-    def test_defaults(self) -> None:
-        cfg = MemoryConfig()
-        assert cfg.context_budget_tokens == 2000
-        assert cfg.notes_budget_today_tokens == 1000
-        assert cfg.notes_budget_yesterday_tokens == 500
-        assert cfg.search_weight_bm25 == 0.7
-        assert cfg.search_weight_vector == 0.3
-        assert cfg.embedding_model == "all-MiniLM-L6-v2"
-        assert cfg.entity_extraction_enabled is True
-        assert cfg.policy_eval_interval_turns == 20
-
-    def test_custom_weights(self) -> None:
-        cfg = MemoryConfig(search_weight_bm25=0.5, search_weight_vector=0.5)
-        assert cfg.search_weight_bm25 == 0.5
-        assert cfg.search_weight_vector == 0.5
-
-
 class TestSessionConfig:
     def test_defaults(self) -> None:
         cfg = SessionConfig()
@@ -294,11 +275,6 @@ class TestConfigWithNewSections:
         assert cfg.eval.fallback_behavior == "skip"
         assert cfg.eval.max_concurrent == 2
 
-    def test_config_has_memory_defaults(self, minimal_toml: Path) -> None:
-        cfg = load_config(minimal_toml)
-        assert cfg.memory.context_budget_tokens == 2000
-        assert cfg.memory.search_weight_bm25 == 0.7
-
     def test_config_has_session_defaults(self, minimal_toml: Path) -> None:
         cfg = load_config(minimal_toml)
         assert cfg.session.retention_count == 50
@@ -327,26 +303,6 @@ class TestConfigWithNewSections:
         assert cfg.eval.max_tokens == 512
         assert cfg.eval.fallback_behavior == "error"
         assert cfg.eval.max_concurrent == 4
-
-    def test_memory_from_toml(self, tmp_path: Path) -> None:
-        config = tmp_path / "arcagent.toml"
-        config.write_text(textwrap.dedent("""\
-            [agent]
-            name = "test"
-
-            [llm]
-            model = "anthropic/claude-sonnet-4-5-20250929"
-
-            [memory]
-            context_budget_tokens = 3000
-            search_weight_bm25 = 0.5
-            search_weight_vector = 0.5
-            entity_extraction_enabled = false
-        """))
-        cfg = load_config(config)
-        assert cfg.memory.context_budget_tokens == 3000
-        assert cfg.memory.search_weight_bm25 == 0.5
-        assert cfg.memory.entity_extraction_enabled is False
 
     def test_session_from_toml(self, tmp_path: Path) -> None:
         config = tmp_path / "arcagent.toml"

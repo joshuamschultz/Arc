@@ -27,7 +27,7 @@ class EvalModelProtocol(Protocol):
     """Structural contract for eval model callables.
 
     The eval model accepts a prompt string and returns a response string.
-    Used by EntityExtractor, PolicyEngine, and SessionManager.
+    Used by modules that require background LLM evaluation.
     """
 
     async def __call__(self, prompt: str) -> str: ...

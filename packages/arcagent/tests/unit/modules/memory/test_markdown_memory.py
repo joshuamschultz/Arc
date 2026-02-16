@@ -14,7 +14,6 @@ from arcagent.core.config import (
     ArcAgentConfig,
     EvalConfig,
     LLMConfig,
-    MemoryConfig,
 )
 from arcagent.core.module_bus import EventContext, ModuleBus, ModuleContext
 from arcagent.modules.memory.markdown_memory import MarkdownMemoryModule
@@ -35,7 +34,7 @@ def _make_config() -> ArcAgentConfig:
 
 def _make_module(workspace: Path) -> MarkdownMemoryModule:
     return MarkdownMemoryModule(
-        config=MemoryConfig(),
+        config={},
         eval_config=EvalConfig(),
         telemetry=_make_telemetry(),
         workspace=workspace,
@@ -254,7 +253,7 @@ class TestBackgroundTaskTracking:
     async def test_error_in_background_logs_not_crashes(self, tmp_path: Path) -> None:
         telemetry = _make_telemetry()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=telemetry,
             workspace=tmp_path,
@@ -552,7 +551,7 @@ class TestGetEvalModelNoConfigNoLLM:
 
     def test_returns_none_and_warns(self, tmp_path: Path) -> None:
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(provider="", model="", fallback_behavior="skip"),
             telemetry=_make_telemetry(),
             workspace=tmp_path,
@@ -601,7 +600,7 @@ class TestOnPostRespondModelNone:
 
     async def test_returns_when_no_model(self, tmp_path: Path) -> None:
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(provider="", model="", fallback_behavior="skip"),
             telemetry=_make_telemetry(),
             workspace=tmp_path,
@@ -648,23 +647,6 @@ class TestBashTargetsMemoryTokenAnalysis:
         module = _make_module(tmp_path)
         # Very long filename that might cause OSError
         assert not module._bash_targets_memory("cat " + "a" * 5 + ".md")
-
-
-class TestOnShutdownModelNone:
-    """Line 473: _on_shutdown returns when model is None."""
-
-    async def test_on_shutdown_returns_when_no_model(self, tmp_path: Path) -> None:
-        module = MarkdownMemoryModule(
-            config=MemoryConfig(),
-            eval_config=EvalConfig(provider="", model="", fallback_behavior="skip"),
-            telemetry=_make_telemetry(),
-            workspace=tmp_path,
-        )
-        module._llm_config = None
-        module._session_messages = [{"role": "user", "content": "hi"}]
-        ctx = _make_ctx("agent:shutdown", {"session_id": "test"})
-        await module._on_shutdown(ctx)
-        # Should return early without error
 
 
 class TestBashTargetsDangerousCmd:

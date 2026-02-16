@@ -164,7 +164,6 @@ class ModuleLoader:
             )
             return None
 
-        # Instantiate — memory module needs specific constructor args
         try:
             instance = self._instantiate(cls, manifest, ctx)
         except Exception:
@@ -181,14 +180,18 @@ class ModuleLoader:
 
         Inspects the class constructor and provides matching arguments
         from the available context. Module-specific config is looked up
-        via ``getattr(config, manifest.name)``. No special-casing needed
-        for individual modules (OCP-compliant).
+        via ``ModuleEntry.config`` dict. Modules validate their own config
+        internally. No special-casing needed for individual modules.
         """
         sig = inspect.signature(cls)
 
+        # Module-specific config from [modules.X.config] in TOML
+        module_entry = ctx.config.modules.get(manifest.name)
+        module_config = module_entry.config if module_entry else None
+
         # Resources available for injection
         available: dict[str, Any] = {
-            "config": getattr(ctx.config, manifest.name, None),
+            "config": module_config,
             "eval_config": ctx.config.eval,
             "llm_config": ctx.llm_config,
             "telemetry": ctx.telemetry,

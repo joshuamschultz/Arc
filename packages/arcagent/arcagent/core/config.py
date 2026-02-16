@@ -154,19 +154,6 @@ class EvalConfig(BaseModel):
     max_concurrent: int = 2  # Semaphore limit
 
 
-class MemoryConfig(BaseModel):
-    """Configuration for the memory module."""
-
-    context_budget_tokens: int = 2000
-    notes_budget_today_tokens: int = 1000
-    notes_budget_yesterday_tokens: int = 500
-    search_weight_bm25: float = 0.7
-    search_weight_vector: float = 0.3
-    embedding_model: str = "all-MiniLM-L6-v2"
-    entity_extraction_enabled: bool = True
-    policy_eval_interval_turns: int = 20
-
-
 class SessionConfig(BaseModel):
     """Configuration for session management."""
 
@@ -213,7 +200,6 @@ class ArcAgentConfig(BaseModel):
     telemetry: TelemetryConfig = TelemetryConfig()
     context: ContextConfig = ContextConfig()
     eval: EvalConfig = EvalConfig()
-    memory: MemoryConfig = MemoryConfig()
     session: SessionConfig = SessionConfig()
     extensions: ExtensionConfig = ExtensionConfig()
 

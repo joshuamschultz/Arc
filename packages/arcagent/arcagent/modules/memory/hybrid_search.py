@@ -12,7 +12,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from arcagent.core.config import MemoryConfig
+from arcagent.modules.memory.config import MemoryConfig
 from arcagent.utils.io import CHARS_PER_TOKEN, sanitize_fts5_query
 
 _logger = logging.getLogger("arcagent.modules.memory.hybrid_search")

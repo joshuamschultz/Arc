@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from arcagent.core.config import MemoryConfig
+from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.hybrid_search import HybridSearch, SearchResult
 
 

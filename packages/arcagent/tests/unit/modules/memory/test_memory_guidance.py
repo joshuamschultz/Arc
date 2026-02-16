@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from arcagent.core.config import EvalConfig, MemoryConfig
+from arcagent.core.config import EvalConfig
 from arcagent.core.module_bus import EventContext
 from arcagent.modules.memory.markdown_memory import MarkdownMemoryModule
 
@@ -19,7 +19,7 @@ def _make_telemetry() -> MagicMock:
 
 def _make_module(workspace: Path) -> MarkdownMemoryModule:
     return MarkdownMemoryModule(
-        config=MemoryConfig(),
+        config={},
         eval_config=EvalConfig(),
         telemetry=_make_telemetry(),
         workspace=workspace,

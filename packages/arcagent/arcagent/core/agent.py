@@ -309,7 +309,6 @@ class ArcAgent:
             )
             raise
 
-        # Include messages and session_id for memory module
         session_id = self._session.session_id if self._session else ""
         messages_dict = [m.model_dump() if hasattr(m, "model_dump") else m for m in (messages or [])]
         await bus.emit(

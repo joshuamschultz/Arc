@@ -13,7 +13,6 @@ from arcagent.core.config import (
     ArcAgentConfig,
     EvalConfig,
     LLMConfig,
-    MemoryConfig,
 )
 from arcagent.core.module_bus import EventContext, ModuleBus, ModuleContext
 from arcagent.modules.memory.markdown_memory import MarkdownMemoryModule
@@ -34,7 +33,7 @@ def _make_config() -> ArcAgentConfig:
 
 def _make_module(workspace: Path, **kwargs: Any) -> MarkdownMemoryModule:
     return MarkdownMemoryModule(
-        config=kwargs.get("config", MemoryConfig()),
+        config=kwargs.get("config", {}),
         eval_config=kwargs.get("eval_config", EvalConfig()),
         telemetry=kwargs.get("telemetry", _make_telemetry()),
         workspace=workspace,
@@ -86,7 +85,7 @@ class TestEvalModelLazyInit:
         """llm_config passed to constructor is not clobbered (regression)."""
         llm_cfg = LLMConfig(model="anthropic/claude-haiku")
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(provider="", model=""),
             telemetry=_make_telemetry(),
             workspace=tmp_path,
@@ -123,7 +122,7 @@ class TestEvalModelLazyInit:
         """_on_post_respond no longer returns early when eval_model is None."""
         module = _make_module(
             tmp_path,
-            config=MemoryConfig(entity_extraction_enabled=True),
+            config={"entity_extraction_enabled": True},
             eval_config=EvalConfig(provider="test", model="model"),
         )
         module._llm_config = LLMConfig(model="fallback/model")
@@ -345,78 +344,3 @@ class TestOnPostRespondEmptyMessages:
             assert len(module._background_tasks) == 0
 
 
-class TestPolicyEvalInterval:
-    """Test policy evaluation at configured turn interval."""
-
-    async def test_policy_eval_at_interval(self, tmp_path: Path) -> None:
-        """Policy evaluation runs every N turns (default 20)."""
-        module = _make_module(
-            tmp_path,
-            config=MemoryConfig(policy_eval_interval_turns=3, entity_extraction_enabled=False),
-            eval_config=EvalConfig(provider="test", model="model"),
-        )
-
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
-            mock_model = MagicMock()
-            mock_load.return_value = mock_model
-
-            ctx = _make_ctx(
-                "agent:post_respond",
-                {"messages": [{"role": "assistant", "content": "test"}]},
-            )
-
-            # Turns 1-2: no policy eval
-            await module._on_post_respond(ctx)
-            assert module._turn_count == 1
-            await module._on_post_respond(ctx)
-            assert module._turn_count == 2
-
-            # Turn 3: policy eval spawned
-            await module._on_post_respond(ctx)
-            assert module._turn_count == 3
-            await asyncio.sleep(0.05)
-
-        await module.shutdown()
-
-
-class TestOnShutdownPolicyEval:
-    """Test policy evaluation runs at session end via agent:shutdown."""
-
-    async def test_policy_eval_on_shutdown(self, tmp_path: Path) -> None:
-        """Policy evaluation runs on shutdown with accumulated messages."""
-        module = _make_module(
-            tmp_path,
-            config=MemoryConfig(entity_extraction_enabled=False),
-            eval_config=EvalConfig(provider="test", model="model"),
-        )
-
-        with patch("arcagent.modules.memory.markdown_memory.load_eval_model") as mock_load:
-            mock_model = MagicMock()
-            mock_load.return_value = mock_model
-
-            messages = [{"role": "assistant", "content": "test"}]
-            ctx = _make_ctx("agent:post_respond", {"messages": messages})
-            await module._on_post_respond(ctx)
-            assert module._session_messages == messages
-
-            with patch.object(module._policy_engine, "evaluate", new_callable=AsyncMock) as mock_eval:
-                shutdown_ctx = _make_ctx("agent:shutdown", {})
-                await module._on_shutdown(shutdown_ctx)
-                mock_eval.assert_called_once()
-
-        await module.shutdown()
-
-    async def test_no_policy_eval_on_shutdown_without_messages(self, tmp_path: Path) -> None:
-        """No policy evaluation if no messages were accumulated."""
-        module = _make_module(
-            tmp_path,
-            config=MemoryConfig(entity_extraction_enabled=False),
-            eval_config=EvalConfig(provider="test", model="model"),
-        )
-
-        with patch.object(module._policy_engine, "evaluate", new_callable=AsyncMock) as mock_eval:
-            shutdown_ctx = _make_ctx("agent:shutdown", {})
-            await module._on_shutdown(shutdown_ctx)
-            mock_eval.assert_not_called()
-
-        await module.shutdown()

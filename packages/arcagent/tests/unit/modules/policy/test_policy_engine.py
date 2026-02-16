@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from arcagent.core.config import EvalConfig, MemoryConfig
-from arcagent.modules.memory.policy_engine import (
+from arcagent.modules.policy.config import PolicyConfig
+from arcagent.modules.policy.policy_engine import (
     BulletRewrite,
     BulletUpdate,
     PolicyBullet,
@@ -26,10 +26,9 @@ def _make_telemetry() -> MagicMock:
 
 def _make_engine(workspace: Path) -> PolicyEngine:
     return PolicyEngine(
-        eval_config=EvalConfig(),
+        config=PolicyConfig(),
         workspace=workspace,
         telemetry=_make_telemetry(),
-        memory_config=MemoryConfig(),
     )
 
 
@@ -317,17 +316,13 @@ class TestEvalModelFailure:
         model = AsyncMock(side_effect=RuntimeError("model down"))
         messages = [{"role": "user", "content": "test"}]
 
-        # Should not raise with default skip behavior
-        await engine.evaluate(messages, model)
+        # PolicyEngine now raises — caller (PolicyModule) handles fallback
+        with pytest.raises(RuntimeError):
+            await engine.evaluate(messages, model)
 
     @pytest.mark.asyncio()
-    async def test_error_on_model_failure_when_configured(self, tmp_path: Path) -> None:
-        engine = PolicyEngine(
-            eval_config=EvalConfig(fallback_behavior="error"),
-            workspace=tmp_path,
-            telemetry=_make_telemetry(),
-            memory_config=MemoryConfig(),
-        )
+    async def test_error_on_model_failure(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)
         model = AsyncMock(side_effect=RuntimeError("model down"))
         messages = [{"role": "user", "content": "test"}]
 
@@ -450,7 +445,7 @@ class TestReflectionInvalidJSON:
         model = AsyncMock(return_value=None)  # Will cause TypeError in json.loads
         messages = [{"role": "user", "content": "test"}]
 
-        delta, policy = await engine._reflect(messages, model)
+        delta, _policy = await engine._reflect(messages, model)
         assert delta is None
 
 

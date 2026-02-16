@@ -10,7 +10,6 @@ from arcagent.core.config import (
     ArcAgentConfig,
     EvalConfig,
     LLMConfig,
-    MemoryConfig,
     ModuleEntry,
 )
 from arcagent.core.module_bus import ModuleBus, ModuleContext
@@ -21,12 +20,14 @@ from arcagent.core.tool_registry import ToolRegistry, ToolsConfig
 def _make_config(memory_enabled: bool = True) -> ArcAgentConfig:
     modules: dict[str, ModuleEntry] = {}
     if memory_enabled:
-        modules["memory"] = ModuleEntry(enabled=True)
+        modules["memory"] = ModuleEntry(
+            enabled=True,
+            config={"entity_extraction_enabled": True},
+        )
     return ArcAgentConfig(
         agent=AgentConfig(name="test-agent"),
         llm=LLMConfig(model="anthropic/claude-haiku"),
         eval=EvalConfig(provider="test", model="eval-model"),
-        memory=MemoryConfig(entity_extraction_enabled=True),
         modules=modules,
     )
 

@@ -1,15 +1,11 @@
 """Tests for ArcAgent error hierarchy."""
 
 from arcagent.core.errors import (
-    AgentMemoryError,
     ArcAgentError,
     ConfigError,
     ContextError,
-    EntityExtractionError,
     IdentityError,
     ModuleBusError,
-    PolicyEvalError,
-    SearchError,
     SessionError,
     ToolError,
     ToolVetoedError,
@@ -110,24 +106,6 @@ class TestModuleBusError:
         assert err.component == "module_bus"
 
 
-class TestAgentMemoryError:
-    def test_default_component(self) -> None:
-        err = AgentMemoryError(code="MEMORY_GENERIC", message="memory failure")
-        assert err.component == "memory"
-
-    def test_inherits_arcagent_error(self) -> None:
-        err = AgentMemoryError(code="MEMORY_GENERIC", message="failure")
-        assert isinstance(err, ArcAgentError)
-
-    def test_does_not_shadow_builtin_memory_error(self) -> None:
-        """AgentMemoryError is distinct from Python's builtin MemoryError."""
-        assert AgentMemoryError is not MemoryError
-        # Builtin MemoryError should still be accessible
-        assert MemoryError.__module__ == "builtins"
-        # Our error should not be a subclass of the builtin
-        assert not issubclass(AgentMemoryError, MemoryError)
-
-
 class TestSessionError:
     def test_default_component(self) -> None:
         err = SessionError(code="SESSION_CREATE", message="failed to create session")
@@ -144,38 +122,3 @@ class TestSessionError:
             details={"session_id": "abc-123", "line": 42},
         )
         assert err.details["session_id"] == "abc-123"
-
-
-class TestEntityExtractionError:
-    def test_default_component(self) -> None:
-        err = EntityExtractionError(
-            code="MEMORY_EXTRACTION", message="extraction failed"
-        )
-        assert err.component == "memory"
-
-    def test_inherits_memory_error(self) -> None:
-        err = EntityExtractionError(
-            code="MEMORY_EXTRACTION", message="failed"
-        )
-        assert isinstance(err, AgentMemoryError)
-        assert isinstance(err, ArcAgentError)
-
-
-class TestSearchError:
-    def test_default_component(self) -> None:
-        err = SearchError(code="MEMORY_SEARCH", message="index failed")
-        assert err.component == "memory"
-
-    def test_inherits_memory_error(self) -> None:
-        err = SearchError(code="MEMORY_SEARCH", message="failed")
-        assert isinstance(err, AgentMemoryError)
-
-
-class TestPolicyEvalError:
-    def test_default_component(self) -> None:
-        err = PolicyEvalError(code="MEMORY_POLICY_EVAL", message="eval failed")
-        assert err.component == "memory"
-
-    def test_inherits_memory_error(self) -> None:
-        err = PolicyEvalError(code="MEMORY_POLICY_EVAL", message="failed")
-        assert isinstance(err, AgentMemoryError)

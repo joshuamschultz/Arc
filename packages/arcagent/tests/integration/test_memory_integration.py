@@ -21,12 +21,12 @@ from arcagent.core.config import (
     EvalConfig,
     IdentityConfig,
     LLMConfig,
-    MemoryConfig,
     ModuleEntry,
     TelemetryConfig,
 )
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.markdown_memory import MarkdownMemoryModule
 
 
@@ -75,7 +75,7 @@ class TestMemoryModuleStartupShutdown:
     async def test_module_registers_handlers(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -93,7 +93,7 @@ class TestMemoryModuleStartupShutdown:
     async def test_module_via_bus_lifecycle(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -114,7 +114,7 @@ class TestNotesAppendOnlyEndToEnd:
     async def test_write_to_notes_vetoed(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -142,7 +142,7 @@ class TestNotesAppendOnlyEndToEnd:
     async def test_edit_to_notes_allowed(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -168,7 +168,7 @@ class TestNotesAppendOnlyEndToEnd:
     async def test_bash_to_notes_vetoed(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -199,7 +199,7 @@ class TestIdentityAuditEndToEnd:
         telemetry = _make_telemetry()
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=telemetry,
             workspace=workspace,
@@ -249,7 +249,7 @@ class TestContextBudgetEndToEnd:
     async def test_over_budget_truncates(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(context_budget_tokens=10),
+            config={"context_budget_tokens": 10},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -286,7 +286,7 @@ class TestAssemblePromptWithNotes:
 
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -379,13 +379,13 @@ class TestPolicyEvaluationIntegration:
     """T5.1.6: ACE policy evaluation cycle."""
 
     async def test_policy_evaluation_creates_bullets(self, workspace: Path) -> None:
-        from arcagent.modules.memory.policy_engine import PolicyEngine
+        from arcagent.modules.policy.config import PolicyConfig
+        from arcagent.modules.policy.policy_engine import PolicyEngine
 
         engine = PolicyEngine(
-            eval_config=EvalConfig(),
+            config=PolicyConfig(),
             workspace=workspace,
             telemetry=_make_telemetry(),
-            memory_config=MemoryConfig(),
         )
 
         model = AsyncMock(
@@ -417,7 +417,7 @@ class TestNonMemoryPathIgnored:
     async def test_write_to_random_file_not_vetoed(self, workspace: Path) -> None:
         bus = _make_bus()
         module = MarkdownMemoryModule(
-            config=MemoryConfig(),
+            config={},
             eval_config=EvalConfig(),
             telemetry=_make_telemetry(),
             workspace=workspace,
@@ -454,7 +454,6 @@ class TestAgentWithMemoryModule:
             identity=IdentityConfig(key_dir=str(tmp_path / "keys")),
             telemetry=TelemetryConfig(enabled=True),
             modules={"memory": ModuleEntry(enabled=True)},
-            memory=MemoryConfig(),
             eval=EvalConfig(),
         )
 

@@ -17,13 +17,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from arcagent.core.config import EvalConfig, MemoryConfig
+from arcagent.modules.policy.config import PolicyConfig
 from arcagent.utils.io import atomic_write_text, format_messages
 
-_logger = logging.getLogger("arcagent.modules.memory.policy_engine")
-
-_MAX_POLICY_BULLETS = 200
-_MAX_BULLET_TEXT_LENGTH = 500
+_logger = logging.getLogger("arcagent.modules.policy.policy_engine")
 
 _REFLECTION_PROMPT = """\
 You are evaluating an AI agent's recent behavior. \
@@ -117,15 +114,13 @@ class PolicyEngine:
 
     def __init__(
         self,
-        eval_config: EvalConfig,
+        config: PolicyConfig,
         workspace: Path,
         telemetry: Any,
-        memory_config: MemoryConfig,
     ) -> None:
-        self._eval_config = eval_config
+        self._config = config
         self._workspace = workspace
         self._telemetry = telemetry
-        self._config = memory_config
         self._policy_path = workspace / "policy.md"
         self._next_bullet_id: int = 0
 
@@ -139,16 +134,12 @@ class PolicyEngine:
         """ACE Reflector: evaluate recent agent behavior.
 
         Calls eval model for structured evaluation, then curator merges
-        the delta into policy.md.
+        the delta into policy.md. Raises on error — caller handles
+        fallback behavior.
         """
-        try:
-            delta, current_policy = await self._reflect(messages, model, session_id=session_id)
-            if delta:
-                await self._curate(delta, current_policy=current_policy)
-        except Exception:
-            if self._eval_config.fallback_behavior == "error":
-                raise
-            _logger.debug("Policy evaluation error, skipping")
+        delta, current_policy = await self._reflect(messages, model, session_id=session_id)
+        if delta:
+            await self._curate(delta, current_policy=current_policy)
 
     async def _reflect(
         self,
@@ -283,7 +274,7 @@ class PolicyEngine:
         bullets.sort(key=lambda b: b.score, reverse=True)
 
         # Enforce max bullet count (keep highest-scored)
-        bullets = bullets[:_MAX_POLICY_BULLETS]
+        bullets = bullets[: self._config.max_bullets]
 
         # Atomic write
         content = self._serialize_policy(bullets)
@@ -325,8 +316,7 @@ class PolicyEngine:
         self._next_bullet_id += 1
         return f"P{self._next_bullet_id:02d}"
 
-    @staticmethod
-    def _sanitize_bullet_text(text: str) -> str:
+    def _sanitize_bullet_text(self, text: str) -> str:
         """Strip control characters and enforce length limit on bullet text."""
         clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-        return clean[:_MAX_BULLET_TEXT_LENGTH]
+        return clean[: self._config.max_bullet_text_length]

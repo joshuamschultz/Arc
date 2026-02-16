@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from arcagent.core.config import MemoryConfig
 from arcagent.core.module_bus import EventContext
+from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.markdown_memory import NoteManager
 
 

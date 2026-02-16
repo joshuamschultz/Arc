@@ -1,0 +1,14 @@
+name: policy
+version: 0.1.0
+description: ACE-based self-learning adaptation policy
+author: ArcAgent
+entry_point: arcagent.modules.policy:PolicyModule
+dependencies:
+  - arcagent.core.module_bus
+events:
+  subscribes:
+    - agent:post_respond
+    - agent:assemble_prompt
+    - agent:shutdown
+  emits:
+    - policy.background_error
