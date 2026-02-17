@@ -10,10 +10,58 @@ Most agent frameworks optimize for developer convenience. Arc optimizes for **tr
 
 Every LLM call can be signed, every tool invocation passes through a deny-by-default sandbox, every action emits a structured audit event, and PII never reaches a provider unless you explicitly allow it. Arc was designed for teams that need to demonstrate compliance -- not just claim it.
 
+## What You Can Build With Arc
+
+Arc is designed for organizations that need AI agents working alongside humans -- not as black boxes, but as accountable team members operating under explicit rules, with every action logged and every capability controlled.
+
+### Teams of Agents, Coordinated by Humans
+
+Stand up a team of specialized agents that divide work, share findings, and converge on results -- with a human in the loop at every decision gate.
+
+- **Analyst teams** that break a complex research question into parallel workstreams, each agent investigating a different angle, then synthesizing into a unified brief
+- **Operations teams** where a planning agent decomposes a mission into tasks, assigns them to execution agents with the right tool access, and tracks progress to completion
+- **Monitoring teams** that watch systems, correlate anomalies across data sources, escalate to human operators, and execute approved remediation playbooks
+- **Knowledge teams** that ingest, classify, and cross-reference documents -- surfacing connections humans would miss across thousands of pages
+
+Agents learn from interactions through a self-improving policy engine. Good behaviors are reinforced. Harmful patterns are suppressed. The policy file is human-readable, auditable, and versioned.
+
+### What You Control
+
+Every capability an agent has is explicitly granted, logged, and revocable. Nothing is implicit.
+
+| Control Surface | What It Means |
+|----------------|---------------|
+| **Tool access** | Deny-by-default. Every tool must be explicitly allowlisted. Parameter-level policy checks on every invocation. |
+| **LLM provider** | Choose which models agents can call. Run fully air-gapped with Ollama, vLLM, or HuggingFace TGI -- zero internet, zero API keys. |
+| **Data flow** | Bidirectional PII scanning. Sensitive data (SSN, credit cards, emails, IPs) is redacted before it leaves your environment. Pluggable for custom patterns (CUI, FOUO, classification markings). |
+| **Identity** | Each agent has a unique Ed25519 cryptographic identity (DID). No shared credentials. No privilege inheritance. Every action is attributable. |
+| **Code execution** | Sandboxed subprocess with stripped environment, process group isolation, two-phase timeout (SIGTERM then SIGKILL), and workspace boundary enforcement. |
+| **Extensions** | Third-party code runs in configurable sandbox modes: `workspace`, `paths`, or `strict` (no subprocess, no network). |
+| **Inter-agent communication** | Signed messages over authenticated channels. Replay protection. No plaintext inter-agent traffic. |
+| **Observability** | Non-optional event emission on every action. Dual audit trail (OpenTelemetry spans + append-only JSONL). Structured logs with control character sanitization. |
+| **Policy** | Behavioral boundaries enforced by a policy engine. Agents cannot override their own policy. Kill switches for immediate revocation. |
+| **Secrets** | Vault-backed, TTL-cached credential resolution. API keys never touch the filesystem. Environment variable injection blocked for security-sensitive paths. |
+
+### Compliance-Ready Architecture
+
+Arc maps directly to the control families federal programs require:
+
+- **NIST 800-53**: AC-3 (access enforcement), AC-6 (least privilege), AU-2/AU-3/AU-12 (audit), IA-3 (identification), SI-4 (monitoring), SI-10 (input validation)
+- **FedRAMP**: Continuous monitoring via OpenTelemetry, boundary enforcement, audit trail integrity
+- **CMMC**: Controlled access, incident response capability, system integrity monitoring
+- **OWASP LLM Top 10 (2025)**: Mitigations for prompt injection, sensitive info disclosure, excessive agency, unbounded consumption
+- **OWASP Agentic Top 10 (2026)**: Mitigations for agent goal hijack, tool misuse, rogue agents, cascading failures, inter-agent tampering
+
+See [Compliance Mapping](#compliance-mapping) for the full control-by-control breakdown.
+
+---
+
 ## Architecture
 
 ```
 arccli          Operator CLI -- 32 commands, 22 REPL commands
+  |
+arcteam         Team coordination -- formation, task distribution, consensus
   |
 arcagent        Agent nucleus -- identity, sessions, extensions, memory
   |
@@ -22,7 +70,7 @@ arcrun          Execution engine -- ReAct loop, sandbox, event bus
 arcllm          LLM abstraction -- 11 providers, zero SDKs, direct HTTP
 ```
 
-Each layer is independently usable. You can call `arcllm` directly for a single LLM request, use `arcrun` for a sandboxed tool loop without agent state, or run the full `arcagent` stack with cryptographic identity and persistent sessions.
+Each layer is independently usable. You can call `arcllm` directly for a single LLM request, use `arcrun` for a sandboxed tool loop without agent state, run the full `arcagent` stack with cryptographic identity and persistent sessions, or coordinate multiple agents through `arcteam`.
 
 ## Packages
 
@@ -31,6 +79,7 @@ Each layer is independently usable. You can call `arcllm` directly for a single 
 | [arcllm](packages/arcllm/) | Unified interface to 11 LLM providers via direct HTTP. No provider SDKs. Opt-in modules for retry, fallback, rate limiting, PII redaction, request signing, audit logging, and OpenTelemetry. |
 | [arcrun](packages/arcrun/) | Async ReAct execution loop with deny-by-default tool sandboxing, JSON Schema parameter validation, structured event bus, and pluggable execution strategies. |
 | [arcagent](packages/arcagent/) | Full agent lifecycle: Ed25519 cryptographic identity (DIDs), TOML-driven configuration, module bus with priority-ordered event dispatch, context window management, session persistence, skill discovery, and extension sandboxing. |
+| [arcteam](packages/arcteam/) | Multi-agent team coordination: team formation and lifecycle, task distribution and delegation, inter-agent messaging, roster management, and consensus protocols. |
 | [arccli](packages/arccli/) | Operator CLI for the full stack. Agent scaffolding, interactive REPL, session management, provider introspection, and `--json` output on every command for CI/CD integration. |
 
 ---
@@ -291,6 +340,7 @@ Each package is independently installable:
 pip install arcllm       # LLM abstraction only
 pip install arcrun       # Execution engine + arcllm
 pip install arcagent     # Full agent + arcllm + arcrun
+pip install arcteam      # Multi-agent coordination + arcagent
 pip install arccli       # CLI + everything
 ```
 
