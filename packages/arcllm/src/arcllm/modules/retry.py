@@ -68,7 +68,6 @@ class RetryModule(BaseModule):
                             raise
                         last_error = e
                         attempt_span.record_exception(e)
-                        attempt_span.set_status(StatusCode.OK)
                         if attempt < self._max_retries:
                             wait = self._calculate_wait(attempt, e)
                             logger.warning(

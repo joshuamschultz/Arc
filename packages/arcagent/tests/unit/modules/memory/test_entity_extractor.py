@@ -1,4 +1,4 @@
-"""Tests for EntityExtractor — async LLM-driven entity extraction."""
+"""Tests for EntityExtractor — markdown-based entity storage."""
 
 from __future__ import annotations
 
@@ -8,6 +8,19 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
+
+
+def _mock_model(
+    *, return_value: Any = None, side_effect: Exception | None = None
+) -> MagicMock:
+    """Create a mock LLM model with invoke() returning LLMResponse-like object."""
+    model = MagicMock()
+    if side_effect is not None:
+        model.invoke = AsyncMock(side_effect=side_effect)
+    else:
+        model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
+    return model
 
 from arcagent.core.config import EvalConfig
 from arcagent.modules.memory.entity_extractor import EntityExtractor
@@ -31,35 +44,47 @@ def _make_extractor(
     )
 
 
+def _read_entity(path: Path) -> tuple[dict[str, Any], str]:
+    """Read entity file, return (frontmatter_dict, body_text)."""
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith("---")
+    end = text.find("\n---", 3)
+    fm = yaml.safe_load(text[4:end])
+    body_start = end + 4
+    if body_start < len(text) and text[body_start] == "\n":
+        body_start += 1
+    return fm, text[body_start:]
+
+
 class TestTrivialExchangeSkip:
-    """T4.1.2: Short messages produce no entities."""
+    """Short messages produce no entities."""
 
     @pytest.mark.asyncio()
     async def test_short_messages_skip(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        model = AsyncMock()
+        model = _mock_model()
         messages = [
             {"role": "user", "content": "ok"},
             {"role": "assistant", "content": "sure"},
         ]
         await ext.extract(messages, model)
-        model.assert_not_called()
+        model.invoke.assert_not_called()
 
     @pytest.mark.asyncio()
     async def test_empty_messages_skip(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        model = AsyncMock()
+        model = _mock_model()
         await ext.extract([], model)
-        model.assert_not_called()
+        model.invoke.assert_not_called()
 
 
 class TestNewEntityCreation:
-    """T4.1.3: New entity creates directory, facts.jsonl, index update."""
+    """New entity creates a markdown file with frontmatter and facts."""
 
     @pytest.mark.asyncio()
-    async def test_new_entity_creates_files(self, tmp_path: Path) -> None:
+    async def test_new_entity_creates_md_file(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "entities": [{
                 "name": "Josh Schultz",
                 "type": "person",
@@ -74,54 +99,39 @@ class TestNewEntityCreation:
         ]
         await ext.extract(messages, model)
 
-        # Entity directory created
-        entity_dir = tmp_path / "entities" / "josh-schultz"
-        assert entity_dir.exists()
+        entity_path = tmp_path / "entities" / "josh-schultz.md"
+        assert entity_path.exists()
 
-        # Facts file created
-        facts_file = entity_dir / "facts.jsonl"
-        assert facts_file.exists()
-        fact = json.loads(facts_file.read_text().strip())
-        assert fact["predicate"] == "role"
-        assert fact["value"] == "engineer"
-
-        # Index updated
-        index_file = tmp_path / "entities" / "index.json"
-        assert index_file.exists()
-        index = json.loads(index_file.read_text())
-        assert "josh-schultz" in index["entities"]
+        fm, body = _read_entity(entity_path)
+        assert fm["name"] == "Josh Schultz"
+        assert fm["type"] == "person"
+        assert "Josh" in fm["aliases"]
+        assert "role: engineer" in body
+        assert "(0.9)" in body
 
 
 class TestExistingEntityUpdate:
-    """T4.1.4: Existing entity appends fact, updates index."""
+    """Existing entity gets new facts appended, aliases merged."""
 
     @pytest.mark.asyncio()
     async def test_append_fact_to_existing(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
 
-        # Pre-create entity
-        entity_dir = tmp_path / "entities" / "josh-schultz"
-        entity_dir.mkdir(parents=True)
-        facts_file = entity_dir / "facts.jsonl"
-        existing_fact = {"predicate": "role", "value": "engineer", "confidence": 0.9,
-                         "timestamp": "2026-02-14T10:00:00Z", "status": "active"}
-        facts_file.write_text(json.dumps(existing_fact) + "\n")
+        # Pre-create entity file
+        entities_dir = tmp_path / "entities"
+        entities_dir.mkdir(parents=True)
+        entity_path = entities_dir / "josh-schultz.md"
+        entity_path.write_text(
+            "---\n"
+            "name: Josh Schultz\n"
+            "type: person\n"
+            "aliases:\n- Josh\n"
+            "last_updated: '2026-02-14T10:00:00+00:00'\n"
+            "---\n\n"
+            "- role: engineer (0.9) [2026-02-14T10:00:00+00:00]\n"
+        )
 
-        index_file = tmp_path / "entities" / "index.json"
-        index_file.write_text(json.dumps({
-            "version": 1,
-            "entities": {
-                "josh-schultz": {
-                    "name": "Josh Schultz",
-                    "type": "person",
-                    "aliases": ["Josh"],
-                    "last_updated": "2026-02-14T10:00:00Z",
-                    "fact_count": 1,
-                }
-            }
-        }))
-
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "entities": [{
                 "name": "Josh Schultz",
                 "type": "person",
@@ -136,41 +146,32 @@ class TestExistingEntityUpdate:
         ]
         await ext.extract(messages, model)
 
-        # Should have 2 facts now
-        lines = facts_file.read_text().strip().split("\n")
-        assert len(lines) == 2
-
-        # Index fact count updated
-        updated_index = json.loads(index_file.read_text())
-        assert updated_index["entities"]["josh-schultz"]["fact_count"] == 2
+        content = entity_path.read_text(encoding="utf-8")
+        assert "role: engineer" in content
+        assert "location: Chicago" in content
 
 
 class TestContradictionDetection:
-    """T4.1.5: Contradictions supersede old facts."""
+    """Contradictions are marked with 'was: old_value'."""
 
     @pytest.mark.asyncio()
-    async def test_contradiction_marks_old_as_superseded(self, tmp_path: Path) -> None:
+    async def test_contradiction_marks_old_value(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
 
-        entity_dir = tmp_path / "entities" / "josh-schultz"
-        entity_dir.mkdir(parents=True)
-        facts_file = entity_dir / "facts.jsonl"
-        old_fact = {"predicate": "location", "value": "NYC", "confidence": 0.9,
-                    "timestamp": "2026-02-14T10:00:00Z", "status": "active"}
-        facts_file.write_text(json.dumps(old_fact) + "\n")
+        entities_dir = tmp_path / "entities"
+        entities_dir.mkdir(parents=True)
+        entity_path = entities_dir / "josh-schultz.md"
+        entity_path.write_text(
+            "---\n"
+            "name: Josh Schultz\n"
+            "type: person\n"
+            "aliases: []\n"
+            "last_updated: '2026-02-14T10:00:00+00:00'\n"
+            "---\n\n"
+            "- location: NYC (0.9) [2026-02-14T10:00:00+00:00]\n"
+        )
 
-        index_file = tmp_path / "entities" / "index.json"
-        index_file.write_text(json.dumps({
-            "version": 1,
-            "entities": {
-                "josh-schultz": {
-                    "name": "Josh Schultz", "type": "person",
-                    "aliases": [], "last_updated": "2026-02-14T10:00:00Z", "fact_count": 1,
-                }
-            }
-        }))
-
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "entities": [{
                 "name": "Josh Schultz",
                 "type": "person",
@@ -185,69 +186,52 @@ class TestContradictionDetection:
         ]
         await ext.extract(messages, model)
 
-        lines = facts_file.read_text().strip().split("\n")
-        # Old fact + supersede marker + new fact
-        assert len(lines) >= 2
-        # New fact should reference supersession
-        new_fact = json.loads(lines[-1])
-        assert new_fact["value"] == "Chicago"
-        assert "supersedes" in new_fact
+        content = entity_path.read_text(encoding="utf-8")
+        assert "location: Chicago" in content
+        assert "was: NYC" in content
 
 
 class TestCaseInsensitiveMatching:
-    """T4.1.6: Case-insensitive name matching."""
+    """Case-insensitive name matching via frontmatter scan."""
 
-    @pytest.mark.asyncio()
-    async def test_lowercase_matches_titlecase(self, tmp_path: Path) -> None:
+    def test_lowercase_matches_titlecase(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
 
-        index_file = tmp_path / "entities" / "index.json"
-        (tmp_path / "entities" / "josh-schultz").mkdir(parents=True)
-        (tmp_path / "entities" / "josh-schultz" / "facts.jsonl").touch()
-        index_file.write_text(json.dumps({
-            "version": 1,
-            "entities": {
-                "josh-schultz": {
-                    "name": "Josh Schultz", "type": "person",
-                    "aliases": [], "last_updated": "2026-02-14T10:00:00Z", "fact_count": 0,
-                }
-            }
-        }))
+        entities_dir = tmp_path / "entities"
+        entities_dir.mkdir(parents=True)
+        (entities_dir / "josh-schultz.md").write_text(
+            "---\nname: Josh Schultz\ntype: person\naliases: []\n---\n"
+        )
 
-        result = ext._find_existing_entity("josh schultz", json.loads(index_file.read_text()))
-        assert result == "josh-schultz"
+        slug = ext._resolve_slug("josh schultz")
+        assert slug == "josh-schultz"
 
 
 class TestAliasMatching:
-    """T4.1.7: Alias matching."""
+    """Alias matching via frontmatter scan."""
 
-    @pytest.mark.asyncio()
-    async def test_alias_matches_entity(self, tmp_path: Path) -> None:
+    def test_alias_matches_entity(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
 
-        index = {
-            "version": 1,
-            "entities": {
-                "josh-schultz": {
-                    "name": "Josh Schultz", "type": "person",
-                    "aliases": ["Mr. Schultz", "Joshua"],
-                    "last_updated": "2026-02-14T10:00:00Z", "fact_count": 0,
-                }
-            }
-        }
-        result = ext._find_existing_entity("Mr. Schultz", index)
-        assert result == "josh-schultz"
+        entities_dir = tmp_path / "entities"
+        entities_dir.mkdir(parents=True)
+        (entities_dir / "josh-schultz.md").write_text(
+            "---\nname: Josh Schultz\ntype: person\n"
+            "aliases:\n- Mr. Schultz\n- Joshua\n---\n"
+        )
+
+        slug = ext._resolve_slug("Mr. Schultz")
+        assert slug == "josh-schultz"
 
 
-class TestAtomicIndexWrite:
-    """T4.1.8: Write-to-temp + rename."""
+class TestAtomicWrite:
+    """Entity files are written atomically."""
 
     @pytest.mark.asyncio()
-    async def test_index_written_atomically(self, tmp_path: Path) -> None:
+    async def test_entity_written_atomically(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        (tmp_path / "entities").mkdir(parents=True)
 
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "entities": [{
                 "name": "Test Entity",
                 "type": "concept",
@@ -262,31 +246,30 @@ class TestAtomicIndexWrite:
         ]
         await ext.extract(messages, model)
 
-        index_file = tmp_path / "entities" / "index.json"
-        assert index_file.exists()
-        # Temp file should not exist after atomic rename
-        assert not (tmp_path / "entities" / "index.json.tmp").exists()
+        entity_path = tmp_path / "entities" / "test-entity.md"
+        assert entity_path.exists()
+        # Temp file should not linger
+        assert not (tmp_path / "entities" / "test-entity.md.tmp").exists()
 
 
 class TestEvalModelFailure:
-    """T4.1.10: Graceful skip on model failure."""
+    """Graceful skip on model failure."""
 
     @pytest.mark.asyncio()
     async def test_skip_on_model_error(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path, fallback_behavior="skip")
-        model = AsyncMock(side_effect=RuntimeError("model unavailable"))
+        model = _mock_model(side_effect=RuntimeError("model unavailable"))
 
         messages = [
             {"role": "user", "content": "I work at BlackArc building AI systems"},
             {"role": "assistant", "content": "Interesting work!"},
         ]
-        # Should not raise
         await ext.extract(messages, model)
 
     @pytest.mark.asyncio()
     async def test_error_on_model_failure_when_configured(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path, fallback_behavior="error")
-        model = AsyncMock(side_effect=RuntimeError("model unavailable"))
+        model = _mock_model(side_effect=RuntimeError("model unavailable"))
 
         messages = [
             {"role": "user", "content": "I work at BlackArc building AI systems"},
@@ -297,50 +280,43 @@ class TestEvalModelFailure:
 
 
 class TestMalformedModelResponse:
-    """Extra safety: handle invalid JSON from model."""
+    """Handle invalid JSON from model."""
 
     @pytest.mark.asyncio()
     async def test_invalid_json_skipped(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        model = AsyncMock(return_value="not valid json {{{")
+        model = _mock_model(return_value="not valid json {{{")
 
         messages = [
             {"role": "user", "content": "My name is Josh and I work on ArcAgent"},
             {"role": "assistant", "content": "Cool project!"},
         ]
-        # Should not raise
         await ext.extract(messages, model)
 
     @pytest.mark.asyncio()
     async def test_missing_entities_key_skipped(self, tmp_path: Path) -> None:
-        """Model response missing 'entities' key is handled."""
         ext = _make_extractor(tmp_path)
-        model = AsyncMock(return_value=json.dumps({"other_field": "value"}))
+        model = _mock_model(return_value=json.dumps({"other_field": "value"}))
 
         messages = [
             {"role": "user", "content": "My name is Josh and I work on ArcAgent"},
             {"role": "assistant", "content": "Cool project!"},
         ]
-        # Should not raise, should skip
         await ext.extract(messages, model)
 
-        # No entities created
         entities_dir = tmp_path / "entities"
-        assert not entities_dir.exists() or len(list(entities_dir.glob("*"))) == 0
+        assert not entities_dir.exists() or len(list(entities_dir.glob("*.md"))) == 0
 
 
 class TestSlugifyEdgeCases:
     """Test _slugify with various edge cases."""
 
     def test_slugify_empty_string_uses_hash(self, tmp_path: Path) -> None:
-        """Empty or non-ASCII-only names use hash-based slugs."""
         ext = _make_extractor(tmp_path)
-        # Only special characters, no alphanumeric
         slug = ext._slugify("!!!")
         assert len(slug) == 12  # Hash-based slug
 
     def test_slugify_cyrillic_name(self, tmp_path: Path) -> None:
-        """Non-ASCII names fall back to hash."""
         ext = _make_extractor(tmp_path)
         slug = ext._slugify("Владимир")
         assert len(slug) == 12  # Hash-based
@@ -351,9 +327,8 @@ class TestEntityExtractionEdgeCases:
 
     @pytest.mark.asyncio()
     async def test_entity_with_no_name_skipped(self, tmp_path: Path) -> None:
-        """Entity data missing 'name' field is skipped."""
         ext = _make_extractor(tmp_path)
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "entities": [{
                 "type": "concept",
                 "facts": [{"predicate": "is", "value": "test"}],
@@ -366,84 +341,123 @@ class TestEntityExtractionEdgeCases:
         ]
         await ext.extract(messages, model)
 
-        # No entity should be created
         entities_dir = tmp_path / "entities"
-        assert not entities_dir.exists() or len(list(entities_dir.glob("*"))) == 0
+        assert not entities_dir.exists() or len(list(entities_dir.glob("*.md"))) == 0
+
+
+class TestExtractNoRecentPair:
+    """_get_recent_pair returns empty for non-user/assistant messages."""
+
+    async def test_extract_skips_system_only_messages(self, tmp_path: Path) -> None:
+        ext = _make_extractor(tmp_path)
+        model = _mock_model()
+        await ext.extract([{"role": "system", "content": "You are helpful"}], model)
+        model.invoke.assert_not_called()
+
+
+class TestFrontmatterParsing:
+    """Test frontmatter reading and stripping."""
+
+    def test_read_frontmatter_valid(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.md"
+        path.write_text("---\nname: Test\ntype: concept\n---\nbody")
+
+        result = EntityExtractor._read_frontmatter(path)
+        assert result == {"name": "Test", "type": "concept"}
+
+    def test_read_frontmatter_missing(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.md"
+        path.write_text("no frontmatter here")
+
+        result = EntityExtractor._read_frontmatter(path)
+        assert result is None
+
+    def test_read_frontmatter_corrupted(self, tmp_path: Path) -> None:
+        path = tmp_path / "test.md"
+        path.write_text("---\n: : invalid yaml [[\n---\nbody")
+
+        result = EntityExtractor._read_frontmatter(path)
+        assert result is None
+
+    def test_strip_frontmatter(self) -> None:
+        text = "---\nname: Test\n---\nbody content"
+        result = EntityExtractor._strip_frontmatter(text)
+        assert result == "body content"
+
+
+class TestFactParsing:
+    """Test fact line parsing for contradiction detection."""
+
+    def test_parse_simple_fact(self) -> None:
+        content = "- role: engineer (0.9) [2026-02-14T10:00:00+00:00]"
+        facts = EntityExtractor._parse_facts(content)
+        assert len(facts) == 1
+        assert facts[0]["predicate"] == "role"
+        assert facts[0]["value"] == "engineer"
+
+    def test_parse_fact_with_supersession(self) -> None:
+        content = "- location: Chicago (0.8) [2026-02-15] | was: NYC"
+        facts = EntityExtractor._parse_facts(content)
+        assert len(facts) == 1
+        assert facts[0]["predicate"] == "location"
+        assert facts[0]["value"] == "Chicago"
+
+    def test_parse_ignores_non_fact_lines(self) -> None:
+        content = "---\nname: Test\n---\nSome description\n- role: eng (0.9) [2026-02-14]"
+        facts = EntityExtractor._parse_facts(content)
+        assert len(facts) == 1
+
+
+class TestFactValueSanitization:
+    """ASI-06: Fact values are sanitized against memory poisoning."""
+
+    def test_unicode_nfkc_normalization(self, tmp_path: Path) -> None:
+        ext = _make_extractor(tmp_path)
+        result = ext._sanitize_fact_text("\uff21\uff22\uff23")
+        assert result == "ABC"
+
+    def test_zero_width_characters_stripped(self, tmp_path: Path) -> None:
+        ext = _make_extractor(tmp_path)
+        result = ext._sanitize_fact_text("hello\u200bworld\u200d")
+        assert result == "helloworld"
+
+    def test_control_characters_stripped(self, tmp_path: Path) -> None:
+        ext = _make_extractor(tmp_path)
+        result = ext._sanitize_fact_text("clean\x00\x01\x08text")
+        assert result == "cleantext"
+
+    def test_length_limit_enforced(self, tmp_path: Path) -> None:
+        ext = _make_extractor(tmp_path)
+        long_text = "x" * 5000
+        result = ext._sanitize_fact_text(long_text)
+        assert len(result) == 2000
 
     @pytest.mark.asyncio()
-    async def test_malformed_facts_jsonl_handling(self, tmp_path: Path) -> None:
-        """Existing facts.jsonl with invalid JSON lines is handled."""
+    async def test_stored_facts_are_sanitized(self, tmp_path: Path) -> None:
+        """End-to-end: extracted facts have sanitized predicate and value."""
         ext = _make_extractor(tmp_path)
-
-        # Pre-create entity with malformed facts
-        entity_dir = tmp_path / "entities" / "test-entity"
-        entity_dir.mkdir(parents=True)
-        facts_file = entity_dir / "facts.jsonl"
-        facts_file.write_text('{"predicate": "valid", "value": "ok"}\ninvalid json line\n')
-
-        index_file = tmp_path / "entities" / "index.json"
-        index_file.write_text(json.dumps({
-            "version": 1,
-            "entities": {
-                "test-entity": {
-                    "name": "Test Entity",
-                    "type": "concept",
-                    "aliases": [],
-                    "last_updated": "2026-02-15T10:00:00Z",
-                    "fact_count": 1,
-                }
-            }
-        }))
-
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "entities": [{
-                "name": "Test Entity",
+                "name": "Test",
                 "type": "concept",
                 "aliases": [],
-                "facts": [{"predicate": "new", "value": "fact"}],
+                "facts": [{
+                    "predicate": "has\u200b_type",
+                    "value": "injected\x00value\ufeff",
+                    "confidence": 0.9,
+                }],
             }]
         }))
 
         messages = [
-            {"role": "user", "content": "Tell me about Test Entity"},
-            {"role": "assistant", "content": "Here is new info"},
+            {"role": "user", "content": "Tell me about the test concept here"},
+            {"role": "assistant", "content": "Here is detailed info about it"},
         ]
-
-        # Should handle malformed line gracefully
         await ext.extract(messages, model)
 
-        # New fact should be appended
-        lines = facts_file.read_text().strip().split("\n")
-        assert len(lines) >= 2  # Original valid + new fact
-
-
-class TestExtractNoRecentPair:
-    """Line 92: _get_recent_pair returns empty for non-user/assistant messages."""
-
-    async def test_extract_skips_system_only_messages(self, tmp_path: Path) -> None:
-        ext = EntityExtractor(
-            eval_config=EvalConfig(provider="test", model="test"),
-            workspace=tmp_path,
-            telemetry=_make_telemetry(),
-        )
-        model = AsyncMock()
-        # Only system messages — no user/assistant pair
-        await ext.extract([{"role": "system", "content": "You are helpful"}], model)
-        model.assert_not_called()
-
-
-class TestLoadIndexJsonDecodeError:
-    """Lines 254-255: Corrupted index.json returns default."""
-
-    def test_corrupted_index_returns_default(self, tmp_path: Path) -> None:
-        ext = EntityExtractor(
-            eval_config=EvalConfig(provider="test", model="test"),
-            workspace=tmp_path,
-            telemetry=_make_telemetry(),
-        )
-        entities_dir = tmp_path / "entities"
-        entities_dir.mkdir()
-        (entities_dir / "index.json").write_text("{bad json!!")
-
-        index = ext._load_index()
-        assert index == {"version": 1, "entities": {}}
+        entity_path = tmp_path / "entities" / "test.md"
+        assert entity_path.exists()
+        content = entity_path.read_text(encoding="utf-8")
+        assert "\u200b" not in content
+        assert "\x00" not in content
+        assert "\ufeff" not in content

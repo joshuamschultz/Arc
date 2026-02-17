@@ -30,7 +30,7 @@ class TestCreate:
         config = tomllib.loads(config_path.read_text())
         expected_sections = [
             "agent", "llm", "identity", "vault", "tools",
-            "telemetry", "context", "eval", "memory", "session", "extensions",
+            "telemetry", "context", "eval", "modules", "session", "extensions",
         ]
         for section in expected_sections:
             assert section in config, f"Missing config section: {section}"

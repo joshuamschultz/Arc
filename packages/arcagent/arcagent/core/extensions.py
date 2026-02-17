@@ -81,8 +81,9 @@ class ExtensionAPI:
         """
         # Convert arcrun.Tool to RegisteredTool if needed
         if not hasattr(tool, 'source') or not hasattr(tool, 'transport'):
-            from arcagent.core.tool_registry import RegisteredTool as RT, ToolTransport
-            tool = RT(
+            from arcagent.core.tool_registry import RegisteredTool as RegTool
+            from arcagent.core.tool_registry import ToolTransport
+            tool = RegTool(
                 name=tool.name,
                 description=tool.description,
                 input_schema=tool.input_schema,

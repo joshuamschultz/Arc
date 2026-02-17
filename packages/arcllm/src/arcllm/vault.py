@@ -12,6 +12,15 @@ from arcllm.exceptions import ArcLLMConfigError
 
 logger = logging.getLogger("arcllm.vault")
 
+# Allowlisted vault backend module prefixes. Only modules under these
+# packages can be loaded dynamically to prevent arbitrary code execution
+# via TOML config manipulation (ASI-04, ASI-05).
+_ALLOWED_BACKEND_PREFIXES = (
+    "arcllm.",
+    "arcagent.",
+    "arcvault.",
+)
+
 
 @runtime_checkable
 class VaultBackend(Protocol):
@@ -61,6 +70,14 @@ class VaultResolver:
             )
 
         module_path, class_name = backend_ref.rsplit(":", 1)
+
+        # Enforce backend module allowlist (ASI-04, ASI-05)
+        if not any(module_path.startswith(prefix) for prefix in _ALLOWED_BACKEND_PREFIXES):
+            raise ArcLLMConfigError(
+                f"Vault backend module '{module_path}' is not in the allowlist. "
+                f"Allowed prefixes: {list(_ALLOWED_BACKEND_PREFIXES)}"
+            )
+
         try:
             module = importlib.import_module(module_path)
         except ImportError as e:

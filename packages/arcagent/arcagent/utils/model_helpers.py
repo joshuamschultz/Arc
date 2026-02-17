@@ -15,7 +15,7 @@ from typing import Any
 from arcagent.core.config import EvalConfig
 from arcagent.utils import load_eval_model
 
-_logger = logging.getLogger("arcagent.utils.eval_helpers")
+_logger = logging.getLogger("arcagent.utils.model_helpers")
 
 
 def get_eval_model(

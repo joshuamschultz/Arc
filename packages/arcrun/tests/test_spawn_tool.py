@@ -145,7 +145,7 @@ class TestMakeSpawnTool:
             system_prompt="test",
             state=state,
         )
-        assert tool.timeout_seconds is None
+        assert tool.timeout_seconds == 300  # default spawn timeout (C4 fix)
 
 
 class TestDepthLimitRejection:

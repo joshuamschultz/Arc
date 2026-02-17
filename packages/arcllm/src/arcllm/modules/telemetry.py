@@ -84,7 +84,7 @@ class TelemetryModule(BaseModule):
             tel_span.set_attribute("arcllm.telemetry.duration_ms", duration_ms)
             tel_span.set_attribute("arcllm.telemetry.cost_usd", cost)
 
-            response.cost_usd = cost
+            response = response.model_copy(update={"cost_usd": cost})
 
             log_structured(
                 logger,

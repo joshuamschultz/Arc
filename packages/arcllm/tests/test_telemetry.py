@@ -4,7 +4,6 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.telemetry import TelemetryModule
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage
@@ -205,7 +204,10 @@ class TestTelemetryModule:
         inner = _make_inner()
         module = TelemetryModule(_make_config(), inner)
         result = await module.invoke(messages)
-        assert result is _OK_RESPONSE
+        # W10: model_copy() returns a new object, so check equality not identity
+        assert result.content == _OK_RESPONSE.content
+        assert result.model == _OK_RESPONSE.model
+        assert result.stop_reason == _OK_RESPONSE.stop_reason
 
 
 # ---------------------------------------------------------------------------

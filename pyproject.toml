@@ -4,6 +4,20 @@ version = "0.1.0"
 description = "Arc: Autonomous agent framework"
 requires-python = ">=3.12"
 
+[dependency-groups]
+dev = [
+    "ruff>=0.4",
+    "mypy>=1.8",
+    "pip-audit>=2.7",
+]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.12",
+    "faker>=37.0",
+]
+
 [tool.uv.workspace]
 members = ["packages/*"]
 

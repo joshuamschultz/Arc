@@ -349,15 +349,17 @@ class TestChunkingEdgeCases:
 
 
 class TestEntityFiles:
-    """Line 194: Entity directory glob."""
+    """Line 194: Entity directory glob (flat markdown files)."""
 
     def test_entities_included_in_file_list(self, tmp_path: Path) -> None:
         search = _make_search(tmp_path)
-        entities_dir = tmp_path / "entities" / "josh"
+        entities_dir = tmp_path / "entities"
         entities_dir.mkdir(parents=True)
-        (entities_dir / "summary.md").write_text("Josh is a developer")
+        (entities_dir / "josh.md").write_text(
+            "---\nname: Josh\ntype: person\n---\nJosh is a developer"
+        )
         files = search._discover_files()
-        assert any("summary.md" in str(f) for f in files)
+        assert any("josh.md" in str(f) for f in files)
 
 
 class TestChunkLargeSections:

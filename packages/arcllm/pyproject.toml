@@ -1,15 +1,15 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "arcllm"
 version = "0.1.0"
 description = "Unified LLM abstraction layer for autonomous agents"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.0",
-    "httpx>=0.25",
+    "httpx>=0.27",
     "opentelemetry-api>=1.20",
 ]
 
@@ -22,16 +22,9 @@ otel = [
 signing = [
     "cryptography>=42.0",
 ]
-dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
-]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-arcllm = ["*.toml", "providers/*.toml"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/arcllm"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

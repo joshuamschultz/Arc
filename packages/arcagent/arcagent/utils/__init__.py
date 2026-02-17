@@ -15,7 +15,12 @@ def load_eval_model(model_id: str) -> LLMProvider:
 
     Parses ``provider/model`` format and delegates to ``arcllm.load_model()``.
     Shared by agent.py and memory module to avoid DRY violation.
+
+    Always enables retry wrapping so transient connection errors
+    (ConnectTimeout, 429, 5xx) are retried with exponential backoff.
+    Scheduled and background tasks are especially prone to transient
+    network issues — retry prevents single-failure schedule trips.
     """
     _logger.info("Loading model: %s", model_id)
     provider, _, model_name = model_id.partition("/")
-    return arcllm_load_model(provider, model_name or None)
+    return arcllm_load_model(provider, model_name or None, retry=True)

@@ -1,5 +1,6 @@
 """Policy module — ACE-based self-learning adaptation policy."""
 
+from arcagent.modules.policy.cli import cli_group
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.modules.policy.errors import PolicyEvalError
 from arcagent.modules.policy.policy_engine import (
@@ -20,4 +21,5 @@ __all__ = [
     "PolicyEngine",
     "PolicyEvalError",
     "PolicyModule",
+    "cli_group",
 ]

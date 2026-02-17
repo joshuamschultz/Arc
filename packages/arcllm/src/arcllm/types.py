@@ -132,3 +132,6 @@ class LLMProvider(ABC):
 
     @abstractmethod
     def validate_config(self) -> bool: ...
+
+    async def close(self) -> None:  # noqa: B027 — intentional concrete no-op default
+        """Release resources held by this provider. No-op by default."""

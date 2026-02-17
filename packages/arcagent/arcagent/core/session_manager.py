@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arcllm.types import Message
+
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.utils.io import format_messages
 
@@ -213,11 +215,15 @@ class SessionManager:
             return
 
         try:
-            facts = await model(
-                f"Extract the key facts, decisions, and important state from "
-                f"this conversation segment. Be concise (2-3 bullet points max):\n\n"
-                f"{msg_text}"
-            )
+            response = await model.invoke([Message(
+                role="user",
+                content=(
+                    f"Extract the key facts, decisions, and important state from "
+                    f"this conversation segment. Be concise (2-3 bullet points max):\n\n"
+                    f"{msg_text}"
+                ),
+            )])
+            facts = response.content
             if facts and facts.strip():
                 # Sanitize LLM output: strip control characters and
                 # markdown injection patterns that could alter prompt behavior
@@ -236,12 +242,24 @@ class SessionManager:
     def _sanitize_context_output(text: str) -> str:
         """Sanitize LLM output before writing to context.md.
 
-        Strips characters and patterns that could be used for
-        prompt injection or context poisoning.
+        Defense-in-depth against context poisoning (ASI-06):
+        1. NFKC normalization (collapses confusable characters)
+        2. Strip zero-width characters (prevents invisible text injection)
+        3. Strip ASCII control characters (keep newlines, tabs)
+        4. Cap length to prevent unbounded context growth
         """
-        # Remove null bytes and other control characters (keep newlines, tabs)
+        import re
+        import unicodedata
+
+        # NFKC normalizes compatibility decomposition + canonical composition
+        sanitized = unicodedata.normalize("NFKC", text)
+        # Remove zero-width and other invisible Unicode characters
+        sanitized = re.sub(
+            r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]", "", sanitized
+        )
+        # Remove ASCII control characters (keep \n, \t for readability)
         sanitized = "".join(
-            c for c in text if c in ("\n", "\t") or (ord(c) >= 32 and ord(c) != 127)
+            c for c in sanitized if c in ("\n", "\t") or (ord(c) >= 32 and ord(c) != 127)
         )
         # Cap length to prevent unbounded context growth
         max_chars = 2000
@@ -258,9 +276,11 @@ class SessionManager:
         msg_text = format_messages(messages, limit=0, type_filter="message")
 
         try:
-            summary: str = await model(
-                f"Summarize this conversation segment concisely:\n\n{msg_text}"
-            )
+            response = await model.invoke([Message(
+                role="user",
+                content=f"Summarize this conversation segment concisely:\n\n{msg_text}",
+            )])
+            summary: str = response.content or ""
             return summary[: self._config.compaction_summary_max_chars]
         except Exception:
             _logger.warning("Summarization failed, using truncated messages")

@@ -10,6 +10,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+
+def _mock_model(
+    *, return_value: Any = None, side_effect: Exception | None = None
+) -> MagicMock:
+    """Create a mock LLM model with invoke() returning LLMResponse-like object."""
+    model = MagicMock()
+    if side_effect is not None:
+        model.invoke = AsyncMock(side_effect=side_effect)
+    else:
+        model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
+    return model
+
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.core.session_manager import SessionManager
 
@@ -183,8 +195,7 @@ class TestCompaction:
         for i in range(20):
             await sm.append_message({"role": "user", "content": f"message {i} " * 50})
 
-        mock_model = AsyncMock()
-        mock_model.return_value = "Summary of older messages."
+        mock_model = _mock_model(return_value="Summary of older messages.")
 
         await sm.compact(mock_model, tmp_path)
 
@@ -204,8 +215,7 @@ class TestCompaction:
             await sm.append_message({"role": "user", "content": f"message {i}"})
 
         original_count = sm.message_count
-        mock_model = AsyncMock()
-        mock_model.return_value = "Summary."
+        mock_model = _mock_model(return_value="Summary.")
 
         await sm.compact(mock_model, tmp_path)
 
@@ -222,8 +232,7 @@ class TestCompaction:
         for i in range(10):
             await sm.append_message({"role": "user", "content": f"msg {i} " * 50})
 
-        mock_model = AsyncMock()
-        mock_model.return_value = "Summary of conversation."
+        mock_model = _mock_model(return_value="Summary of conversation.")
 
         await sm.compact(mock_model, tmp_path)
 
@@ -312,8 +321,7 @@ class TestEdgeCases:
         await sm.append_message({"role": "user", "content": "msg1"})
         await sm.append_message({"role": "assistant", "content": "msg2"})
 
-        mock_model = AsyncMock()
-        mock_model.return_value = "Summary."
+        mock_model = _mock_model(return_value="Summary.")
 
         await sm.compact(mock_model, tmp_path)
 
@@ -340,8 +348,7 @@ class TestEdgeCases:
         sm = _make_session_manager(tmp_path)
         await sm.create_session()
 
-        mock_model = AsyncMock()
-        mock_model.return_value = "Facts"
+        mock_model = _mock_model(return_value="Facts")
 
         # Messages with no content
         messages = [
@@ -350,15 +357,14 @@ class TestEdgeCases:
 
         await sm._pre_compact_flush(messages, tmp_path, mock_model)
         # Model should not be called
-        mock_model.assert_not_called()
+        mock_model.invoke.assert_not_called()
 
     async def test_pre_compact_flush_model_failure(self, tmp_path: Path) -> None:
         """Pre-compaction flush continues when model fails."""
         sm = _make_session_manager(tmp_path)
         await sm.create_session()
 
-        mock_model = AsyncMock()
-        mock_model.side_effect = Exception("Model failed")
+        mock_model = _mock_model(side_effect=Exception("Model failed"))
 
         messages = [
             {"type": "message", "role": "user", "content": "hello"},
@@ -375,8 +381,7 @@ class TestEdgeCases:
         sm = _make_session_manager(tmp_path)
         await sm.create_session()
 
-        mock_model = AsyncMock()
-        mock_model.return_value = "New facts"
+        mock_model = _mock_model(return_value="New facts")
 
         messages = [
             {"type": "message", "role": "user", "content": "hello"},
@@ -391,6 +396,57 @@ class TestEdgeCases:
         assert "New facts" in content
 
 
+class TestContextSanitizationUnicode:
+    """ASI-06: context.md writes sanitize Unicode attack vectors."""
+
+    async def test_nfkc_normalization(self, tmp_path: Path) -> None:
+        """Fullwidth characters are normalized to ASCII equivalents."""
+        sm = _make_session_manager(tmp_path)
+        # Fullwidth 'A' (U+FF21) should normalize to regular 'A'
+        result = sm._sanitize_context_output("\uff21\uff22\uff23")
+        assert result == "ABC"
+
+    async def test_zero_width_characters_stripped(self, tmp_path: Path) -> None:
+        """Zero-width and invisible Unicode chars are removed."""
+        sm = _make_session_manager(tmp_path)
+        result = sm._sanitize_context_output("hello\u200bworld\ufeff")
+        assert result == "helloworld"
+
+    async def test_control_characters_stripped(self, tmp_path: Path) -> None:
+        """ASCII control characters are removed."""
+        sm = _make_session_manager(tmp_path)
+        result = sm._sanitize_context_output("clean\x00\x01text")
+        assert result == "cleantext"
+
+    async def test_newlines_and_tabs_preserved(self, tmp_path: Path) -> None:
+        """Newlines and tabs are kept for readability."""
+        sm = _make_session_manager(tmp_path)
+        result = sm._sanitize_context_output("line1\nline2\ttab")
+        assert result == "line1\nline2\ttab"
+
+    async def test_pre_compact_flush_sanitizes_output(self, tmp_path: Path) -> None:
+        """End-to-end: context.md writes are sanitized against poisoning."""
+        sm = _make_session_manager(tmp_path)
+        await sm.create_session()
+
+        # Model returns text with zero-width chars (injection attempt)
+        mock_model = _mock_model(
+            return_value="Facts\u200b with \ufeffinvisible chars"
+        )
+
+        messages = [
+            {"type": "message", "role": "user", "content": "hello"},
+        ]
+
+        await sm._pre_compact_flush(messages, tmp_path, mock_model)
+
+        context_path = tmp_path / "context.md"
+        content = context_path.read_text()
+        assert "\u200b" not in content
+        assert "\ufeff" not in content
+        assert "Facts with invisible chars" in content
+
+
 class TestSummarizationFailure:
     """Lines 265-267: Summarization exception returns fallback."""
 
@@ -398,7 +454,7 @@ class TestSummarizationFailure:
         sm = _make_session_manager(tmp_path)
         await sm.create_session()
 
-        mock_model = AsyncMock(side_effect=RuntimeError("LLM down"))
+        mock_model = _mock_model(side_effect=RuntimeError("LLM down"))
         messages = [
             {"type": "message", "role": "user", "content": "hello"},
             {"type": "message", "role": "assistant", "content": "hi"},

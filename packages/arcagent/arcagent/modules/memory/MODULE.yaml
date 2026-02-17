@@ -3,6 +3,7 @@ version: 0.1.0
 description: 3-tier persistent memory with markdown files
 author: ArcAgent
 entry_point: arcagent.modules.memory:MarkdownMemoryModule
+cli_entry: arcagent.modules.memory.cli:cli_group
 dependencies:
   - arcagent.core.module_bus
   - arcagent.core.config

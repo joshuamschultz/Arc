@@ -1,7 +1,7 @@
 """Provider registry — convention-based adapter discovery and load_model()."""
 
 import importlib
-import os
+import threading
 from typing import Any
 
 from arcllm.config import ProviderConfig, load_global_config, load_provider_config
@@ -9,10 +9,8 @@ from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider
 
 # Module-level caches: loaded once per provider, reused across calls.
-# Thread safety: relies on CPython GIL for atomic dict operations.
-# Under free-threaded Python (PEP 703, --disable-gil), a threading.Lock
-# would be needed around cache-miss writes. Current async-first design
-# means all access is single-threaded within an event loop.
+# Lock protects cache-miss writes for thread safety (PEP 703 ready).
+_cache_lock = threading.Lock()
 _provider_config_cache: dict[str, ProviderConfig] = {}
 _adapter_class_cache: dict[str, type[LLMProvider]] = {}
 _global_config_cache: dict[str, Any] | None = None
@@ -47,33 +45,42 @@ def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
     if provider_name in _adapter_class_cache:
         return _adapter_class_cache[provider_name]
 
-    module_path = f"arcllm.adapters.{provider_name}"
-    try:
-        module = importlib.import_module(module_path)
-    except ImportError as e:
-        raise ArcLLMConfigError(
-            f"No adapter module found for provider '{provider_name}'. "
-            f"Expected module: {module_path}"
-        ) from e
+    with _cache_lock:
+        # Double-check after acquiring lock
+        if provider_name in _adapter_class_cache:
+            return _adapter_class_cache[provider_name]
 
-    class_name = f"{provider_name.title()}Adapter"
-    adapter_class = getattr(module, class_name, None)
-    if adapter_class is None:
-        raise ArcLLMConfigError(f"No adapter class '{class_name}' found in module '{module_path}'")
+        module_path = f"arcllm.adapters.{provider_name}"
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            raise ArcLLMConfigError(
+                f"No adapter module found for provider '{provider_name}'. "
+                f"Expected module: {module_path}"
+            ) from e
 
-    _adapter_class_cache[provider_name] = adapter_class
-    return adapter_class
+        class_name = f"{provider_name.title()}Adapter"
+        adapter_class = getattr(module, class_name, None)
+        if adapter_class is None:
+            raise ArcLLMConfigError(
+                f"No adapter class '{class_name}' found in module '{module_path}'"
+            )
+
+        _adapter_class_cache[provider_name] = adapter_class
+        return adapter_class
 
 
 def _ensure_global_config() -> Any:
     """Load and cache global config + module settings on first access."""
     global _global_config_cache
     if _global_config_cache is None:
-        _global_config_cache = load_global_config()
-        for name, cfg in _global_config_cache.modules.items():
-            _module_settings_cache[name] = {
-                k: v for k, v in cfg.model_dump().items() if k != "enabled"
-            }
+        with _cache_lock:
+            if _global_config_cache is None:
+                _global_config_cache = load_global_config()
+                for name, cfg in _global_config_cache.modules.items():
+                    _module_settings_cache[name] = {
+                        k: v for k, v in cfg.model_dump().items() if k != "enabled"
+                    }
     return _global_config_cache
 
 
@@ -175,6 +182,9 @@ def load_model(
     # Resolve API key via vault if configured
     _ensure_global_config()
 
+    # Resolve API key via vault if configured (never written to os.environ —
+    # keys stay in-memory only, honoring TTL rotation and zero-trust policy)
+    resolved_api_key: str | None = None
     global _vault_resolver_cache
     vault_cfg = _global_config_cache.vault
     if vault_cfg.backend:
@@ -186,15 +196,13 @@ def load_model(
             )
         vault_path = config.provider.vault_path
         api_key_env = config.provider.api_key_env
-        resolved_key = _vault_resolver_cache.resolve_api_key(api_key_env, vault_path or None)
-        # Set env var so adapter picks it up transparently
-        os.environ[api_key_env] = resolved_key
+        resolved_api_key = _vault_resolver_cache.resolve_api_key(api_key_env, vault_path or None)
 
     # Look up adapter class by convention (cached after first lookup)
     adapter_class = _get_adapter_class(provider)
 
-    # Construct adapter
-    result: LLMProvider = adapter_class(config, model_name)
+    # Construct adapter — pass vault-resolved key directly (bypasses env var)
+    result: LLMProvider = adapter_class(config, model_name, resolved_api_key=resolved_api_key)
 
     # Apply module wrapping (innermost first): RateLimit, Fallback, Retry
     rate_limit_config = _resolve_module_config("rate_limit", rate_limit)

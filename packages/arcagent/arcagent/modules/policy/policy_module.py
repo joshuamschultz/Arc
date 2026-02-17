@@ -16,7 +16,7 @@ from arcagent.core.config import EvalConfig
 from arcagent.core.module_bus import EventContext, ModuleContext
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.modules.policy.policy_engine import PolicyEngine
-from arcagent.utils.eval_helpers import get_eval_model, spawn_background
+from arcagent.utils.model_helpers import get_eval_model, spawn_background
 
 _logger = logging.getLogger("arcagent.modules.policy")
 
@@ -129,6 +129,11 @@ class PolicyModule:
         # Periodic evaluation at configured interval
         self._turn_count += 1
         if self._turn_count % self._config.eval_interval_turns == 0:
+            if self._telemetry is not None:
+                self._telemetry.audit_event(
+                    "policy.eval_triggered",
+                    {"turn": self._turn_count, "session_id": session_id},
+                )
             spawn_background(
                 self._safe_evaluate(messages, model, session_id=session_id),
                 background_tasks=self._background_tasks,
@@ -166,4 +171,9 @@ class PolicyModule:
         except Exception:
             if self._eval_config.fallback_behavior == "error":
                 raise
-            _logger.debug("Policy evaluation error, skipping")
+            _logger.warning("Policy evaluation error, skipping", exc_info=True)
+            if self._telemetry is not None:
+                self._telemetry.audit_event(
+                    "policy.eval_skipped",
+                    {"session_id": session_id, "reason": "evaluation_error"},
+                )

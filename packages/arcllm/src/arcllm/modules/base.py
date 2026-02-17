@@ -91,5 +91,4 @@ class BaseModule(LLMProvider):
 
     async def close(self) -> None:
         """Close resources held by the inner provider."""
-        if hasattr(self._inner, "close"):
-            await self._inner.close()
+        await self._inner.close()

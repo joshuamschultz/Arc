@@ -10,7 +10,7 @@ from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
-from arcrun.strategies import STRATEGIES, _load_strategies, select_strategy
+from arcrun.strategies import STRATEGIES, select_strategy
 from arcrun.types import LoopResult, SandboxConfig, Tool
 
 
@@ -57,6 +57,29 @@ def _build_state(
     return state, sandbox_obj
 
 
+def _inject_spawn_tool(
+    model: Any,
+    tools: list[Tool],
+    system_prompt: str,
+    state: RunState,
+    sandbox: SandboxConfig | None,
+    allowed_strategies: list[str] | None,
+) -> None:
+    """Inject spawn_task tool if recursion depth allows."""
+    if state.depth < state.max_depth:
+        from arcrun.builtins.spawn import make_spawn_tool
+
+        spawn_tool = make_spawn_tool(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            state=state,
+            sandbox=sandbox,
+            allowed_strategies=allowed_strategies,
+        )
+        state.registry.add(spawn_tool)
+
+
 async def _select_and_emit(
     allowed_strategies: list[str] | None,
     model: Any,
@@ -94,14 +117,7 @@ async def run(
         depth=depth, max_depth=max_depth,
     )
 
-    # Inject spawn_task if recursion depth allows
-    if state.depth < state.max_depth:
-        from arcrun.builtins.spawn import make_spawn_tool
-        spawn_tool = make_spawn_tool(
-            model=model, tools=tools, system_prompt=system_prompt,
-            state=state, sandbox=sandbox, allowed_strategies=allowed_strategies,
-        )
-        state.registry.add(spawn_tool)
+    _inject_spawn_tool(model, tools, system_prompt, state, sandbox, allowed_strategies)
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)
     return await strategy_fn(model, state, sandbox_obj, max_turns)
@@ -132,14 +148,7 @@ async def run_async(
         depth=depth, max_depth=max_depth,
     )
 
-    # Inject spawn_task if recursion depth allows
-    if state.depth < state.max_depth:
-        from arcrun.builtins.spawn import make_spawn_tool
-        spawn_tool = make_spawn_tool(
-            model=model, tools=tools, system_prompt=system_prompt,
-            state=state, sandbox=sandbox, allowed_strategies=allowed_strategies,
-        )
-        state.registry.add(spawn_tool)
+    _inject_spawn_tool(model, tools, system_prompt, state, sandbox, allowed_strategies)
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)
     loop_task = asyncio.create_task(strategy_fn(model, state, sandbox_obj, max_turns))

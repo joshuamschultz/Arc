@@ -24,8 +24,8 @@ from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.entity_extractor import EntityExtractor
 from arcagent.modules.memory.hybrid_search import HybridSearch
-from arcagent.utils.eval_helpers import get_eval_model, spawn_background
 from arcagent.utils.io import CHARS_PER_TOKEN
+from arcagent.utils.model_helpers import get_eval_model, spawn_background
 
 _logger = logging.getLogger("arcagent.modules.memory")
 
@@ -414,8 +414,6 @@ class MarkdownMemoryModule:
 
     async def _on_post_respond(self, ctx: EventContext) -> None:
         """Fire async entity extraction after each response."""
-        from datetime import date
-
         model = self._get_eval_model()
         if model is None:
             return
@@ -453,8 +451,6 @@ class MarkdownMemoryModule:
         Creates daily notes file if missing and logs the compaction event.
         Agent will be reminded to save important context via identity.md instructions.
         """
-        from datetime import date
-
         ratio = ctx.data.get("ratio", 0.0)
         _logger.info(
             "Pre-compaction triggered at %.1f%% context usage - ensuring daily notes exist",
@@ -542,6 +538,13 @@ class MarkdownMemoryModule:
                     return True
             except (ValueError, OSError):
                 continue
+
+        # Dangerous commands (sed, awk, perl, tee) can modify memory files
+        # via piping or in-place editing without a direct path argument.
+        # If any dangerous command is present AND command references a
+        # memory subpath by name, deny the operation.
+        if has_dangerous_cmd:
+            return any(sub.rstrip("/") in command for sub in _MEMORY_SUBPATHS)
 
         return False
 

@@ -4,9 +4,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+
+def _mock_model(
+    *, return_value: Any = None, side_effect: Exception | None = None
+) -> MagicMock:
+    """Create a mock LLM model with invoke() returning LLMResponse-like object."""
+    model = MagicMock()
+    if side_effect is not None:
+        model.invoke = AsyncMock(side_effect=side_effect)
+    else:
+        model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
+    return model
 
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.modules.policy.policy_engine import (
@@ -313,7 +326,7 @@ class TestEvalModelFailure:
     @pytest.mark.asyncio()
     async def test_skip_on_model_failure(self, tmp_path: Path) -> None:
         engine = _make_engine(tmp_path)
-        model = AsyncMock(side_effect=RuntimeError("model down"))
+        model = _mock_model(side_effect=RuntimeError("model down"))
         messages = [{"role": "user", "content": "test"}]
 
         # PolicyEngine now raises — caller (PolicyModule) handles fallback
@@ -323,7 +336,7 @@ class TestEvalModelFailure:
     @pytest.mark.asyncio()
     async def test_error_on_model_failure(self, tmp_path: Path) -> None:
         engine = _make_engine(tmp_path)
-        model = AsyncMock(side_effect=RuntimeError("model down"))
+        model = _mock_model(side_effect=RuntimeError("model down"))
         messages = [{"role": "user", "content": "test"}]
 
         with pytest.raises(RuntimeError):
@@ -339,7 +352,7 @@ class TestEmptyPolicy:
         policy_path = tmp_path / "policy.md"
         # No policy file exists yet
 
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "additions": ["Always verify outputs"],
             "updates": [],
             "rewrites": [],
@@ -432,7 +445,7 @@ class TestReflectionInvalidJSON:
     async def test_reflect_invalid_json_returns_none(self, tmp_path: Path) -> None:
         """Invalid JSON from model returns None delta."""
         engine = _make_engine(tmp_path)
-        model = AsyncMock(return_value="not valid json {{{")
+        model = _mock_model(return_value="not valid json {{{")
         messages = [{"role": "user", "content": "test"}]
 
         delta, policy = await engine._reflect(messages, model)
@@ -442,7 +455,7 @@ class TestReflectionInvalidJSON:
     async def test_reflect_type_error_returns_none(self, tmp_path: Path) -> None:
         """TypeError from json.loads returns None delta."""
         engine = _make_engine(tmp_path)
-        model = AsyncMock(return_value=None)  # Will cause TypeError in json.loads
+        model = _mock_model(return_value=None)  # Will cause TypeError in json.loads
         messages = [{"role": "user", "content": "test"}]
 
         delta, _policy = await engine._reflect(messages, model)
@@ -496,7 +509,7 @@ class TestReflectExistingPolicy:
         policy_path = tmp_path / "policy.md"
         policy_path.write_text("# Policy\n- existing rule score:5\n")
 
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "additions": ["new rule"],
             "updates": [],
             "rewrites": [],
@@ -515,7 +528,7 @@ class TestReflectEmptyResult:
 
     async def test_reflect_returns_none_for_empty_delta(self, tmp_path: Path) -> None:
         engine = _make_engine(tmp_path)
-        model = AsyncMock(return_value=json.dumps({
+        model = _mock_model(return_value=json.dumps({
             "additions": [],
             "updates": [],
             "rewrites": [],

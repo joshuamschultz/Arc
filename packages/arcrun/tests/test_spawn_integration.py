@@ -391,5 +391,6 @@ class TestSystemPromptOverride:
 
         # Parent should have "You are a generalist."
         assert system_prompts_seen[0] == "You are a generalist."
-        # Child should have "You are a specialist."
-        assert system_prompts_seen[1] == "You are a specialist."
+        # Child should have parent preamble + specialization (ASI-01)
+        assert "You are a generalist." in system_prompts_seen[1]
+        assert "You are a specialist." in system_prompts_seen[1]

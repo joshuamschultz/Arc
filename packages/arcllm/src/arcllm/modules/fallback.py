@@ -12,11 +12,12 @@ logger = logging.getLogger(__name__)
 _MAX_FALLBACK_CHAIN_LENGTH = 10
 
 
-def load_model(provider: str) -> LLMProvider:
-    """Lazy import to avoid circular dependency with registry."""
+def _load_fallback_model(provider: str) -> LLMProvider:
+    """Load a fallback provider without recursive fallback wrapping."""
     from arcllm.registry import load_model as _load_model
 
-    return _load_model(provider)
+    # Disable fallback on the fallback to prevent recursive chains
+    return _load_model(provider, fallback=False)
 
 
 class FallbackModule(BaseModule):
@@ -61,7 +62,7 @@ class FallbackModule(BaseModule):
                     attrs = {"arcllm.fallback.provider": provider_name}
                     with self._span("arcllm.fallback.attempt", attributes=attrs):
                         try:
-                            fallback = load_model(provider_name)
+                            fallback = _load_fallback_model(provider_name)
                             result = await fallback.invoke(messages, tools, **kwargs)
                             logger.info("Fallback to '%s' succeeded.", provider_name)
                             return result

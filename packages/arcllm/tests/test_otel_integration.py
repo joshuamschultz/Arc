@@ -3,11 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opentelemetry.trace import StatusCode
-
 from arcllm.exceptions import ArcLLMAPIError
 from arcllm.modules.rate_limit import clear_buckets
 from arcllm.types import LLMResponse, Message, Usage
+from opentelemetry.trace import StatusCode
 
 
 def _make_response(**overrides) -> LLMResponse:
@@ -118,8 +117,8 @@ class TestRetrySpans:
         attempt_spans[0].record_exception.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_retry_attempt_ok_when_handled(self):
-        """StatusCode.OK on retried attempt (error was handled)."""
+    async def test_retry_attempt_no_ok_on_failure(self):
+        """Failed attempt span should not be marked OK (W9 — misleading status)."""
         from arcllm.modules.retry import RetryModule
 
         error = ArcLLMAPIError(429, "rate limited", "test")
@@ -134,7 +133,8 @@ class TestRetrySpans:
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
         attempt_spans = [s for s in spans if s._name == "arcllm.retry.attempt"]
-        attempt_spans[0].set_status.assert_called_with(StatusCode.OK)
+        # Failed attempt should NOT be marked OK — only the outer retry span gets OK
+        attempt_spans[0].set_status.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_retry_error_on_exhaustion(self):
@@ -187,7 +187,7 @@ class TestFallbackSpans:
         with (
             patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer),
             patch(
-                "arcllm.modules.fallback.load_model", return_value=fallback_provider
+                "arcllm.modules.fallback._load_fallback_model", return_value=fallback_provider
             ),
         ):
             messages = [Message(role="user", content="hi")]
@@ -208,7 +208,7 @@ class TestFallbackSpans:
         with (
             patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer),
             patch(
-                "arcllm.modules.fallback.load_model", return_value=fallback_provider
+                "arcllm.modules.fallback._load_fallback_model", return_value=fallback_provider
             ),
         ):
             messages = [Message(role="user", content="hi")]
@@ -246,12 +246,14 @@ class TestRateLimitSpans:
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
         rl_span = next(s for s in spans if s._name == "arcllm.rate_limit")
-        rl_span.set_attribute.assert_any_call("arcllm.rate_limit.wait_ms", pytest.approx(0.0, abs=100))
+        rl_span.set_attribute.assert_any_call(
+            "arcllm.rate_limit.wait_ms", pytest.approx(0.0, abs=100),
+        )
 
     @pytest.mark.asyncio
     async def test_rate_limit_throttled_event(self):
         """Event recorded when throttled (wait > 0)."""
-        from arcllm.modules.rate_limit import RateLimitModule, TokenBucket
+        from arcllm.modules.rate_limit import RateLimitModule
 
         inner = _make_inner()
         module = RateLimitModule({"requests_per_minute": 60}, inner)

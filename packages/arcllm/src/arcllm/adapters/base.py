@@ -20,17 +20,28 @@ class BaseAdapter(LLMProvider):
     and async context manager support. Subclasses implement invoke().
     """
 
-    def __init__(self, config: ProviderConfig, model_name: str) -> None:
+    def __init__(
+        self,
+        config: ProviderConfig,
+        model_name: str,
+        resolved_api_key: str | None = None,
+    ) -> None:
         self._config = config
         self._model_name = model_name
         self._model_meta: ModelMetadata | None = config.models.get(model_name)
 
-        env_var = config.provider.api_key_env
-        api_key = os.environ.get(env_var, "")
-        if config.provider.api_key_required and not api_key:
-            raise ArcLLMConfigError(
-                f"Missing environment variable '{env_var}' for provider. Set it to your API key."
-            )
+        # Vault-resolved key takes priority over env var (keeps secrets
+        # out of os.environ — NIST 800-53 AU-9, FedRAMP requirement)
+        if resolved_api_key is not None:
+            api_key = resolved_api_key
+        else:
+            env_var = config.provider.api_key_env
+            api_key = os.environ.get(env_var, "")
+            if config.provider.api_key_required and not api_key:
+                raise ArcLLMConfigError(
+                    f"Missing environment variable '{env_var}' for provider. "
+                    f"Set it to your API key."
+                )
         self._api_key = api_key
 
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))

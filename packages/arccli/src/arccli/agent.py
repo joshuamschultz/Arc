@@ -4,21 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import json
+import logging
 import os
 import sys
 import textwrap
 import tomllib
 import uuid
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import click
+import yaml
 from dotenv import load_dotenv
 
 from arccli.formatting import click_echo, print_kv, print_table
+from arccli.telegram_setup import setup_telegram
 
 # Default .env search paths (tried in order)
 _ENV_PATHS = [
@@ -45,9 +47,9 @@ You are a helpful assistant with access to tools and a structured workspace.
 - Important context that defines your identity
 
 **How to update:**
-Use the `edit` tool to modify this file directly. Add new information under relevant sections below.
+Use the `edit` tool to modify this file directly. Add info under relevant sections.
 
-**DO NOT** update `context.md` or `policy.md` manually - those are managed automatically by the memory system.
+**DO NOT** update `context.md` or `policy.md` manually - managed by the memory system.
 
 ## About Me
 
@@ -117,7 +119,7 @@ Entities are NOUNS - people, companies, places, projects, products, parts, tools
 
 **CRITICAL: You MUST use tools - never just say you did something.**
 
-1. **ALWAYS use tools** - When you need to save, read, or search: USE THE TOOL, don't just say you did
+1. **ALWAYS use tools** - When saving, reading, or searching: USE THE TOOL, don't just say you did
 2. **Verify tool execution** - Check the tool result to confirm success
 3. **Update identity.md** - When learning about yourself or the user, ACTUALLY edit this file
 4. **Be direct and concise** - No filler, no hedging
@@ -170,29 +172,43 @@ max_tokens = 1024
 temperature = 0.2
 fallback_behavior = "skip"
 
-[memory]
-context_budget_tokens = 2000
-entity_extraction_enabled = false
-policy_eval_interval_turns = 5
-
 [session]
 retention_count = 50
 retention_days = 30
 
 [extensions]
 global_dir = "~/.arcagent/extensions"
+"""
+
+_DEFAULT_MODULES_CONFIG = """\
 
 [modules.memory]
 enabled = true
+
+[modules.memory.config]
+context_budget_tokens = 2000
+entity_extraction_enabled = true
+
+[modules.policy]
+enabled = true
+
+[modules.policy.config]
+eval_interval_turns = 5
+
+[modules.scheduler]
+enabled = true
+
+[modules.scheduler.config]
+check_interval_seconds = 30
 """
 
-_DEFAULT_POLICY = """\
+_POLICY_META = "{score:5, uses:0, reviewed:2025-01-01, created:2025-01-01, source:init}"
+_DEFAULT_POLICY = f"""\
 # Policy
 
-## Rules
-- Be helpful and direct
-- Use tools when appropriate
-- Report errors clearly
+- [P01] Be helpful and direct {_POLICY_META}
+- [P02] Use tools when appropriate {_POLICY_META}
+- [P03] Report errors clearly {_POLICY_META}
 """
 
 _DEFAULT_CONTEXT = """\
@@ -277,9 +293,16 @@ def extension(api):
 '''
 
 
-def _load_env() -> None:
-    """Load API keys from .env files."""
-    for env_path in _ENV_PATHS:
+def _load_env(agent_dir: Path | None = None) -> None:
+    """Load API keys from .env files.
+
+    Searches default paths plus the agent workspace ``.env`` if provided.
+    """
+    paths = list(_ENV_PATHS)
+    if agent_dir is not None:
+        # Agent-local .env takes highest priority
+        paths.insert(0, agent_dir / ".env")
+    for env_path in paths:
         if env_path.exists():
             load_dotenv(env_path)
 
@@ -394,6 +417,27 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
         init_file.write_text("")
 
 
+def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
+    """Print workspace structure and next-steps after scaffold."""
+    click_echo()
+    click_echo("Structure:")
+    click_echo(f"  {display_name}/")
+    click_echo("    arcagent.toml")
+    click_echo("    workspace/")
+    click_echo("      identity.md, policy.md, context.md")
+    click_echo("      notes/, entities/")
+    click_echo("      skills/, skills/_agent-created/")
+    click_echo("      extensions/")
+    click_echo("        calculator.py")
+    click_echo("      sessions/, archive/")
+    click_echo("      library/scripts/, templates/, prompts/, data/, snippets/")
+    click_echo("    tools/")
+    click_echo()
+    click_echo("Next steps:")
+    click_echo(f"  arc agent build {agent_dir}")
+    click_echo(f"  arc agent chat {agent_dir}")
+
+
 # ---------------------------------------------------------------------------
 # Top-level group
 # ---------------------------------------------------------------------------
@@ -412,7 +456,11 @@ def agent() -> None:
 @agent.command()
 @click.argument("path", default=".")
 @click.option("--name", default=None, help="Agent name (default: directory name).")
-@click.option("--model", default="anthropic/claude-haiku-4-5-20251001", help="LLM model.")
+@click.option(
+    "--model",
+    default="anthropic/claude-sonnet-4-5-20250929",
+    help="LLM model.",
+)
 @click.option("--interactive", "-i", is_flag=True, help="Interactive setup prompts.")
 def init(path: str, name: str | None, model: str, interactive: bool) -> None:
     """Bootstrap a full agent workspace.
@@ -443,10 +491,10 @@ def init(path: str, name: str | None, model: str, interactive: bool) -> None:
     # Write config
     config_path = agent_dir / "arcagent.toml"
     if not config_path.exists():
-        config_content = _DEFAULT_CONFIG.format(name=agent_name)
-        if model != "anthropic/claude-haiku-4-5-20251001":
+        config_content = _DEFAULT_CONFIG.format(name=agent_name) + _DEFAULT_MODULES_CONFIG
+        if model != "anthropic/claude-sonnet-4-5-20250929":
             config_content = config_content.replace(
-                'model = "anthropic/claude-haiku-4-5-20251001"',
+                'model = "anthropic/claude-sonnet-4-5-20250929"',
                 f'model = "{model}"',
             )
         config_path.write_text(config_content)
@@ -459,23 +507,7 @@ def init(path: str, name: str | None, model: str, interactive: bool) -> None:
         ext_path.write_text(_CALCULATOR_EXTENSION)
 
     click_echo(f"Initialized agent workspace: {agent_dir}")
-    click_echo()
-    click_echo("Structure:")
-    click_echo(f"  {agent_dir.name}/")
-    click_echo(f"    arcagent.toml")
-    click_echo(f"    workspace/")
-    click_echo(f"      identity.md, policy.md, context.md")
-    click_echo(f"      notes/, entities/")
-    click_echo(f"      skills/, skills/_agent-created/")
-    click_echo(f"      extensions/")
-    click_echo(f"        calculator.py")
-    click_echo(f"      sessions/, archive/")
-    click_echo(f"      library/scripts/, templates/, prompts/, data/, snippets/")
-    click_echo(f"    tools/")
-    click_echo()
-    click_echo("Next steps:")
-    click_echo(f"  arc agent build {agent_dir}")
-    click_echo(f"  arc agent chat {agent_dir}")
+    _print_scaffold_summary(agent_dir.name, agent_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +518,11 @@ def init(path: str, name: str | None, model: str, interactive: bool) -> None:
 @agent.command()
 @click.argument("name")
 @click.option("--dir", "parent_dir", default=".", help="Parent directory (default: cwd).")
-@click.option("--model", default="anthropic/claude-haiku-4-5-20251001", help="LLM model.")
+@click.option(
+    "--model",
+    default="anthropic/claude-sonnet-4-5-20250929",
+    help="LLM model.",
+)
 @click.option("--with-code-exec", is_flag=True, help="Include execute_python tool.")
 def create(name: str, parent_dir: str, model: str, with_code_exec: bool) -> None:
     """Scaffold a new agent directory with example tools.
@@ -503,10 +539,10 @@ def create(name: str, parent_dir: str, model: str, with_code_exec: bool) -> None
     agent_dir.mkdir(parents=True)
 
     # Write config
-    config_content = _DEFAULT_CONFIG.format(name=name)
-    if model != "anthropic/claude-haiku-4-5-20251001":
+    config_content = _DEFAULT_CONFIG.format(name=name) + _DEFAULT_MODULES_CONFIG
+    if model != "anthropic/claude-sonnet-4-5-20250929":
         config_content = config_content.replace(
-            'model = "anthropic/claude-haiku-4-5-20251001"',
+            'model = "anthropic/claude-sonnet-4-5-20250929"',
             f'model = "{model}"',
         )
     (agent_dir / "arcagent.toml").write_text(config_content)
@@ -519,23 +555,7 @@ def create(name: str, parent_dir: str, model: str, with_code_exec: bool) -> None
     ext_path.write_text(_CALCULATOR_EXTENSION)
 
     click_echo(f"Created agent: {agent_dir}")
-    click_echo()
-    click_echo("Structure:")
-    click_echo(f"  {name}/")
-    click_echo(f"    arcagent.toml")
-    click_echo(f"    workspace/")
-    click_echo(f"      identity.md, policy.md, context.md")
-    click_echo(f"      notes/, entities/")
-    click_echo(f"      skills/, skills/_agent-created/")
-    click_echo(f"      extensions/")
-    click_echo(f"        calculator.py")
-    click_echo(f"      sessions/, archive/")
-    click_echo(f"      library/scripts/, templates/, prompts/, data/, snippets/")
-    click_echo(f"    tools/")
-    click_echo()
-    click_echo("Next steps:")
-    click_echo(f"  arc agent build {agent_dir}")
-    click_echo(f"  arc agent chat {agent_dir}")
+    _print_scaffold_summary(name, agent_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -544,7 +564,7 @@ def create(name: str, parent_dir: str, model: str, with_code_exec: bool) -> None
 
 _PROVIDER_MODELS = {
     "anthropic": [
-        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-5-20250929",
         "claude-sonnet-4-5-20250929",
         "claude-opus-4-6",
     ],
@@ -627,13 +647,17 @@ def build(path: str, check: bool) -> None:
         status = "ready" if has_key else f"needs {env_var}"
         click_echo(f"  {i}. {p} ({status})")
 
-    current_model = config.get("llm", {}).get("model", "anthropic/claude-haiku-4-5-20251001")
+    default_model = "anthropic/claude-sonnet-4-5-20250929"
+    current_model = config.get("llm", {}).get("model", default_model)
     current_provider = current_model.split("/")[0] if "/" in current_model else "anthropic"
 
+    default_provider_idx = (
+        providers.index(current_provider) + 1 if current_provider in providers else 1
+    )
     provider_idx = click.prompt(
         "\nSelect provider",
         type=click.IntRange(1, len(providers)),
-        default=providers.index(current_provider) + 1 if current_provider in providers else 1,
+        default=default_provider_idx,
     )
     provider = providers[provider_idx - 1]
 
@@ -641,7 +665,7 @@ def build(path: str, check: bool) -> None:
     env_var = _PROVIDER_ENV_VARS.get(provider, "")
     if provider != "ollama" and not os.environ.get(env_var):
         click_echo(f"\n  {env_var} is not set.")
-        click_echo(f"  Add it to your .env file or export it in your shell.")
+        click_echo("  Add it to your .env file or export it in your shell.")
         if click.confirm("  Continue anyway?", default=True):
             pass
         else:
@@ -706,21 +730,32 @@ def build(path: str, check: bool) -> None:
 
     tool_files = [f for f in tools_dir.glob("*.py") if f.name != "__init__.py"]
     if tool_files:
-        click_echo(f"  Found {len(tool_files)} tool file(s): {', '.join(f.name for f in tool_files)}")
+        names = ", ".join(f.name for f in tool_files)
+        click_echo(f"  Found {len(tool_files)} tool file(s): {names}")
     else:
         click_echo("  No tools found.")
         if click.confirm("  Add example calculator tool?", default=True):
             _write_example_tool(tools_dir, include_code_exec=False)
             click_echo("  Created tools/example.py with calculate tool")
 
-    include_code = click.confirm("  Include execute_python (sandboxed code execution)?", default=False)
+    include_code = click.confirm(
+        "  Include execute_python (sandboxed code execution)?",
+        default=False,
+    )
     if include_code and not tool_files:
         _write_example_tool(tools_dir, include_code_exec=True)
         click_echo("  Updated tools/example.py with execute_python")
     elif include_code:
         click_echo("  Use --with-code-exec flag when running: arc agent chat ... --with-code-exec")
 
-    # --- Step 6: Advanced settings ---
+    # --- Step 6: Modules ---
+    click_echo("\nModule setup:")
+    from arccli.module_walkthrough import format_modules_toml, walk_modules
+
+    modules_result = walk_modules(config)
+    modules_toml = format_modules_toml(modules_result)
+
+    # --- Step 7: Advanced settings ---
     max_tokens = config.get("llm", {}).get("max_tokens", 4096)
     temperature = config.get("llm", {}).get("temperature", 0.7)
     context_max = config.get("context", {}).get("max_tokens", 128000)
@@ -771,32 +806,31 @@ max_tokens = 1024
 temperature = 0.2
 fallback_behavior = "skip"
 
-[memory]
-context_budget_tokens = 2000
-entity_extraction_enabled = false
-
 [session]
 retention_count = 50
 retention_days = 30
 
 [extensions]
 global_dir = "~/.arcagent/extensions"
-"""
+
+{modules_toml}"""
     config_path.write_text(config_toml)
 
     # --- Summary ---
     click_echo("\n" + "=" * 50)
     click_echo("Setup complete!")
     click_echo()
-    print_kv([
-        ("Name", name),
-        ("Model", model_id),
-        ("Max tokens", str(max_tokens)),
-        ("Temperature", str(temperature)),
-        ("Context window", str(context_max)),
-        ("Identity", str(identity_path)),
-        ("Tools dir", str(tools_dir)),
-    ])
+    print_kv(
+        [
+            ("Name", name),
+            ("Model", model_id),
+            ("Max tokens", str(max_tokens)),
+            ("Temperature", str(temperature)),
+            ("Context window", str(context_max)),
+            ("Identity", str(identity_path)),
+            ("Tools dir", str(tools_dir)),
+        ]
+    )
 
     click_echo()
     click_echo("Run validation:")
@@ -815,19 +849,43 @@ def _write_example_tool(tools_dir: Path, include_code_exec: bool) -> None:
 
         from __future__ import annotations
 
-        import json
+        import ast
+        import operator
 
         from arcrun import Tool, ToolContext
 
+        # Safe math operators — no builtins, no attribute access (ASI-05)
+        _SAFE_OPS = {
+            ast.Add: operator.add,
+            ast.Sub: operator.sub,
+            ast.Mult: operator.mul,
+            ast.Div: operator.truediv,
+            ast.Mod: operator.mod,
+            ast.Pow: operator.pow,
+            ast.USub: operator.neg,
+            ast.UAdd: operator.pos,
+        }
+
+
+        def _safe_eval(node: ast.AST) -> float:
+            \"\"\"Recursively evaluate an AST node using only safe math ops.\"\"\"
+            if isinstance(node, ast.Expression):
+                return _safe_eval(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
+                return _SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
+            if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
+                return _SAFE_OPS[type(node.op)](_safe_eval(node.operand))
+            raise ValueError(f"Unsupported expression: {ast.dump(node)}")
+
 
         async def calculate(params: dict, ctx: ToolContext) -> str:
-            \"\"\"Evaluate a math expression safely.\"\"\"
+            \"\"\"Evaluate a math expression safely using AST parsing.\"\"\"
             expr = params["expression"]
-            allowed = set("0123456789+-*/().% ")
-            if not all(c in allowed for c in expr):
-                return "Error: expression contains disallowed characters"
             try:
-                result = eval(expr)  # noqa: S307
+                tree = ast.parse(expr, mode="eval")
+                result = _safe_eval(tree)
                 return str(result)
             except Exception as e:
                 return f"Error: {e}"
@@ -886,7 +944,8 @@ def _run_validation(agent_dir: Path) -> None:
         for fname in ("identity.md", "policy.md", "context.md"):
             fpath = workspace / fname
             if fpath.exists():
-                checks.append(("OK", f"workspace/{fname} ({len(fpath.read_text().strip())} chars)"))
+                char_count = len(fpath.read_text().strip())
+                checks.append(("OK", f"workspace/{fname} ({char_count} chars)"))
             elif fname == "identity.md":
                 checks.append(("WARN", "workspace/identity.md not found"))
     else:
@@ -937,6 +996,7 @@ def _run_validation(agent_dir: Path) -> None:
     # 5. Strategies
     try:
         from arcrun.strategies import STRATEGIES, _load_strategies
+
         if not STRATEGIES:
             _load_strategies()
         checks.append(("OK", f"strategies: {', '.join(STRATEGIES.keys())}"))
@@ -995,16 +1055,17 @@ def agent_serve(path: str, verbose: bool) -> None:
 
 async def _serve(agent_dir: Path, shutdown_event: asyncio.Event, verbose: bool) -> None:
     """Async serve function — startup agent, wait for shutdown, cleanup."""
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, config, _config_path = _load_arcagent(agent_dir)
 
     if verbose:
         import logging
+
         logging.getLogger("arcagent.scheduler").setLevel(logging.DEBUG)
 
     await arc_agent.startup()
     agent_name = config.agent.name
     click_echo(f"Serving agent: {agent_name}")
-    click_echo(f"Scheduler active. Press Ctrl+C to stop.")
+    click_echo("Scheduler active. Press Ctrl+C to stop.")
     click_echo("-" * 40)
 
     try:
@@ -1026,7 +1087,13 @@ async def _serve(agent_dir: Path, shutdown_event: asyncio.Event, verbose: bool) 
 @click.option("--model", default=None, help="Override model from config.")
 @click.option("--verbose", is_flag=True, help="Show tool/LLM events.")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
-def agent_run(path: str, task: str, model: str | None, verbose: bool, as_json: bool) -> None:
+def agent_run(
+    path: str,
+    task: str,
+    model: str | None,
+    verbose: bool,
+    as_json: bool,
+) -> None:
     """One-shot task execution through ArcAgent.
 
     \b
@@ -1040,9 +1107,13 @@ def agent_run(path: str, task: str, model: str | None, verbose: bool, as_json: b
 
 
 async def _agent_run_once(
-    agent_dir: Path, task: str, model_override: str | None, verbose: bool, as_json: bool,
+    agent_dir: Path,
+    task: str,
+    model_override: str | None,
+    verbose: bool,
+    as_json: bool,
 ) -> None:
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, config, _config_path = _load_arcagent(agent_dir)
 
     if model_override:
         config.llm.model = model_override
@@ -1102,24 +1173,33 @@ def agent_status(path: str) -> None:
     session_count = 0
     latest_session = "none"
     if sessions_dir.is_dir():
-        session_files = sorted(sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+        session_files = sorted(
+            sessions_dir.glob("*.jsonl"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
         session_count = len(session_files)
         if session_files:
             latest = session_files[0]
-            mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+            mtime = datetime.fromtimestamp(
+                latest.stat().st_mtime,
+                tz=UTC,
+            )
             latest_session = f"{latest.stem} ({mtime.strftime('%Y-%m-%d %H:%M')})"
 
-    print_kv([
-        ("Name", agent_name),
-        ("DID", did or "(not set)"),
-        ("Model", model_id),
-        ("Tools", str(tool_count)),
-        ("Skills", str(skill_count)),
-        ("Extensions", str(ext_count)),
-        ("Sessions", str(session_count)),
-        ("Latest session", latest_session),
-        ("Path", str(agent_dir)),
-    ])
+    print_kv(
+        [
+            ("Name", agent_name),
+            ("DID", did or "(not set)"),
+            ("Model", model_id),
+            ("Tools", str(tool_count)),
+            ("Skills", str(skill_count)),
+            ("Extensions", str(ext_count)),
+            ("Sessions", str(session_count)),
+            ("Latest session", latest_session),
+            ("Path", str(agent_dir)),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1137,7 +1217,7 @@ def agent_reload(path: str) -> None:
 
 
 async def _agent_reload(agent_dir: Path) -> None:
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, _config, _config_path = _load_arcagent(agent_dir)
     await arc_agent.startup()
     try:
         await arc_agent.reload()
@@ -1160,11 +1240,13 @@ def agent_skills(path: str) -> None:
 
     try:
         from arcagent.core.skill_registry import SkillRegistry
+
         registry = SkillRegistry()
         workspace = agent_dir / "workspace"
         skills = registry.discover(workspace, _GLOBAL_SKILL_DIR)
     except ImportError:
         from arccli.skill import _discover_skills_fallback
+
         skills = _discover_skills_fallback(str(agent_dir))
 
     if not skills:
@@ -1196,7 +1278,11 @@ def agent_extensions(path: str) -> None:
     workspace = agent_dir / "workspace"
 
     rows: list[list[str]] = []
-    for source, directory in [("workspace", workspace / "extensions"), ("global", _GLOBAL_EXT_DIR)]:
+    ext_dirs = [
+        ("workspace", workspace / "extensions"),
+        ("global", _GLOBAL_EXT_DIR),
+    ]
+    for source, directory in ext_dirs:
         if not directory.is_dir():
             continue
         for py_file in sorted(directory.glob("*.py")):
@@ -1226,7 +1312,11 @@ def agent_sessions(path: str) -> None:
         click_echo("No sessions directory found.")
         return
 
-    session_files = sorted(sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+    session_files = sorted(
+        sessions_dir.glob("*.jsonl"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
     if not session_files:
         click_echo("No sessions found.")
         return
@@ -1234,15 +1324,17 @@ def agent_sessions(path: str) -> None:
     rows = []
     for sf in session_files:
         stat = sf.stat()
-        mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+        mtime = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
         line_count = sum(1 for _ in open(sf))
         size_kb = stat.st_size / 1024
-        rows.append([
-            sf.stem,
-            mtime.strftime("%Y-%m-%d %H:%M"),
-            str(line_count),
-            f"{size_kb:.1f} KB",
-        ])
+        rows.append(
+            [
+                sf.stem,
+                mtime.strftime("%Y-%m-%d %H:%M"),
+                str(line_count),
+                f"{size_kb:.1f} KB",
+            ]
+        )
 
     print_table(["Session ID", "Last Modified", "Messages", "Size"], rows)
 
@@ -1274,7 +1366,7 @@ def session_resume(path: str, session_id: str, verbose: bool) -> None:
 
 
 async def _session_resume(agent_dir: Path, session_id: str, verbose: bool) -> None:
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, config, _config_path = _load_arcagent(agent_dir)
     await arc_agent.startup()
 
     agent_name = config.agent.name
@@ -1320,7 +1412,7 @@ def session_compact(path: str) -> None:
 
 
 async def _session_compact(agent_dir: Path) -> None:
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, _config, _config_path = _load_arcagent(agent_dir)
     await arc_agent.startup()
     try:
         if arc_agent._session is not None:
@@ -1343,7 +1435,11 @@ def session_fork(path: str) -> None:
     if not sessions_dir.is_dir():
         raise click.ClickException("No sessions directory found.")
 
-    session_files = sorted(sessions_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+    session_files = sorted(
+        sessions_dir.glob("*.jsonl"),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
     if not session_files:
         raise click.ClickException("No sessions to fork.")
 
@@ -1352,6 +1448,7 @@ def session_fork(path: str) -> None:
     new_path = sessions_dir / f"{new_id}.jsonl"
 
     import shutil
+
     shutil.copy2(latest, new_path)
     click_echo(f"Forked: {latest.stem} -> {new_id}")
 
@@ -1371,7 +1468,7 @@ def agent_settings(path: str) -> None:
 
 
 async def _agent_settings(agent_dir: Path) -> None:
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, _config, _config_path = _load_arcagent(agent_dir)
     await arc_agent.startup()
     try:
         if arc_agent.settings is None:
@@ -1379,6 +1476,7 @@ async def _agent_settings(agent_dir: Path) -> None:
             return
 
         from arcagent.core.settings_manager import SettingsManager
+
         pairs = []
         for key in SettingsManager.MUTABLE_KEYS:
             value = arc_agent.settings.get(key)
@@ -1406,7 +1504,7 @@ def agent_settings_set(path: str, key: str, value: str) -> None:
 
 
 async def _agent_settings_set(agent_dir: Path, key: str, value: str) -> None:
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, _config, _config_path = _load_arcagent(agent_dir)
     await arc_agent.startup()
     try:
         if arc_agent.settings is None:
@@ -1414,6 +1512,7 @@ async def _agent_settings_set(agent_dir: Path, key: str, value: str) -> None:
 
         # Type coerce based on key
         from arcagent.core.settings_manager import SettingsManager
+
         expected_type = SettingsManager.MUTABLE_KEYS.get(key)
         if expected_type is float:
             typed_value: Any = float(value)
@@ -1435,17 +1534,22 @@ async def _agent_settings_set(agent_dir: Path, key: str, value: str) -> None:
 
 @agent.command()
 @click.argument("path", default=".")
-@click.option("--task", default=None, help="Single task (non-interactive). Omit for REPL.")
-@click.option("--model", default=None, help="Override model from config (provider/model).")
-@click.option("--max-turns", default=10, type=int, help="Max loop iterations per task.")
-@click.option("--tool-timeout", default=None, type=float, help="Global tool timeout (seconds).")
-@click.option("--strategy", default=None, type=click.Choice(["react", "code"]), help="Force strategy.")
-@click.option("--sandbox", "sandbox_tools", default=None, help="Comma-separated allowlist of tools.")
-@click.option("--with-code-exec", is_flag=True, help="Add built-in execute_python tool.")
-@click.option("--code-timeout", default=30, type=float, help="execute_python timeout (seconds).")
-@click.option("--verbose", is_flag=True, help="Show tool/LLM events as they happen.")
-@click.option("--show-events", is_flag=True, help="Print full event log after each run.")
-@click.option("--json", "as_json", is_flag=True, help="Output result as JSON (one-shot only).")
+@click.option("--task", default=None, help="Single task (non-interactive).")
+@click.option("--model", default=None, help="Override model (provider/model).")
+@click.option("--max-turns", default=10, type=int, help="Max loop iterations.")
+@click.option("--tool-timeout", default=None, type=float, help="Tool timeout (s).")
+@click.option(
+    "--strategy",
+    default=None,
+    type=click.Choice(["react", "code"]),
+    help="Force strategy.",
+)
+@click.option("--sandbox", "sandbox_tools", default=None, help="Tool allowlist.")
+@click.option("--with-code-exec", is_flag=True, help="Add execute_python tool.")
+@click.option("--code-timeout", default=30, type=float, help="Code timeout (s).")
+@click.option("--verbose", is_flag=True, help="Show tool/LLM events.")
+@click.option("--show-events", is_flag=True, help="Print event log after run.")
+@click.option("--json", "as_json", is_flag=True, help="JSON output (one-shot).")
 @click.option("--session-id", default=None, help="Resume a specific session.")
 def chat(
     path: str,
@@ -1480,28 +1584,28 @@ def chat(
     _load_env()
 
     if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
-        raise click.ClickException(
-            "No API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY."
-        )
+        raise click.ClickException("No API key found. Set ANTHROPIC_API_KEY or OPENAI_API_KEY.")
 
     if task:
         asyncio.run(_agent_run_once(agent_dir, task, model, verbose, as_json))
     else:
         if as_json:
             raise click.ClickException("--json only works with --task (one-shot mode).")
-        asyncio.run(_chat_interactive_arcagent(
-            agent_dir=agent_dir,
-            model_override=model,
-            max_turns=max_turns,
-            tool_timeout=tool_timeout,
-            strategy=strategy,
-            sandbox_tools=sandbox_tools,
-            with_code_exec=with_code_exec,
-            code_timeout=code_timeout,
-            verbose=verbose,
-            show_events=show_events,
-            session_id=session_id,
-        ))
+        asyncio.run(
+            _chat_interactive_arcagent(
+                agent_dir=agent_dir,
+                model_override=model,
+                max_turns=max_turns,
+                tool_timeout=tool_timeout,
+                strategy=strategy,
+                sandbox_tools=sandbox_tools,
+                with_code_exec=with_code_exec,
+                code_timeout=code_timeout,
+                verbose=verbose,
+                show_events=show_events,
+                session_id=session_id,
+            )
+        )
 
 
 async def _chat_interactive_arcagent(
@@ -1519,7 +1623,7 @@ async def _chat_interactive_arcagent(
     session_id: str | None,
 ) -> None:
     """Interactive REPL chat via ArcAgent."""
-    arc_agent, config, config_path = _load_arcagent(agent_dir)
+    arc_agent, config, _config_path = _load_arcagent(agent_dir)
 
     if model_override:
         config.llm.model = model_override
@@ -1601,7 +1705,7 @@ async def _chat_interactive_arcagent(
                 continue
 
             if user_input.startswith("/sandbox"):
-                arg = user_input[len("/sandbox"):].strip()
+                arg = user_input[len("/sandbox") :].strip()
                 if arg:
                     click_echo(f"  Sandbox set: {arg}")
                 else:
@@ -1609,7 +1713,7 @@ async def _chat_interactive_arcagent(
                 continue
 
             if user_input.startswith("/strategy"):
-                arg = user_input[len("/strategy"):].strip()
+                arg = user_input[len("/strategy") :].strip()
                 if arg and arg != "auto":
                     click_echo(f"  Strategy: {arg}")
                 else:
@@ -1617,7 +1721,7 @@ async def _chat_interactive_arcagent(
                 continue
 
             if user_input.startswith("/max-turns"):
-                arg = user_input[len("/max-turns"):].strip()
+                arg = user_input[len("/max-turns") :].strip()
                 try:
                     max_turns = int(arg)
                     click_echo(f"  Max turns: {max_turns}")
@@ -1670,7 +1774,7 @@ async def _chat_interactive_arcagent(
                 continue
 
             if user_input.startswith("/switch"):
-                arg = user_input[len("/switch"):].strip()
+                arg = user_input[len("/switch") :].strip()
                 if arg:
                     current_session_id = arg
                     click_echo(f"  Switched to session: {arg}")
@@ -1688,6 +1792,7 @@ async def _chat_interactive_arcagent(
                     )
                     if session_files:
                         import shutil
+
                         new_id = str(uuid.uuid4())
                         new_path = sessions_dir / f"{new_id}.jsonl"
                         shutil.copy2(session_files[0], new_path)
@@ -1703,12 +1808,13 @@ async def _chat_interactive_arcagent(
                 continue
 
             if user_input.startswith("/set "):
-                parts = user_input[len("/set "):].strip().split(None, 1)
+                parts = user_input[len("/set ") :].strip().split(None, 1)
                 if len(parts) == 2:
                     key, value = parts
                     try:
                         if arc_agent.settings is not None:
                             from arcagent.core.settings_manager import SettingsManager
+
                             expected_type = SettingsManager.MUTABLE_KEYS.get(key)
                             if expected_type is float:
                                 typed_val: Any = float(value)
@@ -1766,8 +1872,7 @@ async def _chat_interactive_arcagent(
         await arc_agent.shutdown()
 
     click_echo(
-        f"\nSession: ${total_cost:.4f} total "
-        f"({total_turns} turns, {total_tool_calls} tool calls)"
+        f"\nSession: ${total_cost:.4f} total ({total_turns} turns, {total_tool_calls} tool calls)"
     )
 
 
@@ -1787,19 +1892,23 @@ def list_tools(path: str, as_json: bool, with_code_exec: bool) -> None:
 
     if with_code_exec:
         from arcrun import make_execute_tool
+
         tools.append(make_execute_tool())
 
     if as_json:
         from arccli.formatting import print_json
-        print_json([
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.input_schema,
-                "timeout_seconds": t.timeout_seconds,
-            }
-            for t in tools
-        ])
+
+        print_json(
+            [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.input_schema,
+                    "timeout_seconds": t.timeout_seconds,
+                }
+                for t in tools
+            ]
+        )
     else:
         if not tools:
             click_echo("No tools found.")
@@ -1812,7 +1921,9 @@ def list_tools(path: str, as_json: bool, with_code_exec: bool) -> None:
             if params:
                 for pname, pdef in params.items():
                     req = " (required)" if pname in required else ""
-                    click_echo(f"    - {pname}: {pdef.get('type', '?')}{req} — {pdef.get('description', '')}")
+                    ptype = pdef.get("type", "?")
+                    pdesc = pdef.get("description", "")
+                    click_echo(f"    - {pname}: {ptype}{req} — {pdesc}")
             if t.timeout_seconds:
                 click_echo(f"    timeout: {t.timeout_seconds}s")
             click_echo()
@@ -1850,7 +1961,11 @@ def list_events() -> None:
         ("strategy.selected", "Strategy chosen", "strategy"),
         ("turn.start", "Loop iteration begins", "turn_number"),
         ("turn.end", "Loop iteration ends", "turn_number"),
-        ("llm.call", "model.invoke() returned", "model, stop_reason, tokens, latency_ms, cost_usd"),
+        (
+            "llm.call",
+            "model.invoke() returned",
+            "model, stop_reason, tokens, latency_ms, cost_usd",
+        ),
         ("tool.start", "Tool execution begins", "name, arguments"),
         ("tool.end", "Tool execution complete", "name, result_length, duration_ms"),
         ("tool.denied", "Sandbox blocked tool", "name, reason"),
@@ -1889,6 +2004,7 @@ def show_config(path: str, as_json: bool) -> None:
 
     if as_json:
         from arccli.formatting import print_json
+
         print_json(config)
     else:
         for section, values in config.items():
@@ -1930,7 +2046,11 @@ def _repl_extensions(agent_dir: Path) -> None:
     """Print extensions for agent."""
     workspace = agent_dir / "workspace"
     found = False
-    for source, directory in [("workspace", workspace / "extensions"), ("global", _GLOBAL_EXT_DIR)]:
+    ext_dirs = [
+        ("workspace", workspace / "extensions"),
+        ("global", _GLOBAL_EXT_DIR),
+    ]
+    for source, directory in ext_dirs:
         if not directory.is_dir():
             continue
         for py_file in sorted(directory.glob("*.py")):
@@ -1957,7 +2077,7 @@ def _repl_sessions(agent_dir: Path) -> None:
         click_echo("  No sessions.")
         return
     for sf in session_files[:10]:
-        mtime = datetime.fromtimestamp(sf.stat().st_mtime, tz=timezone.utc)
+        mtime = datetime.fromtimestamp(sf.stat().st_mtime, tz=UTC)
         line_count = sum(1 for _ in open(sf))
         click_echo(f"  {sf.stem}  ({mtime.strftime('%Y-%m-%d %H:%M')}, {line_count} msgs)")
 
@@ -1968,12 +2088,19 @@ async def _repl_settings(arc_agent: Any) -> None:
         click_echo("  SettingsManager not available.")
         return
     from arcagent.core.settings_manager import SettingsManager
+
     for key in SettingsManager.MUTABLE_KEYS:
         value = arc_agent.settings.get(key)
         click_echo(f"  {key} = {value}")
 
 
-def _repl_status(arc_agent: Any, agent_dir: Path, cost: float, turns: int, tool_calls: int) -> None:
+def _repl_status(
+    arc_agent: Any,
+    agent_dir: Path,
+    cost: float,
+    turns: int,
+    tool_calls: int,
+) -> None:
     """Print agent status summary."""
     click_echo(f"  Agent:      {arc_agent._config.agent.name}")
     click_echo(f"  Model:      {arc_agent._config.llm.model}")
@@ -1981,12 +2108,12 @@ def _repl_status(arc_agent: Any, agent_dir: Path, cost: float, turns: int, tool_
         click_echo(f"  DID:        {arc_agent._identity.did}")
     click_echo(f"  Skills:     {len(arc_agent.skills)}")
     if arc_agent._session:
-        click_echo(f"  Session:    {arc_agent._session.session_id} ({arc_agent._session.message_count} msgs)")
+        sid = arc_agent._session.session_id
+        msgs = arc_agent._session.message_count
+        click_echo(f"  Session:    {sid} ({msgs} msgs)")
     click_echo(f"  Cost:       ${cost:.4f}")
     click_echo(f"  Turns:      {turns}")
     click_echo(f"  Tool calls: {tool_calls}")
-
-
 
 
 def _print_events(events: list[Any]) -> None:
@@ -2008,20 +2135,233 @@ def _print_events(events: list[Any]) -> None:
 def _print_result_json(result: Any) -> None:
     """Print LoopResult as JSON."""
     from arccli.formatting import print_json
-    print_json({
-        "content": result.content,
-        "turns": result.turns,
-        "tool_calls_made": result.tool_calls_made,
-        "tokens_used": result.tokens_used,
-        "strategy_used": result.strategy_used,
-        "cost_usd": result.cost_usd,
-        "event_count": len(result.events),
-        "events": [
-            {
-                "type": e.type,
-                "timestamp": e.timestamp,
-                "data": e.data,
-            }
-            for e in result.events
-        ],
-    })
+
+    print_json(
+        {
+            "content": result.content,
+            "turns": result.turns,
+            "tool_calls_made": result.tool_calls_made,
+            "tokens_used": result.tokens_used,
+            "strategy_used": result.strategy_used,
+            "cost_usd": result.cost_usd,
+            "event_count": len(result.events),
+            "events": [
+                {
+                    "type": e.type,
+                    "timestamp": e.timestamp,
+                    "data": e.data,
+                }
+                for e in result.events
+            ],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Module CLI discovery — auto-register module-owned subcommands
+# ---------------------------------------------------------------------------
+
+_cli_logger = logging.getLogger("arccli.agent")
+
+
+def _discover_module_clis(agent_dir: Path) -> list[tuple[str, str]]:
+    """Scan enabled modules for cli_entry fields in MODULE.yaml.
+
+    Returns list of (module_name, cli_entry) tuples for enabled modules
+    that declare a cli_entry.
+    """
+    config_path = agent_dir / "arcagent.toml"
+    if not config_path.exists():
+        return []
+
+    with open(config_path, "rb") as f:
+        raw_config = tomllib.load(f)
+
+    modules_config = raw_config.get("modules", {})
+
+    # Locate the arcagent modules directory
+    try:
+        import arcagent
+
+        modules_dir = Path(arcagent.__file__).parent / "modules"
+    except (ImportError, TypeError):
+        return []
+
+    if not modules_dir.exists():
+        return []
+
+    results: list[tuple[str, str]] = []
+    for subdir in sorted(modules_dir.iterdir()):
+        if not subdir.is_dir():
+            continue
+
+        yaml_path = subdir / "MODULE.yaml"
+        if not yaml_path.exists():
+            continue
+
+        try:
+            manifest = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except Exception:
+            _cli_logger.debug("Failed to parse %s", yaml_path, exc_info=True)
+            continue
+
+        if not isinstance(manifest, dict):
+            continue
+
+        module_name = manifest.get("name", "")
+        cli_entry = manifest.get("cli_entry", "")
+        if not module_name or not cli_entry:
+            continue
+
+        # Check if module is enabled
+        module_conf = modules_config.get(module_name, {})
+        if not module_conf.get("enabled", False):
+            continue
+
+        results.append((module_name, cli_entry))
+
+    return results
+
+
+def _register_module_clis(agent_group: click.Group) -> None:
+    """Auto-register module CLI groups from MODULE.yaml cli_entry.
+
+    Creates wrapper groups that accept PATH as first argument and
+    delegate to the module's cli_group(workspace) factory.
+    """
+    # We use a lazy approach: create groups that, when invoked, scan
+    # for modules. This avoids import-time scanning.
+    # However, for discoverability we need to know module names upfront.
+    # We register known module names (memory, policy) as lazy groups.
+
+    for module_name in ("memory", "policy", "browser"):
+        _register_lazy_module_group(agent_group, module_name)
+
+
+def _register_lazy_module_group(agent_group: click.Group, module_name: str) -> None:
+    """Register a lazy module CLI group on the agent command."""
+
+    class ModuleCLIGroup(click.Group):
+        """Click group that lazily loads subcommands from a module's CLI.
+
+        Handles the ``arc agent <module> PATH COMMAND`` pattern by manually
+        parsing PATH from raw args before delegating to the module's Click
+        group.  No ``click.Argument`` is registered — doing so conflicts
+        with Click's subcommand resolution and causes PATH/COMMAND to be
+        swapped or misrouted.
+        """
+
+        def __init__(self, mod_name: str) -> None:
+            super().__init__(
+                name=mod_name,
+                help=f"Inspect {mod_name} module state.",
+                invoke_without_command=True,
+            )
+            self._mod_name = mod_name
+            # No self.params — we parse PATH manually in parse_args().
+
+        def _load_module_group(self, agent_dir: Path) -> click.Group | None:
+            """Load the module's click group from its cli_entry."""
+            workspace = agent_dir / "workspace"
+            cli_entries = _discover_module_clis(agent_dir)
+            cli_entry = ""
+            for name, entry in cli_entries:
+                if name == self._mod_name:
+                    cli_entry = entry
+                    break
+
+            if not cli_entry:
+                return None
+
+            try:
+                mod_path, func_name = cli_entry.rsplit(":", 1)
+                mod = importlib.import_module(mod_path)
+                factory = getattr(mod, func_name)
+                result: click.Group = factory(workspace)
+                return result
+            except Exception:
+                _cli_logger.debug(
+                    "Failed to load CLI for module '%s'",
+                    self._mod_name,
+                    exc_info=True,
+                )
+                return None
+
+        def list_commands(self, ctx: click.Context) -> list[str]:
+            """Return known subcommand names for help display."""
+            return _get_module_commands(self._mod_name)
+
+        def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
+            """Return a stub command so Click routes the subcommand correctly."""
+            known = _get_module_commands(self._mod_name)
+            if cmd_name not in known:
+                return None
+
+            # Return a lightweight placeholder — the real command is resolved
+            # in invoke() after we know the agent workspace.
+            @click.command(cmd_name, add_help_option=False)
+            @click.argument("args", nargs=-1, type=click.UNPROCESSED)
+            def _stub(**_kwargs: Any) -> None:
+                pass
+
+            return _stub
+
+        def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+            """Pull PATH off the front of *args* before Click resolves subcommands."""
+            ctx.ensure_object(dict)
+
+            if not args or args[0] in ("--help", "-h"):
+                ctx.obj["_module_path"] = None
+                return super().parse_args(ctx, args)
+
+            # First positional token is always the agent path.
+            ctx.obj["_module_path"] = args[0]
+            return super().parse_args(ctx, args[1:])
+
+        def invoke(self, ctx: click.Context) -> Any:
+            """Load the module CLI group and delegate to the resolved subcommand."""
+            path: str | None = ctx.obj.get("_module_path") if ctx.obj else None
+            if path is None:
+                click.echo(f"Usage: arc agent {self._mod_name} PATH COMMAND")
+                click.echo(f"\nInspect {self._mod_name} module state.")
+                ctx.exit(0)
+                return None
+
+            agent_dir = _resolve_agent_dir(path)
+            workspace = agent_dir / "workspace"
+            if not workspace.is_dir():
+                raise click.ClickException(f"No workspace/ in {agent_dir}")
+
+            module_group = self._load_module_group(agent_dir)
+            if module_group is None:
+                raise click.ClickException(
+                    f"Module '{self._mod_name}' has no CLI or is not enabled."
+                )
+
+            # Collect remaining args: the subcommand + its options.
+            remaining = ctx.protected_args + ctx.args
+            return module_group.main(
+                remaining,
+                standalone_mode=False,
+                parent=ctx,
+            )
+
+    group = ModuleCLIGroup(module_name)
+    agent_group.add_command(group)
+
+
+def _get_module_commands(module_name: str) -> list[str]:
+    """Return known subcommand names for a module (for help display)."""
+    known: dict[str, list[str]] = {
+        "memory": ["notes", "entities", "entity", "search", "stats"],
+        "policy": ["bullets", "config", "history"],
+        "browser": ["status", "navigate", "screenshot"],
+    }
+    return known.get(module_name, [])
+
+
+# Register module CLI groups on the agent command
+_register_module_clis(agent)
+
+# Register standalone setup commands
+agent.add_command(setup_telegram)

@@ -188,10 +188,10 @@ class HybridSearch:
             if fpath.exists():
                 files.append(fpath)
 
-        # Entity summaries
+        # Entity files (flat markdown, one per entity)
         entities_dir = self._workspace / "entities"
         if entities_dir.exists():
-            files.extend(entities_dir.glob("**/*.md"))
+            files.extend(entities_dir.glob("*.md"))
 
         return files
 

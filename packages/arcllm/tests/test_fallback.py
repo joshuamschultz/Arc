@@ -4,7 +4,6 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from arcllm.exceptions import ArcLLMAPIError, ArcLLMConfigError
 from arcllm.modules.fallback import FallbackModule
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage
@@ -55,7 +54,7 @@ class TestFallbackSuccess:
         result = await module.invoke(messages)
         assert result.content == "ok"
 
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_primary_fails_first_fallback_succeeds(
         self, mock_load_model, messages
     ):
@@ -70,7 +69,7 @@ class TestFallbackSuccess:
         assert result.content == "fallback-ok"
         mock_load_model.assert_called_once_with("openai")
 
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_primary_fails_second_fallback_succeeds(
         self, mock_load_model, messages
     ):
@@ -93,7 +92,7 @@ class TestFallbackSuccess:
 
 
 class TestFallbackExhaustion:
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_all_fallbacks_fail_raises_primary_error(
         self, mock_load_model, messages
     ):
@@ -123,7 +122,7 @@ class TestFallbackExhaustion:
 
 
 class TestFallbackCreation:
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_fallback_adapter_created_via_load_model(
         self, mock_load_model, messages
     ):
@@ -137,7 +136,7 @@ class TestFallbackCreation:
 
         mock_load_model.assert_called_once_with("openai")
 
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_fallback_adapter_created_on_demand(
         self, mock_load_model, messages
     ):
@@ -176,7 +175,7 @@ class TestFallbackValidation:
 
 
 class TestFallbackCleanup:
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_fallback_adapter_closed_after_success(
         self, mock_load_model, messages
     ):
@@ -191,7 +190,7 @@ class TestFallbackCleanup:
 
         fallback_inner.close.assert_awaited_once()
 
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_fallback_adapter_closed_after_failure(
         self, mock_load_model, messages
     ):
@@ -215,7 +214,7 @@ class TestFallbackCleanup:
 
 
 class TestFallbackLogging:
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_logs_primary_failure(self, mock_load_model, messages, caplog):
         inner = _make_inner([_api_error(500)])
         fallback_inner = _make_inner([_FALLBACK_RESPONSE])
@@ -228,7 +227,7 @@ class TestFallbackLogging:
         assert "Primary provider failed" in caplog.text
         assert "1 fallback" in caplog.text
 
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_logs_fallback_success(self, mock_load_model, messages, caplog):
         inner = _make_inner([_api_error(500)])
         fallback_inner = _make_inner([_FALLBACK_RESPONSE])
@@ -240,7 +239,7 @@ class TestFallbackLogging:
             await module.invoke(messages)
         assert "Fallback to 'openai' succeeded" in caplog.text
 
-    @patch("arcllm.modules.fallback.load_model")
+    @patch("arcllm.modules.fallback._load_fallback_model")
     async def test_logs_all_fallbacks_exhausted(self, mock_load_model, messages, caplog):
         inner = _make_inner([_api_error(500)])
         fallback_inner = _make_inner([_api_error(503)])

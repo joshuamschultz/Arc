@@ -212,12 +212,14 @@ class ContextManager:
             # Memory module will handle creating daily notes and saving context
             import asyncio
             try:
-                asyncio.create_task(
+                task = asyncio.create_task(
                     self._bus.emit(
                         "agent:pre_compaction",
                         {"messages": result, "ratio": ratio},
                     )
                 )
+                # prevent GC of fire-and-forget task (RUF006)
+                task.add_done_callback(lambda t: None)
             except RuntimeError:
                 # No event loop running (shouldn't happen in async context)
                 _logger.debug("Cannot emit pre_compaction event: no event loop")

@@ -23,5 +23,7 @@ class MemoryConfig(ModuleConfig):
     notes_budget_yesterday_tokens: int = 500
     search_weight_bm25: float = 0.7
     search_weight_vector: float = 0.3
+    # Default embedding model for hybrid search. Override via config
+    # for environments where this model is unavailable (e.g., air-gapped).
     embedding_model: str = "all-MiniLM-L6-v2"
     entity_extraction_enabled: bool = True

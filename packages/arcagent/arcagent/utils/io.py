@@ -55,6 +55,23 @@ def format_messages(
     )
 
 
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+
+
+def extract_json(text: str | None) -> str:
+    """Extract JSON from an LLM response that may be wrapped in markdown fences.
+
+    LLMs often return JSON inside ```json ... ``` blocks. This strips
+    the fences so json.loads() can parse the content.
+    """
+    if not text:
+        return text or ""
+    match = _JSON_FENCE_RE.search(text)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
+
+
 def sanitize_fts5_query(query: str) -> str:
     """Escape FTS5 special characters to prevent query syntax errors.
 

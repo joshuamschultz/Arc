@@ -40,9 +40,19 @@ _BUILTIN_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "EMAIL",
         re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"),
     ),
+    # Requires separators, prefix, or parenthesized area code to reduce
+    # false positives on serial numbers and numeric identifiers.
     (
         "PHONE",
-        re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"),
+        re.compile(
+            r"(?:"
+            r"\b(?:\+?1[-.\s]?)\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"  # +1/1 prefixed
+            r"|"
+            r"\(\d{3}\)[-.\s]?\d{3}[-.\s]?\d{4}\b"  # (xxx) xxx-xxxx
+            r"|"
+            r"\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b"  # xxx-xxx-xxxx (separated)
+            r")"
+        ),
     ),
     ("IPV4", re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")),
 ]

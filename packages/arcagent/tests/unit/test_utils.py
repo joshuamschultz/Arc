@@ -13,7 +13,7 @@ class TestLoadEvalModel:
         with patch("arcagent.utils.arcllm_load_model") as mock_load:
             mock_load.return_value = MagicMock()
             result = load_eval_model("anthropic/claude-haiku")
-            mock_load.assert_called_once_with("anthropic", "claude-haiku")
+            mock_load.assert_called_once_with("anthropic", "claude-haiku", retry=True)
             assert result is not None
 
     def test_no_model_name(self) -> None:
@@ -22,7 +22,7 @@ class TestLoadEvalModel:
         with patch("arcagent.utils.arcllm_load_model") as mock_load:
             mock_load.return_value = MagicMock()
             load_eval_model("anthropic")
-            mock_load.assert_called_once_with("anthropic", None)
+            mock_load.assert_called_once_with("anthropic", None, retry=True)
 
 
 class TestFormatMessages:

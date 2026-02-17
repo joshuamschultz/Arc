@@ -203,6 +203,13 @@ class ModuleBus:
                 reg.event,
             )
 
+    def get_module(self, name: str) -> Module | None:
+        """Look up a registered module by name."""
+        for mod in self._modules:
+            if mod.name == name:
+                return mod
+        return None
+
     def register_module(self, module: Module) -> None:
         """Register a module for lifecycle management."""
         self._modules.append(module)

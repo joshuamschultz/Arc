@@ -11,7 +11,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from croniter import croniter
@@ -20,6 +20,9 @@ from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.scheduler.config import SchedulerConfig
 from arcagent.modules.scheduler.models import ScheduleEntry
 from arcagent.modules.scheduler.store import ScheduleStore
+
+if TYPE_CHECKING:
+    from arcagent.core.module_bus import ModuleBus
 
 _logger = logging.getLogger("arcagent.scheduler")
 
@@ -35,14 +38,17 @@ class SchedulerEngine:
         config: SchedulerConfig,
         telemetry: AgentTelemetry,
         agent_run_fn: AgentRunFn,
+        bus: ModuleBus | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._telemetry = telemetry
         self._agent_run_fn = agent_run_fn
+        self._bus = bus
 
         self._queue: asyncio.Queue[ScheduleEntry] = asyncio.Queue(maxsize=100)
         self._in_flight: set[str] = set()
+        self._fire_and_forget: set[asyncio.Task[Any]] = set()
         self._timer_task: asyncio.Task[None] | None = None
         self._worker_task: asyncio.Task[None] | None = None
         self._running = False
@@ -209,12 +215,27 @@ class SchedulerEngine:
         except KeyError:
             pass
 
+        # Emit bus event so other modules (e.g. Telegram) can notify user.
+        if self._bus is not None:
+            self._emit_bus_event("schedule:failed", {
+                "schedule_id": entry.id,
+                "schedule_name": entry.prompt[:80],
+                "error": str(error),
+                "consecutive_failures": new_failures,
+            })
+
         # Return updated entry for caller.
         data = entry.model_dump()
         data.update(updates)
         return ScheduleEntry(**data)
 
     # --- Private ---
+
+    def _emit_bus_event(self, event: str, data: dict[str, Any]) -> None:
+        """Fire-and-forget bus event emission with proper task reference tracking."""
+        task = asyncio.ensure_future(self._bus.emit(event, data))
+        self._fire_and_forget.add(task)
+        task.add_done_callback(self._fire_and_forget.discard)
 
     def _build_metadata_update(
         self,
@@ -275,7 +296,7 @@ class SchedulerEngine:
     def _on_execution_complete(
         self, entry: ScheduleEntry, result: Any, elapsed: float,
     ) -> None:
-        """Update metadata after successful execution."""
+        """Update metadata and emit bus event after successful execution."""
         updates = self._build_metadata_update(
             entry,
             last_result="ok",
@@ -292,6 +313,16 @@ class SchedulerEngine:
             self._store.update(entry.id, updates)
         except KeyError:
             _logger.warning("Schedule %s disappeared during execution", entry.id)
+
+        # Emit bus event so other modules (e.g. Telegram) can deliver results.
+        if self._bus is not None:
+            content = getattr(result, "content", None) or str(result) if result else ""
+            self._emit_bus_event("schedule:completed", {
+                "schedule_id": entry.id,
+                "schedule_name": entry.prompt[:80],
+                "result": content,
+                "elapsed": elapsed,
+            })
 
     async def _timer_loop(self) -> None:
         """Periodically evaluate all schedules and enqueue those that fire."""

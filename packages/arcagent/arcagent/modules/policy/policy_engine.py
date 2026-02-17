@@ -18,8 +18,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from arcllm.types import Message
+
 from arcagent.modules.policy.config import PolicyConfig
-from arcagent.utils.io import atomic_write_text, format_messages
+from arcagent.utils.io import atomic_write_text, extract_json, format_messages
 
 _logger = logging.getLogger("arcagent.modules.policy.policy_engine")
 
@@ -105,7 +107,7 @@ _BULLET_RE = re.compile(
     r"^-\s+\[(?P<id>P\d+)\]\s+(?P<text>.+?)\s+"
     r"\{score:(?P<score>\d+),\s*uses:(?P<uses>\d+),\s*"
     r"reviewed:(?P<reviewed>[^,]+),\s*created:(?P<created>[^,]+),\s*"
-    r"source:(?P<source>[^}]+)\}",
+    r"source:(?P<source>[^}]*)\}",
 )
 
 
@@ -169,10 +171,11 @@ class PolicyEngine:
             messages=msg_text,
         )
 
-        raw = await model(prompt)
+        response = await model.invoke([Message(role="user", content=prompt)])
+        raw = response.content
 
         try:
-            data = json.loads(raw)
+            data = json.loads(extract_json(raw))
         except (json.JSONDecodeError, TypeError):
             return None, current_policy
 

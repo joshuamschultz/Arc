@@ -1,0 +1,29 @@
+name: browser
+version: 0.1.0
+description: CDP-based browser interaction tools for web automation
+author: ArcAgent
+entry_point: arcagent.modules.browser:BrowserModule
+cli_entry: arcagent.modules.browser.cli:cli_group
+dependencies:
+  - arcagent.core.module_bus
+  - arcagent.core.config
+events:
+  subscribes:
+    - agent:shutdown
+  emits:
+    - browser.connected
+    - browser.disconnected
+    - browser.error
+    - browser.navigated
+    - browser.clicked
+    - browser.typed
+    - browser.selected
+    - browser.hovered
+    - browser.form_filled
+    - browser.screenshot_taken
+    - browser.js_executed
+    - browser.dialog_handled
+    - browser.cookies_read
+    - browser.cookies_set
+    - browser.download_started
+    - browser.url_blocked

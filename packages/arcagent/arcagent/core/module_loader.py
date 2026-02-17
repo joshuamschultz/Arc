@@ -35,6 +35,7 @@ class ModuleManifest(BaseModel):
     description: str = ""
     dependencies: list[str] = []
     events: dict[str, list[str]] = {}
+    cli_entry: str = ""
 
 
 class ModuleLoader:

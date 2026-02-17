@@ -5,10 +5,8 @@ import time
 from unittest.mock import patch
 
 import pytest
-
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.vault import VaultBackend, VaultResolver
-
 
 # ---------------------------------------------------------------------------
 # Mock vault backend for testing
@@ -173,7 +171,7 @@ class TestVaultErrors:
     def test_backend_not_installed_string(self):
         """When backend is a string that can't be imported, raise clear error."""
         with pytest.raises(ArcLLMConfigError, match="not installed"):
-            VaultResolver.from_config("nonexistent.module:Backend", 300)
+            VaultResolver.from_config("arcllm.nonexistent.module:Backend", 300)
 
     def test_invalid_backend_config_no_colon(self):
         """Backend string must have module:Class format."""

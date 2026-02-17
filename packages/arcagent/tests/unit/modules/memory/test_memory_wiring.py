@@ -61,7 +61,7 @@ class TestEvalModelLazyInit:
         # Store llm_config as if startup() was called
         module._llm_config = LLMConfig(model="openai/gpt-4o")
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with("anthropic/claude-haiku")
@@ -75,7 +75,7 @@ class TestEvalModelLazyInit:
         )
         module._llm_config = LLMConfig(model="anthropic/claude-haiku")
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with("anthropic/claude-haiku")
@@ -94,7 +94,7 @@ class TestEvalModelLazyInit:
         # Must survive construction — was previously overwritten to None
         assert module._llm_config is llm_cfg
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with("anthropic/claude-haiku")
@@ -108,7 +108,7 @@ class TestEvalModelLazyInit:
         )
         module._llm_config = LLMConfig(model="fallback/model")
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             sentinel = MagicMock()
             mock_load.return_value = sentinel
 
@@ -127,7 +127,7 @@ class TestEvalModelLazyInit:
         )
         module._llm_config = LLMConfig(model="fallback/model")
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_model = MagicMock()
             mock_load.return_value = mock_model
 
@@ -202,7 +202,7 @@ class TestSemaphoreLimitedBackgroundTasks:
         """Background tasks respect semaphore limit (max_concurrent=2)."""
         import logging
 
-        from arcagent.utils.eval_helpers import spawn_background
+        from arcagent.utils.model_helpers import spawn_background
 
         module = _make_module(
             tmp_path,
@@ -248,7 +248,7 @@ class TestGetEvalModelFallback:
         )
         module._llm_config = None
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             try:
                 module._get_eval_model()
@@ -263,7 +263,7 @@ class TestGetEvalModelFallback:
             eval_config=EvalConfig(provider="test", model="model", fallback_behavior="error"),
         )
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.side_effect = RuntimeError("Load failed")
             try:
                 module._get_eval_model()
@@ -278,7 +278,7 @@ class TestGetEvalModelFallback:
             eval_config=EvalConfig(provider="test", model="model", fallback_behavior="skip"),
         )
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.side_effect = RuntimeError("Load failed")
             result = module._get_eval_model()
             assert result is None
@@ -345,7 +345,7 @@ class TestOnPostRespondEmptyMessages:
             eval_config=EvalConfig(provider="test", model="model"),
         )
 
-        with patch("arcagent.utils.eval_helpers.load_eval_model") as mock_load:
+        with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_model = MagicMock()
             mock_load.return_value = mock_model
 

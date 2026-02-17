@@ -14,6 +14,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+
+def _mock_model(
+    *, return_value: Any = None, side_effect: Exception | None = None
+) -> MagicMock:
+    """Create a mock LLM model with invoke() returning LLMResponse-like object."""
+    model = MagicMock()
+    if side_effect is not None:
+        model.invoke = AsyncMock(side_effect=side_effect)
+    else:
+        model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
+    return model
+
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
     AgentConfig,
@@ -322,7 +334,7 @@ class TestEntityExtractionIntegration:
             telemetry=telemetry,
         )
 
-        model = AsyncMock(
+        model = _mock_model(
             return_value=json.dumps(
                 {
                     "entities": [
@@ -345,13 +357,13 @@ class TestEntityExtractionIntegration:
         ]
         await extractor.extract(messages, model)
 
-        entity_dir = workspace / "entities" / "arcagent"
-        assert entity_dir.exists()
+        entity_path = workspace / "entities" / "arcagent.md"
+        assert entity_path.exists()
 
-        index_file = workspace / "entities" / "index.json"
-        assert index_file.exists()
-        index = json.loads(index_file.read_text())
-        assert "arcagent" in index["entities"]
+        content = entity_path.read_text(encoding="utf-8")
+        assert "name: ArcAgent" in content
+        assert "type: project" in content
+        assert "AI framework" in content
 
 
 class TestHybridSearchIntegration:
@@ -388,7 +400,7 @@ class TestPolicyEvaluationIntegration:
             telemetry=_make_telemetry(),
         )
 
-        model = AsyncMock(
+        model = _mock_model(
             return_value=json.dumps(
                 {
                     "additions": ["Always verify test results before claiming success"],

@@ -13,7 +13,6 @@ from arcagent.modules.scheduler.config import SchedulerConfig
 
 if TYPE_CHECKING:
     from arcagent.modules.scheduler.scheduler import SchedulerEngine
-    from arcagent.modules.scheduler.store import ScheduleStore
 
 _logger = logging.getLogger("arcagent.scheduler")
 
@@ -62,6 +61,9 @@ class SchedulerModule:
         # Subscribe to agent:shutdown for graceful cleanup.
         ctx.bus.subscribe("agent:shutdown", self._on_agent_shutdown)
 
+        # Subscribe to agent:ready for deferred binding of agent.run().
+        ctx.bus.subscribe("agent:ready", self._on_agent_ready)
+
         # Create and start the engine.
         # agent_run_fn will be bound later via set_agent_run_fn or ctx.
         agent_run_fn = getattr(ctx, "agent_run_fn", None)
@@ -76,6 +78,7 @@ class SchedulerModule:
             config=self._config,
             telemetry=self._telemetry,
             agent_run_fn=agent_run_fn,
+            bus=ctx.bus,
         )
         await self._engine.start()
         _logger.info("Scheduler module started")
@@ -91,6 +94,14 @@ class SchedulerModule:
         """Bind the agent.run() callback after startup (deferred binding)."""
         if self._engine is not None:
             self._engine.set_agent_run_fn(fn)
+
+    async def _on_agent_ready(self, event: Any) -> None:
+        """Handle agent:ready — bind agent.run() callback."""
+        data = event.data if hasattr(event, "data") else {}
+        run_fn = data.get("run_fn")
+        if run_fn is not None:
+            self.set_agent_run_fn(run_fn)
+            _logger.info("Bound agent_run_fn via agent:ready event")
 
     async def _on_agent_shutdown(self, event: Any) -> None:
         """Handle agent:shutdown event."""

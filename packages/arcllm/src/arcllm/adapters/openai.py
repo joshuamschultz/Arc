@@ -31,8 +31,13 @@ _STOP_REASON_MAP: dict[str, StopReason] = {
 class OpenaiAdapter(BaseAdapter):
     """Translates ArcLLM types to/from the OpenAI Chat Completions API."""
 
-    def __init__(self, config: ProviderConfig, model_name: str) -> None:
-        super().__init__(config, model_name)
+    def __init__(
+        self,
+        config: ProviderConfig,
+        model_name: str,
+        resolved_api_key: str | None = None,
+    ) -> None:
+        super().__init__(config, model_name, resolved_api_key=resolved_api_key)
         # Cache headers — api_key is immutable after init.
         self._headers: dict[str, str] = {"Content-Type": "application/json"}
         if self._api_key:

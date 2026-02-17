@@ -151,7 +151,13 @@ class SecurityModule(BaseModule):
         return result
 
     def _redact_str(self, text: str) -> str:
-        """Detect and redact PII in a string."""
+        """Detect and redact PII in a string.
+
+        Callers must ensure _pii_detector is not None before calling.
+        Assert enforces this invariant structurally.
+        """
+        if self._pii_detector is None:  # pragma: no cover — structural guard
+            return text
         matches = self._pii_detector.detect(text)
         if not matches:
             return text

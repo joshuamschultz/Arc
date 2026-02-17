@@ -15,8 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from arcllm import Message
-from arcrun import Event, LoopResult
-from arcrun import Tool as ArcRunTool
+from arcrun import Event
 from arcrun import run as arcrun_run
 
 from arcagent.core.config import ArcAgentConfig
@@ -243,6 +242,15 @@ class ArcAgent:
 
         # 12. Start modules with context
         await self._bus.startup(module_ctx)
+
+        # 13. Emit agent:ready with deferred-binding callbacks.
+        # Modules subscribe to this event during startup() to receive
+        # agent.run/chat callbacks without core knowing about them.
+        await self._bus.emit("agent:ready", {
+            "run_fn": self.run,
+            "chat_fn": self.chat,
+        })
+
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
         await self._bus.emit("agent:extensions_loaded", {})
         await self._bus.emit("agent:skills_loaded", {})
@@ -310,7 +318,10 @@ class ArcAgent:
             raise
 
         session_id = self._session.session_id if self._session else ""
-        messages_dict = [m.model_dump() if hasattr(m, "model_dump") else m for m in (messages or [])]
+        messages_dict = [
+            m.model_dump() if hasattr(m, "model_dump") else m
+            for m in (messages or [])
+        ]
         await bus.emit(
             "agent:post_respond",
             {"result": result, "messages": messages_dict, "session_id": session_id},

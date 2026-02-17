@@ -233,7 +233,7 @@ class TestBackgroundTaskTracking:
 
     @pytest.mark.asyncio()
     async def test_spawn_background_adds_to_set(self, tmp_path: Path) -> None:
-        from arcagent.utils.eval_helpers import spawn_background
+        from arcagent.utils.model_helpers import spawn_background
 
         module = _make_module(tmp_path)
 
@@ -252,7 +252,7 @@ class TestBackgroundTaskTracking:
 
     @pytest.mark.asyncio()
     async def test_done_callback_removes_from_set(self, tmp_path: Path) -> None:
-        from arcagent.utils.eval_helpers import spawn_background
+        from arcagent.utils.model_helpers import spawn_background
 
         module = _make_module(tmp_path)
 
@@ -272,7 +272,7 @@ class TestBackgroundTaskTracking:
 
     @pytest.mark.asyncio()
     async def test_error_in_background_logs_not_crashes(self, tmp_path: Path) -> None:
-        from arcagent.utils.eval_helpers import spawn_background
+        from arcagent.utils.model_helpers import spawn_background
 
         telemetry = _make_telemetry()
         module = MarkdownMemoryModule(
@@ -307,7 +307,7 @@ class TestShutdown:
 
     @pytest.mark.asyncio()
     async def test_shutdown_cancels_background_tasks(self, tmp_path: Path) -> None:
-        from arcagent.utils.eval_helpers import spawn_background
+        from arcagent.utils.model_helpers import spawn_background
 
         module = _make_module(tmp_path)
 
@@ -541,7 +541,7 @@ class TestBackgroundTaskBackpressure:
 
     async def test_backpressure_drops_tasks(self, tmp_path: Path) -> None:
         """When background queue is full, new tasks are dropped."""
-        from arcagent.utils.eval_helpers import spawn_background
+        from arcagent.utils.model_helpers import spawn_background
 
         module = _make_module(tmp_path)
 
