@@ -1,0 +1,81 @@
+"""Entity registry for agents and users with role-based queries."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from arcteam.audit import AuditLogger
+from arcteam.storage import StorageBackend
+from arcteam.types import Entity
+
+REGISTRY_COLLECTION = "messages/registry"
+
+
+def _entity_key(entity_id: str) -> str:
+    """Convert entity URI to filesystem-safe key: agent://x -> agent_x."""
+    return entity_id.replace("://", "_")
+
+
+class EntityRegistry:
+    """Agent and user registration with role-based queries."""
+
+    def __init__(self, backend: StorageBackend, audit: AuditLogger) -> None:
+        self._backend = backend
+        self._audit = audit
+
+    async def register(self, entity: Entity) -> None:
+        """Register a new entity. Rejects duplicates."""
+        key = _entity_key(entity.id)
+        existing = await self._backend.read(REGISTRY_COLLECTION, key)
+        if existing is not None:
+            raise ValueError(f"Entity already registered: {entity.id}")
+
+        if not entity.created:
+            entity.created = datetime.now(UTC).isoformat()
+
+        await self._backend.write(REGISTRY_COLLECTION, key, entity.model_dump())
+        await self._audit.log(
+            event_type="entity.registered",
+            subject=f"registry.{entity.type.value}",
+            actor_id=entity.id,
+            detail=f"Registered {entity.type.value} '{entity.name}' with roles {entity.roles}",
+            target_id=entity.id,
+        )
+
+    async def get(self, entity_id: str) -> Entity | None:
+        """Read entity by ID."""
+        key = _entity_key(entity_id)
+        data = await self._backend.read(REGISTRY_COLLECTION, key)
+        if data is None:
+            return None
+        return Entity.model_validate(data)
+
+    async def list_entities(self, role: str | None = None) -> list[Entity]:
+        """All entities, optionally filtered by role."""
+        records = await self._backend.query(REGISTRY_COLLECTION)
+        entities = [Entity.model_validate(r) for r in records]
+        if role:
+            entities = [e for e in entities if role in e.roles]
+        return entities
+
+    async def by_role(self, role: str) -> list[Entity]:
+        """All entities with this role. Used for role-based addressing."""
+        return await self.list_entities(role=role)
+
+    async def update_status(self, entity_id: str, status: str) -> None:
+        """Update entity status."""
+        key = _entity_key(entity_id)
+        data = await self._backend.read(REGISTRY_COLLECTION, key)
+        if data is None:
+            raise ValueError(f"Entity not found: {entity_id}")
+
+        old_status = data.get("status", "unknown")
+        data["status"] = status
+        await self._backend.write(REGISTRY_COLLECTION, key, data)
+        await self._audit.log(
+            event_type="entity.status_changed",
+            subject="registry.status",
+            actor_id=entity_id,
+            detail=f"Status changed from '{old_status}' to '{status}'",
+            target_id=entity_id,
+        )

@@ -8,10 +8,11 @@ version = "0.1.0"
 description = "Multi-agent team coordination, communication, and lifecycle management"
 requires-python = ">=3.12"
 dependencies = [
-    "arcagent>=0.1",
     "pydantic>=2.0,<3",
-    "opentelemetry-api>=1.20",
 ]
+
+[project.scripts]
+arc-team = "arcteam.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcteam"]
@@ -25,6 +26,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S108"]
+"src/arcteam/cli.py" = ["T201"]  # CLI uses print for output
 
 [tool.mypy]
 python_version = "3.12"
