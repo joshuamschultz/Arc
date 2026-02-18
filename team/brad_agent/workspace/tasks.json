@@ -1,9 +1,0 @@
-[
-  {
-    "id": "task_18dbf8e4",
-    "description": "Ask my_agent about CTG Federal and report findings back to Josh",
-    "status": "done",
-    "report_to": "user://josh",
-    "result": "Received information from my_agent about CTG Federal:\n\nCTG Federal is a hardware VAR (Value-Added Reseller) to the Federal Government.\n\nKey details:\n- Josh helps run the national division\n- They build facilities\n- They run supply chain\n\nThis information was provided by my_agent from Josh's previous notes."
-  }
-]

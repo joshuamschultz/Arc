@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.modules.telegram.config import TelegramConfig
 
 if TYPE_CHECKING:
@@ -22,7 +24,8 @@ class TelegramModule:
 
     Provides bidirectional text messaging between a human (Telegram)
     and ArcAgent. Supports inbound messages via long polling and
-    proactive notifications via Module Bus event subscriptions.
+    proactive notifications via an LLM-callable tool. The agent
+    decides what's worth sending — no auto-forwarding of schedule results.
     """
 
     def __init__(
@@ -42,7 +45,7 @@ class TelegramModule:
         return "telegram"
 
     async def startup(self, ctx: ModuleContext) -> None:
-        """Subscribe to events, create bot, and start polling loop."""
+        """Subscribe to events, create bot, register tools, and start polling."""
         from arcagent.modules.telegram.bot import TelegramBot
 
         self._bus = ctx.bus
@@ -53,8 +56,7 @@ class TelegramModule:
         # Subscribe to agent:ready for deferred binding of agent.chat().
         ctx.bus.subscribe("agent:ready", self._on_agent_ready)
 
-        # Subscribe to schedule events for proactive notifications
-        ctx.bus.subscribe("schedule:completed", self._on_schedule_completed)
+        # Subscribe to schedule failure notifications (failures are always worth knowing).
         ctx.bus.subscribe("schedule:failed", self._on_schedule_failed)
 
         # Create and start bot
@@ -64,6 +66,9 @@ class TelegramModule:
             workspace=self._workspace,
         )
         await self._bot.start()
+
+        # Register notify_user tool — agent decides what's worth sending.
+        ctx.tool_registry.register(self._create_notify_tool())
 
         # Emit Module Bus event for observability
         await self._emit_bus_event("telegram:module_started", {})
@@ -94,23 +99,45 @@ class TelegramModule:
         """Handle agent:shutdown event."""
         await self.shutdown()
 
-    async def _on_schedule_completed(self, event: Any) -> None:
-        """Handle schedule:completed — send agent response to user via Telegram."""
-        if self._bot is None:
-            return
-        data = event.data if hasattr(event, "data") else {}
-        result = data.get("result", "")
-        schedule_name = data.get("schedule_name", "task")
+    def _create_notify_tool(self) -> RegisteredTool:
+        """Create the notify_user tool — agent calls this to message the human."""
+        bot = self._bot
 
-        # Send the agent's response directly — it's already a natural-language reply.
-        notification = result if result else f"Scheduled task completed: {schedule_name}"
-        await self._bot.send_notification(notification)
-        await self._emit_bus_event(
-            "telegram:notification_forwarded",
-            {
-                "source_event": "schedule:completed",
-                "schedule_name": schedule_name,
+        async def _handle_notify_user(
+            message: str = "",
+            **kwargs: Any,
+        ) -> str:
+            """Send a notification to the user via Telegram."""
+            if not message:
+                return json.dumps({"error": "message is required"})
+            if bot is None:
+                return json.dumps({"error": "Telegram bot not running"})
+            await bot.send_notification(message)
+            _logger.info("Agent sent user notification (%d chars)", len(message))
+            return json.dumps({"status": "sent", "length": len(message)})
+
+        return RegisteredTool(
+            name="notify_user",
+            description=(
+                "Send a message to the user via Telegram. Use this ONLY when "
+                "you have a meaningful update, result, question, or need "
+                "direction. Do NOT use for routine status like 'no new messages' "
+                "or 'task completed with no findings'."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The message to send to the user",
+                    },
+                },
+                "required": ["message"],
             },
+            transport=ToolTransport.NATIVE,
+            execute=_handle_notify_user,
+            timeout_seconds=30,
+            source="telegram",
         )
 
     async def _on_schedule_failed(self, event: Any) -> None:

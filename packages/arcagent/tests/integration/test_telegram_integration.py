@@ -147,10 +147,10 @@ class TestFullMessageFlow:
 
 
 class TestProactiveNotification:
-    """5.2 — Schedule events trigger proactive Telegram notifications."""
+    """5.2 — Agent-driven notifications via notify_user tool."""
 
     @pytest.mark.asyncio
-    async def test_schedule_completed_sends_notification(self, tmp_path: Path) -> None:
+    async def test_notify_user_tool_sends_to_telegram(self, tmp_path: Path) -> None:
         module = TelegramModule(
             config={"enabled": True, "allowed_chat_ids": [123]},
             telemetry=_make_telemetry(),
@@ -169,20 +169,23 @@ class TestProactiveNotification:
         mock_app.bot = MagicMock()
         mock_app.bot.send_message = AsyncMock()
         mock_app.updater = MagicMock()
-        mock_app.updater.running = False  # Prevent stop() from trying to stop updater
+        mock_app.updater.running = False
         mock_app.stop = AsyncMock()
         mock_app.shutdown = AsyncMock()
         bot._application = mock_app
 
-        # Simulate schedule:completed event with no result — triggers fallback template
-        event = MagicMock()
-        event.data = {"result": "", "schedule_name": "daily-report"}
-        await module._on_schedule_completed(event)
+        # Get the registered notify_user tool and invoke it
+        tool = ctx.tool_registry.register.call_args[0][0]
+        assert tool.name == "notify_user"
+
+        import json
+        result = await tool.execute(message="Found critical issue in module X")
+        data = json.loads(result)
+        assert data["status"] == "sent"
 
         mock_app.bot.send_message.assert_called_once()
         sent_text = mock_app.bot.send_message.call_args[1]["text"]
-        assert "daily-report" in sent_text
-        assert "completed" in sent_text
+        assert "critical issue" in sent_text
 
         await module.shutdown()
 

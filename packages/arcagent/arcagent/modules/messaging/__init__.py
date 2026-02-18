@@ -210,21 +210,28 @@ class MessagingModule:
             "## Team Messaging",
             "",
             f"You are **{entity_name}** (`{entity_id}`) on a team.",
+            "",
+            "### Autonomy Principle",
+            "",
+            "You are an autonomous agent. Work silently and efficiently.",
+            "**Do NOT narrate your actions or report routine status.**",
+            "Only contact the user (`notify_user`) when you have:",
+            "- A meaningful result or finding worth sharing",
+            "- A question that requires human judgment",
+            "- A blocker that needs human intervention",
+            "",
+            "If your inbox is empty or a routine check has no findings, "
+            "just move on. No notification needed.",
         ]
 
-        # Urgent: unread messages — directive to check first.
+        # Unread messages — check them, but don't make it a big deal.
         if self._last_unread:
             total = sum(self._last_unread.values())
             lines.append("")
-            lines.append(f"**You have {total} unread message(s). "
-                         "Call `messaging_check_inbox` BEFORE doing anything else.**")
+            lines.append(f"You have {total} unread message(s). "
+                         "Check inbox and handle them.")
             for stream, count in self._last_unread.items():
                 lines.append(f"  - {stream}: {count}")
-            lines.append("")
-            lines.append(
-                "Read them, then respond to any that are `action_required: true` "
-                "or that ask you a question."
-            )
 
         # Surface pending tasks so multi-step work survives across runs.
         pending = self._load_pending_tasks()
@@ -240,56 +247,17 @@ class MessagingModule:
                 )
                 if task.get("report_to"):
                     lines.append(f"  Report results to: `{task['report_to']}`")
-            lines.append("")
-            lines.append(
-                "Work through pending tasks. Use `task_update` to change "
-                "status to `in_progress` when starting, and `task_complete` "
-                "when done (auto-sends result to `report_to` if set)."
-            )
 
-        # Always: behavioral rules.
+        # Behavioral rules — concise.
         lines.extend([
             "",
-            "### Team Communication Rules",
+            "### Communication Rules",
             "",
-            "1. **Check inbox first** — At the start of every turn, "
-            "call `messaging_check_inbox` to see if teammates need you.",
-            "2. **Plan multi-step tasks** — When a message requires multiple "
-            "steps (ask X then tell Y), use `task_create` for each step. "
-            "Set `report_to` so results auto-send when you call "
-            "`task_complete`. Tasks persist across turns.",
-            "3. **Share results** — When you complete a task, use "
-            "`task_complete` with a result summary. If the task has a "
-            "`report_to`, the result is sent automatically.",
-            "4. **Ask for help** — If you are stuck or need information another "
-            "agent has, message them directly. Don't work in silence.",
-            "5. **Reply to DMs** — If a direct message is marked "
-            "`action_required: true`, respond promptly.",
-            "6. **Channel messages are FYI** — Only respond to channel messages "
-            "that are relevant to your role or specifically mention you. "
-            "Not every group message needs a reply.",
-            "7. **Use channels for team-wide updates** — Post status, "
-            "blockers, and completed work to shared channels so the whole "
-            "team stays informed.",
-            "8. **Thread replies** — When responding to a message in a thread, "
-            "pass the `thread_id` from the original message to keep "
-            "conversations grouped.",
-            "",
-            "### Tools",
-            "",
-            "**Messaging:**",
-            "- `messaging_check_inbox` — Check for unread messages "
-            "(replies include full thread context)",
-            "- `messaging_send` — Send a message (DM, channel, or role)",
-            "- `messaging_read_thread` — Read full conversation thread",
-            "- `messaging_list_entities` — Discover teammates and capabilities",
-            "- `messaging_list_channels` — See available channels",
-            "",
-            "**Task Management:**",
-            "- `task_create` — Create a task (set `report_to` for auto-send)",
-            "- `task_list` — List tasks (filter by status)",
-            "- `task_update` — Update task status or description",
-            "- `task_complete` — Mark done + auto-send result to `report_to`",
+            "- Reply to `action_required: true` DMs promptly.",
+            "- Channel messages are FYI — only respond if relevant to your role.",
+            "- Use `thread_id` from the original message when replying in threads.",
+            "- If stuck, message the relevant teammate. Don't work in silence.",
+            "- Use `notify_user` for the human. Use `messaging_send` for agents/channels.",
         ])
 
         sections["messaging"] = "\n".join(lines)

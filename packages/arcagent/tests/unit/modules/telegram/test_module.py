@@ -71,15 +71,25 @@ class TestModuleStartup:
         assert "agent:shutdown" in subscribed_events
 
     @pytest.mark.asyncio
-    async def test_startup_subscribes_to_schedule_events(self, tmp_path: Path) -> None:
+    async def test_startup_subscribes_to_schedule_failed(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
         subscribed_events = [
             call.args[0] for call in ctx.bus.subscribe.call_args_list
         ]
-        assert "schedule:completed" in subscribed_events
+        # Only failure events auto-notify; completed events are agent-driven via tool.
         assert "schedule:failed" in subscribed_events
+        assert "schedule:completed" not in subscribed_events
+
+    @pytest.mark.asyncio
+    async def test_startup_registers_notify_user_tool(self, tmp_path: Path) -> None:
+        module = _make_module(tmp_path)
+        ctx = make_ctx(tmp_path)
+        await module.startup(ctx)
+        ctx.tool_registry.register.assert_called_once()
+        tool = ctx.tool_registry.register.call_args[0][0]
+        assert tool.name == "notify_user"
 
     @pytest.mark.asyncio
     async def test_startup_stores_bus_reference(self, tmp_path: Path) -> None:
@@ -184,29 +194,6 @@ class TestSetAgentChatFn:
 
 class TestScheduleEventHandlers:
     @pytest.mark.asyncio
-    async def test_schedule_completed_sends_notification(self, tmp_path: Path) -> None:
-        module = _make_module(tmp_path)
-        ctx = make_ctx(tmp_path)
-
-        with patch(
-            "arcagent.modules.telegram.bot.TelegramBot"
-        ) as MockBot:
-            mock_bot = MagicMock()
-            mock_bot.start = AsyncMock()
-            mock_bot.send_notification = AsyncMock()
-            MockBot.return_value = mock_bot
-
-            await module.startup(ctx)
-
-            event = MagicMock()
-            event.data = {"result": "all done", "schedule_name": "daily-report"}
-            await module._on_schedule_completed(event)
-
-            mock_bot.send_notification.assert_called_once()
-            msg = mock_bot.send_notification.call_args[0][0]
-            assert "all done" in msg
-
-    @pytest.mark.asyncio
     async def test_schedule_failed_sends_notification(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
@@ -231,13 +218,59 @@ class TestScheduleEventHandlers:
             assert "failed" in msg
 
     @pytest.mark.asyncio
-    async def test_schedule_event_noop_when_no_bot(self, tmp_path: Path) -> None:
-        """Schedule events are no-ops if bot is not running."""
+    async def test_schedule_failed_noop_when_no_bot(self, tmp_path: Path) -> None:
+        """Schedule failed is a no-op if bot is not running."""
         module = _make_module(tmp_path)
-        # No startup, so bot is None
         event = MagicMock()
-        await module._on_schedule_completed(event)  # should not raise
         await module._on_schedule_failed(event)  # should not raise
+
+
+class TestNotifyUserTool:
+    @pytest.mark.asyncio
+    async def test_notify_user_sends_to_telegram(self, tmp_path: Path) -> None:
+        module = _make_module(tmp_path)
+        ctx = make_ctx(tmp_path)
+
+        with patch(
+            "arcagent.modules.telegram.bot.TelegramBot"
+        ) as MockBot:
+            mock_bot = MagicMock()
+            mock_bot.start = AsyncMock()
+            mock_bot.send_notification = AsyncMock()
+            MockBot.return_value = mock_bot
+
+            await module.startup(ctx)
+
+            tool = ctx.tool_registry.register.call_args[0][0]
+            result = await tool.execute(message="Important finding: X is broken")
+
+            mock_bot.send_notification.assert_called_once_with(
+                "Important finding: X is broken"
+            )
+            import json
+            data = json.loads(result)
+            assert data["status"] == "sent"
+
+    @pytest.mark.asyncio
+    async def test_notify_user_rejects_empty_message(self, tmp_path: Path) -> None:
+        module = _make_module(tmp_path)
+        ctx = make_ctx(tmp_path)
+
+        with patch(
+            "arcagent.modules.telegram.bot.TelegramBot"
+        ) as MockBot:
+            mock_bot = MagicMock()
+            mock_bot.start = AsyncMock()
+            MockBot.return_value = mock_bot
+
+            await module.startup(ctx)
+
+            tool = ctx.tool_registry.register.call_args[0][0]
+            result = await tool.execute(message="")
+
+            import json
+            data = json.loads(result)
+            assert "error" in data
 
 
 class TestBusEventEmission:
@@ -261,27 +294,14 @@ class TestBusEventEmission:
         assert "telegram:module_stopped" in emit_calls
 
     @pytest.mark.asyncio
-    async def test_schedule_completed_emits_notification_forwarded(self, tmp_path: Path) -> None:
+    async def test_schedule_completed_no_longer_auto_forwards(self, tmp_path: Path) -> None:
+        """Verify schedule:completed does NOT auto-forward to Telegram."""
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
+        await module.startup(ctx)
 
-        with patch(
-            "arcagent.modules.telegram.bot.TelegramBot"
-        ) as MockBot:
-            mock_bot = MagicMock()
-            mock_bot.start = AsyncMock()
-            mock_bot.send_notification = AsyncMock()
-            MockBot.return_value = mock_bot
-
-            await module.startup(ctx)
-
-            event = MagicMock()
-            event.result = "ok"
-            event.schedule_name = "test"
-            await module._on_schedule_completed(event)
-
-            emit_calls = [c[0][0] for c in ctx.bus.emit.call_args_list]
-            assert "telegram:notification_forwarded" in emit_calls
+        # No _on_schedule_completed handler exists — agent uses notify_user tool instead.
+        assert not hasattr(module, "_on_schedule_completed")
 
     @pytest.mark.asyncio
     async def test_no_bot_token_in_events(self, tmp_path: Path) -> None:
