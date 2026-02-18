@@ -26,6 +26,7 @@ def _build_state(
     tool_timeout: float | None = None,
     depth: int = 0,
     max_depth: int = 3,
+    tool_choice: dict[str, Any] | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     if not tools:
@@ -52,6 +53,7 @@ def _build_state(
         tool_timeout=tool_timeout,
         depth=depth,
         max_depth=max_depth,
+        tool_choice=tool_choice,
     )
 
     return state, sandbox_obj
@@ -107,6 +109,7 @@ async def run(
     tool_timeout: float | None = None,
     depth: int = 0,
     max_depth: int = 3,
+    tool_choice: dict[str, Any] | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
@@ -115,6 +118,7 @@ async def run(
         on_event=on_event, sandbox=sandbox,
         transform_context=transform_context, tool_timeout=tool_timeout,
         depth=depth, max_depth=max_depth,
+        tool_choice=tool_choice,
     )
 
     _inject_spawn_tool(model, tools, system_prompt, state, sandbox, allowed_strategies)
@@ -138,6 +142,7 @@ async def run_async(
     tool_timeout: float | None = None,
     depth: int = 0,
     max_depth: int = 3,
+    tool_choice: dict[str, Any] | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -146,6 +151,7 @@ async def run_async(
         on_event=on_event, sandbox=sandbox,
         transform_context=transform_context, tool_timeout=tool_timeout,
         depth=depth, max_depth=max_depth,
+        tool_choice=tool_choice,
     )
 
     _inject_spawn_tool(model, tools, system_prompt, state, sandbox, allowed_strategies)

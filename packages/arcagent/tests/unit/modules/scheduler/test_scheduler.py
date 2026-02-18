@@ -348,7 +348,9 @@ class TestExecution:
         )
         entry = make_entry(prompt="Check inbox")
         result = await engine.execute(entry)
-        agent_run_fn.assert_awaited_once_with("Check inbox")
+        agent_run_fn.assert_awaited_once_with(
+            "Check inbox", tool_choice={"type": "any"},
+        )
         assert result is not None
 
     @pytest.mark.asyncio
@@ -423,7 +425,7 @@ class TestLifecycle:
         """Queue should drain before stop completes."""
         results: list[str] = []
 
-        async def mock_run(prompt: str) -> str:
+        async def mock_run(prompt: str, **kwargs: object) -> str:
             results.append(prompt)
             return "ok"
 

@@ -254,6 +254,42 @@ class TestPathSanitization:
         assert result == {"seq": 5}
 
 
+class TestAppendAutoSeq:
+    """append_auto_seq: atomic seq assignment prevents duplicates."""
+
+    async def test_assigns_seq_from_one(self, backend: StorageBackend) -> None:
+        seq, offset = await backend.append_auto_seq("streams", "s1", {"data": "first"})
+        assert seq == 1
+        assert offset == 0
+
+    async def test_monotonic_seq(self, backend: StorageBackend) -> None:
+        for _ in range(5):
+            await backend.append_auto_seq("streams", "s1", {"data": "msg"})
+        results = await backend.read_stream("streams", "s1", after_seq=0)
+        seqs = [r["seq"] for r in results]
+        assert seqs == [1, 2, 3, 4, 5]
+
+    async def test_entry_gets_seq_field(self, backend: StorageBackend) -> None:
+        entry: dict = {"data": "test"}
+        seq, _ = await backend.append_auto_seq("streams", "s1", entry)
+        assert entry["seq"] == seq
+
+    async def test_concurrent_auto_seq(self, file_backend: FileBackend) -> None:
+        """Concurrent appends get unique seq numbers under flock."""
+        results: list[int] = []
+
+        async def writer() -> None:
+            seq, _ = await file_backend.append_auto_seq(
+                "streams", "s1", {"data": "msg"},
+            )
+            results.append(seq)
+
+        tasks = [writer() for _ in range(10)]
+        await asyncio.gather(*tasks)
+
+        assert sorted(results) == list(range(1, 11))
+
+
 class TestExists:
     """exists operations."""
 

@@ -53,11 +53,10 @@ def _format_message(msg: dict[str, Any]) -> str:
     """Format a message for human-readable display."""
     flag = "!" if msg.get("action_required") else " "
     sender = msg.get("sender", "?")
-    subject = msg.get("subject", "")
     body = msg.get("body", "")[:80]
     seq = msg.get("seq", 0)
     ts = msg.get("ts", "")[:19]
-    return f"  [{seq:>4}] {flag} {ts} {sender:<25} {subject or body}"
+    return f"  [{seq:>4}] {flag} {ts} {sender:<25} {body}"
 
 
 def _format_entity(entity: dict[str, Any]) -> str:
@@ -136,12 +135,11 @@ async def cmd_send(args: argparse.Namespace) -> None:
         sender=sender,
         to=targets,
         body=args.body,
-        subject=args.subject or "",
         msg_type=MsgType(args.type) if args.type else MsgType.INFO,
         priority=Priority(args.priority) if args.priority else Priority.NORMAL,
         action_required=args.action or False,
         refs=refs,
-        reply_to=args.reply_to,
+        thread_id=args.thread_id,
     )
     sent = await svc.send(msg)
     print(f"Sent: {sent.id} (seq={sent.seq})")
@@ -279,7 +277,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("send", help="Send a message")
     p.add_argument("--to", required=True, help="Target URIs (comma-separated)")
     p.add_argument("--body", required=True, help="Message body")
-    p.add_argument("--subject", default=None, help="Message subject")
     p.add_argument(
         "--type",
         default=None,
@@ -294,7 +291,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--action", action="store_true", help="Action required")
     p.add_argument("--refs", default=None, help="Comma-separated references")
-    p.add_argument("--reply-to", default=None, help="Message ID to reply to")
+    p.add_argument("--thread-id", default=None, help="Thread ID (for replies)")
 
     # inbox
     p = sub.add_parser("inbox", help="Check inbox (all subscribed streams)")

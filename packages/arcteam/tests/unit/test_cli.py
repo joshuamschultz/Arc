@@ -125,14 +125,13 @@ class TestSendAndInbox:
         capsys.readouterr()
 
         main([*_r(tmp_path), "--as", "agent://a1", "send",
-              "--to", "channel://ops", "--body", "Hello!",
-              "--subject", "Test"])
+              "--to", "channel://ops", "--body", "Hello!"])
         out = capsys.readouterr().out
         assert "Sent:" in out
 
         main([*_r(tmp_path), "--as", "agent://a2", "inbox"])
         out = capsys.readouterr().out
-        assert "Hello!" in out or "Test" in out
+        assert "Hello!" in out
 
     def test_inbox_json(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
@@ -181,7 +180,7 @@ class TestSendAndInbox:
 
         main([*_r(tmp_path), "--as", "agent://a1", "send",
               "--to", "agent://a1", "--body", "Self msg",
-              "--refs", "ref1,ref2", "--reply-to", "msg_123"])
+              "--refs", "ref1,ref2", "--thread-id", "msg_123"])
         out = capsys.readouterr().out
         assert "Sent:" in out
 

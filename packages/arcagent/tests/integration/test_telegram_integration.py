@@ -174,10 +174,9 @@ class TestProactiveNotification:
         mock_app.shutdown = AsyncMock()
         bot._application = mock_app
 
-        # Simulate schedule:completed event
+        # Simulate schedule:completed event with no result — triggers fallback template
         event = MagicMock()
-        event.result = "Report generated"
-        event.schedule_name = "daily-report"
+        event.data = {"result": "", "schedule_name": "daily-report"}
         await module._on_schedule_completed(event)
 
         mock_app.bot.send_message.assert_called_once()

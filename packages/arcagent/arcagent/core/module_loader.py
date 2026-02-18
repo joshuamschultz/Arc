@@ -195,6 +195,7 @@ class ModuleLoader:
             "config": module_config,
             "eval_config": ctx.config.eval,
             "llm_config": ctx.llm_config,
+            "team_config": ctx.config.team,
             "telemetry": ctx.telemetry,
             "workspace": ctx.workspace,
         }

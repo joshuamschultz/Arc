@@ -1,0 +1,26 @@
+[
+  {
+    "id": "sched_inbox_check",
+    "type": "interval",
+    "prompt": "MANDATORY: Call the messaging_check_inbox tool NOW to check for unread messages. If there are unread messages, read them carefully and act on each one: reply to questions, execute tasks, and report results back to the sender using messaging_send. If a message asks you to contact another agent, use messaging_send to reach them. Do NOT just describe what you would do \u2014 actually call the tools.",
+    "enabled": true,
+    "expression": null,
+    "at": null,
+    "every_seconds": 180,
+    "active_hours": null,
+    "timeout_seconds": 300,
+    "metadata": {
+      "created_by": "system",
+      "created_at": "",
+      "reason": "Periodic inbox check for team messaging",
+      "source_session": "",
+      "last_run": "2026-02-18T00:02:02.038786+00:00",
+      "last_result": "ok",
+      "run_count": 61,
+      "last_duration_seconds": 4.943,
+      "last_tokens_used": null,
+      "last_cost_usd": null,
+      "consecutive_failures": 0
+    }
+  }
+]

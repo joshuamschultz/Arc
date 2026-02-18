@@ -123,6 +123,7 @@ dependencies = [
     { name = "arcagent" },
     { name = "arcllm" },
     { name = "arcrun" },
+    { name = "arcteam" },
     { name = "click" },
     { name = "python-dotenv" },
 ]
@@ -132,6 +133,7 @@ requires-dist = [
     { name = "arcagent", editable = "packages/arcagent" },
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "arcrun", editable = "packages/arcrun" },
+    { name = "arcteam", editable = "packages/arcteam" },
     { name = "click", specifier = ">=8.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
 ]
@@ -188,17 +190,11 @@ name = "arcteam"
 version = "0.1.0"
 source = { editable = "packages/arcteam" }
 dependencies = [
-    { name = "arcagent" },
-    { name = "opentelemetry-api" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "arcagent", editable = "packages/arcagent" },
-    { name = "opentelemetry-api", specifier = ">=1.20" },
-    { name = "pydantic", specifier = ">=2.0,<3" },
-]
+requires-dist = [{ name = "pydantic", specifier = ">=2.0,<3" }]
 
 [[package]]
 name = "attrs"

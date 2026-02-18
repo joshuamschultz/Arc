@@ -72,6 +72,16 @@ class StorageBackend(Protocol):
         """List all keys in a collection."""
         ...
 
+    async def append_auto_seq(
+        self, collection: str, key: str, entry: dict[str, Any],
+    ) -> tuple[int, int]:
+        """Atomically assign seq and append. Returns (seq, byte_offset).
+
+        Reads last seq under file lock, increments, writes — prevents
+        duplicate seq numbers when multiple processes share a stream.
+        """
+        ...
+
     async def exists(self, collection: str, key: str) -> bool:
         """Check if a record exists."""
         ...
@@ -132,6 +142,57 @@ class FileBackend:
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         return offset
+
+    def _sync_append_auto_seq(
+        self, stream: Path, entry: dict[str, Any],
+    ) -> tuple[int, int]:
+        """Assign seq and append atomically under flock.
+
+        Reads the last seq number and writes the new entry under a single
+        exclusive file lock, preventing duplicate seq numbers when multiple
+        processes share a stream.
+        """
+        stream.parent.mkdir(parents=True, exist_ok=True)
+        with open(stream, "a+b") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                # Determine last seq under the lock
+                size = f.seek(0, os.SEEK_END)
+                last_seq = 0
+                if size > 0:
+                    last_seq = self._parse_last_seq_from_handle(f, size)
+                seq = last_seq + 1
+                entry["seq"] = seq
+                line = json.dumps(entry, ensure_ascii=False) + "\n"
+                encoded = line.encode("utf-8")
+                offset = f.seek(0, os.SEEK_END)
+                f.write(encoded)
+                f.flush()
+                os.fsync(f.fileno())
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        return seq, offset
+
+    @staticmethod
+    def _parse_last_seq_from_handle(f: Any, size: int) -> int:
+        """Extract seq from the last valid line of an open JSONL file handle."""
+        pos = size - 1
+        f.seek(pos)
+        if f.read(1) == b"\n":
+            pos -= 1
+        while pos > 0:
+            f.seek(pos)
+            if f.read(1) == b"\n":
+                break
+            pos -= 1
+        f.seek(pos + 1 if pos > 0 else 0)
+        last_line = f.readline().decode("utf-8").strip()
+        if last_line:
+            try:
+                return json.loads(last_line).get("seq", 0)
+            except json.JSONDecodeError:
+                return 0
+        return 0
 
     def _sync_read_stream(
         self, stream: Path, after_seq: int, byte_pos: int, limit: int
@@ -244,6 +305,13 @@ class FileBackend:
         stream = self._stream_path(collection, key)
         return await asyncio.to_thread(self._sync_append, stream, entry)
 
+    async def append_auto_seq(
+        self, collection: str, key: str, entry: dict[str, Any],
+    ) -> tuple[int, int]:
+        """Atomically assign seq and append. Returns (seq, byte_offset)."""
+        stream = self._stream_path(collection, key)
+        return await asyncio.to_thread(self._sync_append_auto_seq, stream, entry)
+
     async def read_stream(
         self,
         collection: str,
@@ -313,6 +381,22 @@ class MemoryBackend:
         self._stream_bytes[collection][key] += line_size
         self._streams[collection][key].append(entry)
         return offset
+
+    async def append_auto_seq(
+        self, collection: str, key: str, entry: dict[str, Any],
+    ) -> tuple[int, int]:
+        """Atomically assign seq and append. Returns (seq, byte_offset)."""
+        self._streams.setdefault(collection, {}).setdefault(key, [])
+        self._stream_bytes.setdefault(collection, {}).setdefault(key, 0)
+        entries = self._streams[collection][key]
+        last_seq = entries[-1].get("seq", 0) if entries else 0
+        seq = last_seq + 1
+        entry["seq"] = seq
+        offset = self._stream_bytes[collection][key]
+        line_size = len(json.dumps(entry, ensure_ascii=False).encode("utf-8")) + 1
+        self._stream_bytes[collection][key] += line_size
+        entries.append(entry)
+        return seq, offset
 
     async def read_stream(
         self,

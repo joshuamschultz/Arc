@@ -34,3 +34,4 @@ class RunState:
     transform_context: Callable[..., Any] | None = None
     tool_timeout: float | None = None
     strategy_name: str = ""
+    tool_choice: dict[str, Any] | None = None

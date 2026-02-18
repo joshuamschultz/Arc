@@ -37,12 +37,10 @@ class TestMessageModel:
             ts="2026-02-17T00:00:00Z",
             sender="user://josh",
             to=["agent://a1", "channel://ops"],
-            reply_to="msg_100_xyz",
             thread_id="msg_99_root",
             msg_type=MsgType.TASK,
             priority=Priority.HIGH,
             action_required=True,
-            subject="Deploy v2",
             body="Please deploy version 2",
             refs=["ref://doc1"],
             status="delivered",
@@ -58,7 +56,6 @@ class TestMessageModel:
         msg = Message(sender="agent://a1", to=["channel://ops"], body="test")
         assert msg.id == ""
         assert msg.ts == ""
-        assert msg.reply_to is None
         assert msg.thread_id is None
         assert msg.refs == []
         assert msg.meta == {}

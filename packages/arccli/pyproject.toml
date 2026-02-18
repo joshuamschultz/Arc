@@ -12,6 +12,7 @@ dependencies = [
     "arcllm",
     "arcrun",
     "arcagent",
+    "arcteam",
     "python-dotenv>=1.0",
 ]
 

@@ -71,7 +71,6 @@ class TestFullAgentWorkflow:
             sender="user://josh",
             to=["channel://project-alpha"],
             body="Please analyze vendor proposals",
-            subject="Vendor Analysis",
             msg_type=MsgType.TASK,
             priority=Priority.HIGH,
             action_required=True,

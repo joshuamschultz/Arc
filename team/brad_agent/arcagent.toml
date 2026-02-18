@@ -44,6 +44,9 @@ retention_days = 30
 [extensions]
 global_dir = "~/.arcagent/extensions"
 
+[team]
+root = "../shared"
+
 [modules.memory]
 enabled = true
 
@@ -62,3 +65,15 @@ enabled = true
 
 [modules.scheduler.config]
 check_interval_seconds = 30
+
+[modules.messaging]
+enabled = true
+
+[modules.messaging.config]
+entity_id = "agent://brad_agent"
+entity_name = "Brad"
+roles = ["executor", "ops"]
+capabilities = ["task-execution", "file-management"]
+poll_interval_seconds = 2.0
+auto_ack = true
+audit_hmac_key = "arcteam-local-dev"

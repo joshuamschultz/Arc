@@ -1,0 +1,15 @@
+name: messaging
+version: 0.1.0
+description: Inter-agent messaging via ArcTeam — tools, polling, and context injection
+author: ArcAgent
+entry_point: arcagent.modules.messaging:MessagingModule
+dependencies:
+  - arcagent.core.module_bus
+  - arcagent.core.config
+events:
+  subscribes:
+    - agent:assemble_prompt
+    - agent:shutdown
+  emits:
+    - messaging:new_messages
+    - messaging:entity_registered

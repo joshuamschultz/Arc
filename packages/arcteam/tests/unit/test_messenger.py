@@ -140,7 +140,7 @@ class TestAutoAssign:
 
 
 class TestThreading:
-    """Threading: reply_to sets thread_id to original message's thread_id."""
+    """Threading: explicit thread_id groups messages into conversations."""
 
     async def test_reply_thread(self, svc: MessagingService) -> None:
         original = await svc.send(Message(
@@ -152,7 +152,7 @@ class TestThreading:
             sender="agent://a2",
             to=["channel://project-alpha"],
             body="reply to original",
-            reply_to=original.id,
+            thread_id=original.id,
         ))
         assert reply.thread_id == original.id
 
@@ -276,9 +276,9 @@ class TestBodyTooLarge:
         big_body = "x" * 70000
         msg = Message.model_construct(
             seq=0, id="", ts="", sender="agent://a1",
-            to=["channel://project-alpha"], reply_to=None, thread_id=None,
+            to=["channel://project-alpha"], thread_id=None,
             msg_type=MsgType.INFO, priority=Priority.NORMAL,
-            action_required=False, subject="", body=big_body,
+            action_required=False, body=big_body,
             refs=[], status="sent", meta={},
         )
         with pytest.raises(ValueError, match="64KB"):
@@ -343,13 +343,13 @@ class TestGetThread:
             sender="agent://a2",
             to=["channel://project-alpha"],
             body="reply 1",
-            reply_to=original.id,
+            thread_id=original.id,
         ))
         await svc.send(Message(
             sender="agent://a1",
             to=["channel://project-alpha"],
             body="reply 2",
-            reply_to=original.id,
+            thread_id=original.id,
         ))
         # Unrelated message
         await svc.send(Message(
@@ -392,9 +392,9 @@ class TestChannelMembership:
 
 
 class TestDeepThreading:
-    """Deep threading: reply to a reply inherits original thread_id."""
+    """Deep threading: all replies in a thread share the same thread_id."""
 
-    async def test_deep_thread_inheritance(self, svc: MessagingService) -> None:
+    async def test_deep_thread_same_id(self, svc: MessagingService) -> None:
         original = await svc.send(Message(
             sender="agent://a1",
             to=["channel://project-alpha"],
@@ -404,15 +404,16 @@ class TestDeepThreading:
             sender="agent://a2",
             to=["channel://project-alpha"],
             body="first reply",
-            reply_to=original.id,
+            thread_id=original.id,
         ))
-        # Reply to the reply — should still use original's thread_id
+        # All replies pass the same thread_id
         reply2 = await svc.send(Message(
             sender="agent://a1",
             to=["channel://project-alpha"],
             body="reply to reply",
-            reply_to=reply1.id,
+            thread_id=original.id,
         ))
+        assert reply1.thread_id == original.id
         assert reply2.thread_id == original.id
 
 

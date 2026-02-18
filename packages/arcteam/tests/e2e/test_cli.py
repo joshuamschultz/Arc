@@ -48,14 +48,14 @@ class TestFullFlow:
 
         # Send message to channel
         r = run_cli(tmp_path, "--as", "agent://a1", "send",
-                     "--to", "channel://ops-channel", "--body", "Hello ops!", "--subject", "Greeting")
+                     "--to", "channel://ops-channel", "--body", "Hello ops!")
         assert r.returncode == 0
         assert "Sent:" in r.stdout
 
         # Check inbox for a2
         r = run_cli(tmp_path, "--as", "agent://a2", "inbox")
         assert r.returncode == 0
-        assert "Hello ops!" in r.stdout or "Greeting" in r.stdout
+        assert "Hello ops!" in r.stdout
 
 
 class TestDMFlow:

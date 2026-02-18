@@ -1,0 +1,11 @@
+[
+  {
+    "description": "Find out what CTG Federal is/does and report back to Josh",
+    "status": "waiting",
+    "report_to": "user://josh",
+    "waiting_for": "Response from agent://my_agent about CTG Federal",
+    "original_message_id": "msg_1771368011456602000_000000",
+    "my_request_id": "msg_1771368217850725000_000000",
+    "created": "2026-02-17T22:40:11+00:00"
+  }
+]

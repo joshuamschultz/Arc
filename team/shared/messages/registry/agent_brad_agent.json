@@ -1,0 +1,1 @@
+{"id": "agent://brad_agent", "name": "Brad", "type": "agent", "roles": ["executor", "ops"], "capabilities": ["task-execution", "file-management"], "created": "2026-02-17T17:26:13.283171+00:00", "status": "online"}

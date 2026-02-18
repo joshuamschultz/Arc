@@ -72,19 +72,17 @@ MAX_BODY_BYTES = 65536  # 64KB
 
 
 class Message(BaseModel):
-    """15-field message envelope. Maps to NATS JetStream message."""
+    """13-field message envelope. Maps to NATS JetStream message."""
 
     seq: int = 0
     id: str = ""
     ts: str = ""
     sender: str
     to: list[str]
-    reply_to: str | None = None
     thread_id: str | None = None
     msg_type: MsgType = MsgType.INFO
     priority: Priority = Priority.NORMAL
     action_required: bool = False
-    subject: str = ""
     body: str
     refs: list[str] = Field(default_factory=list)
     status: str = "sent"

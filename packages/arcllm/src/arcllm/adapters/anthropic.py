@@ -130,6 +130,9 @@ class AnthropicAdapter(BaseAdapter):
             body["system"] = system_text
         if tools:
             body["tools"] = [self._format_tool(t) for t in tools]
+            tool_choice = kwargs.get("tool_choice")
+            if tool_choice is not None:
+                body["tool_choice"] = tool_choice
         return body
 
     # -- Response parsing -----------------------------------------------------

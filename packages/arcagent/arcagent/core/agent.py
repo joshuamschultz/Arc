@@ -243,6 +243,11 @@ class ArcAgent:
         # 12. Start modules with context
         await self._bus.startup(module_ctx)
 
+        # Mark started BEFORE emitting agent:ready so modules that
+        # immediately invoke agent.run() (e.g. scheduler) don't hit
+        # the _ensure_started() guard.
+        self._started = True
+
         # 13. Emit agent:ready with deferred-binding callbacks.
         # Modules subscribe to this event during startup() to receive
         # agent.run/chat callbacks without core knowing about them.
@@ -254,8 +259,6 @@ class ArcAgent:
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
         await self._bus.emit("agent:extensions_loaded", {})
         await self._bus.emit("agent:skills_loaded", {})
-
-        self._started = True
         _logger.info(
             "Agent %s started (DID: %s)",
             self._config.agent.name,
@@ -288,6 +291,7 @@ class ArcAgent:
         task: str,
         *,
         messages: list[Any] | None = None,
+        tool_choice: dict[str, Any] | None = None,
     ) -> Any:
         """Shared execution: build tools, emit events, run loop."""
         telemetry, tool_registry, context, bus = self._ensure_started()
@@ -309,6 +313,7 @@ class ArcAgent:
                     messages=messages,
                     on_event=bridge,
                     transform_context=context.transform_context,
+                    tool_choice=tool_choice,
                 )
         except Exception as exc:
             await bus.emit(
@@ -328,9 +333,9 @@ class ArcAgent:
         )
         return result
 
-    async def run(self, task: str) -> Any:
+    async def run(self, task: str, *, tool_choice: dict[str, Any] | None = None) -> Any:
         """Execute a single task through the agent loop."""
-        return await self._execute_loop(task)
+        return await self._execute_loop(task, tool_choice=tool_choice)
 
     async def chat(self, message: str, *, session_id: str | None = None) -> Any:
         """Multi-turn conversation with persistent message history."""

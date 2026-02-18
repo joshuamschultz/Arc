@@ -164,6 +164,17 @@ class SessionConfig(BaseModel):
     compaction_summary_max_chars: int = 2000
 
 
+class TeamSection(BaseModel):
+    """Team coordination config — shared by all team modules.
+
+    Any module that participates in the team (messaging, file sharing,
+    shared knowledge, etc.) reads its root from here rather than
+    declaring its own ``team_root`` field.
+    """
+
+    root: str = ""
+
+
 class ExtensionEntry(BaseModel):
     """Per-extension configuration."""
 
@@ -199,6 +210,7 @@ class ArcAgentConfig(BaseModel):
     vault: VaultConfig = VaultConfig()
     tools: ToolsConfig = ToolsConfig()
     modules: dict[str, ModuleEntry] = {}
+    team: TeamSection = TeamSection()
     telemetry: TelemetryConfig = TelemetryConfig()
     context: ContextConfig = ContextConfig()
     eval: EvalConfig = EvalConfig()

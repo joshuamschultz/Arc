@@ -68,10 +68,12 @@ class SchedulerModule:
         # agent_run_fn will be bound later via set_agent_run_fn or ctx.
         agent_run_fn = getattr(ctx, "agent_run_fn", None)
         if agent_run_fn is None:
-            async def _noop(prompt: str) -> str:
+            async def _noop(prompt: str, **kwargs: Any) -> str:
                 _logger.warning("No agent_run_fn bound; schedule '%s' skipped", prompt)
                 return ""
             agent_run_fn = _noop
+
+        has_real_run_fn = getattr(ctx, "agent_run_fn", None) is not None
 
         self._engine = _Engine(
             store=self._store,
@@ -80,6 +82,12 @@ class SchedulerModule:
             agent_run_fn=agent_run_fn,
             bus=ctx.bus,
         )
+
+        # If a real agent_run_fn was provided at startup (e.g. tests),
+        # signal readiness immediately so the timer loop doesn't block.
+        if has_real_run_fn:
+            self._engine.set_agent_run_fn(agent_run_fn)
+
         await self._engine.start()
         _logger.info("Scheduler module started")
 
@@ -90,7 +98,7 @@ class SchedulerModule:
             self._engine = None
         _logger.info("Scheduler module stopped")
 
-    def set_agent_run_fn(self, fn: Callable[[str], Awaitable[Any]]) -> None:
+    def set_agent_run_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
         """Bind the agent.run() callback after startup (deferred binding)."""
         if self._engine is not None:
             self._engine.set_agent_run_fn(fn)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,7 +48,7 @@ class TestSchedulerIntegration:
         telemetry = MagicMock()
         run_results: list[str] = []
 
-        async def mock_agent_run(prompt: str) -> str:
+        async def mock_agent_run(prompt: str, **kwargs: object) -> str:
             run_results.append(prompt)
             return "done"
 
@@ -72,7 +72,7 @@ class TestSchedulerIntegration:
         module = SchedulerModule(config=config, telemetry=telemetry, workspace=tmp_path)
         ctx = MagicMock()
         ctx.tool_registry = MagicMock()
-        ctx.bus = MagicMock()
+        ctx.bus = AsyncMock()
         ctx.agent_run_fn = mock_agent_run
         await module.startup(ctx)
 
@@ -136,13 +136,13 @@ class TestSchedulerIntegration:
         store = ScheduleStore(tmp_path / "schedules.json")
         telemetry = MagicMock()
 
-        async def failing_run(prompt: str) -> str:
+        async def failing_run(prompt: str, **kwargs: object) -> str:
             raise RuntimeError("LLM unavailable")
 
         module = SchedulerModule(config=config, telemetry=telemetry, workspace=tmp_path)
         ctx = MagicMock()
         ctx.tool_registry = MagicMock()
-        ctx.bus = MagicMock()
+        ctx.bus = AsyncMock()
         ctx.agent_run_fn = failing_run
         await module.startup(ctx)
 
@@ -172,14 +172,14 @@ class TestSchedulerIntegration:
         store = ScheduleStore(tmp_path / "schedules.json")
         results: list[str] = []
 
-        async def mock_run(prompt: str) -> str:
+        async def mock_run(prompt: str, **kwargs: object) -> str:
             results.append(prompt)
             return "ok"
 
         module = SchedulerModule(config=config, telemetry=MagicMock(), workspace=tmp_path)
         ctx = MagicMock()
         ctx.tool_registry = MagicMock()
-        ctx.bus = MagicMock()
+        ctx.bus = AsyncMock()
         ctx.agent_run_fn = mock_run
         await module.startup(ctx)
 

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("arcagent.scheduler")
 
-AgentRunFn = Callable[[str], Awaitable[Any]]
+AgentRunFn = Callable[..., Awaitable[Any]]
 
 
 class SchedulerEngine:
@@ -53,6 +53,7 @@ class SchedulerEngine:
         self._worker_task: asyncio.Task[None] | None = None
         self._running = False
         self._timer_consecutive_errors = 0
+        self._ready = asyncio.Event()  # Set when agent_run_fn is bound
 
     @property
     def running(self) -> bool:
@@ -61,6 +62,7 @@ class SchedulerEngine:
     def set_agent_run_fn(self, fn: AgentRunFn) -> None:
         """Bind or rebind the agent.run() callback."""
         self._agent_run_fn = fn
+        self._ready.set()
 
     # --- Public API ---
 
@@ -74,6 +76,7 @@ class SchedulerEngine:
     async def stop(self, timeout: float = 10.0) -> None:
         """Stop the engine, draining the queue before shutdown."""
         self._running = False
+        self._ready.set()  # Unblock timer loop if still waiting for readiness.
 
         if self._timer_task is not None:
             self._timer_task.cancel()
@@ -117,7 +120,10 @@ class SchedulerEngine:
 
         try:
             result = await asyncio.wait_for(
-                self._agent_run_fn(entry.prompt),
+                self._agent_run_fn(
+                    entry.prompt,
+                    tool_choice={"type": "any"},
+                ),
                 timeout=timeout,
             )
             elapsed = time.monotonic() - start_time
@@ -326,6 +332,8 @@ class SchedulerEngine:
 
     async def _timer_loop(self) -> None:
         """Periodically evaluate all schedules and enqueue those that fire."""
+        # Wait until agent_run_fn is bound (via agent:ready event).
+        await self._ready.wait()
         interval = self._config.check_interval_seconds
         while self._running:
             try:

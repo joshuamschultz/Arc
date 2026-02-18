@@ -60,29 +60,9 @@ class MessagingService:
         self._backend = backend
         self._registry = registry
         self._audit = audit
-        self._seq_counters: dict[str, int] = {}
-        self._seq_locks: dict[str, asyncio.Lock] = {}
         self._dlq_seq: int | None = None
+        self._known_streams: set[str] = set()
         self._cursor_cache: dict[str, Cursor] = {}
-
-    def _get_seq_lock(self, stream: str) -> asyncio.Lock:
-        """Get or create a per-stream lock for sequence counter safety."""
-        if stream not in self._seq_locks:
-            self._seq_locks[stream] = asyncio.Lock()
-        return self._seq_locks[stream]
-
-    async def _next_seq(self, stream: str) -> int:
-        """Get next monotonic sequence number for a stream (lock-protected)."""
-        lock = self._get_seq_lock(stream)
-        async with lock:
-            if stream not in self._seq_counters:
-                last = await self._backend.read_last(STREAMS_COLLECTION, stream)
-                if last:
-                    self._seq_counters[stream] = last.get("seq", 0)
-                else:
-                    self._seq_counters[stream] = 0
-            self._seq_counters[stream] += 1
-            return self._seq_counters[stream]
 
     async def _next_dlq_seq(self) -> int:
         """Get next DLQ sequence number (cached)."""
@@ -134,21 +114,8 @@ class MessagingService:
         message.id = generate_message_id()
         message.ts = now
 
-        # Compute target streams for thread resolution hints
-        target_streams: list[str] = []
-        for uri in message.to:
-            try:
-                target_streams.append(_stream_name_from_uri(uri))
-            except ValueError:
-                pass
-
-        # Threading: if reply_to is set but no thread_id, inherit from parent
-        if message.reply_to and not message.thread_id:
-            message.thread_id = await self._resolve_thread_id(
-                message.reply_to, target_streams
-            )
-        elif not message.thread_id:
-            # New thread: thread_id = own id
+        # Threading: caller sets thread_id for replies; new messages self-reference.
+        if not message.thread_id:
             message.thread_id = message.id
 
         # Serialize once before the loop (not per-target)
@@ -174,10 +141,11 @@ class MessagingService:
                         f"Sender {message.sender} is not a member of channel://{name}"
                     )
 
-            seq = await self._next_seq(stream)
-            msg_dict = {**base_dict, "seq": seq}
-
-            await self._backend.append(STREAMS_COLLECTION, stream, msg_dict)
+            msg_dict = {**base_dict}
+            seq, _offset = await self._backend.append_auto_seq(
+                STREAMS_COLLECTION, stream, msg_dict,
+            )
+            self._known_streams.add(stream)
             streams_written.append(stream)
             last_seq = seq
 
@@ -193,30 +161,6 @@ class MessagingService:
         message.seq = last_seq
         message.status = "sent"
         return message
-
-    async def _resolve_thread_id(
-        self, reply_to_id: str, target_streams: list[str] | None = None
-    ) -> str:
-        """Look up the parent message's thread_id for proper deep threading.
-
-        Searches target streams first, then known streams. Falls back to reply_to_id
-        if parent is not found (safe default — treats it as thread root).
-        """
-        # Build search order: target streams first, then other known streams
-        streams_to_check = list(target_streams or [])
-        for s in self._seq_counters:
-            if s not in streams_to_check:
-                streams_to_check.append(s)
-
-        for stream_key in streams_to_check:
-            records = await self._backend.read_stream(
-                STREAMS_COLLECTION, stream_key, after_seq=0, limit=10000
-            )
-            for r in records:
-                if r.get("id") == reply_to_id:
-                    return r.get("thread_id", reply_to_id)
-        # Fallback: treat reply_to as thread root
-        return reply_to_id
 
     # --- Poll ---
 
