@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcagent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Enterprise-grade autonomous agent nucleus"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
+license = "CC-BY-4.0"
 dependencies = [
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",

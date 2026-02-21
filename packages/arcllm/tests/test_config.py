@@ -37,11 +37,13 @@ def test_global_config_modules_all_disabled():
 
 def test_global_config_module_extra_fields():
     config = load_global_config()
-    assert config.modules["budget"].monthly_limit_usd == 500.00
     assert config.modules["retry"].max_retries == 3
     assert config.modules["retry"].backoff_base_seconds == 1.0
     assert config.modules["fallback"].chain == ["anthropic", "openai"]
     assert config.modules["rate_limit"].requests_per_minute == 60
+    # Routing module has enforcement and default_classification
+    assert config.modules["routing"].enforcement == "warn"
+    assert config.modules["routing"].default_classification == "unclassified"
 
 
 # --- Provider config loading ---

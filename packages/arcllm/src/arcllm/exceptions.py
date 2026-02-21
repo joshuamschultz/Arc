@@ -22,6 +22,32 @@ class ArcLLMConfigError(ArcLLMError):
     """Raised on configuration validation failure."""
 
 
+class ArcLLMBudgetError(ArcLLMError):
+    """Raised when a budget limit would be exceeded.
+
+    Carries scope, limit type, and dollar amounts so callers can decide
+    whether to retry later, switch to a cheaper model, or alert.
+    """
+
+    def __init__(
+        self,
+        scope: str,
+        limit_type: str,
+        limit_usd: float,
+        current_usd: float,
+        estimated_usd: float | None,
+    ) -> None:
+        self.scope = scope
+        self.limit_type = limit_type
+        self.limit_usd = limit_usd
+        self.current_usd = current_usd
+        self.estimated_usd = estimated_usd
+        super().__init__(
+            f"Budget {limit_type} limit exceeded for '{scope}': "
+            f"limit=${limit_usd:.2f}, current=${current_usd:.2f}"
+        )
+
+
 _MAX_ERROR_BODY_DISPLAY = 500
 
 

@@ -4,6 +4,7 @@ import click
 
 from arccli.agent import agent
 from arccli.ext import ext
+from arccli.init_wizard import init
 from arccli.llm import llm
 from arccli.run import run_group
 from arccli.skill import skill
@@ -15,6 +16,7 @@ def cli() -> None:
     """Arc — unified CLI for Arc products."""
 
 
+cli.add_command(init)
 cli.add_command(llm)
 cli.add_command(agent)
 cli.add_command(run_group)

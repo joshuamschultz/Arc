@@ -8,7 +8,7 @@
 │   for Autonomous Agents at Scale                     │
 │                                                      │
 ├──────────────────────────────────────────────────────┤
-│  11 Providers · 7 Modules · 2 Dependencies · <1ms   │
+│  11 Providers · 8 Modules · 2 Dependencies · <1ms   │
 ╰──────────────────────────────────────────────────────╯
 ```
 
@@ -41,7 +41,9 @@ Switch providers by changing one string. Your agent code stays the same.
 - **Security first** — API keys from environment variables or vault backends. PII redaction, HMAC request signing, and audit trails built in. No secrets in config files, ever.
 - **Agent-native** — Purpose-built for agentic tool-calling loops, not chat interfaces. Stateless model objects. Your agent manages its own conversation history.
 - **Minimal core** — Two runtime dependencies (`pydantic`, `httpx`). No provider SDKs. Direct HTTP to every provider. Import time under 100ms, abstraction overhead under 1ms per call.
-- **Opt-in complexity** — Need just Anthropic with no extras? That's all that loads. Need retry, fallback, telemetry, audit, and rate limiting? Enable them with a flag. Nothing runs that you didn't ask for.
+- **Budget enforcement** — Per-scope spend tracking with calendar period resets. Pre-flight cost estimation. Per-call, daily, and monthly limits with configurable enforcement (`block`, `warn`, `log`).
+- **Classification-aware routing** — Route LLM calls to specific providers based on data classification. CUI stays on cleared infrastructure. Unclassified goes to cost-optimized providers.
+- **Opt-in complexity** — Need just Anthropic with no extras? That's all that loads. Need retry, fallback, telemetry, audit, routing, and budget controls? Enable them with a flag. Nothing runs that you didn't ask for.
 - **Config-driven** — Model metadata, provider settings, and module toggles live in TOML files. Add a provider by dropping in one `.toml` file. Zero code changes.
 
 ---
@@ -75,9 +77,10 @@ All disabled by default. Enable via config or at load time.
 | **Retry** | Exponential backoff on transient errors (429, 500, 503). Respects `Retry-After` headers. |
 | **Fallback** | Provider chain — if Anthropic fails, try OpenAI. Configurable order. |
 | **Rate Limit** | Token-bucket throttling per provider. Prevents quota exhaustion across concurrent agents. |
-| **Telemetry** | Timing, token counts, and cost-per-call with automatic pricing from model metadata. |
+| **Telemetry** | Timing, token counts, cost-per-call, and budget enforcement with automatic pricing from model metadata. |
 | **Audit** | Structured call logging with metadata for compliance trails. PII-safe by default. |
 | **Security** | PII redaction on requests/responses, HMAC request signing, vault-based key resolution. |
+| **Routing** | Classification-aware provider/model selection. Route CUI to cleared providers, unclassified to cost-optimized. |
 | **OpenTelemetry** | Distributed tracing export via OTLP (gRPC or HTTP). GenAI semantic conventions. |
 
 Enable at load time:
@@ -100,6 +103,44 @@ enabled = true
 max_retries = 3
 backoff_base_seconds = 1.0
 ```
+
+### Budget Enforcement
+
+Control LLM spend at every level — per-call, daily, and monthly — with configurable enforcement:
+
+```toml
+[modules.telemetry]
+enabled = true
+monthly_limit_usd = 500.00
+daily_limit_usd = 50.00
+per_call_max_usd = 5.00
+alert_threshold_pct = 80
+enforcement = "block"        # block | warn | log
+budget_scope = "my-agent"
+```
+
+Budget scopes are validated with NFKC Unicode normalization. Costs are clamped to prevent negative injection. Calendar period resets are automatic (UTC monthly/daily). Thread-safe for concurrent agents.
+
+### Classification-Aware Routing
+
+Route LLM calls based on data classification:
+
+```toml
+[modules.routing]
+enabled = true
+enforcement = "block"
+default_classification = "unclassified"
+
+[modules.routing.rules.cui]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+
+[modules.routing.rules.unclassified]
+provider = "openai"
+model = "gpt-4o-mini"
+```
+
+CUI data stays on cleared providers. Unclassified data goes to cost-optimized providers. Enforcement modes: `block` (hard stop), `warn` (log + continue), `log` (silent).
 
 ---
 
@@ -127,7 +168,7 @@ With ECDSA request signing:
 pip install -e ".[signing]"
 ```
 
-**Requirements:** Python 3.11+
+**Requirements:** Python 3.12+
 
 ---
 
@@ -277,7 +318,7 @@ Agent Code
     |
 load_model() ---- Public API
     |
-Modules ---------- opt-in: retry, fallback, telemetry, audit, security, otel
+Modules ---------- opt-in: retry, fallback, telemetry, audit, security, routing, otel
     |
 Adapter ---------- provider-specific translation (one .py per provider)
     |
@@ -345,6 +386,20 @@ backoff_base_seconds = 1.0
 enabled = false
 chain = ["anthropic", "openai"]
 
+[modules.routing]
+enabled = false
+enforcement = "warn"
+default_classification = "unclassified"
+
+[modules.telemetry]
+enabled = false
+log_level = "INFO"
+# monthly_limit_usd = 500.00
+# daily_limit_usd = 50.00
+# per_call_max_usd = 5.00
+# alert_threshold_pct = 80
+# enforcement = "block"
+
 [modules.security]
 enabled = false
 pii_enabled = true
@@ -380,6 +435,7 @@ Model metadata (context windows, capabilities, pricing) lives in config, not cod
 ```bash
 pytest -v                       # Unit + adapter tests (mocked)
 pytest --cov=arcllm             # With coverage
+pytest tests/security/          # Security-specific tests
 pytest tests/test_agentic_loop.py  # Live API test (requires ANTHROPIC_API_KEY)
 ```
 
@@ -396,6 +452,8 @@ Key capabilities:
 - **Request signing** — HMAC-SHA256 signatures on every request payload for tamper detection and non-repudiation.
 - **Vault integration** — Pluggable secrets backend with TTL caching. Supports any vault (HashiCorp, AWS SM, Azure KV).
 - **Audit trails** — Structured compliance logging. PII-safe metadata by default, raw content opt-in at DEBUG.
+- **Budget enforcement** — Per-scope spend limits with negative cost injection prevention, Unicode homoglyph attack resistance, and thread-safe accumulation.
+- **Classification routing** — Data classification-aware provider selection prevents CUI from reaching unauthorized providers.
 - **TLS enforced** — All provider communication over HTTPS via httpx defaults.
 - **OpenTelemetry** — Distributed tracing with mTLS support for secure telemetry export.
 
@@ -403,21 +461,28 @@ Key capabilities:
 
 ## Project Status
 
-ArcLLM is in active development. Core foundation, all provider adapters, and the module system are complete and tested.
+ArcLLM is in active development. Core foundation, all provider adapters, the module system, budget enforcement, and classification routing are complete and tested.
 
 | Phase | Status |
 |-------|--------|
 | Core Foundation (types, config, adapters, registry) | Complete |
 | Module System (retry, fallback, rate limit, telemetry, audit, security, otel) | Complete |
 | Enterprise (vault integration, request signing, PII redaction) | Complete |
-| Router, budget manager | In progress |
+| Budget enforcement (per-scope, daily, monthly, per-call) | Complete |
+| Classification-aware routing | Complete |
 
 ---
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution-NoDerivatives 4.0 International License (CC BY-ND 4.0)](https://creativecommons.org/licenses/by-nd/4.0/).
+This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
 
-You are free to use and share this software, provided you give appropriate credit. You may not distribute modified versions.
+You are free to use, share, and adapt this software, provided you give appropriate credit.
 
-Copyright (c) 2025 BlackArc Systems / CTG Federal.
+Copyright (c) 2025-2026 BlackArc Systems.
+
+---
+
+## Acknowledgments
+
+ArcLLM was inspired by [pi-ai](https://github.com/badlogic/pi-mono/tree/main/packages/ai) (from [pi-mono](https://github.com/badlogic/pi-mono) by Mario Zechner) and [LiteLLM](https://github.com/BerriAI/litellm). We studied their architectures and built something purpose-fit for Python, federal environments, and autonomous agent fleets.

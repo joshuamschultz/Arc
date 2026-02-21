@@ -11,17 +11,29 @@ region = ""
 
 [modules.routing]
 enabled = false
+enforcement = "warn"
+default_classification = "unclassified"
+
+# [modules.routing.rules.cui]
+# provider = "anthropic"
+# model = "claude-sonnet-4-6"
+
+# [modules.routing.rules.unclassified]
+# provider = "openai"
+# model = "gpt-4o-mini"
 
 [modules.telemetry]
 enabled = false
 log_level = "INFO"
+# Budget fields (all optional — budget disabled if none present)
+# monthly_limit_usd = 500.00
+# daily_limit_usd = 50.00
+# per_call_max_usd = 5.00
+# alert_threshold_pct = 80
+# enforcement = "block"
 
 [modules.audit]
 enabled = false
-
-[modules.budget]
-enabled = false
-monthly_limit_usd = 500.00
 
 [modules.retry]
 enabled = false

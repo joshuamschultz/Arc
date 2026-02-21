@@ -1,50 +1,41 @@
 ```
-  ┌─┐  ┬─┐  ┌─┐  ┬─┐  ┬ ┬  ┌┐┌
-  ├─┤  ├┬┘  │    ├┬┘  │ │  │││
-  ┴ ┴  ┴└─  └─┘  ┴└─  └─┘  ┘└┘
-
-  async execution engine for agents
-
-  model + tools + task  ──►  result
-  every action audited. always.
-
-  ┌───────────────────────────────┐
-  │  YOUR AGENT                   │
-  │  prompts · tools · config     │
-  ├───────────────────────────────┤
-  │  arcrun              ◄ here   │
-  │  loop · sandbox · events      │
-  ├───────────────────────────────┤
-  │  arcllm                       │
-  │  providers · transport        │
-  └───────────────────────────────┘
+╭──────────────────────────────────────────────────────╮
+│                                                      │
+│   ▄▀█ █▀█ █▀▀ █▀█ █ █ █▄ █                         │
+│   █▀█ █▀▄ █▄▄ █▀▄ █▄█ █ ▀█                         │
+│                                                      │
+│   Async Execution Engine                             │
+│   for Autonomous Agents at Scale                     │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│  model + tools + task ──► result · every action audited │
+╰──────────────────────────────────────────────────────╯
 ```
 
-# arcrun
+**The execution engine for autonomous agents.** ArcRun receives an [ArcLLM](../arcllm/) model, a set of tools, and a task — then loops until the task is done.
 
-**The execution engine for autonomous agents.** arcrun receives an [arcllm](https://github.com/joshuamschultz/arcllm) model, a set of tools, and a task — then loops until the task is done.
+ArcRun is to agents what an engine is to a car. The car (your agent) decides where to go. The engine (ArcRun) makes it move.
 
-arcrun is to agents what an engine is to a car. The car (your agent) decides where to go. The engine (arcrun) makes it move.
-
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Lines of Code](https://img.shields.io/badge/lines-~900-brightgreen.svg)]()
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![Lines of Code](https://img.shields.io/badge/lines-~1,200-brightgreen.svg)]()
 
 ---
 
-## Why arcrun
+## Why ArcRun
 
 Most agent frameworks do too much. They own your prompts, your config, your session management, your UI. You end up fighting the framework.
 
-arcrun does one thing: **execute the loop**.
+ArcRun does one thing: **execute the loop**.
 
 - **5 lines to run** — `await run(model, tools, prompt, task)`
-- **~900 lines** — small enough for a model to reason about
-- **Every action auditable** — events emit for everything, always, non-optional
-- **Deny-by-default sandbox** — tool calls checked before execution
-- **Zero opinions** — no agents, no sessions, no config format, no UI
+- **~1,200 lines** — small enough for a model to reason about
+- **Tamper-evident audit trail** — SHA-256 hash-chained events. Every action logged, every log verifiable, non-optional.
+- **Deny-by-default sandbox** — Tool calls checked before execution. Container isolation available.
+- **36 adversarial tests** — OWASP LLM Top 10 and Agentic AI Top 10 attack vectors validated.
+- **Zero opinions** — No agents, no sessions, no config format, no UI.
 
-You build the agent. arcrun makes it move.
+You build the agent. ArcRun makes it move.
 
 ---
 
@@ -54,7 +45,13 @@ You build the agent. arcrun makes it move.
 pip install arcrun
 ```
 
-Requires Python 3.11+. Only dependency beyond arcllm is `jsonschema` for tool parameter validation.
+With container sandbox support:
+
+```bash
+pip install "arcrun[container]"
+```
+
+Requires Python 3.12+. Only dependency beyond ArcLLM is `jsonschema` for tool parameter validation.
 
 ---
 
@@ -89,7 +86,7 @@ print(result.turns)         # loop iterations
 print(result.tool_calls_made)  # total tool invocations
 print(result.tokens_used)   # {"input": N, "output": N, "total": N}
 print(result.cost_usd)      # estimated cost
-print(result.events)        # full audit trail
+print(result.events)        # full audit trail (hash-chained)
 ```
 
 That's it. Five lines of setup. One call to `run()`.
@@ -103,7 +100,7 @@ That's it. Five lines of setup. One call to `run()`.
 ```
 run(model, tools, system_prompt, task)
   │
-  ├── EMIT: loop.start
+  ├── EMIT: loop.start (hash chain genesis)
   │
   ├── Strategy Selection (react / code)
   │   EMIT: strategy.selected
@@ -128,14 +125,31 @@ run(model, tools, system_prompt, task)
   │
   ├── EMIT: loop.complete
   │
-  └── return LoopResult
+  └── return LoopResult (with verifiable hash chain)
 ```
 
-The model reasons, picks tools, observes results, repeats. arcrun handles tool dispatch, sandbox checks, event emission, and message management. The model just sees `invoke()`.
+The model reasons, picks tools, observes results, repeats. ArcRun handles tool dispatch, sandbox checks, event emission, and message management. The model just sees `invoke()`.
+
+### Tamper-Evident Event Chain
+
+Every event is hash-chained using SHA-256. Each event contains a `sequence` number, `prev_hash`, and `event_hash`. The genesis event uses `"0" * 64` as its previous hash. Verify the integrity of any audit trail:
+
+```python
+from arcrun import verify_chain
+
+result = await run(...)
+verification = verify_chain(result.events)
+
+print(verification.valid)           # True if chain is intact
+print(verification.verified_count)  # Number of events verified
+print(verification.first_invalid_index)  # None if valid
+```
+
+Events are immutable (`frozen=True` dataclass with `MappingProxyType` data). No post-emission tampering.
 
 ### Tools
 
-Tools are what the model can call. You define them, arcrun validates and dispatches.
+Tools are what the model can call. You define them, ArcRun validates and dispatches.
 
 ```python
 from arcrun import Tool
@@ -173,7 +187,7 @@ Every `execute` function receives:
 - `params` — validated against `input_schema` before your code runs
 - `ctx` — a `ToolContext` with `run_id`, `tool_call_id`, `turn_number`, `event_bus`, and `cancelled` signal
 
-Return a string. Raise an exception for errors (arcrun catches it, emits `tool.error`, sends the error back to the model).
+Return a string. Raise an exception for errors (ArcRun catches it, emits `tool.error`, sends the error back to the model).
 
 ### Events
 
@@ -194,14 +208,13 @@ Every action emits an event. Always. Non-negotiable. This is the audit trail.
 ```python
 # Real-time handler
 def my_handler(event):
-    print(f"[{event.type}] {event.data}")
+    print(f"[{event.type}] seq={event.sequence} hash={event.event_hash[:12]}")
 
 result = await run(..., on_event=my_handler)
 
-# Post-execution analysis
-for event in result.events:
-    if event.type == "tool.denied":
-        print(f"DENIED: {event.data['name']} — {event.data['reason']}")
+# Post-execution verification
+verification = verify_chain(result.events)
+assert verification.valid
 ```
 
 ### Sandbox
@@ -230,10 +243,31 @@ sandbox = SandboxConfig(
 result = await run(..., sandbox=sandbox)
 ```
 
-When sandbox denies a tool call:
-1. `tool.denied` event emits with the reason
-2. Error message returns to the model (it can adjust)
-3. Loop continues
+### Container Sandbox
+
+For maximum isolation, run agent-generated code inside Docker containers:
+
+```python
+from arcrun import make_contained_execute_tool
+
+tool = make_contained_execute_tool(
+    memory_limit="256m",
+    cpu_period=100000,
+    cpu_quota=50000,       # 50% of one CPU
+    network_disabled=True,
+    read_only=True,
+    timeout_seconds=30,
+)
+
+result = await run(model=model, tools=[tool], ...)
+```
+
+Container sandbox provides:
+- **Memory limits** — OOM kills prevent resource exhaustion
+- **CPU quotas** — Prevents CPU monopolization
+- **Network isolation** — No outbound connections from agent code
+- **Read-only filesystem** — No persistent writes
+- **Automatic cleanup** — Containers removed after execution
 
 ### Dynamic Tool Registry
 
@@ -291,11 +325,11 @@ Called before every `model.invoke()`. You control the strategy.
 
 ## Execution Strategies
 
-arcrun supports multiple execution strategies. The model picks (or you constrain):
+ArcRun supports multiple execution strategies. The model picks (or you constrain):
 
 ### ReAct (Default)
 
-Reason → Act → Observe → Repeat. The standard tool-calling loop. Uses whatever tools you pass in. Terminates on `end_turn` or `max_turns`.
+Reason -> Act -> Observe -> Repeat. The standard tool-calling loop. Uses whatever tools you pass in. Terminates on `end_turn` or `max_turns`.
 
 ```python
 result = await run(
@@ -341,10 +375,10 @@ result = await run(
 
 ```
 arcrun/
-├── __init__.py            # Public API: run(), Tool, LoopResult, etc.
+├── __init__.py            # Public API: run(), Tool, LoopResult, verify_chain, etc.
 ├── loop.py                # run() + run_async() + RunHandle
 ├── state.py               # RunState — internal state during execution
-├── events.py              # Event bus + Event dataclass
+├── events.py              # EventBus + Event + hash chain + verify_chain()
 ├── sandbox.py             # Permission boundary
 ├── registry.py            # Dynamic tool registry
 ├── executor.py            # Shared tool execution pipeline
@@ -357,10 +391,11 @@ arcrun/
 │   └── code.py            # CodeExec strategy
 │
 └── builtins/
-    └── execute.py         # Sandboxed Python execution
+    ├── execute.py         # Sandboxed Python execution
+    └── contained_execute.py  # Docker-isolated execution
 ```
 
-**Total: ~900 lines of Python.**
+**Total: ~1,200 lines of Python.**
 
 ### Layer Separation
 
@@ -374,8 +409,8 @@ arcrun/
 │  arcrun (this package)                      │
 │  Execution loop (ReAct / CodeExec)          │
 │  Tool dispatch + validation                 │
-│  Event emission (every action, always)      │
-│  Sandbox (permission boundary)              │
+│  Hash-chained event audit trail             │
+│  Sandbox (permission + container)           │
 │  Steering (mid-execution intervention)      │
 ├─────────────────────────────────────────────┤
 │  arcllm                                     │
@@ -386,33 +421,20 @@ arcrun/
 └─────────────────────────────────────────────┘
 ```
 
-arcrun calls `model.invoke()`. That's the only touchpoint with arcllm. arcrun never calls `load_model()`, never configures providers, never handles API keys.
-
-### What arcrun Does NOT Have
-
-| Thing | Where It Lives |
-|---|---|
-| Agent definitions | Your agent code |
-| Extension system | Your agent code |
-| Session management | Your agent code |
-| Config file loading | Your agent code |
-| Model configuration | arcllm (`load_model()`) |
-| Tool discovery | Your agent code |
-| Memory / RAG | Your agent code |
-| UI / CLI | Your agent code |
+ArcRun calls `model.invoke()`. That's the only touchpoint with ArcLLM. ArcRun never calls `load_model()`, never configures providers, never handles API keys.
 
 ---
 
 ## Security
 
-arcrun is built for federal and enterprise deployment. Security is non-optional.
+ArcRun is built for federal and enterprise deployment. Security is non-optional.
 
 ### Threat Model
 
 Formal analysis covers:
 - **OWASP Agentic AI (T1-T15)** — tool misuse, resource overload, RCE, agent poisoning
 - **OWASP LLM Top 10 (2025)** — prompt injection, excessive agency, unbounded consumption
-- **NIST SP 800-53** — 12 controls mapped directly to arcrun features
+- **NIST SP 800-53** — 12 controls mapped directly to ArcRun features
 
 ### Defense Layers
 
@@ -421,14 +443,31 @@ Formal analysis covers:
 | **Tool allowlist** | Only explicitly allowed tools can execute |
 | **Param validation** | JSON Schema validation before every `execute()` |
 | **Sandbox checker** | Caller-provided callback for granular permission logic |
-| **Event audit trail** | Every action logged — non-optional, non-disableable |
+| **Container isolation** | Docker-based execution with memory/CPU/network limits |
+| **Hash-chained audit trail** | SHA-256 chain on every event — tamper-evident, verifiable |
+| **Immutable events** | `frozen=True` dataclass with `MappingProxyType` data |
 | **Tool timeouts** | Per-tool and global timeout enforcement |
 | **Dynamic tool denial** | New tools added mid-execution are denied by default |
 | **Cancel signal** | Tools receive cancellation signal for clean shutdown |
 
+### Adversarial Test Coverage
+
+36 tests across 8 categories validate resilience against real attack vectors:
+
+| Category | Tests | OWASP Mapping |
+|---|---|---|
+| Prompt injection | 3 | LLM01, ASI01 |
+| Path traversal | 4 | ASI05 |
+| Steering injection | 3 | ASI01, ASI06 |
+| Tool injection | 3 | ASI02, ASI04 |
+| Resource exhaustion | 3 | LLM10, ASI08 |
+| Spawn depth bomb | 4 | ASI08 |
+| Event tampering | 8 | AU-9, AU-10 |
+| Timing attacks | 8 | AU-8 |
+
 ### NIST SP 800-53 Coverage
 
-| Control | Title | arcrun Feature |
+| Control | Title | ArcRun Feature |
 |---|---|---|
 | AC-3 | Access Enforcement | Sandbox deny-by-default |
 | AC-4 | Information Flow | Context transform isolation |
@@ -436,121 +475,14 @@ Formal analysis covers:
 | AU-2 | Event Logging | Every action emits event |
 | AU-3 | Audit Content | Events include timestamp, run_id, tool, args, duration |
 | AU-8 | Timestamps | ISO 8601 on every event |
+| AU-9 | Protection of Audit Info | SHA-256 hash chain, immutable events |
+| AU-10 | Non-Repudiation | Hash chain verification via `verify_chain()` |
 | AU-12 | Audit Generation | Non-optional emission |
 | CM-7 | Least Functionality | Tools are opt-in |
 | SC-28 | Protection at Rest | State dies when `run()` returns |
 | SI-4 | System Monitoring | Events, tokens, cost tracking |
 | SI-10 | Input Validation | JSON Schema on every tool call |
 | SI-11 | Error Handling | Errors return to model as structured results |
-
-### arcllm Security (Inherited)
-
-arcrun inherits arcllm's transport-layer security automatically:
-
-| Module | Capability |
-|---|---|
-| SecurityModule | PII redaction, HMAC request signing |
-| AuditModule | Structured compliance logging |
-| OtelModule | Distributed tracing (OpenTelemetry GenAI conventions) |
-| RateLimitModule | Token-bucket throttling |
-| RetryModule | Exponential backoff on transient failures |
-| FallbackModule | Provider failover chain |
-| VaultResolver | Secrets management integration |
-
-arcrun focuses on execution-layer security. arcllm handles transport-layer security. No duplication.
-
----
-
-## API Reference
-
-### `run()`
-
-```python
-result = await run(
-    model=model,                          # arcllm model (required)
-    tools=[tool1, tool2],                 # list of Tool (required, non-empty)
-    system_prompt="You are...",           # str (required)
-    task="Do the thing",                  # str (required)
-
-    # Optional:
-    max_turns=25,                         # int — default 25
-    allowed_strategies=["react"],         # list[str] — default ["react"]
-    sandbox=SandboxConfig(...),           # permission boundary
-    on_event=my_handler,                  # callback for real-time events
-    transform_context=my_pruner,          # context management hook
-    tool_timeout=30.0,                    # default timeout for all tools (seconds)
-)
-```
-
-### `run_async()`
-
-```python
-handle = await run_async(model, tools, system_prompt, task, **options)
-
-await handle.steer("new instructions")    # interrupt
-await handle.follow_up("also do this")    # queue for end_turn
-await handle.cancel()                     # hard stop
-result = await handle.result()            # await completion
-state = handle.state                      # read-only state access
-```
-
-### `Tool`
-
-```python
-Tool(
-    name="tool_name",           # unique identifier
-    description="What it does", # shown to model
-    input_schema={...},         # JSON Schema for params
-    execute=async_fn,           # async (params, ctx) -> str
-    timeout_seconds=None,       # per-tool timeout override (optional)
-)
-```
-
-### `ToolContext`
-
-```python
-@dataclass
-class ToolContext:
-    run_id: str                 # execution run ID
-    tool_call_id: str           # correlation ID for this call
-    turn_number: int            # current loop turn
-    event_bus: EventBus | None  # emit custom events
-    cancelled: asyncio.Event    # check for cancellation
-```
-
-### `LoopResult`
-
-```python
-@dataclass
-class LoopResult:
-    content: str | None         # final response text
-    turns: int                  # loop iterations
-    tool_calls_made: int        # total tool invocations
-    tokens_used: dict           # {"input": N, "output": N, "total": N}
-    strategy_used: str          # "react" | "code"
-    cost_usd: float             # estimated cost
-    events: list[Event]         # full audit trail
-```
-
-### `SandboxConfig`
-
-```python
-SandboxConfig(
-    allowed_tools=["read", "search"],     # allowlist (None = no sandbox)
-    check=my_async_checker,               # async (name, params) -> (bool, reason)
-)
-```
-
-### `Event`
-
-```python
-@dataclass
-class Event:
-    type: str                   # "tool.start", "llm.call", etc.
-    timestamp: float            # time.time()
-    run_id: str                 # correlation ID
-    data: dict[str, Any]        # event-specific payload
-```
 
 ---
 
@@ -564,6 +496,7 @@ pip install -e ".[dev]"
 # Tests
 pytest -v
 pytest --cov=arcrun
+pytest tests/security/       # Adversarial tests
 
 # Type checking
 mypy src/arcrun
@@ -577,12 +510,13 @@ ruff format src/arcrun
 
 | Metric | Target |
 |---|---|
-| Total lines | < 1,000 (~900 currently) |
+| Total lines | < 1,500 (~1,200 currently) |
 | Test coverage | >= 80% |
 | Cyclomatic complexity | <= 10 per function |
 | Critical vulnerabilities | 0 |
 | Type hints | Required on public API |
 | Async-only | No sync wrappers in core |
+| Adversarial tests | 36 passing |
 
 ---
 
@@ -593,31 +527,15 @@ ruff format src/arcrun
 | 1 | Core Loop + ReAct | `run()` works end-to-end with events and sandbox | **Complete** |
 | 2 | CodeExec | Model writes + executes Python in sandboxed subprocess | **Complete** |
 | 3 | Recursive | Task decomposition via spawn with isolated context | Planned |
-| 4 | Hardening | Container sandbox, event integrity, adversarial testing, NIST docs | Planned |
+| 4 | Hardening | Container sandbox, event integrity, adversarial testing, NIST docs | **Complete** |
 | 5 | RLM | Recursive Language Models for near-infinite context processing | Research |
-
----
-
-## Design Decisions
-
-All architectural decisions are logged with context, options, and reasoning. 25 decisions made so far, including:
-
-- **Package name** — `arcrun` over `arcloop`, `arcexec`, `arcengine` (action-oriented, verb-based)
-- **Tool.execute async-only** — matches arcllm's async-native design
-- **Tool.execute returns str** — simplest thing that works, errors via exceptions
-- **Generic Event with dict data** — one dataclass saves ~190 lines vs typed events
-- **Allowlist security model** — deny-by-default, dynamic tools denied automatically
-- **Strategy enforces max_turns** — strategies own the loop, define what "turn" means
-- **Caller-provided sandbox checker** — arcrun makes zero assumptions about tool internals
-- **Steer + followUp** — two delivery modes for mid-execution intervention
-- **jsonschema for validation** — correctness on every tool call worth the dependency
-- **make_execute_tool() factory** — returns configured Tool, not a class — composable, testable
-- **CodeExec as prompt augmentation** — reuses react_loop with code-first system prompt prefix
-
-Full log: [`.claude/decision-log.md`](.claude/decision-log.md)
 
 ---
 
 ## License
 
-MIT
+This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+
+You are free to use, share, and adapt this software, provided you give appropriate credit.
+
+Copyright (c) 2025-2026 BlackArc Systems.

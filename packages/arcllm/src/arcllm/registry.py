@@ -34,6 +34,10 @@ def clear_cache() -> None:
 
     reset_sdk()
 
+    from arcllm.modules.telemetry import clear_budgets
+
+    clear_budgets()
+
 
 def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
     """Look up the adapter class by naming convention.
@@ -119,10 +123,40 @@ def _resolve_module_config(
     return None
 
 
+def _build_adapter(
+    provider_name: str,
+    model_name: str | None,
+    vault_cfg: Any,
+    vault_resolver: Any,
+) -> LLMProvider:
+    """Build a single adapter for *provider_name*, resolving config and vault key.
+
+    Eliminates duplication between the primary adapter path and routing
+    rule adapter construction.
+    """
+    if provider_name not in _provider_config_cache:
+        _provider_config_cache[provider_name] = load_provider_config(provider_name)
+    config = _provider_config_cache[provider_name]
+    resolved_model = model_name or config.provider.default_model
+
+    resolved_api_key: str | None = None
+    if vault_cfg.backend and vault_resolver is not None:
+        vault_path = config.provider.vault_path
+        api_key_env = config.provider.api_key_env
+        resolved_api_key = vault_resolver.resolve_api_key(
+            api_key_env, vault_path or None
+        )
+
+    adapter_class = _get_adapter_class(provider_name)
+    return adapter_class(config, resolved_model, resolved_api_key=resolved_api_key)
+
+
 def load_model(
     provider: str,
     model: str | None = None,
     *,
+    budget_scope: str | None = None,
+    routing: bool | dict[str, Any] | None = None,
     retry: bool | dict[str, Any] | None = None,
     fallback: bool | dict[str, Any] | None = None,
     rate_limit: bool | dict[str, Any] | None = None,
@@ -150,12 +184,16 @@ def load_model(
         - ``None`` (default): use config.toml enabled flag
 
     Stacking order (outermost first):
-        Otel → Telemetry → Audit → Security → Retry → Fallback → RateLimit → Adapter.
+        Otel → Telemetry → Audit → Security → Retry → Fallback → RateLimit → [Router|Adapter].
 
     Args:
         provider: Provider name (e.g., "anthropic", "openai").
             Must match a TOML file in providers/ and a module in adapters/.
         model: Model identifier. If None, uses default_model from provider config.
+        budget_scope: Budget tracking scope (e.g., "agent:agent-007"). Required
+            when budget limits are configured in telemetry.
+        routing: RoutingModule configuration override. When enabled, replaces the
+            single adapter with a classification-based router.
         retry: RetryModule configuration override.
         fallback: FallbackModule configuration override.
         rate_limit: RateLimitModule configuration override.
@@ -179,30 +217,46 @@ def load_model(
     # Resolve model name
     model_name = model or config.provider.default_model
 
-    # Resolve API key via vault if configured
+    # Ensure global config + vault resolver are initialized
     _ensure_global_config()
-
-    # Resolve API key via vault if configured (never written to os.environ —
-    # keys stay in-memory only, honoring TTL rotation and zero-trust policy)
-    resolved_api_key: str | None = None
     global _vault_resolver_cache
     vault_cfg = _global_config_cache.vault
-    if vault_cfg.backend:
+    if vault_cfg.backend and _vault_resolver_cache is None:
         from arcllm.vault import VaultResolver
 
-        if _vault_resolver_cache is None:
-            _vault_resolver_cache = VaultResolver.from_config(
-                vault_cfg.backend, vault_cfg.cache_ttl_seconds
+        _vault_resolver_cache = VaultResolver.from_config(
+            vault_cfg.backend, vault_cfg.cache_ttl_seconds
+        )
+
+    # Check if routing is enabled — if so, create a RoutingModule instead of
+    # a single adapter. Router replaces adapter at innermost stack position.
+    routing_config = _resolve_module_config("routing", routing)
+    if routing_config is not None and routing_config.get("rules"):
+        from arcllm.modules.routing import RoutingModule
+
+        rules: dict[str, Any] = routing_config.get("rules", {})
+        adapters: dict[str, LLMProvider] = {}
+        for classification, rule in rules.items():
+            rule_provider = rule.get("provider")
+            if not rule_provider:
+                raise ArcLLMConfigError(
+                    f"Routing rule '{classification}' missing 'provider'"
+                )
+            adapters[classification] = _build_adapter(
+                rule_provider, rule.get("model"), vault_cfg, _vault_resolver_cache
             )
-        vault_path = config.provider.vault_path
-        api_key_env = config.provider.api_key_env
-        resolved_api_key = _vault_resolver_cache.resolve_api_key(api_key_env, vault_path or None)
 
-    # Look up adapter class by convention (cached after first lookup)
-    adapter_class = _get_adapter_class(provider)
-
-    # Construct adapter — pass vault-resolved key directly (bypasses env var)
-    result: LLMProvider = adapter_class(config, model_name, resolved_api_key=resolved_api_key)
+        result: LLMProvider = RoutingModule(
+            {
+                "enforcement": routing_config.get("enforcement", "block"),
+                "default_classification": routing_config.get(
+                    "default_classification", "unclassified"
+                ),
+            },
+            adapters,
+        )
+    else:
+        result = _build_adapter(provider, model_name, vault_cfg, _vault_resolver_cache)
 
     # Apply module wrapping (innermost first): RateLimit, Fallback, Retry
     rate_limit_config = _resolve_module_config("rate_limit", rate_limit)
@@ -250,6 +304,16 @@ def load_model(
             telemetry_config.setdefault(
                 "cost_cache_write_per_1m", model_meta.cost_cache_write_per_1m
             )
+
+        # Inject budget_scope from load_model() kwarg into telemetry config
+        if budget_scope is not None:
+            telemetry_config["budget_scope"] = budget_scope
+
+        # Source default_max_tokens from global config defaults
+        telemetry_config.setdefault(
+            "default_max_tokens", _global_config_cache.defaults.max_tokens
+        )
+
         result = TelemetryModule(telemetry_config, result)
 
     otel_config = _resolve_module_config("otel", otel)

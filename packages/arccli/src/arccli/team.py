@@ -1,8 +1,8 @@
-"""Team messaging CLI — `arc team` commands.
+"""Team messaging & management CLI — `arc team` commands.
 
-Wraps the arcteam messaging subsystem as Click commands under the
-unified ``arc`` CLI. All arcteam imports are lazy so the ``arc``
-command still loads even if arcteam is not installed.
+Wraps the arcteam messaging and memory subsystems as Click commands
+under the unified ``arc`` CLI. All arcteam imports are lazy so the
+``arc`` command still loads even if arcteam is not installed.
 """
 
 from __future__ import annotations
@@ -13,8 +13,7 @@ from typing import Any
 
 import click
 
-from arccli.formatting import click_echo, print_json, print_table
-
+from arccli.formatting import click_echo, print_json, print_kv, print_table
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -520,3 +519,338 @@ def cleanup(ctx: click.Context, max_age: int) -> None:
 
     removed = asyncio.run(_run())
     click_echo(f"Removed {removed} stale cursor(s) older than {max_age}h")
+
+
+# ---------------------------------------------------------------------------
+# init — initialize team data directory
+# ---------------------------------------------------------------------------
+
+
+@team.command("init")
+@click.option("--root", "root_path", type=click.Path(), default=None, help="Team data root.")
+@click.pass_context
+def team_init(ctx: click.Context, root_path: str | None) -> None:
+    """Initialize team data directory (creates root, entities, channels, HMAC key)."""
+    from arcteam.config import TeamConfig
+
+    root = Path(root_path) if root_path else TeamConfig().root
+
+    dirs = [root, root / "entities", root / "channels", root / "cursors"]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    hmac_path = root / ".hmac_key"
+    if not hmac_path.exists():
+        import secrets
+
+        hmac_path.write_bytes(secrets.token_bytes(32))
+        hmac_path.chmod(0o600)
+        click_echo(f"Generated HMAC key: {hmac_path}")
+    else:
+        click_echo(f"HMAC key already exists: {hmac_path}")
+
+    click_echo(f"Team initialized at: {root}")
+    for d in dirs:
+        click_echo(f"  {d.name}/")
+
+
+# ---------------------------------------------------------------------------
+# status — team overview
+# ---------------------------------------------------------------------------
+
+
+@team.command("status")
+@click.pass_context
+def team_status(ctx: click.Context) -> None:
+    """Show team overview — entity count, channels, messages, audit chain."""
+    root = _resolve_root(ctx)
+    use_json = ctx.obj.get("use_json", False)
+
+    entities_dir = root / "entities"
+    channels_dir = root / "channels"
+
+    entity_count = len(list(entities_dir.glob("*.json"))) if entities_dir.is_dir() else 0
+    channel_count = len(list(channels_dir.iterdir())) if channels_dir.is_dir() else 0
+
+    # Count messages across streams
+    message_count = 0
+    streams_dir = root / "streams"
+    if streams_dir.is_dir():
+        for stream_file in streams_dir.rglob("*.jsonl"):
+            with open(stream_file, encoding="utf-8") as f:
+                message_count += sum(1 for _ in f)
+
+    # Audit chain
+    audit_dir = root / "streams" / "audit"
+    audit_count = 0
+    if audit_dir.is_dir():
+        for audit_file in audit_dir.glob("*.jsonl"):
+            with open(audit_file, encoding="utf-8") as f:
+                audit_count += sum(1 for _ in f)
+
+    hmac_exists = (root / ".hmac_key").exists()
+
+    data = {
+        "root": str(root),
+        "entities": entity_count,
+        "channels": channel_count,
+        "messages": message_count,
+        "audit_entries": audit_count,
+        "hmac_key": hmac_exists,
+    }
+
+    if use_json:
+        print_json(data)
+    else:
+        click_echo("Team Status:")
+        print_kv(
+            [
+                ("Root", str(root)),
+                ("Entities", str(entity_count)),
+                ("Channels", str(channel_count)),
+                ("Messages", str(message_count)),
+                ("Audit entries", str(audit_count)),
+                ("HMAC key", "present" if hmac_exists else "MISSING"),
+            ]
+        )
+
+
+# ---------------------------------------------------------------------------
+# config — show team configuration
+# ---------------------------------------------------------------------------
+
+
+@team.command("config")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def team_config(ctx: click.Context, as_json: bool) -> None:
+    """Show team configuration."""
+    from arcteam.config import TeamConfig
+
+    cfg = TeamConfig()
+    data = cfg.model_dump()
+    # Convert Path to string for serialization
+    data["root"] = str(data["root"])
+
+    if as_json:
+        print_json(data)
+    else:
+        click_echo("Team Configuration:")
+        for key, val in data.items():
+            click_echo(f"  {key} = {val}")
+
+
+# ---------------------------------------------------------------------------
+# memory — team memory subgroup
+# ---------------------------------------------------------------------------
+
+
+@team.group("memory")
+@click.pass_context
+def memory(ctx: click.Context) -> None:
+    """Team memory — entity storage, search, and index management."""
+    ctx.ensure_object(dict)
+
+
+def _build_memory_services(
+    root: Path,
+) -> tuple[Any, Any, Any, Any]:
+    """Build team memory services (config, storage, index, search)."""
+    from arcteam.memory.config import TeamMemoryConfig
+    from arcteam.memory.index_manager import IndexManager
+    from arcteam.memory.search_engine import SearchEngine
+    from arcteam.memory.storage import MemoryStorage
+
+    config = TeamMemoryConfig(root=root)
+    storage = MemoryStorage(config.entities_dir)
+    index_mgr = IndexManager(config.entities_dir, storage, config)
+    search = SearchEngine(storage, index_mgr, config)
+    return config, storage, index_mgr, search
+
+
+@memory.command("status")
+@click.pass_context
+def memory_status(ctx: click.Context) -> None:
+    """Show entity count, index health, and memory config."""
+    root = _resolve_root(ctx)
+    use_json = ctx.obj.get("use_json", False)
+
+    async def _run() -> dict[str, Any]:
+        config, storage, index_mgr, _ = _build_memory_services(root)
+        index = await index_mgr.get_index()
+        dirty = index_mgr._is_dirty()
+        files = await storage.list_entity_files()
+        return {
+            "enabled": config.enabled,
+            "entity_count": len(index),
+            "file_count": len(files),
+            "index_dirty": dirty,
+            "entities_dir": str(config.entities_dir),
+            "tier": config.tier,
+        }
+
+    data = asyncio.run(_run())
+
+    if use_json:
+        print_json(data)
+    else:
+        click_echo("Team Memory Status:")
+        print_kv(
+            [
+                ("Enabled", str(data["enabled"])),
+                ("Entities indexed", str(data["entity_count"])),
+                ("Entity files", str(data["file_count"])),
+                ("Index dirty", str(data["index_dirty"])),
+                ("Entities dir", data["entities_dir"]),
+                ("Tier", data["tier"]),
+            ]
+        )
+
+
+@memory.command("entities")
+@click.option("--type", "entity_type", default=None, help="Filter by entity type.")
+@click.pass_context
+def memory_entities(ctx: click.Context, entity_type: str | None) -> None:
+    """List entities from the index."""
+    root = _resolve_root(ctx)
+    use_json = ctx.obj.get("use_json", False)
+
+    async def _run() -> list[dict[str, Any]]:
+        _, _, index_mgr, _ = _build_memory_services(root)
+        index = await index_mgr.get_index()
+        entries = list(index.values())
+        if entity_type:
+            entries = [e for e in entries if e.entity_type == entity_type]
+        return [e.model_dump() for e in entries]
+
+    results = asyncio.run(_run())
+
+    if use_json:
+        print_json(results)
+    elif not results:
+        click_echo("No entities found.")
+    else:
+        rows = [
+            [
+                e["entity_id"],
+                e["entity_type"],
+                e["status"],
+                e["summary_snippet"][:50],
+                e["last_updated"][:10] if e["last_updated"] else "",
+            ]
+            for e in results
+        ]
+        print_table(["ID", "Type", "Status", "Snippet", "Updated"], rows)
+
+
+@memory.command("entity")
+@click.argument("entity_id")
+@click.pass_context
+def memory_entity(ctx: click.Context, entity_id: str) -> None:
+    """Show a single entity by ID."""
+    root = _resolve_root(ctx)
+    use_json = ctx.obj.get("use_json", False)
+
+    async def _run() -> dict[str, Any] | None:
+        _, storage, index_mgr, _ = _build_memory_services(root)
+        index = await index_mgr.get_index()
+        entry = index.get(entity_id)
+        if entry is None:
+            return None
+        entity_file = await storage.read_entity(entity_id, index)
+        if entity_file is None:
+            return {"index_entry": entry.model_dump(), "content": None}
+        return {
+            "metadata": entity_file.metadata.model_dump(),
+            "content": entity_file.content,
+        }
+
+    result = asyncio.run(_run())
+
+    if result is None:
+        raise click.ClickException(f"Entity '{entity_id}' not found in index.")
+
+    if use_json:
+        print_json(result)
+    else:
+        meta = result.get("metadata") or result.get("index_entry", {})
+        click_echo(f"Entity: {entity_id}")
+        for key, val in meta.items():
+            if isinstance(val, list):
+                val = ", ".join(str(v) for v in val) if val else "(none)"
+            click_echo(f"  {key}: {val}")
+        content = result.get("content")
+        if content:
+            click_echo("\n--- Content ---")
+            click_echo(content[:2000])
+            if len(content) > 2000:
+                click_echo(f"\n... ({len(content)} chars total)")
+
+
+@memory.command("search")
+@click.argument("query")
+@click.option("--max-results", default=20, help="Maximum results.")
+@click.pass_context
+def memory_search(ctx: click.Context, query: str, max_results: int) -> None:
+    """Search team memory using BM25 with wiki-link traversal."""
+    root = _resolve_root(ctx)
+    use_json = ctx.obj.get("use_json", False)
+
+    async def _run() -> list[dict[str, Any]]:
+        _, _, _, search = _build_memory_services(root)
+        results = await search.search(query, max_results=max_results)
+        return [r.model_dump() for r in results]
+
+    results = asyncio.run(_run())
+
+    if use_json:
+        print_json(results)
+    elif not results:
+        click_echo("No results found.")
+    else:
+        rows = [
+            [
+                r["entity_id"],
+                r["entity_type"],
+                f"{r['score']:.3f}",
+                str(r["hops"]),
+                r["snippet"][:50],
+            ]
+            for r in results
+        ]
+        print_table(["ID", "Type", "Score", "Hops", "Snippet"], rows)
+
+
+@memory.command("rebuild-index")
+@click.pass_context
+def memory_rebuild_index(ctx: click.Context) -> None:
+    """Force a full index rebuild from entity files."""
+    root = _resolve_root(ctx)
+
+    async def _run() -> int:
+        _, _, index_mgr, _ = _build_memory_services(root)
+        index = await index_mgr.rebuild()
+        return len(index)
+
+    count = asyncio.run(_run())
+    click_echo(f"Index rebuilt: {count} entities indexed.")
+
+
+@memory.command("config")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def memory_config(ctx: click.Context, as_json: bool) -> None:
+    """Show team memory configuration."""
+    from arcteam.memory.config import TeamMemoryConfig
+
+    root = _resolve_root(ctx)
+    config = TeamMemoryConfig(root=root)
+    data = config.model_dump()
+    data["root"] = str(data["root"])
+
+    if as_json:
+        print_json(data)
+    else:
+        click_echo("Team Memory Configuration:")
+        for key, val in data.items():
+            click_echo(f"  {key} = {val}")

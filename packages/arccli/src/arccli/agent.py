@@ -2234,7 +2234,7 @@ def _register_module_clis(agent_group: click.Group) -> None:
     # However, for discoverability we need to know module names upfront.
     # We register known module names (memory, policy) as lazy groups.
 
-    for module_name in ("memory", "policy", "browser"):
+    for module_name in ("memory", "policy", "browser", "bio_memory"):
         _register_lazy_module_group(agent_group, module_name)
 
 
@@ -2356,6 +2356,7 @@ def _get_module_commands(module_name: str) -> list[str]:
         "memory": ["notes", "entities", "entity", "search", "stats"],
         "policy": ["bullets", "config", "history"],
         "browser": ["status", "navigate", "screenshot"],
+        "bio_memory": ["status", "identity", "episodes", "working"],
     }
     return known.get(module_name, [])
 

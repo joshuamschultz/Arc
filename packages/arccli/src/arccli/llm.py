@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 import click
-
 from arcllm.registry import load_model
-from arccli.formatting import print_json, print_kv, print_table
+
+from arccli.formatting import click_echo, print_json, print_kv, print_table
 
 
 @click.group()
@@ -26,8 +26,9 @@ def llm() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
 def version(as_json: bool) -> None:
     """Show version information."""
-    import arccli
     import arcllm
+
+    import arccli
 
     data = {
         "arccli": arccli.__version__,
@@ -105,9 +106,7 @@ def _list_provider_names() -> list[str]:
     providers_dir = _get_providers_dir()
     if not providers_dir.is_dir():
         return []
-    return sorted(
-        p.stem for p in providers_dir.glob("*.toml") if p.stem != "__init__"
-    )
+    return sorted(p.stem for p in providers_dir.glob("*.toml") if p.stem != "__init__")
 
 
 # ---------------------------------------------------------------------------
@@ -126,17 +125,21 @@ def providers(as_json: bool) -> None:
     for name in names:
         try:
             cfg = load_provider_config(name)
-            rows.append({
-                "name": name,
-                "api_format": cfg.provider.api_format,
-                "default_model": cfg.provider.default_model,
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "api_format": cfg.provider.api_format,
+                    "default_model": cfg.provider.default_model,
+                }
+            )
         except Exception:
-            rows.append({
-                "name": name,
-                "api_format": "(error)",
-                "default_model": "(error)",
-            })
+            rows.append(
+                {
+                    "name": name,
+                    "api_format": "(error)",
+                    "default_model": "(error)",
+                }
+            )
 
     if as_json:
         print_json(rows)
@@ -168,21 +171,25 @@ def provider(name: str, as_json: bool) -> None:
         )
 
     if as_json:
-        print_json({
-            "provider": cfg.provider.model_dump(),
-            "models": {k: v.model_dump() for k, v in cfg.models.items()},
-        })
+        print_json(
+            {
+                "provider": cfg.provider.model_dump(),
+                "models": {k: v.model_dump() for k, v in cfg.models.items()},
+            }
+        )
         return
 
     click.echo(f"Provider: {name}")
     click.echo()
-    print_kv([
-        ("api_format", cfg.provider.api_format),
-        ("base_url", cfg.provider.base_url),
-        ("api_key_env", cfg.provider.api_key_env),
-        ("default_model", cfg.provider.default_model),
-        ("default_temperature", str(cfg.provider.default_temperature)),
-    ])
+    print_kv(
+        [
+            ("api_format", cfg.provider.api_format),
+            ("base_url", cfg.provider.base_url),
+            ("api_key_env", cfg.provider.api_key_env),
+            ("default_model", cfg.provider.default_model),
+            ("default_temperature", str(cfg.provider.default_temperature)),
+        ]
+    )
     click.echo()
     click.echo("Models:")
     print_table(
@@ -231,15 +238,17 @@ def models(provider_filter: str | None, tools: bool, vision: bool, as_json: bool
                 continue
             if vision and not meta.supports_vision:
                 continue
-            rows.append({
-                "provider": name,
-                "model": model_name,
-                "context_window": meta.context_window,
-                "supports_tools": meta.supports_tools,
-                "supports_vision": meta.supports_vision,
-                "cost_input_per_1m": meta.cost_input_per_1m,
-                "cost_output_per_1m": meta.cost_output_per_1m,
-            })
+            rows.append(
+                {
+                    "provider": name,
+                    "model": model_name,
+                    "context_window": meta.context_window,
+                    "supports_tools": meta.supports_tools,
+                    "supports_vision": meta.supports_vision,
+                    "cost_input_per_1m": meta.cost_input_per_1m,
+                    "cost_output_per_1m": meta.cost_output_per_1m,
+                }
+            )
 
     if as_json:
         print_json(rows)
@@ -386,7 +395,12 @@ def validate(provider_filter: str | None, as_json: bool) -> None:
 
     results = []
     for name in names:
-        entry: dict[str, Any] = {"provider": name, "config_valid": False, "api_key_set": False, "error": ""}
+        entry: dict[str, Any] = {
+            "provider": name,
+            "config_valid": False,
+            "api_key_set": False,
+            "error": "",
+        }
         try:
             cfg = load_provider_config(name)
             entry["config_valid"] = True
@@ -418,3 +432,80 @@ def validate(provider_filter: str | None, as_json: bool) -> None:
                 for r in results
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# init — arcllm-specific setup with tier presets
+# ---------------------------------------------------------------------------
+
+
+@llm.command("init")
+@click.option(
+    "--tier",
+    type=click.Choice(["open", "enterprise", "federal"]),
+    default=None,
+    help="Deployment tier.",
+)
+@click.option(
+    "--provider",
+    default=None,
+    help="Default LLM provider.",
+)
+def llm_init(tier: str | None, provider: str | None) -> None:
+    """Initialize ArcLLM config with tier-based module presets."""
+    from arccli.init_wizard import (
+        _VALID_TIERS,
+        _check_provider_key,
+        _generate_config_toml,
+    )
+
+    if tier is None:
+        click_echo("ArcLLM Setup")
+        click_echo("============")
+        click_echo("")
+        click_echo("  open       — All modules disabled")
+        click_echo("  enterprise — Telemetry, audit, retry, fallback, rate limiting")
+        click_echo("  federal    — Full security: routing, PII, signing, OTel")
+        click_echo("")
+        tier = click.prompt("Tier", type=click.Choice(_VALID_TIERS), default="open")
+
+    if provider is None:
+        available = _list_provider_names()
+        if available:
+            click_echo(f"\nAvailable providers: {', '.join(available)}")
+        provider = click.prompt("Default provider", default="anthropic")
+
+    # Write to the arcllm package config location
+    import arcllm
+
+    config_dir = Path(arcllm.__file__).parent
+    config_path = config_dir / "config.toml"
+
+    content = _generate_config_toml(tier, provider)
+
+    if config_path.exists():
+        if not click.confirm(f"{config_path} already exists. Overwrite?", default=False):
+            click_echo("Aborted.")
+            return
+
+    config_path.write_text(content, encoding="utf-8")
+    click_echo(f"Wrote: {config_path}")
+
+    # Validate key
+    key_ok = _check_provider_key(provider)
+    from arccli.init_wizard import _PROVIDER_ENV_VARS
+
+    env_var = _PROVIDER_ENV_VARS.get(provider, "")
+
+    click_echo("")
+    print_kv(
+        [
+            ("Tier", tier),
+            ("Provider", provider),
+            ("Config", str(config_path)),
+            ("API key", "OK" if key_ok else f"MISSING ({env_var})"),
+        ]
+    )
+
+    if not key_ok:
+        click_echo(f"\nSet your API key: export {env_var}=<your-key>")

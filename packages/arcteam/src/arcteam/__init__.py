@@ -7,6 +7,8 @@ from arcteam.config import TeamConfig
 from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry
 from arcteam.storage import FileBackend, MemoryBackend, StorageBackend
+from arcteam.memory.config import TeamMemoryConfig
+from arcteam.memory.service import TeamMemoryService
 from arcteam.types import (
     AuditRecord,
     Channel,
@@ -34,4 +36,6 @@ __all__ = [
     "Priority",
     "StorageBackend",
     "TeamConfig",
+    "TeamMemoryConfig",
+    "TeamMemoryService",
 ]

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcrun"
-version = "0.1.0"
+version = "0.2.0"
 description = "Async execution engine for autonomous agents"
 requires-python = ">=3.12"
 dependencies = [

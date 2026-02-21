@@ -346,6 +346,16 @@ pip install arccli       # CLI + everything
 
 ---
 
+## Acknowledgments
+
+Arc was inspired by [pi-mono](https://github.com/badlogic/pi-mono) by Mario Zechner — a clean TypeScript AI agent toolkit with a unified LLM API, coding agent, and minimal design philosophy. We studied its architecture, learned from its design decisions, and built something purpose-fit for Python, federal environments, and autonomous agent fleets. Credit where it's due.
+
+---
+
 ## License
 
-Copyright BlackArc Systems / CTG Federal. See individual package licenses for details.
+This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
+
+You are free to use, share, and adapt this software, provided you give appropriate credit.
+
+Copyright (c) 2025-2026 BlackArc Systems.

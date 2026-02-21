@@ -22,6 +22,7 @@ from arcllm.types import Message
 
 from arcagent.core.config import EvalConfig
 from arcagent.utils.io import atomic_write_text, extract_json
+from arcagent.utils.sanitizer import sanitize_text
 
 _logger = logging.getLogger("arcagent.modules.memory.entity_extractor")
 
@@ -339,18 +340,8 @@ class EntityExtractor:
 
     @staticmethod
     def _sanitize_fact_text(text: str) -> str:
-        """Sanitize fact text: normalize Unicode, strip dangerous chars.
-
-        Defense-in-depth against memory poisoning (ASI-06):
-        1. NFKC normalization (collapses confusable characters)
-        2. Strip zero-width characters (prevents invisible text injection)
-        3. Strip ASCII control characters
-        4. Enforce length limit
-        """
-        clean = unicodedata.normalize("NFKC", text)
-        clean = re.sub(r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]", "", clean)
-        clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", clean)
-        return clean[:_MAX_FACT_VALUE_LENGTH]
+        """Sanitize fact text via shared sanitizer (ASI-06 defense)."""
+        return sanitize_text(text, max_length=_MAX_FACT_VALUE_LENGTH)
 
     @staticmethod
     def _slugify(name: str) -> str:
