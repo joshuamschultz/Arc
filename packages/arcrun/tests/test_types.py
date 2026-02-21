@@ -137,3 +137,31 @@ class TestLoopResult:
             cost_usd=0.0,
         )
         assert result.content is None
+
+    def test_verify_integrity_valid_chain(self):
+        from arcrun.events import EventBus
+        from arcrun.types import LoopResult
+
+        bus = EventBus(run_id="r")
+        bus.emit("a")
+        bus.emit("b")
+
+        result = LoopResult(
+            content="done", turns=1, tool_calls_made=0,
+            tokens_used={}, strategy_used="react", cost_usd=0.0,
+            events=bus.events,
+        )
+        verification = result.verify_integrity()
+        assert verification.valid is True
+        assert verification.event_count == 2
+
+    def test_verify_integrity_empty_events(self):
+        from arcrun.types import LoopResult
+
+        result = LoopResult(
+            content="done", turns=1, tool_calls_made=0,
+            tokens_used={}, strategy_used="react", cost_usd=0.0,
+        )
+        verification = result.verify_integrity()
+        assert verification.valid is True
+        assert verification.event_count == 0

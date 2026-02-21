@@ -1,4 +1,5 @@
-"""Public type contracts for arcrun. No business logic."""
+"""Public type contracts for arcrun."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,12 +7,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 if TYPE_CHECKING:
-    from arcrun.events import EventBus
+    from arcrun.events import ChainVerificationResult, Event, EventBus
 
 
 @dataclass
 class Tool:
-    """A tool the model can call. Use factory functions for complex tools."""
+    """A tool the model can call."""
 
     name: str
     description: str
@@ -22,7 +23,7 @@ class Tool:
 
 @dataclass
 class ToolContext:
-    """Passed to Tool.execute. Provides environment awareness and cancel signal."""
+    """Passed to Tool.execute."""
 
     run_id: str
     tool_call_id: str
@@ -33,7 +34,7 @@ class ToolContext:
 
 @dataclass
 class SandboxConfig:
-    """Permission boundary. allowed_tools=None means no sandbox (all allowed)."""
+    """Permission boundary. allowed_tools=None means all allowed."""
 
     allowed_tools: list[str] | None = None
     check: Callable[[str, dict[str, Any]], Awaitable[tuple[bool, str]]] | None = None
@@ -41,7 +42,7 @@ class SandboxConfig:
 
 @dataclass
 class LoopResult:
-    """Returned by run(). Complete execution summary."""
+    """Returned by run()."""
 
     content: str | None
     turns: int
@@ -49,4 +50,10 @@ class LoopResult:
     tokens_used: dict[str, Any]
     strategy_used: str
     cost_usd: float
-    events: list[Any] = field(default_factory=list)
+    events: list[Event] = field(default_factory=list)
+
+    def verify_integrity(self) -> ChainVerificationResult:
+        """Verify tamper-evidence of the event chain."""
+        from arcrun.events import verify_chain
+
+        return verify_chain(self.events)

@@ -12,6 +12,9 @@ dependencies = [
     "jsonschema>=4.0",
 ]
 
+[project.optional-dependencies]
+container = ["docker>=7.0,<9"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcrun"]
 
