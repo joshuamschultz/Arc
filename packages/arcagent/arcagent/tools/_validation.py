@@ -12,6 +12,15 @@ from pathlib import Path
 from arcagent.core.errors import ToolError
 
 
+def _is_within(path: Path, boundary: Path) -> bool:
+    """Check if *path* is inside *boundary* without raising."""
+    try:
+        path.relative_to(boundary)
+        return True
+    except ValueError:
+        return False
+
+
 def resolve_workspace_path(
     file_path: str,
     workspace: Path,
@@ -47,24 +56,13 @@ def resolve_workspace_path(
     workspace = workspace.resolve()
     candidate = Path(file_path)
 
-    # Build the unresolved path to check for symlinks
-    if candidate.is_absolute():
-        unresolved = candidate
-    else:
-        unresolved = workspace / candidate
+    unresolved = candidate if candidate.is_absolute() else workspace / candidate
 
-    # Symlink check: walk all path components within workspace boundary.
-    # For absolute paths outside workspace, skip symlink check (the
-    # boundary check below will reject them anyway).
-    if not allow_symlinks:
-        try:
-            rel_parts = unresolved.relative_to(workspace).parts
-        except ValueError:
-            # Path is outside workspace — boundary check will handle it
-            rel_parts = ()
-
+    # Symlink check: walk path components within workspace boundary.
+    # Paths outside workspace are skipped (boundary check rejects them).
+    if not allow_symlinks and _is_within(unresolved, workspace):
         check = workspace
-        for part in rel_parts:
+        for part in unresolved.relative_to(workspace).parts:
             check = check / part
             if check.is_symlink():
                 raise ToolError(
@@ -75,21 +73,14 @@ def resolve_workspace_path(
 
     resolved = unresolved.resolve()
 
-    # Check workspace boundary first
-    try:
-        resolved.relative_to(workspace)
+    # Check workspace boundary, then allowed_paths
+    if _is_within(resolved, workspace):
         return resolved
-    except ValueError:
-        pass
 
-    # Check allowed_paths boundaries
     if allowed_paths:
         for allowed in allowed_paths:
-            try:
-                resolved.relative_to(allowed.resolve())
+            if _is_within(resolved, allowed.resolve()):
                 return resolved
-            except ValueError:
-                continue
 
     raise ToolError(
         code="TOOL_PATH_OUTSIDE_WORKSPACE",

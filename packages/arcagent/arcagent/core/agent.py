@@ -46,7 +46,8 @@ def _validate_vault_backend(backend_ref: str) -> None:
             message=f"Invalid vault backend format (missing ':'): {backend_ref}",
             details={"backend": backend_ref},
         )
-    module_path = backend_ref.rsplit(":", 1)[0]
+
+    module_path, _ = backend_ref.rsplit(":", 1)
     if not module_path or ".." in module_path:
         raise ConfigError(
             code="CONFIG_INVALID_VAULT_BACKEND",
@@ -160,10 +161,7 @@ class ArcAgent:
         self._telemetry.set_agent_did(self._identity.did)
 
         # 4. Module Bus
-        self._bus = ModuleBus(
-            config=self._config,
-            telemetry=self._telemetry,
-        )
+        self._bus = ModuleBus()
 
         # 5. Tool Registry
         self._tool_registry = ToolRegistry(
@@ -461,10 +459,11 @@ class ArcAgent:
 
         async def _inject_skills(ctx: Any) -> None:
             sections = ctx.data.get("sections")
-            if sections is not None and isinstance(sections, dict):
-                prompt_text = skill_registry.format_for_prompt()
-                if prompt_text:
-                    sections["skills"] = prompt_text
+            if not isinstance(sections, dict):
+                return
+            prompt_text = skill_registry.format_for_prompt()
+            if prompt_text:
+                sections["skills"] = prompt_text
 
         bus.subscribe(
             event="agent:assemble_prompt",

@@ -6,6 +6,7 @@ Workspace-scoped with configurable result limit.
 
 from __future__ import annotations
 
+import stat as stat_module
 from pathlib import Path
 from typing import Any
 
@@ -63,14 +64,15 @@ def create_tool(
         if ".." in pattern:
             return "Error: Pattern must not contain '..'"
 
-        # Collect matching files with mtime (single stat per file)
+        # Collect matching files with mtime (single stat per file,
+        # using st_mode directly to avoid redundant is_file syscall)
         file_mtimes: list[tuple[Path, float]] = []
         for p in search_root.glob(pattern):
             try:
                 st = p.stat()
             except OSError:
                 continue
-            if not p.is_file():
+            if not stat_module.S_ISREG(st.st_mode):
                 continue
             file_mtimes.append((p, st.st_mtime))
 

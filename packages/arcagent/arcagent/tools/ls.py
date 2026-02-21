@@ -6,6 +6,7 @@ Workspace-scoped. Directories listed before files, both sorted alphabetically.
 
 from __future__ import annotations
 
+import stat as stat_module
 from pathlib import Path
 from typing import Any
 
@@ -62,7 +63,8 @@ def create_tool(
         if not entries:
             return "(empty directory)"
 
-        # Single pass: classify entries by stat() once
+        # Single pass: classify entries using the stat result directly
+        # (avoids redundant syscalls from is_dir/is_file after stat)
         dirs: list[str] = []
         files: list[tuple[str, int]] = []
         for entry in entries:
@@ -70,9 +72,9 @@ def create_tool(
                 st = entry.stat()
             except OSError:
                 continue
-            if entry.is_dir():
+            if stat_module.S_ISDIR(st.st_mode):
                 dirs.append(entry.name)
-            elif entry.is_file():
+            elif stat_module.S_ISREG(st.st_mode):
                 files.append((entry.name, st.st_size))
 
         dirs.sort()

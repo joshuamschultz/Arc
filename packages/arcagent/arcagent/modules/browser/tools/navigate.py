@@ -128,9 +128,9 @@ def create_navigate_tools(
 
         return f"[EXTERNAL WEB CONTENT] Navigated to {final_url or url} — {title}"
 
-    async def _handle_go_back() -> str:
-        await cdp.send("Page", "goBack")
-        # Validate resulting URL against policy
+    async def _history_navigate(method: str, direction: str) -> str:
+        """Navigate back/forward, validate resulting URL against policy."""
+        await cdp.send("Page", method)
         current_url = await _get_current_url(cdp)
         if current_url:
             try:
@@ -139,20 +139,13 @@ def create_navigate_tools(
                 await bus.emit("browser.url_blocked", {"url": current_url})
                 await cdp.send("Page", "navigate", {"url": "about:blank"})
                 raise
-        return f"[EXTERNAL WEB CONTENT] Navigated back to {current_url}"
+        return f"[EXTERNAL WEB CONTENT] Navigated {direction} to {current_url}"
+
+    async def _handle_go_back() -> str:
+        return await _history_navigate("goBack", "back")
 
     async def _handle_go_forward() -> str:
-        await cdp.send("Page", "goForward")
-        # Validate resulting URL against policy
-        current_url = await _get_current_url(cdp)
-        if current_url:
-            try:
-                _check_url_policy(current_url, config.security)
-            except URLBlockedError:
-                await bus.emit("browser.url_blocked", {"url": current_url})
-                await cdp.send("Page", "navigate", {"url": "about:blank"})
-                raise
-        return f"[EXTERNAL WEB CONTENT] Navigated forward to {current_url}"
+        return await _history_navigate("goForward", "forward")
 
     async def _handle_reload() -> str:
         await cdp.send("Page", "reload")

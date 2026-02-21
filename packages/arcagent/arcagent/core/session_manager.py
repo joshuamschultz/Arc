@@ -224,17 +224,14 @@ class SessionManager:
                 ),
             )])
             facts = response.content
-            if facts and facts.strip():
-                # Sanitize LLM output: strip control characters and
-                # markdown injection patterns that could alter prompt behavior
-                sanitized = self._sanitize_context_output(facts)
-                existing = ""
-                if context_path.exists():
-                    existing = context_path.read_text(encoding="utf-8")
-                with open(context_path, "w", encoding="utf-8") as f:
-                    if existing:
-                        f.write(existing.rstrip() + "\n\n")
-                    f.write(f"## Compaction Flush\n\n{sanitized}\n")
+            if not facts or not facts.strip():
+                return
+            sanitized = self._sanitize_context_output(facts)
+            existing = context_path.read_text(encoding="utf-8") if context_path.exists() else ""
+            with open(context_path, "w", encoding="utf-8") as f:
+                if existing:
+                    f.write(existing.rstrip() + "\n\n")
+                f.write(f"## Compaction Flush\n\n{sanitized}\n")
         except Exception:
             _logger.warning("Pre-compaction flush failed, continuing without flush")
 

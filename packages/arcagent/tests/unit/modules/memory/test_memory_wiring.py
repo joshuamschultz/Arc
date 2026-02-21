@@ -156,7 +156,7 @@ class TestMemorySearchRegistration:
         config = _make_config()
 
         ctx = ModuleContext(
-            bus=ModuleBus(config=config, telemetry=MagicMock()),
+            bus=ModuleBus(),
             tool_registry=tool_registry,
             config=config,
             telemetry=_make_telemetry(),
@@ -178,7 +178,7 @@ class TestMemorySearchRegistration:
         config = _make_config()
 
         ctx = ModuleContext(
-            bus=ModuleBus(config=config, telemetry=MagicMock()),
+            bus=ModuleBus(),
             tool_registry=tool_registry,
             config=config,
             telemetry=_make_telemetry(),

@@ -166,18 +166,17 @@ class ContextManager:
         for i, msg in enumerate(messages):
             role = _msg_attr(msg, "role", "")
             content = _msg_content_str(msg)
-            if i < protected_start and role == "tool" and content:
-                original_tokens = self.estimate_tokens(content)
-                if isinstance(msg, dict):
-                    pruned_msg = {**msg}
-                    pruned_msg["content"] = f"[output pruned — {original_tokens} tokens]"
-                else:
-                    pruned_msg = msg.model_copy(
-                        update={"content": f"[output pruned — {original_tokens} tokens]"}
-                    )
-                result.append(pruned_msg)
-            else:
+
+            if i >= protected_start or role != "tool" or not content:
                 result.append(msg)
+                continue
+
+            placeholder = f"[output pruned — {self.estimate_tokens(content)} tokens]"
+            if isinstance(msg, dict):
+                pruned_msg = {**msg, "content": placeholder}
+            else:
+                pruned_msg = msg.model_copy(update={"content": placeholder})
+            result.append(pruned_msg)
 
         return result
 
@@ -242,8 +241,7 @@ class ContextManager:
         kept: list[Any] = []
         accumulated = 0
         for msg in reversed(messages):
-            content = _msg_content_str(msg)
-            msg_tokens = self.estimate_tokens(content) if content else 0
+            msg_tokens = self.estimate_tokens(_msg_content_str(msg))
             if accumulated + msg_tokens <= target_tokens:
                 kept.append(msg)
                 accumulated += msg_tokens

@@ -233,12 +233,10 @@ class PolicyEngine:
         today = date.today().isoformat()
 
         # Reset ID counter based on existing bullets
-        max_id = 0
-        for b in bullets:
-            id_match = re.match(r"P(\d+)", b.id)
-            if id_match:
-                max_id = max(max_id, int(id_match.group(1)))
-        self._next_bullet_id = max_id
+        self._next_bullet_id = max(
+            (int(m.group(1)) for b in bullets if (m := re.match(r"P(\d+)", b.id))),
+            default=0,
+        )
 
         # Apply additions
         for text in delta.additions:

@@ -79,8 +79,10 @@ class ExtensionAPI:
         Tags the tool source for cleanup during hot reload.
         Accepts both RegisteredTool and arcrun.Tool objects.
         """
-        # Convert arcrun.Tool to RegisteredTool if needed
+        tagged_source = f"{self._source_prefix}{self._extension_name}"
+
         if not hasattr(tool, 'source') or not hasattr(tool, 'transport'):
+            # Convert arcrun.Tool to RegisteredTool
             from arcagent.core.tool_registry import RegisteredTool as RegTool
             from arcagent.core.tool_registry import ToolTransport
             tool = RegTool(
@@ -90,10 +92,10 @@ class ExtensionAPI:
                 transport=ToolTransport.NATIVE,
                 execute=tool.execute,
                 timeout_seconds=getattr(tool, 'timeout_seconds', None),
-                source=f"{self._source_prefix}{self._extension_name}",
+                source=tagged_source,
             )
-        # Ensure source is tagged for cleanup with the correct prefix
         elif not tool.source.startswith(self._source_prefix):
+            # Re-tag source for cleanup tracking
             tool = RegisteredTool(
                 name=tool.name,
                 description=tool.description,
@@ -101,8 +103,9 @@ class ExtensionAPI:
                 transport=tool.transport,
                 execute=tool.execute,
                 timeout_seconds=tool.timeout_seconds,
-                source=f"{self._source_prefix}{self._extension_name}",
+                source=tagged_source,
             )
+
         self._tool_registry.register(tool)
         self._tools_registered.append(tool.name)
 
@@ -227,6 +230,19 @@ class ExtensionLoader:
         self._manifests.clear()
         _logger.info("Cleared all extensions")
 
+    @staticmethod
+    def _sandbox_context(
+        mode: str,
+        workspace: Path,
+        allowed_paths: list[Path] | None,
+    ) -> contextlib.AbstractContextManager[None]:
+        """Return the appropriate sandbox context manager for a mode."""
+        if mode == "strict":
+            return _strict_sandbox(workspace)
+        if mode == "paths":
+            return _paths_sandbox(workspace, allowed_paths or [])
+        return contextlib.nullcontext()
+
     def _resolve_sandbox_config(self, ext_name: str) -> tuple[str, list[Path]]:
         """Resolve sandbox mode and allowed paths for an extension.
 
@@ -270,13 +286,8 @@ class ExtensionLoader:
         )
 
         try:
-            if sandbox_mode == "strict":
-                with _strict_sandbox(workspace):
-                    factory(api)
-            elif sandbox_mode == "paths":
-                with _paths_sandbox(workspace, sandbox_allowed_paths or []):
-                    factory(api)
-            else:
+            sandbox_ctx = self._sandbox_context(sandbox_mode, workspace, sandbox_allowed_paths)
+            with sandbox_ctx:
                 factory(api)
         except Exception:
             _logger.exception("Extension factory failed: %s", ext_name)

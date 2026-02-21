@@ -28,7 +28,7 @@ def mock_telemetry() -> MagicMock:
 
 @pytest.fixture()
 def bus(config: ArcAgentConfig, mock_telemetry: MagicMock) -> ModuleBus:
-    return ModuleBus(config=config, telemetry=mock_telemetry)
+    return ModuleBus()
 
 
 class TestModuleContextCreation:

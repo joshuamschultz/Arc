@@ -103,9 +103,7 @@ class Module(Protocol):
 class ModuleBus:
     """Async event bus with priority dispatch, veto, and module lifecycle."""
 
-    def __init__(self, config: ArcAgentConfig, telemetry: Any) -> None:
-        self._config = config
-        self._telemetry = telemetry
+    def __init__(self) -> None:
         self._handlers: dict[str, list[_HandlerRegistration]] = defaultdict(list)
         self._modules: list[Module] = []
 
@@ -205,10 +203,7 @@ class ModuleBus:
 
     def get_module(self, name: str) -> Module | None:
         """Look up a registered module by name."""
-        for mod in self._modules:
-            if mod.name == name:
-                return mod
-        return None
+        return next((mod for mod in self._modules if mod.name == name), None)
 
     def register_module(self, module: Module) -> None:
         """Register a module for lifecycle management."""

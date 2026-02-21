@@ -76,10 +76,7 @@ class TestModuleProtocol:
     @pytest.mark.asyncio()
     async def test_startup_subscribes_events(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
-        bus = ModuleBus(
-            config=MagicMock(),
-            telemetry=MagicMock(),
-        )
+        bus = ModuleBus()
         await module.startup(_make_module_ctx(bus, tmp_path))
         assert bus.handler_count("agent:pre_tool") >= 1
         assert bus.handler_count("agent:post_tool") >= 1
@@ -98,28 +95,28 @@ class TestEventSubscription:
     @pytest.mark.asyncio()
     async def test_pre_tool_handler_registered(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
-        bus = ModuleBus(config=MagicMock(), telemetry=MagicMock())
+        bus = ModuleBus()
         await module.startup(_make_module_ctx(bus, tmp_path))
         assert bus.handler_count("agent:pre_tool") == 1
 
     @pytest.mark.asyncio()
     async def test_post_tool_handler_registered(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
-        bus = ModuleBus(config=MagicMock(), telemetry=MagicMock())
+        bus = ModuleBus()
         await module.startup(_make_module_ctx(bus, tmp_path))
         assert bus.handler_count("agent:post_tool") == 1
 
     @pytest.mark.asyncio()
     async def test_assemble_prompt_handler_registered(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
-        bus = ModuleBus(config=MagicMock(), telemetry=MagicMock())
+        bus = ModuleBus()
         await module.startup(_make_module_ctx(bus, tmp_path))
         assert bus.handler_count("agent:assemble_prompt") == 1
 
     @pytest.mark.asyncio()
     async def test_post_respond_handler_registered(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
-        bus = ModuleBus(config=MagicMock(), telemetry=MagicMock())
+        bus = ModuleBus()
         await module.startup(_make_module_ctx(bus, tmp_path))
         assert bus.handler_count("agent:post_respond") == 1
 

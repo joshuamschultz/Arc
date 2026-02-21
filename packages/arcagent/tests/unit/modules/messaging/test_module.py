@@ -53,8 +53,8 @@ class TestModuleStartup:
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
         try:
-            # Should register 9 tools (5 messaging + 4 task)
-            assert ctx.tool_registry.register.call_count == 9
+            # Should register 5 messaging tools.
+            assert ctx.tool_registry.register.call_count == 5
         finally:
             await module.shutdown()
 
@@ -205,27 +205,3 @@ class TestTeamRootResolution:
         assert module._resolve_team_root() == tmp_path / "team"
 
 
-class TestPendingTasks:
-    def test_no_tasks_file_returns_empty(self, tmp_path: Path) -> None:
-        module = _make_module(tmp_path)
-        assert module._load_pending_tasks() == []
-
-    def test_loads_pending_tasks(self, tmp_path: Path) -> None:
-        import json
-
-        module = _make_module(tmp_path)
-        tasks = [
-            {"id": "task_1", "description": "Report to josh", "status": "waiting", "report_to": "user://josh"},
-            {"id": "task_2", "description": "Done task", "status": "done"},
-        ]
-        tasks_path = tmp_path / "tasks.json"
-        tasks_path.write_text(json.dumps(tasks), encoding="utf-8")
-        result = module._load_pending_tasks()
-        assert len(result) == 1
-        assert result[0]["description"] == "Report to josh"
-
-    def test_invalid_json_returns_empty(self, tmp_path: Path) -> None:
-        module = _make_module(tmp_path)
-        tasks_path = tmp_path / "tasks.json"
-        tasks_path.write_text("not valid json", encoding="utf-8")
-        assert module._load_pending_tasks() == []

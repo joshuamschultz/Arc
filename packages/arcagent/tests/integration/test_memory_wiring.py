@@ -50,7 +50,7 @@ class TestConventionLoaderIntegration:
         telemetry = MagicMock()
         telemetry.audit_event = MagicMock()
 
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=ToolsConfig(),
             bus=bus,
@@ -97,7 +97,7 @@ class TestConventionLoaderIntegration:
         telemetry = MagicMock()
         telemetry.audit_event = MagicMock()
 
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=ToolsConfig(),
             bus=bus,
@@ -141,7 +141,7 @@ class TestConventionLoaderIntegration:
         telemetry = MagicMock()
         telemetry.audit_event = MagicMock()
 
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=ToolsConfig(),
             bus=bus,

@@ -175,13 +175,10 @@ class SettingsManager:
         settings_lines = ["[settings]"]
         for key, value in sorted(self._overlay.items()):
             if isinstance(value, str):
-                # Escape backslashes and quotes for valid TOML
                 escaped = value.replace("\\", "\\\\").replace('"', '\\"')
                 escaped = escaped.replace("\n", "\\n").replace("\r", "\\r")
                 settings_lines.append(f'{key} = "{escaped}"')
-            elif isinstance(value, float):
-                settings_lines.append(f"{key} = {value}")
-            elif isinstance(value, int):
+            elif isinstance(value, (int, float)):
                 settings_lines.append(f"{key} = {value}")
         settings_block = "\n".join(settings_lines) + "\n"
 

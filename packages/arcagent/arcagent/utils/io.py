@@ -65,7 +65,7 @@ def extract_json(text: str | None) -> str:
     the fences so json.loads() can parse the content.
     """
     if not text:
-        return text or ""
+        return ""
     match = _JSON_FENCE_RE.search(text)
     if match:
         return match.group(1).strip()
@@ -78,12 +78,8 @@ def sanitize_fts5_query(query: str) -> str:
     Strips characters that FTS5 interprets as operators (``*``, ``"``,
     ``{}``, etc.) and individually quotes each term.
     """
-    terms = query.split()
-    escaped: list[str] = []
-    for term in terms:
-        clean = _FTS5_SPECIAL_RE.sub("", term)
-        if clean:
-            escaped.append(f'"{clean}"')
-    return " ".join(escaped)
-
-
+    return " ".join(
+        f'"{clean}"'
+        for term in query.split()
+        if (clean := _FTS5_SPECIAL_RE.sub("", term))
+    )

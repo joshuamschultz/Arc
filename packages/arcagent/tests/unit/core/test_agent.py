@@ -183,7 +183,7 @@ class TestArcRunBridge:
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
         )
-        bus = ModuleBus(config=config, telemetry=MagicMock())
+        bus = ModuleBus()
         events: list[str] = []
 
         async def on_pre_tool(ctx: Any) -> None:
@@ -208,7 +208,7 @@ class TestArcRunBridge:
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
         )
-        bus = ModuleBus(config=config, telemetry=MagicMock())
+        bus = ModuleBus()
         bridge = create_arcrun_bridge(bus)
 
         mock_event = MagicMock()
@@ -504,7 +504,7 @@ class TestBridgeNoRunningLoop:
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
         )
-        bus = ModuleBus(config=config, telemetry=MagicMock())
+        bus = ModuleBus()
         bridge = create_arcrun_bridge(bus)
 
         # Create a mock event that would map to a bus event

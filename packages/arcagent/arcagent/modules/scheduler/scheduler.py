@@ -266,7 +266,7 @@ class SchedulerEngine:
     def _should_fire_interval(
         self, entry: ScheduleEntry, now: datetime,
     ) -> bool:
-        if entry.metadata.last_run is None or entry.metadata.last_run == "":
+        if not entry.metadata.last_run:
             return True
         last = datetime.fromisoformat(entry.metadata.last_run)
         return last + timedelta(seconds=entry.every_seconds or 0) <= now
@@ -275,7 +275,7 @@ class SchedulerEngine:
         if entry.expression is None:
             return False
 
-        if entry.metadata.last_run and entry.metadata.last_run != "":
+        if entry.metadata.last_run:
             base = datetime.fromisoformat(entry.metadata.last_run)
         else:
             base = now - timedelta(days=1)
@@ -322,7 +322,7 @@ class SchedulerEngine:
 
         # Emit bus event so other modules (e.g. Telegram) can deliver results.
         if self._bus is not None:
-            content = getattr(result, "content", None) or str(result) if result else ""
+            content = (getattr(result, "content", None) or str(result)) if result else ""
             self._emit_bus_event("schedule:completed", {
                 "schedule_id": entry.id,
                 "schedule_name": entry.prompt[:80],

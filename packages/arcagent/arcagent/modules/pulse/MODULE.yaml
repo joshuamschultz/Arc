@@ -1,0 +1,18 @@
+name: pulse
+version: 0.1.0
+description: Periodic ambient awareness — agent wakes, reads pulse.md check list, executes all overdue checks
+author: ArcAgent
+entry_point: arcagent.modules.pulse:PulseModule
+dependencies:
+  - arcagent.core.module_bus
+  - arcagent.core.config
+events:
+  subscribes:
+    - agent:shutdown
+    - agent:ready
+  emits:
+    - pulse:ok
+    - pulse:check_started
+    - pulse:check_completed
+    - pulse:check_failed
+    - pulse:no_checks

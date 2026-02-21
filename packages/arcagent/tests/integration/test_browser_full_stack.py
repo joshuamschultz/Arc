@@ -55,7 +55,7 @@ def _make_config(workspace: str = "./test-workspace") -> ArcAgentConfig:
 def _make_bus(config: ArcAgentConfig | None = None) -> ModuleBus:
     if config is None:
         config = _make_config()
-    return ModuleBus(config=config, telemetry=_make_telemetry())
+    return ModuleBus()
 
 
 class TestBrowserModuleDiscovery:
@@ -125,7 +125,7 @@ class TestBrowserToolRegistration:
 
         config = _make_config(workspace=str(tmp_path))
         telemetry = _make_telemetry()
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -194,7 +194,7 @@ class TestToolRegistryToArcRunBridge:
 
         config = _make_config(workspace=str(tmp_path))
         telemetry = _make_telemetry()
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -265,7 +265,7 @@ class TestToolRegistryToArcRunBridge:
 
         config = _make_config(workspace=str(tmp_path))
         telemetry = _make_telemetry()
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -333,7 +333,7 @@ class TestToolRegistryToArcRunBridge:
 
         config = _make_config(workspace=str(tmp_path))
         telemetry = _make_telemetry()
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -467,7 +467,7 @@ class TestBrowserEventWiring:
 
         config = _make_config(workspace=str(tmp_path))
         telemetry = _make_telemetry()
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -521,7 +521,7 @@ class TestBrowserEventWiring:
 
         config = _make_config(workspace=str(tmp_path))
         telemetry = _make_telemetry()
-        bus = ModuleBus(config=config, telemetry=telemetry)
+        bus = ModuleBus()
         tool_registry = ToolRegistry(
             config=config.tools,
             bus=bus,

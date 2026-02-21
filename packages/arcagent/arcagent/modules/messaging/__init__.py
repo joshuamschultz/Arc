@@ -10,7 +10,6 @@ Zero hardcoded coupling to arcagent core — this is a pure module.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -87,10 +86,7 @@ class MessagingModule:
         from arcteam.storage import FileBackend
         from arcteam.types import Entity, EntityType
 
-        from arcagent.modules.messaging.tools import (
-            create_messaging_tools,
-            create_task_tools,
-        )
+        from arcagent.modules.messaging.tools import create_messaging_tools
 
         # Resolve entity identity from config, falling back to agent name.
         entity_id = self._config.entity_id
@@ -144,12 +140,7 @@ class MessagingModule:
             registry=self._registry,
             config=self._config,
         )
-        task_tools = create_task_tools(
-            svc=self._svc,
-            config=self._config,
-            workspace=self._workspace,
-        )
-        for tool in tools + task_tools:
+        for tool in tools:
             ctx.tool_registry.register(tool)
 
         # Subscribe to prompt assembly for context injection.
@@ -182,25 +173,8 @@ class MessagingModule:
         """Handle agent:shutdown event."""
         await self.shutdown()
 
-    def _load_pending_tasks(self) -> list[dict[str, Any]]:
-        """Read pending tasks from workspace. Returns incomplete tasks."""
-        tasks_path = self._workspace / "tasks.json"
-        if not tasks_path.exists():
-            return []
-        try:
-            data = json.loads(tasks_path.read_text(encoding="utf-8"))
-            return [t for t in data if t.get("status") != "done"]
-        except (json.JSONDecodeError, OSError):
-            return []
-
     async def _on_assemble_prompt(self, ctx: EventContext) -> None:
-        """Inject team messaging behavior into the system prompt.
-
-        Includes:
-        - Unread message alerts
-        - Pending multi-step tasks from workspace
-        - Behavioral rules for team communication
-        """
+        """Inject team messaging behavior into the system prompt."""
         sections = ctx.data.get("sections", {})
 
         entity_id = self._config.entity_id
@@ -232,21 +206,6 @@ class MessagingModule:
                          "Check inbox and handle them.")
             for stream, count in self._last_unread.items():
                 lines.append(f"  - {stream}: {count}")
-
-        # Surface pending tasks so multi-step work survives across runs.
-        pending = self._load_pending_tasks()
-        if pending:
-            lines.append("")
-            lines.append(f"### Pending Tasks ({len(pending)} incomplete)")
-            lines.append("")
-            for task in pending:
-                status = task.get("status", "pending")
-                lines.append(
-                    f"- **[{status}]** `{task.get('id', '?')}`: "
-                    f"{task.get('description', '(no description)')}"
-                )
-                if task.get("report_to"):
-                    lines.append(f"  Report results to: `{task['report_to']}`")
 
         # Behavioral rules — concise.
         lines.extend([

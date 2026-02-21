@@ -258,15 +258,10 @@ class EntityExtractor:
                     old_value = existing["value"]
                     break
 
-            confidence = fact.get("confidence", 0.5)
+            line = self._format_fact(fact, timestamp)
             if old_value:
-                new_lines.append(
-                    f"- {predicate}: {value} ({confidence}) [{timestamp}] | was: {old_value}"
-                )
-            else:
-                new_lines.append(
-                    f"- {predicate}: {value} ({confidence}) [{timestamp}]"
-                )
+                line += f" | was: {old_value}"
+            new_lines.append(line)
 
         # Rebuild file: new frontmatter + existing body + new facts
         body = self._strip_frontmatter(content).rstrip()

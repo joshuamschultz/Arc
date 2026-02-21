@@ -56,7 +56,7 @@ def _make_bus(config: ArcAgentConfig | None = None) -> ModuleBus:
             llm=LLMConfig(model="test/model"),
         )
     telemetry = _make_telemetry()
-    return ModuleBus(config=config, telemetry=telemetry)
+    return ModuleBus()
 
 
 def _make_module_ctx(bus: ModuleBus, workspace: Path) -> ModuleContext:

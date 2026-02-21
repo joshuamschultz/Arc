@@ -412,6 +412,19 @@ class MarkdownMemoryModule:
             "- Use `write` or `edit` to update your working context."
         )
 
+    def _ensure_daily_notes(self, extra_content: str = "") -> None:
+        """Create today's notes file if it doesn't exist."""
+        today = date.today()
+        notes_file = self._workspace / "notes" / f"{today.isoformat()}.md"
+        if notes_file.exists():
+            return
+        notes_file.parent.mkdir(parents=True, exist_ok=True)
+        content = f"# Daily Notes - {today.isoformat()}\n\n"
+        if extra_content:
+            content += extra_content
+        notes_file.write_text(content, encoding="utf-8")
+        _logger.debug("Auto-created daily notes file: %s", notes_file.name)
+
     async def _on_post_respond(self, ctx: EventContext) -> None:
         """Fire async entity extraction after each response."""
         model = self._get_eval_model()
@@ -422,16 +435,7 @@ class MarkdownMemoryModule:
         if not messages:
             return
 
-        # Ensure today's notes file exists (auto-create on first turn of day)
-        today = date.today()
-        notes_file = self._workspace / "notes" / f"{today.isoformat()}.md"
-        if not notes_file.exists():
-            notes_file.parent.mkdir(parents=True, exist_ok=True)
-            notes_file.write_text(
-                f"# Daily Notes - {today.isoformat()}\n\n",
-                encoding="utf-8",
-            )
-            _logger.debug("Auto-created daily notes file: %s", notes_file.name)
+        self._ensure_daily_notes()
 
         # Entity extraction on every response
         if self._config.entity_extraction_enabled:
@@ -457,28 +461,17 @@ class MarkdownMemoryModule:
             ratio * 100,
         )
 
-        # Ensure today's notes file exists
-        today = date.today()
-        notes_file = self._workspace / "notes" / f"{today.isoformat()}.md"
-
-        if not notes_file.exists():
-            notes_file.parent.mkdir(parents=True, exist_ok=True)
-            notes_file.write_text(
-                f"# Daily Notes - {today.isoformat()}\n\n"
-                f"**Context approaching limit** - important information should be noted here.\n\n",
-                encoding="utf-8",
-            )
-            _logger.info("Created daily notes file: %s", notes_file.name)
+        self._ensure_daily_notes(
+            "**Context approaching limit** - important information should be noted here.\n\n",
+        )
 
     def _resolve_path(self, tool_name: str, args: dict[str, Any]) -> Path | None:
         """Extract and canonicalize file path from tool args."""
         if tool_name in ("read", "write", "edit"):
             raw = args.get("path") or args.get("file_path")
-            if raw:
-                return Path(raw).resolve()
-        elif tool_name == "bash":
-            cmd = args.get("command", "")
-            return self._parse_bash_target(cmd)
+            return Path(raw).resolve() if raw else None
+        if tool_name == "bash":
+            return self._parse_bash_target(args.get("command", ""))
         return None
 
     def _parse_bash_target(self, command: str) -> Path | None:

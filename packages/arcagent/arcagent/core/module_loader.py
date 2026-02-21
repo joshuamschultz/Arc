@@ -63,66 +63,75 @@ class ModuleLoader:
             if not yaml_path.exists():
                 continue
 
-            # Parse YAML
-            dir_name = subdir.name
-            try:
-                raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                raise ConfigError(
-                    code="CONFIG_MODULE_YAML_PARSE",
-                    message=f"Failed to parse MODULE.yaml for module '{dir_name}': {exc}",
-                    details={"module": dir_name},
-                ) from exc
-
-            if not isinstance(raw, dict):
-                raise ConfigError(
-                    code="CONFIG_MODULE_YAML_PARSE",
-                    message=f"MODULE.yaml is not a mapping for module '{dir_name}'",
-                    details={"module": dir_name},
-                )
-
-            # Check required fields before Pydantic (better error messages)
-            module_name = raw.get("name")
-            if not module_name:
-                raise ConfigError(
-                    code="CONFIG_MODULE_MISSING_NAME",
-                    message=f"MODULE.yaml missing 'name' for module '{dir_name}'",
-                    details={"module": dir_name},
-                )
-
-            entry_point = raw.get("entry_point")
-            if not entry_point:
-                raise ConfigError(
-                    code="CONFIG_MODULE_MISSING_ENTRY_POINT",
-                    message=f"MODULE.yaml missing 'entry_point' for module '{module_name}'",
-                    details={"module": module_name},
-                )
-
-            # Check config enablement
-            module_entry = config.modules.get(module_name)
-            if module_entry is None or not module_entry.enabled:
-                _logger.debug("Module '%s' not enabled in config, skipping", module_name)
-                continue
-
-            # Validate with Pydantic (warns on missing optional fields)
-            try:
-                manifest = ModuleManifest(**raw)
-            except Exception as exc:
-                raise ConfigError(
-                    code="CONFIG_MODULE_VALIDATION",
-                    message=f"MODULE.yaml validation failed for '{module_name}': {exc}",
-                    details={"module": module_name},
-                ) from exc
-
-            if not manifest.version or manifest.version == "0.0.0":
-                _logger.warning(
-                    "Module '%s' missing version, using default 0.0.0",
-                    module_name,
-                )
-
-            manifests.append(manifest)
+            manifest = self._parse_module_yaml(yaml_path, subdir.name, config)
+            if manifest is not None:
+                manifests.append(manifest)
 
         return manifests
+
+    def _parse_module_yaml(
+        self,
+        yaml_path: Path,
+        dir_name: str,
+        config: ArcAgentConfig,
+    ) -> ModuleManifest | None:
+        """Parse and validate a single MODULE.yaml file.
+
+        Returns the validated manifest, or None if the module is disabled.
+        Raises ConfigError for parse failures or missing required fields.
+        """
+        try:
+            raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ConfigError(
+                code="CONFIG_MODULE_YAML_PARSE",
+                message=f"Failed to parse MODULE.yaml for module '{dir_name}': {exc}",
+                details={"module": dir_name},
+            ) from exc
+
+        if not isinstance(raw, dict):
+            raise ConfigError(
+                code="CONFIG_MODULE_YAML_PARSE",
+                message=f"MODULE.yaml is not a mapping for module '{dir_name}'",
+                details={"module": dir_name},
+            )
+
+        module_name = raw.get("name")
+        if not module_name:
+            raise ConfigError(
+                code="CONFIG_MODULE_MISSING_NAME",
+                message=f"MODULE.yaml missing 'name' for module '{dir_name}'",
+                details={"module": dir_name},
+            )
+
+        if not raw.get("entry_point"):
+            raise ConfigError(
+                code="CONFIG_MODULE_MISSING_ENTRY_POINT",
+                message=f"MODULE.yaml missing 'entry_point' for module '{module_name}'",
+                details={"module": module_name},
+            )
+
+        module_entry = config.modules.get(module_name)
+        if module_entry is None or not module_entry.enabled:
+            _logger.debug("Module '%s' not enabled in config, skipping", module_name)
+            return None
+
+        try:
+            manifest = ModuleManifest(**raw)
+        except Exception as exc:
+            raise ConfigError(
+                code="CONFIG_MODULE_VALIDATION",
+                message=f"MODULE.yaml validation failed for '{module_name}': {exc}",
+                details={"module": module_name},
+            ) from exc
+
+        if not manifest.version or manifest.version == "0.0.0":
+            _logger.warning(
+                "Module '%s' missing version, using default 0.0.0",
+                module_name,
+            )
+
+        return manifest
 
     def load(
         self,

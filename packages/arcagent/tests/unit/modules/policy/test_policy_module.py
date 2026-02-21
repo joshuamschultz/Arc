@@ -69,7 +69,7 @@ class TestStartupRegistration:
 
     @pytest.mark.asyncio()
     async def test_startup_subscribes_events(self, tmp_path: Path) -> None:
-        bus = ModuleBus(config=MagicMock(), telemetry=MagicMock())
+        bus = ModuleBus()
         mod = _make_module(tmp_path)
         ctx = _make_module_ctx(bus, tmp_path)
         await mod.startup(ctx)

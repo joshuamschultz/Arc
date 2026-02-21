@@ -279,17 +279,15 @@ class HybridSearch:
                 "WHERE fts_chunks MATCH ? ORDER BY rank LIMIT ?",
                 (safe_query, top_k),
             )
-            results: list[SearchResult] = []
-            for row in cursor.fetchall():
-                results.append(
-                    SearchResult(
-                        source=row[1],
-                        content=row[0],
-                        score=abs(row[2]),  # FTS5 rank is negative
-                        match_type="bm25",
-                    )
+            return [
+                SearchResult(
+                    source=row[1],
+                    content=row[0],
+                    score=abs(row[2]),  # FTS5 rank is negative
+                    match_type="bm25",
                 )
-            return results
+                for row in cursor.fetchall()
+            ]
         except sqlite3.OperationalError:
             _logger.debug("BM25 search failed for query: %s", query)
             return []

@@ -50,7 +50,7 @@ class TestBrowserModuleStartup:
         tool_registry = MagicMock()
 
         ctx = ModuleContext(
-            bus=ModuleBus(config=config, telemetry=MagicMock()),
+            bus=ModuleBus(),
             tool_registry=tool_registry,
             config=config,
             telemetry=_make_telemetry(),
@@ -79,7 +79,7 @@ class TestBrowserModuleStartup:
 
         module = BrowserModule(workspace=tmp_path)
         config = _make_config()
-        bus = ModuleBus(config=config, telemetry=MagicMock())
+        bus = ModuleBus()
 
         ctx = ModuleContext(
             bus=bus,

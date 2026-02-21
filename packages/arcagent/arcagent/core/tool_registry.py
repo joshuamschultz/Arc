@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -46,6 +48,100 @@ class RegisteredTool:
     execute: Any  # Callable[..., Awaitable[Any]]
     timeout_seconds: int = 30
     source: str = ""
+
+
+# -- Type map for native_tool decorator schema generation --
+_PY_TYPE_MAP: dict[type, str] = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+}
+
+
+def native_tool(
+    *,
+    name: str = "",
+    description: str = "",
+    source: str = "",
+    timeout_seconds: int = 30,
+    params: dict[str, str | dict[str, Any]] | None = None,
+    required: list[str] | None = None,
+) -> Callable[..., Any]:
+    """Decorator that converts an async function into a RegisteredTool.
+
+    Eliminates boilerplate — schema is built from function signature
+    and the optional ``params`` dict. The decorated function gains a
+    ``.tool`` attribute holding the RegisteredTool.
+
+    Usage::
+
+        @native_tool(
+            description="Send a message",
+            source="messaging",
+            params={"to": "Recipient URI", "body": "Message body"},
+            required=["to", "body"],
+        )
+        async def messaging_send(to="", body="", **kwargs):
+            ...
+
+    ``params`` values can be a string (used as description) or a dict
+    with full JSON Schema property fields (type, enum, default, etc).
+    """
+
+    def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        tool_name = name or fn.__name__
+        tool_desc = description or fn.__doc__ or ""
+
+        # Build input schema from function signature + params hints.
+        properties: dict[str, Any] = {}
+        sig = inspect.signature(fn)
+        for param_name, param in sig.parameters.items():
+            if param_name in ("self", "kwargs") or param.kind == param.VAR_KEYWORD:
+                continue
+
+            prop: dict[str, Any] = {}
+
+            # Infer JSON Schema type from annotation or default value.
+            annotation = param.annotation
+            if annotation is not inspect.Parameter.empty and annotation in _PY_TYPE_MAP:
+                prop["type"] = _PY_TYPE_MAP[annotation]
+            elif param.default is not inspect.Parameter.empty and param.default is not None:
+                default_type = type(param.default)
+                if default_type in _PY_TYPE_MAP:
+                    prop["type"] = _PY_TYPE_MAP[default_type]
+
+            # Merge caller-supplied param metadata.
+            if params and param_name in params:
+                hint = params[param_name]
+                if isinstance(hint, str):
+                    prop["description"] = hint
+                elif isinstance(hint, dict):
+                    prop.update(hint)
+
+            if prop:
+                properties[param_name] = prop
+
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": properties,
+        }
+        if required:
+            schema["required"] = required
+
+        tool = RegisteredTool(
+            name=tool_name,
+            description=tool_desc,
+            input_schema=schema,
+            transport=ToolTransport.NATIVE,
+            execute=fn,
+            timeout_seconds=timeout_seconds,
+            source=source,
+        )
+        fn.tool = tool  # type: ignore[attr-defined]
+        return fn
+
+    return decorator
 
 
 def _echo_tool(text: str = "") -> str:
@@ -136,23 +232,24 @@ class ToolRegistry:
         _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
 
     def _check_policy(self, tool_name: str) -> None:
-        """Check tool against allow/deny policy."""
+        """Check tool against allow/deny policy.
+
+        Deny takes precedence when a tool appears in both lists.
+        """
         policy = self._config.policy
 
-        # If allowlist is set, tool must be in it
-        if policy.allow and tool_name not in policy.allow:
-            raise ToolError(
-                code="TOOL_POLICY_DENIED",
-                message=f"Tool '{tool_name}' not in allowlist",
-                details={"tool": tool_name, "allowlist": policy.allow},
-            )
-
-        # If tool is in denylist, block it
         if tool_name in policy.deny:
             raise ToolError(
                 code="TOOL_POLICY_DENIED",
                 message=f"Tool '{tool_name}' is in denylist",
                 details={"tool": tool_name, "denylist": policy.deny},
+            )
+
+        if policy.allow and tool_name not in policy.allow:
+            raise ToolError(
+                code="TOOL_POLICY_DENIED",
+                message=f"Tool '{tool_name}' not in allowlist",
+                details={"tool": tool_name, "allowlist": policy.allow},
             )
 
     def register_native_tools(self, tools: dict[str, NativeToolEntry]) -> None:

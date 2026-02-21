@@ -35,7 +35,7 @@ def mock_bus(mock_telemetry: MagicMock) -> ModuleBus:
         agent={"name": "test-agent"},
         llm={"model": "test/model"},
     )
-    return ModuleBus(config=config, telemetry=mock_telemetry)
+    return ModuleBus()
 
 
 @pytest.fixture()
