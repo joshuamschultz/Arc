@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.0] - 2026-02-21
 
-Security hardening, budget enforcement, tamper-evident audit trails, biographical memory, team knowledge management, and CLI initialization across the full stack.
+Security hardening, budget enforcement, tamper-evident audit trails, biological memory, team knowledge management, and CLI initialization across the full stack.
 
 ---
 
@@ -49,10 +49,10 @@ Security hardening, budget enforcement, tamper-evident audit trails, biographica
 ### ArcAgent `0.2.0`
 
 #### Added
-- **Biographical memory module** — Long-term identity-aware memory with identity manager, working memory, consolidator, and retriever. Tracks agent personality, episodic experiences, and session-scoped reasoning.
+- **Biological memory module** — Long-term identity-aware memory with identity manager, working memory, consolidator, and retriever. Tracks agent personality, episodic experiences, and session-scoped reasoning.
 - **Shared text sanitizer** — Centralized ASI-06 defense with NFKC normalization, zero-width character stripping, and control character removal.
 - **Bio memory CLI** — `arc agent bio_memory status|identity|episodes|working`.
-- **Integration and unit tests** — Full test coverage for biographical memory lifecycle and retrieval accuracy.
+- **Integration and unit tests** — Full test coverage for biological memory lifecycle and retrieval accuracy.
 
 #### Changed
 - Entity extractor refactored to use shared sanitizer (DRY).

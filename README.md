@@ -1,4 +1,16 @@
-# Arc
+```
+╭──────────────────────────────────────────────────────╮
+│                                                      │
+│   ▄▀█ █▀█ █▀▀                                       │
+│   █▀█ █▀▄ █▄▄                                       │
+│                                                      │
+│   Security-First Autonomous Agent Framework          │
+│   for Environments Where Trust Is Non-Negotiable     │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│  5 Packages · 11 Providers · Zero SDKs · SCIF-Ready │
+╰──────────────────────────────────────────────────────╯
+```
 
 A security-first autonomous agent framework built for environments where audit trails, cryptographic identity, and data sovereignty are non-negotiable.
 
@@ -354,8 +366,6 @@ Arc was inspired by [pi-mono](https://github.com/badlogic/pi-mono) by Mario Zech
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-
-You are free to use, share, and adapt this software, provided you give appropriate credit.
+This project is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 Copyright (c) 2025-2026 BlackArc Systems.

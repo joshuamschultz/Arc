@@ -39,7 +39,7 @@ class TestConventionLoaderIntegration:
         """Convention loader discovers memory module from MODULE.yaml."""
         config = _make_config()
         loader = ModuleLoader()
-        modules_dir = Path(__file__).parent.parent.parent / "arcagent" / "modules"
+        modules_dir = Path(__file__).parent.parent.parent / "src" / "arcagent" / "modules"
 
         manifests = loader.discover(modules_dir, config)
         assert any(m.name == "memory" for m in manifests)
@@ -68,7 +68,7 @@ class TestConventionLoaderIntegration:
 
         # Convention loader discovers and loads
         loader = ModuleLoader()
-        modules_dir = Path(__file__).parent.parent.parent / "arcagent" / "modules"
+        modules_dir = Path(__file__).parent.parent.parent / "src" / "arcagent" / "modules"
         modules = loader.load_all(modules_dir, ctx)
 
         assert len(modules) == 1
@@ -120,7 +120,7 @@ class TestConventionLoaderIntegration:
 
         # Load and start memory module
         loader = ModuleLoader()
-        modules_dir = Path(__file__).parent.parent.parent / "arcagent" / "modules"
+        modules_dir = Path(__file__).parent.parent.parent / "src" / "arcagent" / "modules"
         modules = loader.load_all(modules_dir, ctx)
         for mod in modules:
             bus.register_module(mod)
@@ -161,7 +161,7 @@ class TestConventionLoaderIntegration:
         (tmp_path / "identity.md").write_text("# Agent\n\nI am a test agent.")
 
         loader = ModuleLoader()
-        modules_dir = Path(__file__).parent.parent.parent / "arcagent" / "modules"
+        modules_dir = Path(__file__).parent.parent.parent / "src" / "arcagent" / "modules"
         modules = loader.load_all(modules_dir, ctx)
         for mod in modules:
             bus.register_module(mod)

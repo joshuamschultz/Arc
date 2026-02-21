@@ -475,9 +475,7 @@ ArcLLM is in active development. Core foundation, all provider adapters, the mod
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-
-You are free to use, share, and adapt this software, provided you give appropriate credit.
+This project is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 Copyright (c) 2025-2026 BlackArc Systems.
 

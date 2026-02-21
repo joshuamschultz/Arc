@@ -31,7 +31,7 @@ ArcAgent refuses that tradeoff.
 | **Audit trail** | Hash-chained OpenTelemetry | None | None | Partial |
 | **Credential isolation** | Vault-backed | Plaintext files | None | Managed |
 | **Module system** | Event-driven bus | 52+ coupled modules | None | Plugins |
-| **Memory** | Hybrid search + biographical | Basic RAG | None | Managed |
+| **Memory** | Hybrid search + biological | Basic RAG | None | Managed |
 | **Concurrent agents** | 10,000+ (via ArcTeam) | Limited | Single machine | Managed |
 
 ## Architecture
@@ -67,7 +67,7 @@ Modules extend ArcAgent without touching core code:
 | Module | Status | Description |
 |---|---|---|
 | **Memory** | Complete | Markdown-based with hybrid search (BM25 + vector), entity extraction, policy engine |
-| **Biographical Memory** | Complete | Long-term identity-aware memory — personality, episodes, working memory, consolidation |
+| **Biological Memory** | Complete | Long-term identity-aware memory — personality, episodes, working memory, consolidation |
 | **Skills** | Complete | Markdown skill files with argument schemas, discovered at startup |
 | **Tools** | Complete | Native Python tools with 4-transport architecture (Native, MCP, HTTP, Process) |
 | **Extensions** | Complete | Hot-loadable Python from workspace directories |
@@ -147,9 +147,9 @@ export ARCAGENT_LLM__MODEL="openai/gpt-4o"
 export ARCAGENT_TELEMETRY__LOG_LEVEL="DEBUG"
 ```
 
-## Biographical Memory
+## Biological Memory
 
-ArcAgent's biographical memory module provides long-term identity-aware memory that persists across sessions:
+ArcAgent's biological memory module provides long-term identity-aware memory that persists across sessions:
 
 - **Identity Manager** — Tracks agent traits, preferences, and behavioral patterns. Agents develop personality through experience.
 - **Working Memory** — Session-scoped scratchpad for in-progress reasoning, intermediate state, and active goals.
@@ -302,7 +302,7 @@ arcagent/
 │   │   ├── hybrid_search.py     # BM25 + vector search
 │   │   ├── entity_extractor.py  # Named entity extraction
 │   │   └── policy_engine.py     # Self-learning policy
-│   └── bio_memory/         # Biographical long-term memory
+│   └── bio_memory/         # Biological long-term memory
 │       ├── identity_manager.py  # Persistent agent identity
 │       ├── working_memory.py    # Session-scoped scratchpad
 │       ├── consolidator.py      # Working -> episodic promotion
@@ -322,7 +322,7 @@ arcagent/
 - [x] **Phase 1a** — Core components (identity, config, telemetry, context, tools, modules)
 - [x] **Phase 1b** — Agent runtime (ArcRun integration, sessions, skills, extensions, settings)
 - [x] **Phase 1c** — Memory module (markdown memory, hybrid search, entity extraction, policy)
-- [x] **Phase 2a** — Biographical memory (identity, working memory, consolidation, retrieval)
+- [x] **Phase 2a** — Biological memory (identity, working memory, consolidation, retrieval)
 - [x] **Phase 2b** — Shared text sanitizer (centralized ASI-06 defense)
 - [ ] **Phase 3** — MCP/HTTP/Process tool transports, CLI integration via ArcCLI
 - [ ] **Phase 4** — ArcTeam fleet coordination, scheduling, shared context
@@ -330,9 +330,7 @@ arcagent/
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-
-You are free to use, share, and adapt this software, provided you give appropriate credit.
+This project is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 Copyright (c) 2025-2026 BlackArc Systems.
 

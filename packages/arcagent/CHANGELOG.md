@@ -9,14 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Biographical memory module** — Long-term identity-aware memory system (`bio_memory/`). Tracks agent identity, episodic memory, and working memory across sessions. Includes:
+- **Biological memory module** — Long-term identity-aware memory system (`bio_memory/`). Tracks agent identity, episodic memory, and working memory across sessions. Includes:
   - `IdentityManager` — Persistent agent identity with traits, preferences, and behavioral patterns.
   - `WorkingMemory` — Session-scoped scratchpad for in-progress reasoning and intermediate state.
   - `Consolidator` — Promotes working memory to long-term episodic storage with relevance scoring.
   - `Retriever` — Context-aware memory retrieval with recency, relevance, and importance weighting.
   - `MODULE.yaml` — Declarative module manifest for Module Bus registration.
 - **Shared text sanitizer** — `utils/sanitizer.py` provides `sanitize_text()` with NFKC normalization, zero-width character stripping, and control character removal. Centralizes ASI-06 (Memory & Context Poisoning) defense across all modules.
-- **Bio memory CLI commands** — `arc agent bio_memory status|identity|episodes|working` for inspecting biographical memory state.
+- **Bio memory CLI commands** — `arc agent bio_memory status|identity|episodes|working` for inspecting biological memory state.
 - **Bio memory integration tests** — End-to-end tests for memory lifecycle (write, consolidate, retrieve) and retrieval accuracy.
 - **Bio memory unit tests** — Component-level tests for identity manager, working memory, consolidator, retriever, and config.
 
@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Centralized text sanitization prevents memory poisoning (OWASP ASI-06) with consistent NFKC normalization across entity extraction and biographical memory.
-- Biographical memory validates all writes through the shared sanitizer before storage.
+- Centralized text sanitization prevents memory poisoning (OWASP ASI-06) with consistent NFKC normalization across entity extraction and biological memory.
+- Biological memory validates all writes through the shared sanitizer before storage.
 
 ## [0.1.0] - 2026-02-01
 

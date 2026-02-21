@@ -53,7 +53,7 @@ arc agent create my-agent                 # scaffold agent directory
 arc agent build my-agent                  # interactive onboarding wizard
 arc agent chat my-agent                   # interactive REPL
 arc agent chat my-agent --task "2+2?"     # one-shot task
-arc agent bio_memory status               # biographical memory overview
+arc agent bio_memory status               # biological memory overview
 
 # --- Run ---
 arc run task "What is 2+2?" --with-calc   # one-shot with tools
@@ -125,7 +125,7 @@ arc init --tier federal           # direct tier selection
 | `arc agent config [PATH]` | Show agent configuration |
 | `arc agent strategies` | List available execution strategies |
 | `arc agent events` | List all event types emitted by ArcRun |
-| `arc agent bio_memory status` | Biographical memory overview |
+| `arc agent bio_memory status` | Biological memory overview |
 | `arc agent bio_memory identity` | Agent identity and traits |
 | `arc agent bio_memory episodes` | Long-term episodic memories |
 | `arc agent bio_memory working` | Current working memory |
@@ -195,8 +195,6 @@ arc team memory search "q" --json  # JSON search results
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-
-You are free to use, share, and adapt this software, provided you give appropriate credit.
+This project is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 Copyright (c) 2025-2026 BlackArc Systems.

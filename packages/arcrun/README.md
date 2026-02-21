@@ -17,7 +17,7 @@
 ArcRun is to agents what an engine is to a car. The car (your agent) decides where to go. The engine (ArcRun) makes it move.
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![License: CC BY 4.0](https://img.shields.io/badge/license-CC%20BY%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Lines of Code](https://img.shields.io/badge/lines-~1,200-brightgreen.svg)]()
 
 ---
@@ -534,8 +534,6 @@ ruff format src/arcrun
 
 ## License
 
-This project is licensed under the [Creative Commons Attribution 4.0 International License (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
-
-You are free to use, share, and adapt this software, provided you give appropriate credit.
+This project is licensed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 Copyright (c) 2025-2026 BlackArc Systems.

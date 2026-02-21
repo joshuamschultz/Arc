@@ -67,6 +67,7 @@ class TestBrowserModuleDiscovery:
 
         yaml_path = (
             Path(__file__).resolve().parents[2]
+            / "src"
             / "arcagent"
             / "modules"
             / "browser"
@@ -87,7 +88,7 @@ class TestBrowserModuleDiscovery:
 
         config = _make_config()
         modules_dir = (
-            Path(__file__).resolve().parents[2] / "arcagent" / "modules"
+            Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
         )
 
         loader = ModuleLoader()
@@ -106,7 +107,7 @@ class TestBrowserModuleDiscovery:
             modules={"browser": ModuleEntry(enabled=False)},
         )
         modules_dir = (
-            Path(__file__).resolve().parents[2] / "arcagent" / "modules"
+            Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
         )
 
         loader = ModuleLoader()
