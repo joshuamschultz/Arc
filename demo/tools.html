@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — Tools & Skills</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <div class="breadcrumb">
+        <a href="index.html">Dashboard</a>
+        <span class="sep">/</span>
+        <span>Tools & Skills</span>
+      </div>
+
+      <div class="page-header">
+        <h1>Tools & Skills Registry</h1>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-sm">Register Tool</button>
+          <button class="btn btn-primary btn-sm">+ Create Skill</button>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active">Tools</div>
+        <div class="tab">Skills</div>
+        <div class="tab">MCP Servers</div>
+        <div class="tab">Extensions</div>
+        <div class="tab">Auth & Tokens</div>
+      </div>
+
+      <!-- Tool Registry -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title">Registered Tools (14)</span>
+          <div class="flex gap-8">
+            <select class="filter-select">
+              <option>All Transports</option>
+              <option>Native</option>
+              <option>MCP</option>
+              <option>HTTP</option>
+              <option>Process</option>
+            </select>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Tool Name</th>
+                <th>Transport</th>
+                <th>Source Module</th>
+                <th>Timeout</th>
+                <th>Calls (24h)</th>
+                <th>Avg Duration</th>
+                <th>Error Rate</th>
+                <th>Agents</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="text-white">read_file</div>
+                  <div class="text-xs text-dimmed">Read file contents from workspace</div>
+                </td>
+                <td><span class="badge badge-accent">native</span></td>
+                <td class="mono text-muted">core</td>
+                <td class="mono">30s</td>
+                <td class="mono">1,247</td>
+                <td class="mono">0.12s</td>
+                <td class="mono" style="color:var(--status-online);">0.0%</td>
+                <td class="mono">6/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">write_file</div>
+                  <div class="text-xs text-dimmed">Write or update file in workspace</div>
+                </td>
+                <td><span class="badge badge-accent">native</span></td>
+                <td class="mono text-muted">core</td>
+                <td class="mono">30s</td>
+                <td class="mono">489</td>
+                <td class="mono">0.08s</td>
+                <td class="mono" style="color:var(--status-online);">0.0%</td>
+                <td class="mono">5/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">search_inventory</div>
+                  <div class="text-xs text-dimmed">Query inventory management system (ERP)</div>
+                </td>
+                <td><span class="badge badge-info">MCP</span></td>
+                <td class="mono text-muted">inventory-mcp</td>
+                <td class="mono">60s</td>
+                <td class="mono">867</td>
+                <td class="mono">0.89s</td>
+                <td class="mono" style="color:var(--status-online);">0.2%</td>
+                <td class="mono">6/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">query_vendors</div>
+                  <div class="text-xs text-dimmed">REST API to vendor management portal</div>
+                </td>
+                <td><span class="badge badge-warning">HTTP</span></td>
+                <td class="mono text-muted">vendor-api</td>
+                <td class="mono">30s</td>
+                <td class="mono">342</td>
+                <td class="mono">1.23s</td>
+                <td class="mono" style="color:var(--status-online);">0.5%</td>
+                <td class="mono">2/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">execute_python</div>
+                  <div class="text-xs text-dimmed">Sandboxed Python code execution</div>
+                </td>
+                <td><span class="badge badge-neutral">process</span></td>
+                <td class="mono text-muted">core</td>
+                <td class="mono">300s</td>
+                <td class="mono">156</td>
+                <td class="mono">4.2s</td>
+                <td class="mono" style="color:var(--status-warning);">1.2%</td>
+                <td class="mono">2/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">send_message</div>
+                  <div class="text-xs text-dimmed">Send message via ArcTeam messaging</div>
+                </td>
+                <td><span class="badge badge-accent">native</span></td>
+                <td class="mono text-muted">messaging</td>
+                <td class="mono">10s</td>
+                <td class="mono">1,089</td>
+                <td class="mono">0.05s</td>
+                <td class="mono" style="color:var(--status-online);">0.0%</td>
+                <td class="mono">6/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">create_task</div>
+                  <div class="text-xs text-dimmed">Create or update tasks in ArcTeam</div>
+                </td>
+                <td><span class="badge badge-accent">native</span></td>
+                <td class="mono text-muted">tasks</td>
+                <td class="mono">10s</td>
+                <td class="mono">234</td>
+                <td class="mono">0.04s</td>
+                <td class="mono" style="color:var(--status-online);">0.0%</td>
+                <td class="mono">6/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">update_kb</div>
+                  <div class="text-xs text-dimmed">Create or update knowledge base entries</div>
+                </td>
+                <td><span class="badge badge-accent">native</span></td>
+                <td class="mono text-muted">kb</td>
+                <td class="mono">30s</td>
+                <td class="mono">456</td>
+                <td class="mono">0.18s</td>
+                <td class="mono" style="color:var(--status-online);">0.0%</td>
+                <td class="mono">4/6</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="text-white">http_request</div>
+                  <div class="text-xs text-dimmed">General HTTP requests (sandboxed)</div>
+                </td>
+                <td><span class="badge badge-accent">native</span></td>
+                <td class="mono text-muted">core</td>
+                <td class="mono">30s</td>
+                <td class="mono">189</td>
+                <td class="mono">2.14s</td>
+                <td class="mono" style="color:var(--status-warning);">2.1%</td>
+                <td class="mono">3/6</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Skills -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title">Agent Skills</span>
+          <span class="text-xs text-dimmed">Loaded from SKILL.md files in workspace</span>
+        </div>
+        <div class="card-body">
+          <div class="grid-3" style="gap:12px;">
+            <div class="card" style="border-color:var(--accent);">
+              <div class="card-body" style="padding:12px;">
+                <div class="text-white font-bold mb-4">vendor-evaluation</div>
+                <div class="text-xs text-muted mb-8">Evaluate vendor compliance, pricing, and risk using DFARS and CMMC frameworks.</div>
+                <div class="flex gap-8">
+                  <span class="tag">procurement</span>
+                  <span class="tag">compliance</span>
+                </div>
+                <div class="text-xs text-dimmed mt-8">Used by: PROC-Alpha, COMP-Foxtrot</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body" style="padding:12px;">
+                <div class="text-white font-bold mb-4">inventory-forecasting</div>
+                <div class="text-xs text-muted mb-8">Predict stock levels, consumption rates, and optimal reorder points.</div>
+                <div class="flex gap-8">
+                  <span class="tag">inventory</span>
+                  <span class="tag">analytics</span>
+                </div>
+                <div class="text-xs text-dimmed mt-8">Used by: INV-Bravo</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body" style="padding:12px;">
+                <div class="text-white font-bold mb-4">materials-testing</div>
+                <div class="text-xs text-muted mb-8">Analyze tensile test results, compare against ASTM standards.</div>
+                <div class="flex gap-8">
+                  <span class="tag">quality</span>
+                  <span class="tag">testing</span>
+                </div>
+                <div class="text-xs text-dimmed mt-8">Used by: QC-Charlie</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body" style="padding:12px;">
+                <div class="text-white font-bold mb-4">route-optimization</div>
+                <div class="text-xs text-muted mb-8">Optimize shipping routes considering carriers, delays, and cost constraints.</div>
+                <div class="flex gap-8">
+                  <span class="tag">logistics</span>
+                  <span class="tag">optimization</span>
+                </div>
+                <div class="text-xs text-dimmed mt-8">Used by: LOG-Delta</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body" style="padding:12px;">
+                <div class="text-white font-bold mb-4">compliance-audit</div>
+                <div class="text-xs text-muted mb-8">Prepare and execute compliance audits for FedRAMP, NIST, CMMC.</div>
+                <div class="flex gap-8">
+                  <span class="tag">compliance</span>
+                  <span class="tag">audit</span>
+                </div>
+                <div class="text-xs text-dimmed mt-8">Used by: COMP-Foxtrot</div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-body" style="padding:12px;">
+                <div class="text-white font-bold mb-4">report-generation</div>
+                <div class="text-xs text-muted mb-8">Generate structured reports from data analysis and team findings.</div>
+                <div class="flex gap-8">
+                  <span class="tag">reporting</span>
+                  <span class="tag">all-agents</span>
+                </div>
+                <div class="text-xs text-dimmed mt-8">Used by: All agents</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Auth & Token Management -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Authentication & Token Management</span>
+          <span class="text-xs text-dimmed">Vault-backed, short-lived tokens only</span>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <table>
+            <thead>
+              <tr><th>Service</th><th>Auth Method</th><th>Status</th><th>Last Rotated</th><th>TTL</th><th>Agents</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-white">Vault (cascade.vault)</td>
+                <td class="mono text-muted">mTLS + Ed25519</td>
+                <td><span class="badge badge-online">connected</span></td>
+                <td class="text-muted">Auto-rotating</td>
+                <td class="mono">300s</td>
+                <td>All agents</td>
+              </tr>
+              <tr>
+                <td class="text-white">Anthropic API</td>
+                <td class="mono text-muted">Bearer Token (Vault)</td>
+                <td><span class="badge badge-online">active</span></td>
+                <td class="text-muted">2h ago</td>
+                <td class="mono">24h</td>
+                <td>PA, IB, LD, CF</td>
+              </tr>
+              <tr>
+                <td class="text-white">OpenAI API</td>
+                <td class="mono text-muted">Bearer Token (Vault)</td>
+                <td><span class="badge badge-online">active</span></td>
+                <td class="text-muted">4h ago</td>
+                <td class="mono">24h</td>
+                <td>QC</td>
+              </tr>
+              <tr>
+                <td class="text-white">Inventory ERP (MCP)</td>
+                <td class="mono text-muted">OAuth2 Client Credentials</td>
+                <td><span class="badge badge-online">active</span></td>
+                <td class="text-muted">1h ago</td>
+                <td class="mono">1h</td>
+                <td>All agents</td>
+              </tr>
+              <tr>
+                <td class="text-white">Vendor Portal API</td>
+                <td class="mono text-muted">API Key (Vault)</td>
+                <td><span class="badge badge-online">active</span></td>
+                <td class="text-muted">6h ago</td>
+                <td class="mono">12h</td>
+                <td>PA, CF</td>
+              </tr>
+              <tr>
+                <td class="text-white">NATS Message Bus</td>
+                <td class="mono text-muted">mTLS + NKey</td>
+                <td><span class="badge badge-online">connected</span></td>
+                <td class="text-muted">Startup</td>
+                <td class="mono">Session</td>
+                <td>All agents</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="assets/arc-shell.js"></script>
+  <script>ARC.renderShell('tools');</script>
+</body>
+</html>

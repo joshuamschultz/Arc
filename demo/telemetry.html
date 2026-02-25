@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — LLM Telemetry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <div class="breadcrumb">
+        <a href="index.html">Dashboard</a>
+        <span class="sep">/</span>
+        <span>LLM Telemetry</span>
+      </div>
+
+      <div class="page-header">
+        <h1>LLM Telemetry & Traces</h1>
+        <div class="page-header-actions">
+          <div class="pill-nav">
+            <span class="pill-nav-item active">Overview</span>
+            <span class="pill-nav-item">Traces</span>
+            <span class="pill-nav-item">Replay</span>
+            <span class="pill-nav-item">Cost</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Stats -->
+      <div class="grid-4 mb-20">
+        <div class="stat-card">
+          <div class="stat-card-label">LLM Calls (24h)</div>
+          <div class="stat-card-value">4,891</div>
+          <div class="stat-card-sub"><span class="stat-card-trend up">+12%</span> vs yesterday</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Total Tokens</div>
+          <div class="stat-card-value">8.2M</div>
+          <div class="stat-card-sub">5.1M in / 3.1M out</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Avg Latency</div>
+          <div class="stat-card-value">1.42s</div>
+          <div class="stat-card-sub">P95: 2.8s &middot; P99: 4.1s</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Total Cost (24h)</div>
+          <div class="stat-card-value">$42.18</div>
+          <div class="stat-card-sub">Anthropic: $34.60 &middot; OpenAI: $6.38 &middot; Ollama: $1.20</div>
+        </div>
+      </div>
+
+      <div class="grid-2 mb-20">
+        <!-- Token Usage Chart -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Token Volume (Hourly)</span>
+            <div class="pill-nav">
+              <span class="pill-nav-item active">24h</span>
+              <span class="pill-nav-item">7d</span>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="chart-area" id="token-volume" style="height:180px;"></div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;">
+              <span class="text-xs text-dimmed">00:00</span>
+              <span class="text-xs text-dimmed">06:00</span>
+              <span class="text-xs text-dimmed">12:00</span>
+              <span class="text-xs text-dimmed">18:00</span>
+              <span class="text-xs text-dimmed">Now</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cost by Provider -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Cost Breakdown by Provider</span>
+          </div>
+          <div class="card-body">
+            <div style="margin-bottom:16px;">
+              <div class="flex justify-between items-center mb-8">
+                <span class="text-sm text-white">Anthropic (Claude Sonnet)</span>
+                <span class="mono text-sm">$34.60 (82%)</span>
+              </div>
+              <div class="progress-bar" style="height:8px;"><div class="fill" style="width:82%;"></div></div>
+            </div>
+            <div style="margin-bottom:16px;">
+              <div class="flex justify-between items-center mb-8">
+                <span class="text-sm text-white">OpenAI (GPT-4o)</span>
+                <span class="mono text-sm">$6.38 (15%)</span>
+              </div>
+              <div class="progress-bar" style="height:8px;"><div class="fill" style="width:15%;background:var(--status-online);"></div></div>
+            </div>
+            <div>
+              <div class="flex justify-between items-center mb-8">
+                <span class="text-sm text-white">Ollama (Llama 3.1:70b)</span>
+                <span class="mono text-sm">$1.20 (3%)</span>
+              </div>
+              <div class="progress-bar" style="height:8px;"><div class="fill" style="width:3%;background:var(--status-warning);"></div></div>
+            </div>
+
+            <div style="margin-top:20px;padding:12px;background:var(--bg-deepest);border-radius:var(--radius-md);">
+              <div class="text-xs text-dimmed mb-8">Cost Per Agent (24h)</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                <div class="flex justify-between"><span class="text-xs">PROC-Alpha</span><span class="mono text-xs">$14.20</span></div>
+                <div class="flex justify-between"><span class="text-xs">COMP-Foxtrot</span><span class="mono text-xs">$11.90</span></div>
+                <div class="flex justify-between"><span class="text-xs">INV-Bravo</span><span class="mono text-xs">$9.80</span></div>
+                <div class="flex justify-between"><span class="text-xs">QC-Charlie</span><span class="mono text-xs">$8.40</span></div>
+                <div class="flex justify-between"><span class="text-xs">LOG-Delta</span><span class="mono text-xs">$7.60</span></div>
+                <div class="flex justify-between"><span class="text-xs">SCHED-Echo</span><span class="mono text-xs">$1.20</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Recent LLM Calls -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title">Recent LLM Calls</span>
+          <div class="flex gap-8">
+            <select class="filter-select">
+              <option>All Providers</option>
+              <option>Anthropic</option>
+              <option>OpenAI</option>
+              <option>Ollama</option>
+            </select>
+            <select class="filter-select">
+              <option>All Agents</option>
+              <option>PROC-Alpha</option>
+              <option>INV-Bravo</option>
+              <option>QC-Charlie</option>
+              <option>LOG-Delta</option>
+              <option>SCHED-Echo</option>
+              <option>COMP-Foxtrot</option>
+            </select>
+            <button class="btn btn-ghost btn-sm">Export</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:0;overflow-x:auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Trace ID</th>
+                <th>Agent</th>
+                <th>Model</th>
+                <th>Tokens In</th>
+                <th>Tokens Out</th>
+                <th>Latency</th>
+                <th>Cost</th>
+                <th>Status</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="mono text-accent">t-7f3a9c1e</td>
+                <td><span class="badge badge-accent">PROC-Alpha</span></td>
+                <td class="mono text-muted">claude-sonnet-4-20250514</td>
+                <td class="mono">2,847</td>
+                <td class="mono">412</td>
+                <td class="mono">1.23s</td>
+                <td class="mono">$0.0089</td>
+                <td><span class="badge badge-online">200</span></td>
+                <td class="text-muted">14:33:02</td>
+              </tr>
+              <tr>
+                <td class="mono text-accent">t-2d8b4f6a</td>
+                <td><span class="badge badge-accent">INV-Bravo</span></td>
+                <td class="mono text-muted">claude-sonnet-4-20250514</td>
+                <td class="mono">3,210</td>
+                <td class="mono">567</td>
+                <td class="mono">1.56s</td>
+                <td class="mono">$0.0112</td>
+                <td><span class="badge badge-online">200</span></td>
+                <td class="text-muted">14:31:45</td>
+              </tr>
+              <tr>
+                <td class="mono text-accent">t-9e1c5d3b</td>
+                <td><span class="badge badge-accent">QC-Charlie</span></td>
+                <td class="mono text-muted">gpt-4o</td>
+                <td class="mono">1,890</td>
+                <td class="mono">345</td>
+                <td class="mono">0.98s</td>
+                <td class="mono">$0.0067</td>
+                <td><span class="badge badge-online">200</span></td>
+                <td class="text-muted">14:30:11</td>
+              </tr>
+              <tr>
+                <td class="mono text-accent">t-4a6e8f2c</td>
+                <td><span class="badge badge-accent">LOG-Delta</span></td>
+                <td class="mono text-muted">claude-sonnet-4-20250514</td>
+                <td class="mono">4,120</td>
+                <td class="mono">623</td>
+                <td class="mono">2.14s</td>
+                <td class="mono">$0.0145</td>
+                <td><span class="badge badge-online">200</span></td>
+                <td class="text-muted">14:28:33</td>
+              </tr>
+              <tr>
+                <td class="mono text-accent">t-8e2i4j6f</td>
+                <td><span class="badge badge-accent">COMP-Foxtrot</span></td>
+                <td class="mono text-muted">claude-sonnet-4-20250514</td>
+                <td class="mono">5,670</td>
+                <td class="mono">890</td>
+                <td class="mono">3.21s</td>
+                <td class="mono">$0.0198</td>
+                <td><span class="badge badge-online">200</span></td>
+                <td class="text-muted">14:25:42</td>
+              </tr>
+              <tr>
+                <td class="mono text-accent">t-6c0g2h4d</td>
+                <td><span class="badge badge-accent">SCHED-Echo</span></td>
+                <td class="mono text-muted">llama3.1:70b</td>
+                <td class="mono">1,200</td>
+                <td class="mono">156</td>
+                <td class="mono">4.56s</td>
+                <td class="mono">$0.0008</td>
+                <td><span class="badge badge-online">200</span></td>
+                <td class="text-muted">14:22:00</td>
+              </tr>
+              <tr style="opacity:0.6;">
+                <td class="mono" style="color:var(--status-error);">t-err-a2b4</td>
+                <td><span class="badge badge-accent">PROC-Alpha</span></td>
+                <td class="mono text-muted">claude-sonnet-4-20250514</td>
+                <td class="mono">2,100</td>
+                <td class="mono">0</td>
+                <td class="mono">30.00s</td>
+                <td class="mono">$0.0063</td>
+                <td><span class="badge badge-error">timeout</span></td>
+                <td class="text-muted">13:45:12</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Trace Detail (Expanded) -->
+      <div class="card mb-20">
+        <div class="card-header">
+          <span class="card-title">Trace Detail: t-7f3a9c1e</span>
+          <div class="flex gap-8">
+            <button class="btn btn-secondary btn-sm">Replay Call</button>
+            <button class="btn btn-ghost btn-sm">Export JSON</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="grid-2" style="gap:20px;">
+            <div>
+              <div class="text-xs text-dimmed mb-8">Request</div>
+              <div class="code-block" style="max-height:200px;overflow-y:auto;">
+{
+  "model": "anthropic/claude-sonnet-4-20250514",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "system": "[identity.md + context.md + skills injection]",
+  "messages": [
+    {"role": "user", "content": "Synthesize team input..."},
+    {"role": "assistant", "content": "[prior turn]"},
+    {"role": "user", "content": "[tool results]"}
+  ],
+  "tools": [8 tools registered],
+  "metadata": {
+    "agent_did": "did:arc:cascade:procurement/7f3a9c1e",
+    "session_id": "abc-7f3a",
+    "turn_number": 23,
+    "trace_id": "t-7f3a9c1e"
+  }
+}
+              </div>
+            </div>
+            <div>
+              <div class="text-xs text-dimmed mb-8">Response</div>
+              <div class="code-block" style="max-height:200px;overflow-y:auto;">
+{
+  "id": "msg_01XqYz...",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "name": "create_task",
+      "input": {
+        "title": "Request mill certs from Acme",
+        "assigned_to": ["agent://procurement-01"],
+        "priority": "critical",
+        "due": "2026-02-24"
+      }
+    },
+    {
+      "type": "text",
+      "text": "Synthesizing the team's input..."
+    }
+  ],
+  "usage": {
+    "input_tokens": 2847,
+    "output_tokens": 412
+  },
+  "stop_reason": "end_turn"
+}
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:16px;">
+            <div class="text-xs text-dimmed mb-8">Span Timeline</div>
+            <div style="display:flex;align-items:center;gap:4px;height:24px;background:var(--bg-deepest);border-radius:var(--radius-sm);padding:0 8px;">
+              <div style="width:5%;height:12px;background:var(--status-info);border-radius:2px;" title="System prompt assembly: 62ms"></div>
+              <div style="width:8%;height:12px;background:var(--accent);border-radius:2px;" title="Token estimation: 98ms"></div>
+              <div style="width:60%;height:12px;background:var(--status-online);border-radius:2px;" title="LLM call: 742ms"></div>
+              <div style="width:15%;height:12px;background:var(--status-warning);border-radius:2px;" title="Tool execution: 186ms"></div>
+              <div style="width:12%;height:12px;background:var(--text-dimmed);border-radius:2px;" title="Post-processing: 142ms"></div>
+            </div>
+            <div style="display:flex;gap:16px;margin-top:8px;">
+              <span class="text-xs"><span style="color:var(--status-info);">&#9632;</span> Prompt (62ms)</span>
+              <span class="text-xs"><span style="color:var(--accent);">&#9632;</span> Tokens (98ms)</span>
+              <span class="text-xs"><span style="color:var(--status-online);">&#9632;</span> LLM (742ms)</span>
+              <span class="text-xs"><span style="color:var(--status-warning);">&#9632;</span> Tool (186ms)</span>
+              <span class="text-xs"><span style="color:var(--text-dimmed);">&#9632;</span> Post (142ms)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Circuit Breaker Status -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Provider Circuit Breakers</span>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <table>
+            <thead>
+              <tr><th>Provider</th><th>State</th><th>Success Rate</th><th>Avg Latency</th><th>Failures (1h)</th><th>Last Failure</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-white">Anthropic (claude-sonnet-4-20250514)</td>
+                <td><span class="badge badge-online">Closed</span></td>
+                <td class="mono">99.8%</td>
+                <td class="mono">1.42s</td>
+                <td class="mono">1</td>
+                <td class="text-muted">1h ago (timeout)</td>
+              </tr>
+              <tr>
+                <td class="text-white">OpenAI (gpt-4o)</td>
+                <td><span class="badge badge-online">Closed</span></td>
+                <td class="mono">99.5%</td>
+                <td class="mono">0.98s</td>
+                <td class="mono">0</td>
+                <td class="text-muted">N/A</td>
+              </tr>
+              <tr>
+                <td class="text-white">Ollama (llama3.1:70b)</td>
+                <td><span class="badge badge-online">Closed</span></td>
+                <td class="mono">100%</td>
+                <td class="mono">4.56s</td>
+                <td class="mono">0</td>
+                <td class="text-muted">N/A</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="assets/arc-shell.js"></script>
+  <script>
+    ARC.renderShell('telemetry');
+    ARC.renderChartBars(document.getElementById('token-volume'), 48, 160);
+  </script>
+</body>
+</html>

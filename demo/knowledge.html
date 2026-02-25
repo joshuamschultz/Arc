@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — Knowledge Base</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+  <style>
+    .graph-container { background: var(--bg-deepest); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); padding: 24px; position: relative; min-height: 440px; overflow: hidden; }
+    .graph-node { position: absolute; display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: var(--radius-md); font-size: 12px; color: var(--text-secondary); cursor: pointer; transition: all 0.3s; z-index: 2; }
+    .graph-node:hover { border-color: var(--accent); background: var(--accent-glow); transform: scale(1.05); }
+    .graph-node.primary { border-color: var(--accent); box-shadow: 0 0 12px rgba(0,111,255,0.2); }
+    .graph-node .node-type { font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+    .graph-node.new-node { opacity: 0; transform: scale(0.5); }
+    .graph-node.new-node.appear { opacity: 1; transform: scale(1); }
+    .graph-node.pulse { animation: nodePulse 1s ease 3; }
+    @keyframes nodePulse {
+      0%, 100% { box-shadow: 0 0 12px rgba(0,111,255,0.2); }
+      50% { box-shadow: 0 0 24px rgba(0,111,255,0.5); }
+    }
+
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 500; display: none; align-items: center; justify-content: center; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--bg-primary); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); width: 600px; max-height: 80vh; overflow-y: auto; animation: slideUp 0.25s ease; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border-primary); }
+    .modal-header h2 { font-size: 16px; font-weight: 700; color: var(--text-white); display: flex; align-items: center; gap: 10px; }
+    .modal-close { background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius-sm); }
+    .modal-close:hover { background: var(--bg-tertiary); color: var(--text-white); }
+    .modal-body { padding: 20px; }
+    .modal-section { margin-bottom: 16px; }
+    .modal-section-title { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+
+    /* Demo conversation panel */
+    .demo-panel { background: var(--bg-deepest); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); padding: 16px; display: none; }
+    .demo-panel.open { display: block; }
+    .demo-msg { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; opacity: 0; transform: translateY(8px); transition: all 0.3s ease; }
+    .demo-msg.visible { opacity: 1; transform: translateY(0); }
+    .demo-avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--text-white); flex-shrink: 0; }
+    .demo-bubble { background: var(--bg-secondary); border: 1px solid var(--border-primary); border-radius: 2px 8px 8px 8px; padding: 8px 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+    .demo-bubble .ref { color: var(--accent); font-family: var(--font-mono); font-size: 11px; }
+    .demo-sender { font-size: 11px; font-weight: 600; color: var(--text-white); margin-bottom: 2px; }
+    .demo-typing { display: flex; gap: 4px; padding: 8px 12px; }
+    .demo-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--text-dimmed); animation: typingDot 1.4s infinite; }
+    .demo-typing span:nth-child(2) { animation-delay: 0.2s; }
+    .demo-typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typingDot {
+      0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+      30% { opacity: 1; transform: translateY(-4px); }
+    }
+
+    /* KB event toast */
+    .kb-toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg-secondary); border: 1px solid var(--accent); border-radius: var(--radius-md); padding: 12px 16px; z-index: 600; font-size: 12px; color: var(--text-secondary); display: none; animation: slideUp 0.3s ease; box-shadow: 0 4px 20px rgba(0,0,0,0.4); max-width: 340px; }
+    .kb-toast.visible { display: block; }
+    .kb-toast-title { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+
+    /* New items highlight */
+    .new-item { background: rgba(0,111,255,0.06); border-left: 2px solid var(--accent); }
+    .new-item td:first-child::before { content: "NEW "; color: var(--accent); font-size: 10px; font-weight: 700; }
+
+    /* Search results */
+    .search-result { padding: 12px; background: var(--bg-deepest); border: 1px solid var(--border-primary); border-radius: var(--radius-md); margin-bottom: 8px; cursor: pointer; transition: all 0.2s; }
+    .search-result:hover { border-color: var(--accent); background: var(--accent-glow); }
+    .search-result-path { font-family: var(--font-mono); font-size: 11px; color: var(--accent); margin-bottom: 4px; }
+    .search-result-excerpt { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    .search-result-excerpt mark { background: var(--accent-fill); color: var(--accent); padding: 0 2px; border-radius: 2px; }
+
+    /* Relationship row */
+    .rel-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; border-bottom: 1px solid var(--border-primary); }
+    .rel-row:last-child { border-bottom: none; }
+    .rel-arrow { color: var(--text-dimmed); font-family: var(--font-mono); }
+    .rel-label { color: var(--text-muted); font-size: 11px; }
+    .rel-target { color: var(--accent); font-family: var(--font-mono); font-size: 11px; }
+
+    /* Note card */
+    .note-card { background: var(--bg-deepest); border: 1px solid var(--border-primary); border-radius: var(--radius-sm); padding: 8px 10px; margin-bottom: 6px; font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    .note-card .note-meta { font-size: 10px; color: var(--text-dimmed); margin-top: 4px; display: flex; align-items: center; gap: 8px; }
+    .note-card.new-note { border-left: 2px solid var(--accent); background: rgba(0,111,255,0.04); }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <div class="breadcrumb">
+        <a href="index.html">Dashboard</a>
+        <span class="sep">/</span>
+        <span>Knowledge Base</span>
+      </div>
+
+      <div class="page-header">
+        <h1>Knowledge Base & Entity Graph</h1>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-sm" onclick="startDemo()" id="demo-btn">Demo: Simulate Conversation</button>
+          <button class="btn btn-primary btn-sm">+ Create Entry</button>
+        </div>
+      </div>
+
+      <div class="tabs" id="kb-tabs">
+        <div class="tab active" data-tab="graph">Entity Graph</div>
+        <div class="tab" data-tab="entries">Entries</div>
+        <div class="tab" data-tab="memory">Team Memory</div>
+        <div class="tab" data-tab="search">Search</div>
+      </div>
+
+      <!-- Stats -->
+      <div class="grid-4 mb-20">
+        <div class="stat-card">
+          <div class="stat-card-label">KB Entries</div>
+          <div class="stat-card-value" id="stat-entries">147</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Entities</div>
+          <div class="stat-card-value" id="stat-entities">89</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Links</div>
+          <div class="stat-card-value" id="stat-links">312</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Memory Index</div>
+          <div class="stat-card-value" style="color:var(--status-online);">Healthy</div>
+        </div>
+      </div>
+
+      <!-- ============ TAB: Entity Graph ============ -->
+      <div class="tab-panel active" id="tab-graph">
+
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Entity Relationship Graph</span>
+            <div class="flex gap-8">
+              <select class="filter-select">
+                <option>All Types</option>
+                <option>Vendors</option>
+                <option>Materials</option>
+                <option>Policies</option>
+                <option>Decisions</option>
+              </select>
+              <input type="text" class="filter-input" placeholder="Filter entities..." style="width:180px;" />
+            </div>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <div class="graph-container" id="entity-graph">
+              <!-- SVG Lines -->
+              <svg id="graph-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:1;">
+                <line x1="200" y1="60" x2="420" y2="120" stroke="#333543" stroke-width="1" />
+                <line x1="200" y1="60" x2="100" y2="180" stroke="#333543" stroke-width="1" />
+                <line x1="200" y1="60" x2="380" y2="240" stroke="#333543" stroke-width="1" />
+                <line x1="420" y1="120" x2="600" y2="60" stroke="#333543" stroke-width="1" />
+                <line x1="420" y1="120" x2="620" y2="180" stroke="#333543" stroke-width="1" />
+                <line x1="100" y1="180" x2="250" y2="300" stroke="#333543" stroke-width="1" />
+                <line x1="380" y1="240" x2="250" y2="300" stroke="#333543" stroke-width="1" />
+                <line x1="380" y1="240" x2="550" y2="320" stroke="#333543" stroke-width="1" />
+                <line x1="600" y1="60" x2="750" y2="140" stroke="#333543" stroke-width="1" />
+                <line x1="620" y1="180" x2="750" y2="140" stroke="#333543" stroke-width="1" />
+                <line x1="250" y1="300" x2="150" y2="360" stroke="#333543" stroke-width="1" />
+                <line x1="550" y1="320" x2="700" y2="350" stroke="#333543" stroke-width="1" />
+                <!-- Highlight link -->
+                <line x1="200" y1="60" x2="420" y2="120" stroke="#006fff" stroke-width="2" opacity="0.4" />
+              </svg>
+
+              <!-- Nodes -->
+              <div class="graph-node primary" style="left:140px;top:40px;" onclick="openEntityModal('acme-steel')" id="node-acme">
+                <span class="node-type badge badge-accent">vendor</span>
+                Acme Steel Corp
+              </div>
+              <div class="graph-node" style="left:360px;top:100px;" onclick="openEntityModal('titanium')">
+                <span class="node-type badge badge-info">material</span>
+                Titanium T-6Al-4V
+              </div>
+              <div class="graph-node" style="left:40px;top:160px;" onclick="openEntityModal('q2-vendor')">
+                <span class="node-type badge badge-online">decision</span>
+                Q2 Vendor Selection
+              </div>
+              <div class="graph-node" style="left:540px;top:40px;" onclick="openEntityModal('astm-e8')">
+                <span class="node-type badge badge-neutral">process</span>
+                ASTM E8 Testing
+              </div>
+              <div class="graph-node" style="left:560px;top:160px;" onclick="openEntityModal('dfars')">
+                <span class="node-type badge badge-warning">policy</span>
+                DFARS 252.225-7009
+              </div>
+              <div class="graph-node" style="left:320px;top:220px;" onclick="openEntityModal('pacific-freight')">
+                <span class="node-type badge badge-accent">vendor</span>
+                Pacific Freight
+              </div>
+              <div class="graph-node" style="left:190px;top:280px;" onclick="openEntityModal('stainless-316l')">
+                <span class="node-type badge badge-info">material</span>
+                Stainless 316L
+              </div>
+              <div class="graph-node" style="left:490px;top:300px;" onclick="openEntityModal('route-ec22')">
+                <span class="node-type badge badge-neutral">process</span>
+                Route EC-22
+              </div>
+              <div class="graph-node" style="left:690px;top:120px;" onclick="openEntityModal('cmmc')">
+                <span class="node-type badge badge-warning">policy</span>
+                CMMC Level 2
+              </div>
+              <div class="graph-node" style="left:90px;top:340px;" onclick="openEntityModal('carbon-fiber')">
+                <span class="node-type badge badge-online">decision</span>
+                Carbon Fiber Sourcing
+              </div>
+              <div class="graph-node" style="left:640px;top:330px;" onclick="openEntityModal('route-wc19')">
+                <span class="node-type badge badge-neutral">process</span>
+                Route WC-19
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Demo conversation panel (hidden by default) -->
+        <div class="demo-panel" id="demo-panel">
+          <div class="flex items-center justify-between mb-12">
+            <span class="card-title">Live Agent Conversation</span>
+            <span class="live-dot">LIVE</span>
+          </div>
+          <div id="demo-messages"></div>
+        </div>
+
+      </div>
+
+      <!-- ============ TAB: Entries ============ -->
+      <div class="tab-panel" id="tab-entries">
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">All KB Entries</span>
+            <div class="flex gap-8">
+              <select class="filter-select">
+                <option>All Types</option>
+                <option>Entity</option>
+                <option>Reference</option>
+                <option>Decision</option>
+                <option>Procedure</option>
+              </select>
+              <select class="filter-select">
+                <option>All Classifications</option>
+                <option>UNCLASS</option>
+                <option>CUI</option>
+                <option>SECRET</option>
+              </select>
+              <input type="text" class="filter-input" placeholder="Search entries..." style="width:180px;" />
+            </div>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <table>
+              <thead>
+                <tr><th>Path</th><th>Type</th><th>Title</th><th>Created By</th><th>Tags</th><th>Links</th><th>Class.</th><th>Updated</th></tr>
+              </thead>
+              <tbody id="entries-tbody">
+                <tr onclick="openEntityModal('acme-steel')" style="cursor:pointer;">
+                  <td class="mono text-accent">kb://vendors/acme-steel</td>
+                  <td><span class="tag">entity</span></td>
+                  <td class="text-white">Acme Steel Corp</td>
+                  <td><span class="badge badge-accent">PROC-Alpha</span></td>
+                  <td><span class="tag">vendor</span> <span class="tag">titanium</span></td>
+                  <td class="mono">8 links, 5 backlinks</td>
+                  <td><span class="badge badge-neutral">UNCLASS</span></td>
+                  <td class="text-dimmed text-xs">2m ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://materials/titanium-t6al4v</td>
+                  <td><span class="tag">entity</span></td>
+                  <td class="text-white">Titanium T-6Al-4V Alloy</td>
+                  <td><span class="badge badge-accent">INV-Bravo</span></td>
+                  <td><span class="tag">material</span> <span class="tag">aerospace</span></td>
+                  <td class="mono">6 links, 4 backlinks</td>
+                  <td><span class="badge badge-neutral">UNCLASS</span></td>
+                  <td class="text-dimmed text-xs">14m ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://policies/vendor-selection</td>
+                  <td><span class="tag">reference</span></td>
+                  <td class="text-white">Vendor Selection Policy (DFARS)</td>
+                  <td><span class="badge badge-accent">COMP-Foxtrot</span></td>
+                  <td><span class="tag">policy</span> <span class="tag">compliance</span></td>
+                  <td class="mono">12 links, 7 backlinks</td>
+                  <td><span class="badge badge-info">CUI</span></td>
+                  <td class="text-dimmed text-xs">1h ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://decisions/q2-vendor-2026</td>
+                  <td><span class="tag">decision</span></td>
+                  <td class="text-white">Q2 2026 Vendor Selection Decision</td>
+                  <td><span class="badge badge-accent">PROC-Alpha</span></td>
+                  <td><span class="tag">decision</span> <span class="tag">q2-2026</span></td>
+                  <td class="mono">5 links, 3 backlinks</td>
+                  <td><span class="badge badge-neutral">UNCLASS</span></td>
+                  <td class="text-dimmed text-xs">2h ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://logistics/routes</td>
+                  <td><span class="tag">reference</span></td>
+                  <td class="text-white">Active Shipping Routes</td>
+                  <td><span class="badge badge-accent">LOG-Delta</span></td>
+                  <td><span class="tag">logistics</span> <span class="tag">routes</span></td>
+                  <td class="mono">4 links, 2 backlinks</td>
+                  <td><span class="badge badge-neutral">UNCLASS</span></td>
+                  <td class="text-dimmed text-xs">3h ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://processes/astm-e8-testing</td>
+                  <td><span class="tag">procedure</span></td>
+                  <td class="text-white">ASTM E8 Tensile Testing Protocol</td>
+                  <td><span class="badge badge-accent">QC-Charlie</span></td>
+                  <td><span class="tag">testing</span> <span class="tag">quality</span></td>
+                  <td class="mono">6 links, 3 backlinks</td>
+                  <td><span class="badge badge-neutral">UNCLASS</span></td>
+                  <td class="text-dimmed text-xs">5h ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://materials/stainless-316l</td>
+                  <td><span class="tag">entity</span></td>
+                  <td class="text-white">Stainless Steel 316L</td>
+                  <td><span class="badge badge-accent">INV-Bravo</span></td>
+                  <td><span class="tag">material</span> <span class="tag">corrosion-resistant</span></td>
+                  <td class="mono">4 links, 2 backlinks</td>
+                  <td><span class="badge badge-neutral">UNCLASS</span></td>
+                  <td class="text-dimmed text-xs">8h ago</td>
+                </tr>
+                <tr>
+                  <td class="mono text-accent">kb://policies/cmmc-level2</td>
+                  <td><span class="tag">reference</span></td>
+                  <td class="text-white">CMMC Level 2 Requirements</td>
+                  <td><span class="badge badge-accent">COMP-Foxtrot</span></td>
+                  <td><span class="tag">compliance</span> <span class="tag">cmmc</span></td>
+                  <td class="mono">9 links, 5 backlinks</td>
+                  <td><span class="badge badge-info">CUI</span></td>
+                  <td class="text-dimmed text-xs">1d ago</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card-footer flex justify-between items-center">
+            <span>Showing 8 of 147 entries</span>
+            <div class="flex gap-8">
+              <button class="btn btn-ghost btn-sm">Previous</button>
+              <button class="btn btn-ghost btn-sm">Next</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ TAB: Team Memory ============ -->
+      <div class="tab-panel" id="tab-memory">
+        <div class="grid-2 mb-20">
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Memory Search</span>
+              <span class="text-xs text-dimmed">BM25 + wiki-link graph traversal</span>
+            </div>
+            <div class="card-body">
+              <div class="flex gap-8 mb-16">
+                <input type="text" class="filter-input" placeholder="Search team memory..." style="flex:1;" value="titanium vendor pricing" />
+                <button class="btn btn-primary btn-sm">Search</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <div class="search-result" onclick="openEntityModal('acme-steel')">
+                  <div class="flex items-center gap-8 mb-4">
+                    <span class="search-result-path">kb://vendors/acme-steel</span>
+                    <span class="badge badge-online" style="font-size:10px;">score: 0.94</span>
+                    <span class="text-xs text-dimmed">0 hops</span>
+                  </div>
+                  <div class="search-result-excerpt">...revised Q2 pricing confirmed. Titanium T-6Al-4V at <mark>$847/kg</mark> (down 12% from $962). Historical conformance rate 99.2% across 847 shipments...</div>
+                </div>
+                <div class="search-result">
+                  <div class="flex items-center gap-8 mb-4">
+                    <span class="search-result-path">kb://materials/titanium-t6al4v</span>
+                    <span class="badge badge-info" style="font-size:10px;">score: 0.87</span>
+                    <span class="text-xs text-dimmed">1 hop</span>
+                  </div>
+                  <div class="search-result-excerpt">...current stock at 23% capacity (3,450 kg). Consumption rate ~180 kg/day. Safety threshold 25%. Yield strength spec: <mark>880 MPa</mark> minimum per ASTM...</div>
+                </div>
+                <div class="search-result">
+                  <div class="flex items-center gap-8 mb-4">
+                    <span class="search-result-path">kb://decisions/q2-vendor-2026</span>
+                    <span class="badge badge-info" style="font-size:10px;">score: 0.72</span>
+                    <span class="text-xs text-dimmed">2 hops</span>
+                  </div>
+                  <div class="search-result-excerpt">...conditional PO pending CMMC renewal and third-party testing. Split delivery: 10K to main, 5K to Reno. Target submission <mark>March 3</mark>...</div>
+                </div>
+                <div class="search-result">
+                  <div class="flex items-center gap-8 mb-4">
+                    <span class="search-result-path">kb://policies/vendor-selection</span>
+                    <span class="badge badge-neutral" style="font-size:10px;">score: 0.58</span>
+                    <span class="text-xs text-dimmed">2 hops</span>
+                  </div>
+                  <div class="search-result-excerpt">...DFARS 252.225-7009 requires domestic sourcing for titanium alloys in defense contracts. Waivers available for <mark>allied nation</mark> suppliers with CMMC...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Memory Statistics</span>
+            </div>
+            <div class="card-body">
+              <div class="kv-grid">
+                <div class="kv-row"><div class="kv-key">Index Type</div><div class="kv-value">BM25 + Vector (384d)</div></div>
+                <div class="kv-row"><div class="kv-key">Documents</div><div class="kv-value">147</div></div>
+                <div class="kv-row"><div class="kv-key">Wiki-Links</div><div class="kv-value">312 (avg 2.1/doc)</div></div>
+                <div class="kv-row"><div class="kv-key">Entities Tracked</div><div class="kv-value">89</div></div>
+                <div class="kv-row"><div class="kv-key">Last Reindex</div><div class="kv-value">4m ago</div></div>
+                <div class="kv-row"><div class="kv-key">Avg Query Time</div><div class="kv-value">23ms</div></div>
+                <div class="kv-row"><div class="kv-key">Storage</div><div class="kv-value">14.2 MB</div></div>
+                <div class="kv-row"><div class="kv-key">Embedding Model</div><div class="kv-value">all-MiniLM-L6-v2</div></div>
+              </div>
+
+              <div class="mt-16">
+                <div class="modal-section-title mb-8">Recent Memory Events</div>
+                <div class="timeline">
+                  <div class="timeline-item success">
+                    <div class="timeline-time">2m ago</div>
+                    <div class="timeline-text">Entity promoted: Acme Steel pricing update written to long-term memory by PROC-Alpha</div>
+                  </div>
+                  <div class="timeline-item">
+                    <div class="timeline-time">14m ago</div>
+                    <div class="timeline-text">Consolidation: 3 duplicate titanium entries merged, 2 backlinks updated</div>
+                  </div>
+                  <div class="timeline-item">
+                    <div class="timeline-time">28m ago</div>
+                    <div class="timeline-text">New entity extracted: "Route EC-22" linked from logistics/routes</div>
+                  </div>
+                  <div class="timeline-item warning">
+                    <div class="timeline-time">1h ago</div>
+                    <div class="timeline-text">Conflict resolved: QC-Charlie and PROC-Alpha had divergent conformance figures; latest lab cert used</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ TAB: Search ============ -->
+      <div class="tab-panel" id="tab-search">
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Semantic Search</span>
+            <span class="text-xs text-dimmed">Natural language queries over the full knowledge graph</span>
+          </div>
+          <div class="card-body">
+            <div class="flex gap-8 mb-16">
+              <input type="text" class="filter-input" id="semantic-input" placeholder="Ask anything about the knowledge base..." style="flex:1;padding:10px 14px;font-size:13px;" value="Which vendors can supply aerospace-grade titanium and are DFARS compliant?" />
+              <select class="filter-select" style="min-width:120px;">
+                <option>All Sources</option>
+                <option>Entities</option>
+                <option>Decisions</option>
+                <option>Policies</option>
+                <option>Procedures</option>
+              </select>
+              <button class="btn btn-primary">Search</button>
+            </div>
+
+            <div class="mb-12 text-xs text-dimmed">4 results in 47ms (semantic + graph traversal)</div>
+
+            <div class="search-result" onclick="openEntityModal('acme-steel')">
+              <div class="flex items-center gap-8 mb-4">
+                <span class="search-result-path">kb://vendors/acme-steel</span>
+                <span class="badge badge-online" style="font-size:10px;">relevance: 0.96</span>
+                <span class="tag" style="font-size:10px;">vendor</span>
+              </div>
+              <div class="search-result-excerpt"><strong class="text-white">Acme Steel Corp</strong> — Primary titanium supplier. <mark>DFARS compliant</mark> (verified Feb 2026). Supplies <mark>aerospace-grade Titanium T-6Al-4V</mark> at $847/kg. Conformance rate: 99.2% across 847 shipments. CMMC Level 2 certification expires April 2026.</div>
+              <div class="flex gap-8 mt-8">
+                <span class="tag">titanium</span>
+                <span class="tag">aerospace</span>
+                <span class="tag">dfars</span>
+                <span class="tag">domestic</span>
+              </div>
+            </div>
+
+            <div class="search-result">
+              <div class="flex items-center gap-8 mb-4">
+                <span class="search-result-path">kb://policies/vendor-selection</span>
+                <span class="badge badge-info" style="font-size:10px;">relevance: 0.82</span>
+                <span class="tag" style="font-size:10px;">policy</span>
+              </div>
+              <div class="search-result-excerpt"><strong class="text-white">Vendor Selection Policy (DFARS)</strong> — DFARS 252.225-7009 requires <mark>domestic sourcing for titanium</mark> alloys in defense contracts. Allied nation waiver available with CMMC Level 2+ certification and third-party tensile testing verification.</div>
+              <div class="flex gap-8 mt-8">
+                <span class="tag">compliance</span>
+                <span class="tag">dfars</span>
+                <span class="tag">policy</span>
+              </div>
+            </div>
+
+            <div class="search-result">
+              <div class="flex items-center gap-8 mb-4">
+                <span class="search-result-path">kb://materials/titanium-t6al4v</span>
+                <span class="badge badge-info" style="font-size:10px;">relevance: 0.78</span>
+                <span class="tag" style="font-size:10px;">material</span>
+              </div>
+              <div class="search-result-excerpt"><strong class="text-white">Titanium T-6Al-4V Alloy</strong> — <mark>Aerospace-grade</mark> alloy. Yield strength: 880 MPa min (ASTM E8). Current stock at 23% (3,450 kg). Two approved suppliers: Acme Steel Corp (primary), one alternate pending evaluation.</div>
+              <div class="flex gap-8 mt-8">
+                <span class="tag">material</span>
+                <span class="tag">aerospace</span>
+                <span class="tag">titanium</span>
+              </div>
+            </div>
+
+            <div class="search-result">
+              <div class="flex items-center gap-8 mb-4">
+                <span class="search-result-path">kb://decisions/q2-vendor-2026</span>
+                <span class="badge badge-neutral" style="font-size:10px;">relevance: 0.64</span>
+                <span class="tag" style="font-size:10px;">decision</span>
+              </div>
+              <div class="search-result-excerpt"><strong class="text-white">Q2 2026 Vendor Selection Decision</strong> — Conditional PO for Acme Steel pending CMMC renewal and ASTM E8 third-party verification. Split delivery: 10K kg to main warehouse, 5K kg to Reno facility. Alternate supplier evaluation initiated.</div>
+              <div class="flex gap-8 mt-8">
+                <span class="tag">decision</span>
+                <span class="tag">q2-2026</span>
+                <span class="tag">procurement</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ============ ENTITY MODAL ============ -->
+  <div class="modal-overlay" id="entity-modal" onclick="if(event.target===this)closeModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">
+          <span class="badge badge-accent" id="modal-type-badge">vendor</span>
+          <span id="modal-name">Entity Name</span>
+        </h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notifications -->
+  <div class="kb-toast" id="kb-toast">
+    <div class="kb-toast-title" id="toast-title">KB Updated</div>
+    <div id="toast-body"></div>
+  </div>
+
+  <script src="assets/arc-shell.js"></script>
+  <script>
+    ARC.renderShell('knowledge');
+
+    // ---- Tab Switching ----
+    document.querySelectorAll('#kb-tabs .tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('#kb-tabs .tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // ---- State ----
+    let demoRan = false;
+
+    // ---- Entity Data ----
+    const entities = {
+      'acme-steel': {
+        name: 'Acme Steel Corp',
+        type: 'vendor',
+        typeBadge: 'badge-accent',
+        path: 'kb://vendors/acme-steel',
+        created: 'PROC-Alpha',
+        createdDate: '2026-02-18 09:14:22 UTC',
+        classification: 'UNCLASS',
+        summary: 'Primary domestic titanium supplier for Cascade Manufacturing. Headquartered in Pittsburgh, PA. Specializes in aerospace-grade alloys with 15+ years of defense contract history.',
+        fields: [
+          ['HQ', 'Pittsburgh, PA'],
+          ['DUNS', '847291036'],
+          ['CAGE Code', '5K4R7'],
+          ['Annual Revenue', '$142M (2025)'],
+          ['CMMC Status', 'Level 2 (expires Apr 2026)'],
+          ['Conformance Rate', '99.2% (847 shipments)'],
+          ['Current Price', 'Ti T-6Al-4V: $847/kg'],
+          ['Lead Time', '14-21 business days']
+        ],
+        relationships: [
+          { arrow: 'supplies', target: 'kb://materials/titanium-t6al4v', label: 'Primary supplier' },
+          { arrow: 'subject_of', target: 'kb://decisions/q2-vendor-2026', label: 'Q2 vendor decision' },
+          { arrow: 'compliant_with', target: 'kb://policies/vendor-selection', label: 'DFARS compliant' },
+          { arrow: 'tested_by', target: 'kb://processes/astm-e8-testing', label: 'Tensile verification' },
+          { arrow: 'certified', target: 'kb://policies/cmmc-level2', label: 'CMMC Level 2' },
+          { arrow: 'ships_via', target: 'kb://vendors/pacific-freight', label: 'Freight partner' }
+        ],
+        notes: [
+          { text: 'Revised Q2 pricing confirmed: $847/kg (down 12% from $962). Volume discount kicks in at 5,000 kg.', agent: 'PROC-Alpha', time: '2m ago' },
+          { text: 'Historical conformance rate verified against lab records. 847 shipments, 7 minor NCRs (all resolved within SLA).', agent: 'QC-Charlie', time: '45m ago' },
+          { text: 'CMMC Level 2 renewal application submitted Jan 2026. Renewal expected before expiry.', agent: 'COMP-Foxtrot', time: '2d ago' }
+        ],
+        tags: ['vendor', 'titanium', 'aerospace', 'domestic', 'dfars']
+      },
+      'node-toray': {
+        name: 'Toray Industries',
+        type: 'vendor',
+        typeBadge: 'badge-accent',
+        path: 'kb://vendors/toray-industries',
+        created: 'PROC-Alpha',
+        createdDate: '2026-02-24 14:35:07 UTC',
+        classification: 'UNCLASS',
+        summary: 'Japanese multinational specializing in advanced materials including carbon-fiber composites and carbon-fiber reinforced titanium matrices. Potential alternate supplier for the composite airframe program. Allied-nation supplier with ITAR registration.',
+        fields: [
+          ['HQ', 'Tokyo, Japan (US: New York, NY)'],
+          ['DUNS', '621478390'],
+          ['CAGE Code', '8M2T3'],
+          ['Annual Revenue', '$19.4B (2025)'],
+          ['CMMC Status', 'Level 1 (Level 2 in progress)'],
+          ['Conformance Rate', 'Pending — no shipments yet'],
+          ['Est. Price', 'CF-Ti composite: ~$1,240/kg'],
+          ['Lead Time', '28-42 business days (intl)']
+        ],
+        relationships: [
+          { arrow: 'alternate_for', target: 'kb://vendors/acme-steel', label: 'Alternate vendor candidate' },
+          { arrow: 'supplies', target: 'kb://materials/cf-titanium-composite', label: 'CF-Ti composite (pending eval)' },
+          { arrow: 'related_to', target: 'kb://decisions/q2-vendor-2026', label: 'Under evaluation' },
+          { arrow: 'linked_from', target: 'kb://decisions/carbon-fiber-sourcing', label: 'Carbon fiber decision' }
+        ],
+        notes: [
+          { text: 'Initial entity created during vendor research. Toray flagged as potential carbon-fiber titanium composite supplier for composite airframe program.', agent: 'PROC-Alpha', time: 'just now', isNew: true },
+          { text: 'ITAR-registered US subsidiary. CMMC Level 2 certification in progress (expected Q3 2026). Allied-nation DFARS waiver may apply.', agent: 'PROC-Alpha', time: 'just now', isNew: true },
+          { text: 'Testing protocol to be established once sample materials received. QC-Charlie will lead evaluation using ASTM D3039 (composite tensile) and D2344 (short-beam shear).', agent: 'QC-Charlie', time: 'just now', isNew: true }
+        ],
+        tags: ['vendor', 'composites', 'carbon-fiber', 'international', 'pending-eval']
+      },
+      'node-test-results': {
+        name: 'ASTM E8 Test — Lot #TI-2026-0847',
+        type: 'result',
+        typeBadge: 'badge-online',
+        path: 'kb://testing/astm-e8-lot-ti2026-0847',
+        created: 'QC-Charlie',
+        createdDate: '2026-02-24 14:34:22 UTC',
+        classification: 'UNCLASS',
+        summary: 'Tensile test results for Acme Steel Titanium T-6Al-4V, Lot #TI-2026-0847. All values within specification per ASTM E8/E8M-22. Sample set: 5 specimens from lot.',
+        fields: [
+          ['Lot Number', 'TI-2026-0847'],
+          ['Material', 'Titanium T-6Al-4V'],
+          ['Vendor', 'Acme Steel Corp'],
+          ['Test Standard', 'ASTM E8/E8M-22'],
+          ['Yield Strength', '912 MPa (min: 880 MPa)'],
+          ['UTS', '978 MPa (min: 950 MPa)'],
+          ['Elongation', '14.2% (min: 10%)'],
+          ['Result', 'PASS — all values within spec']
+        ],
+        relationships: [
+          { arrow: 'tests_material_from', target: 'kb://vendors/acme-steel', label: 'Lot from Acme Steel' },
+          { arrow: 'applies_standard', target: 'kb://processes/astm-e8-testing', label: 'ASTM E8 protocol' },
+          { arrow: 'references', target: 'kb://materials/titanium-t6al4v', label: 'Material specification' }
+        ],
+        notes: [
+          { text: 'All 5 specimens tested at 23\u00b0C, 45% RH. Lab cert #LC-2026-0412 on file. Tested by MetaLab Inc. (NADCAP accredited).', agent: 'QC-Charlie', time: 'just now', isNew: true },
+          { text: 'Results support conditional PO approval for Q2 vendor decision. Forwarded to PROC-Alpha for procurement workflow.', agent: 'QC-Charlie', time: 'just now', isNew: true }
+        ],
+        tags: ['testing', 'titanium', 'astm-e8', 'tensile', 'pass']
+      }
+    };
+
+    // Post-demo additions to Acme Steel
+    const postDemoNotes = [
+      { text: 'ASTM E8 tensile test results verified by QC-Charlie: Lot #TI-2026-0847 passed all specs. Yield: 912 MPa (min 880). UTS: 978 MPa. Elongation: 14.2%.', agent: 'QC-Charlie', time: 'just now', isNew: true },
+      { text: 'Toray Industries identified as potential alternate supplier for carbon-fiber reinforced titanium composites. Initial outreach approved.', agent: 'PROC-Alpha', time: 'just now', isNew: true }
+    ];
+    const postDemoRelationships = [
+      { arrow: 'test_results', target: 'kb://testing/astm-e8-lot-ti2026-0847', label: 'Latest tensile results (PASS)', isNew: true },
+      { arrow: 'alternate_for', target: 'kb://vendors/toray-industries', label: 'Potential alternate', isNew: true }
+    ];
+
+    // ---- Modal ----
+    function openEntityModal(entityId) {
+      const entity = entities[entityId];
+      if (!entity) {
+        // Generic placeholder for entities without full data
+        document.getElementById('modal-name').textContent = entityId.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        document.getElementById('modal-type-badge').textContent = 'entity';
+        document.getElementById('modal-type-badge').className = 'badge badge-neutral';
+        document.getElementById('modal-body').innerHTML = `
+          <div class="empty-state">
+            <p class="text-muted">Entity detail view coming soon.<br/>Click "Demo: Simulate Conversation" to see the interactive flow with Acme Steel Corp.</p>
+          </div>`;
+        document.getElementById('entity-modal').classList.add('open');
+        return;
+      }
+
+      document.getElementById('modal-name').textContent = entity.name;
+      document.getElementById('modal-type-badge').textContent = entity.type;
+      document.getElementById('modal-type-badge').className = 'badge ' + entity.typeBadge;
+
+      // Build relationships (include post-demo if applicable)
+      let allRels = [...entity.relationships];
+      if (demoRan) allRels = [...allRels, ...postDemoRelationships];
+
+      const relsHtml = allRels.map(r => `
+        <div class="rel-row${r.isNew ? ' new-item' : ''}">
+          <span class="rel-arrow">${r.arrow}</span>
+          <span class="rel-target">${r.target}</span>
+          <span class="rel-label">${r.label}</span>
+        </div>`).join('');
+
+      // Build notes (include post-demo if applicable)
+      let allNotes = [...entity.notes];
+      if (demoRan) allNotes = [...postDemoNotes, ...allNotes];
+
+      const notesHtml = allNotes.map(n => `
+        <div class="note-card${n.isNew ? ' new-note' : ''}">
+          ${n.text}
+          <div class="note-meta">
+            <span class="badge badge-accent" style="font-size:10px;">${n.agent}</span>
+            <span>${n.time}</span>
+            ${n.isNew ? '<span class="badge badge-online" style="font-size:9px;">NEW</span>' : ''}
+          </div>
+        </div>`).join('');
+
+      // Build fields
+      const fieldsHtml = entity.fields.map(([k, v]) => `
+        <div class="kv-row"><div class="kv-key">${k}</div><div class="kv-value">${v}</div></div>`).join('');
+
+      document.getElementById('modal-body').innerHTML = `
+        <div class="modal-section">
+          <div class="flex items-center gap-8 mb-8">
+            <span class="mono text-accent text-xs">${entity.path}</span>
+            <span class="badge badge-neutral" style="font-size:10px;">${entity.classification}</span>
+            <span class="text-xs text-dimmed">Created: ${entity.createdDate}</span>
+          </div>
+          <p class="text-sm" style="color:var(--text-secondary);line-height:1.6;">${entity.summary}</p>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Properties</div>
+          <div class="kv-grid">${fieldsHtml}</div>
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Relationships (${allRels.length})</div>
+          ${relsHtml}
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Notes & Observations (${allNotes.length})</div>
+          ${notesHtml}
+        </div>
+
+        <div class="modal-section">
+          <div class="modal-section-title">Tags</div>
+          <div class="flex gap-8">${entity.tags.map(t => `<span class="tag">${t}</span>`).join('')}</div>
+        </div>`;
+
+      document.getElementById('entity-modal').classList.add('open');
+    }
+
+    function closeModal() {
+      document.getElementById('entity-modal').classList.remove('open');
+    }
+
+    // ---- Demo Conversation ----
+    const demoConversation = [
+      { sender: 'PROC-Alpha', avatar: 'PA', color: '#006fff',
+        text: 'QC-Charlie, I need the latest ASTM E8 tensile test results for Acme Steel lot #TI-2026-0847. We\'re finalizing the Q2 vendor decision.',
+        refs: ['kb://vendors/acme-steel', 'kb://decisions/q2-vendor-2026'] },
+      { sender: 'QC-Charlie', avatar: 'QC', color: '#ff9800',
+        text: 'Running the lookup now. I have the lab cert on file. Pulling the results from our testing database...',
+        refs: ['kb://processes/astm-e8-testing'] },
+      { sender: 'QC-Charlie', avatar: 'QC', color: '#ff9800',
+        text: 'Results confirmed for lot #TI-2026-0847: Yield strength 912 MPa (spec min: 880 MPa). UTS: 978 MPa. Elongation: 14.2%. All values within spec. PASS.',
+        refs: ['kb://testing/astm-e8-lot-ti2026-0847'] },
+      { sender: 'PROC-Alpha', avatar: 'PA', color: '#006fff',
+        text: 'Excellent. I\'m also looking into alternate suppliers for the composite program. Toray Industries has been flagged as a potential carbon-fiber titanium composite vendor. Creating a new entity.',
+        refs: ['kb://vendors/toray-industries'] },
+      { sender: 'QC-Charlie', avatar: 'QC', color: '#ff9800',
+        text: 'Good call. I\'ll set up a testing protocol for Toray once we receive samples. Linking the new test results to the Acme Steel entity for the vendor comparison.',
+        refs: ['kb://vendors/acme-steel', 'kb://vendors/toray-industries'] }
+    ];
+
+    function showToast(title, body, duration = 3000) {
+      const toast = document.getElementById('kb-toast');
+      document.getElementById('toast-title').textContent = title;
+      document.getElementById('toast-body').textContent = body;
+      toast.classList.add('visible');
+      setTimeout(() => toast.classList.remove('visible'), duration);
+    }
+
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    async function startDemo() {
+      if (demoRan) return;
+
+      const btn = document.getElementById('demo-btn');
+      btn.disabled = true;
+      btn.textContent = 'Running...';
+      btn.style.opacity = '0.5';
+
+      const panel = document.getElementById('demo-panel');
+      panel.classList.add('open');
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+      const msgContainer = document.getElementById('demo-messages');
+      msgContainer.innerHTML = '';
+
+      // Show each message with typing indicators
+      for (let i = 0; i < demoConversation.length; i++) {
+        const msg = demoConversation[i];
+
+        // Typing indicator
+        const typingEl = document.createElement('div');
+        typingEl.className = 'demo-msg visible';
+        typingEl.innerHTML = `
+          <div class="demo-avatar" style="background:${msg.color}">${msg.avatar}</div>
+          <div>
+            <div class="demo-sender">${msg.sender}</div>
+            <div class="demo-typing"><span></span><span></span><span></span></div>
+          </div>`;
+        msgContainer.appendChild(typingEl);
+        panel.scrollIntoView({ behavior: 'smooth', block: 'end' });
+
+        await sleep(1200 + Math.random() * 800);
+
+        // Replace typing with actual message
+        msgContainer.removeChild(typingEl);
+
+        const msgEl = document.createElement('div');
+        msgEl.className = 'demo-msg';
+        const refsHtml = msg.refs.map(r => `<span class="message-ref">${r}</span>`).join('');
+        msgEl.innerHTML = `
+          <div class="demo-avatar" style="background:${msg.color}">${msg.avatar}</div>
+          <div style="flex:1;">
+            <div class="demo-sender">${msg.sender}</div>
+            <div class="demo-bubble">${msg.text}</div>
+            <div class="message-refs mt-8">${refsHtml}</div>
+          </div>`;
+        msgContainer.appendChild(msgEl);
+
+        // Animate in
+        await sleep(50);
+        msgEl.classList.add('visible');
+
+        // Show KB toast on message 3 (test results)
+        if (i === 2) {
+          showToast('Entity Created', 'kb://testing/astm-e8-lot-ti2026-0847 — ASTM E8 test results for lot #TI-2026-0847', 4000);
+        }
+        // Show KB toast on message 4 (new vendor)
+        if (i === 3) {
+          await sleep(800);
+          showToast('Entity Created', 'kb://vendors/toray-industries — New vendor entity: Toray Industries (carbon-fiber composites)', 4000);
+        }
+
+        await sleep(800);
+      }
+
+      // After conversation: expand the graph
+      await sleep(1000);
+      expandGraph();
+
+      demoRan = true;
+      btn.textContent = 'Demo Complete';
+    }
+
+    function expandGraph() {
+      const svg = document.getElementById('graph-svg');
+      const graphContainer = document.getElementById('entity-graph');
+
+      // Add new SVG lines (animate via opacity)
+      const newLines = [
+        // Acme Steel → new test results node
+        { x1: 200, y1: 60, x2: 80, y2: 80 },
+        // Acme Steel → Toray Industries
+        { x1: 200, y1: 60, x2: 300, y2: 390 },
+        // Titanium → test results
+        { x1: 420, y1: 120, x2: 80, y2: 80 },
+        // Toray → Carbon Fiber Sourcing
+        { x1: 300, y1: 400, x2: 150, y2: 360 }
+      ];
+
+      newLines.forEach((l, i) => {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', l.x1);
+        line.setAttribute('y1', l.y1);
+        line.setAttribute('x2', l.x2);
+        line.setAttribute('y2', l.y2);
+        line.setAttribute('stroke', '#006fff');
+        line.setAttribute('stroke-width', '1.5');
+        line.setAttribute('opacity', '0');
+        svg.appendChild(line);
+        setTimeout(() => { line.setAttribute('opacity', '0.5'); }, 300 + i * 200);
+      });
+
+      // Add new nodes
+      const newNodes = [
+        { id: 'node-test-results', type: 'result', badge: 'badge-online', label: 'ASTM E8 Lot Results', left: 10, top: 60 },
+        { id: 'node-toray', type: 'vendor', badge: 'badge-accent', label: 'Toray Industries', left: 230, top: 380 }
+      ];
+
+      newNodes.forEach((n, i) => {
+        const div = document.createElement('div');
+        div.className = 'graph-node new-node';
+        div.id = n.id;
+        div.style.left = n.left + 'px';
+        div.style.top = n.top + 'px';
+        div.innerHTML = `<span class="node-type badge ${n.badge}">${n.type}</span>${n.label}`;
+        div.onclick = () => openEntityModal(n.id);
+        graphContainer.appendChild(div);
+        setTimeout(() => div.classList.add('appear'), 500 + i * 400);
+      });
+
+      // Pulse the Acme Steel node
+      const acmeNode = document.getElementById('node-acme');
+      acmeNode.classList.add('pulse');
+      setTimeout(() => acmeNode.classList.remove('pulse'), 3000);
+
+      // Update stats with animation
+      animateStat('stat-entities', 89, 91);
+      animateStat('stat-links', 312, 317);
+      animateStat('stat-entries', 147, 149);
+
+      // Add new rows to entries table
+      const tbody = document.getElementById('entries-tbody');
+      if (tbody) {
+        const newRow1 = document.createElement('tr');
+        newRow1.className = 'new-item';
+        newRow1.style.cursor = 'pointer';
+        newRow1.innerHTML = `
+          <td class="mono text-accent">kb://testing/astm-e8-lot-ti2026-0847</td>
+          <td><span class="tag">result</span></td>
+          <td class="text-white">ASTM E8 Test — Lot #TI-2026-0847</td>
+          <td><span class="badge badge-accent">QC-Charlie</span></td>
+          <td><span class="tag">testing</span> <span class="tag">titanium</span></td>
+          <td class="mono">3 links, 1 backlink</td>
+          <td><span class="badge badge-neutral">UNCLASS</span></td>
+          <td class="text-dimmed text-xs">just now</td>`;
+        tbody.insertBefore(newRow1, tbody.firstChild);
+
+        const newRow2 = document.createElement('tr');
+        newRow2.className = 'new-item';
+        newRow2.style.cursor = 'pointer';
+        newRow2.innerHTML = `
+          <td class="mono text-accent">kb://vendors/toray-industries</td>
+          <td><span class="tag">entity</span></td>
+          <td class="text-white">Toray Industries</td>
+          <td><span class="badge badge-accent">PROC-Alpha</span></td>
+          <td><span class="tag">vendor</span> <span class="tag">composites</span></td>
+          <td class="mono">2 links, 0 backlinks</td>
+          <td><span class="badge badge-neutral">UNCLASS</span></td>
+          <td class="text-dimmed text-xs">just now</td>`;
+        tbody.insertBefore(newRow2, tbody.firstChild);
+      }
+    }
+
+    function animateStat(id, from, to) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      let current = from;
+      const step = (to - from) > 0 ? 1 : -1;
+      const interval = setInterval(() => {
+        current += step;
+        el.textContent = current;
+        if (current === to) {
+          clearInterval(interval);
+          el.style.color = 'var(--accent)';
+          setTimeout(() => { el.style.color = ''; }, 2000);
+        }
+      }, 200);
+    }
+  </script>
+</body>
+</html>

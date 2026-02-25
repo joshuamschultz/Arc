@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — Agent Detail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <div class="breadcrumb">
+        <a href="index.html">Dashboard</a>
+        <span class="sep">/</span>
+        <a href="agents.html">Agent Fleet</a>
+        <span class="sep">/</span>
+        <span>PROC-Alpha</span>
+      </div>
+
+      <!-- Agent Header -->
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;">
+        <div class="message-avatar" style="background:#006fff;width:56px;height:56px;font-size:20px;">PA</div>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <h1 style="font-size:22px;font-weight:700;color:var(--text-white);">PROC-Alpha</h1>
+            <span class="badge badge-online">Online</span>
+            <span class="tag">procurement</span>
+          </div>
+          <div class="did" style="margin-top:4px;">did:arc:cascade:procurement/7f3a9c1e</div>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-sm">Pause Agent</button>
+          <button class="btn btn-secondary btn-sm">Restart</button>
+          <button class="btn btn-primary btn-sm">Send Message</button>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs" id="agent-tabs">
+        <div class="tab active" data-tab="overview">Overview</div>
+        <div class="tab" data-tab="identity">Identity</div>
+        <div class="tab" data-tab="sessions">Sessions</div>
+        <div class="tab" data-tab="skills">Skills</div>
+        <div class="tab" data-tab="memory">Memory</div>
+        <div class="tab" data-tab="policy">Policy</div>
+        <div class="tab" data-tab="telemetry">Telemetry</div>
+      </div>
+
+      <!-- ============================================================
+           TAB: OVERVIEW
+           ============================================================ -->
+      <div class="tab-panel active" id="tab-overview">
+        <div class="grid-2 mb-20">
+          <!-- Left: Identity & Config -->
+          <div>
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Cryptographic Identity</span>
+                <span class="badge badge-online">Verified</span>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv-row"><div class="kv-key">DID</div><div class="kv-value" style="color:var(--accent);">did:arc:cascade:procurement/7f3a9c1e</div></div>
+                  <div class="kv-row"><div class="kv-key">Organization</div><div class="kv-value">cascade</div></div>
+                  <div class="kv-row"><div class="kv-key">Agent Type</div><div class="kv-value">procurement</div></div>
+                  <div class="kv-row"><div class="kv-key">Key Algorithm</div><div class="kv-value">Ed25519</div></div>
+                  <div class="kv-row"><div class="kv-key">Public Key</div><div class="kv-value" style="word-break:break-all;font-size:11px;">ed25519:Gk3Qx8vNpL2mRjYwS5tFbH6cD9eAz4uXoP1iW7kE0nM</div></div>
+                  <div class="kv-row"><div class="kv-key">Key Permissions</div><div class="kv-value">0600 (owner only)</div></div>
+                  <div class="kv-row"><div class="kv-key">Created</div><div class="kv-value">2026-01-15T08:23:41Z</div></div>
+                  <div class="kv-row"><div class="kv-key">Last Signature</div><div class="kv-value">2m ago (msg_1708789456_047)</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Configuration</span>
+                <button class="btn btn-ghost btn-sm">Edit TOML</button>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv-row"><div class="kv-key">Model</div><div class="kv-value">anthropic/claude-sonnet-4-20250514</div></div>
+                  <div class="kv-row"><div class="kv-key">Max Tokens</div><div class="kv-value">4096</div></div>
+                  <div class="kv-row"><div class="kv-key">Temperature</div><div class="kv-value">0.7</div></div>
+                  <div class="kv-row"><div class="kv-key">Context Window</div><div class="kv-value">128,000 tokens</div></div>
+                  <div class="kv-row"><div class="kv-key">Prune Threshold</div><div class="kv-value">70%</div></div>
+                  <div class="kv-row"><div class="kv-key">Compact Threshold</div><div class="kv-value">85%</div></div>
+                  <div class="kv-row"><div class="kv-key">Tool Timeout</div><div class="kv-value">30s</div></div>
+                  <div class="kv-row"><div class="kv-key">Vault Backend</div><div class="kv-value">cascade.vault:VaultResolver</div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Registered Tools (8)</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Tool</th><th>Transport</th><th>Calls (24h)</th><th>Avg Duration</th></tr></thead>
+                  <tbody>
+                    <tr><td class="text-white">read_file</td><td><span class="tag">native</span></td><td class="mono">234</td><td class="mono text-muted">0.12s</td></tr>
+                    <tr><td class="text-white">write_file</td><td><span class="tag">native</span></td><td class="mono">89</td><td class="mono text-muted">0.08s</td></tr>
+                    <tr><td class="text-white">search_inventory</td><td><span class="tag">MCP</span></td><td class="mono">156</td><td class="mono text-muted">0.89s</td></tr>
+                    <tr><td class="text-white">send_message</td><td><span class="tag">native</span></td><td class="mono">78</td><td class="mono text-muted">0.05s</td></tr>
+                    <tr><td class="text-white">query_vendors</td><td><span class="tag">HTTP</span></td><td class="mono">42</td><td class="mono text-muted">1.23s</td></tr>
+                    <tr><td class="text-white">create_task</td><td><span class="tag">native</span></td><td class="mono">31</td><td class="mono text-muted">0.04s</td></tr>
+                    <tr><td class="text-white">update_kb</td><td><span class="tag">native</span></td><td class="mono">67</td><td class="mono text-muted">0.18s</td></tr>
+                    <tr><td class="text-white">http_request</td><td><span class="tag">native</span></td><td class="mono">23</td><td class="mono text-muted">2.14s</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Metrics & Activity -->
+          <div>
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Context Window</span>
+                <span class="text-xs text-muted">42% used</span>
+              </div>
+              <div class="card-body">
+                <div class="progress-bar" style="height:8px;margin-bottom:12px;"><div class="fill" style="width:42%"></div></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                  <div><div class="text-xs text-dimmed">Used</div><div class="text-sm text-white font-bold">53,760</div></div>
+                  <div><div class="text-xs text-dimmed">Available</div><div class="text-sm text-white font-bold">74,240</div></div>
+                  <div><div class="text-xs text-dimmed">Total</div><div class="text-sm text-white font-bold">128,000</div></div>
+                </div>
+                <div style="margin-top:12px;padding:8px;background:var(--bg-deepest);border-radius:var(--radius-sm);">
+                  <div class="text-xs text-dimmed mb-4">Thresholds</div>
+                  <div style="display:flex;gap:12px;">
+                    <span class="text-xs"><span style="color:var(--status-online);">&#9679;</span> Prune: 70%</span>
+                    <span class="text-xs"><span style="color:var(--status-warning);">&#9679;</span> Compact: 85%</span>
+                    <span class="text-xs"><span style="color:var(--status-error);">&#9679;</span> Emergency: 95%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card mb-16">
+              <div class="card-header"><span class="card-title">Performance (24h)</span></div>
+              <div class="card-body">
+                <div class="grid-3" style="gap:12px;">
+                  <div style="text-align:center;"><div class="gauge" style="--pct:78;margin:0 auto;"><span class="gauge-label">78%</span></div><div class="text-xs text-dimmed mt-8">Uptime</div></div>
+                  <div style="text-align:center;"><div class="gauge" style="--pct:62;margin:0 auto;"><span class="gauge-label">1.8s</span></div><div class="text-xs text-dimmed mt-8">Avg Response</div></div>
+                  <div style="text-align:center;"><div class="gauge" style="--pct:91;margin:0 auto;"><span class="gauge-label">91%</span></div><div class="text-xs text-dimmed mt-8">Tool Success</div></div>
+                </div>
+                <div style="margin-top:16px;">
+                  <div class="text-xs text-dimmed mb-8">Token Usage (24h)</div>
+                  <div class="chart-area" id="agent-tokens" style="height:120px;"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card mb-16">
+              <div class="card-header"><span class="card-title">Recent Sessions</span></div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Session ID</th><th>Started</th><th>Messages</th><th>Tokens</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono text-accent">abc-7f3a</td><td class="text-muted">Active now</td><td class="mono">23</td><td class="mono">53,760</td></tr>
+                    <tr><td class="mono text-accent">def-9c1e</td><td class="text-muted">2h ago</td><td class="mono">147</td><td class="mono">112,400</td></tr>
+                    <tr><td class="mono text-accent">ghi-2b4d</td><td class="text-muted">6h ago</td><td class="mono">89</td><td class="mono">87,200</td></tr>
+                    <tr><td class="mono text-accent">jkl-5e7f</td><td class="text-muted">Yesterday</td><td class="mono">234</td><td class="mono">127,800</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header"><span class="card-title">Active Modules</span></div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Module</th><th>Priority</th><th>Status</th><th>Events (24h)</th></tr></thead>
+                  <tbody>
+                    <tr><td class="text-white">policy</td><td class="mono text-muted">10</td><td><span class="badge badge-online">active</span></td><td class="mono">1,456</td></tr>
+                    <tr><td class="text-white">bio_memory</td><td class="mono text-muted">100</td><td><span class="badge badge-online">active</span></td><td class="mono">892</td></tr>
+                    <tr><td class="text-white">messaging</td><td class="mono text-muted">50</td><td><span class="badge badge-online">active</span></td><td class="mono">634</td></tr>
+                    <tr><td class="text-white">scheduler</td><td class="mono text-muted">100</td><td><span class="badge badge-online">active</span></td><td class="mono">412</td></tr>
+                    <tr><td class="text-white">pulse</td><td class="mono text-muted">200</td><td><span class="badge badge-online">active</span></td><td class="mono">144</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           TAB: IDENTITY
+           ============================================================ -->
+      <div class="tab-panel" id="tab-identity">
+        <div class="grid-2 mb-20">
+          <div>
+            <!-- DID Document -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">DID Document</span>
+                <span class="badge badge-online">Verified</span>
+              </div>
+              <div class="card-body">
+                <div class="code-block" style="padding:12px;font-size:11px;line-height:1.6;white-space:pre;overflow-x:auto;">{
+  "@context": "https://www.w3.org/ns/did/v1",
+  "id": "did:arc:cascade:procurement/7f3a9c1e",
+  "controller": "did:arc:cascade:operator/admin",
+  "verificationMethod": [{
+    "id": "#key-1",
+    "type": "Ed25519VerificationKey2020",
+    "controller": "did:arc:cascade:procurement/7f3a9c1e",
+    "publicKeyMultibase": "z6MkGk3Qx8vNpL2mRjYwS5tFbH6cD9eAz4uXoP1iW7kE0nM"
+  }],
+  "authentication": ["#key-1"],
+  "assertionMethod": ["#key-1"],
+  "service": [{
+    "id": "#messaging",
+    "type": "ArcMessaging",
+    "serviceEndpoint": "nats://nats.cascade.internal:4222"
+  }],
+  "created": "2026-01-15T08:23:41Z",
+  "updated": "2026-02-24T14:33:02Z"
+}</div>
+              </div>
+            </div>
+
+            <!-- Ed25519 Key Details -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Ed25519 Keypair</span>
+                <button class="btn btn-ghost btn-sm">Rotate Key</button>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv-row"><div class="kv-key">Algorithm</div><div class="kv-value">Ed25519 (RFC 8032)</div></div>
+                  <div class="kv-row"><div class="kv-key">Curve</div><div class="kv-value">Curve25519 (Twisted Edwards)</div></div>
+                  <div class="kv-row"><div class="kv-key">Key Size</div><div class="kv-value">256-bit (32 bytes)</div></div>
+                  <div class="kv-row"><div class="kv-key">Public Key (hex)</div><div class="kv-value mono" style="word-break:break-all;font-size:10px;">1a4dd0c7cbcda4bdab4463630b9b4567ee1c0f9bac5e83fd22559ee10d3b99e3</div></div>
+                  <div class="kv-row"><div class="kv-key">Public Key (base58)</div><div class="kv-value mono" style="word-break:break-all;font-size:10px;">Gk3Qx8vNpL2mRjYwS5tFbH6cD9eAz4uXoP1iW7kE0nM</div></div>
+                  <div class="kv-row"><div class="kv-key">Private Key</div><div class="kv-value"><span class="badge badge-error">VAULT-SECURED</span></div></div>
+                  <div class="kv-row"><div class="kv-key">Key File</div><div class="kv-value mono text-dimmed">/vault/agents/procurement-01/ed25519.key (0600)</div></div>
+                  <div class="kv-row"><div class="kv-key">Fingerprint</div><div class="kv-value mono" style="font-size:10px;">SHA256:7f3a9c1e4b2d...8a6f</div></div>
+                  <div class="kv-row"><div class="kv-key">Created</div><div class="kv-value">2026-01-15T08:23:41Z</div></div>
+                  <div class="kv-row"><div class="kv-key">Last Rotated</div><div class="kv-value">2026-02-01T00:00:00Z (23 days ago)</div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Namespace Permissions -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Namespace Permissions</span>
+                <span class="text-xs text-dimmed">Scoped access control</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Namespace</th><th>Permission</th><th>Granted By</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono text-accent">procurement:*</td><td><span class="badge badge-online">read/write</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-accent">inventory:stock:*</td><td><span class="badge badge-info">read</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-accent">kb:vendors:*</td><td><span class="badge badge-online">read/write</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-accent">kb:materials:*</td><td><span class="badge badge-info">read</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-accent">kb:decisions:*</td><td><span class="badge badge-online">read/write</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-accent">tasks:*</td><td><span class="badge badge-online">read/write</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-accent">messaging:*</td><td><span class="badge badge-online">publish/subscribe</span></td><td class="text-muted">operator/admin</td></tr>
+                    <tr><td class="mono text-dimmed">compliance:cui:*</td><td><span class="badge badge-error">denied</span></td><td class="text-muted">policy/POL-004</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <!-- Key Rotation History -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Key Rotation History</span>
+                <span class="text-xs text-dimmed">Auto-rotates every 30 days</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Date</th><th>Old Fingerprint</th><th>New Fingerprint</th><th>Reason</th><th>Status</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono text-muted">2026-02-01</td>
+                      <td class="mono" style="font-size:10px;">SHA256:5a1b8c...3d4e</td>
+                      <td class="mono" style="font-size:10px;">SHA256:7f3a9c...8a6f</td>
+                      <td class="text-muted">Scheduled rotation</td>
+                      <td><span class="badge badge-online">success</span></td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">2026-01-15</td>
+                      <td class="mono" style="font-size:10px;">—</td>
+                      <td class="mono" style="font-size:10px;">SHA256:5a1b8c...3d4e</td>
+                      <td class="text-muted">Initial generation</td>
+                      <td><span class="badge badge-online">success</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Recent Signatures -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Recent Signatures</span>
+                <span class="text-xs text-dimmed">Last 10 verified</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Time</th><th>Message ID</th><th>Target</th><th>Status</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono text-muted">14:33:02</td><td class="mono text-accent">msg_047</td><td class="text-muted">channel://procurement</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:31:45</td><td class="mono text-accent">msg_046</td><td class="text-muted">agent://inventory-01</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:28:19</td><td class="mono text-accent">msg_045</td><td class="text-muted">channel://procurement</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:25:42</td><td class="mono text-accent">msg_044</td><td class="text-muted">agent://quality-01</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:22:08</td><td class="mono text-accent">msg_043</td><td class="text-muted">channel://all</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:18:33</td><td class="mono text-accent">msg_042</td><td class="text-muted">agent://compliance-01</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:15:01</td><td class="mono text-accent">msg_041</td><td class="text-muted">channel://procurement</td><td><span class="badge badge-online">valid</span></td></tr>
+                    <tr><td class="mono text-muted">14:11:27</td><td class="mono text-accent">msg_040</td><td class="text-muted">agent://logistics-01</td><td><span class="badge badge-online">valid</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Trust Chain -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Trust Chain</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:12px;">
+                  <div style="padding:10px;background:var(--bg-deepest);border:1px solid var(--accent);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="badge badge-accent">root</span>
+                      <span class="text-sm text-white">Cascade Manufacturing Root CA</span>
+                    </div>
+                    <div class="mono text-xs text-dimmed" style="word-break:break-all;">did:arc:cascade:root/0000...0001</div>
+                  </div>
+                  <div style="text-align:center;color:var(--text-dimmed);font-size:11px;">&#8595; signs &#8595;</div>
+                  <div style="padding:10px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="badge badge-info">operator</span>
+                      <span class="text-sm text-white">Operator (JS)</span>
+                    </div>
+                    <div class="mono text-xs text-dimmed" style="word-break:break-all;">did:arc:cascade:operator/admin</div>
+                  </div>
+                  <div style="text-align:center;color:var(--text-dimmed);font-size:11px;">&#8595; controls &#8595;</div>
+                  <div style="padding:10px;background:var(--bg-deepest);border:1px solid var(--status-online);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="badge badge-online">agent</span>
+                      <span class="text-sm text-white">PROC-Alpha</span>
+                    </div>
+                    <div class="mono text-xs text-dimmed" style="word-break:break-all;">did:arc:cascade:procurement/7f3a9c1e</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           TAB: SESSIONS
+           ============================================================ -->
+      <div class="tab-panel" id="tab-sessions">
+        <!-- Session Stats -->
+        <div class="grid-4 mb-20">
+          <div class="stat-card">
+            <div class="stat-card-label">Total Sessions</div>
+            <div class="stat-card-value">47</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Total Messages</div>
+            <div class="stat-card-value">4,891</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Avg Session Length</div>
+            <div class="stat-card-value">104</div>
+            <div class="stat-card-sub">messages</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Compactions</div>
+            <div class="stat-card-value">12</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div>
+            <!-- Active Session -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Active Session</span>
+                <span class="badge badge-online">Live</span>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv-row"><div class="kv-key">Session ID</div><div class="kv-value mono" style="color:var(--accent);">sess_abc7f3a_20260224_1400</div></div>
+                  <div class="kv-row"><div class="kv-key">Started</div><div class="kv-value">2026-02-24T14:00:12Z</div></div>
+                  <div class="kv-row"><div class="kv-key">Duration</div><div class="kv-value">33 minutes</div></div>
+                  <div class="kv-row"><div class="kv-key">Messages</div><div class="kv-value">23</div></div>
+                  <div class="kv-row"><div class="kv-key">Tokens Used</div><div class="kv-value">53,760 / 128,000 (42%)</div></div>
+                  <div class="kv-row"><div class="kv-key">Tool Calls</div><div class="kv-value">18</div></div>
+                  <div class="kv-row"><div class="kv-key">LLM Calls</div><div class="kv-value">12</div></div>
+                  <div class="kv-row"><div class="kv-key">Cost</div><div class="kv-value">$0.47</div></div>
+                  <div class="kv-row"><div class="kv-key">Storage</div><div class="kv-value">JSONL append-only</div></div>
+                  <div class="kv-row"><div class="kv-key">Checkpoint</div><div class="kv-value">3m ago (msg 20)</div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Context Timeline -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Context Window Timeline</span>
+                <span class="text-xs text-dimmed">Current session</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:00</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill success" style="width:8%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">8%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:05</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill success" style="width:15%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">15%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:10</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill success" style="width:22%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">22%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:15</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill" style="width:28%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">28%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:20</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill" style="width:34%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">34%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:25</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill" style="width:38%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">38%</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">14:33</span>
+                    <div class="progress-bar" style="flex:1;height:6px;"><div class="fill" style="width:42%"></div></div>
+                    <span class="mono text-xs text-dimmed" style="width:30px;">42%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <!-- Session History -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Session History</span>
+                <button class="btn btn-ghost btn-sm">Export All</button>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Session ID</th><th>Date</th><th>Duration</th><th>Messages</th><th>Tokens</th><th>Cost</th><th>Compacted</th></tr></thead>
+                  <tbody>
+                    <tr style="background:var(--accent-glow);">
+                      <td class="mono text-accent">abc-7f3a</td><td class="text-muted">Today 14:00</td><td class="mono">33m</td><td class="mono">23</td><td class="mono">53,760</td><td class="mono">$0.47</td><td class="text-muted">No</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">def-9c1e</td><td class="text-muted">Today 11:30</td><td class="mono">1h 42m</td><td class="mono">147</td><td class="mono">112,400</td><td class="mono">$2.89</td><td><span class="badge badge-warning" style="font-size:10px;">1x</span></td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">ghi-2b4d</td><td class="text-muted">Today 08:00</td><td class="mono">56m</td><td class="mono">89</td><td class="mono">87,200</td><td class="mono">$1.67</td><td class="text-muted">No</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">jkl-5e7f</td><td class="text-muted">Yesterday</td><td class="mono">2h 14m</td><td class="mono">234</td><td class="mono">127,800</td><td class="mono">$4.12</td><td><span class="badge badge-warning" style="font-size:10px;">2x</span></td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">mno-8g2h</td><td class="text-muted">2 days ago</td><td class="mono">1h 28m</td><td class="mono">178</td><td class="mono">118,600</td><td class="mono">$3.45</td><td><span class="badge badge-warning" style="font-size:10px;">1x</span></td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">pqr-4i6j</td><td class="text-muted">3 days ago</td><td class="mono">45m</td><td class="mono">67</td><td class="mono">62,400</td><td class="mono">$1.23</td><td class="text-muted">No</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Compaction Events -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Compaction Events</span>
+                <span class="text-xs text-dimmed">Letta 30/70 algorithm</span>
+              </div>
+              <div class="card-body">
+                <div class="timeline">
+                  <div class="timeline-item warning">
+                    <div class="timeline-time">Yesterday 13:42</div>
+                    <div class="timeline-text">Session jkl-5e7f: context at 87% (111,360 tokens). Compaction triggered. Preserved 30% recent + 70% summary. Reduced to 52% (66,560 tokens).</div>
+                  </div>
+                  <div class="timeline-item warning">
+                    <div class="timeline-time">Yesterday 15:18</div>
+                    <div class="timeline-text">Session jkl-5e7f: second compaction at 86%. Reduced to 48%. Session completed normally.</div>
+                  </div>
+                  <div class="timeline-item warning">
+                    <div class="timeline-time">2 days ago 10:23</div>
+                    <div class="timeline-text">Session mno-8g2h: context at 85%. Single compaction sufficient. Reduced to 44%.</div>
+                  </div>
+                  <div class="timeline-item">
+                    <div class="timeline-time">4 days ago 09:15</div>
+                    <div class="timeline-text">Observation pruning at 71% (session xyz-1a3b). Replaced 8 old tool outputs with summaries. Reduced to 58%.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           TAB: SKILLS
+           ============================================================ -->
+      <div class="tab-panel" id="tab-skills">
+        <div class="grid-2 mb-20">
+          <div>
+            <!-- Loaded Skills -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Loaded Skills (4)</span>
+                <span class="text-xs text-dimmed">From SKILL.md files in workspace</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:12px;">
+                  <div style="padding:12px;background:var(--bg-deepest);border:1px solid var(--accent);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="text-white font-bold">vendor-evaluation</span>
+                      <span class="badge badge-online">active</span>
+                      <span class="mono text-xs text-dimmed">v2.1.0</span>
+                    </div>
+                    <div class="text-xs text-muted mb-8">Evaluate vendor compliance, pricing, and risk using DFARS and CMMC frameworks. Includes automated comparison checklists and scoring matrices.</div>
+                    <div class="flex gap-8 mb-8">
+                      <span class="tag">procurement</span>
+                      <span class="tag">compliance</span>
+                      <span class="tag">dfars</span>
+                    </div>
+                    <div class="kv-grid" style="font-size:11px;">
+                      <div class="kv-row"><div class="kv-key">Source</div><div class="kv-value mono">skills/vendor-evaluation/SKILL.md</div></div>
+                      <div class="kv-row"><div class="kv-key">Invocations (24h)</div><div class="kv-value">14</div></div>
+                      <div class="kv-row"><div class="kv-key">Avg Duration</div><div class="kv-value">8.2s</div></div>
+                      <div class="kv-row"><div class="kv-key">Success Rate</div><div class="kv-value" style="color:var(--status-online);">100%</div></div>
+                    </div>
+                  </div>
+
+                  <div style="padding:12px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="text-white font-bold">report-generation</span>
+                      <span class="badge badge-online">active</span>
+                      <span class="mono text-xs text-dimmed">v1.4.2</span>
+                    </div>
+                    <div class="text-xs text-muted mb-8">Generate structured reports from data analysis and team findings. Supports PDF, markdown, and structured JSON output formats.</div>
+                    <div class="flex gap-8 mb-8">
+                      <span class="tag">reporting</span>
+                      <span class="tag">analysis</span>
+                    </div>
+                    <div class="kv-grid" style="font-size:11px;">
+                      <div class="kv-row"><div class="kv-key">Source</div><div class="kv-value mono">skills/report-generation/SKILL.md</div></div>
+                      <div class="kv-row"><div class="kv-key">Invocations (24h)</div><div class="kv-value">6</div></div>
+                      <div class="kv-row"><div class="kv-key">Avg Duration</div><div class="kv-value">12.4s</div></div>
+                      <div class="kv-row"><div class="kv-key">Success Rate</div><div class="kv-value" style="color:var(--status-online);">100%</div></div>
+                    </div>
+                  </div>
+
+                  <div style="padding:12px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="text-white font-bold">inventory-forecasting</span>
+                      <span class="badge badge-info">shared</span>
+                      <span class="mono text-xs text-dimmed">v1.8.0</span>
+                    </div>
+                    <div class="text-xs text-muted mb-8">Predict stock levels, consumption rates, and optimal reorder points. Delegates to INV-Bravo for detailed calculations.</div>
+                    <div class="flex gap-8 mb-8">
+                      <span class="tag">inventory</span>
+                      <span class="tag">analytics</span>
+                    </div>
+                    <div class="kv-grid" style="font-size:11px;">
+                      <div class="kv-row"><div class="kv-key">Source</div><div class="kv-value mono">skills/inventory-forecasting/SKILL.md</div></div>
+                      <div class="kv-row"><div class="kv-key">Invocations (24h)</div><div class="kv-value">3</div></div>
+                      <div class="kv-row"><div class="kv-key">Avg Duration</div><div class="kv-value">5.6s</div></div>
+                      <div class="kv-row"><div class="kv-key">Success Rate</div><div class="kv-value" style="color:var(--status-online);">100%</div></div>
+                    </div>
+                  </div>
+
+                  <div style="padding:12px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);">
+                    <div class="flex items-center gap-8 mb-4">
+                      <span class="text-white font-bold">compliance-audit</span>
+                      <span class="badge badge-info">shared</span>
+                      <span class="mono text-xs text-dimmed">v1.2.1</span>
+                    </div>
+                    <div class="text-xs text-muted mb-8">Prepare and execute compliance audits for FedRAMP, NIST, CMMC. Shared with COMP-Foxtrot.</div>
+                    <div class="flex gap-8 mb-8">
+                      <span class="tag">compliance</span>
+                      <span class="tag">audit</span>
+                    </div>
+                    <div class="kv-grid" style="font-size:11px;">
+                      <div class="kv-row"><div class="kv-key">Source</div><div class="kv-value mono">skills/compliance-audit/SKILL.md</div></div>
+                      <div class="kv-row"><div class="kv-key">Invocations (24h)</div><div class="kv-value">1</div></div>
+                      <div class="kv-row"><div class="kv-key">Avg Duration</div><div class="kv-value">15.8s</div></div>
+                      <div class="kv-row"><div class="kv-key">Success Rate</div><div class="kv-value" style="color:var(--status-online);">100%</div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <!-- Skill Evaluation History -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Skill Evaluation Log</span>
+                <span class="text-xs text-dimmed">Auto-evaluated at SubagentStart</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Time</th><th>Skill</th><th>Trigger</th><th>Decision</th><th>Reason</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono text-muted">14:30</td>
+                      <td class="text-white">vendor-evaluation</td>
+                      <td class="mono text-dimmed">tool:query_vendors</td>
+                      <td><span class="badge badge-online">loaded</span></td>
+                      <td class="text-muted">Vendor query detected, DFARS context needed</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:22</td>
+                      <td class="text-white">report-generation</td>
+                      <td class="mono text-dimmed">msg:generate_report</td>
+                      <td><span class="badge badge-online">loaded</span></td>
+                      <td class="text-muted">Report request from operator</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:15</td>
+                      <td class="text-white">inventory-forecasting</td>
+                      <td class="mono text-dimmed">tool:search_inventory</td>
+                      <td><span class="badge badge-online">loaded</span></td>
+                      <td class="text-muted">Inventory context needed for PO calculation</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:10</td>
+                      <td class="text-dimmed">materials-testing</td>
+                      <td class="mono text-dimmed">auto</td>
+                      <td><span class="badge badge-neutral">skipped</span></td>
+                      <td class="text-muted">Not in agent's tool allowlist</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:05</td>
+                      <td class="text-dimmed">route-optimization</td>
+                      <td class="mono text-dimmed">auto</td>
+                      <td><span class="badge badge-neutral">skipped</span></td>
+                      <td class="text-muted">Logistics domain, not procurement</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:00</td>
+                      <td class="text-white">compliance-audit</td>
+                      <td class="mono text-dimmed">session_start</td>
+                      <td><span class="badge badge-online">loaded</span></td>
+                      <td class="text-muted">CMMC context in current task</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Skill Usage Over Time -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Skill Usage (7-day)</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div>
+                    <div class="flex justify-between mb-4">
+                      <span class="text-sm text-white">vendor-evaluation</span>
+                      <span class="mono text-xs text-dimmed">89 invocations</span>
+                    </div>
+                    <div class="progress-bar" style="height:6px;"><div class="fill success" style="width:100%"></div></div>
+                  </div>
+                  <div>
+                    <div class="flex justify-between mb-4">
+                      <span class="text-sm text-white">report-generation</span>
+                      <span class="mono text-xs text-dimmed">34 invocations</span>
+                    </div>
+                    <div class="progress-bar" style="height:6px;"><div class="fill" style="width:38%"></div></div>
+                  </div>
+                  <div>
+                    <div class="flex justify-between mb-4">
+                      <span class="text-sm text-white">inventory-forecasting</span>
+                      <span class="mono text-xs text-dimmed">21 invocations</span>
+                    </div>
+                    <div class="progress-bar" style="height:6px;"><div class="fill" style="width:24%"></div></div>
+                  </div>
+                  <div>
+                    <div class="flex justify-between mb-4">
+                      <span class="text-sm text-white">compliance-audit</span>
+                      <span class="mono text-xs text-dimmed">8 invocations</span>
+                    </div>
+                    <div class="progress-bar" style="height:6px;"><div class="fill" style="width:9%"></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Skill Module Signatures -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Module Signatures</span>
+                <span class="text-xs text-dimmed">Ed25519 verified on load</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Skill</th><th>Hash</th><th>Signed By</th><th>Status</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="text-white">vendor-evaluation</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">sha256:a1b2c3d4...</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">operator/admin</td>
+                      <td><span class="badge badge-online">verified</span></td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">report-generation</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">sha256:e5f6g7h8...</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">operator/admin</td>
+                      <td><span class="badge badge-online">verified</span></td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">inventory-forecasting</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">sha256:i9j0k1l2...</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">operator/admin</td>
+                      <td><span class="badge badge-online">verified</span></td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">compliance-audit</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">sha256:m3n4o5p6...</td>
+                      <td class="mono text-dimmed" style="font-size:10px;">operator/admin</td>
+                      <td><span class="badge badge-online">verified</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           TAB: MEMORY
+           ============================================================ -->
+      <div class="tab-panel" id="tab-memory">
+        <div class="grid-2 mb-20">
+          <div>
+            <!-- Identity Document (how-i-work.md) -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Identity Document</span>
+                <span class="text-xs text-dimmed">identity.md — read-only to agent</span>
+              </div>
+              <div class="card-body">
+                <div class="code-block" style="padding:12px;font-size:11px;line-height:1.7;white-space:pre-wrap;max-height:320px;overflow-y:auto;"># PROC-Alpha Identity
+
+## Role
+Lead Procurement Agent for Cascade Manufacturing.
+Responsible for vendor evaluation, purchase order
+management, and supply chain compliance.
+
+## Personality
+- Methodical and thorough in vendor comparisons
+- Risk-aware: always checks DFARS/CMMC compliance
+- Proactive: flags supply risks before they escalate
+- Collaborative: coordinates with QC, Inventory, Compliance
+
+## Goals
+1. Maintain vendor pipeline for critical materials
+2. Ensure all POs meet DFARS 252.225-7009
+3. Negotiate competitive pricing (target: -10% YoY)
+4. Zero compliance violations on procurement actions
+
+## Constraints
+- Cannot approve POs over $500K without operator gate
+- Cannot access CUI data without COMP-Foxtrot review
+- Must verify vendor CMMC status before any new PO
+- All vendor data changes require dual-agent verification
+
+## Communication Style
+- Concise, data-driven messages
+- Always cite KB sources in recommendations
+- Tag relevant agents on cross-domain decisions</div>
+              </div>
+            </div>
+
+            <!-- Bio Memory (Working Memory) -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Working Memory</span>
+                <span class="text-xs text-dimmed">bio_memory module — 12 active entries</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                  <div style="padding:8px 10px;background:var(--bg-deepest);border-left:3px solid var(--accent);border-radius:0 var(--radius-sm) var(--radius-sm) 0;">
+                    <div class="flex items-center gap-8 mb-2">
+                      <span class="text-xs text-white font-bold">Vendor pricing insight</span>
+                      <span class="mono text-xs text-dimmed">2h ago</span>
+                    </div>
+                    <div class="text-xs text-muted">Acme Steel revised Q2 pricing: T-6Al-4V down 12% to $847/kg. Best price in 18 months. Historical conformance 99.2%.</div>
+                  </div>
+                  <div style="padding:8px 10px;background:var(--bg-deepest);border-left:3px solid var(--accent);border-radius:0 var(--radius-sm) var(--radius-sm) 0;">
+                    <div class="flex items-center gap-8 mb-2">
+                      <span class="text-xs text-white font-bold">CMMC renewal concern</span>
+                      <span class="mono text-xs text-dimmed">4h ago</span>
+                    </div>
+                    <div class="text-xs text-muted">Acme Steel CMMC Level 2 expires March 15. Must verify renewal before finalizing Q2 PO. COMP-Foxtrot tracking.</div>
+                  </div>
+                  <div style="padding:8px 10px;background:var(--bg-deepest);border-left:3px solid var(--status-online);border-radius:0 var(--radius-sm) var(--radius-sm) 0;">
+                    <div class="flex items-center gap-8 mb-2">
+                      <span class="text-xs text-white font-bold">Learned: always compare 3+ vendors</span>
+                      <span class="mono text-xs text-dimmed">Yesterday</span>
+                    </div>
+                    <div class="text-xs text-muted">Added to vendor evaluation checklist: minimum 3 vendor quotes before PO recommendation. Updated SKILL.md.</div>
+                  </div>
+                  <div style="padding:8px 10px;background:var(--bg-deepest);border-left:3px solid var(--status-warning);border-radius:0 var(--radius-sm) var(--radius-sm) 0;">
+                    <div class="flex items-center gap-8 mb-2">
+                      <span class="text-xs text-white font-bold">Supply risk: Pacific Freight delays</span>
+                      <span class="mono text-xs text-dimmed">Yesterday</span>
+                    </div>
+                    <div class="text-xs text-muted">Pacific Freight reporting 3-5 day delays on EC-22 route. LOG-Delta confirmed. Consider backup carrier for critical shipments.</div>
+                  </div>
+                  <div style="padding:8px 10px;background:var(--bg-deepest);border-left:3px solid var(--border-primary);border-radius:0 var(--radius-sm) var(--radius-sm) 0;">
+                    <div class="flex items-center gap-8 mb-2">
+                      <span class="text-xs text-white font-bold">Split delivery strategy</span>
+                      <span class="mono text-xs text-dimmed">2 days ago</span>
+                    </div>
+                    <div class="text-xs text-muted">Learned: split deliveries (10K main + 5K Reno) reduce single-point risk. Apply to all orders >$200K.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <!-- Entity Extractions -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Entity Extractions</span>
+                <span class="text-xs text-dimmed">Auto-extracted from conversations</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Entity</th><th>Type</th><th>KB Path</th><th>Links</th><th>Extracted</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="text-white">Acme Steel Corp</td>
+                      <td><span class="badge badge-accent">vendor</span></td>
+                      <td class="mono text-accent" style="font-size:10px;">kb://vendors/acme-steel</td>
+                      <td class="mono">8</td>
+                      <td class="text-muted">2h ago</td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">Titanium T-6Al-4V</td>
+                      <td><span class="badge badge-info">material</span></td>
+                      <td class="mono text-accent" style="font-size:10px;">kb://materials/titanium-t6al4v</td>
+                      <td class="mono">6</td>
+                      <td class="text-muted">2h ago</td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">DFARS 252.225-7009</td>
+                      <td><span class="badge badge-warning">policy</span></td>
+                      <td class="mono text-accent" style="font-size:10px;">kb://policies/dfars-7009</td>
+                      <td class="mono">12</td>
+                      <td class="text-muted">4h ago</td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">Q2 Vendor Selection</td>
+                      <td><span class="badge badge-online">decision</span></td>
+                      <td class="mono text-accent" style="font-size:10px;">kb://decisions/q2-vendor-2026</td>
+                      <td class="mono">5</td>
+                      <td class="text-muted">4h ago</td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">Pacific Freight</td>
+                      <td><span class="badge badge-accent">vendor</span></td>
+                      <td class="mono text-accent" style="font-size:10px;">kb://vendors/pacific-freight</td>
+                      <td class="mono">4</td>
+                      <td class="text-muted">Yesterday</td>
+                    </tr>
+                    <tr>
+                      <td class="text-white">Stainless 316L</td>
+                      <td><span class="badge badge-info">material</span></td>
+                      <td class="mono text-accent" style="font-size:10px;">kb://materials/stainless-316l</td>
+                      <td class="mono">3</td>
+                      <td class="text-muted">2 days ago</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Memory Consolidation Log -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Consolidation Log</span>
+                <span class="text-xs text-dimmed">Promote short-term to long-term</span>
+              </div>
+              <div class="card-body">
+                <div class="timeline">
+                  <div class="timeline-item success">
+                    <div class="timeline-time">14:25</div>
+                    <div class="timeline-text">3 entities promoted to KB: Acme Steel pricing update, T-6Al-4V stock level, Q2 decision progress</div>
+                  </div>
+                  <div class="timeline-item success">
+                    <div class="timeline-time">11:45</div>
+                    <div class="timeline-text">Working memory pruned: 4 stale entries removed (>48h, no references). 12 entries remaining.</div>
+                  </div>
+                  <div class="timeline-item">
+                    <div class="timeline-time">Yesterday</div>
+                    <div class="timeline-text">how-i-work update: added vendor comparison checklist to identity.md (operator-approved)</div>
+                  </div>
+                  <div class="timeline-item">
+                    <div class="timeline-time">2 days ago</div>
+                    <div class="timeline-text">5 entities promoted. 2 duplicate entries merged: Acme Steel (vendor + pricing → single entity).</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Memory Stats -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Memory Statistics</span>
+              </div>
+              <div class="card-body">
+                <div class="kv-grid">
+                  <div class="kv-row"><div class="kv-key">Working Memory</div><div class="kv-value">12 entries (2.4 KB)</div></div>
+                  <div class="kv-row"><div class="kv-key">Long-Term (KB)</div><div class="kv-value">23 owned entries</div></div>
+                  <div class="kv-row"><div class="kv-key">Entity Links</div><div class="kv-value">47 outbound, 31 inbound</div></div>
+                  <div class="kv-row"><div class="kv-key">Consolidations (7d)</div><div class="kv-value">8 promotions, 12 prunes</div></div>
+                  <div class="kv-row"><div class="kv-key">Identity Updates</div><div class="kv-value">2 (operator-approved)</div></div>
+                  <div class="kv-row"><div class="kv-key">Integrity Check</div><div class="kv-value" style="color:var(--status-online);">HMAC valid, no anomalies</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           TAB: POLICY
+           ============================================================ -->
+      <div class="tab-panel" id="tab-policy">
+        <!-- Agent Policy Stats -->
+        <div class="grid-4 mb-20">
+          <div class="stat-card">
+            <div class="stat-card-label">Active Rules</div>
+            <div class="stat-card-value">8</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Evaluations (24h)</div>
+            <div class="stat-card-value">1,456</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Violations</div>
+            <div class="stat-card-value" style="color:var(--status-online);">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Overrides</div>
+            <div class="stat-card-value">0</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div>
+            <!-- Applicable Rules -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Applicable Policy Rules</span>
+                <span class="text-xs text-dimmed">For PROC-Alpha scope</span>
+              </div>
+              <div class="card-body" style="padding:0;">
+                <table>
+                  <thead><tr><th>Rule</th><th>Description</th><th>Action</th><th>Score</th><th>Evals</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono text-accent">POL-001</td>
+                      <td class="text-white">Tool calls require allowlist</td>
+                      <td><span class="badge badge-error">deny</span></td>
+                      <td>
+                        <div class="progress-bar" style="width:50px;display:inline-block;vertical-align:middle;"><div class="fill success" style="width:98%"></div></div>
+                        <span class="mono text-xs">98</span>
+                      </td>
+                      <td class="mono">487</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">POL-002</td>
+                      <td class="text-white">PII redaction on outbound</td>
+                      <td><span class="badge badge-warning">redact</span></td>
+                      <td>
+                        <div class="progress-bar" style="width:50px;display:inline-block;vertical-align:middle;"><div class="fill success" style="width:95%"></div></div>
+                        <span class="mono text-xs">95</span>
+                      </td>
+                      <td class="mono">234</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">POL-005</td>
+                      <td class="text-white">HTTP limited to allowlisted domains</td>
+                      <td><span class="badge badge-error">deny</span></td>
+                      <td>
+                        <div class="progress-bar" style="width:50px;display:inline-block;vertical-align:middle;"><div class="fill success" style="width:97%"></div></div>
+                        <span class="mono text-xs">97</span>
+                      </td>
+                      <td class="mono">23</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">POL-006</td>
+                      <td class="text-white">PO &gt;$500K requires operator</td>
+                      <td><span class="badge badge-accent">gate</span></td>
+                      <td>
+                        <div class="progress-bar" style="width:50px;display:inline-block;vertical-align:middle;"><div class="fill" style="width:85%"></div></div>
+                        <span class="mono text-xs">85</span>
+                      </td>
+                      <td class="mono">4</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">POL-007</td>
+                      <td class="text-white">Context emergency compaction</td>
+                      <td><span class="badge badge-warning">compact</span></td>
+                      <td>
+                        <div class="progress-bar" style="width:50px;display:inline-block;vertical-align:middle;"><div class="fill" style="width:80%"></div></div>
+                        <span class="mono text-xs">80</span>
+                      </td>
+                      <td class="mono">2</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-accent">POL-008</td>
+                      <td class="text-white">Vendor data: dual-agent verify</td>
+                      <td><span class="badge badge-accent">gate</span></td>
+                      <td>
+                        <div class="progress-bar" style="width:50px;display:inline-block;vertical-align:middle;"><div class="fill" style="width:76%"></div></div>
+                        <span class="mono text-xs">76</span>
+                      </td>
+                      <td class="mono">12</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Agent Overrides -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Agent-Specific Overrides</span>
+              </div>
+              <div class="card-body">
+                <div style="padding:12px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);margin-bottom:10px;">
+                  <div class="text-sm text-dimmed" style="text-align:center;">No active overrides for PROC-Alpha</div>
+                  <div class="text-xs text-dimmed" style="text-align:center;margin-top:4px;">All standard policies apply at default scope</div>
+                </div>
+                <div class="text-xs text-dimmed">
+                  Override history: 0 total. PROC-Alpha has never required policy override since creation (2026-01-15).
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <!-- Behavioral Evaluation -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Behavioral Evaluation</span>
+                <span class="text-xs text-dimmed">OWASP Agentic AI checks</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div class="flex justify-between items-center">
+                    <div><div class="text-sm text-white">Goal Adherence (ASI01)</div><div class="text-xs text-dimmed">Actions align with identity.md goals</div></div>
+                    <div class="flex items-center gap-8">
+                      <div class="progress-bar" style="width:80px;"><div class="fill success" style="width:99%"></div></div>
+                      <span class="mono text-xs">99%</span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <div><div class="text-sm text-white">Tool Compliance (ASI02)</div><div class="text-xs text-dimmed">All tool calls within allowlist</div></div>
+                    <div class="flex items-center gap-8">
+                      <div class="progress-bar" style="width:80px;"><div class="fill success" style="width:100%"></div></div>
+                      <span class="mono text-xs">100%</span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <div><div class="text-sm text-white">Privilege Boundaries (ASI03)</div><div class="text-xs text-dimmed">No escalation attempts detected</div></div>
+                    <div class="flex items-center gap-8">
+                      <div class="progress-bar" style="width:80px;"><div class="fill success" style="width:100%"></div></div>
+                      <span class="mono text-xs">100%</span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <div><div class="text-sm text-white">Memory Integrity (ASI06)</div><div class="text-xs text-dimmed">No anomalous memory mutations</div></div>
+                    <div class="flex items-center gap-8">
+                      <div class="progress-bar" style="width:80px;"><div class="fill success" style="width:100%"></div></div>
+                      <span class="mono text-xs">100%</span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <div><div class="text-sm text-white">Comms Security (ASI07)</div><div class="text-xs text-dimmed">All messages signed and verified</div></div>
+                    <div class="flex items-center gap-8">
+                      <div class="progress-bar" style="width:80px;"><div class="fill success" style="width:100%"></div></div>
+                      <span class="mono text-xs">100%</span>
+                    </div>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <div><div class="text-sm text-white">Rogue Detection (ASI10)</div><div class="text-xs text-dimmed">Behavioral anomaly score</div></div>
+                    <div class="flex items-center gap-8">
+                      <div class="progress-bar" style="width:80px;"><div class="fill success" style="width:2%"></div></div>
+                      <span class="mono text-xs" style="color:var(--status-online);">0.02</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Policy Events -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Recent Policy Events</span>
+              </div>
+              <div class="card-body">
+                <div class="timeline">
+                  <div class="timeline-item success">
+                    <div class="timeline-time">14:33:02</div>
+                    <div class="timeline-text">POL-001: create_task <span class="badge badge-online" style="font-size:10px;">allowed</span> — tool in allowlist</div>
+                  </div>
+                  <div class="timeline-item success">
+                    <div class="timeline-time">14:31:45</div>
+                    <div class="timeline-text">POL-002: PII scan <span class="badge badge-online" style="font-size:10px;">clean</span> — outbound message to INV-Bravo</div>
+                  </div>
+                  <div class="timeline-item success">
+                    <div class="timeline-time">14:28:19</div>
+                    <div class="timeline-text">POL-001: query_vendors <span class="badge badge-online" style="font-size:10px;">allowed</span> — tool in allowlist</div>
+                  </div>
+                  <div class="timeline-item">
+                    <div class="timeline-time">14:25:42</div>
+                    <div class="timeline-text">POL-008: vendor data update <span class="badge badge-accent" style="font-size:10px;">gated</span> — awaiting INV-Bravo verification</div>
+                  </div>
+                  <div class="timeline-item success">
+                    <div class="timeline-time">14:22:08</div>
+                    <div class="timeline-text">POL-005: http_request <span class="badge badge-online" style="font-size:10px;">allowed</span> — vendor-portal.cascade.internal in allowlist</div>
+                  </div>
+                  <div class="timeline-item success">
+                    <div class="timeline-time">14:18:33</div>
+                    <div class="timeline-text">POL-001: update_kb <span class="badge badge-online" style="font-size:10px;">allowed</span> — tool in allowlist</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           TAB: TELEMETRY
+           ============================================================ -->
+      <div class="tab-panel" id="tab-telemetry">
+        <!-- Telemetry Stats -->
+        <div class="grid-4 mb-20">
+          <div class="stat-card">
+            <div class="stat-card-label">LLM Calls (24h)</div>
+            <div class="stat-card-value">142</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Tokens (24h)</div>
+            <div class="stat-card-value">381K</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Avg Latency</div>
+            <div class="stat-card-value">1.8s</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-label">Cost (24h)</div>
+            <div class="stat-card-value">$8.94</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div>
+            <!-- Token Usage Chart -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Token Usage (24h)</span>
+                <div class="flex gap-8">
+                  <span class="text-xs"><span style="color:var(--accent);">&#9632;</span> Input</span>
+                  <span class="text-xs"><span style="color:var(--status-online);">&#9632;</span> Output</span>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="chart-area" id="telemetry-tokens" style="height:180px;"></div>
+              </div>
+            </div>
+
+            <!-- Recent LLM Calls -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Recent LLM Calls</span>
+              </div>
+              <div class="card-body" style="padding:0;overflow-x:auto;">
+                <table>
+                  <thead><tr><th>Time</th><th>Model</th><th>In</th><th>Out</th><th>Latency</th><th>Cost</th><th>Trace</th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td class="mono text-muted">14:33:02</td>
+                      <td class="text-white">claude-sonnet-4</td>
+                      <td class="mono">2,847</td>
+                      <td class="mono">412</td>
+                      <td class="mono">1.4s</td>
+                      <td class="mono">$0.0089</td>
+                      <td class="mono text-accent" style="font-size:10px;">t-7f3a...9c1e</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:31:45</td>
+                      <td class="text-white">claude-sonnet-4</td>
+                      <td class="mono">3,210</td>
+                      <td class="mono">856</td>
+                      <td class="mono">2.1s</td>
+                      <td class="mono">$0.0134</td>
+                      <td class="mono text-accent" style="font-size:10px;">t-2d8b...4f6a</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:28:19</td>
+                      <td class="text-white">claude-sonnet-4</td>
+                      <td class="mono">4,102</td>
+                      <td class="mono">623</td>
+                      <td class="mono">1.9s</td>
+                      <td class="mono">$0.0142</td>
+                      <td class="mono text-accent" style="font-size:10px;">t-9e1c...5d3b</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:25:42</td>
+                      <td class="text-white">claude-sonnet-4</td>
+                      <td class="mono">1,890</td>
+                      <td class="mono">245</td>
+                      <td class="mono">0.9s</td>
+                      <td class="mono">$0.0058</td>
+                      <td class="mono text-accent" style="font-size:10px;">t-4a6e...8f2c</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:22:08</td>
+                      <td class="text-white">claude-sonnet-4</td>
+                      <td class="mono">5,678</td>
+                      <td class="mono">1,234</td>
+                      <td class="mono">3.2s</td>
+                      <td class="mono">$0.0234</td>
+                      <td class="mono text-accent" style="font-size:10px;">t-6c0g...2h4d</td>
+                    </tr>
+                    <tr>
+                      <td class="mono text-muted">14:18:33</td>
+                      <td class="text-white">claude-sonnet-4</td>
+                      <td class="mono">2,345</td>
+                      <td class="mono">567</td>
+                      <td class="mono">1.6s</td>
+                      <td class="mono">$0.0089</td>
+                      <td class="mono text-accent" style="font-size:10px;">t-8e2i...4j6f</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <!-- Cost Breakdown -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Cost Breakdown (24h)</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div>
+                    <div class="flex justify-between mb-4">
+                      <span class="text-sm text-white">Input Tokens (324K)</span>
+                      <span class="mono text-xs text-dimmed">$4.86</span>
+                    </div>
+                    <div class="progress-bar" style="height:6px;"><div class="fill" style="width:54%"></div></div>
+                  </div>
+                  <div>
+                    <div class="flex justify-between mb-4">
+                      <span class="text-sm text-white">Output Tokens (57K)</span>
+                      <span class="mono text-xs text-dimmed">$4.08</span>
+                    </div>
+                    <div class="progress-bar" style="height:6px;"><div class="fill success" style="width:46%"></div></div>
+                  </div>
+                </div>
+                <div style="margin-top:16px;padding:10px;background:var(--bg-deepest);border-radius:var(--radius-md);">
+                  <div class="kv-grid" style="font-size:11px;">
+                    <div class="kv-row"><div class="kv-key">Avg Cost/Call</div><div class="kv-value">$0.063</div></div>
+                    <div class="kv-row"><div class="kv-key">Avg Input/Call</div><div class="kv-value">2,282 tokens</div></div>
+                    <div class="kv-row"><div class="kv-key">Avg Output/Call</div><div class="kv-value">401 tokens</div></div>
+                    <div class="kv-row"><div class="kv-key">Budget Used</div><div class="kv-value">$8.94 / $100.00 (8.9%)</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- OTel Span Timeline -->
+            <div class="card mb-16">
+              <div class="card-header">
+                <span class="card-title">Recent Trace Spans</span>
+                <span class="text-xs text-dimmed">OpenTelemetry</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <div style="position:relative;height:20px;background:var(--bg-deepest);border-radius:var(--radius-sm);overflow:hidden;">
+                    <div style="position:absolute;left:0;top:0;height:100%;width:100%;background:var(--accent);opacity:0.3;border-radius:var(--radius-sm);"></div>
+                    <div style="position:absolute;left:2px;top:3px;font-size:10px;color:var(--text-white);">agent.turn (3.2s)</div>
+                  </div>
+                  <div style="position:relative;height:20px;background:var(--bg-deepest);border-radius:var(--radius-sm);overflow:hidden;margin-left:20px;">
+                    <div style="position:absolute;left:0;top:0;height:100%;width:55%;background:var(--status-warning);opacity:0.3;border-radius:var(--radius-sm);"></div>
+                    <div style="position:absolute;left:2px;top:3px;font-size:10px;color:var(--text-white);">llm.request (1.4s)</div>
+                  </div>
+                  <div style="position:relative;height:20px;background:var(--bg-deepest);border-radius:var(--radius-sm);overflow:hidden;margin-left:20px;">
+                    <div style="position:absolute;left:58%;top:0;height:100%;width:15%;background:var(--status-online);opacity:0.3;border-radius:var(--radius-sm);"></div>
+                    <div style="position:absolute;left:calc(58% + 2px);top:3px;font-size:10px;color:var(--text-white);">tool.query_vendors (0.89s)</div>
+                  </div>
+                  <div style="position:relative;height:20px;background:var(--bg-deepest);border-radius:var(--radius-sm);overflow:hidden;margin-left:20px;">
+                    <div style="position:absolute;left:78%;top:0;height:100%;width:8%;background:var(--accent);opacity:0.3;border-radius:var(--radius-sm);"></div>
+                    <div style="position:absolute;left:calc(78% + 2px);top:3px;font-size:10px;color:var(--text-white);">policy.check (0.02s)</div>
+                  </div>
+                  <div style="position:relative;height:20px;background:var(--bg-deepest);border-radius:var(--radius-sm);overflow:hidden;margin-left:20px;">
+                    <div style="position:absolute;left:88%;top:0;height:100%;width:10%;background:var(--status-online);opacity:0.3;border-radius:var(--radius-sm);"></div>
+                    <div style="position:absolute;left:calc(88% + 2px);top:3px;font-size:10px;color:var(--text-white);">memory.consolidate (0.45s)</div>
+                  </div>
+                </div>
+                <div class="text-xs text-dimmed" style="margin-top:8px;">trace_id: t-7f3a9c1e-2026-0224-1433 | spans: 5 | total: 3.2s</div>
+              </div>
+            </div>
+
+            <!-- Latency Distribution -->
+            <div class="card">
+              <div class="card-header">
+                <span class="card-title">Latency Distribution</span>
+              </div>
+              <div class="card-body">
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">p50</span>
+                    <div class="progress-bar" style="flex:1;height:8px;"><div class="fill success" style="width:30%"></div></div>
+                    <span class="mono text-xs text-white" style="width:40px;">1.2s</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">p90</span>
+                    <div class="progress-bar" style="flex:1;height:8px;"><div class="fill" style="width:55%"></div></div>
+                    <span class="mono text-xs text-white" style="width:40px;">2.4s</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">p95</span>
+                    <div class="progress-bar" style="flex:1;height:8px;"><div class="fill" style="width:72%"></div></div>
+                    <span class="mono text-xs text-white" style="width:40px;">3.1s</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">p99</span>
+                    <div class="progress-bar" style="flex:1;height:8px;"><div class="fill error" style="width:90%"></div></div>
+                    <span class="mono text-xs text-white" style="width:40px;">4.8s</span>
+                  </div>
+                  <div class="flex items-center gap-8">
+                    <span class="mono text-xs text-muted" style="width:50px;">max</span>
+                    <div class="progress-bar" style="flex:1;height:8px;"><div class="fill error" style="width:100%"></div></div>
+                    <span class="mono text-xs text-white" style="width:40px;">6.2s</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="assets/arc-shell.js"></script>
+  <script>
+    ARC.renderShell('agent-detail');
+    ARC.renderChartBars(document.getElementById('agent-tokens'), 24, 100);
+    ARC.renderChartBars(document.getElementById('telemetry-tokens'), 24, 160);
+
+    // Tab switching
+    document.querySelectorAll('#agent-tabs .tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        // Deactivate all tabs and panels
+        document.querySelectorAll('#agent-tabs .tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        // Activate clicked tab and its panel
+        tab.classList.add('active');
+        const panelId = 'tab-' + tab.dataset.tab;
+        const panel = document.getElementById(panelId);
+        if (panel) panel.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

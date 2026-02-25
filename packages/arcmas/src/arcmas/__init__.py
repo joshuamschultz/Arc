@@ -1,6 +1,6 @@
-"""arcstack — the full Arc autonomous agent framework.
+"""arcmas — the full Arc autonomous agent framework.
 
-Install with: pip install arcstack
+Install with: pip install arcmas
 
 This meta-package installs all Arc components:
   - arcllm:   Provider-agnostic LLM abstraction

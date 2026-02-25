@@ -28,7 +28,7 @@ arcrun = { workspace = true }
 arcagent = { workspace = true }
 arccmd = { workspace = true }
 arcteam = { workspace = true }
-arcstack = { workspace = true }
+arcmas = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"

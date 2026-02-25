@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "arcstack"
+name = "arcmas"
 version = "0.2.0"
 description = "Arc: Security-first autonomous agent framework — install the full stack"
 readme = "README.md"
@@ -31,4 +31,4 @@ Documentation = "https://github.com/joshuamschultz/Arc#readme"
 Issues = "https://github.com/joshuamschultz/Arc/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/arcstack"]
+packages = ["src/arcmas"]

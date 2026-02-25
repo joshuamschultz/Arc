@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — Task Detail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+  <style>
+    .subtask-row { display:flex; align-items:center; gap:10px; padding:8px 12px; border-bottom:1px solid var(--border-primary); }
+    .subtask-row:last-child { border-bottom:none; }
+    .subtask-check { width:18px; height:18px; border:2px solid var(--border-primary); border-radius:4px; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+    .subtask-check.done { border-color:var(--status-online); background:var(--status-online); }
+    .subtask-check.done::after { content:'✓'; color:#fff; font-size:11px; font-weight:700; }
+    .dep-arrow { color:var(--text-dimmed); font-size:18px; }
+    .dep-card { padding:10px 12px; background:var(--bg-deepest); border:1px solid var(--border-primary); border-radius:var(--radius-md); }
+    .dep-card.blocked { border-color:var(--status-error); }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <div class="breadcrumb">
+        <a href="index.html">Dashboard</a>
+        <span class="sep">/</span>
+        <a href="tasks.html">Tasks</a>
+        <span class="sep">/</span>
+        <span>Procurement</span>
+        <span class="sep">/</span>
+        <span>Q2 Titanium Alloy Procurement</span>
+        <span class="sep">/</span>
+        <span>task_042</span>
+      </div>
+
+      <!-- Task Header -->
+      <div style="display:flex;align-items:flex-start;gap:16px;margin-bottom:24px;">
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+            <h1 style="font-size:20px;font-weight:700;color:var(--text-white);">Vendor Risk Assessment — Acme Steel</h1>
+            <span class="badge badge-error">critical</span>
+            <span class="badge badge-warning">in_progress</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px;">
+            <span class="mono text-accent" style="font-size:12px;">task_042</span>
+            <span class="text-xs text-dimmed">Project: Q2 Titanium Alloy Procurement</span>
+            <span class="text-xs text-dimmed">Department: Procurement</span>
+          </div>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-sm">Edit</button>
+          <button class="btn btn-secondary btn-sm">Reassign</button>
+          <button class="btn btn-primary btn-sm">Comment</button>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div style="margin-bottom:24px;">
+        <div class="flex justify-between mb-4">
+          <span class="text-sm text-white">Subtask Progress</span>
+          <span class="mono text-sm text-white">3 / 7 complete (43%)</span>
+        </div>
+        <div class="progress-bar" style="height:8px;"><div class="fill" style="width:43%"></div></div>
+      </div>
+
+      <div class="grid-2 mb-20">
+        <div>
+          <!-- Task Details -->
+          <div class="card mb-16">
+            <div class="card-header">
+              <span class="card-title">Task Details</span>
+            </div>
+            <div class="card-body">
+              <div class="kv-grid">
+                <div class="kv-row"><div class="kv-key">Task ID</div><div class="kv-value mono" style="color:var(--accent);">task_042</div></div>
+                <div class="kv-row"><div class="kv-key">Created</div><div class="kv-value">2026-02-22T09:15:00Z (2 days ago)</div></div>
+                <div class="kv-row"><div class="kv-key">Due Date</div><div class="kv-value" style="color:var(--status-error);">2026-02-24 (Today)</div></div>
+                <div class="kv-row"><div class="kv-key">Priority</div><div class="kv-value"><span class="badge badge-error">critical</span></div></div>
+                <div class="kv-row"><div class="kv-key">Status</div><div class="kv-value"><span class="badge badge-warning">in_progress</span></div></div>
+                <div class="kv-row"><div class="kv-key">Created By</div><div class="kv-value"><span class="badge badge-accent">PROC-Alpha</span> (autonomous — triggered by low stock alert)</div></div>
+                <div class="kv-row"><div class="kv-key">Assigned To</div><div class="kv-value"><span class="badge badge-accent">PROC-Alpha</span> (lead) + <span class="badge badge-accent">COMP-Foxtrot</span> (compliance review)</div></div>
+                <div class="kv-row"><div class="kv-key">Assigned By</div><div class="kv-value"><span class="badge badge-accent">PROC-Alpha</span> (self-assigned) — COMP-Foxtrot assigned via <span class="mono text-accent">POL-004</span> gate</div></div>
+                <div class="kv-row"><div class="kv-key">Project</div><div class="kv-value">Q2 Titanium Alloy Procurement</div></div>
+                <div class="kv-row"><div class="kv-key">Department</div><div class="kv-value">Procurement</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div class="card mb-16">
+            <div class="card-header">
+              <span class="card-title">Description</span>
+            </div>
+            <div class="card-body">
+              <div class="text-sm text-muted" style="line-height:1.7;">
+                Comprehensive risk assessment for Acme Steel Corp ahead of Q2 titanium alloy purchase order. INV-Bravo flagged titanium T-6Al-4V stock at 23% capacity (below 25% safety threshold) triggering urgent reorder evaluation.<br><br>
+                Assessment covers: pricing verification, CMMC Level 2 certification status (expires March 15), DFARS 252.225-7009 compliance, historical quality conformance, delivery reliability, and financial stability. Results feed into conditional PO draft (task_044, currently blocked pending this assessment).<br><br>
+                <strong>Key decision:</strong> Should Cascade Manufacturing proceed with $847/kg pricing from Acme Steel for 15,000 kg split delivery (10K main facility + 5K Reno)?
+              </div>
+            </div>
+          </div>
+
+          <!-- Subtasks -->
+          <div class="card mb-16">
+            <div class="card-header">
+              <span class="card-title">Subtasks (3/7)</span>
+            </div>
+            <div class="card-body" style="padding:0;">
+              <div class="subtask-row">
+                <div class="subtask-check done"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-white" style="text-decoration:line-through;opacity:0.6;">Pull current pricing from vendor portal API</div>
+                  <div class="text-xs text-dimmed">Completed by PROC-Alpha &middot; 6h ago &middot; tool:query_vendors</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+              </div>
+              <div class="subtask-row">
+                <div class="subtask-check done"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-white" style="text-decoration:line-through;opacity:0.6;">Review 12-month pricing history and trend</div>
+                  <div class="text-xs text-dimmed">Completed by PROC-Alpha &middot; 5h ago &middot; skill:vendor-evaluation</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+              </div>
+              <div class="subtask-row">
+                <div class="subtask-check done"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-white" style="text-decoration:line-through;opacity:0.6;">Check historical conformance rate (847 shipments)</div>
+                  <div class="text-xs text-dimmed">Completed by PROC-Alpha &middot; 4h ago &middot; tool:search_inventory + kb lookup</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+              </div>
+              <div class="subtask-row" style="background:var(--accent-glow);">
+                <div class="subtask-check" style="border-color:var(--accent);"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-white font-bold">Verify CMMC Level 2 certification status</div>
+                  <div class="text-xs text-dimmed">In progress &middot; assigned to COMP-Foxtrot via POL-004 gate &middot; expires March 15</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">COMP-Foxtrot</span>
+              </div>
+              <div class="subtask-row">
+                <div class="subtask-check"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-muted">Validate DFARS 252.225-7009 compliance</div>
+                  <div class="text-xs text-dimmed">Pending &middot; depends on CMMC verification</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">COMP-Foxtrot</span>
+              </div>
+              <div class="subtask-row">
+                <div class="subtask-check"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-muted">Request and verify third-party test results</div>
+                  <div class="text-xs text-dimmed">Pending &middot; QC-Charlie to verify ASTM E8 compliance</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">QC-Charlie</span>
+              </div>
+              <div class="subtask-row">
+                <div class="subtask-check"></div>
+                <div style="flex:1;">
+                  <div class="text-sm text-muted">Generate final risk assessment report</div>
+                  <div class="text-xs text-dimmed">Pending &middot; all prior subtasks must complete &middot; skill:report-generation</div>
+                </div>
+                <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <!-- Assigned Agents -->
+          <div class="card mb-16">
+            <div class="card-header">
+              <span class="card-title">Assigned Agents</span>
+            </div>
+            <div class="card-body">
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <div style="padding:10px;background:var(--bg-deepest);border:1px solid var(--accent);border-radius:var(--radius-md);">
+                  <div class="flex items-center gap-8 mb-4">
+                    <div class="message-avatar" style="background:#006fff;width:28px;height:28px;font-size:10px;">PA</div>
+                    <span class="text-white font-bold">PROC-Alpha</span>
+                    <span class="badge badge-online" style="font-size:9px;">online</span>
+                    <span class="badge badge-accent" style="font-size:9px;">lead</span>
+                  </div>
+                  <div class="kv-grid" style="font-size:11px;">
+                    <div class="kv-row"><div class="kv-key">Role</div><div class="kv-value">Task owner & primary executor</div></div>
+                    <div class="kv-row"><div class="kv-key">Assigned By</div><div class="kv-value">Self-assigned (autonomous trigger)</div></div>
+                    <div class="kv-row"><div class="kv-key">Subtasks</div><div class="kv-value">4 of 7 (pricing, history, conformance, final report)</div></div>
+                    <div class="kv-row"><div class="kv-key">Time Spent</div><div class="kv-value">2h 14m (active processing)</div></div>
+                  </div>
+                </div>
+                <div style="padding:10px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);">
+                  <div class="flex items-center gap-8 mb-4">
+                    <div class="message-avatar" style="background:#f44336;width:28px;height:28px;font-size:10px;">CF</div>
+                    <span class="text-white font-bold">COMP-Foxtrot</span>
+                    <span class="badge badge-online" style="font-size:9px;">online</span>
+                    <span class="badge badge-info" style="font-size:9px;">reviewer</span>
+                  </div>
+                  <div class="kv-grid" style="font-size:11px;">
+                    <div class="kv-row"><div class="kv-key">Role</div><div class="kv-value">Compliance verification (CMMC + DFARS)</div></div>
+                    <div class="kv-row"><div class="kv-key">Assigned By</div><div class="kv-value">Policy gate POL-004 (CUI data requires compliance review)</div></div>
+                    <div class="kv-row"><div class="kv-key">Subtasks</div><div class="kv-value">2 of 7 (CMMC verify, DFARS validate)</div></div>
+                    <div class="kv-row"><div class="kv-key">Time Spent</div><div class="kv-value">45m (active processing)</div></div>
+                  </div>
+                </div>
+                <div style="padding:10px;background:var(--bg-deepest);border:1px solid var(--border-primary);border-radius:var(--radius-md);">
+                  <div class="flex items-center gap-8 mb-4">
+                    <div class="message-avatar" style="background:#ff9800;width:28px;height:28px;font-size:10px;">QC</div>
+                    <span class="text-white font-bold">QC-Charlie</span>
+                    <span class="badge badge-online" style="font-size:9px;">online</span>
+                    <span class="badge badge-neutral" style="font-size:9px;">contributor</span>
+                  </div>
+                  <div class="kv-grid" style="font-size:11px;">
+                    <div class="kv-row"><div class="kv-key">Role</div><div class="kv-value">Third-party test verification (ASTM E8)</div></div>
+                    <div class="kv-row"><div class="kv-key">Assigned By</div><div class="kv-value">PROC-Alpha (delegated via send_message)</div></div>
+                    <div class="kv-row"><div class="kv-key">Subtasks</div><div class="kv-value">1 of 7 (test results verification)</div></div>
+                    <div class="kv-row"><div class="kv-key">Time Spent</div><div class="kv-value">Not started</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dependencies -->
+          <div class="card mb-16">
+            <div class="card-header">
+              <span class="card-title">Dependencies</span>
+            </div>
+            <div class="card-body">
+              <div class="text-xs text-dimmed mb-8" style="font-weight:600;">BLOCKS (downstream tasks waiting on this)</div>
+              <div class="dep-card blocked" style="margin-bottom:10px;">
+                <div class="flex items-center gap-8 mb-4">
+                  <span class="mono text-accent" style="font-size:11px;">task_044</span>
+                  <span class="text-white text-sm">Conditional PO Draft — Acme Steel</span>
+                  <span class="badge badge-error" style="font-size:9px;">blocked</span>
+                </div>
+                <div class="text-xs text-dimmed">Cannot draft PO until risk assessment completes. $847/kg &times; 15,000 kg = $12.7M conditional PO.</div>
+              </div>
+              <div class="dep-card blocked" style="margin-bottom:16px;">
+                <div class="flex items-center gap-8 mb-4">
+                  <span class="mono text-accent" style="font-size:11px;">task_051</span>
+                  <span class="text-white text-sm">Reno facility delivery scheduling</span>
+                  <span class="badge badge-error" style="font-size:9px;">blocked</span>
+                </div>
+                <div class="text-xs text-dimmed">LOG-Delta cannot schedule 5K kg Reno delivery until PO approved.</div>
+              </div>
+
+              <div class="text-xs text-dimmed mb-8" style="font-weight:600;">DEPENDS ON (upstream requirements)</div>
+              <div class="dep-card" style="margin-bottom:10px;">
+                <div class="flex items-center gap-8 mb-4">
+                  <span class="mono text-accent" style="font-size:11px;">task_039</span>
+                  <span class="text-sm" style="text-decoration:line-through;opacity:0.5;">Q2 vendor pricing review</span>
+                  <span class="badge badge-online" style="font-size:9px;">complete</span>
+                </div>
+                <div class="text-xs text-dimmed">Pricing data confirmed. Unblocked 6h ago.</div>
+              </div>
+
+              <div class="text-xs text-dimmed mb-8" style="font-weight:600;margin-top:16px;">RELATED</div>
+              <div class="dep-card">
+                <div class="flex items-center gap-8 mb-4">
+                  <span class="mono text-accent" style="font-size:11px;">task_043</span>
+                  <span class="text-sm text-white">Reorder titanium alloy stock</span>
+                  <span class="badge badge-warning" style="font-size:9px;">in_progress</span>
+                </div>
+                <div class="text-xs text-dimmed">INV-Bravo tracking stock levels in parallel. Cross-referenced in KB.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- KB & Message References -->
+          <div class="card mb-16">
+            <div class="card-header">
+              <span class="card-title">References</span>
+            </div>
+            <div class="card-body">
+              <div class="text-xs text-dimmed mb-8" style="font-weight:600;">KNOWLEDGE BASE</div>
+              <div style="display:flex;flex-direction:column;gap:4px;margin-bottom:12px;">
+                <div class="mono text-accent text-xs">kb://vendors/acme-steel</div>
+                <div class="mono text-accent text-xs">kb://materials/titanium-t6al4v</div>
+                <div class="mono text-accent text-xs">kb://policies/dfars-7009</div>
+                <div class="mono text-accent text-xs">kb://decisions/q2-vendor-2026</div>
+              </div>
+              <div class="text-xs text-dimmed mb-8" style="font-weight:600;">MESSAGES</div>
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <div class="mono text-xs text-muted">msg_042 — PROC-Alpha: "Acme revised Q2 pricing..." (channel://procurement)</div>
+                <div class="mono text-xs text-muted">msg_043 — INV-Bravo: "Ti T-6Al-4V at 23%..." (channel://procurement)</div>
+                <div class="mono text-xs text-muted">msg_045 — COMP-Foxtrot: "CMMC renewal tracking..." (DM to PROC-Alpha)</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Activity Log</span>
+          <span class="text-xs text-dimmed">Audit trail — every action timestamped</span>
+        </div>
+        <div class="card-body">
+          <div class="timeline">
+            <div class="timeline-item success">
+              <div class="timeline-time">14:33:02</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> updated KB entry <span class="mono text-accent">kb://vendors/acme-steel</span> with conformance rate (99.2%)</div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-time">14:25:42</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">COMP-Foxtrot</span> began CMMC Level 2 verification — querying vendor portal for cert #CMMC-2024-4891</div>
+            </div>
+            <div class="timeline-item success">
+              <div class="timeline-time">12:15:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> completed subtask: "Check historical conformance rate" — 99.2% across 847 shipments confirmed</div>
+            </div>
+            <div class="timeline-item success">
+              <div class="timeline-time">11:30:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> completed subtask: "Review 12-month pricing history" — $962 &rarr; $847/kg (-12% trend)</div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-time">10:45:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> delegated CMMC/DFARS subtasks to <span class="badge badge-accent" style="font-size:10px;">COMP-Foxtrot</span> via policy gate POL-004</div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-time">10:42:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> delegated ASTM E8 verification to <span class="badge badge-accent" style="font-size:10px;">QC-Charlie</span> via send_message</div>
+            </div>
+            <div class="timeline-item success">
+              <div class="timeline-time">10:15:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> completed subtask: "Pull current pricing" — $847/kg confirmed via vendor portal API</div>
+            </div>
+            <div class="timeline-item">
+              <div class="timeline-time">09:15:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span> created task_042 — triggered by INV-Bravo low stock alert (Ti T-6Al-4V at 23%)</div>
+            </div>
+            <div class="timeline-item warning">
+              <div class="timeline-time">09:14:00</div>
+              <div class="timeline-text"><span class="badge badge-accent" style="font-size:10px;">INV-Bravo</span> triggered alert: Titanium T-6Al-4V stock below 25% safety threshold (23% / 3,450 kg)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="assets/arc-shell.js"></script>
+  <script>ARC.renderShell('tasks');</script>
+</body>
+</html>

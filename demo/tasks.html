@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — Task Management</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+  <style>
+    .tree-node { margin-left: 0; }
+    .tree-node .tree-children { margin-left: 24px; border-left: 1px solid var(--border-primary); padding-left: 0; }
+    .tree-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: background 0.15s; }
+    .tree-row:hover { background: var(--bg-secondary); }
+    .tree-row.dept { padding: 10px 12px; font-weight: 600; color: var(--text-white); font-size: 14px; }
+    .tree-row.project { padding: 8px 12px 8px 24px; color: var(--text-secondary); font-size: 13px; }
+    .tree-row.task { padding: 6px 12px 6px 24px; font-size: 12px; color: var(--text-muted); }
+    .tree-row.task:hover { background: var(--accent-glow); }
+    .tree-toggle { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; color: var(--text-dimmed); transition: transform 0.15s; flex-shrink: 0; }
+    .tree-toggle.open { transform: rotate(90deg); }
+    .tree-agent-count { font-size: 10px; color: var(--text-dimmed); margin-left: auto; }
+    .tree-progress { width: 60px; flex-shrink: 0; }
+    .dept-icon { width: 28px; height: 28px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
+    .project-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <div class="breadcrumb">
+        <a href="index.html">Dashboard</a>
+        <span class="sep">/</span>
+        <span>Task Management</span>
+      </div>
+
+      <div class="page-header">
+        <h1>Task Management</h1>
+        <div class="page-header-actions">
+          <button class="btn btn-primary btn-sm">+ Create Task</button>
+        </div>
+      </div>
+
+      <!-- Tabs for views -->
+      <div class="tabs" id="task-tabs">
+        <div class="tab" data-tab="kanban">Kanban</div>
+        <div class="tab active" data-tab="hierarchy">Hierarchy</div>
+        <div class="tab" data-tab="list">List</div>
+      </div>
+
+      <!-- Summary -->
+      <div class="grid-4 mb-20">
+        <div class="stat-card">
+          <div class="stat-card-label">Total Tasks</div>
+          <div class="stat-card-value">47</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Active Projects</div>
+          <div class="stat-card-value">11</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Blocked</div>
+          <div class="stat-card-value" style="color:var(--status-error);">2</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-label">Completed (7d)</div>
+          <div class="stat-card-value" style="color:var(--status-online);">31</div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           VIEW: HIERARCHY
+           ============================================================ -->
+      <div class="tab-panel active" id="tab-hierarchy">
+
+        <!-- Filter Bar -->
+        <div class="flex gap-8 mb-16">
+          <select class="filter-select">
+            <option>All Departments</option>
+            <option>Procurement</option>
+            <option>Inventory</option>
+            <option>Quality Control</option>
+            <option>Logistics</option>
+            <option>Compliance</option>
+          </select>
+          <select class="filter-select">
+            <option>All Statuses</option>
+            <option>In Progress</option>
+            <option>Blocked</option>
+            <option>Review</option>
+            <option>Complete</option>
+          </select>
+          <select class="filter-select">
+            <option>All Priorities</option>
+            <option>Critical</option>
+            <option>High</option>
+            <option>Normal</option>
+          </select>
+          <input type="text" class="filter-input" placeholder="Search tasks..." style="flex:1;" />
+        </div>
+
+        <div class="card">
+          <div class="card-body" style="padding:8px 0;">
+
+            <!-- ===== PROCUREMENT ===== -->
+            <div class="tree-node">
+              <div class="tree-row dept" onclick="toggleTree(this)">
+                <span class="tree-toggle open">&#9654;</span>
+                <div class="dept-icon" style="background:#006fff;">PA</div>
+                <span>Procurement</span>
+                <span class="text-xs text-dimmed" style="margin-left:4px;">PROC-Alpha</span>
+                <span class="tree-agent-count">3 projects &middot; 12 tasks</span>
+              </div>
+              <div class="tree-children">
+
+                <!-- Project: Q2 Titanium Alloy Procurement -->
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle open">&#9654;</span>
+                    <div class="project-dot" style="background:var(--severity-critical);"></div>
+                    <span class="text-white">Q2 Titanium Alloy Procurement</span>
+                    <span class="badge badge-error" style="font-size:10px;margin-left:8px;">critical</span>
+                    <span class="tree-agent-count">
+                      <span class="mono">4/7 done</span>
+                      <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill" style="width:57%"></div></div>
+                    </span>
+                  </div>
+                  <div class="tree-children">
+                    <a href="task-detail.html" class="tree-row task" style="text-decoration:none;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-error" style="font-size:9px;padding:1px 5px;">critical</span>
+                      <span class="text-white">Vendor risk assessment — Acme Steel</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count">
+                        <span class="badge badge-warning" style="font-size:9px;">in_progress</span>
+                        <span class="mono" style="margin-left:6px;">3/7</span>
+                      </span>
+                    </a>
+                    <a href="task-detail.html" class="tree-row task" style="text-decoration:none;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-error" style="font-size:9px;padding:1px 5px;">critical</span>
+                      <span style="color:var(--status-error);">Conditional PO draft — Acme Steel</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count">
+                        <span class="badge badge-error" style="font-size:9px;">blocked</span>
+                        <span class="mono" style="margin-left:6px;">0/4</span>
+                      </span>
+                    </a>
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span class="text-white">Request mill certs from Acme</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count">
+                        <span class="badge badge-info" style="font-size:9px;">assigned</span>
+                      </span>
+                    </div>
+                    <div class="tree-row task" style="opacity:0.5;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">done</span>
+                      <span>Q2 vendor pricing review</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count">
+                        <span class="badge badge-online" style="font-size:9px;">complete</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Project: Stainless Steel Procurement -->
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle open">&#9654;</span>
+                    <div class="project-dot" style="background:var(--accent);"></div>
+                    <span class="text-white">Stainless Steel Procurement</span>
+                    <span class="badge badge-neutral" style="font-size:10px;margin-left:8px;">normal</span>
+                    <span class="tree-agent-count">
+                      <span class="mono">1/3 done</span>
+                      <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill" style="width:33%"></div></div>
+                    </span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">normal</span>
+                      <span class="text-white">316L price comparison (3 vendors)</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count"><span class="badge badge-warning" style="font-size:9px;">in_progress</span> <span class="mono">2/3</span></span>
+                    </div>
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">normal</span>
+                      <span class="text-white">Update vendor scoring model</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count"><span class="badge badge-neutral" style="font-size:9px;">pending</span></span>
+                    </div>
+                    <div class="tree-row task" style="opacity:0.5;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">done</span>
+                      <span>Initial supplier research</span>
+                      <span class="badge badge-accent" style="font-size:9px;">PROC-Alpha</span>
+                      <span class="tree-agent-count"><span class="badge badge-online" style="font-size:9px;">complete</span></span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Project: Carbon Fiber -->
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle">&#9654;</span>
+                    <div class="project-dot" style="background:var(--text-dimmed);"></div>
+                    <span class="text-white">Carbon Fiber Supplier Diversification</span>
+                    <span class="badge badge-neutral" style="font-size:10px;margin-left:8px;">normal</span>
+                    <span class="tree-agent-count">
+                      <span class="mono">0/5 done</span>
+                      <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill" style="width:0%"></div></div>
+                    </span>
+                  </div>
+                  <div class="tree-children" style="display:none;">
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">normal</span>
+                      <span class="text-muted">Market research — CF suppliers</span>
+                      <span class="tree-agent-count"><span class="badge badge-neutral" style="font-size:9px;">pending</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== INVENTORY ===== -->
+            <div class="tree-node" style="margin-top:4px;">
+              <div class="tree-row dept" onclick="toggleTree(this)">
+                <span class="tree-toggle open">&#9654;</span>
+                <div class="dept-icon" style="background:#00c853;">IB</div>
+                <span>Inventory & Warehousing</span>
+                <span class="text-xs text-dimmed" style="margin-left:4px;">INV-Bravo</span>
+                <span class="tree-agent-count">2 projects &middot; 8 tasks</span>
+              </div>
+              <div class="tree-children">
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle open">&#9654;</span>
+                    <div class="project-dot" style="background:var(--severity-high);"></div>
+                    <span class="text-white">Safety Stock Optimization</span>
+                    <span class="badge badge-warning" style="font-size:10px;margin-left:8px;">high</span>
+                    <span class="tree-agent-count"><span class="mono">2/5 done</span> <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill" style="width:40%"></div></div></span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span class="text-white">Reorder titanium alloy stock</span>
+                      <span class="badge badge-accent" style="font-size:9px;">INV-Bravo</span>
+                      <span class="tree-agent-count"><span class="badge badge-warning" style="font-size:9px;">in_progress</span> <span class="mono">2/5</span></span>
+                    </div>
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span class="text-white">Production schedule optimization</span>
+                      <span class="badge badge-accent" style="font-size:9px;">INV-Bravo</span>
+                      <span class="tree-agent-count"><span class="badge badge-info" style="font-size:9px;">assigned</span></span>
+                    </div>
+                    <div class="tree-row task" style="opacity:0.5;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">done</span>
+                      <span>February safety stock report</span>
+                      <span class="badge badge-accent" style="font-size:9px;">INV-Bravo</span>
+                      <span class="tree-agent-count"><span class="badge badge-online" style="font-size:9px;">complete</span></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle">&#9654;</span>
+                    <div class="project-dot" style="background:var(--text-dimmed);"></div>
+                    <span class="text-white">Warehouse Zone B Audit</span>
+                    <span class="badge badge-neutral" style="font-size:10px;margin-left:8px;">normal</span>
+                    <span class="tree-agent-count"><span class="mono">0/3 done</span></span>
+                  </div>
+                  <div class="tree-children" style="display:none;">
+                    <div class="tree-row task"><span style="width:16px;"></span><span class="badge badge-neutral" style="font-size:9px;">normal</span><span class="text-muted">Physical count — Zone B racks</span><span class="tree-agent-count"><span class="badge badge-neutral" style="font-size:9px;">pending</span></span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== QUALITY CONTROL ===== -->
+            <div class="tree-node" style="margin-top:4px;">
+              <div class="tree-row dept" onclick="toggleTree(this)">
+                <span class="tree-toggle open">&#9654;</span>
+                <div class="dept-icon" style="background:#ff9800;">QC</div>
+                <span>Quality Control</span>
+                <span class="text-xs text-dimmed" style="margin-left:4px;">QC-Charlie</span>
+                <span class="tree-agent-count">2 projects &middot; 7 tasks</span>
+              </div>
+              <div class="tree-children">
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle open">&#9654;</span>
+                    <div class="project-dot" style="background:var(--accent);"></div>
+                    <span class="text-white">Batch Testing Pipeline</span>
+                    <span class="badge badge-neutral" style="font-size:10px;margin-left:8px;">normal</span>
+                    <span class="tree-agent-count"><span class="mono">3/5 done</span> <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill success" style="width:60%"></div></div></span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">normal</span>
+                      <span class="text-white">Batch #4821 tensile test analysis</span>
+                      <span class="badge badge-accent" style="font-size:9px;">QC-Charlie</span>
+                      <span class="tree-agent-count"><span class="badge badge-warning" style="font-size:9px;">in_progress</span> <span class="mono">4/5</span></span>
+                    </div>
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">normal</span>
+                      <span class="text-white">QC batch sampling protocol update</span>
+                      <span class="badge badge-accent" style="font-size:9px;">QC-Charlie</span>
+                      <span class="tree-agent-count"><span class="badge badge-info" style="font-size:9px;">review</span></span>
+                    </div>
+                    <div class="tree-row task" style="opacity:0.5;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">done</span>
+                      <span>Batch #4820 QC sign-off</span>
+                      <span class="badge badge-accent" style="font-size:9px;">QC-Charlie</span>
+                      <span class="tree-agent-count"><span class="badge badge-online" style="font-size:9px;">complete</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== LOGISTICS ===== -->
+            <div class="tree-node" style="margin-top:4px;">
+              <div class="tree-row dept" onclick="toggleTree(this)">
+                <span class="tree-toggle open">&#9654;</span>
+                <div class="dept-icon" style="background:#e040fb;">LD</div>
+                <span>Logistics & Shipping</span>
+                <span class="text-xs text-dimmed" style="margin-left:4px;">LOG-Delta</span>
+                <span class="tree-agent-count">2 projects &middot; 9 tasks</span>
+              </div>
+              <div class="tree-children">
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle open">&#9654;</span>
+                    <div class="project-dot" style="background:var(--severity-high);"></div>
+                    <span class="text-white">Q2 Delivery Logistics</span>
+                    <span class="badge badge-warning" style="font-size:10px;margin-left:8px;">high</span>
+                    <span class="tree-agent-count"><span class="mono">1/4 done</span> <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill" style="width:25%"></div></div></span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span class="text-white">Split-route logistics plan (10K/5K)</span>
+                      <span class="badge badge-accent" style="font-size:9px;">LOG-Delta</span>
+                      <span class="tree-agent-count"><span class="badge badge-info" style="font-size:9px;">assigned</span></span>
+                    </div>
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span style="color:var(--status-error);">Reno facility delivery scheduling</span>
+                      <span class="badge badge-accent" style="font-size:9px;">LOG-Delta</span>
+                      <span class="tree-agent-count"><span class="badge badge-error" style="font-size:9px;">blocked</span></span>
+                    </div>
+                    <div class="tree-row task" style="opacity:0.5;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">done</span>
+                      <span>Shipment #SH-9844 delivery confirmation</span>
+                      <span class="badge badge-accent" style="font-size:9px;">LOG-Delta</span>
+                      <span class="tree-agent-count"><span class="badge badge-online" style="font-size:9px;">complete</span></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle">&#9654;</span>
+                    <div class="project-dot" style="background:var(--text-dimmed);"></div>
+                    <span class="text-white">West Coast Route Optimization</span>
+                    <span class="badge badge-neutral" style="font-size:10px;margin-left:8px;">normal</span>
+                    <span class="tree-agent-count"><span class="mono">0/3 done</span></span>
+                  </div>
+                  <div class="tree-children" style="display:none;">
+                    <div class="tree-row task"><span style="width:16px;"></span><span class="badge badge-neutral" style="font-size:9px;">normal</span><span class="text-muted">Route optimization — West Coast</span><span class="tree-agent-count"><span class="badge badge-neutral" style="font-size:9px;">pending</span></span></div>
+                    <div class="tree-row task"><span style="width:16px;"></span><span class="badge badge-neutral" style="font-size:9px;">normal</span><span class="text-muted">Carrier contract renewal evaluation</span><span class="tree-agent-count"><span class="badge badge-neutral" style="font-size:9px;">pending</span></span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== COMPLIANCE ===== -->
+            <div class="tree-node" style="margin-top:4px;">
+              <div class="tree-row dept" onclick="toggleTree(this)">
+                <span class="tree-toggle open">&#9654;</span>
+                <div class="dept-icon" style="background:#f44336;">CF</div>
+                <span>Compliance & Legal</span>
+                <span class="text-xs text-dimmed" style="margin-left:4px;">COMP-Foxtrot</span>
+                <span class="tree-agent-count">2 projects &middot; 8 tasks</span>
+              </div>
+              <div class="tree-children">
+                <div class="tree-node">
+                  <div class="tree-row project" onclick="toggleTree(this)">
+                    <span class="tree-toggle open">&#9654;</span>
+                    <div class="project-dot" style="background:var(--severity-high);"></div>
+                    <span class="text-white">Q1 CMMC/DFARS Audit</span>
+                    <span class="badge badge-warning" style="font-size:10px;margin-left:8px;">high</span>
+                    <span class="tree-agent-count"><span class="mono">2/6 done</span> <div class="progress-bar tree-progress" style="display:inline-block;vertical-align:middle;margin-left:6px;"><div class="fill" style="width:33%"></div></div></span>
+                  </div>
+                  <div class="tree-children">
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span class="text-white">CMMC/DFARS compliance verification</span>
+                      <span class="badge badge-accent" style="font-size:9px;">COMP-Foxtrot</span>
+                      <span class="tree-agent-count"><span class="badge badge-warning" style="font-size:9px;">in_progress</span> <span class="mono">1/4</span></span>
+                    </div>
+                    <div class="tree-row task">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-warning" style="font-size:9px;padding:1px 5px;">high</span>
+                      <span class="text-white">Q1 compliance audit preparation</span>
+                      <span class="badge badge-accent" style="font-size:9px;">COMP-Foxtrot</span>
+                      <span class="tree-agent-count"><span class="badge badge-info" style="font-size:9px;">review</span></span>
+                    </div>
+                    <div class="tree-row task" style="opacity:0.5;">
+                      <span style="width:16px;"></span>
+                      <span class="badge badge-neutral" style="font-size:9px;padding:1px 5px;">done</span>
+                      <span>Carrier insurance renewal verification</span>
+                      <span class="badge badge-accent" style="font-size:9px;">COMP-Foxtrot</span>
+                      <span class="tree-agent-count"><span class="badge badge-online" style="font-size:9px;">complete</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ===== SCHEDULING ===== -->
+            <div class="tree-node" style="margin-top:4px;">
+              <div class="tree-row dept" onclick="toggleTree(this)">
+                <span class="tree-toggle">&#9654;</span>
+                <div class="dept-icon" style="background:#29b6f6;">SE</div>
+                <span>Scheduling</span>
+                <span class="text-xs text-dimmed" style="margin-left:4px;">SCHED-Echo</span>
+                <span class="tree-agent-count">1 project &middot; 3 tasks</span>
+              </div>
+              <div class="tree-children" style="display:none;">
+                <div class="tree-node">
+                  <div class="tree-row project"><span style="width:16px;"></span><div class="project-dot" style="background:var(--text-dimmed);"></div><span class="text-white">Production Schedule Management</span><span class="tree-agent-count"><span class="mono">1/3 done</span></span></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           VIEW: KANBAN (existing)
+           ============================================================ -->
+      <div class="tab-panel" id="tab-kanban">
+        <div class="kanban">
+          <!-- Pending -->
+          <div class="kanban-column">
+            <div class="kanban-col-header"><span class="kanban-col-title">Pending</span><span class="kanban-col-count">5</span></div>
+            <div class="kanban-col-body">
+              <div class="kanban-card"><div class="kanban-card-title">Route optimization — West Coast</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">LOG-Delta</span><span class="badge badge-neutral" style="font-size:10px;">normal</span></div><div class="text-xs text-dimmed mt-8">Due: Mar 5</div></div>
+              <div class="kanban-card"><div class="kanban-card-title">Update vendor scoring model</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span><span class="badge badge-neutral" style="font-size:10px;">low</span></div><div class="text-xs text-dimmed mt-8">Due: Mar 10</div></div>
+              <div class="kanban-card"><div class="kanban-card-title">Carbon fiber supplier diversification</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span><span class="badge badge-neutral" style="font-size:10px;">normal</span></div><div class="text-xs text-dimmed mt-8">Due: Mar 15 &middot; 3 subtasks</div></div>
+              <div class="kanban-card"><div class="kanban-card-title">Warehouse zone B inventory audit</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">INV-Bravo</span><span class="badge badge-neutral" style="font-size:10px;">low</span></div><div class="text-xs text-dimmed mt-8">Due: Mar 12</div></div>
+              <div class="kanban-card"><div class="kanban-card-title">Carrier contract renewal evaluation</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">LOG-Delta</span><span class="badge badge-neutral" style="font-size:10px;">normal</span></div><div class="text-xs text-dimmed mt-8">Due: Mar 20</div></div>
+            </div>
+          </div>
+          <!-- In Progress -->
+          <div class="kanban-column">
+            <div class="kanban-col-header" style="border-bottom:2px solid var(--accent);"><span class="kanban-col-title">In Progress</span><span class="kanban-col-count">5</span></div>
+            <div class="kanban-col-body">
+              <a href="task-detail.html" style="text-decoration:none;" class="kanban-card" style="border-left:3px solid var(--severity-critical);"><div class="kanban-card-title" style="color:var(--text-white);">Vendor risk assessment — Acme Steel</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span><span class="badge badge-error" style="font-size:10px;">critical</span></div><div class="text-xs text-dimmed mt-8">task_042 &middot; 3/7 subtasks</div><div class="progress-bar mt-8"><div class="fill" style="width:43%"></div></div></a>
+              <div class="kanban-card" style="border-left:3px solid var(--severity-high);"><div class="kanban-card-title">Reorder titanium alloy stock</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">INV-Bravo</span><span class="badge badge-warning" style="font-size:10px;">high</span></div><div class="text-xs text-dimmed mt-8">task_043 &middot; 2/5 subtasks</div><div class="progress-bar mt-8"><div class="fill" style="width:40%"></div></div></div>
+              <div class="kanban-card"><div class="kanban-card-title">Batch #4821 tensile test analysis</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">QC-Charlie</span><span class="badge badge-neutral" style="font-size:10px;">normal</span></div><div class="text-xs text-dimmed mt-8">task_045 &middot; 4/5 subtasks</div><div class="progress-bar mt-8"><div class="fill success" style="width:80%"></div></div></div>
+              <div class="kanban-card"><div class="kanban-card-title">CMMC/DFARS compliance verification</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">COMP-Foxtrot</span><span class="badge badge-warning" style="font-size:10px;">high</span></div><div class="text-xs text-dimmed mt-8">task_046 &middot; 1/4 subtasks</div><div class="progress-bar mt-8"><div class="fill" style="width:25%"></div></div></div>
+              <div class="kanban-card"><div class="kanban-card-title">Stainless 316L price comparison</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span><span class="badge badge-neutral" style="font-size:10px;">normal</span></div><div class="text-xs text-dimmed mt-8">task_048 &middot; 2/3 subtasks</div><div class="progress-bar mt-8"><div class="fill" style="width:67%"></div></div></div>
+            </div>
+          </div>
+          <!-- Blocked -->
+          <div class="kanban-column">
+            <div class="kanban-col-header" style="border-bottom:2px solid var(--status-error);"><span class="kanban-col-title">Blocked</span><span class="kanban-col-count">2</span></div>
+            <div class="kanban-col-body">
+              <div class="kanban-card" style="border-left:3px solid var(--status-error);"><div class="kanban-card-title">Conditional PO draft — Acme Steel</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span><span class="badge badge-error" style="font-size:10px;">critical</span></div><div class="text-xs text-dimmed mt-8" style="color:var(--status-error);">Blocked by: CMMC verification (task_046)</div></div>
+              <div class="kanban-card" style="border-left:3px solid var(--status-error);"><div class="kanban-card-title">Reno facility delivery scheduling</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">LOG-Delta</span><span class="badge badge-warning" style="font-size:10px;">high</span></div><div class="text-xs text-dimmed mt-8" style="color:var(--status-error);">Blocked by: PO approval pending</div></div>
+            </div>
+          </div>
+          <!-- Complete -->
+          <div class="kanban-column">
+            <div class="kanban-col-header" style="border-bottom:2px solid var(--status-online);"><span class="kanban-col-title">Complete</span><span class="kanban-col-count">5</span></div>
+            <div class="kanban-col-body">
+              <div class="kanban-card" style="opacity:0.6;"><div class="kanban-card-title">Q2 vendor pricing review</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span></div><div class="text-xs text-dimmed mt-8">30m ago</div></div>
+              <div class="kanban-card" style="opacity:0.6;"><div class="kanban-card-title">Batch #4820 QC sign-off</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">QC-Charlie</span></div><div class="text-xs text-dimmed mt-8">2h ago</div></div>
+              <div class="kanban-card" style="opacity:0.6;"><div class="kanban-card-title">February safety stock report</div><div class="kanban-card-meta"><span class="badge badge-accent" style="font-size:10px;">INV-Bravo</span></div><div class="text-xs text-dimmed mt-8">4h ago</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+           VIEW: LIST
+           ============================================================ -->
+      <div class="tab-panel" id="tab-list">
+        <div class="card">
+          <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+              <thead><tr><th>ID</th><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>Progress</th><th>Due</th></tr></thead>
+              <tbody>
+                <tr><td class="mono text-accent">042</td><td class="text-white"><a href="task-detail.html" style="color:inherit;">Vendor risk assessment — Acme Steel</a></td><td class="text-muted">Q2 Ti Procurement</td><td><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span></td><td><span class="badge badge-error" style="font-size:10px;">critical</span></td><td><span class="badge badge-warning" style="font-size:10px;">in_progress</span></td><td><div class="progress-bar" style="width:60px;display:inline-block;"><div class="fill" style="width:43%"></div></div> <span class="mono text-xs">3/7</span></td><td class="mono text-muted">Today</td></tr>
+                <tr><td class="mono text-accent">043</td><td class="text-white">Reorder titanium alloy stock</td><td class="text-muted">Safety Stock Opt.</td><td><span class="badge badge-accent" style="font-size:10px;">INV-Bravo</span></td><td><span class="badge badge-warning" style="font-size:10px;">high</span></td><td><span class="badge badge-warning" style="font-size:10px;">in_progress</span></td><td><div class="progress-bar" style="width:60px;display:inline-block;"><div class="fill" style="width:40%"></div></div> <span class="mono text-xs">2/5</span></td><td class="mono text-muted">Mar 1</td></tr>
+                <tr><td class="mono text-accent">044</td><td class="text-white" style="color:var(--status-error);">Conditional PO draft — Acme Steel</td><td class="text-muted">Q2 Ti Procurement</td><td><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span></td><td><span class="badge badge-error" style="font-size:10px;">critical</span></td><td><span class="badge badge-error" style="font-size:10px;">blocked</span></td><td class="text-dimmed">—</td><td class="mono text-muted">Mar 3</td></tr>
+                <tr><td class="mono text-accent">045</td><td class="text-white">Batch #4821 tensile test</td><td class="text-muted">Batch Testing</td><td><span class="badge badge-accent" style="font-size:10px;">QC-Charlie</span></td><td><span class="badge badge-neutral" style="font-size:10px;">normal</span></td><td><span class="badge badge-warning" style="font-size:10px;">in_progress</span></td><td><div class="progress-bar" style="width:60px;display:inline-block;"><div class="fill success" style="width:80%"></div></div> <span class="mono text-xs">4/5</span></td><td class="mono text-muted">Today</td></tr>
+                <tr><td class="mono text-accent">046</td><td class="text-white">CMMC/DFARS compliance verification</td><td class="text-muted">Q1 CMMC Audit</td><td><span class="badge badge-accent" style="font-size:10px;">COMP-Foxtrot</span></td><td><span class="badge badge-warning" style="font-size:10px;">high</span></td><td><span class="badge badge-warning" style="font-size:10px;">in_progress</span></td><td><div class="progress-bar" style="width:60px;display:inline-block;"><div class="fill" style="width:25%"></div></div> <span class="mono text-xs">1/4</span></td><td class="mono text-muted">Mar 5</td></tr>
+                <tr><td class="mono text-accent">048</td><td class="text-white">316L price comparison</td><td class="text-muted">SS Procurement</td><td><span class="badge badge-accent" style="font-size:10px;">PROC-Alpha</span></td><td><span class="badge badge-neutral" style="font-size:10px;">normal</span></td><td><span class="badge badge-warning" style="font-size:10px;">in_progress</span></td><td><div class="progress-bar" style="width:60px;display:inline-block;"><div class="fill" style="width:67%"></div></div> <span class="mono text-xs">2/3</span></td><td class="mono text-muted">Mar 8</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="assets/arc-shell.js"></script>
+  <script>
+    ARC.renderShell('tasks');
+
+    // Tree toggle
+    function toggleTree(row) {
+      const node = row.closest('.tree-node');
+      const children = node.querySelector('.tree-children');
+      const toggle = row.querySelector('.tree-toggle');
+      if (!children) return;
+      if (children.style.display === 'none') {
+        children.style.display = '';
+        toggle.classList.add('open');
+      } else {
+        children.style.display = 'none';
+        toggle.classList.remove('open');
+      }
+    }
+
+    // Tab switching
+    document.querySelectorAll('#task-tabs .tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('#task-tabs .tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

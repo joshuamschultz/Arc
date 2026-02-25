@@ -1,4 +1,4 @@
-name: Publish arcstack
+name: Publish arcmas
 
 on:
   release:
@@ -12,12 +12,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment:
-      name: pypi-arcstack
-      url: https://pypi.org/project/arcstack/
+      name: pypi-arcmas
+      url: https://pypi.org/project/arcmas/
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv build --package arcstack
+      - run: uv build --package arcmas
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
