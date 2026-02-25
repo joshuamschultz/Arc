@@ -61,3 +61,12 @@ architecture/
 Basic_Agent/
 my_agent/
 team/
+
+# Demo UI
+demo/
+
+# Analysis/plan artifacts
+PLAN-*.md
+prompt-injection-*.md
+packages/*/ENTITY*.md
+packages/*/PROMPT_INJECTION*.md
