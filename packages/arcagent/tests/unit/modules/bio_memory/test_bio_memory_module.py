@@ -729,6 +729,57 @@ class TestGetTeamEntitiesDir:
         )
         assert m._get_team_entities_dir() is None
 
+    def test_pydantic_model_team_config(
+        self, workspace: Path, telemetry: MagicMock, tmp_path: Path,
+    ) -> None:
+        """team_config may be a Pydantic model (TeamSection) instead of dict."""
+        from arcagent.core.config import TeamSection
+
+        team_root = tmp_path / "team"
+        team_entities = team_root / "entities"
+        team_entities.mkdir(parents=True)
+
+        m = BioMemoryModule(
+            workspace=workspace,
+            telemetry=telemetry,
+            team_config=TeamSection(root=str(team_root)),
+        )
+        assert m._get_team_entities_dir() == team_entities
+
+    def test_pydantic_model_empty_root(
+        self, workspace: Path, telemetry: MagicMock,
+    ) -> None:
+        """Pydantic model with empty root returns None."""
+        from arcagent.core.config import TeamSection
+
+        m = BioMemoryModule(
+            workspace=workspace,
+            telemetry=telemetry,
+            team_config=TeamSection(),
+        )
+        assert m._get_team_entities_dir() is None
+
+    def test_relative_path_resolved_against_workspace_parent(
+        self, tmp_path: Path, telemetry: MagicMock,
+    ) -> None:
+        """Relative team root is resolved against workspace parent."""
+        # Simulate: agent at /project/agents/my_agent/workspace
+        # team root = "../shared" → /project/agents/shared
+        agent_dir = tmp_path / "agents" / "my_agent"
+        ws = agent_dir / "workspace"
+        ws.mkdir(parents=True)
+        (ws / "memory").mkdir()
+
+        team_entities = tmp_path / "agents" / "shared" / "entities"
+        team_entities.mkdir(parents=True)
+
+        m = BioMemoryModule(
+            workspace=ws,
+            telemetry=telemetry,
+            team_config={"root": "../shared"},
+        )
+        assert m._get_team_entities_dir() == team_entities
+
 
 class TestGetEvalModel:
     """_get_eval_model caches and returns model."""

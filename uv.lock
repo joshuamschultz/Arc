@@ -10,12 +10,13 @@ resolution-markers = [
 members = [
     "arc",
     "arcagent",
-    "arccli",
+    "arccmd",
     "arcllm",
+    "arcmas",
     "arcmodel",
+    "arcprompt",
     "arcrun",
     "arcskill",
-    "arcstack",
     "arcteam",
     "arctui",
     "arcui",
@@ -121,7 +122,7 @@ requires-dist = [
 provides-extras = ["telegram"]
 
 [[package]]
-name = "arccli"
+name = "arccmd"
 version = "0.2.0"
 source = { editable = "packages/arccli" }
 dependencies = [
@@ -176,9 +177,25 @@ requires-dist = [
 provides-extras = ["otel", "signing"]
 
 [[package]]
+name = "arcmas"
+version = "0.2.0"
+source = { editable = "packages/arcmas" }
+dependencies = [
+    { name = "arccmd" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "arccmd", editable = "packages/arccli" }]
+
+[[package]]
 name = "arcmodel"
 version = "0.0.1"
 source = { editable = "packages/arcmodel" }
+
+[[package]]
+name = "arcprompt"
+version = "0.0.1"
+source = { editable = "packages/arcprompt" }
 
 [[package]]
 name = "arcrun"
@@ -206,17 +223,6 @@ provides-extras = ["container"]
 name = "arcskill"
 version = "0.0.1"
 source = { editable = "packages/arcskill" }
-
-[[package]]
-name = "arcstack"
-version = "0.2.0"
-source = { editable = "packages/arcstack" }
-dependencies = [
-    { name = "arccli" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "arccli", editable = "packages/arccli" }]
 
 [[package]]
 name = "arcteam"

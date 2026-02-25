@@ -76,6 +76,9 @@ class BioMemoryModule:
             workspace=self._workspace,
             team_entities_dir=self._get_team_entities_dir(),
         )
+        # Infer agent_id from workspace parent directory name
+        self._agent_id = self._workspace.parent.name if self._workspace != Path(".") else ""
+
         self._consolidator = Consolidator(
             self._memory_dir,
             self._config,
@@ -84,6 +87,7 @@ class BioMemoryModule:
             telemetry,
             workspace=self._workspace,
             team_service_factory=self._get_team_service,
+            agent_id=self._agent_id,
         )
 
     @property
@@ -143,7 +147,11 @@ class BioMemoryModule:
         try:
             from arcteam.memory.config import TeamMemoryConfig  # type: ignore[import-untyped]
             from arcteam.memory.service import TeamMemoryService  # type: ignore[import-untyped]
-            team_cfg = TeamMemoryConfig(**self._team_config)
+            # Resolve team root to absolute path before passing to TeamMemoryConfig.
+            # Relative paths (e.g. "../shared") resolve against workspace parent
+            # (where arcagent.toml lives), consistent with messaging module.
+            team_root = self._resolve_team_root()
+            team_cfg = TeamMemoryConfig(root=team_root)
             self._team_service = TeamMemoryService(team_cfg)
             return self._team_service
         except ImportError:
@@ -153,14 +161,43 @@ class BioMemoryModule:
             _logger.debug("arcteam init failed, team memory disabled", exc_info=True)
             return None
 
+    def _resolve_team_root(self) -> Path:
+        """Resolve team root from team_config to an absolute path.
+
+        Relative paths resolve against workspace parent (agent directory).
+        """
+        if isinstance(self._team_config, dict):
+            root_str = self._team_config.get("root_path") or self._team_config.get("root", "")
+        else:
+            root_str = getattr(self._team_config, "root", "")
+        if not root_str:
+            return Path.home() / ".arc" / "team"
+        team_root = Path(root_str)
+        if not team_root.is_absolute():
+            team_root = (self._workspace.parent / team_root).resolve()
+        return team_root
+
     def _get_team_entities_dir(self) -> Path | None:
-        """Resolve team entities path from team_config if available."""
+        """Resolve team entities path from team_config if available.
+
+        Handles both Pydantic model (getattr) and dict (.get) for team_config.
+        Relative paths resolved against workspace parent (where arcagent.toml lives).
+        """
         if self._team_config is None:
             return None
-        root = self._team_config.get("root_path") or self._team_config.get("root")
+        # Support both Pydantic model (getattr) and dict (.get)
+        if isinstance(self._team_config, dict):
+            root = self._team_config.get("root_path") or self._team_config.get("root")
+        else:
+            root = getattr(self._team_config, "root", None)
         if not root:
             return None
-        team_entities = Path(root) / "entities"
+        team_root = Path(root)
+        if not team_root.is_absolute():
+            # Resolve relative to agent directory (workspace parent),
+            # consistent with messaging module behavior
+            team_root = (self._workspace.parent / team_root).resolve()
+        team_entities = team_root / "entities"
         if team_entities.exists():
             return team_entities
         return None

@@ -55,6 +55,7 @@ class Consolidator:
         telemetry: Any,
         workspace: Path | None = None,
         team_service_factory: Callable[[], Any] | None = None,
+        agent_id: str = "",
     ) -> None:
         self._memory_dir = memory_dir
         self._config = config
@@ -64,6 +65,7 @@ class Consolidator:
         self._workspace = workspace or memory_dir.parent
         self._entities_dir = self._workspace / config.entities_dirname
         self._team_service_factory = team_service_factory
+        self._agent_id = agent_id
         # Per-session UUID for boundary markers (SEC-11)
         self._boundary_id = uuid.uuid4().hex[:12]
 
@@ -560,7 +562,18 @@ class Consolidator:
                 team_svc = self._team_service_factory()
                 if team_svc:
                     try:
-                        await team_svc.promote(entity_id=slug, entity_path=target_path)
+                        # Import lazily to avoid hard dependency on arcteam
+                        from arcteam.memory.types import EntityMetadata  # type: ignore[import-untyped]
+
+                        metadata = EntityMetadata(**frontmatter)
+                        await team_svc.promote(
+                            entity_id=slug,
+                            content=content,
+                            metadata=metadata,
+                            agent_id=self._agent_id,
+                        )
+                    except ImportError:
+                        _logger.debug("arcteam not installed, skipping team promotion")
                     except Exception:
                         _logger.debug("Team promotion failed for %s", slug, exc_info=True)
 

@@ -7,14 +7,14 @@
 │   Security-First Autonomous Agent Framework          │
 │   for Environments Where Trust Is Non-Negotiable     │
 │                                                      │
-├──────────────────────────────────────────────────────┤
-│  5 Packages · 11 Providers · Zero SDKs · SCIF-Ready │
-╰──────────────────────────────────────────────────────╯
+├───────────────────────────────────────────────────────┤
+│  11 Packages · 11 Providers · Zero SDKs · SCIF-Ready │
+╰───────────────────────────────────────────────────────╯
 ```
 
 A security-first autonomous agent framework built for environments where audit trails, cryptographic identity, and data sovereignty are non-negotiable.
 
-Arc is a composable stack of four packages that gives you full control over every layer -- from raw LLM calls to multi-turn agent sessions -- without vendor SDKs, hidden state, or opaque abstractions.
+Arc is a composable stack of packages that gives you full control over every layer -- from raw LLM calls to multi-turn agent sessions -- without vendor SDKs, hidden state, or opaque abstractions.
 
 ## Why Arc Exists
 
@@ -71,7 +71,9 @@ See [Compliance Mapping](#compliance-mapping) for the full control-by-control br
 ## Architecture
 
 ```
-arccli          Operator CLI -- 32 commands, 22 REPL commands
+arcmas          Meta-package -- pip install arcmas gets the full stack
+  |
+arccmd          Operator CLI -- 32 commands, 22 REPL commands
   |
 arcteam         Team coordination -- formation, task distribution, consensus
   |
@@ -80,19 +82,38 @@ arcagent        Agent nucleus -- identity, sessions, extensions, memory
 arcrun          Execution engine -- ReAct loop, sandbox, event bus
   |
 arcllm          LLM abstraction -- 11 providers, zero SDKs, direct HTTP
+
+arcprompt       Prompt management (coming soon)
+arcmodel        Model management (coming soon)
+arcskill        Skill system (coming soon)
+arctui          Terminal UI (coming soon)
+arcui           Web UI (coming soon)
 ```
 
 Each layer is independently usable. You can call `arcllm` directly for a single LLM request, use `arcrun` for a sandboxed tool loop without agent state, run the full `arcagent` stack with cryptographic identity and persistent sessions, or coordinate multiple agents through `arcteam`.
 
 ## Packages
 
-| Package | What It Does |
-|---------|-------------|
-| [arcllm](packages/arcllm/) | Unified interface to 11 LLM providers via direct HTTP. No provider SDKs. Opt-in modules for retry, fallback, rate limiting, PII redaction, request signing, audit logging, and OpenTelemetry. |
-| [arcrun](packages/arcrun/) | Async ReAct execution loop with deny-by-default tool sandboxing, JSON Schema parameter validation, structured event bus, and pluggable execution strategies. |
-| [arcagent](packages/arcagent/) | Full agent lifecycle: Ed25519 cryptographic identity (DIDs), TOML-driven configuration, module bus with priority-ordered event dispatch, context window management, session persistence, skill discovery, and extension sandboxing. |
-| [arcteam](packages/arcteam/) | Multi-agent team coordination: team formation and lifecycle, task distribution and delegation, inter-agent messaging, roster management, and consensus protocols. |
-| [arccli](packages/arccli/) | Operator CLI for the full stack. Agent scaffolding, interactive REPL, session management, provider introspection, and `--json` output on every command for CI/CD integration. |
+### Core Stack
+
+| Package | PyPI | What It Does |
+|---------|------|-------------|
+| [arcllm](packages/arcllm/) | [![PyPI](https://img.shields.io/pypi/v/arcllm)](https://pypi.org/project/arcllm/) | Unified interface to 11 LLM providers via direct HTTP. No provider SDKs. Opt-in modules for retry, fallback, rate limiting, PII redaction, request signing, audit logging, and OpenTelemetry. |
+| [arcrun](packages/arcrun/) | [![PyPI](https://img.shields.io/pypi/v/arcrun)](https://pypi.org/project/arcrun/) | Async ReAct execution loop with deny-by-default tool sandboxing, JSON Schema parameter validation, structured event bus, and pluggable execution strategies. |
+| [arcagent](packages/arcagent/) | [![PyPI](https://img.shields.io/pypi/v/arcagent)](https://pypi.org/project/arcagent/) | Full agent lifecycle: Ed25519 cryptographic identity (DIDs), TOML-driven configuration, module bus with priority-ordered event dispatch, context window management, session persistence, skill discovery, and extension sandboxing. |
+| [arcteam](packages/arcteam/) | [![PyPI](https://img.shields.io/pypi/v/arcteam)](https://pypi.org/project/arcteam/) | Multi-agent team coordination: team formation and lifecycle, task distribution and delegation, inter-agent messaging, roster management, and consensus protocols. |
+| [arccmd](packages/arccli/) | [![PyPI](https://img.shields.io/pypi/v/arccmd)](https://pypi.org/project/arccmd/) | Operator CLI for the full stack. Agent scaffolding, interactive REPL, session management, provider introspection, and `--json` output on every command for CI/CD integration. |
+| [arcmas](packages/arcmas/) | [![PyPI](https://img.shields.io/pypi/v/arcmas)](https://pypi.org/project/arcmas/) | Meta-package that installs the complete Arc stack with a single `pip install arcmas`. |
+
+### Coming Soon
+
+| Package | PyPI | What It Will Do |
+|---------|------|----------------|
+| [arcprompt](packages/arcprompt/) | [![PyPI](https://img.shields.io/pypi/v/arcprompt)](https://pypi.org/project/arcprompt/) | Prompt management, templating, and versioning. |
+| [arcmodel](packages/arcmodel/) | [![PyPI](https://img.shields.io/pypi/v/arcmodel)](https://pypi.org/project/arcmodel/) | Model management, selection, and routing. |
+| [arcskill](packages/arcskill/) | [![PyPI](https://img.shields.io/pypi/v/arcskill)](https://pypi.org/project/arcskill/) | Skill system for reusable agent capabilities. |
+| [arctui](packages/arctui/) | [![PyPI](https://img.shields.io/pypi/v/arctui)](https://pypi.org/project/arctui/) | Terminal UI for agent interaction. |
+| [arcui](packages/arcui/) | [![PyPI](https://img.shields.io/pypi/v/arcui)](https://pypi.org/project/arcui/) | Web UI for agent management and monitoring. |
 
 ---
 
@@ -346,14 +367,20 @@ arc run task anthropic/claude-sonnet-4-20250514 "Calculate 2^32" --with-calc
 
 ## Individual Package Install
 
-Each package is independently installable:
+Install the full stack:
+
+```bash
+pip install arcmas       # Everything -- CLI, agents, teams, LLM, runtime
+```
+
+Or install individual layers:
 
 ```bash
 pip install arcllm       # LLM abstraction only
 pip install arcrun       # Execution engine + arcllm
 pip install arcagent     # Full agent + arcllm + arcrun
-pip install arcteam      # Multi-agent coordination + arcagent
-pip install arccli       # CLI + everything
+pip install arcteam      # Multi-agent coordination
+pip install arccmd       # CLI + everything
 ```
 
 ---
