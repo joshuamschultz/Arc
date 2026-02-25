@@ -21,7 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "arccli>=0.2",
+    "arccmd>=0.2",
 ]
 
 [project.urls]

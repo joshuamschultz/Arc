@@ -12,12 +12,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     environment:
-      name: pypi-arccli
-      url: https://pypi.org/project/arccli/
+      name: pypi-arccmd
+      url: https://pypi.org/project/arccmd/
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: uv build --package arccli
+      - run: uv build --package arccmd
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/

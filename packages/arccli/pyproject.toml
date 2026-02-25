@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "arccli"
+name = "arccmd"
 version = "0.2.0"
 description = "Unified CLI for Arc products (arcllm, arcrun, arcagent)"
 readme = "README.md"
