@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "arccli"
+name = "arcstack"
 version = "0.2.0"
-description = "Unified CLI for Arc products (arcllm, arcrun, arcagent)"
+description = "Arc: Security-first autonomous agent framework — install the full stack"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -21,24 +21,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "click>=8.0",
-    "arcllm",
-    "arcrun",
-    "arcagent[telegram]",
-    "arcteam",
-    "python-dotenv>=1.0",
+    "arccli>=0.2",
 ]
-
-[project.scripts]
-arc = "arccli.main:cli"
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
 Repository = "https://github.com/joshuamschultz/Arc"
+Documentation = "https://github.com/joshuamschultz/Arc#readme"
 Issues = "https://github.com/joshuamschultz/Arc/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/arccli"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+packages = ["src/arcstack"]

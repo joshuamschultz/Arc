@@ -29,7 +29,7 @@ class MessagingModule:
     2. Registers this agent as an entity in the team registry
     3. Registers 5 LLM-callable tools (send, inbox, thread, entities, channels)
     4. Subscribes to agent:assemble_prompt to inject unread message counts
-    5. Starts a background polling loop that emits messaging:new_messages events
+    5. Starts a background polling loop that routes new messages through agent.chat()
     """
 
     def __init__(
@@ -47,6 +47,8 @@ class MessagingModule:
         self._svc: Any = None  # MessagingService — set during startup
         self._registry: Any = None  # EntityRegistry — set during startup
         self._last_unread: dict[str, int] = {}  # stream -> unread count cache
+        self._agent_chat_fn: Any = None  # agent.chat() — bound via agent:ready
+        self._processing_lock = asyncio.Lock()  # Serialize message processing
 
     def _resolve_team_root(self) -> Path:
         """Resolve team root directory.
@@ -152,11 +154,20 @@ class MessagingModule:
 
         # Subscribe to lifecycle events.
         ctx.bus.subscribe("agent:shutdown", self._on_agent_shutdown)
+        ctx.bus.subscribe("agent:ready", self._on_agent_ready)
 
         # Start background polling loop.
         self._poll_task = asyncio.create_task(self._poll_loop())
 
         _logger.info("Messaging module started (entity=%s, team_root=%s)", entity_id, team_root)
+
+    async def _on_agent_ready(self, event: Any) -> None:
+        """Bind agent.chat() callback for message processing."""
+        data = event.data if hasattr(event, "data") else {}
+        chat_fn = data.get("chat_fn")
+        if chat_fn is not None:
+            self._agent_chat_fn = chat_fn
+            _logger.info("Bound agent_chat_fn for message processing")
 
     async def shutdown(self) -> None:
         """Stop polling loop. Safe to call multiple times."""
@@ -222,7 +233,14 @@ class MessagingModule:
         sections["messaging"] = "\n".join(lines)
 
     async def _poll_loop(self) -> None:
-        """Background polling loop. Updates unread cache for prompt injection."""
+        """Background polling loop. Routes new messages through agent.chat().
+
+        When new messages arrive, formats them as a prompt and sends through
+        agent.chat() so the agent can reason about them, respond, and trigger
+        memory consolidation (entity extraction, episodes, etc.).
+
+        Falls back to unread-count caching when agent_chat_fn is not yet bound.
+        """
         interval = self._config.poll_interval_seconds
         entity_id = self._config.entity_id
 
@@ -235,13 +253,89 @@ class MessagingModule:
                     entity_id,
                     max_per_stream=self._config.max_messages_per_poll,
                 )
-                # Update cached unread counts.
+
+                # Update cached unread counts for prompt injection.
                 self._last_unread = {
                     stream: len(msgs) for stream, msgs in inbox.items()
                 }
+
+                # Route messages through agent.chat() for full processing.
+                if self._agent_chat_fn is not None:
+                    await self._process_inbox(inbox)
+
             except Exception:
                 _logger.exception("Messaging poll error")
             await asyncio.sleep(interval)
+
+    async def _process_inbox(self, inbox: dict[str, list[Any]]) -> None:
+        """Format inbox messages as a prompt and route through agent.chat().
+
+        Batches all unread messages into a single prompt to avoid excessive
+        LLM calls. The agent sees the full context and can respond to each.
+        Serialized via lock to prevent concurrent processing.
+        """
+        all_messages: list[dict[str, Any]] = []
+        for stream, msgs in inbox.items():
+            for m in msgs:
+                all_messages.append({
+                    "stream": stream,
+                    "seq": m.seq,
+                    "id": m.id,
+                    "sender": m.sender,
+                    "body": m.body,
+                    "msg_type": m.msg_type,
+                    "priority": m.priority,
+                    "action_required": m.action_required,
+                    "thread_id": m.thread_id,
+                    "ts": m.ts,
+                })
+
+        if not all_messages:
+            return
+
+        async with self._processing_lock:
+            # Build prompt with all unread messages
+            lines = [
+                "You have new messages. Read each carefully and act on them:",
+                "",
+            ]
+            for msg in all_messages:
+                action_flag = " [ACTION REQUIRED]" if msg["action_required"] else ""
+                lines.append(
+                    f"**From {msg['sender']}** ({msg['msg_type']}, "
+                    f"{msg['priority']} priority){action_flag}:"
+                )
+                lines.append(f"> {msg['body']}")
+                if msg["thread_id"] and msg["thread_id"] != msg["id"]:
+                    lines.append(f"  (thread: {msg['thread_id']})")
+                lines.append("")
+
+            lines.append(
+                "Process each message: reply to questions, execute tasks, "
+                "and report results. Use messaging_send to respond to senders."
+            )
+
+            prompt = "\n".join(lines)
+            entity_id = self._config.entity_id
+
+            try:
+                _logger.info(
+                    "Processing %d inbox message(s) through agent.chat()",
+                    len(all_messages),
+                )
+                await self._agent_chat_fn(prompt)
+
+                # Ack after successful processing
+                if self._config.auto_ack:
+                    for stream, msgs in inbox.items():
+                        if msgs:
+                            last = msgs[-1]
+                            await self._svc.ack(
+                                stream, entity_id, seq=last.seq, byte_pos=0,
+                            )
+
+            except Exception:
+                _logger.exception("Failed to process inbox messages via chat")
 
 
 __all__ = ["MessagingModule"]

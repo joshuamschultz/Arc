@@ -6,12 +6,29 @@ build-backend = "hatchling.build"
 name = "arcllm"
 version = "0.2.0"
 description = "Unified LLM abstraction layer for autonomous agents"
-requires-python = ">=3.12"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.0",
     "httpx>=0.27",
     "opentelemetry-api>=1.20",
 ]
+
+[project.urls]
+Homepage = "https://github.com/joshuamschultz/Arc"
+Repository = "https://github.com/joshuamschultz/Arc"
+Issues = "https://github.com/joshuamschultz/Arc/issues"
 
 [project.optional-dependencies]
 otel = [

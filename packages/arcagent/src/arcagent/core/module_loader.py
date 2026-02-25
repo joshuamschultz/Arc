@@ -213,6 +213,12 @@ class ModuleLoader:
         for name, param in sig.parameters.items():
             if name == "self":
                 continue
+            # Skip *args and **kwargs — they're catch-alls, not dependencies
+            if param.kind in (
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            ):
+                continue
             if name in available and available[name] is not None:
                 kwargs[name] = available[name]
             elif param.default is inspect.Parameter.empty:

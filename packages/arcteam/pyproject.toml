@@ -6,7 +6,19 @@ build-backend = "hatchling.build"
 name = "arcteam"
 version = "0.2.0"
 description = "Multi-agent team coordination, communication, and lifecycle management"
-requires-python = ">=3.12"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.0,<3",
     "python-frontmatter>=1.0",
@@ -20,8 +32,13 @@ arc-memory = "arcteam.memory.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcteam"]
 
+[project.urls]
+Homepage = "https://github.com/joshuamschultz/Arc"
+Repository = "https://github.com/joshuamschultz/Arc"
+Issues = "https://github.com/joshuamschultz/Arc/issues"
+
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 99
 
 [tool.ruff.lint]
@@ -33,7 +50,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 "src/arcteam/memory/cli.py" = ["T201"]  # CLI uses print for output
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

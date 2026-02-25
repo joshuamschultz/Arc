@@ -1,7 +1,8 @@
 """Top-level ``arc init`` setup wizard — tier-based configuration.
 
 Generates config files with module presets for open, enterprise, or
-federal deployment tiers.
+federal deployment tiers.  Optionally scaffolds a first agent for
+immediate use.
 """
 
 from __future__ import annotations
@@ -129,6 +130,8 @@ _PROVIDER_ENV_VARS: dict[str, str] = {
     "lmstudio": "",
 }
 
+_VALID_PROVIDERS = list(_PROVIDER_ENV_VARS.keys())
+
 
 def _check_provider_key(provider: str) -> bool:
     """Check if the provider's API key env var is set."""
@@ -162,29 +165,52 @@ def _check_provider_key(provider: str) -> bool:
     default=None,
     help="Default LLM provider.",
 )
-def init(tier: str | None, config_dir: str | None, provider: str | None) -> None:
+@click.option(
+    "--quick",
+    is_flag=True,
+    help="Quick start — open tier + first agent in one step.",
+)
+def init(
+    tier: str | None,
+    config_dir: str | None,
+    provider: str | None,
+    quick: bool,
+) -> None:
     """Initialize Arc — configure deployment tier and write config files."""
-    # Interactive tier selection if not provided
-    if tier is None:
-        click_echo("Arc Setup Wizard")
-        click_echo("================")
+    click_echo("")
+    click_echo("  Arc — Security-First Agent Framework")
+    click_echo("  ====================================")
+    click_echo("")
+
+    if quick:
+        tier = "open"
+    elif tier is None:
+        click_echo("  How do you want to deploy?")
         click_echo("")
-        click_echo("Select a deployment tier:")
+        click_echo("  1) quick start  — Minimal config, create an agent immediately")
+        click_echo("  2) open         — No security modules, basic defaults")
+        click_echo("  3) enterprise   — Telemetry, audit, rate limiting, retry + fallback")
+        click_echo("  4) federal      — Full security: routing, PII, signing, OTel, audit")
         click_echo("")
-        click_echo("  open       — No security modules, no audit, basic defaults")
-        click_echo("  enterprise — Telemetry, audit, rate limiting, retry + fallback")
-        click_echo("  federal    — All security enabled: routing, PII, signing, OTel, audit")
-        click_echo("")
-        tier = click.prompt(
-            "Tier",
-            type=click.Choice(_VALID_TIERS),
-            default="open",
+        choice = click.prompt(
+            "  Select",
+            type=click.Choice(["1", "2", "3", "4"]),
+            default="1",
         )
+        tier_map = {"1": "open", "2": "open", "3": "enterprise", "4": "federal"}
+        tier = tier_map[choice]
+        quick = choice == "1"
 
     # Interactive provider selection if not provided
     if provider is None:
+        click_echo("")
+        click_echo("  LLM Providers:")
+        click_echo("    Cloud:  anthropic, openai, google, groq, mistral, deepseek")
+        click_echo("    Local:  ollama, lmstudio (no API key needed)")
+        click_echo("")
         provider = click.prompt(
-            "Default LLM provider",
+            "  Default provider",
+            type=click.Choice(_VALID_PROVIDERS),
             default="anthropic",
         )
 
@@ -195,27 +221,30 @@ def init(tier: str | None, config_dir: str | None, provider: str | None) -> None
     config_path = arc_dir / "config.toml"
     config_content = _generate_config_toml(tier, provider)
 
-    if config_path.exists():
-        if not click.confirm(f"{config_path} already exists. Overwrite?", default=False):
-            click_echo("Aborted.")
+    if config_path.exists() and not quick:
+        if not click.confirm(f"  {config_path} already exists. Overwrite?", default=False):
+            click_echo("  Aborted.")
             return
 
     config_path.write_text(config_content, encoding="utf-8")
-    click_echo(f"Wrote config: {config_path}")
+
+    # Create .env file if it doesn't exist
+    env_path = arc_dir / ".env"
+    if not env_path.exists():
+        env_path.touch(mode=0o600)
 
     # Create team directory if enterprise or federal
     if tier in ("enterprise", "federal"):
         team_dir = arc_dir / "team"
         for sub in ("entities", "channels", "cursors"):
             (team_dir / sub).mkdir(parents=True, exist_ok=True)
-        click_echo(f"Created team directory: {team_dir}")
 
     # Validate provider key
     key_ok = _check_provider_key(provider)
     env_var = _PROVIDER_ENV_VARS.get(provider, "")
 
     click_echo("")
-    click_echo("Configuration Summary:")
+    click_echo("  Configuration Summary:")
     print_kv(
         [
             ("Tier", tier),
@@ -227,4 +256,76 @@ def init(tier: str | None, config_dir: str | None, provider: str | None) -> None
 
     if not key_ok:
         click_echo("")
-        click_echo(f"Set your API key: export {env_var}=<your-key>")
+        click_echo(f"  Set your API key:")
+        click_echo(f"    export {env_var}=<your-key>")
+        click_echo("")
+        click_echo(f"  Or add it to {env_path}:")
+        click_echo(f"    echo '{env_var}=sk-...' >> {env_path}")
+
+    # Quick start: create first agent
+    if quick:
+        click_echo("")
+        agent_name = click.prompt("  Name your first agent", default="assistant")
+        click_echo("")
+        _create_quick_agent(arc_dir, agent_name)
+
+    click_echo("")
+
+
+def _create_quick_agent(arc_dir: Path, name: str) -> None:
+    """Create a minimal agent directory for quick start."""
+    # Import here to avoid circular dependency
+    from arccli.agent import _resolve_agent_dir
+
+    # Use ~/.arc/agents/<name> as the default location
+    agents_dir = arc_dir / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    agent_dir = agents_dir / name
+
+    if agent_dir.exists():
+        click_echo(f"  Agent '{name}' already exists at {agent_dir}")
+        click_echo(f"  Start chatting: arc agent chat {agent_dir}")
+        return
+
+    # Delegate to the existing create logic via CLI invocation
+    from click.testing import CliRunner
+
+    from arccli.agent import agent
+
+    runner = CliRunner()
+    result = runner.invoke(agent, ["create", str(agent_dir)])
+
+    if result.exit_code == 0:
+        click_echo(f"  Agent created at {agent_dir}")
+        click_echo("")
+        click_echo("  Get started:")
+        click_echo(f"    arc agent chat {agent_dir}")
+    else:
+        # Fallback: create minimal structure manually
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        (agent_dir / "workspace").mkdir(exist_ok=True)
+
+        identity = (
+            "# Agent Identity\n\n"
+            "You are a helpful assistant with access to tools "
+            "and a structured workspace.\n"
+        )
+        (agent_dir / "identity.md").write_text(identity)
+
+        config = (
+            '# Agent config\ntier = "open"\n\n'
+            "[modules]\n"
+            "[modules.bio_memory]\n"
+            "enabled = true\n"
+        )
+        (agent_dir / "arcagent.toml").write_text(config)
+
+        (agent_dir / "context.md").write_text("# Context\n\nNo context yet.\n")
+        (agent_dir / "policy.md").write_text(
+            "# Policy\n\n## Approved Behaviors\n\n## Denied Behaviors\n"
+        )
+
+        click_echo(f"  Agent created at {agent_dir}")
+        click_echo("")
+        click_echo("  Get started:")
+        click_echo(f"    arc agent chat {agent_dir}")

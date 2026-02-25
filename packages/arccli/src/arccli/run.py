@@ -17,9 +17,9 @@ from dotenv import load_dotenv
 from arccli.formatting import click_echo, print_json, print_kv, print_table
 
 _ENV_PATHS = [
-    Path.home() / "AI" / "arcrun" / ".env",
-    Path.home() / ".env",
     Path.cwd() / ".env",
+    Path.home() / ".arc" / ".env",
+    Path.home() / ".env",
 ]
 
 

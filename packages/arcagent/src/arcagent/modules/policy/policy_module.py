@@ -81,10 +81,12 @@ class PolicyModule:
         )
 
     async def shutdown(self) -> None:
-        """Cancel background tasks."""
-        for task in self._background_tasks:
-            task.cancel()
+        """Await in-flight background tasks before teardown."""
         if self._background_tasks:
+            _logger.info(
+                "Awaiting %d background task(s) before shutdown",
+                len(self._background_tasks),
+            )
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
 
     def _get_eval_model(self) -> Any:

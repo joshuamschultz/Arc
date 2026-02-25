@@ -321,10 +321,19 @@ class ArcAgent:
             raise
 
         session_id = self._session.session_id if self._session else ""
-        messages_dict = [
-            m.model_dump() if hasattr(m, "model_dump") else m
-            for m in (messages or [])
-        ]
+        if messages:
+            messages_dict = [
+                m.model_dump() if hasattr(m, "model_dump") else m
+                for m in messages
+            ]
+        else:
+            # Synthesize messages for run() path so memory modules
+            # (entity extraction, consolidation) can process the exchange.
+            response_text = getattr(result, "content", None) or ""
+            messages_dict = [
+                {"role": "user", "content": task},
+                {"role": "assistant", "content": response_text},
+            ]
         await bus.emit(
             "agent:post_respond",
             {"result": result, "messages": messages_dict, "session_id": session_id},

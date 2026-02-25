@@ -7,8 +7,18 @@ name = "arcagent"
 version = "0.2.0"
 description = "Enterprise-grade autonomous agent nucleus"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
 dependencies = [
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
@@ -29,8 +39,13 @@ telegram = [
     "python-telegram-bot>=20.0,<22",
 ]
 
+[project.urls]
+Homepage = "https://github.com/joshuamschultz/Arc"
+Repository = "https://github.com/joshuamschultz/Arc"
+Issues = "https://github.com/joshuamschultz/Arc/issues"
+
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 99
 
 [tool.ruff.lint]
@@ -52,7 +67,7 @@ select = [
 "tests/**/*.py" = ["S101", "S108"]  # assert + /tmp paths expected in tests
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

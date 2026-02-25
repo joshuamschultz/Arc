@@ -4,7 +4,7 @@ Guides the user through:
 1. Bot token entry (with BotFather instructions)
 2. Token verification via Telegram ``getMe()``
 3. Chat ID auto-discovery via ``getUpdates`` polling
-4. Token storage in ``~/AI/arcrun/.env``
+4. Token storage in ``~/.arc/.env``
 5. ``arcagent.toml`` config update with ``[modules.telegram]``
 
 Uses ``httpx`` directly — no ``python-telegram-bot`` dependency at setup time.
@@ -23,7 +23,7 @@ import httpx
 from arccli.formatting import click_echo
 
 _TELEGRAM_API = "https://api.telegram.org/bot{token}"
-_ENV_PATH = Path.home() / "AI" / "arcrun" / ".env"
+_ENV_PATH = Path.home() / ".arc" / ".env"
 _TOKEN_ENV_VAR = "ARCAGENT_TELEGRAM_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
 _HTTP_TIMEOUT = 10.0
 
@@ -192,7 +192,7 @@ def _discover_chat_id(token: str, bot_username: str) -> int:
 
 
 def _store_token(token: str) -> None:
-    """Append the bot token to ``~/AI/arcrun/.env`` with ``0o600`` permissions.
+    """Append the bot token to ``~/.arc/.env`` with ``0o600`` permissions.
 
     Skips if the token is already stored with the same value.
     """

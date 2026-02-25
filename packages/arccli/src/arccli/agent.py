@@ -24,9 +24,9 @@ from arccli.telegram_setup import setup_telegram
 
 # Default .env search paths (tried in order)
 _ENV_PATHS = [
-    Path.home() / "AI" / "arcrun" / ".env",
-    Path.home() / ".env",
     Path.cwd() / ".env",
+    Path.home() / ".arc" / ".env",
+    Path.home() / ".env",
 ]
 
 _GLOBAL_SKILL_DIR = Path.home() / ".arcagent" / "skills"

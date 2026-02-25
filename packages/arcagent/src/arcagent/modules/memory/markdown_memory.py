@@ -326,10 +326,12 @@ class MarkdownMemoryModule:
         return "\n".join(parts)
 
     async def shutdown(self) -> None:
-        """Cancel background tasks, close resources."""
-        for task in self._background_tasks:
-            task.cancel()
+        """Await in-flight background tasks, then close resources."""
         if self._background_tasks:
+            _logger.info(
+                "Awaiting %d background task(s) before shutdown",
+                len(self._background_tasks),
+            )
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         await self._hybrid_search.close()
 

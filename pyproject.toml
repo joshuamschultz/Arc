@@ -2,7 +2,8 @@
 name = "arc"
 version = "0.1.0"
 description = "Arc: Autonomous agent framework"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
+license = "Apache-2.0"
 
 [dependency-groups]
 dev = [
@@ -27,9 +28,10 @@ arcrun = { workspace = true }
 arcagent = { workspace = true }
 arccli = { workspace = true }
 arcteam = { workspace = true }
+arcstack = { workspace = true }
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 99
 
 [tool.ruff.lint]
@@ -39,7 +41,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 "**/tests/**/*.py" = ["S101"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
 warn_return_any = true
 
