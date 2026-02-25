@@ -1,7 +1,7 @@
-"""CLI commands for the bio-memory module — read-only workspace inspection.
+"""CLI commands for the bio-memory module — workspace inspection and management.
 
 Provides ``arc agent bio-memory <path> ...`` subcommands for viewing
-working memory, identity, episodes, and search results.
+working memory, identity, episodes, entities, and triggering consolidation.
 """
 
 from __future__ import annotations
@@ -13,6 +13,14 @@ import click
 from arcagent.utils.sanitizer import read_frontmatter
 
 
+class _NoOpTelemetry:
+    """Minimal telemetry stub for CLI commands that don't need real telemetry."""
+
+    def audit_event(self, event_type: str, details: dict | None = None) -> None:
+        """No-op audit event."""
+        _ = event_type, details
+
+
 def cli_group(workspace: Path) -> click.Group:
     """Factory: return a Click group bound to *workspace*."""
 
@@ -21,7 +29,7 @@ def cli_group(workspace: Path) -> click.Group:
     @click.group("bio-memory")
     @click.pass_context
     def bio_memory(ctx: click.Context) -> None:
-        """Inspect bio-memory — working memory, identity, episodes."""
+        """Inspect bio-memory — working memory, identity, episodes, entities."""
         ctx.ensure_object(dict)
         ctx.obj["workspace"] = workspace
         ctx.obj["memory_dir"] = memory_dir
@@ -31,6 +39,7 @@ def cli_group(workspace: Path) -> click.Group:
     def status(ctx: click.Context) -> None:
         """Show bio-memory workspace overview."""
         md = ctx.obj["memory_dir"]
+        ws = ctx.obj["workspace"]
 
         # Identity
         identity_path = md / "how-i-work.md"
@@ -49,6 +58,14 @@ def cli_group(workspace: Path) -> click.Group:
             else 0
         )
 
+        # Entities
+        entities_dir = ws / "entities"
+        entity_count = (
+            len(list(entities_dir.rglob("*.md")))
+            if entities_dir.is_dir()
+            else 0
+        )
+
         click.echo("Bio-Memory Status:")
         if identity_exists:
             click.echo(f"  Identity: yes ({identity_size} bytes)")
@@ -56,6 +73,7 @@ def cli_group(workspace: Path) -> click.Group:
             click.echo("  Identity: no")
         click.echo(f"  Working memory: {'active' if working_exists else 'empty'}")
         click.echo(f"  Episodes: {episode_count}")
+        click.echo(f"  Entities: {entity_count}")
 
     @bio_memory.group("identity")
     def identity() -> None:
@@ -117,6 +135,106 @@ def cli_group(workspace: Path) -> click.Group:
             click.echo(body)
         else:
             click.echo("Working memory is empty.")
+
+    @bio_memory.group("entities")
+    def entities() -> None:
+        """Entity commands."""
+
+    @entities.command("list")
+    @click.pass_context
+    def entities_list(ctx: click.Context) -> None:
+        """List all entity files with frontmatter summary."""
+        ws = ctx.obj["workspace"]
+        entities_dir = ws / "entities"
+        if not entities_dir.is_dir():
+            click.echo("No entities directory found.")
+            return
+
+        md_files = sorted(entities_dir.rglob("*.md"))
+        if not md_files:
+            click.echo("No entities found.")
+            return
+
+        for f in md_files:
+            meta = read_frontmatter(f)
+            name = meta.get("name", f.stem) if meta else f.stem
+            entity_type = meta.get("entity_type", "?") if meta else "?"
+            status = meta.get("status", "?") if meta else "?"
+            rel = str(f.relative_to(entities_dir))
+            click.echo(f"  {rel}: {name} ({entity_type}) [{status}]")
+
+    @entities.command("normalize")
+    @click.pass_context
+    def entities_normalize(ctx: click.Context) -> None:
+        """Normalize all entity files to v2.1 format (add frontmatter)."""
+        ws = ctx.obj["workspace"]
+        entities_dir = ws / "entities"
+        if not entities_dir.is_dir():
+            click.echo("No entities directory found.")
+            return
+
+        from arcagent.modules.bio_memory.config import BioMemoryConfig
+        from arcagent.modules.bio_memory.consolidator import Consolidator
+        from arcagent.modules.bio_memory.identity_manager import IdentityManager
+        from arcagent.modules.bio_memory.working_memory import WorkingMemory
+
+        # Minimal setup for normalization
+        md = ctx.obj["memory_dir"]
+        config = BioMemoryConfig()
+        telemetry = _NoOpTelemetry()
+        consolidator = Consolidator(
+            md, config,
+            IdentityManager(md, config, telemetry),
+            WorkingMemory(md, config),
+            telemetry,
+            workspace=ws,
+        )
+
+        count = 0
+        for f in entities_dir.rglob("*.md"):
+            meta = read_frontmatter(f)
+            if meta is None:
+                consolidator._normalize_entity_file(f)
+                count += 1
+                click.echo(f"  Normalized: {f.name}")
+
+        click.echo(f"Normalized {count} entity file(s).")
+
+    @bio_memory.command("consolidate-deep")
+    @click.option("--dry-run", is_flag=True, help="Preview without writing")
+    @click.pass_context
+    def consolidate_deep(ctx: click.Context, dry_run: bool) -> None:
+        """Trigger deep memory consolidation."""
+        import asyncio
+
+        click.echo("Running deep consolidation...")
+
+        async def _run() -> None:
+            from arcagent.modules.bio_memory.config import BioMemoryConfig
+            from arcagent.modules.bio_memory.deep_consolidator import DeepConsolidator
+            from arcagent.modules.bio_memory.identity_manager import IdentityManager
+
+            ws = ctx.obj["workspace"]
+            md = ctx.obj["memory_dir"]
+            config = BioMemoryConfig()
+            telemetry = _NoOpTelemetry()
+
+            # Validate that DeepConsolidator can be constructed
+            DeepConsolidator(
+                memory_dir=md,
+                workspace=ws,
+                config=config,
+                identity=IdentityManager(md, config, telemetry),
+                telemetry=telemetry,
+            )
+
+            # Deep consolidation requires an LLM model
+            click.echo(
+                "Note: Deep consolidation requires an LLM model. "
+                "Use the memory_consolidate_deep tool within an agent session."
+            )
+
+        asyncio.run(_run())
 
     return bio_memory
 

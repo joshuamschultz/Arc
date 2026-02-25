@@ -51,6 +51,34 @@ class TestBioMemoryConfigDefaults:
         cfg = BioMemoryConfig()
         assert cfg.episodes_dirname == "episodes"
 
+    def test_default_entities_dirname(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.entities_dirname == "entities"
+
+    def test_default_per_entity_budget(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.per_entity_budget == 800
+
+    def test_default_deep_max_entities(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.deep_max_entities == 50
+
+    def test_default_deep_cluster_size(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.deep_cluster_size == 20
+
+    def test_default_staleness_ttl_days(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.staleness_ttl_days == 90
+
+    def test_default_archive_dirname(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.archive_dirname == "archive"
+
+    def test_default_rotation_state_file(self) -> None:
+        cfg = BioMemoryConfig()
+        assert cfg.rotation_state_file == ".consolidation-state.json"
+
 
 class TestBioMemoryConfigOverrides:
     """Custom values are respected."""
@@ -84,6 +112,28 @@ class TestBioMemoryConfigOverrides:
         assert cfg.working_filename == "scratch.md"
         assert cfg.identity_filename == "identity.md"
         assert cfg.episodes_dirname == "memories"
+
+    def test_custom_entity_config(self) -> None:
+        cfg = BioMemoryConfig(
+            entities_dirname="knowledge",
+            per_entity_budget=1200,
+        )
+        assert cfg.entities_dirname == "knowledge"
+        assert cfg.per_entity_budget == 1200
+
+    def test_custom_deep_consolidation_config(self) -> None:
+        cfg = BioMemoryConfig(
+            deep_max_entities=100,
+            deep_cluster_size=30,
+            staleness_ttl_days=180,
+            archive_dirname="old",
+            rotation_state_file=".rotation.json",
+        )
+        assert cfg.deep_max_entities == 100
+        assert cfg.deep_cluster_size == 30
+        assert cfg.staleness_ttl_days == 180
+        assert cfg.archive_dirname == "old"
+        assert cfg.rotation_state_file == ".rotation.json"
 
 
 class TestBioMemoryConfigValidation:

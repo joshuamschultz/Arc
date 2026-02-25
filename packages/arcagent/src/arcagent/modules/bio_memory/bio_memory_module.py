@@ -1,7 +1,8 @@
 """BioMemoryModule — facade implementing the Module protocol.
 
 Delegates to internal helpers: WorkingMemory, IdentityManager,
-Retriever, Consolidator. Registers bus handlers and memory tools.
+Retriever, Consolidator, DeepConsolidator. Registers bus handlers
+and memory tools. Optionally integrates with arcteam TeamMemoryService.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from arcagent.utils.sanitizer import sanitize_text
 _logger = logging.getLogger("arcagent.modules.bio_memory")
 
 # Memory-protected workspace subpaths
-_MEMORY_SUBPATHS = ("memory/",)
+_MEMORY_SUBPATHS = ("memory/", "entities/")
 
 
 class BioMemoryModule:
@@ -36,8 +37,9 @@ class BioMemoryModule:
     Facade that delegates to internal helpers:
     - WorkingMemory: scratchpad lifecycle
     - IdentityManager: how-i-work.md injection and updates
-    - Retriever: grep + wiki-link graph traversal
-    - Consolidator: light consolidation on shutdown
+    - Retriever: grep + wiki-link graph traversal (memory + entities + team)
+    - Consolidator: light consolidation on shutdown (episodes + entity updates)
+    - DeepConsolidator: deep "sleep cycle" consolidation (entity rewrites, graph, merge)
     """
 
     def __init__(
@@ -47,12 +49,15 @@ class BioMemoryModule:
         telemetry: Any = None,
         workspace: Path = Path("."),
         llm_config: Any | None = None,
+        team_config: dict[str, Any] | None = None,
     ) -> None:
         self._config = BioMemoryConfig(**(config or {}))
         self._eval_config = eval_config or EvalConfig()
         self._llm_config = llm_config
         self._telemetry = telemetry
         self._workspace = workspace.resolve() if workspace != Path(".") else workspace
+        self._team_config = team_config
+        self._team_service: Any = None
 
         self._memory_dir = self._workspace / "memory"
         self._eval_model: Any = None
@@ -65,13 +70,20 @@ class BioMemoryModule:
         self._identity = IdentityManager(
             self._memory_dir, self._config, telemetry,
         )
-        self._retriever = Retriever(self._memory_dir, self._config)
+        self._retriever = Retriever(
+            self._memory_dir,
+            self._config,
+            workspace=self._workspace,
+            team_entities_dir=self._get_team_entities_dir(),
+        )
         self._consolidator = Consolidator(
             self._memory_dir,
             self._config,
             self._identity,
             self._working,
             telemetry,
+            workspace=self._workspace,
+            team_service_factory=self._get_team_service,
         )
 
     @property
@@ -110,18 +122,53 @@ class BioMemoryModule:
         self._register_tools(ctx.tool_registry)
 
     async def shutdown(self) -> None:
-        """Cancel background tasks."""
-        for task in self._background_tasks:
-            task.cancel()
+        """Await in-flight background tasks (consolidation, etc.) before teardown."""
         if self._background_tasks:
+            _logger.info(
+                "Awaiting %d background task(s) before shutdown",
+                len(self._background_tasks),
+            )
             await asyncio.gather(
                 *self._background_tasks, return_exceptions=True,
             )
 
+    # -- Team integration --
+
+    def _get_team_service(self) -> Any:
+        """Lazy-init TeamMemoryService from arcteam. Returns None if unavailable."""
+        if self._team_service is not None:
+            return self._team_service
+        if self._team_config is None:
+            return None
+        try:
+            from arcteam.memory.config import TeamMemoryConfig  # type: ignore[import-untyped]
+            from arcteam.memory.service import TeamMemoryService  # type: ignore[import-untyped]
+            team_cfg = TeamMemoryConfig(**self._team_config)
+            self._team_service = TeamMemoryService(team_cfg)
+            return self._team_service
+        except ImportError:
+            _logger.debug("arcteam not installed, team memory disabled")
+            return None
+        except Exception:
+            _logger.debug("arcteam init failed, team memory disabled", exc_info=True)
+            return None
+
+    def _get_team_entities_dir(self) -> Path | None:
+        """Resolve team entities path from team_config if available."""
+        if self._team_config is None:
+            return None
+        root = self._team_config.get("root_path") or self._team_config.get("root")
+        if not root:
+            return None
+        team_entities = Path(root) / "entities"
+        if team_entities.exists():
+            return team_entities
+        return None
+
     # -- Bus handlers --
 
     async def _on_assemble_prompt(self, ctx: EventContext) -> None:
-        """Inject identity + working memory into prompt context."""
+        """Inject identity + working memory + entity hint into prompt context."""
         identity_text = await self._identity.inject_context()
         working_text = await self._working.read()
 
@@ -130,6 +177,16 @@ class BioMemoryModule:
             parts.append(f"<agent-identity>\n{identity_text}\n</agent-identity>")
         if working_text:
             parts.append(f"<working-memory>\n{working_text}\n</working-memory>")
+
+        # Entity location hint so LLM knows to search
+        entities_dir = self._workspace / self._config.entities_dirname
+        if entities_dir.exists():
+            parts.append(
+                "<memory-hint>"
+                "Entity files available at workspace/entities/. "
+                "Use memory_search with scope='entities' to find relevant entities."
+                "</memory-hint>"
+            )
 
         if parts:
             ctx.data.setdefault("memory_context", "\n\n".join(parts))
@@ -197,7 +254,7 @@ class BioMemoryModule:
     # -- Tool registration --
 
     def _register_tools(self, tool_registry: Any) -> None:
-        """Register four memory tools."""
+        """Register memory tools."""
         tool_registry.register(RegisteredTool(
             name="memory_search",
             description="Search agent memory using grep + wiki-link graph traversal.",
@@ -211,8 +268,8 @@ class BioMemoryModule:
                     },
                     "scope": {
                         "type": "string",
-                        "description": "Filter: episodes, identity, working",
-                        "enum": ["episodes", "identity", "working"],
+                        "description": "Filter: episodes, identity, working, entities",
+                        "enum": ["episodes", "identity", "working", "entities"],
                     },
                     "top_k": {
                         "type": "integer",
@@ -287,6 +344,27 @@ class BioMemoryModule:
             },
             transport=ToolTransport.NATIVE,
             execute=self._handle_memory_reflect,
+        ))
+
+        tool_registry.register(RegisteredTool(
+            name="memory_consolidate_deep",
+            description=(
+                "Trigger deep memory consolidation"
+                " (entity rewrites, graph analysis, merge detection)."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview changes without writing",
+                        "default": False,
+                    },
+                },
+                "additionalProperties": False,
+            },
+            transport=ToolTransport.NATIVE,
+            execute=self._handle_deep_consolidation,
         ))
 
     # -- Tool handlers --
@@ -401,6 +479,58 @@ class BioMemoryModule:
                 return "Identity updated based on reflection."
         return "No significant changes to identity detected."
 
+    async def _handle_deep_consolidation(
+        self, dry_run: bool = False,
+    ) -> str:
+        """Handle memory_consolidate_deep tool invocation."""
+        # Lazy import to avoid circular deps at module level
+        from arcagent.modules.bio_memory.deep_consolidator import DeepConsolidator
+
+        model = self._get_eval_model()
+        if model is None:
+            return "Deep consolidation unavailable: no eval model configured."
+
+        deep = DeepConsolidator(
+            memory_dir=self._memory_dir,
+            workspace=self._workspace,
+            config=self._config,
+            identity=self._identity,
+            telemetry=self._telemetry,
+            team_service_factory=self._get_team_service,
+        )
+
+        result = await deep.consolidate(model, agent_id="self")
+        self._telemetry.audit_event(
+            "memory.deep_consolidated",
+            details=result,
+        )
+
+        # Format summary for the agent
+        if result.get("skipped"):
+            return f"Deep consolidation skipped: {result.get('reason', 'unknown')}"
+
+        parts = [f"Deep consolidation complete (intensity: {result.get('intensity', 'unknown')})."]
+        ep = result.get("entity_pass", {})
+        if ep:
+            parts.append(
+                f"  Entities rewritten: {ep.get('entities_rewritten', 0)}, "
+                f"skipped unchanged: {ep.get('skipped_unchanged', 0)}"
+            )
+        gp = result.get("graph_pass", {})
+        if gp and not gp.get("skipped"):
+            parts.append(f"  Graph links added: {gp.get('links_added', 0)}")
+        if result.get("merges"):
+            parts.append(f"  Merges: {result['merges']}")
+        stale = result.get("stale", {})
+        if stale:
+            parts.append(
+                f"  Stale: {stale.get('flagged', 0)} flagged, "
+                f"{stale.get('archived', 0)} archived"
+            )
+        if result.get("identity_refreshed"):
+            parts.append("  Identity refreshed.")
+        return "\n".join(parts)
+
     # -- Helpers --
 
     def _get_eval_model(self) -> Any:
@@ -456,9 +586,16 @@ class BioMemoryModule:
         return False
 
     def _is_memory_path(self, path: Path) -> bool:
-        """Check if a resolved path falls within the memory directory."""
+        """Check if a resolved path falls within memory or entities directory."""
+        mem_dir = self._memory_dir.resolve()
+        ent_dir = (self._workspace / self._config.entities_dirname).resolve()
         try:
-            path.relative_to(self._memory_dir.resolve())
+            path.relative_to(mem_dir)
+            return True
+        except ValueError:
+            pass
+        try:
+            path.relative_to(ent_dir)
             return True
         except ValueError:
             return False

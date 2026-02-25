@@ -2,7 +2,8 @@
 
 Two-pass search: frontmatter grep for tag/entity matches, then full-text
 on matched subset. Wiki-links followed one hop. Budget enforcement via
-configurable overflow strategy.
+configurable overflow strategy. Searches memory/, workspace/entities/,
+and optionally team entities.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ _WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 # Scoring constants
 _FRONTMATTER_BOOST = 5.0
 _WIKI_LINK_DECAY = 0.5
+_TEAM_SCORE_PENALTY = 0.8
 
 
 @dataclass
@@ -36,9 +38,18 @@ class RetrievalResult:
 class Retriever:
     """Grep + wiki-link graph traversal across memory tiers."""
 
-    def __init__(self, memory_dir: Path, config: BioMemoryConfig) -> None:
+    def __init__(
+        self,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        workspace: Path | None = None,
+        team_entities_dir: Path | None = None,
+    ) -> None:
         self._memory_dir = memory_dir
         self._config = config
+        self._workspace = workspace or memory_dir.parent
+        self._entities_dir = self._workspace / config.entities_dirname
+        self._team_entities_dir = team_entities_dir
 
     async def search(
         self,
@@ -77,30 +88,56 @@ class Retriever:
     async def recall(self, name: str) -> str | None:
         """Retrieve specific entity/episode by name (exact match on slug).
 
-        Validates resolved path stays within memory_dir to prevent
+        Validates resolved path stays within allowed directories to prevent
         path traversal attacks (SEC-9, ASI-06).
         """
         # Check episodes directory
         episodes_dir = self._memory_dir / self._config.episodes_dirname
         if episodes_dir.exists():
             path = (episodes_dir / f"{name}.md").resolve()
-            if self._is_within_memory(path) and path.exists():
+            if self._is_within_bounds(path) and path.exists():
                 return path.read_text(encoding="utf-8")
 
         # Check top-level memory files
         path = (self._memory_dir / f"{name}.md").resolve()
-        if self._is_within_memory(path) and path.exists():
+        if self._is_within_bounds(path) and path.exists():
             return path.read_text(encoding="utf-8")
+
+        # Check entities directory
+        if self._entities_dir.exists():
+            path = (self._entities_dir / f"{name}.md").resolve()
+            if self._is_within_bounds(path) and path.exists():
+                return path.read_text(encoding="utf-8")
+            # Check subdirectories
+            for sub_path in self._entities_dir.rglob(f"{name}.md"):
+                resolved = sub_path.resolve()
+                if self._is_within_bounds(resolved):
+                    return resolved.read_text(encoding="utf-8")
 
         return None
 
-    def _is_within_memory(self, path: Path) -> bool:
-        """Verify resolved path is within memory_dir (path traversal defense)."""
+    def _is_within_bounds(self, path: Path) -> bool:
+        """Verify resolved path is within memory_dir or entities_dir (path traversal defense)."""
+        resolved_mem = self._memory_dir.resolve()
+        resolved_ent = self._entities_dir.resolve()
         try:
-            path.relative_to(self._memory_dir.resolve())
+            path.relative_to(resolved_mem)
             return True
         except ValueError:
-            return False
+            pass
+        try:
+            path.relative_to(resolved_ent)
+            return True
+        except ValueError:
+            pass
+        # Also allow team entities
+        if self._team_entities_dir:
+            try:
+                path.relative_to(self._team_entities_dir.resolve())
+                return True
+            except ValueError:
+                pass
+        return False
 
     def _frontmatter_grep(
         self, query: str, files: list[Path],
@@ -158,7 +195,11 @@ class Retriever:
                 score += _FRONTMATTER_BOOST
                 match_type = "frontmatter"
 
-            source = str(path.relative_to(self._memory_dir))
+            # Apply team penalty for team entity files
+            if self._team_entities_dir and self._is_team_entity(path):
+                score *= _TEAM_SCORE_PENALTY
+
+            source = self._relative_source(path)
             results.append(RetrievalResult(
                 source=source,
                 content=content,
@@ -167,6 +208,30 @@ class Retriever:
             ))
 
         return results
+
+    def _is_team_entity(self, path: Path) -> bool:
+        """Check if a file belongs to team entities directory."""
+        if not self._team_entities_dir:
+            return False
+        try:
+            path.resolve().relative_to(self._team_entities_dir.resolve())
+            return True
+        except ValueError:
+            return False
+
+    def _relative_source(self, path: Path) -> str:
+        """Compute relative source path for display."""
+        # Try memory_dir first (backward compat)
+        try:
+            return str(path.relative_to(self._memory_dir))
+        except ValueError:
+            pass
+        # Try workspace
+        try:
+            return str(path.relative_to(self._workspace))
+        except ValueError:
+            pass
+        return str(path)
 
     def _follow_wiki_links_from_results(
         self, results: list[RetrievalResult],
@@ -177,7 +242,7 @@ class Retriever:
 
         for result in results:
             for link_path in self._follow_wiki_links(result.content):
-                source = str(link_path.relative_to(self._memory_dir))
+                source = self._relative_source(link_path)
                 if source in seen_sources:
                     continue
                 seen_sources.add(source)
@@ -194,7 +259,11 @@ class Retriever:
         return linked
 
     def _follow_wiki_links(self, content: str, depth: int = 1) -> list[Path]:
-        """Extract [[wiki-links]] from content, resolve to file paths."""
+        """Extract [[wiki-links]] from content, resolve to file paths.
+
+        Only follows links that resolve to existing files (entity registry
+        defense against dangling link injection — security research).
+        """
         if depth <= 0:
             return []
 
@@ -205,7 +274,7 @@ class Retriever:
             if slug is None:
                 continue
 
-            # Check episodes directory first, then top-level
+            # Check episodes directory first, then memory top-level
             episodes_dir = self._memory_dir / self._config.episodes_dirname
             candidate = episodes_dir / f"{slug}.md"
             if candidate.exists():
@@ -214,13 +283,31 @@ class Retriever:
             candidate = self._memory_dir / f"{slug}.md"
             if candidate.exists():
                 paths.append(candidate)
+                continue
+
+            # Check entities directory and subdirectories
+            if self._entities_dir.exists():
+                candidate = self._entities_dir / f"{slug}.md"
+                if candidate.exists():
+                    paths.append(candidate)
+                    continue
+                # Subdirectories
+                for sub_candidate in self._entities_dir.rglob(f"{slug}.md"):
+                    paths.append(sub_candidate)
+                    break  # Take first match
+
+            # Check team entities (only existing files — registry defense)
+            if self._team_entities_dir and self._team_entities_dir.exists():
+                candidate = self._team_entities_dir / f"{slug}.md"
+                if candidate.exists():
+                    paths.append(candidate)
 
         return paths
 
     def _discover_files(self, scope: str | None = None) -> list[Path]:
         """Find indexable files, optionally filtered by scope.
 
-        Scope values: "episodes", "identity", "working", or None (all).
+        Scope values: "episodes", "identity", "working", "entities", or None (all).
         """
         files: list[Path] = []
 
@@ -241,6 +328,14 @@ class Retriever:
             identity = self._memory_dir / self._config.identity_filename
             if identity.exists():
                 files.append(identity)
+
+        # Entities
+        if scope is None or scope == "entities":
+            if self._entities_dir.exists():
+                files.extend(self._entities_dir.rglob("*.md"))
+            # Team entities (lower priority)
+            if self._team_entities_dir and self._team_entities_dir.exists():
+                files.extend(self._team_entities_dir.rglob("*.md"))
 
         return files
 
@@ -271,4 +366,3 @@ class Retriever:
                 break
 
         return trimmed
-

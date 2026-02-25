@@ -33,3 +33,14 @@ class BioMemoryConfig(ModuleConfig):
     working_filename: str = "working.md"
     identity_filename: str = "how-i-work.md"
     episodes_dirname: str = "episodes"
+
+    # Entity config (workspace-level, NOT inside memory/)
+    entities_dirname: str = "entities"
+    per_entity_budget: int = 800
+
+    # Deep consolidation
+    deep_max_entities: int = 50
+    deep_cluster_size: int = 20
+    staleness_ttl_days: int = 90
+    archive_dirname: str = "archive"
+    rotation_state_file: str = ".consolidation-state.json"
