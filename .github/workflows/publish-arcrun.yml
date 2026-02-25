@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
-      - run: cd packages/arcrun && uv build
+      - run: uv build --package arcrun
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: packages/arcrun/dist/
+          packages-dir: dist/
