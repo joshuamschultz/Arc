@@ -20,19 +20,18 @@ class BioMemoryConfig(ModuleConfig):
 
     # Token budgets
     total_per_turn: int = 4000
-    identity_budget: int = 500
     retrieved_budget: int = 3000
     working_budget: int = 500
     overflow_strategy: str = "truncate"
 
     # Consolidation
     light_on_shutdown: bool = True
-    significance_model: str = "llm"
+    consolidation_interval_turns: int = 15
 
     # Paths (relative to workspace/memory/)
     working_filename: str = "working.md"
-    identity_filename: str = "how-i-work.md"
     episodes_dirname: str = "episodes"
+    daily_notes_dirname: str = "daily-notes"
 
     # Entity config (workspace-level, NOT inside memory/)
     entities_dirname: str = "entities"

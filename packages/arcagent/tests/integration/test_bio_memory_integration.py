@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
-from arcagent.core.errors import ConfigError
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.modules.bio_memory.bio_memory_module import BioMemoryModule
 
@@ -104,42 +103,25 @@ class TestWorkingMemoryLifecycle:
         assert not ctx.is_vetoed
 
     @pytest.mark.asyncio
-    async def test_assemble_prompt_with_identity(
+    async def test_assemble_prompt_with_working_memory(
         self, workspace: Path, telemetry: MagicMock,
         bus: ModuleBus, module_ctx: ModuleContext,
     ) -> None:
-        # Create identity file
+        # Create working memory file
         memory_dir = workspace / "memory"
         memory_dir.mkdir(parents=True)
-        (memory_dir / "how-i-work.md").write_text(
-            "I prefer structured responses.", encoding="utf-8",
+        (memory_dir / "working.md").write_text(
+            "---\ntype: note\n---\n\nCurrent task: refactor retriever\n",
+            encoding="utf-8",
         )
 
         module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
         await module.startup(module_ctx)
 
         ctx = await bus.emit("agent:assemble_prompt", {})
-        # Should inject memory_context
+        # Should inject memory_context with working memory
         assert "memory_context" in ctx.data
-        assert "structured responses" in ctx.data["memory_context"]
-
-
-class TestMutualExclusivity:
-    """Bio-memory and markdown-memory cannot coexist."""
-
-    @pytest.mark.asyncio
-    async def test_rejects_when_memory_module_registered(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
-    ) -> None:
-        # Register the markdown-memory module first
-        fake_memory = MagicMock()
-        fake_memory.name = "memory"
-        bus.register_module(fake_memory)
-
-        module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
-        with pytest.raises(ConfigError, match="mutually exclusive"):
-            await module.startup(module_ctx)
+        assert "refactor retriever" in ctx.data["memory_context"]
 
 
 class TestBashVetoIntegration:

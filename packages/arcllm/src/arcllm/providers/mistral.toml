@@ -7,6 +7,8 @@ default_model = "mistral-large-latest"
 default_temperature = 0.7
 vault_path = ""
 
+# --- Flagship models (versioned) ---
+
 [models.mistral-large-latest]
 context_window = 128000
 max_output_tokens = 8192
@@ -16,6 +18,18 @@ supports_thinking = false
 input_modalities = ["text", "image"]
 cost_input_per_1m = 2.00
 cost_output_per_1m = 6.00
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models.mistral-medium-latest]
+context_window = 128000
+max_output_tokens = 8192
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 1.00
+cost_output_per_1m = 3.00
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
 
@@ -31,20 +45,10 @@ cost_output_per_1m = 0.30
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
 
-[models.open-mistral-nemo]
-context_window = 128000
-max_output_tokens = 4096
-supports_tools = true
-supports_vision = false
-supports_thinking = false
-input_modalities = ["text"]
-cost_input_per_1m = 0.15
-cost_output_per_1m = 0.15
-cost_cache_read_per_1m = 0.0
-cost_cache_write_per_1m = 0.0
+# --- Code models ---
 
 [models.codestral-latest]
-context_window = 32000
+context_window = 256000
 max_output_tokens = 8192
 supports_tools = false
 supports_vision = false
@@ -52,5 +56,43 @@ supports_thinking = false
 input_modalities = ["text"]
 cost_input_per_1m = 0.30
 cost_output_per_1m = 0.90
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models.devstral-latest]
+context_window = 128000
+max_output_tokens = 8192
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.25
+cost_output_per_1m = 0.75
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+# --- Reasoning models ---
+
+[models.magistral-medium-latest]
+context_window = 40000
+max_output_tokens = 40000
+supports_tools = false
+supports_vision = false
+supports_thinking = true
+input_modalities = ["text"]
+cost_input_per_1m = 2.00
+cost_output_per_1m = 5.00
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models.magistral-small-latest]
+context_window = 40000
+max_output_tokens = 40000
+supports_tools = false
+supports_vision = false
+supports_thinking = true
+input_modalities = ["text"]
+cost_input_per_1m = 0.50
+cost_output_per_1m = 1.50
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0

@@ -1,7 +1,7 @@
 """Integration test: bio-memory isolation and team sharing.
 
 Verifies that:
-1. Agent A cannot see Agent B's private memory (episodes, working, identity)
+1. Agent A cannot see Agent B's private memory (episodes, working, daily notes)
 2. Agent A cannot see Agent B's private entities
 3. Both agents CAN see shared team entities
 4. Team entity scoring is penalized vs private entities
@@ -52,11 +52,11 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
         team/
             agent_a/
                 workspace/
-                    memory/ (episodes, working, identity)
+                    memory/ (episodes, working, daily-notes)
                     entities/ (private)
             agent_b/
                 workspace/
-                    memory/ (episodes, working, identity)
+                    memory/ (episodes, working, daily-notes)
                     entities/ (private)
             shared/
                 entities/ (team-wide)
@@ -67,13 +67,16 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
     ws_a = team / "agent_a" / "workspace"
     mem_a = ws_a / "memory"
     ep_a = mem_a / "episodes"
+    dn_a = mem_a / "daily-notes"
     ent_a = ws_a / "entities"
-    for d in [ep_a, ent_a]:
+    for d in [ep_a, dn_a, ent_a]:
         d.mkdir(parents=True)
 
-    # Agent A identity
-    (mem_a / "how-i-work.md").write_text(
-        "I am Agent A. I handle research tasks.", encoding="utf-8",
+    # Agent A daily notes
+    dn_a_fm = yaml.dump({"date": "2026-02-25", "agent": "agent_a"}, default_flow_style=False).strip()
+    (dn_a / "2026-02-25.md").write_text(
+        f"---\n{dn_a_fm}\n---\n\n# 2026-02-25\n\n## 10:00 UTC\n- Agent A researched topic-x\n",
+        encoding="utf-8",
     )
     # Agent A working memory
     fm = yaml.dump({"type": "note"}, default_flow_style=False).strip()
@@ -89,13 +92,16 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
     ws_b = team / "agent_b" / "workspace"
     mem_b = ws_b / "memory"
     ep_b = mem_b / "episodes"
+    dn_b = mem_b / "daily-notes"
     ent_b = ws_b / "entities"
-    for d in [ep_b, ent_b]:
+    for d in [ep_b, dn_b, ent_b]:
         d.mkdir(parents=True)
 
-    # Agent B identity
-    (mem_b / "how-i-work.md").write_text(
-        "I am Agent B. I handle execution tasks.", encoding="utf-8",
+    # Agent B daily notes
+    dn_b_fm = yaml.dump({"date": "2026-02-25", "agent": "agent_b"}, default_flow_style=False).strip()
+    (dn_b / "2026-02-25.md").write_text(
+        f"---\n{dn_b_fm}\n---\n\n# 2026-02-25\n\n## 14:00 UTC\n- Agent B deployed service-y\n",
+        encoding="utf-8",
     )
     # Agent B working memory
     fm = yaml.dump({"type": "note"}, default_flow_style=False).strip()
@@ -160,7 +166,7 @@ class TestPrivateMemoryIsolation:
         assert "2026-02-25-agent-b-deployed-service.md" in episode_names
         assert "2026-02-25-agent-a-discovered-bug.md" not in episode_names
 
-    def test_agent_a_cannot_see_agent_b_identity(
+    def test_agent_a_cannot_see_agent_b_daily_notes(
         self, team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
@@ -170,7 +176,7 @@ class TestPrivateMemoryIsolation:
             team_entities_dir=team_layout["shared_ent"],
         )
 
-        files = retriever_a._discover_files(scope="identity")
+        files = retriever_a._discover_files(scope="daily_notes")
         contents = [f.read_text(encoding="utf-8") for f in files]
         combined = " ".join(contents)
 
@@ -380,7 +386,7 @@ class TestFullIsolationSearch:
         self, team_layout: dict[str, Path],
     ) -> None:
         """An unscoped search (all tiers) should return:
-        - Agent's own episodes, identity, working memory
+        - Agent's own episodes, daily notes, working memory
         - Agent's own entities
         - Team entities
         - NOT the other agent's anything
@@ -392,15 +398,15 @@ class TestFullIsolationSearch:
             team_entities_dir=team_layout["shared_ent"],
         )
 
-        # Search for "agent" which appears in identity, episodes, entities
+        # Search for "agent" which appears in daily notes, episodes, entities
         results = await retriever_a.search("agent")
         sources = [r.source for r in results]
         all_content = " ".join(r.content for r in results)
 
-        # Should find Agent A's own content
-        assert any("how-i-work" in s for s in sources)
+        # Should find Agent A's own content (daily notes or episodes)
+        assert any("daily-notes" in s or "episodes" in s for s in sources)
 
-        # Should NOT contain Agent B's identity
+        # Should NOT contain Agent B's content
         assert "Agent B" not in all_content
         assert "service-y" not in all_content
         assert "bob-jones" not in " ".join(sources)

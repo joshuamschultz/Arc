@@ -1,4 +1,7 @@
-"""Bio-memory module — biologically-inspired memory with working memory, identity, and episodes."""
+"""Bio-memory module — biologically-inspired memory.
+
+Working memory, daily notes, episodes, and entity consolidation.
+"""
 
 from arcagent.modules.bio_memory.bio_memory_module import BioMemoryModule
 from arcagent.modules.bio_memory.cli import cli_group
@@ -9,6 +12,7 @@ from arcagent.modules.bio_memory.errors import (
     ConsolidationError,
     RetrievalError,
 )
+from arcagent.modules.bio_memory.facts import Fact, format_fact, parse_fact, parse_facts
 from arcagent.modules.bio_memory.retriever import RetrievalResult
 
 __all__ = [
@@ -17,7 +21,11 @@ __all__ = [
     "BioMemoryModule",
     "ConsolidationError",
     "DeepConsolidator",
+    "Fact",
     "RetrievalError",
     "RetrievalResult",
     "cli_group",
+    "format_fact",
+    "parse_fact",
+    "parse_facts",
 ]

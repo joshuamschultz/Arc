@@ -1,0 +1,115 @@
+[provider]
+api_format = "openai-chat"
+base_url = "https://REPLACE-WITH-YOUR-RESOURCE.openai.azure.us"
+api_key_env = "AZURE_OPENAI_API_KEY"
+api_key_required = true
+default_model = "gpt-4o"
+default_temperature = 0.7
+vault_path = ""
+
+# NOTE: Model names here are canonical Azure model names.
+# Users deploy these as "deployments" with custom names.
+# The `model` field in load_model() should be the deployment name.
+# These metadata entries are for pricing/capability reference.
+
+# --- GPT-4.1 family ---
+
+[models.gpt-4_1]
+context_window = 300000
+max_output_tokens = 32768
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 2.00
+cost_output_per_1m = 8.00
+cost_cache_read_per_1m = 0.50
+cost_cache_write_per_1m = 2.00
+
+[models.gpt-4_1-mini]
+context_window = 300000
+max_output_tokens = 32768
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 0.40
+cost_output_per_1m = 1.60
+cost_cache_read_per_1m = 0.10
+cost_cache_write_per_1m = 0.40
+
+[models.gpt-4_1-nano]
+context_window = 300000
+max_output_tokens = 32768
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 0.10
+cost_output_per_1m = 0.40
+cost_cache_read_per_1m = 0.025
+cost_cache_write_per_1m = 0.10
+
+# --- GPT-4o family ---
+
+[models.gpt-4o]
+context_window = 128000
+max_output_tokens = 16384
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 2.50
+cost_output_per_1m = 10.00
+cost_cache_read_per_1m = 1.25
+cost_cache_write_per_1m = 2.50
+
+[models.gpt-4o-mini]
+context_window = 128000
+max_output_tokens = 16384
+supports_tools = true
+supports_vision = true
+supports_thinking = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 0.15
+cost_output_per_1m = 0.60
+cost_cache_read_per_1m = 0.075
+cost_cache_write_per_1m = 0.15
+
+# --- o-series reasoning ---
+
+[models.o3]
+context_window = 200000
+max_output_tokens = 100000
+supports_tools = true
+supports_vision = true
+supports_thinking = true
+input_modalities = ["text", "image"]
+cost_input_per_1m = 10.00
+cost_output_per_1m = 40.00
+cost_cache_read_per_1m = 2.50
+cost_cache_write_per_1m = 10.00
+
+[models.o3-mini]
+context_window = 200000
+max_output_tokens = 100000
+supports_tools = true
+supports_vision = false
+supports_thinking = true
+input_modalities = ["text"]
+cost_input_per_1m = 1.10
+cost_output_per_1m = 4.40
+cost_cache_read_per_1m = 0.275
+cost_cache_write_per_1m = 1.10
+
+[models.o4-mini]
+context_window = 200000
+max_output_tokens = 100000
+supports_tools = true
+supports_vision = true
+supports_thinking = true
+input_modalities = ["text", "image"]
+cost_input_per_1m = 1.10
+cost_output_per_1m = 4.40
+cost_cache_read_per_1m = 0.275
+cost_cache_write_per_1m = 1.10

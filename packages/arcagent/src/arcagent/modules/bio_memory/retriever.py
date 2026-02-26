@@ -8,16 +8,13 @@ and optionally team entities.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from arcagent.modules.bio_memory.config import BioMemoryConfig
+from arcagent.modules.bio_memory.entity_helpers import WIKI_LINK_RE, EntityIndex
 from arcagent.utils.io import CHARS_PER_TOKEN
 from arcagent.utils.sanitizer import read_frontmatter, sanitize_wiki_link
-
-# Extract [[wiki-links]] from markdown content
-_WIKI_LINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
 # Scoring constants
 _FRONTMATTER_BOOST = 5.0
@@ -58,22 +55,26 @@ class Retriever:
         scope: str | None = None,
     ) -> list[RetrievalResult]:
         """Two-pass search: frontmatter grep, full-text on matches, wiki-link follow."""
-        files = self._discover_files(scope=scope)
+        idx = EntityIndex(self._entities_dir, self._workspace)
+        files = self._discover_files(scope=scope, idx=idx)
         if not files:
             return []
+
+        # Per-search content cache — each file read once, reused across passes
+        content_cache: dict[Path, str] = {}
 
         # Pass 1: frontmatter grep — filter by tag/entity match
         fm_matches = self._frontmatter_grep(query, files)
 
         # Pass 2: full-text grep — score all files, boost frontmatter matches
-        scored = self._fulltext_grep(query, files, fm_matches)
+        scored = self._fulltext_grep(query, files, fm_matches, content_cache)
 
         # Sort by score descending, take top_k
         scored.sort(key=lambda r: r.score, reverse=True)
         results = scored[:top_k]
 
         # Follow wiki-links from top results (one hop)
-        linked = self._follow_wiki_links_from_results(results)
+        linked = self._follow_wiki_links_from_results(results, idx, content_cache)
         for link_result in linked:
             if not any(r.source == link_result.source for r in results):
                 results.append(link_result)
@@ -103,16 +104,11 @@ class Retriever:
         if self._is_within_bounds(path) and path.exists():
             return path.read_text(encoding="utf-8")
 
-        # Check entities directory
-        if self._entities_dir.exists():
-            path = (self._entities_dir / f"{name}.md").resolve()
-            if self._is_within_bounds(path) and path.exists():
-                return path.read_text(encoding="utf-8")
-            # Check subdirectories
-            for sub_path in self._entities_dir.rglob(f"{name}.md"):
-                resolved = sub_path.resolve()
-                if self._is_within_bounds(resolved):
-                    return resolved.read_text(encoding="utf-8")
+        # Check entities directory (index-backed O(1) lookup)
+        idx = EntityIndex(self._entities_dir, self._workspace)
+        entity_path = idx.resolve(name)
+        if entity_path is not None and entity_path.exists():
+            return entity_path.read_text(encoding="utf-8")
 
         return None
 
@@ -169,6 +165,7 @@ class Retriever:
         query: str,
         files: list[Path],
         fm_matches: set[Path],
+        content_cache: dict[Path, str],
     ) -> list[RetrievalResult]:
         """Pass 2: full-text search on files, score by match count."""
         results: list[RetrievalResult] = []
@@ -177,7 +174,11 @@ class Retriever:
 
         for path in files:
             try:
-                content = path.read_text(encoding="utf-8")
+                if path in content_cache:
+                    content = content_cache[path]
+                else:
+                    content = path.read_text(encoding="utf-8")
+                    content_cache[path] = content
             except (OSError, UnicodeDecodeError):
                 continue
 
@@ -234,20 +235,27 @@ class Retriever:
         return str(path)
 
     def _follow_wiki_links_from_results(
-        self, results: list[RetrievalResult],
+        self,
+        results: list[RetrievalResult],
+        idx: EntityIndex,
+        content_cache: dict[Path, str],
     ) -> list[RetrievalResult]:
         """Extract wiki-links from results and resolve to files (one hop)."""
         linked: list[RetrievalResult] = []
         seen_sources: set[str] = {r.source for r in results}
 
         for result in results:
-            for link_path in self._follow_wiki_links(result.content):
+            for link_path in self._follow_wiki_links(result.content, idx=idx):
                 source = self._relative_source(link_path)
                 if source in seen_sources:
                     continue
                 seen_sources.add(source)
                 try:
-                    content = link_path.read_text(encoding="utf-8")
+                    if link_path in content_cache:
+                        content = content_cache[link_path]
+                    else:
+                        content = link_path.read_text(encoding="utf-8")
+                        content_cache[link_path] = content
                 except (OSError, UnicodeDecodeError):
                     continue
                 linked.append(RetrievalResult(
@@ -258,7 +266,9 @@ class Retriever:
                 ))
         return linked
 
-    def _follow_wiki_links(self, content: str, depth: int = 1) -> list[Path]:
+    def _follow_wiki_links(
+        self, content: str, depth: int = 1, idx: EntityIndex | None = None,
+    ) -> list[Path]:
         """Extract [[wiki-links]] from content, resolve to file paths.
 
         Only follows links that resolve to existing files (entity registry
@@ -268,7 +278,7 @@ class Retriever:
             return []
 
         paths: list[Path] = []
-        for match in _WIKI_LINK_RE.finditer(content):
+        for match in WIKI_LINK_RE.finditer(content):
             raw_link = match.group(1)
             slug = sanitize_wiki_link(raw_link)
             if slug is None:
@@ -285,16 +295,17 @@ class Retriever:
                 paths.append(candidate)
                 continue
 
-            # Check entities directory and subdirectories
-            if self._entities_dir.exists():
+            # Check entities (index-backed O(1) lookup)
+            if idx is not None:
+                entity_path = idx.resolve(slug)
+                if entity_path is not None:
+                    paths.append(entity_path)
+                    continue
+            elif self._entities_dir.exists():
                 candidate = self._entities_dir / f"{slug}.md"
                 if candidate.exists():
                     paths.append(candidate)
                     continue
-                # Subdirectories
-                for sub_candidate in self._entities_dir.rglob(f"{slug}.md"):
-                    paths.append(sub_candidate)
-                    break  # Take first match
 
             # Check team entities (only existing files — registry defense)
             if self._team_entities_dir and self._team_entities_dir.exists():
@@ -304,10 +315,12 @@ class Retriever:
 
         return paths
 
-    def _discover_files(self, scope: str | None = None) -> list[Path]:
+    def _discover_files(
+        self, scope: str | None = None, idx: EntityIndex | None = None,
+    ) -> list[Path]:
         """Find indexable files, optionally filtered by scope.
 
-        Scope values: "episodes", "identity", "working", "entities", or None (all).
+        Scope values: "episodes", "daily_notes", "working", "entities", or None (all).
         """
         files: list[Path] = []
 
@@ -317,23 +330,25 @@ class Retriever:
             if episodes_dir.exists():
                 files.extend(episodes_dir.glob("*.md"))
 
+        # Daily notes
+        if scope is None or scope == "daily_notes":
+            daily_notes_dir = self._memory_dir / self._config.daily_notes_dirname
+            if daily_notes_dir.exists():
+                files.extend(daily_notes_dir.glob("*.md"))
+
         # Working memory
         if scope is None or scope == "working":
             working = self._memory_dir / self._config.working_filename
             if working.exists():
                 files.append(working)
 
-        # Identity
-        if scope is None or scope == "identity":
-            identity = self._memory_dir / self._config.identity_filename
-            if identity.exists():
-                files.append(identity)
-
-        # Entities
+        # Entities (index-backed avoids rglob)
         if scope is None or scope == "entities":
-            if self._entities_dir.exists():
+            if idx is not None:
+                files.extend(idx.all_files())
+            elif self._entities_dir.exists():
                 files.extend(self._entities_dir.rglob("*.md"))
-            # Team entities (lower priority)
+            # Team entities (lower priority — separate directory, no index)
             if self._team_entities_dir and self._team_entities_dir.exists():
                 files.extend(self._team_entities_dir.rglob("*.md"))
 

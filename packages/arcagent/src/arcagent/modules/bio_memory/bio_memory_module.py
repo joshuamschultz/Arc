@@ -1,8 +1,10 @@
 """BioMemoryModule — facade implementing the Module protocol.
 
-Delegates to internal helpers: WorkingMemory, IdentityManager,
+Delegates to internal helpers: WorkingMemory, DailyNotes,
 Retriever, Consolidator, DeepConsolidator. Registers bus handlers
 and memory tools. Optionally integrates with arcteam TeamMemoryService.
+
+Identity/behavioral patterns are managed by the policy module, not here.
 """
 
 from __future__ import annotations
@@ -14,12 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.config import EvalConfig
-from arcagent.core.errors import ConfigError
 from arcagent.core.module_bus import EventContext, ModuleContext
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.modules.bio_memory.config import BioMemoryConfig
 from arcagent.modules.bio_memory.consolidator import Consolidator
-from arcagent.modules.bio_memory.identity_manager import IdentityManager
+from arcagent.modules.bio_memory.daily_notes import DailyNotes
 from arcagent.modules.bio_memory.retriever import Retriever
 from arcagent.modules.bio_memory.working_memory import WorkingMemory
 from arcagent.utils.model_helpers import get_eval_model, spawn_background
@@ -36,10 +37,12 @@ class BioMemoryModule:
 
     Facade that delegates to internal helpers:
     - WorkingMemory: scratchpad lifecycle
-    - IdentityManager: how-i-work.md injection and updates
+    - DailyNotes: append-only daily journal (queryable history)
     - Retriever: grep + wiki-link graph traversal (memory + entities + team)
-    - Consolidator: light consolidation on shutdown (episodes + entity updates)
+    - Consolidator: periodic consolidation every N turns (daily notes + episodes + entities)
     - DeepConsolidator: deep "sleep cycle" consolidation (entity rewrites, graph, merge)
+
+    Identity/behavioral patterns managed by the policy module, not here.
     """
 
     def __init__(
@@ -64,12 +67,11 @@ class BioMemoryModule:
         self._background_tasks: set[asyncio.Task[None]] = set()
         self._semaphore = asyncio.Semaphore(self._eval_config.max_concurrent)
         self._messages: list[dict[str, Any]] = []
+        self._turn_count: int = 0
 
         # Internal helpers
         self._working = WorkingMemory(self._memory_dir, self._config)
-        self._identity = IdentityManager(
-            self._memory_dir, self._config, telemetry,
-        )
+        self._daily_notes = DailyNotes(self._memory_dir, self._config)
         self._retriever = Retriever(
             self._memory_dir,
             self._config,
@@ -82,8 +84,8 @@ class BioMemoryModule:
         self._consolidator = Consolidator(
             self._memory_dir,
             self._config,
-            self._identity,
             self._working,
+            self._daily_notes,
             telemetry,
             workspace=self._workspace,
             team_service_factory=self._get_team_service,
@@ -96,16 +98,6 @@ class BioMemoryModule:
 
     async def startup(self, ctx: ModuleContext) -> None:
         """Register bus handlers + memory tools."""
-        # Mutual exclusivity check
-        if ctx.bus.get_module("memory") is not None:
-            raise ConfigError(
-                code="CONFIG_MODULE_CONFLICT",
-                message=(
-                    "bio_memory and memory modules are mutually exclusive. "
-                    "Disable one in [modules] config."
-                ),
-            )
-
         bus = ctx.bus
         bus.subscribe(
             "agent:assemble_prompt", self._on_assemble_prompt, priority=50,
@@ -205,13 +197,10 @@ class BioMemoryModule:
     # -- Bus handlers --
 
     async def _on_assemble_prompt(self, ctx: EventContext) -> None:
-        """Inject identity + working memory + entity hint into prompt context."""
-        identity_text = await self._identity.inject_context()
+        """Inject working memory + entity hint into prompt context."""
         working_text = await self._working.read()
 
         parts: list[str] = []
-        if identity_text:
-            parts.append(f"<agent-identity>\n{identity_text}\n</agent-identity>")
         if working_text:
             parts.append(f"<working-memory>\n{working_text}\n</working-memory>")
 
@@ -229,10 +218,27 @@ class BioMemoryModule:
             ctx.data.setdefault("memory_context", "\n\n".join(parts))
 
     async def _on_post_respond(self, ctx: EventContext) -> None:
-        """Update working memory after each turn."""
+        """Track messages and trigger periodic consolidation every N turns."""
         messages = ctx.data.get("messages", [])
-        if messages:
-            self._messages = messages
+        if not messages:
+            return
+
+        self._messages = messages
+        self._turn_count += 1
+
+        interval = self._config.consolidation_interval_turns
+        if interval > 0 and self._turn_count % interval == 0:
+            model = self._get_eval_model()
+            if model is not None:
+                spawn_background(
+                    self._consolidator.periodic_consolidate(messages, model),
+                    background_tasks=self._background_tasks,
+                    semaphore=self._semaphore,
+                    eval_config=self._eval_config,
+                    telemetry=self._telemetry,
+                    audit_event_name="bio_memory.consolidation_error",
+                    logger=_logger,
+                )
 
     async def _on_pre_tool(self, ctx: EventContext) -> None:
         """Veto bash commands targeting memory paths."""
@@ -267,7 +273,7 @@ class BioMemoryModule:
             pass
 
     async def _on_shutdown(self, ctx: EventContext) -> None:
-        """Trigger light consolidation on session end."""
+        """Final consolidation on session end (safety net)."""
         if not self._config.light_on_shutdown:
             return
         if not self._messages:
@@ -279,7 +285,7 @@ class BioMemoryModule:
             return
 
         spawn_background(
-            self._consolidator.light_consolidate(self._messages, model),
+            self._consolidator.periodic_consolidate(self._messages, model),
             background_tasks=self._background_tasks,
             semaphore=self._semaphore,
             eval_config=self._eval_config,
@@ -305,8 +311,8 @@ class BioMemoryModule:
                     },
                     "scope": {
                         "type": "string",
-                        "description": "Filter: episodes, identity, working, entities",
-                        "enum": ["episodes", "identity", "working", "entities"],
+                        "description": "Filter: episodes, daily_notes, working, entities",
+                        "enum": ["episodes", "daily_notes", "working", "entities"],
                     },
                     "top_k": {
                         "type": "integer",
@@ -363,24 +369,6 @@ class BioMemoryModule:
             },
             transport=ToolTransport.NATIVE,
             execute=self._handle_memory_recall,
-        ))
-
-        tool_registry.register(RegisteredTool(
-            name="memory_reflect",
-            description="Trigger a reflection on recent memories to update identity patterns.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "focus": {
-                        "type": "string",
-                        "description": "Optional focus area for reflection",
-                        "maxLength": 500,
-                    },
-                },
-                "additionalProperties": False,
-            },
-            transport=ToolTransport.NATIVE,
-            execute=self._handle_memory_reflect,
         ))
 
         tool_registry.register(RegisteredTool(
@@ -494,28 +482,6 @@ class BioMemoryModule:
             return f"No memory found for '{name}'."
         return f'<memory-result source="{name}">\n{result}\n</memory-result>'
 
-    async def _handle_memory_reflect(
-        self, focus: str | None = None,
-    ) -> str:
-        """Handle memory_reflect tool invocation."""
-        model = self._get_eval_model()
-        if model is None:
-            return "Reflection unavailable: no eval model configured."
-        # Trigger identity update evaluation using recent messages
-        if self._messages:
-            current_identity = await self._identity.read()
-            new_identity = await self._consolidator.evaluate_identity(
-                self._messages, current_identity, model,
-            )
-            if new_identity is not None:
-                await self._identity.update(new_identity)
-                self._telemetry.audit_event(
-                    "memory.identity_reflected",
-                    details={"focus": focus},
-                )
-                return "Identity updated based on reflection."
-        return "No significant changes to identity detected."
-
     async def _handle_deep_consolidation(
         self, dry_run: bool = False,
     ) -> str:
@@ -531,7 +497,6 @@ class BioMemoryModule:
             memory_dir=self._memory_dir,
             workspace=self._workspace,
             config=self._config,
-            identity=self._identity,
             telemetry=self._telemetry,
             team_service_factory=self._get_team_service,
         )
@@ -564,8 +529,6 @@ class BioMemoryModule:
                 f"  Stale: {stale.get('flagged', 0)} flagged, "
                 f"{stale.get('archived', 0)} archived"
             )
-        if result.get("identity_refreshed"):
-            parts.append("  Identity refreshed.")
         return "\n".join(parts)
 
     # -- Helpers --

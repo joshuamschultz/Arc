@@ -86,26 +86,59 @@ class TestEpisodesList:
         assert result.exit_code == 0
 
 
-class TestIdentityShow:
-    """CLI 'identity show' displays how-i-work.md."""
+class TestEntitiesList:
+    """CLI 'entities list' shows all entity files."""
 
-    def test_no_identity(
+    def test_no_entities_dir(
         self, runner: CliRunner, cli: click.Group,
     ) -> None:
-        result = runner.invoke(cli, ["identity", "show"])
+        result = runner.invoke(cli, ["entities", "list"])
         assert result.exit_code == 0
 
-    def test_with_identity(
+    def test_with_entities(
         self, runner: CliRunner, cli: click.Group, workspace: Path,
     ) -> None:
-        memory_dir = workspace / "memory"
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        (memory_dir / "how-i-work.md").write_text(
-            "I prefer clear answers.", encoding="utf-8",
+        entities_dir = workspace / "entities"
+        entities_dir.mkdir()
+        fm_text = yaml.dump(
+            {"entity_type": "person", "name": "Josh", "status": "active"},
+        ).strip()
+        (entities_dir / "josh.md").write_text(
+            f"---\n{fm_text}\n---\n\n# Josh\n", encoding="utf-8",
         )
-        result = runner.invoke(cli, ["identity", "show"])
+        result = runner.invoke(cli, ["entities", "list"])
         assert result.exit_code == 0
-        assert "clear answers" in result.output
+        assert "Josh" in result.output
+
+
+class TestEntitiesNormalize:
+    """CLI 'entities normalize' adds frontmatter to legacy files."""
+
+    def test_normalizes_legacy_file(
+        self, runner: CliRunner, cli: click.Group, workspace: Path,
+    ) -> None:
+        entities_dir = workspace / "entities"
+        entities_dir.mkdir()
+        (entities_dir / "legacy.md").write_text("# Legacy\n\nContent.", encoding="utf-8")
+        result = runner.invoke(cli, ["entities", "normalize"])
+        assert result.exit_code == 0
+        assert "Normalized 1" in result.output
+
+    def test_no_entities_dir(
+        self, runner: CliRunner, cli: click.Group,
+    ) -> None:
+        result = runner.invoke(cli, ["entities", "normalize"])
+        assert result.exit_code == 0
+
+
+class TestConsolidateDeep:
+    """CLI 'consolidate-deep' command."""
+
+    def test_runs_without_error(
+        self, runner: CliRunner, cli: click.Group,
+    ) -> None:
+        result = runner.invoke(cli, ["consolidate-deep"])
+        assert result.exit_code == 0
 
 
 class TestWorkingShow:

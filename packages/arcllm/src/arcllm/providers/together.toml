@@ -31,15 +31,15 @@ cost_output_per_1m = 0.18
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
 
-[models."mistralai/Mixtral-8x7B-Instruct-v0.1"]
-context_window = 32000
-max_output_tokens = 4096
+[models."meta-llama/Llama-4-Scout-17B-16E-Instruct"]
+context_window = 512000
+max_output_tokens = 8192
 supports_tools = true
-supports_vision = false
+supports_vision = true
 supports_thinking = false
-input_modalities = ["text"]
-cost_input_per_1m = 0.60
-cost_output_per_1m = 0.60
+input_modalities = ["text", "image"]
+cost_input_per_1m = 0.18
+cost_output_per_1m = 0.18
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
 

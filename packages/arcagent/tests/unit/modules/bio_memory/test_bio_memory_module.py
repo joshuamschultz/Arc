@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
-from arcagent.core.errors import ConfigError
 from arcagent.core.module_bus import EventContext, ModuleBus, ModuleContext
 from arcagent.modules.bio_memory.bio_memory_module import BioMemoryModule
 
@@ -88,37 +87,19 @@ class TestModuleProtocol:
         tool_registry: MagicMock,
     ) -> None:
         await module.startup(module_ctx)
-        # Should register 5 tools
-        assert tool_registry.register.call_count == 5
+        # Should register 4 tools (search, note, recall, consolidate_deep)
+        assert tool_registry.register.call_count == 4
         tool_names = [
             call.args[0].name for call in tool_registry.register.call_args_list
         ]
         assert "memory_search" in tool_names
         assert "memory_note" in tool_names
         assert "memory_recall" in tool_names
-        assert "memory_reflect" in tool_names
         assert "memory_consolidate_deep" in tool_names
 
     @pytest.mark.asyncio
     async def test_shutdown_no_error(self, module: BioMemoryModule) -> None:
         await module.shutdown()
-
-
-class TestMutualExclusivity:
-    """Bio-memory and markdown-memory cannot both be active."""
-
-    @pytest.mark.asyncio
-    async def test_raises_if_memory_module_present(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus,
-    ) -> None:
-        # Register a fake "memory" module
-        fake_memory = MagicMock()
-        fake_memory.name = "memory"
-        bus.register_module(fake_memory)
-
-        with pytest.raises(ConfigError, match="mutually exclusive"):
-            await module.startup(module_ctx)
 
 
 class TestBashVeto:
@@ -366,27 +347,24 @@ class TestConstructor:
 
     def test_custom_config(self, workspace: Path) -> None:
         m = BioMemoryModule(
-            config={"total_per_turn": 8000, "identity_budget": 1000},
+            config={"total_per_turn": 8000, "retrieved_budget": 5000},
             workspace=workspace,
         )
         assert m.name == "bio_memory"
 
 
 class TestAssemblePrompt:
-    """_on_assemble_prompt injects identity, working memory, and entity hint."""
+    """_on_assemble_prompt injects working memory and entity hint."""
 
     @pytest.mark.asyncio
-    async def test_injects_identity_and_working(
+    async def test_injects_working_memory(
         self, module: BioMemoryModule, module_ctx: ModuleContext, bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
         memory_dir = module._memory_dir
         memory_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create identity and working memory files
-        (memory_dir / "how-i-work.md").write_text(
-            "---\ntitle: identity\n---\n\nI help with code.\n", encoding="utf-8",
-        )
+        # Create working memory file
         (memory_dir / "working.md").write_text(
             "---\ntype: note\n---\n\nCurrent task notes.\n", encoding="utf-8",
         )
@@ -394,8 +372,8 @@ class TestAssemblePrompt:
         result = await bus.emit("agent:assemble_prompt", {})
         ctx_data = result.data
         mem_ctx = ctx_data.get("memory_context", "")
-        assert "<agent-identity>" in mem_ctx
         assert "<working-memory>" in mem_ctx
+        assert "Current task notes" in mem_ctx
 
     @pytest.mark.asyncio
     async def test_injects_entity_hint_when_dir_exists(
@@ -552,52 +530,6 @@ class TestMemoryRecallWithResult:
         assert "Session content" in result
 
 
-class TestMemoryReflect:
-    """memory_reflect handler triggers identity evaluation."""
-
-    @pytest.mark.asyncio
-    async def test_reflect_no_model(
-        self, module: BioMemoryModule,
-    ) -> None:
-        """Reflect without eval model returns unavailable message."""
-        result = await module._handle_memory_reflect()
-        assert "unavailable" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_reflect_no_messages(
-        self, module: BioMemoryModule,
-    ) -> None:
-        """Reflect with model but no messages returns no changes."""
-        mock_model = MagicMock()
-        module._eval_model = mock_model
-        result = await module._handle_memory_reflect()
-        assert "No significant changes" in result
-
-    @pytest.mark.asyncio
-    async def test_reflect_updates_identity(
-        self, module: BioMemoryModule, telemetry: MagicMock,
-    ) -> None:
-        """Reflect with model + messages triggers identity update."""
-        memory_dir = module._memory_dir
-        memory_dir.mkdir(parents=True, exist_ok=True)
-        (memory_dir / "how-i-work.md").write_text(
-            "---\ntitle: identity\n---\n\nOld identity.\n", encoding="utf-8",
-        )
-
-        mock_model = MagicMock()
-        module._eval_model = mock_model
-        module._messages = [{"role": "user", "content": "test msg"}]
-
-        # Mock the consolidator's evaluate_identity to return new content
-        module._consolidator.evaluate_identity = AsyncMock(
-            return_value="Updated identity content.",
-        )
-
-        result = await module._handle_memory_reflect(focus="communication")
-        assert "Identity updated" in result
-        telemetry.audit_event.assert_called()
-
-
 class TestDeepConsolidation:
     """memory_consolidate_deep handler."""
 
@@ -638,7 +570,6 @@ class TestDeepConsolidation:
             "entity_pass": {"entities_rewritten": 2, "skipped_unchanged": 1},
             "graph_pass": {"links_added": 3},
             "stale": {"flagged": 1, "archived": 0},
-            "identity_refreshed": True,
         }
 
         with patch(
@@ -652,7 +583,6 @@ class TestDeepConsolidation:
         assert "complete" in result.lower()
         assert "Entities rewritten: 2" in result
         assert "Graph links added: 3" in result
-        assert "Identity refreshed" in result
 
 
 class TestGetTeamService:

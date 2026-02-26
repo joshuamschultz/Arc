@@ -29,7 +29,7 @@ def cli_group(workspace: Path) -> click.Group:
     @click.group("bio-memory")
     @click.pass_context
     def bio_memory(ctx: click.Context) -> None:
-        """Inspect bio-memory — working memory, identity, episodes, entities."""
+        """Inspect bio-memory — working memory, daily notes, episodes, entities."""
         ctx.ensure_object(dict)
         ctx.obj["workspace"] = workspace
         ctx.obj["memory_dir"] = memory_dir
@@ -41,14 +41,17 @@ def cli_group(workspace: Path) -> click.Group:
         md = ctx.obj["memory_dir"]
         ws = ctx.obj["workspace"]
 
-        # Identity
-        identity_path = md / "how-i-work.md"
-        identity_exists = identity_path.exists()
-        identity_size = identity_path.stat().st_size if identity_exists else 0
-
         # Working memory
         working_path = md / "working.md"
         working_exists = working_path.exists()
+
+        # Daily notes
+        daily_notes_dir = md / "daily-notes"
+        daily_note_count = (
+            len(list(daily_notes_dir.glob("*.md")))
+            if daily_notes_dir.is_dir()
+            else 0
+        )
 
         # Episodes
         episodes_dir = md / "episodes"
@@ -67,28 +70,10 @@ def cli_group(workspace: Path) -> click.Group:
         )
 
         click.echo("Bio-Memory Status:")
-        if identity_exists:
-            click.echo(f"  Identity: yes ({identity_size} bytes)")
-        else:
-            click.echo("  Identity: no")
         click.echo(f"  Working memory: {'active' if working_exists else 'empty'}")
+        click.echo(f"  Daily notes: {daily_note_count}")
         click.echo(f"  Episodes: {episode_count}")
         click.echo(f"  Entities: {entity_count}")
-
-    @bio_memory.group("identity")
-    def identity() -> None:
-        """Identity (how-i-work.md) commands."""
-
-    @identity.command("show")
-    @click.pass_context
-    def identity_show(ctx: click.Context) -> None:
-        """Show current identity file."""
-        md = ctx.obj["memory_dir"]
-        path = md / "how-i-work.md"
-        if not path.exists():
-            click.echo("No identity file found.")
-            return
-        click.echo(path.read_text(encoding="utf-8"))
 
     @bio_memory.group("episodes")
     def episodes() -> None:
@@ -173,28 +158,13 @@ def cli_group(workspace: Path) -> click.Group:
             click.echo("No entities directory found.")
             return
 
-        from arcagent.modules.bio_memory.config import BioMemoryConfig
-        from arcagent.modules.bio_memory.consolidator import Consolidator
-        from arcagent.modules.bio_memory.identity_manager import IdentityManager
-        from arcagent.modules.bio_memory.working_memory import WorkingMemory
-
-        # Minimal setup for normalization
-        md = ctx.obj["memory_dir"]
-        config = BioMemoryConfig()
-        telemetry = _NoOpTelemetry()
-        consolidator = Consolidator(
-            md, config,
-            IdentityManager(md, config, telemetry),
-            WorkingMemory(md, config),
-            telemetry,
-            workspace=ws,
-        )
+        from arcagent.modules.bio_memory.entity_helpers import normalize_entity_file
 
         count = 0
         for f in entities_dir.rglob("*.md"):
             meta = read_frontmatter(f)
             if meta is None:
-                consolidator._normalize_entity_file(f)
+                normalize_entity_file(f, entities_dir)
                 count += 1
                 click.echo(f"  Normalized: {f.name}")
 
@@ -212,7 +182,6 @@ def cli_group(workspace: Path) -> click.Group:
         async def _run() -> None:
             from arcagent.modules.bio_memory.config import BioMemoryConfig
             from arcagent.modules.bio_memory.deep_consolidator import DeepConsolidator
-            from arcagent.modules.bio_memory.identity_manager import IdentityManager
 
             ws = ctx.obj["workspace"]
             md = ctx.obj["memory_dir"]
@@ -224,7 +193,6 @@ def cli_group(workspace: Path) -> click.Group:
                 memory_dir=md,
                 workspace=ws,
                 config=config,
-                identity=IdentityManager(md, config, telemetry),
                 telemetry=telemetry,
             )
 

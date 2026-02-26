@@ -1,4 +1,4 @@
-"""Tests for Consolidator — significance, episodes, identity, entity pipeline."""
+"""Tests for Consolidator — significance, episodes, daily notes, entity pipeline."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import yaml
 
 from arcagent.modules.bio_memory.config import BioMemoryConfig
 from arcagent.modules.bio_memory.consolidator import Consolidator
-from arcagent.modules.bio_memory.identity_manager import IdentityManager
+from arcagent.modules.bio_memory.daily_notes import DailyNotes
 from arcagent.modules.bio_memory.working_memory import WorkingMemory
 
 
@@ -45,12 +45,10 @@ def telemetry() -> MagicMock:
 
 
 @pytest.fixture
-def identity(
-    memory_dir: Path, config: BioMemoryConfig, telemetry: MagicMock,
-) -> IdentityManager:
-    return IdentityManager(
-        memory_dir=memory_dir, config=config, telemetry=telemetry,
-    )
+def daily_notes(
+    memory_dir: Path, config: BioMemoryConfig,
+) -> DailyNotes:
+    return DailyNotes(memory_dir=memory_dir, config=config)
 
 
 @pytest.fixture
@@ -62,7 +60,7 @@ def working(memory_dir: Path, config: BioMemoryConfig) -> WorkingMemory:
 def consolidator(
     memory_dir: Path,
     config: BioMemoryConfig,
-    identity: IdentityManager,
+    daily_notes: DailyNotes,
     working: WorkingMemory,
     telemetry: MagicMock,
     workspace: Path,
@@ -70,8 +68,8 @@ def consolidator(
     return Consolidator(
         memory_dir=memory_dir,
         config=config,
-        identity=identity,
         working=working,
+        daily_notes=daily_notes,
         telemetry=telemetry,
         workspace=workspace,
     )
@@ -112,24 +110,25 @@ def _write_entity(
     return path
 
 
-class TestLightConsolidate:
-    """Consolidator.light_consolidate() orchestrates the full sequence."""
+class TestPeriodicConsolidate:
+    """Consolidator.periodic_consolidate() orchestrates the full sequence."""
 
     @pytest.mark.asyncio
     async def test_skips_empty_messages(
         self, consolidator: Consolidator,
     ) -> None:
         model = _mock_model("")
-        await consolidator.light_consolidate([], model)
+        await consolidator.periodic_consolidate([], model)
         model.invoke.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_significant_session_creates_episode(
         self, consolidator: Consolidator, memory_dir: Path,
     ) -> None:
-        # Model: significant → episode → entity analysis → identity eval
+        # Model: daily note → significance → episode → entity analysis
         model = AsyncMock()
         responses = [
+            MagicMock(content=json.dumps({"entries": ["Discussed deadline"]})),
             MagicMock(content=json.dumps({"significant": True, "reason": "deadline discussed"})),
             MagicMock(content=json.dumps({
                 "title": "deadline-discussion",
@@ -141,11 +140,10 @@ class TestLightConsolidate:
                 "touched_entities": [], "corrections": [],
                 "new_entities": [], "co_occurrences": [],
             })),
-            MagicMock(content=json.dumps({"update_needed": False})),
         ]
         model.invoke = AsyncMock(side_effect=responses)
 
-        await consolidator.light_consolidate(_sample_messages(), model)
+        await consolidator.periodic_consolidate(_sample_messages(), model)
 
         episodes_dir = memory_dir / "episodes"
         assert episodes_dir.exists()
@@ -156,12 +154,40 @@ class TestLightConsolidate:
     async def test_insignificant_session_no_episode(
         self, consolidator: Consolidator, memory_dir: Path,
     ) -> None:
-        model = _mock_model(json.dumps({"significant": False, "reason": "trivial"}))
-        await consolidator.light_consolidate(_sample_messages(), model)
+        # Model: daily note → significance (false)
+        model = AsyncMock()
+        responses = [
+            MagicMock(content=json.dumps({"entries": ["Trivial chat"]})),
+            MagicMock(content=json.dumps({"significant": False, "reason": "trivial"})),
+        ]
+        model.invoke = AsyncMock(side_effect=responses)
+
+        await consolidator.periodic_consolidate(_sample_messages(), model)
 
         episodes_dir = memory_dir / "episodes"
         if episodes_dir.exists():
             assert list(episodes_dir.glob("*.md")) == []
+
+    @pytest.mark.asyncio
+    async def test_always_creates_daily_note(
+        self, consolidator: Consolidator, memory_dir: Path,
+    ) -> None:
+        """Daily note is always appended, even for trivial sessions."""
+        # Model: daily note → (pre-filter will catch trivial)
+        model = _mock_model(json.dumps({"entries": ["Did some work"]}))
+
+        # Short trivial messages — will be pre-filtered (no signal words, < 3 msgs)
+        trivial = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "bye"},
+        ]
+        await consolidator.periodic_consolidate(trivial, model)
+
+        daily_notes_dir = memory_dir / "daily-notes"
+        assert daily_notes_dir.exists()
+        note_files = list(daily_notes_dir.glob("*.md"))
+        assert len(note_files) == 1
 
     @pytest.mark.asyncio
     async def test_clears_working_memory(
@@ -169,20 +195,22 @@ class TestLightConsolidate:
         memory_dir: Path,
     ) -> None:
         await working.write(content="Active data", frontmatter={"turn_number": 1})
-        model = _mock_model(json.dumps({"significant": False, "reason": "trivial"}))
-        await consolidator.light_consolidate(_sample_messages(), model)
+        # Model: daily note → (pre-filter catches trivial)
+        model = _mock_model(json.dumps({"entries": ["Worked on task"]}))
+
+        await consolidator.periodic_consolidate(_sample_messages(), model)
 
         # Working memory should be cleared
         content = await working.read()
-        # Either file cleared or still has frontmatter with empty body
         assert "Active data" not in content
 
     @pytest.mark.asyncio
     async def test_emits_telemetry(
         self, consolidator: Consolidator, telemetry: MagicMock,
     ) -> None:
-        model = _mock_model(json.dumps({"significant": False, "reason": "trivial"}))
-        await consolidator.light_consolidate(_sample_messages(), model)
+        # Model: daily note → (pre-filter catches trivial)
+        model = _mock_model(json.dumps({"entries": ["Some work"]}))
+        await consolidator.periodic_consolidate(_sample_messages(), model)
         telemetry.audit_event.assert_called()
 
 
@@ -340,6 +368,78 @@ class TestUpdateTouchedEntities:
         assert count == 0
 
 
+class TestAppendEntityFacts:
+    """LC-4.5: Append compact fact triplets to entity Key Facts."""
+
+    def test_appends_facts_to_entity(
+        self, consolidator: Consolidator, entities_dir: Path,
+    ) -> None:
+        _write_entity(
+            entities_dir, "josh",
+            {"entity_type": "person"},
+            "# Josh\n\n## Key Facts\n\n## Summary\nA person.\n",
+        )
+        count = consolidator._append_entity_facts({
+            "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
+        })
+        assert count == 1
+        text = (entities_dir / "josh.md").read_text()
+        assert "works_at" in text
+        assert "Anthropic" in text
+
+    def test_detects_contradiction(
+        self, consolidator: Consolidator, entities_dir: Path,
+    ) -> None:
+        _write_entity(
+            entities_dir, "josh",
+            {"entity_type": "person"},
+            "# Josh\n\n## Key Facts\n- works_at: IBM .8 2023-01-01\n\n## Summary\n",
+        )
+        count = consolidator._append_entity_facts({
+            "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
+        })
+        assert count == 1
+        text = (entities_dir / "josh.md").read_text()
+        assert "was: IBM" in text
+
+    def test_skips_nonexistent_entity(
+        self, consolidator: Consolidator,
+    ) -> None:
+        count = consolidator._append_entity_facts({
+            "missing": [{"p": "role", "v": "engineer", "c": 0.5}],
+        })
+        assert count == 0
+
+    def test_skips_empty_predicate_or_value(
+        self, consolidator: Consolidator, entities_dir: Path,
+    ) -> None:
+        _write_entity(
+            entities_dir, "test",
+            {"entity_type": "concept"},
+            "# Test\n\n## Key Facts\n",
+        )
+        count = consolidator._append_entity_facts({
+            "test": [{"p": "", "v": "val", "c": 0.5}, {"p": "key", "v": "", "c": 0.5}],
+        })
+        assert count == 0
+
+    def test_multiple_facts_for_entity(
+        self, consolidator: Consolidator, entities_dir: Path,
+    ) -> None:
+        _write_entity(
+            entities_dir, "proj",
+            {"entity_type": "project"},
+            "# Project\n\n## Key Facts\n\n## Summary\n",
+        )
+        count = consolidator._append_entity_facts({
+            "proj": [
+                {"p": "status", "v": "active", "c": 0.95},
+                {"p": "language", "v": "Python", "c": 0.9},
+            ],
+        })
+        assert count == 2
+
+
 class TestApplyCorrections:
     """LC-5: Append corrections to Constraints and Lessons section."""
 
@@ -448,12 +548,14 @@ class TestNormalizeEntityFile:
     """Legacy files get v2.1 frontmatter on first touch."""
 
     def test_adds_frontmatter_to_legacy_file(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self, entities_dir: Path,
     ) -> None:
+        from arcagent.modules.bio_memory.entity_helpers import normalize_entity_file
+
         path = entities_dir / "legacy-entity.md"
         path.write_text("# Legacy Entity\n\nSome content here.\n", encoding="utf-8")
 
-        consolidator._normalize_entity_file(path)
+        normalize_entity_file(path, entities_dir)
 
         text = path.read_text()
         assert text.startswith("---\n")
@@ -464,88 +566,18 @@ class TestNormalizeEntityFile:
         assert fm["name"] == "Legacy Entity"
 
     def test_skips_file_with_existing_frontmatter(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self, entities_dir: Path,
     ) -> None:
+        from arcagent.modules.bio_memory.entity_helpers import normalize_entity_file
+
         path = entities_dir / "existing-fm.md"
         original = "---\nentity_type: person\n---\n\n# Person\n"
         path.write_text(original, encoding="utf-8")
 
-        consolidator._normalize_entity_file(path)
+        normalize_entity_file(path, entities_dir)
 
-        # Should be unchanged (not double-frontmattered)
         text = path.read_text()
         assert text.count("---") == 2
-
-
-class TestEvaluateIdentityUpdate:
-    """Consolidator._evaluate_identity_update() delegates to LLM."""
-
-    @pytest.mark.asyncio
-    async def test_returns_new_content_when_needed(
-        self, consolidator: Consolidator,
-    ) -> None:
-        model = _mock_model(json.dumps({
-            "update_needed": True,
-            "new_content": "I now prefer detailed answers.",
-        }))
-        result = await consolidator._evaluate_identity_update(
-            _sample_messages(), "I prefer short answers.", model,
-        )
-        assert result == "I now prefer detailed answers."
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_not_needed(
-        self, consolidator: Consolidator,
-    ) -> None:
-        model = _mock_model(json.dumps({"update_needed": False}))
-        result = await consolidator._evaluate_identity_update(
-            _sample_messages(), "Current identity.", model,
-        )
-        assert result is None
-
-
-class TestEvaluateIdentityPublicAPI:
-    """Consolidator.evaluate_identity() — public API wrapping _evaluate_identity_update."""
-
-    @pytest.mark.asyncio
-    async def test_public_api_delegates_correctly(
-        self, consolidator: Consolidator,
-    ) -> None:
-        model = _mock_model(json.dumps({
-            "update_needed": True,
-            "new_content": "Updated identity.",
-        }))
-        result = await consolidator.evaluate_identity(
-            _sample_messages(), "Old identity.", model,
-        )
-        assert result == "Updated identity."
-
-    @pytest.mark.asyncio
-    async def test_public_api_returns_none_when_not_needed(
-        self, consolidator: Consolidator,
-    ) -> None:
-        model = _mock_model(json.dumps({"update_needed": False}))
-        result = await consolidator.evaluate_identity(
-            _sample_messages(), "Current identity.", model,
-        )
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_sanitizes_returned_content(
-        self, consolidator: Consolidator,
-    ) -> None:
-        """Returned identity content is sanitized (ASI-06)."""
-        model = _mock_model(json.dumps({
-            "update_needed": True,
-            "new_content": "Clean\u200bidentity\u200ftext\ufeff",
-        }))
-        result = await consolidator.evaluate_identity(
-            _sample_messages(), "Old identity.", model,
-        )
-        assert result is not None
-        assert "\u200b" not in result
-        assert "\u200f" not in result
-        assert "\ufeff" not in result
 
 
 class TestBoundaryMarkers:
@@ -555,14 +587,14 @@ class TestBoundaryMarkers:
         self,
         memory_dir: Path,
         config: BioMemoryConfig,
-        identity: IdentityManager,
+        daily_notes: DailyNotes,
         working: WorkingMemory,
         telemetry: MagicMock,
         workspace: Path,
     ) -> None:
         """Each consolidator instance has a unique boundary ID."""
-        c1 = Consolidator(memory_dir, config, identity, working, telemetry, workspace=workspace)
-        c2 = Consolidator(memory_dir, config, identity, working, telemetry, workspace=workspace)
+        c1 = Consolidator(memory_dir, config, working, daily_notes, telemetry, workspace=workspace)
+        c2 = Consolidator(memory_dir, config, working, daily_notes, telemetry, workspace=workspace)
         assert c1._boundary_id != c2._boundary_id
 
     def test_boundary_id_length(self, consolidator: Consolidator) -> None:

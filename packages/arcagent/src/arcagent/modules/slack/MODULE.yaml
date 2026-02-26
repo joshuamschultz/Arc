@@ -1,0 +1,21 @@
+name: slack
+version: 0.1.0
+description: Bidirectional Slack messaging for human-agent interaction via Socket Mode
+author: ArcAgent
+entry_point: arcagent.modules.slack:SlackModule
+dependencies:
+  - arcagent.core.module_bus
+  - arcagent.core.config
+events:
+  subscribes:
+    - agent:shutdown
+    - agent:ready
+    - schedule:failed
+  emits:
+    - slack:message_received
+    - slack:message_sent
+    - slack:notification_sent
+    - slack:auth_rejected
+    - slack:connected
+    - slack:disconnected
+    - slack:error

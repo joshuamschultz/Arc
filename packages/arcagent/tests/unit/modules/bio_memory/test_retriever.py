@@ -142,11 +142,14 @@ class TestSearch:
         assert len(results) >= 1
 
     @pytest.mark.asyncio
-    async def test_search_includes_identity(
+    async def test_search_includes_daily_notes(
         self, retriever: Retriever, memory_dir: Path,
     ) -> None:
-        (memory_dir / "how-i-work.md").write_text(
-            "I prefer structured responses.", encoding="utf-8",
+        dn_dir = memory_dir / "daily-notes"
+        dn_dir.mkdir(parents=True, exist_ok=True)
+        (dn_dir / "2026-02-25.md").write_text(
+            "---\ndate: '2026-02-25'\n---\n\n# 2026-02-25\n\n- Prefer structured responses.\n",
+            encoding="utf-8",
         )
         results = await retriever.search("structured")
         assert len(results) >= 1
@@ -389,12 +392,14 @@ class TestDiscoverFiles:
         files = retriever._discover_files()
         assert any(f.name == "working.md" for f in files)
 
-    def test_discovers_identity(
+    def test_discovers_daily_notes(
         self, retriever: Retriever, memory_dir: Path,
     ) -> None:
-        (memory_dir / "how-i-work.md").write_text("identity", encoding="utf-8")
+        dn_dir = memory_dir / "daily-notes"
+        dn_dir.mkdir(parents=True, exist_ok=True)
+        (dn_dir / "2026-02-25.md").write_text("daily note content", encoding="utf-8")
         files = retriever._discover_files()
-        assert any(f.name == "how-i-work.md" for f in files)
+        assert any(f.name == "2026-02-25.md" for f in files)
 
     def test_empty_dir_returns_empty(self, retriever: Retriever) -> None:
         files = retriever._discover_files()
@@ -403,23 +408,27 @@ class TestDiscoverFiles:
     def test_scope_episodes_only(
         self, retriever: Retriever, memory_dir: Path,
     ) -> None:
-        """Scope='episodes' excludes identity and working files."""
+        """Scope='episodes' excludes daily notes and working files."""
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1")
         (memory_dir / "working.md").write_text("data", encoding="utf-8")
-        (memory_dir / "how-i-work.md").write_text("id", encoding="utf-8")
+        dn_dir = memory_dir / "daily-notes"
+        dn_dir.mkdir(parents=True, exist_ok=True)
+        (dn_dir / "2026-02-25.md").write_text("note", encoding="utf-8")
         files = retriever._discover_files(scope="episodes")
         assert all("episodes" in str(f) for f in files)
         assert len(files) == 1
 
-    def test_scope_identity_only(
+    def test_scope_daily_notes_only(
         self, retriever: Retriever, memory_dir: Path,
     ) -> None:
-        """Scope='identity' returns only how-i-work.md."""
+        """Scope='daily_notes' returns only daily note files."""
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1")
-        (memory_dir / "how-i-work.md").write_text("identity", encoding="utf-8")
-        files = retriever._discover_files(scope="identity")
+        dn_dir = memory_dir / "daily-notes"
+        dn_dir.mkdir(parents=True, exist_ok=True)
+        (dn_dir / "2026-02-25.md").write_text("daily note", encoding="utf-8")
+        files = retriever._discover_files(scope="daily_notes")
         assert len(files) == 1
-        assert files[0].name == "how-i-work.md"
+        assert files[0].name == "2026-02-25.md"
 
     def test_scope_working_only(
         self, retriever: Retriever, memory_dir: Path,

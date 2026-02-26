@@ -15,10 +15,6 @@ class TestBioMemoryConfigDefaults:
         cfg = BioMemoryConfig()
         assert cfg.total_per_turn == 4000
 
-    def test_default_identity_budget(self) -> None:
-        cfg = BioMemoryConfig()
-        assert cfg.identity_budget == 500
-
     def test_default_retrieved_budget(self) -> None:
         cfg = BioMemoryConfig()
         assert cfg.retrieved_budget == 3000
@@ -35,17 +31,9 @@ class TestBioMemoryConfigDefaults:
         cfg = BioMemoryConfig()
         assert cfg.light_on_shutdown is True
 
-    def test_default_significance_model(self) -> None:
-        cfg = BioMemoryConfig()
-        assert cfg.significance_model == "llm"
-
     def test_default_working_filename(self) -> None:
         cfg = BioMemoryConfig()
         assert cfg.working_filename == "working.md"
-
-    def test_default_identity_filename(self) -> None:
-        cfg = BioMemoryConfig()
-        assert cfg.identity_filename == "how-i-work.md"
 
     def test_default_episodes_dirname(self) -> None:
         cfg = BioMemoryConfig()
@@ -86,12 +74,10 @@ class TestBioMemoryConfigOverrides:
     def test_custom_budgets(self) -> None:
         cfg = BioMemoryConfig(
             total_per_turn=8000,
-            identity_budget=1000,
             retrieved_budget=5000,
             working_budget=1000,
         )
         assert cfg.total_per_turn == 8000
-        assert cfg.identity_budget == 1000
         assert cfg.retrieved_budget == 5000
         assert cfg.working_budget == 1000
 
@@ -106,11 +92,9 @@ class TestBioMemoryConfigOverrides:
     def test_custom_filenames(self) -> None:
         cfg = BioMemoryConfig(
             working_filename="scratch.md",
-            identity_filename="identity.md",
             episodes_dirname="memories",
         )
         assert cfg.working_filename == "scratch.md"
-        assert cfg.identity_filename == "identity.md"
         assert cfg.episodes_dirname == "memories"
 
     def test_custom_entity_config(self) -> None:

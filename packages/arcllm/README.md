@@ -8,7 +8,7 @@
 │   for Autonomous Agents at Scale                     │
 │                                                      │
 ├──────────────────────────────────────────────────────┤
-│  11 Providers · 8 Modules · 2 Dependencies · <1ms   │
+│  13 Providers · 8 Modules · 2 Dependencies · <1ms   │
 ╰──────────────────────────────────────────────────────╯
 ```
 
@@ -54,8 +54,10 @@ Switch providers by changing one string. Your agent code stays the same.
 |----------|------|---------|
 | Anthropic | Cloud | `anthropic` |
 | OpenAI | Cloud | `openai` |
+| Azure OpenAI | Cloud (GCC) | `azure_openai` |
 | DeepSeek | Cloud | `deepseek` |
 | Mistral | Cloud | `mistral` |
+| Moonshot | Cloud | `moonshot` |
 | Groq | Cloud | `groq` |
 | Together AI | Cloud | `together` |
 | Fireworks AI | Cloud | `fireworks` |
@@ -228,10 +230,11 @@ async with load_model("anthropic") as model:
 ### 3. Switch providers
 
 ```python
-model = load_model("openai")          # OpenAI
-model = load_model("groq")            # Groq
-model = load_model("ollama")          # Local Ollama
-model = load_model("together")        # Together AI
+model = load_model("openai")                          # OpenAI
+model = load_model("azure_openai", "my-deployment")   # Azure OpenAI (GCC)
+model = load_model("groq")                            # Groq
+model = load_model("ollama")                          # Local Ollama
+model = load_model("together")                        # Together AI
 ```
 
 Same `Message` types, same `invoke()` call, same `LLMResponse` back.
@@ -290,7 +293,7 @@ while True:
             ))
 ```
 
-Every provider returns the same `LLMResponse` with the same `ToolCall` objects and the same `stop_reason` values. Your agentic loop works across all 11 providers without modification.
+Every provider returns the same `LLMResponse` with the same `ToolCall` objects and the same `stop_reason` values. Your agentic loop works across all 13 providers without modification.
 
 ---
 
@@ -343,10 +346,10 @@ ArcLLM is radically smaller than alternatives. This is a design choice, not a li
 
 | Metric | ArcLLM | pi-ai | LiteLLM |
 |--------|--------|-------|---------|
-| **Source LOC** | ~2,900 | ~22,600 | ~475,000 |
-| **Source files** | 33 | 38 | 1,558 |
+| **Source LOC** | ~3,500 | ~22,600 | ~475,000 |
+| **Source files** | 35 | 38 | 1,558 |
 | **Runtime deps** | 3 | 13 | 12+ |
-| **Providers** | 11 | 9 | 100+ |
+| **Providers** | 13 | 9 | 100+ |
 
 **LOC per provider**: ArcLLM averages ~60 lines per provider adapter. Most are 11-line thin aliases over the OpenAI-compatible base. pi-ai averages ~630 lines per provider. LiteLLM averages ~1,300 lines per provider.
 
@@ -357,7 +360,7 @@ Why this matters:
 - **Maintainable** — Fewer lines means fewer bugs. Every line in ArcLLM exists because it has to, not because a feature flag needed a feature flag.
 - **Fast** — 3 runtime dependencies means fast installs, small container images, and minimal attack surface. pi-ai requires `@anthropic-ai/sdk`, `openai`, `@google/genai`, `@aws-sdk/client-bedrock-runtime`, and 9 more packages. LiteLLM requires `openai`, `tiktoken`, `tokenizers`, `aiohttp`, `jinja2`, `jsonschema`, and more.
 
-The tradeoff is provider count: LiteLLM supports 100+ providers because it wraps provider SDKs. pi-ai wraps 4 provider SDKs (Anthropic, OpenAI, Google, AWS) to cover 9 API backends. ArcLLM supports 11 providers via direct HTTP — no SDKs, no transitive dependency trees. Adding a new OpenAI-compatible provider is an 11-line file and a TOML config.
+The tradeoff is provider count: LiteLLM supports 100+ providers because it wraps provider SDKs. pi-ai wraps 4 provider SDKs (Anthropic, OpenAI, Google, AWS) to cover 9 API backends. ArcLLM supports 13 providers via direct HTTP — no SDKs, no transitive dependency trees. Adding a new OpenAI-compatible provider is an 11-line file and a TOML config.
 
 *LOC measured with `find src -name "*.py" | xargs wc -l` (ArcLLM) and `find src -name "*.ts" | xargs wc -l` (pi-ai), excluding tests. Competitor numbers from public GitHub repos as of February 2026.*
 

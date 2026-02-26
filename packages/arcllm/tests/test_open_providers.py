@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-
 from arcllm.config import (
     ModelMetadata,
     ProviderConfig,
@@ -19,7 +18,6 @@ from arcllm.config import (
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.registry import clear_cache, load_model
 from arcllm.types import LLMResponse, Message
-
 
 # ---------------------------------------------------------------------------
 # Provider metadata for parametrization
@@ -33,22 +31,29 @@ LOCAL_PROVIDERS = [
 ]
 
 CLOUD_PROVIDERS = [
+    ("azure_openai", "AZURE_OPENAI_API_KEY", True, "https://REPLACE-WITH-YOUR-RESOURCE"),
+    ("cohere", "COHERE_API_KEY", True, "https://api.cohere.com"),
     ("together", "TOGETHER_API_KEY", True, "https://api.together.xyz"),
+    ("google", "GOOGLE_API_KEY", True, "https://generativelanguage.googleapis.com"),
     ("groq", "GROQ_API_KEY", True, "https://api.groq.com"),
     ("fireworks", "FIREWORKS_API_KEY", True, "https://api.fireworks.ai"),
     ("deepseek", "DEEPSEEK_API_KEY", True, "https://api.deepseek.com"),
     ("huggingface", "HF_TOKEN", True, "https://api-inference.huggingface.co"),
     ("mistral", "MISTRAL_API_KEY", True, "https://api.mistral.ai"),
     ("moonshot", "MOONSHOT_API_KEY", True, "https://api.moonshot.ai"),
+    ("xai", "XAI_API_KEY", True, "https://api.x.ai"),
 ]
 
 ALL_PROVIDERS = LOCAL_PROVIDERS + CLOUD_PROVIDERS
 
 # Expected adapter class names by convention: provider_name.title() + "Adapter"
 EXPECTED_NAMES = {
+    "azure_openai": "azure_openai",
+    "cohere": "cohere",
     "ollama": "ollama",
     "vllm": "vllm",
     "together": "together",
+    "google": "google",
     "groq": "groq",
     "fireworks": "fireworks",
     "deepseek": "deepseek",
@@ -56,6 +61,7 @@ EXPECTED_NAMES = {
     "huggingface": "huggingface",
     "huggingface_tgi": "huggingface_tgi",
     "moonshot": "moonshot",
+    "xai": "xai",
 }
 
 

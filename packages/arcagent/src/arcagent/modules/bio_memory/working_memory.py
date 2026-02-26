@@ -6,6 +6,7 @@ Uses YAML frontmatter for structured metadata and atomic writes for crash safety
 
 from __future__ import annotations
 
+import asyncio
 import math
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ class WorkingMemory:
         """Read current working.md content. Returns empty string if missing."""
         if not self._path.exists():
             return ""
-        return self._path.read_text(encoding="utf-8")
+        return await asyncio.to_thread(self._path.read_text, encoding="utf-8")
 
     async def write(
         self,
@@ -51,7 +52,7 @@ class WorkingMemory:
             frontmatter, default_flow_style=False, sort_keys=False,
         ).strip()
         parts = [f"---\n{fm_text}\n---", "", truncated, ""]
-        atomic_write_text(self._path, "\n".join(parts))
+        await asyncio.to_thread(atomic_write_text, self._path, "\n".join(parts))
 
     async def clear(self) -> None:
         """Clear working.md (write empty frontmatter). Called on session end.
@@ -62,7 +63,9 @@ class WorkingMemory:
         if not self._path.exists():
             return
         fm_text = yaml.dump({}, default_flow_style=False, sort_keys=False).strip()
-        atomic_write_text(self._path, f"---\n{fm_text}\n---\n")
+        await asyncio.to_thread(
+            atomic_write_text, self._path, f"---\n{fm_text}\n---\n",
+        )
 
     def estimate_tokens(self, text: str) -> int:
         """Character-based token estimation using CHARS_PER_TOKEN."""

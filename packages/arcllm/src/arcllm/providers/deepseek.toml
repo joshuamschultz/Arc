@@ -7,8 +7,10 @@ default_model = "deepseek-chat"
 default_temperature = 0.7
 vault_path = ""
 
+# Aliases that auto-track the latest version (currently V3.2)
+
 [models.deepseek-chat]
-context_window = 64000
+context_window = 128000
 max_output_tokens = 8192
 supports_tools = true
 supports_vision = false
@@ -20,7 +22,7 @@ cost_cache_read_per_1m = 0.014
 cost_cache_write_per_1m = 0.14
 
 [models.deepseek-reasoner]
-context_window = 64000
+context_window = 128000
 max_output_tokens = 8192
 supports_tools = false
 supports_vision = false

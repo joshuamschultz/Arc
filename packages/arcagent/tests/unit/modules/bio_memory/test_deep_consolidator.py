@@ -12,7 +12,7 @@ import yaml
 
 from arcagent.modules.bio_memory.config import BioMemoryConfig
 from arcagent.modules.bio_memory.deep_consolidator import DeepConsolidator
-from arcagent.modules.bio_memory.identity_manager import IdentityManager
+from arcagent.modules.bio_memory.entity_helpers import EntityIndex
 
 
 @pytest.fixture
@@ -45,24 +45,21 @@ def telemetry() -> MagicMock:
 
 
 @pytest.fixture
-def identity(
-    memory_dir: Path, config: BioMemoryConfig, telemetry: MagicMock,
-) -> IdentityManager:
-    return IdentityManager(memory_dir=memory_dir, config=config, telemetry=telemetry)
-
-
-@pytest.fixture
 def deep(
     memory_dir: Path, workspace: Path, config: BioMemoryConfig,
-    identity: IdentityManager, telemetry: MagicMock,
+    telemetry: MagicMock,
 ) -> DeepConsolidator:
     return DeepConsolidator(
         memory_dir=memory_dir,
         workspace=workspace,
         config=config,
-        identity=identity,
         telemetry=telemetry,
     )
+
+
+@pytest.fixture
+def idx(entities_dir: Path, workspace: Path) -> EntityIndex:
+    return EntityIndex(entities_dir, workspace)
 
 
 def _write_episode(memory_dir: Path, name: str, date: str, body: str) -> Path:
@@ -208,6 +205,7 @@ class TestEntityCentricPass:
     @pytest.mark.asyncio
     async def test_rewrites_touched_entity(
         self, deep: DeepConsolidator, memory_dir: Path, entities_dir: Path,
+        idx: EntityIndex,
     ) -> None:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         _write_episode(
@@ -219,16 +217,18 @@ class TestEntityCentricPass:
             {"entity_type": "project", "last_updated": "2026-01-01", "links_to": []},
             "# Test Entity\n\n## Summary\nOld summary.\n",
         )
+        idx.refresh()
 
         model = _mock_model("# Test Entity\n\n## Summary\nUpdated summary with new facts.\n")
         result = await deep._entity_centric_pass(
-            [memory_dir / "episodes" / f"{today}-session.md"], model, "test-agent",
+            [memory_dir / "episodes" / f"{today}-session.md"], model, "test-agent", idx,
         )
         assert result["entities_rewritten"] >= 1
 
     @pytest.mark.asyncio
     async def test_skips_unchanged_entity_via_hash(
         self, deep: DeepConsolidator, memory_dir: Path, entities_dir: Path,
+        idx: EntityIndex,
     ) -> None:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         ep_path = _write_episode(
@@ -240,6 +240,7 @@ class TestEntityCentricPass:
             {"entity_type": "project", "last_updated": "2026-01-01", "links_to": []},
             "# Test Entity\n",
         )
+        idx.refresh()
 
         # Pre-compute and store hash
         entity_content = entity_path.read_text()
@@ -248,7 +249,7 @@ class TestEntityCentricPass:
         deep._update_hash("test-entity", input_hash)
 
         model = _mock_model("")
-        result = await deep._entity_centric_pass([ep_path], model, "test-agent")
+        result = await deep._entity_centric_pass([ep_path], model, "test-agent", idx)
         assert result["skipped_unchanged"] == 1
         model.invoke.assert_not_called()
 
@@ -258,24 +259,27 @@ class TestGraphCentricPass:
 
     @pytest.mark.asyncio
     async def test_discovers_links(
-        self, deep: DeepConsolidator, entities_dir: Path,
+        self, deep: DeepConsolidator, entities_dir: Path, idx: EntityIndex,
     ) -> None:
         # Create a subdirectory with entities
         sub = entities_dir / "projects"
         sub.mkdir()
         _write_entity(sub, "proj-a", {"entity_type": "project", "links_to": []}, "Project A")
         _write_entity(sub, "proj-b", {"entity_type": "project", "links_to": []}, "Project B")
+        idx.refresh()
 
         model = _mock_model(json.dumps([
             {"from": "proj-a", "to": "proj-b", "reason": "same domain"},
         ]))
-        result = await deep._graph_centric_pass(model)
+        result = await deep._graph_centric_pass(model, idx)
         assert not result.get("skipped")
 
     @pytest.mark.asyncio
-    async def test_no_entities_skips(self, deep: DeepConsolidator) -> None:
+    async def test_no_entities_skips(
+        self, deep: DeepConsolidator, idx: EntityIndex,
+    ) -> None:
         model = _mock_model("[]")
-        result = await deep._graph_centric_pass(model)
+        result = await deep._graph_centric_pass(model, idx)
         assert result.get("skipped") is True
 
 
@@ -284,7 +288,7 @@ class TestMergeDetection:
 
     @pytest.mark.asyncio
     async def test_detects_merge_candidates(
-        self, deep: DeepConsolidator, entities_dir: Path,
+        self, deep: DeepConsolidator, entities_dir: Path, idx: EntityIndex,
     ) -> None:
         # Create entities sharing 3+ links
         shared = ["[[link-1]]", "[[link-2]]", "[[link-3]]"]
@@ -293,23 +297,26 @@ class TestMergeDetection:
         # Create the linked entities
         for i in range(1, 4):
             _write_entity(entities_dir, f"link-{i}", {"links_to": []}, f"Link {i}")
+        idx.refresh()
 
-        adj = deep._build_adjacency()
+        adj = deep._build_adjacency(idx)
         candidates = deep._find_merge_candidates(adj)
         assert len(candidates) >= 1
 
     @pytest.mark.asyncio
     async def test_merge_confirmed_by_llm(
         self, deep: DeepConsolidator, entities_dir: Path, workspace: Path,
+        idx: EntityIndex,
     ) -> None:
         shared = ["[[link-1]]", "[[link-2]]", "[[link-3]]"]
         _write_entity(entities_dir, "ent-a", {"links_to": shared}, "Entity A about dogs")
         _write_entity(entities_dir, "ent-b", {"links_to": shared}, "Entity B about dogs")
         for i in range(1, 4):
             _write_entity(entities_dir, f"link-{i}", {"links_to": []}, f"Link {i}")
+        idx.refresh()
 
         model = _mock_model(json.dumps({"same_entity": True, "reason": "same topic"}))
-        result = await deep._detect_merges(model)
+        result = await deep._detect_merges(model, idx)
         assert result["merged"] >= 1
 
         # Archive dir should have the removed entity
@@ -321,7 +328,7 @@ class TestFlagStaleEntities:
     """Staleness management: flag and archive stale entities."""
 
     def test_flags_stale_entity(
-        self, deep: DeepConsolidator, entities_dir: Path,
+        self, deep: DeepConsolidator, entities_dir: Path, idx: EntityIndex,
     ) -> None:
         old_date = (datetime.now(UTC) - timedelta(days=100)).strftime("%Y-%m-%d")
         _write_entity(
@@ -329,7 +336,8 @@ class TestFlagStaleEntities:
             {"entity_type": "concept", "last_verified": old_date, "status": "active"},
             "Old entity",
         )
-        result = deep._flag_stale_entities()
+        idx.refresh()
+        result = deep._flag_stale_entities(idx)
         assert result["flagged"] == 1
 
         from arcagent.utils.sanitizer import read_frontmatter
@@ -338,6 +346,7 @@ class TestFlagStaleEntities:
 
     def test_archives_very_stale_entity(
         self, deep: DeepConsolidator, entities_dir: Path, workspace: Path,
+        idx: EntityIndex,
     ) -> None:
         very_old = (datetime.now(UTC) - timedelta(days=200)).strftime("%Y-%m-%d")
         _write_entity(
@@ -345,13 +354,14 @@ class TestFlagStaleEntities:
             {"entity_type": "concept", "last_verified": very_old, "status": "active"},
             "Very old entity",
         )
-        result = deep._flag_stale_entities()
+        idx.refresh()
+        result = deep._flag_stale_entities(idx)
         assert result["archived"] == 1
         assert not (entities_dir / "ancient-ent.md").exists()
         assert (workspace / "archive" / "ancient-ent.md").exists()
 
     def test_skips_recently_verified(
-        self, deep: DeepConsolidator, entities_dir: Path,
+        self, deep: DeepConsolidator, entities_dir: Path, idx: EntityIndex,
     ) -> None:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         _write_entity(
@@ -359,7 +369,8 @@ class TestFlagStaleEntities:
             {"entity_type": "concept", "last_verified": today, "status": "active"},
             "Fresh entity",
         )
-        result = deep._flag_stale_entities()
+        idx.refresh()
+        result = deep._flag_stale_entities(idx)
         assert result["flagged"] == 0
         assert result["archived"] == 0
 
@@ -397,7 +408,7 @@ class TestConsolidateOrchestrator:
         today = datetime.now(UTC).strftime("%Y-%m-%d")
         _write_episode(memory_dir, "ep1", today, "Session content.")
 
-        # Model returns identity not updated
+        # Model for entity pass (stub response)
         model = _mock_model(json.dumps({"updated": False, "content": None}))
         result = await deep.consolidate(model, "test-agent")
         assert "intensity" in result

@@ -55,16 +55,16 @@ def test_load_provider_config_anthropic():
     assert config.provider.api_format == "anthropic-messages"
     assert config.provider.base_url == "https://api.anthropic.com"
     assert config.provider.api_key_env == "ANTHROPIC_API_KEY"
-    assert config.provider.default_model == "claude-sonnet-4-20250514"
+    assert config.provider.default_model == "claude-sonnet-4-6"
     assert config.provider.default_temperature == 0.7
 
 
 def test_provider_config_model_metadata():
     config = load_provider_config("anthropic")
-    sonnet = config.models["claude-sonnet-4-20250514"]
+    sonnet = config.models["claude-sonnet-4-6"]
     assert isinstance(sonnet, ModelMetadata)
     assert sonnet.context_window == 200000
-    assert sonnet.max_output_tokens == 8192
+    assert sonnet.max_output_tokens == 16384
     assert sonnet.supports_tools is True
     assert sonnet.supports_vision is True
     assert sonnet.supports_thinking is True
@@ -77,18 +77,18 @@ def test_provider_config_model_metadata():
 
 def test_provider_config_multiple_models():
     config = load_provider_config("anthropic")
-    assert len(config.models) == 2
-    assert "claude-sonnet-4-20250514" in config.models
+    assert len(config.models) >= 2
+    assert "claude-sonnet-4-6" in config.models
     assert "claude-haiku-4-5-20251001" in config.models
 
 
 def test_load_provider_config_openai():
     config = load_provider_config("openai")
     assert config.provider.api_format == "openai-chat"
-    assert config.provider.default_model == "gpt-4o"
-    assert len(config.models) == 2
+    assert config.provider.default_model == "gpt-4.1"
+    assert len(config.models) >= 2
+    assert "gpt-4.1" in config.models
     assert "gpt-4o" in config.models
-    assert "gpt-4o-mini" in config.models
 
 
 # --- Error handling ---
@@ -109,7 +109,7 @@ def test_config_error_is_arcllm_error():
 
 def test_model_metadata_types():
     config = load_provider_config("anthropic")
-    sonnet = config.models["claude-sonnet-4-20250514"]
+    sonnet = config.models["claude-sonnet-4-6"]
     assert isinstance(sonnet.context_window, int)
     assert isinstance(sonnet.max_output_tokens, int)
     assert isinstance(sonnet.cost_input_per_1m, float)

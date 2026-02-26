@@ -25,9 +25,17 @@ def memory_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def seeded_workspace(memory_dir: Path) -> Path:
     """Create a fully seeded memory workspace for retrieval testing."""
-    # Identity
-    (memory_dir / "how-i-work.md").write_text(
-        "I prefer structured answers. I use wiki-links like [[project-alpha]].",
+    # Daily notes
+    daily_notes_dir = memory_dir / "daily-notes"
+    daily_notes_dir.mkdir()
+    dn_fm = yaml.dump(
+        {"date": "2026-02-20", "agent": "test"},
+        default_flow_style=False,
+    ).strip()
+    (daily_notes_dir / "2026-02-20.md").write_text(
+        f"---\n{dn_fm}\n---\n\n# 2026-02-20\n\n## 10:00 UTC\n"
+        "- Reviewed structured answers and preferences\n"
+        "- Discussed [[project-alpha]] wiki-links\n",
         encoding="utf-8",
     )
 
@@ -112,12 +120,12 @@ class TestSearchIntegration:
     async def test_search_across_all_tiers(
         self, seeded_workspace: Path,
     ) -> None:
-        """Search should find results in episodes, identity, and working memory."""
+        """Search should find results in episodes, daily notes, and working memory."""
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
 
-        # Should find in identity
+        # Should find in daily notes
         results = await retriever.search("structured")
-        assert any("how-i-work" in r.source for r in results)
+        assert any("daily-notes" in r.source for r in results)
 
         # Should find in working memory
         results = await retriever.search("retrieval")
@@ -144,13 +152,13 @@ class TestWikiLinkIntegration:
         assert any("client-a" in s for s in sources)
 
     @pytest.mark.asyncio
-    async def test_follows_wiki_links_from_identity(
+    async def test_follows_wiki_links_from_daily_notes(
         self, seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("structured answers")
 
-        # Identity mentions [[project-alpha]], should follow
+        # Daily note mentions [[project-alpha]], should follow
         sources = [r.source for r in results]
         assert any("project-alpha" in s for s in sources)
 

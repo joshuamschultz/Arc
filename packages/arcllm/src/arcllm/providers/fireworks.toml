@@ -3,11 +3,11 @@ api_format = "openai-chat"
 base_url = "https://api.fireworks.ai/inference"
 api_key_env = "FIREWORKS_API_KEY"
 api_key_required = true
-default_model = "accounts/fireworks/models/llama-v3p1-70b-instruct"
+default_model = "accounts/fireworks/models/llama-v3p3-70b-instruct"
 default_temperature = 0.7
 vault_path = ""
 
-[models."accounts/fireworks/models/llama-v3p1-70b-instruct"]
+[models."accounts/fireworks/models/llama-v3p3-70b-instruct"]
 context_window = 128000
 max_output_tokens = 4096
 supports_tools = true
@@ -31,14 +31,26 @@ cost_output_per_1m = 0.20
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
 
-[models."accounts/fireworks/models/mixtral-8x7b-instruct"]
-context_window = 32000
+[models."accounts/fireworks/models/deepseek-v3"]
+context_window = 128000
+max_output_tokens = 8192
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.90
+cost_output_per_1m = 0.90
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
+[models."accounts/fireworks/models/qwen2p5-72b-instruct"]
+context_window = 32768
 max_output_tokens = 4096
 supports_tools = true
 supports_vision = false
 supports_thinking = false
 input_modalities = ["text"]
-cost_input_per_1m = 0.50
-cost_output_per_1m = 0.50
+cost_input_per_1m = 0.90
+cost_output_per_1m = 0.90
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
