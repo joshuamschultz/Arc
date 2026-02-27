@@ -319,7 +319,7 @@ class MarkdownMemoryModule:
             # Boundary markers prevent result content from being
             # interpreted as instructions (prompt injection defense)
             parts.append(
-                f"<memory-result source=\"{r.source}\" score=\"{r.score:.2f}\">\n"
+                f'<memory-result source="{r.source}" score="{r.score:.2f}">\n'
                 f"{r.content}\n"
                 f"</memory-result>"
             )

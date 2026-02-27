@@ -57,9 +57,7 @@ class TestModuleStartup:
         module = _make_module(tmp_path)
         ctx = _make_ctx(tmp_path)
         await module.startup(ctx)
-        subscribed = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "agent:assemble_prompt" in subscribed
         assert "agent:shutdown" in subscribed
 

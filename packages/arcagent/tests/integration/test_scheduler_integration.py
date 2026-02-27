@@ -57,7 +57,9 @@ class TestSchedulerIntegration:
         create_tool = next(t for t in tools if t.name == "schedule_create")
 
         result = await create_tool.execute(
-            type="interval", prompt="Check inbox", every_seconds=300,
+            type="interval",
+            prompt="Check inbox",
+            every_seconds=300,
         )
         data = json.loads(result)
         assert data["type"] == "interval"
@@ -109,12 +111,20 @@ class TestSchedulerIntegration:
         cancel_tool = next(t for t in tools if t.name == "schedule_cancel")
 
         # Create 2 schedules
-        r1 = json.loads(await create_tool.execute(
-            type="interval", prompt="Heartbeat", every_seconds=300,
-        ))
-        r2 = json.loads(await create_tool.execute(
-            type="cron", prompt="Daily report", expression="0 9 * * *",
-        ))
+        r1 = json.loads(
+            await create_tool.execute(
+                type="interval",
+                prompt="Heartbeat",
+                every_seconds=300,
+            )
+        )
+        r2 = json.loads(
+            await create_tool.execute(
+                type="cron",
+                prompt="Daily report",
+                expression="0 9 * * *",
+            )
+        )
 
         # List all
         all_entries = json.loads(await list_tool.execute())
@@ -148,8 +158,10 @@ class TestSchedulerIntegration:
 
         # Add a schedule directly
         entry = ScheduleEntry(
-            id="sched_fail_test", type="interval",
-            prompt="Will fail", every_seconds=300,
+            id="sched_fail_test",
+            type="interval",
+            prompt="Will fail",
+            every_seconds=300,
         )
         store.add(entry)
 
@@ -185,8 +197,10 @@ class TestSchedulerIntegration:
 
         # Add entry and enqueue
         entry = ScheduleEntry(
-            id="sched_drain", type="interval",
-            prompt="Drain test", every_seconds=300,
+            id="sched_drain",
+            type="interval",
+            prompt="Drain test",
+            every_seconds=300,
         )
         store.add(entry)
         assert module._engine is not None

@@ -1,4 +1,5 @@
 """CodeExec strategy: augment system prompt for code-first problem solving."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -26,7 +27,10 @@ GUIDELINES:
 
 
 class CodeExecStrategy(Strategy):
-    """Augments system prompt to encourage code-first problem solving, then delegates to react_loop."""
+    """Augments system prompt to encourage code-first problem solving.
+
+    Delegates to react_loop after prompt augmentation.
+    """
 
     def __init__(self, system_prompt_prefix: str | None = None) -> None:
         self._prefix = system_prompt_prefix or _DEFAULT_PREFIX
@@ -43,13 +47,22 @@ class CodeExecStrategy(Strategy):
             "predefined tool calls."
         )
 
-    async def __call__(self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int) -> LoopResult:
+    async def __call__(
+        self,
+        model: Any,
+        state: RunState,
+        sandbox: Sandbox,
+        max_turns: int,
+    ) -> LoopResult:
         original = state.messages[0].content
         state.messages[0] = system_message(self._prefix + "\n" + original)
 
-        state.event_bus.emit("code.prompt.augmented", {
-            "original_length": len(original),
-            "augmented_length": len(state.messages[0].content),
-        })
+        state.event_bus.emit(
+            "code.prompt.augmented",
+            {
+                "original_length": len(original),
+                "augmented_length": len(state.messages[0].content),
+            },
+        )
 
         return await react_loop(model, state, sandbox, max_turns)

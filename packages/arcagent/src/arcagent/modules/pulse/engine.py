@@ -59,7 +59,7 @@ def parse_pulse_file(content: str) -> list[PulseCheck]:
             continue
 
         # Collect action text (first line + continuations)
-        lines = body[action_m.start():].split("\n")
+        lines = body[action_m.start() :].split("\n")
         first = action_m.group(1).strip()
         parts = [first] if first else []
         for line in lines[1:]:
@@ -70,11 +70,13 @@ def parse_pulse_file(content: str) -> list[PulseCheck]:
 
         action = " ".join(parts)
         if action:
-            checks.append(PulseCheck(
-                name=match.group(1),
-                interval_minutes=int(interval_m.group(1)),
-                action=action,
-            ))
+            checks.append(
+                PulseCheck(
+                    name=match.group(1),
+                    interval_minutes=int(interval_m.group(1)),
+                    action=action,
+                )
+            )
 
     return checks
 
@@ -148,7 +150,8 @@ class PulseEngine:
             except Exception:
                 self._consecutive_errors += 1
                 _logger.exception(
-                    "Pulse error (consecutive: %d)", self._consecutive_errors,
+                    "Pulse error (consecutive: %d)",
+                    self._consecutive_errors,
                 )
                 if self._consecutive_errors >= 5:
                     _logger.critical(
@@ -187,9 +190,13 @@ class PulseEngine:
         elapsed_str = f"{elapsed:.0f} min ago" if elapsed is not None else "never"
 
         _logger.info("Pulse: running '%s' (last run: %s)", check.name, elapsed_str)
-        self._emit_event("pulse:check_started", {
-            "check": check.name, "elapsed_minutes": elapsed,
-        })
+        self._emit_event(
+            "pulse:check_started",
+            {
+                "check": check.name,
+                "elapsed_minutes": elapsed,
+            },
+        )
 
         prompt = (
             f'PULSE CHECK: "{check.name}" '
@@ -206,27 +213,41 @@ class PulseEngine:
             )
             duration = time.monotonic() - start
             self._update_state(check.name, "ok")
-            self._emit_event("pulse:check_completed", {
-                "check": check.name, "duration_seconds": round(duration, 2),
-            })
+            self._emit_event(
+                "pulse:check_completed",
+                {
+                    "check": check.name,
+                    "duration_seconds": round(duration, 2),
+                },
+            )
             _logger.info("Pulse: '%s' completed in %.1fs", check.name, duration)
         except TimeoutError:
             self._update_state(check.name, "timeout")
             _logger.warning("Pulse: '%s' timed out", check.name)
-            self._emit_event("pulse:check_failed", {
-                "check": check.name, "error": "timeout",
-            })
+            self._emit_event(
+                "pulse:check_failed",
+                {
+                    "check": check.name,
+                    "error": "timeout",
+                },
+            )
         except Exception as exc:
             self._update_state(check.name, "error")
             _logger.error("Pulse: '%s' failed: %s", check.name, exc)
-            self._emit_event("pulse:check_failed", {
-                "check": check.name, "error": str(exc),
-            })
+            self._emit_event(
+                "pulse:check_failed",
+                {
+                    "check": check.name,
+                    "error": str(exc),
+                },
+            )
 
     # --- Check selection ---
 
     def _find_overdue(
-        self, checks: list[PulseCheck], state: PulseState,
+        self,
+        checks: list[PulseCheck],
+        state: PulseState,
     ) -> list[PulseCheck]:
         """Find all overdue checks, sorted most overdue first."""
         now = datetime.now(tz=UTC)

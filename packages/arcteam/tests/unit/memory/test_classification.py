@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from arcteam.memory.classification import ClassificationChecker
 from arcteam.memory.config import TeamMemoryConfig
 from arcteam.memory.types import Classification, IndexEntry, SearchResult
@@ -13,7 +11,10 @@ class TestParseClassification:
     """parse_classification should handle all valid strings."""
 
     def test_parse_unclassified(self) -> None:
-        assert ClassificationChecker.parse_classification("unclassified") == Classification.UNCLASSIFIED
+        assert (
+            ClassificationChecker.parse_classification("unclassified")
+            == Classification.UNCLASSIFIED
+        )
 
     def test_parse_cui(self) -> None:
         assert ClassificationChecker.parse_classification("CUI") == Classification.CUI
@@ -22,7 +23,9 @@ class TestParseClassification:
         assert ClassificationChecker.parse_classification("SECRET") == Classification.SECRET
 
     def test_parse_top_secret(self) -> None:
-        assert ClassificationChecker.parse_classification("top_secret") == Classification.TOP_SECRET
+        assert (
+            ClassificationChecker.parse_classification("top_secret") == Classification.TOP_SECRET
+        )
 
     def test_parse_unknown_defaults_unclassified(self) -> None:
         assert ClassificationChecker.parse_classification("garbage") == Classification.UNCLASSIFIED
@@ -81,15 +84,24 @@ class TestFilterResults:
         checker = ClassificationChecker(config)
         results = [
             SearchResult(
-                entity_id="a", path="person/a.md", snippet="", score=1.0,
+                entity_id="a",
+                path="person/a.md",
+                snippet="",
+                score=1.0,
                 classification="unclassified",
             ),
             SearchResult(
-                entity_id="b", path="person/b.md", snippet="", score=0.8,
+                entity_id="b",
+                path="person/b.md",
+                snippet="",
+                score=0.8,
                 classification="SECRET",
             ),
             SearchResult(
-                entity_id="c", path="person/c.md", snippet="", score=0.5,
+                entity_id="c",
+                path="person/c.md",
+                snippet="",
+                score=0.5,
                 classification="CUI",
             ),
         ]
@@ -103,8 +115,18 @@ class TestFilterResults:
         config = TeamMemoryConfig(tier="federal")
         checker = ClassificationChecker(config)
         entries = [
-            IndexEntry(entity_id="a", path="person/a.md", entity_type="person", classification="unclassified"),
-            IndexEntry(entity_id="b", path="person/b.md", entity_type="person", classification="TOP_SECRET"),
+            IndexEntry(
+                entity_id="a",
+                path="person/a.md",
+                entity_type="person",
+                classification="unclassified",
+            ),
+            IndexEntry(
+                entity_id="b",
+                path="person/b.md",
+                entity_type="person",
+                classification="TOP_SECRET",
+            ),
         ]
         filtered = checker.filter_results(entries, Classification.SECRET)
         entity_ids = [e.entity_id for e in filtered]
@@ -116,7 +138,10 @@ class TestFilterResults:
         checker = ClassificationChecker(config)
         results = [
             SearchResult(
-                entity_id="a", path="person/a.md", snippet="", score=1.0,
+                entity_id="a",
+                path="person/a.md",
+                snippet="",
+                score=1.0,
                 classification="TOP_SECRET",
             ),
         ]

@@ -1,4 +1,5 @@
 """ReAct strategy: Reason -> Act -> Observe -> Repeat."""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +29,13 @@ class ReactStrategy(Strategy):
             "problems requiring tool interaction."
         )
 
-    async def __call__(self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int) -> LoopResult:
+    async def __call__(
+        self,
+        model: Any,
+        state: RunState,
+        sandbox: Sandbox,
+        max_turns: int,
+    ) -> LoopResult:
         return await react_loop(model, state, sandbox, max_turns)
 
 
@@ -67,7 +74,7 @@ async def _execute_tool_calls(
         coros = [execute_tool_call(spawn_queue[i], state, sandbox) for i in indices]
         results = await asyncio.gather(*coros, return_exceptions=True)
 
-        for idx, result in zip(indices, results):
+        for idx, result in zip(indices, results, strict=False):
             if isinstance(result, tuple):
                 tool_results_map[idx] = result[0]
             else:
@@ -93,11 +100,14 @@ async def react_loop(
 ) -> LoopResult:
     """Run the ReAct loop until end_turn, max_turns, or cancel."""
     bus = state.event_bus
-    bus.emit("loop.start", {
-        "task": state.messages[-1].content if state.messages else "",
-        "tool_names": state.registry.names(),
-        "strategy": "react",
-    })
+    bus.emit(
+        "loop.start",
+        {
+            "task": state.messages[-1].content if state.messages else "",
+            "tool_names": state.registry.names(),
+            "strategy": "react",
+        },
+    )
 
     while state.turn_count < max_turns:
         if state.cancel_event.is_set():
@@ -127,13 +137,16 @@ async def react_loop(
 
         _accumulate_usage(state, response)
 
-        bus.emit("llm.call", {
-            "model": str(type(model).__name__),
-            "stop_reason": response.stop_reason,
-            "tokens": state.tokens_used.copy(),
-            "latency_ms": latency_ms,
-            "cost_usd": getattr(response, "cost_usd", 0.0),
-        })
+        bus.emit(
+            "llm.call",
+            {
+                "model": str(type(model).__name__),
+                "stop_reason": response.stop_reason,
+                "tokens": state.tokens_used.copy(),
+                "latency_ms": latency_ms,
+                "cost_usd": getattr(response, "cost_usd", 0.0),
+            },
+        )
 
         # Build assistant message
         assistant_content: list[Any] = []
@@ -161,10 +174,13 @@ async def react_loop(
         _end_turn(state, bus)
 
     if state.turn_count >= max_turns:
-        bus.emit("loop.max_turns", {
-            "turns_used": state.turn_count,
-            "max_turns": max_turns,
-        })
+        bus.emit(
+            "loop.max_turns",
+            {
+                "turns_used": state.turn_count,
+                "max_turns": max_turns,
+            },
+        )
 
     return _build_result(state, None)
 
@@ -186,13 +202,16 @@ def _end_turn(state: RunState, bus: Any) -> None:
 
 
 def _build_result(state: RunState, content: str | None) -> LoopResult:
-    state.event_bus.emit("loop.complete", {
-        "content": content,
-        "turns": state.turn_count,
-        "tool_calls": state.tool_calls_made,
-        "tokens": state.tokens_used.copy(),
-        "cost": state.cost_usd,
-    })
+    state.event_bus.emit(
+        "loop.complete",
+        {
+            "content": content,
+            "turns": state.turn_count,
+            "tool_calls": state.tool_calls_made,
+            "tokens": state.tokens_used.copy(),
+            "cost": state.cost_usd,
+        },
+    )
     return LoopResult(
         content=content,
         turns=state.turn_count,

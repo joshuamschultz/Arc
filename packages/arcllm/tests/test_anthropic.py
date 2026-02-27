@@ -1,8 +1,6 @@
 """Tests for ArcLLM Anthropic adapter."""
 
-import json
-import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -24,12 +22,9 @@ from arcllm.types import (
     Message,
     TextBlock,
     Tool,
-    ToolCall,
     ToolResultBlock,
     ToolUseBlock,
-    Usage,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -100,12 +95,14 @@ def _make_anthropic_tool_response(
     content = []
     if text:
         content.append({"type": "text", "text": text})
-    content.append({
-        "type": "tool_use",
-        "id": tool_id,
-        "name": tool_name,
-        "input": tool_input or {"query": "test"},
-    })
+    content.append(
+        {
+            "type": "tool_use",
+            "id": tool_id,
+            "name": tool_name,
+            "input": tool_input or {"query": "test"},
+        }
+    )
     return {
         "id": "msg_test",
         "type": "message",
@@ -331,15 +328,11 @@ class TestAnthropicRequestBuilding:
         assert tb == {"type": "text", "text": "hello"}
 
         # ToolUseBlock
-        tub = adapter._format_content_block(
-            ToolUseBlock(id="t1", name="calc", arguments={"x": 1})
-        )
+        tub = adapter._format_content_block(ToolUseBlock(id="t1", name="calc", arguments={"x": 1}))
         assert tub == {"type": "tool_use", "id": "t1", "name": "calc", "input": {"x": 1}}
 
         # ToolResultBlock with string content
-        trb = adapter._format_content_block(
-            ToolResultBlock(tool_use_id="t1", content="42")
-        )
+        trb = adapter._format_content_block(ToolResultBlock(tool_use_id="t1", content="42"))
         assert trb == {"type": "tool_result", "tool_use_id": "t1", "content": "42"}
 
         # ToolResultBlock with list content
@@ -359,9 +352,7 @@ class TestAnthropicRequestBuilding:
         adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
         from arcllm.types import ImageBlock
 
-        ib = adapter._format_content_block(
-            ImageBlock(source="base64data", media_type="image/png")
-        )
+        ib = adapter._format_content_block(ImageBlock(source="base64data", media_type="image/png"))
         assert ib == {
             "type": "image",
             "source": {
@@ -623,9 +614,7 @@ class TestAnthropicFullCycle:
                 },
             )
         ]
-        resp = await adapter.invoke(
-            [Message(role="user", content="Search cats")], tools=tools
-        )
+        resp = await adapter.invoke([Message(role="user", content="Search cats")], tools=tools)
         assert isinstance(resp, LLMResponse)
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "search"

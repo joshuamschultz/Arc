@@ -143,7 +143,9 @@ class MessagingService:
 
             msg_dict = {**base_dict}
             seq, _offset = await self._backend.append_auto_seq(
-                STREAMS_COLLECTION, stream, msg_dict,
+                STREAMS_COLLECTION,
+                stream,
+                msg_dict,
             )
             self._known_streams.add(stream)
             streams_written.append(stream)

@@ -85,9 +85,11 @@ class PulseModule:
 
         agent_run_fn = getattr(ctx, "agent_run_fn", None)
         if agent_run_fn is None:
+
             async def _noop(prompt: str, **kwargs: Any) -> str:
                 _logger.warning("No agent_run_fn bound; pulse check skipped")
                 return ""
+
             agent_run_fn = _noop
 
         has_real_run_fn = getattr(ctx, "agent_run_fn", None) is not None

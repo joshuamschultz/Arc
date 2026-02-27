@@ -46,7 +46,8 @@ def telemetry() -> MagicMock:
 
 @pytest.fixture
 def daily_notes(
-    memory_dir: Path, config: BioMemoryConfig,
+    memory_dir: Path,
+    config: BioMemoryConfig,
 ) -> DailyNotes:
     return DailyNotes(memory_dir=memory_dir, config=config)
 
@@ -115,7 +116,8 @@ class TestPeriodicConsolidate:
 
     @pytest.mark.asyncio
     async def test_skips_empty_messages(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
         model = _mock_model("")
         await consolidator.periodic_consolidate([], model)
@@ -123,23 +125,35 @@ class TestPeriodicConsolidate:
 
     @pytest.mark.asyncio
     async def test_significant_session_creates_episode(
-        self, consolidator: Consolidator, memory_dir: Path,
+        self,
+        consolidator: Consolidator,
+        memory_dir: Path,
     ) -> None:
         # Model: daily note → significance → episode → entity analysis
         model = AsyncMock()
         responses = [
             MagicMock(content=json.dumps({"entries": ["Discussed deadline"]})),
             MagicMock(content=json.dumps({"significant": True, "reason": "deadline discussed"})),
-            MagicMock(content=json.dumps({
-                "title": "deadline-discussion",
-                "tags": ["deadline"],
-                "entities": ["ProjectX"],
-                "narrative": "Team discussed the project deadline change.",
-            })),
-            MagicMock(content=json.dumps({
-                "touched_entities": [], "corrections": [],
-                "new_entities": [], "co_occurrences": [],
-            })),
+            MagicMock(
+                content=json.dumps(
+                    {
+                        "title": "deadline-discussion",
+                        "tags": ["deadline"],
+                        "entities": ["ProjectX"],
+                        "narrative": "Team discussed the project deadline change.",
+                    }
+                )
+            ),
+            MagicMock(
+                content=json.dumps(
+                    {
+                        "touched_entities": [],
+                        "corrections": [],
+                        "new_entities": [],
+                        "co_occurrences": [],
+                    }
+                )
+            ),
         ]
         model.invoke = AsyncMock(side_effect=responses)
 
@@ -152,7 +166,9 @@ class TestPeriodicConsolidate:
 
     @pytest.mark.asyncio
     async def test_insignificant_session_no_episode(
-        self, consolidator: Consolidator, memory_dir: Path,
+        self,
+        consolidator: Consolidator,
+        memory_dir: Path,
     ) -> None:
         # Model: daily note → significance (false)
         model = AsyncMock()
@@ -170,7 +186,9 @@ class TestPeriodicConsolidate:
 
     @pytest.mark.asyncio
     async def test_always_creates_daily_note(
-        self, consolidator: Consolidator, memory_dir: Path,
+        self,
+        consolidator: Consolidator,
+        memory_dir: Path,
     ) -> None:
         """Daily note is always appended, even for trivial sessions."""
         # Model: daily note → (pre-filter will catch trivial)
@@ -191,7 +209,9 @@ class TestPeriodicConsolidate:
 
     @pytest.mark.asyncio
     async def test_clears_working_memory(
-        self, consolidator: Consolidator, working: WorkingMemory,
+        self,
+        consolidator: Consolidator,
+        working: WorkingMemory,
         memory_dir: Path,
     ) -> None:
         await working.write(content="Active data", frontmatter={"turn_number": 1})
@@ -206,7 +226,9 @@ class TestPeriodicConsolidate:
 
     @pytest.mark.asyncio
     async def test_emits_telemetry(
-        self, consolidator: Consolidator, telemetry: MagicMock,
+        self,
+        consolidator: Consolidator,
+        telemetry: MagicMock,
     ) -> None:
         # Model: daily note → (pre-filter catches trivial)
         model = _mock_model(json.dumps({"entries": ["Some work"]}))
@@ -251,7 +273,8 @@ class TestEvaluateSignificance:
 
     @pytest.mark.asyncio
     async def test_returns_true_for_significant(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
         model = _mock_model(json.dumps({"significant": True, "reason": "important"}))
         result = await consolidator._evaluate_significance(_sample_messages(), model)
@@ -259,7 +282,8 @@ class TestEvaluateSignificance:
 
     @pytest.mark.asyncio
     async def test_returns_false_for_trivial(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
         model = _mock_model(json.dumps({"significant": False, "reason": "trivial"}))
         result = await consolidator._evaluate_significance(_sample_messages(), model)
@@ -267,7 +291,8 @@ class TestEvaluateSignificance:
 
     @pytest.mark.asyncio
     async def test_returns_false_on_parse_error(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
         model = _mock_model("not valid json")
         result = await consolidator._evaluate_significance(_sample_messages(), model)
@@ -279,14 +304,20 @@ class TestCreateEpisode:
 
     @pytest.mark.asyncio
     async def test_creates_episode_file(
-        self, consolidator: Consolidator, memory_dir: Path,
+        self,
+        consolidator: Consolidator,
+        memory_dir: Path,
     ) -> None:
-        model = _mock_model(json.dumps({
-            "title": "test-episode",
-            "tags": ["test"],
-            "entities": [],
-            "narrative": "A test episode was created.",
-        }))
+        model = _mock_model(
+            json.dumps(
+                {
+                    "title": "test-episode",
+                    "tags": ["test"],
+                    "entities": [],
+                    "narrative": "A test episode was created.",
+                }
+            )
+        )
         await consolidator._create_episode(_sample_messages(), model)
 
         episodes_dir = memory_dir / "episodes"
@@ -296,14 +327,20 @@ class TestCreateEpisode:
 
     @pytest.mark.asyncio
     async def test_episode_has_frontmatter(
-        self, consolidator: Consolidator, memory_dir: Path,
+        self,
+        consolidator: Consolidator,
+        memory_dir: Path,
     ) -> None:
-        model = _mock_model(json.dumps({
-            "title": "test-episode",
-            "tags": ["test", "demo"],
-            "entities": ["ProjectX"],
-            "narrative": "Episode narrative here.",
-        }))
+        model = _mock_model(
+            json.dumps(
+                {
+                    "title": "test-episode",
+                    "tags": ["test", "demo"],
+                    "entities": ["ProjectX"],
+                    "narrative": "Episode narrative here.",
+                }
+            )
+        )
         await consolidator._create_episode(_sample_messages(), model)
 
         episodes_dir = memory_dir / "episodes"
@@ -321,21 +358,27 @@ class TestEntityAnalysis:
 
     @pytest.mark.asyncio
     async def test_analyze_entities_returns_dict(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
-        model = _mock_model(json.dumps({
-            "touched_entities": ["josh-schultz"],
-            "corrections": [],
-            "new_entities": [],
-            "co_occurrences": [],
-        }))
+        model = _mock_model(
+            json.dumps(
+                {
+                    "touched_entities": ["josh-schultz"],
+                    "corrections": [],
+                    "new_entities": [],
+                    "co_occurrences": [],
+                }
+            )
+        )
         result = await consolidator._analyze_entities(_sample_messages(), model)
         assert isinstance(result, dict)
         assert result["touched_entities"] == ["josh-schultz"]
 
     @pytest.mark.asyncio
     async def test_analyze_entities_handles_failure(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
         model = _mock_model("not valid json")
         result = await consolidator._analyze_entities(_sample_messages(), model)
@@ -347,10 +390,13 @@ class TestUpdateTouchedEntities:
 
     @pytest.mark.asyncio
     async def test_updates_existing_entity(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "josh-schultz",
+            entities_dir,
+            "josh-schultz",
             {"entity_type": "person", "last_verified": "2026-01-01"},
             "# Josh Schultz\n\n## Recent Activity\n",
         )
@@ -362,7 +408,8 @@ class TestUpdateTouchedEntities:
 
     @pytest.mark.asyncio
     async def test_skips_nonexistent_entity(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
         count = await consolidator._update_touched_entities(["does-not-exist"])
         assert count == 0
@@ -372,71 +419,94 @@ class TestAppendEntityFacts:
     """LC-4.5: Append compact fact triplets to entity Key Facts."""
 
     def test_appends_facts_to_entity(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "josh",
+            entities_dir,
+            "josh",
             {"entity_type": "person"},
             "# Josh\n\n## Key Facts\n\n## Summary\nA person.\n",
         )
-        count = consolidator._append_entity_facts({
-            "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
-        })
+        count = consolidator._append_entity_facts(
+            {
+                "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
+            }
+        )
         assert count == 1
         text = (entities_dir / "josh.md").read_text()
         assert "works_at" in text
         assert "Anthropic" in text
 
     def test_detects_contradiction(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "josh",
+            entities_dir,
+            "josh",
             {"entity_type": "person"},
             "# Josh\n\n## Key Facts\n- works_at: IBM .8 2023-01-01\n\n## Summary\n",
         )
-        count = consolidator._append_entity_facts({
-            "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
-        })
+        count = consolidator._append_entity_facts(
+            {
+                "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
+            }
+        )
         assert count == 1
         text = (entities_dir / "josh.md").read_text()
         assert "was: IBM" in text
 
     def test_skips_nonexistent_entity(
-        self, consolidator: Consolidator,
+        self,
+        consolidator: Consolidator,
     ) -> None:
-        count = consolidator._append_entity_facts({
-            "missing": [{"p": "role", "v": "engineer", "c": 0.5}],
-        })
+        count = consolidator._append_entity_facts(
+            {
+                "missing": [{"p": "role", "v": "engineer", "c": 0.5}],
+            }
+        )
         assert count == 0
 
     def test_skips_empty_predicate_or_value(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "test",
+            entities_dir,
+            "test",
             {"entity_type": "concept"},
             "# Test\n\n## Key Facts\n",
         )
-        count = consolidator._append_entity_facts({
-            "test": [{"p": "", "v": "val", "c": 0.5}, {"p": "key", "v": "", "c": 0.5}],
-        })
+        count = consolidator._append_entity_facts(
+            {
+                "test": [{"p": "", "v": "val", "c": 0.5}, {"p": "key", "v": "", "c": 0.5}],
+            }
+        )
         assert count == 0
 
     def test_multiple_facts_for_entity(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "proj",
+            entities_dir,
+            "proj",
             {"entity_type": "project"},
             "# Project\n\n## Key Facts\n\n## Summary\n",
         )
-        count = consolidator._append_entity_facts({
-            "proj": [
-                {"p": "status", "v": "active", "c": 0.95},
-                {"p": "language", "v": "Python", "c": 0.9},
-            ],
-        })
+        count = consolidator._append_entity_facts(
+            {
+                "proj": [
+                    {"p": "status", "v": "active", "c": 0.95},
+                    {"p": "language", "v": "Python", "c": 0.9},
+                ],
+            }
+        )
         assert count == 2
 
 
@@ -445,16 +515,21 @@ class TestApplyCorrections:
 
     @pytest.mark.asyncio
     async def test_applies_correction(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "pricing",
+            entities_dir,
+            "pricing",
             {"entity_type": "concept"},
             "# Pricing\n\n## Constraints and Lessons\n",
         )
-        count = await consolidator._apply_corrections([
-            {"entity": "pricing", "correction": "Show methodology first"},
-        ])
+        count = await consolidator._apply_corrections(
+            [
+                {"entity": "pricing", "correction": "Show methodology first"},
+            ]
+        )
         assert count == 1
         text = (entities_dir / "pricing.md").read_text()
         assert "Show methodology first" in text
@@ -464,7 +539,9 @@ class TestCoOccurrenceLinking:
     """LC-6: Bidirectional wiki-link addition."""
 
     def test_adds_bidirectional_links(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(entities_dir, "entity-a", {"links_to": []}, "Entity A")
         _write_entity(entities_dir, "entity-b", {"links_to": []}, "Entity B")
@@ -473,13 +550,16 @@ class TestCoOccurrenceLinking:
         assert count == 2  # One in each direction
 
         from arcagent.utils.sanitizer import read_frontmatter
+
         fm_a = read_frontmatter(entities_dir / "entity-a.md")
         fm_b = read_frontmatter(entities_dir / "entity-b.md")
         assert "[[entity-b]]" in fm_a["links_to"]
         assert "[[entity-a]]" in fm_b["links_to"]
 
     def test_skips_existing_links(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(entities_dir, "entity-a", {"links_to": ["[[entity-b]]"]}, "A")
         _write_entity(entities_dir, "entity-b", {"links_to": ["[[entity-a]]"]}, "B")
@@ -488,14 +568,16 @@ class TestCoOccurrenceLinking:
         assert count == 0  # Already linked
 
     def test_rate_limits_links(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         """Max 10 new links per session."""
         for i in range(8):
             _write_entity(entities_dir, f"ent-{i}", {"links_to": []}, f"Entity {i}")
 
         # 6 pairs = 12 links attempted, should cap at 10
-        pairs = [[f"ent-{i}", f"ent-{i+1}"] for i in range(6)]
+        pairs = [[f"ent-{i}", f"ent-{i + 1}"] for i in range(6)]
         count = consolidator._add_co_occurrence_links(pairs)
         assert count <= 10
 
@@ -505,11 +587,15 @@ class TestCreateEntityStubs:
 
     @pytest.mark.asyncio
     async def test_creates_stub_with_v21_schema(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
-        count = await consolidator._create_entity_stubs([
-            {"id": "new-project", "type": "project", "summary": "A new project."},
-        ])
+        count = await consolidator._create_entity_stubs(
+            [
+                {"id": "new-project", "type": "project", "summary": "A new project."},
+            ]
+        )
         assert count == 1
 
         # Check file exists
@@ -523,22 +609,27 @@ class TestCreateEntityStubs:
 
     @pytest.mark.asyncio
     async def test_skips_existing_entity(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         _write_entity(entities_dir, "existing", {}, "Already exists")
-        count = await consolidator._create_entity_stubs([
-            {"id": "existing", "type": "project", "summary": "Duplicate"},
-        ])
+        count = await consolidator._create_entity_stubs(
+            [
+                {"id": "existing", "type": "project", "summary": "Duplicate"},
+            ]
+        )
         assert count == 0
 
     @pytest.mark.asyncio
     async def test_rate_limits_creation(
-        self, consolidator: Consolidator, entities_dir: Path,
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
     ) -> None:
         """Max 3 new entities per session."""
         entities = [
-            {"id": f"new-{i}", "type": "concept", "summary": f"Entity {i}"}
-            for i in range(5)
+            {"id": f"new-{i}", "type": "concept", "summary": f"Entity {i}"} for i in range(5)
         ]
         count = await consolidator._create_entity_stubs(entities)
         assert count == 3  # Rate limited
@@ -548,7 +639,8 @@ class TestNormalizeEntityFile:
     """Legacy files get v2.1 frontmatter on first touch."""
 
     def test_adds_frontmatter_to_legacy_file(
-        self, entities_dir: Path,
+        self,
+        entities_dir: Path,
     ) -> None:
         from arcagent.modules.bio_memory.entity_helpers import normalize_entity_file
 
@@ -560,13 +652,15 @@ class TestNormalizeEntityFile:
         text = path.read_text()
         assert text.startswith("---\n")
         from arcagent.utils.sanitizer import read_frontmatter
+
         fm = read_frontmatter(path)
         assert fm is not None
         assert fm["entity_id"] == "legacy-entity"
         assert fm["name"] == "Legacy Entity"
 
     def test_skips_file_with_existing_frontmatter(
-        self, entities_dir: Path,
+        self,
+        entities_dir: Path,
     ) -> None:
         from arcagent.modules.bio_memory.entity_helpers import normalize_entity_file
 

@@ -27,12 +27,16 @@ def _make_metadata(**overrides: object) -> EntityMetadata:
 
 
 @pytest.fixture
-async def setup(tmp_path: Path) -> tuple[PromotionGate, MemoryStorage, IndexManager, TeamMemoryConfig]:
+async def setup(
+    tmp_path: Path,
+) -> tuple[PromotionGate, MemoryStorage, IndexManager, TeamMemoryConfig]:
     config = TeamMemoryConfig(root=tmp_path)
     storage = MemoryStorage(config.entities_dir)
     index_mgr = IndexManager(config.entities_dir, storage, config)
     classifier = ClassificationChecker(config)
-    gate = PromotionGate(storage, index_mgr, classifier, audit_logger=None, messenger=None, config=config)
+    gate = PromotionGate(
+        storage, index_mgr, classifier, audit_logger=None, messenger=None, config=config
+    )
     return gate, storage, index_mgr, config
 
 
@@ -41,7 +45,7 @@ class TestPromoteCreate:
 
     @pytest.mark.asyncio
     async def test_promote_creates_entity(self, setup: tuple) -> None:
-        gate, storage, index_mgr, config = setup
+        gate, _storage, _index_mgr, config = setup
         meta = _make_metadata(entity_id="alice", name="Alice")
         result = await gate.promote("alice", "# Alice\n\nA researcher.", meta, agent_id="agent-1")
         assert result.entity_id == "alice"
@@ -52,7 +56,7 @@ class TestPromoteCreate:
 
     @pytest.mark.asyncio
     async def test_promote_touches_dirty_flag(self, setup: tuple) -> None:
-        gate, _, index_mgr, config = setup
+        gate, _, _index_mgr, config = setup
         meta = _make_metadata(entity_id="alice", name="Alice")
         await gate.promote("alice", "# Alice", meta, agent_id="agent-1")
         assert (config.entities_dir / ".dirty").exists()
@@ -72,7 +76,7 @@ class TestPromoteUpdate:
 
     @pytest.mark.asyncio
     async def test_promote_updates_existing(self, setup: tuple) -> None:
-        gate, storage, index_mgr, _ = setup
+        gate, _storage, index_mgr, _ = setup
         meta = _make_metadata(entity_id="alice", name="Alice")
         await gate.promote("alice", "# Alice v1", meta, agent_id="agent-1")
         await index_mgr.rebuild()  # Rebuild so entity_exists works
@@ -102,7 +106,9 @@ class TestPromoteClassification:
         storage = MemoryStorage(config.entities_dir)
         index_mgr = IndexManager(config.entities_dir, storage, config)
         classifier = ClassificationChecker(config)
-        gate = PromotionGate(storage, index_mgr, classifier, audit_logger=None, messenger=None, config=config)
+        gate = PromotionGate(
+            storage, index_mgr, classifier, audit_logger=None, messenger=None, config=config
+        )
 
         # No classification field = "unclassified" default — should be allowed
         meta = _make_metadata(entity_id="alice", name="Alice")
@@ -116,7 +122,9 @@ class TestPromoteClassification:
         storage = MemoryStorage(config.entities_dir)
         index_mgr = IndexManager(config.entities_dir, storage, config)
         classifier = ClassificationChecker(config)
-        gate = PromotionGate(storage, index_mgr, classifier, audit_logger=None, messenger=None, config=config)
+        gate = PromotionGate(
+            storage, index_mgr, classifier, audit_logger=None, messenger=None, config=config
+        )
 
         meta = _make_metadata(entity_id="alice", name="Alice", classification="CUI")
         with pytest.raises(PromotionError):

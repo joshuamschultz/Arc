@@ -18,10 +18,8 @@ def workspace(tmp_path: Path) -> Path:
 
     # Policy file with structured bullets
     bullets = [
-        "- [P01] Be helpful {score:8, uses:5,"
-        " reviewed:2026-02-15, created:2026-01-01, source:s1}",
-        "- [P02] Use tools {score:6, uses:3,"
-        " reviewed:2026-02-14, created:2026-01-05, source:s2}",
+        "- [P01] Be helpful {score:8, uses:5, reviewed:2026-02-15, created:2026-01-01, source:s1}",
+        "- [P02] Use tools {score:6, uses:3, reviewed:2026-02-14, created:2026-01-05, source:s2}",
         "- [P03] Report errors {score:9, uses:10,"
         " reviewed:2026-02-15, created:2026-01-01, source:s3}",
     ]

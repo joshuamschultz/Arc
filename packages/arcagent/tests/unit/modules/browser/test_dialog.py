@@ -34,9 +34,7 @@ class TestBrowserHandleDialog:
 
         result = await dialog_tool.execute(action="accept")
         assert "accept" in result.lower()
-        cdp.send.assert_called_once_with(
-            "Page", "handleJavaScriptDialog", {"accept": True}
-        )
+        cdp.send.assert_called_once_with("Page", "handleJavaScriptDialog", {"accept": True})
 
     async def test_dismiss_dialog(self) -> None:
         from arcagent.modules.browser.tools.dialog import create_dialog_tools
@@ -50,9 +48,7 @@ class TestBrowserHandleDialog:
 
         result = await dialog_tool.execute(action="dismiss")
         assert "dismiss" in result.lower()
-        cdp.send.assert_called_once_with(
-            "Page", "handleJavaScriptDialog", {"accept": False}
-        )
+        cdp.send.assert_called_once_with("Page", "handleJavaScriptDialog", {"accept": False})
 
     async def test_type_in_prompt(self) -> None:
         from arcagent.modules.browser.tools.dialog import create_dialog_tools

@@ -82,7 +82,10 @@ class DeepConsolidator:
         # 2. Entity-centric pass (with content-hash gating)
         if intensity in ("light", "full"):
             audit["entity_pass"] = await self._entity_centric_pass(
-                recent_episodes, model, agent_id, idx,
+                recent_episodes,
+                model,
+                agent_id,
+                idx,
             )
 
         # 3. Graph-centric pass (full only)
@@ -122,6 +125,7 @@ class DeepConsolidator:
             return []
 
         from datetime import timedelta
+
         cutoff_date = datetime.now(UTC) - timedelta(days=lookback_days)
         cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
@@ -150,7 +154,10 @@ class DeepConsolidator:
     # -- Entity-centric pass --
 
     async def _entity_centric_pass(
-        self, episodes: list[Path], model: Any, agent_id: str,
+        self,
+        episodes: list[Path],
+        model: Any,
+        agent_id: str,
         idx: EntityIndex,
     ) -> dict[str, Any]:
         """Rewrite entities touched by recent episodes. Sequential processing."""
@@ -162,7 +169,7 @@ class DeepConsolidator:
         results: list[str] = []
         skipped_hash = 0
 
-        for entity_path in touched[:self._config.deep_max_entities]:
+        for entity_path in touched[: self._config.deep_max_entities]:
             try:
                 entity_content = entity_path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -171,8 +178,7 @@ class DeepConsolidator:
 
             refs = self._find_episodes_referencing(entity_path.stem, episodes)
             episode_text = "\n---\n".join(
-                ep.read_text(encoding="utf-8") for ep in refs
-                if ep.exists()
+                ep.read_text(encoding="utf-8") for ep in refs if ep.exists()
             )
 
             # Content-hash gating (80-90% cost reduction)
@@ -184,7 +190,9 @@ class DeepConsolidator:
 
             # LLM rewrite
             new_content = await self._rewrite_entity(
-                entity_content, episode_text, model,
+                entity_content,
+                episode_text,
+                model,
             )
 
             # 5-step validation + budget enforcement
@@ -213,7 +221,9 @@ class DeepConsolidator:
         }
 
     def _find_touched_entities(
-        self, episodes: list[Path], idx: EntityIndex,
+        self,
+        episodes: list[Path],
+        idx: EntityIndex,
     ) -> list[Path]:
         """Find entities referenced in recent episodes via wiki-links and frontmatter."""
         if not self._entities_dir.exists():
@@ -246,9 +256,12 @@ class DeepConsolidator:
         return paths
 
     def _prioritize_entities(
-        self, entities: list[Path], episodes: list[Path],
+        self,
+        entities: list[Path],
+        episodes: list[Path],
     ) -> list[Path]:
         """Sort entities by: oldest last_updated, most episode refs, highest link count."""
+
         def sort_key(path: Path) -> tuple[str, int, int]:
             fm = read_frontmatter(path)
             last_updated = fm.get("last_updated", "9999-99-99") if fm else "9999-99-99"
@@ -292,7 +305,10 @@ class DeepConsolidator:
     # -- LLM rewrite --
 
     async def _rewrite_entity(
-        self, entity_content: str, episode_text: str, model: Any,
+        self,
+        entity_content: str,
+        episode_text: str,
+        model: Any,
     ) -> str | None:
         """LLM rewrites entity file integrating new episode information."""
         budget_words = self._config.per_entity_budget
@@ -324,6 +340,7 @@ class DeepConsolidator:
 
         try:
             from arcllm.types import Message
+
             response = await asyncio.wait_for(
                 model.invoke([Message(role="user", content=prompt)]),
                 timeout=_LLM_CALL_TIMEOUT_SECONDS,
@@ -354,7 +371,9 @@ class DeepConsolidator:
         if word_count > max_words:
             _logger.warning(
                 "Rewrite validation failed: %d words > %d budget for %s",
-                word_count, max_words, entity_path.stem,
+                word_count,
+                max_words,
+                entity_path.stem,
             )
             return False
 
@@ -417,7 +436,9 @@ class DeepConsolidator:
     # -- Graph-centric pass --
 
     async def _graph_centric_pass(
-        self, model: Any, idx: EntityIndex,
+        self,
+        model: Any,
+        idx: EntityIndex,
     ) -> dict[str, Any]:
         """Select entity cluster, discover structural links via LLM."""
         state = self._load_rotation_state()
@@ -432,12 +453,14 @@ class DeepConsolidator:
         for path in cluster:
             fm = read_frontmatter(path) or {}
             summary = self._extract_summary(path)
-            summaries.append({
-                "id": path.stem,
-                "type": fm.get("entity_type", "unknown"),
-                "links_to": fm.get("links_to", []),
-                "summary": summary,
-            })
+            summaries.append(
+                {
+                    "id": path.stem,
+                    "type": fm.get("entity_type", "unknown"),
+                    "links_to": fm.get("links_to", []),
+                    "summary": summary,
+                }
+            )
 
         # LLM discovers connections
         links = await self._discover_structural_links(summaries, model)
@@ -456,7 +479,9 @@ class DeepConsolidator:
                     added += pair_added
                 except Exception:
                     _logger.warning(
-                        "Failed to add link %s <-> %s", from_id, to_id,
+                        "Failed to add link %s <-> %s",
+                        from_id,
+                        to_id,
                         exc_info=True,
                     )
 
@@ -475,8 +500,7 @@ class DeepConsolidator:
 
         # Find entity subdirectories (domains)
         domains: list[Path] = [
-            d for d in self._entities_dir.iterdir()
-            if d.is_dir() and not d.name.startswith(".")
+            d for d in self._entities_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
         ]
 
         # Also include root-level entities as a "general" domain
@@ -493,11 +517,11 @@ class DeepConsolidator:
         if candidates:
             # Prefer domains with recently updated entities
             domain = candidates[0]
-            entities = list(domain.rglob("*.md"))[:self._config.deep_cluster_size]
+            entities = list(domain.rglob("*.md"))[: self._config.deep_cluster_size]
             return entities
 
         # Fallback to root entities
-        return root_entities[:self._config.deep_cluster_size]
+        return root_entities[: self._config.deep_cluster_size]
 
     def _extract_summary(self, entity_path: Path) -> str:
         """Extract summary section from entity file (~100 tokens)."""
@@ -512,7 +536,7 @@ class DeepConsolidator:
             # Return first 400 chars of body as fallback
             body_start = text.find("\n---", 3)
             if body_start != -1:
-                return text[body_start + 4:body_start + 404].strip()
+                return text[body_start + 4 : body_start + 404].strip()
             return text[:400]
 
         after = idx + len("## Summary") + 1
@@ -527,17 +551,16 @@ class DeepConsolidator:
         return summary.strip()[:max_chars]
 
     async def _discover_structural_links(
-        self, summaries: list[dict[str, Any]], model: Any,
+        self,
+        summaries: list[dict[str, Any]],
+        model: Any,
     ) -> list[dict[str, str]]:
         """LLM discovers non-obvious connections between entities."""
         tag = f"entity_summaries_{self._boundary_id}"
         formatted = "\n".join(
-            f"- {s['id']} ({s['type']}): {s['summary'][:200]}"
-            for s in summaries
+            f"- {s['id']} ({s['type']}): {s['summary'][:200]}" for s in summaries
         )
-        existing_links = {
-            s["id"]: s.get("links_to", []) for s in summaries
-        }
+        existing_links = {s["id"]: s.get("links_to", []) for s in summaries}
 
         prompt = (
             "Given these entity summaries, identify connections between entities "
@@ -554,16 +577,14 @@ class DeepConsolidator:
 
         try:
             from arcllm.types import Message
+
             response = await asyncio.wait_for(
                 model.invoke([Message(role="user", content=prompt)]),
                 timeout=_LLM_CALL_TIMEOUT_SECONDS,
             )
             data = json.loads(extract_json(response.content))
             if isinstance(data, list):
-                return [
-                    d for d in data
-                    if isinstance(d, dict) and "from" in d and "to" in d
-                ]
+                return [d for d in data if isinstance(d, dict) and "from" in d and "to" in d]
             return []
         except TimeoutError:
             _logger.warning("Structural link discovery LLM call timed out")
@@ -589,7 +610,9 @@ class DeepConsolidator:
     # -- Merge detection --
 
     async def _detect_merges(
-        self, model: Any, idx: EntityIndex,
+        self,
+        model: Any,
+        idx: EntityIndex,
     ) -> dict[str, Any]:
         """Find entity pairs with 3+ shared links, LLM confirms merge."""
         adjacency = self._build_adjacency(idx)
@@ -638,7 +661,8 @@ class DeepConsolidator:
         return adj
 
     def _find_merge_candidates(
-        self, adjacency: dict[str, set[str]],
+        self,
+        adjacency: dict[str, set[str]],
     ) -> list[tuple[str, str]]:
         """Find entity pairs sharing 3+ neighbors."""
         slugs = list(adjacency.keys())
@@ -646,7 +670,7 @@ class DeepConsolidator:
         seen: set[tuple[str, str]] = set()
 
         for i, a in enumerate(slugs):
-            for b in slugs[i + 1:]:
+            for b in slugs[i + 1 :]:
                 pair = (min(a, b), max(a, b))
                 if pair in seen:
                     continue
@@ -657,7 +681,10 @@ class DeepConsolidator:
         return candidates
 
     async def _llm_confirms_merge(
-        self, content_a: str, content_b: str, model: Any,
+        self,
+        content_a: str,
+        content_b: str,
+        model: Any,
     ) -> bool:
         """LLM judges if two entities represent the same thing."""
         tag_a = f"merge_entity_a_{self._boundary_id}"
@@ -672,6 +699,7 @@ class DeepConsolidator:
         )
         try:
             from arcllm.types import Message
+
             response = await asyncio.wait_for(
                 model.invoke([Message(role="user", content=prompt)]),
                 timeout=_LLM_CALL_TIMEOUT_SECONDS,
@@ -724,7 +752,7 @@ class DeepConsolidator:
         end = text.find("\n---", 3)
         if end == -1:
             return text
-        return text[end + 4:].strip()
+        return text[end + 4 :].strip()
 
     # -- Staleness --
 
@@ -750,7 +778,8 @@ class DeepConsolidator:
 
             try:
                 verified_date = datetime.strptime(
-                    str(last_verified), "%Y-%m-%d",
+                    str(last_verified),
+                    "%Y-%m-%d",
                 ).replace(tzinfo=UTC)
             except ValueError:
                 continue
@@ -773,7 +802,7 @@ class DeepConsolidator:
                 if end != -1:
                     fm["status"] = "stale"
                     fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False).strip()
-                    body = text[end + 4:]
+                    body = text[end + 4 :]
                     atomic_write_text(entity, f"---\n{fm_text}\n---{body}")
                 flagged += 1
                 self._telemetry.audit_event(

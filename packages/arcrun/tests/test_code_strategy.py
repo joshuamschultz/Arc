@@ -1,6 +1,6 @@
 """Tests for CodeExecStrategy."""
-import pytest
 
+import pytest
 from conftest import LLMResponse, MockModel
 
 from arcrun._messages import system_message, user_message

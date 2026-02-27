@@ -1,7 +1,5 @@
 """Tests for arcllm package __init__.py — lazy imports and __all__."""
 
-import importlib
-
 import pytest
 
 

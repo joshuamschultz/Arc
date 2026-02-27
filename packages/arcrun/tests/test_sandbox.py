@@ -1,4 +1,5 @@
 """Tests for sandbox permission enforcement."""
+
 import pytest
 
 from arcrun.events import EventBus
@@ -24,7 +25,7 @@ class TestSandbox:
 
         cfg = SandboxConfig(allowed_tools=["search", "calc"])
         sandbox = Sandbox(config=cfg, event_bus=self._make_bus())
-        allowed, reason = await sandbox.check("search", {})
+        allowed, _reason = await sandbox.check("search", {})
         assert allowed is True
 
     @pytest.mark.asyncio
@@ -46,7 +47,7 @@ class TestSandbox:
 
         cfg = SandboxConfig(allowed_tools=["tool1"], check=allow_all)
         sandbox = Sandbox(config=cfg, event_bus=self._make_bus())
-        allowed, reason = await sandbox.check("tool1", {"x": 1})
+        allowed, _reason = await sandbox.check("tool1", {"x": 1})
         assert allowed is True
 
     @pytest.mark.asyncio

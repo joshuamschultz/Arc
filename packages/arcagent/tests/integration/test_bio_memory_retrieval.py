@@ -100,7 +100,8 @@ class TestSearchIntegration:
 
     @pytest.mark.asyncio
     async def test_search_finds_episodes_by_tag(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("pricing")
@@ -109,7 +110,8 @@ class TestSearchIntegration:
 
     @pytest.mark.asyncio
     async def test_search_finds_by_fulltext(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("deadline")
@@ -118,7 +120,8 @@ class TestSearchIntegration:
 
     @pytest.mark.asyncio
     async def test_search_across_all_tiers(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         """Search should find results in episodes, daily notes, and working memory."""
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
@@ -141,7 +144,8 @@ class TestWikiLinkIntegration:
 
     @pytest.mark.asyncio
     async def test_follows_wiki_links_from_episode(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("pricing correction")
@@ -153,7 +157,8 @@ class TestWikiLinkIntegration:
 
     @pytest.mark.asyncio
     async def test_follows_wiki_links_from_daily_notes(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("structured answers")
@@ -168,7 +173,8 @@ class TestRecallIntegration:
 
     @pytest.mark.asyncio
     async def test_recall_episode_by_name(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         result = await retriever.recall("project-alpha")
@@ -177,7 +183,8 @@ class TestRecallIntegration:
 
     @pytest.mark.asyncio
     async def test_recall_nonexistent(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         result = await retriever.recall("nonexistent-entity")
@@ -189,7 +196,8 @@ class TestBudgetEnforcementIntegration:
 
     @pytest.mark.asyncio
     async def test_results_within_budget(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         # Very tight budget
         cfg = BioMemoryConfig(retrieved_budget=50)
@@ -206,7 +214,8 @@ class TestRetrievalResultTypes:
 
     @pytest.mark.asyncio
     async def test_frontmatter_match_type(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("pricing")
@@ -216,7 +225,8 @@ class TestRetrievalResultTypes:
 
     @pytest.mark.asyncio
     async def test_wiki_link_match_type(
-        self, seeded_workspace: Path,
+        self,
+        seeded_workspace: Path,
     ) -> None:
         retriever = Retriever(seeded_workspace, BioMemoryConfig())
         results = await retriever.search("pricing correction")

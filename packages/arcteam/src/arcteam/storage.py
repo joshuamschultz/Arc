@@ -73,7 +73,10 @@ class StorageBackend(Protocol):
         ...
 
     async def append_auto_seq(
-        self, collection: str, key: str, entry: dict[str, Any],
+        self,
+        collection: str,
+        key: str,
+        entry: dict[str, Any],
     ) -> tuple[int, int]:
         """Atomically assign seq and append. Returns (seq, byte_offset).
 
@@ -144,7 +147,9 @@ class FileBackend:
         return offset
 
     def _sync_append_auto_seq(
-        self, stream: Path, entry: dict[str, Any],
+        self,
+        stream: Path,
+        entry: dict[str, Any],
     ) -> tuple[int, int]:
         """Assign seq and append atomically under flock.
 
@@ -306,7 +311,10 @@ class FileBackend:
         return await asyncio.to_thread(self._sync_append, stream, entry)
 
     async def append_auto_seq(
-        self, collection: str, key: str, entry: dict[str, Any],
+        self,
+        collection: str,
+        key: str,
+        entry: dict[str, Any],
     ) -> tuple[int, int]:
         """Atomically assign seq and append. Returns (seq, byte_offset)."""
         stream = self._stream_path(collection, key)
@@ -322,9 +330,7 @@ class FileBackend:
     ) -> list[dict[str, Any]]:
         """Read entries from JSONL stream. Seeks to byte_pos, filters by after_seq."""
         stream = self._stream_path(collection, key)
-        return await asyncio.to_thread(
-            self._sync_read_stream, stream, after_seq, byte_pos, limit
-        )
+        return await asyncio.to_thread(self._sync_read_stream, stream, after_seq, byte_pos, limit)
 
     async def read_last(self, collection: str, key: str) -> dict[str, Any] | None:
         """Read the last entry from a JSONL stream. O(1) via backward seek."""
@@ -383,7 +389,10 @@ class MemoryBackend:
         return offset
 
     async def append_auto_seq(
-        self, collection: str, key: str, entry: dict[str, Any],
+        self,
+        collection: str,
+        key: str,
+        entry: dict[str, Any],
     ) -> tuple[int, int]:
         """Atomically assign seq and append. Returns (seq, byte_offset)."""
         self._streams.setdefault(collection, {}).setdefault(key, [])

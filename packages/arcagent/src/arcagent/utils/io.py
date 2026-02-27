@@ -50,9 +50,7 @@ def format_messages(
     if type_filter:
         filtered = [m for m in filtered if m.get("type") == type_filter]
     recent = filtered[-limit:] if limit > 0 else filtered
-    return "\n".join(
-        f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in recent
-    )
+    return "\n".join(f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in recent)
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
@@ -79,7 +77,5 @@ def sanitize_fts5_query(query: str) -> str:
     ``{}``, etc.) and individually quotes each term.
     """
     return " ".join(
-        f'"{clean}"'
-        for term in query.split()
-        if (clean := _FTS5_SPECIAL_RE.sub("", term))
+        f'"{clean}"' for term in query.split() if (clean := _FTS5_SPECIAL_RE.sub("", term))
     )

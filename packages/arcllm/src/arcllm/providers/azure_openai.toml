@@ -1,11 +1,11 @@
 [provider]
 api_format = "openai-chat"
-base_url = "https://REPLACE-WITH-YOUR-RESOURCE.openai.azure.us"
+base_url = "https://oai-josh-agent.openai.azure.com"
 api_key_env = "AZURE_OPENAI_API_KEY"
 api_key_required = true
-default_model = "gpt-4o"
+default_model = "gpt-4-1"
 default_temperature = 0.7
-vault_path = ""
+vault_path = "azure-openai-api-key"  # Key Vault secret name
 
 # NOTE: Model names here are canonical Azure model names.
 # Users deploy these as "deployments" with custom names.
@@ -77,6 +77,18 @@ cost_cache_read_per_1m = 0.075
 cost_cache_write_per_1m = 0.15
 
 # --- o-series reasoning ---
+
+[models.o1]
+context_window = 200000
+max_output_tokens = 100000
+supports_tools = true
+supports_vision = true
+supports_thinking = true
+input_modalities = ["text", "image"]
+cost_input_per_1m = 15.00
+cost_output_per_1m = 60.00
+cost_cache_read_per_1m = 3.75
+cost_cache_write_per_1m = 15.00
 
 [models.o3]
 context_window = 200000

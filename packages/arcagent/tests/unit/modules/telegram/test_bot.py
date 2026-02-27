@@ -133,10 +133,14 @@ class TestBotConstruction:
         state_dir = tmp_path / "telegram"
         state_dir.mkdir(parents=True)
         state_path = state_dir / "state.json"
-        state_path.write_text(json.dumps({
-            "chat_id": 999,
-            "session_id": "abc-123",
-        }))
+        state_path.write_text(
+            json.dumps(
+                {
+                    "chat_id": 999,
+                    "session_id": "abc-123",
+                }
+            )
+        )
 
         bot = _make_bot(tmp_path)
         assert bot._chat_id == 999

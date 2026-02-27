@@ -1,4 +1,5 @@
 """Permission boundary. Allowlist model. Deny-by-default when configured."""
+
 from __future__ import annotations
 
 from typing import Any

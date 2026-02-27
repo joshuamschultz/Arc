@@ -59,7 +59,8 @@ class AgentTelemetry:
             yield _NOOP_SPAN
             return
         with self._tracer.start_as_current_span(
-            name, attributes={"agent.did": self._agent_did, **attributes},
+            name,
+            attributes={"agent.did": self._agent_did, **attributes},
         ) as span:
             yield span
 

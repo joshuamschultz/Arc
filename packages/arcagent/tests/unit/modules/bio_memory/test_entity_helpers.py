@@ -21,7 +21,10 @@ from arcagent.modules.bio_memory.entity_helpers import (
 
 
 def _write_entity(
-    entities_dir: Path, name: str, fm: dict[str, object], body: str,
+    entities_dir: Path,
+    name: str,
+    fm: dict[str, object],
+    body: str,
 ) -> Path:
     fm_text = yaml.dump(fm, default_flow_style=False).strip()
     content = f"---\n{fm_text}\n---\n\n{body}\n"
@@ -117,6 +120,7 @@ class TestAddLinkToFrontmatter:
         path = _write_entity(tmp_path, "a", {"links_to": []}, "body")
         assert add_link_to_frontmatter(path, "b") is True
         from arcagent.utils.sanitizer import read_frontmatter
+
         fm = read_frontmatter(path)
         assert "[[b]]" in fm["links_to"]
 
@@ -147,8 +151,11 @@ class TestNormalizeEntityFile:
         path.write_text("# Josh\n\nA person.")
         normalize_entity_file(path, entities)
         from arcagent.utils.sanitizer import read_frontmatter
+
         fm = read_frontmatter(path)
-        assert fm["entity_type"] == "people"  # rstrip("s") not applied since parent is entities_dir check
+        assert (
+            fm["entity_type"] == "people"
+        )  # rstrip("s") not applied since parent is entities_dir check
 
 
 class TestExtractWikiLinks:

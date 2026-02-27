@@ -225,9 +225,7 @@ class TestSettingsCorruptedToml:
         """Corrupted TOML is gracefully ignored."""
         config, toml_path = _make_config(tmp_path)
         # Corrupt the TOML
-        toml_path.write_text(
-            '[agent]\nname = "test"\n\n[settings\nBROKEN TOML HERE'
-        )
+        toml_path.write_text('[agent]\nname = "test"\n\n[settings\nBROKEN TOML HERE')
 
         # Should not crash, just use config defaults
         sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)
@@ -283,7 +281,9 @@ class TestSettingsPersistFormatting:
         config, toml_path = _make_config(tmp_path)
         # Pre-populate with settings section
         content = toml_path.read_text()
-        content += '\n[settings]\nmodel = "old/model"\nlog_level = "ERROR"\n\n[other]\nkey = "value"\n'
+        content += (
+            '\n[settings]\nmodel = "old/model"\nlog_level = "ERROR"\n\n[other]\nkey = "value"\n'
+        )
         toml_path.write_text(content)
 
         sm = SettingsManager(config, mock_telemetry, mock_bus, toml_path)

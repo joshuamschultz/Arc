@@ -20,12 +20,9 @@ from arcllm.types import (
     Message,
     TextBlock,
     Tool,
-    ToolCall,
     ToolResultBlock,
     ToolUseBlock,
-    Usage,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -602,9 +599,7 @@ class TestOpenAIFullCycle:
                 },
             )
         ]
-        resp = await adapter.invoke(
-            [Message(role="user", content="Search cats")], tools=tools
-        )
+        resp = await adapter.invoke([Message(role="user", content="Search cats")], tools=tools)
         assert isinstance(resp, LLMResponse)
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "search"

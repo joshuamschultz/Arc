@@ -47,12 +47,8 @@ def bus(config: ArcAgentConfig, mock_telemetry: MagicMock) -> ModuleBus:
 
 
 @pytest.fixture()
-def registry(
-    config: ArcAgentConfig, bus: ModuleBus, mock_telemetry: MagicMock
-) -> ToolRegistry:
-    return ToolRegistry(
-        config=config.tools, bus=bus, telemetry=mock_telemetry
-    )
+def registry(config: ArcAgentConfig, bus: ModuleBus, mock_telemetry: MagicMock) -> ToolRegistry:
+    return ToolRegistry(config=config.tools, bus=bus, telemetry=mock_telemetry)
 
 
 def _make_tool(
@@ -103,13 +99,9 @@ class TestPolicyEnforcement:
         config = ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
-            tools=ToolsConfig(
-                policy=ToolConfig(allow=["read_file"])
-            ),
+            tools=ToolsConfig(policy=ToolConfig(allow=["read_file"])),
         )
-        registry = ToolRegistry(
-            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
-        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         registry.register(_make_tool("read_file"))
         with pytest.raises(ToolError) as exc_info:
             registry.register(_make_tool("shell_exec"))
@@ -119,13 +111,9 @@ class TestPolicyEnforcement:
         config = ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
-            tools=ToolsConfig(
-                policy=ToolConfig(deny=["shell_exec"])
-            ),
+            tools=ToolsConfig(policy=ToolConfig(deny=["shell_exec"])),
         )
-        registry = ToolRegistry(
-            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
-        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         registry.register(_make_tool("read_file"))  # Allowed
         with pytest.raises(ToolError) as exc_info:
             registry.register(_make_tool("shell_exec"))
@@ -167,9 +155,7 @@ class TestToolWrapping:
         await wrapped({})
         assert "post_tool" in events
 
-    async def test_veto_blocks_execution(
-        self, registry: ToolRegistry, bus: ModuleBus
-    ) -> None:
+    async def test_veto_blocks_execution(self, registry: ToolRegistry, bus: ModuleBus) -> None:
         async def veto_handler(ctx: EventContext) -> None:
             ctx.veto("blocked by policy")
 
@@ -210,9 +196,7 @@ class TestToArcrunTools:
 
 
 class TestTimeoutEnforcement:
-    async def test_tool_exceeds_timeout_raises(
-        self, registry: ToolRegistry
-    ) -> None:
+    async def test_tool_exceeds_timeout_raises(self, registry: ToolRegistry) -> None:
         async def slow_execute(**kwargs: Any) -> str:
             await asyncio.sleep(10)
             return "slow"
@@ -255,9 +239,7 @@ class TestModuleAllowlist:
                 allowed_module_prefixes=["arcagent."],
             ),
         )
-        registry = ToolRegistry(
-            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
-        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         entries = {
             "echo": NativeToolEntry(
                 module="arcagent.core.tool_registry:_echo_tool",
@@ -273,9 +255,7 @@ class TestModuleAllowlist:
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
         )
-        registry = ToolRegistry(
-            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
-        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         entries = {
             "nonexistent": NativeToolEntry(
                 module="arcagent.core.tool_registry:_nonexistent_func",
@@ -294,9 +274,7 @@ class TestModuleAllowlist:
                 allowed_module_prefixes=["arcagent."],
             ),
         )
-        registry = ToolRegistry(
-            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
-        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         entries = {
             "evil": NativeToolEntry(
                 module="os:system",
@@ -313,9 +291,7 @@ class TestModuleAllowlist:
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
         )
-        registry = ToolRegistry(
-            config=config.tools, bus=MagicMock(), telemetry=MagicMock()
-        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         entries = {
             "bad": NativeToolEntry(
                 module="os.system",
@@ -328,9 +304,7 @@ class TestModuleAllowlist:
 
 
 class TestArgValidation:
-    async def test_missing_required_arg_rejected(
-        self, registry: ToolRegistry
-    ) -> None:
+    async def test_missing_required_arg_rejected(self, registry: ToolRegistry) -> None:
         """Tool call missing required args is rejected."""
         tool = RegisteredTool(
             name="strict_tool",
@@ -349,9 +323,7 @@ class TestArgValidation:
             await wrapped({})
         assert exc_info.value.code == "TOOL_INVALID_ARGS"
 
-    async def test_valid_args_accepted(
-        self, registry: ToolRegistry
-    ) -> None:
+    async def test_valid_args_accepted(self, registry: ToolRegistry) -> None:
         """Tool call with all required args passes validation."""
         tool = RegisteredTool(
             name="valid_tool",
@@ -369,9 +341,7 @@ class TestArgValidation:
         result = await wrapped({"path": "/test"})
         assert result == "ok"
 
-    async def test_unknown_args_rejected_when_strict(
-        self, registry: ToolRegistry
-    ) -> None:
+    async def test_unknown_args_rejected_when_strict(self, registry: ToolRegistry) -> None:
         """Unknown args rejected when additionalProperties is false."""
         tool = RegisteredTool(
             name="strict_schema",
@@ -415,9 +385,7 @@ class TestEchoTool:
 class TestNativeToolAsyncWrapper:
     """Line 172: _async_wrapper wraps sync functions."""
 
-    async def test_native_tool_wrapper_invokes_function(
-        self, registry: ToolRegistry
-    ) -> None:
+    async def test_native_tool_wrapper_invokes_function(self, registry: ToolRegistry) -> None:
         native_tools = {
             "echo": NativeToolEntry(
                 module="arcagent.core.tool_registry:_echo_tool",

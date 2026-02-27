@@ -173,10 +173,7 @@ class IndexManager:
                 self._verify_checksum(content)
 
             data = json.loads(content)
-            return {
-                eid: IndexEntry.model_validate(entry)
-                for eid, entry in data.items()
-            }
+            return {eid: IndexEntry.model_validate(entry) for eid, entry in data.items()}
         except IndexCorruptionError:
             raise
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:

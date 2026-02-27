@@ -7,7 +7,6 @@ skills cached → agent-created rescan works.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -208,9 +207,7 @@ class TestSkillDiscovery:
 
         # Malformed skill (invalid YAML) — directly in skills_dir
         skills_dir.mkdir(parents=True, exist_ok=True)
-        (skills_dir / "bad-skill.md").write_text(
-            "---\nname: [invalid yaml\n---\nBroken.\n"
-        )
+        (skills_dir / "bad-skill.md").write_text("---\nname: [invalid yaml\n---\nBroken.\n")
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()

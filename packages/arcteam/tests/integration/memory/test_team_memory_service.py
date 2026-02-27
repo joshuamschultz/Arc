@@ -80,12 +80,14 @@ class TestFullLifecycle:
     @pytest.mark.asyncio
     async def test_list_entities(self, service: TeamMemoryService) -> None:
         await service.promote(
-            "alice", "# Alice",
+            "alice",
+            "# Alice",
             _meta(entity_id="alice", name="Alice"),
             agent_id="agent-1",
         )
         await service.promote(
-            "nnsa", "# NNSA",
+            "nnsa",
+            "# NNSA",
             _meta(entity_id="nnsa", name="NNSA", entity_type="organization"),
             agent_id="agent-1",
         )
@@ -126,7 +128,8 @@ class TestFullLifecycle:
     @pytest.mark.asyncio
     async def test_update_entity(self, service: TeamMemoryService) -> None:
         await service.promote(
-            "alice", "# Alice v1\n\nOriginal.",
+            "alice",
+            "# Alice v1\n\nOriginal.",
             _meta(entity_id="alice", name="Alice"),
             agent_id="agent-1",
         )
@@ -134,7 +137,8 @@ class TestFullLifecycle:
         await service._index_mgr.rebuild()
 
         result = await service.promote(
-            "alice", "# Alice v2\n\nUpdated content.",
+            "alice",
+            "# Alice v2\n\nUpdated content.",
             _meta(entity_id="alice", name="Alice Updated"),
             agent_id="agent-1",
         )
@@ -152,7 +156,8 @@ class TestClassificationFiltering:
     @pytest.mark.asyncio
     async def test_federal_filters_search(self, federal_service: TeamMemoryService) -> None:
         await federal_service.promote(
-            "public-doc", "# Public\n\nPublic research about fusion.",
+            "public-doc",
+            "# Public\n\nPublic research about fusion.",
             _meta(entity_id="public-doc", name="Public", classification="unclassified"),
             agent_id="agent-1",
         )
@@ -201,7 +206,8 @@ class TestNullObjectPattern:
         svc = TeamMemoryService(config)
 
         result = await svc.promote(
-            "alice", "# Alice",
+            "alice",
+            "# Alice",
             _meta(entity_id="alice", name="Alice"),
             agent_id="agent-1",
         )
@@ -227,7 +233,8 @@ class TestIndexRebuild:
     async def test_rebuild_after_promotes(self, service: TeamMemoryService) -> None:
         for i in range(5):
             await service.promote(
-                f"person-{i}", f"# Person {i}\n\nContent for person {i}.",
+                f"person-{i}",
+                f"# Person {i}\n\nContent for person {i}.",
                 _meta(entity_id=f"person-{i}", name=f"Person {i}"),
                 agent_id="agent-1",
             )
@@ -240,12 +247,14 @@ class TestIndexRebuild:
     @pytest.mark.asyncio
     async def test_index_backlinks(self, service: TeamMemoryService) -> None:
         await service.promote(
-            "alice", "# Alice",
+            "alice",
+            "# Alice",
             _meta(entity_id="alice", name="Alice", links_to=["bob"]),
             agent_id="agent-1",
         )
         await service.promote(
-            "bob", "# Bob",
+            "bob",
+            "# Bob",
             _meta(entity_id="bob", name="Bob"),
             agent_id="agent-1",
         )

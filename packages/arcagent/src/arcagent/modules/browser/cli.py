@@ -33,15 +33,17 @@ def cli_group(workspace: Path) -> click.Group:
         ws: Path = ctx.obj["workspace"]
         config = BrowserConfig()
 
-        print_kv([
-            ("Module", "browser"),
-            ("Workspace", str(ws)),
-            ("Headless", str(config.connection.headless)),
-            ("CDP URL", config.connection.cdp_url or "(auto-launch)"),
-            ("URL mode", config.security.url_mode),
-            ("JS execution", str(config.security.allow_js_execution)),
-            ("Downloads", str(config.security.allow_downloads)),
-        ])
+        print_kv(
+            [
+                ("Module", "browser"),
+                ("Workspace", str(ws)),
+                ("Headless", str(config.connection.headless)),
+                ("CDP URL", config.connection.cdp_url or "(auto-launch)"),
+                ("URL mode", config.security.url_mode),
+                ("JS execution", str(config.security.allow_js_execution)),
+                ("Downloads", str(config.security.allow_downloads)),
+            ]
+        )
 
     @browser.command("navigate")
     @click.argument("url")

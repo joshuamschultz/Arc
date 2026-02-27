@@ -56,9 +56,7 @@ class PromotionGate:
         self._validate(entity_id, metadata, content)
 
         # 2. Check classification
-        entity_classification = ClassificationChecker.parse_classification(
-            metadata.classification
-        )
+        entity_classification = ClassificationChecker.parse_classification(metadata.classification)
 
         # 3. CUI+ requires approval queue (tier-gated)
         if (
@@ -128,9 +126,7 @@ class PromotionGate:
             and self._config.classification_required
             and not metadata.classification
         ):
-            raise EntityValidationError(
-                "classification is required for federal tier"
-            )
+            raise EntityValidationError("classification is required for federal tier")
 
         # Token budget enforcement
         estimated = self._storage.estimate_tokens(content)
@@ -183,9 +179,7 @@ class PromotionGate:
                 actor_id=agent_id,
                 detail="queued for CUI+ approval",
                 classification=(
-                    metadata.classification.upper()
-                    if metadata.classification
-                    else "UNCLASSIFIED"
+                    metadata.classification.upper() if metadata.classification else "UNCLASSIFIED"
                 ),
             )
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+
 from arcllm.config import (
     ModelMetadata,
     ProviderConfig,
@@ -167,9 +168,7 @@ class TestProviderConfigLoading:
         ALL_PROVIDERS,
         ids=[p[0] for p in ALL_PROVIDERS],
     )
-    def test_toml_has_models(
-        self, provider_name, api_key_env, api_key_required, base_url_prefix
-    ):
+    def test_toml_has_models(self, provider_name, api_key_env, api_key_required, base_url_prefix):
         config = load_provider_config(provider_name)
         assert len(config.models) >= 1, f"{provider_name} should have at least 1 model"
 

@@ -249,10 +249,13 @@ class ArcAgent:
         # 13. Emit agent:ready with deferred-binding callbacks.
         # Modules subscribe to this event during startup() to receive
         # agent.run/chat callbacks without core knowing about them.
-        await self._bus.emit("agent:ready", {
-            "run_fn": self.run,
-            "chat_fn": self.chat,
-        })
+        await self._bus.emit(
+            "agent:ready",
+            {
+                "run_fn": self.run,
+                "chat_fn": self.chat,
+            },
+        )
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
         await self._bus.emit("agent:extensions_loaded", {})
@@ -322,10 +325,7 @@ class ArcAgent:
 
         session_id = self._session.session_id if self._session else ""
         if messages:
-            messages_dict = [
-                m.model_dump() if hasattr(m, "model_dump") else m
-                for m in messages
-            ]
+            messages_dict = [m.model_dump() if hasattr(m, "model_dump") else m for m in messages]
         else:
             # Synthesize messages for run() path so memory modules
             # (entity extraction, consolidation) can process the exchange.

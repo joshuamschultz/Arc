@@ -138,6 +138,13 @@ class OpenaiAdapter(BaseAdapter):
                 result.append(self._format_message(msg))
         return result
 
+    @property
+    def _is_reasoning_model(self) -> bool:
+        """Check if the current model is a reasoning model (o-series)."""
+        if self._model_meta and self._model_meta.supports_thinking:
+            return True
+        return False
+
     def _build_request_body(
         self,
         messages: list[Message],
@@ -151,9 +158,18 @@ class OpenaiAdapter(BaseAdapter):
         body: dict[str, Any] = {
             "model": self._model_name,
             "messages": formatted,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
         }
+
+        if self._is_reasoning_model:
+            # Reasoning models (o3, o4-mini, etc.) reject temperature and
+            # max_tokens. Use max_completion_tokens and reasoning_effort.
+            body["max_completion_tokens"] = max_tokens
+            reasoning_effort = kwargs.get("reasoning_effort", "medium")
+            body["reasoning_effort"] = reasoning_effort
+        else:
+            body["max_tokens"] = max_tokens
+            body["temperature"] = temperature
+
         if tools:
             body["tools"] = [self._format_tool(t) for t in tools]
         return body

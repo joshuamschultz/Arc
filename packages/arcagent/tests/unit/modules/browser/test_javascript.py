@@ -40,11 +40,7 @@ class TestBrowserExecuteJS:
         from arcagent.modules.browser.tools.javascript import create_javascript_tools
 
         cdp = _make_cdp()
-        cdp.send.return_value = {
-            "exceptionDetails": {
-                "text": "ReferenceError: x is not defined"
-            }
-        }
+        cdp.send.return_value = {"exceptionDetails": {"text": "ReferenceError: x is not defined"}}
         config = BrowserConfig()
         bus = _make_bus()
 

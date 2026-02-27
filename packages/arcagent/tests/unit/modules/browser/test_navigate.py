@@ -139,9 +139,7 @@ class TestNavigateTool:
         with pytest.raises(URLBlockedError):
             await nav_tool.execute(url="file:///etc/passwd")
 
-        bus.emit.assert_called_once_with(
-            "browser.url_blocked", {"url": "file:///etc/passwd"}
-        )
+        bus.emit.assert_called_once_with("browser.url_blocked", {"url": "file:///etc/passwd"})
 
     async def test_navigate_redirect_blocked(self) -> None:
         """Post-redirect URL validation blocks redirects to denied domains."""

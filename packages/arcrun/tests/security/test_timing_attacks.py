@@ -3,15 +3,16 @@
 Tests that concurrent spawns don't deadlock, interleave events,
 or corrupt state.
 """
+
 from __future__ import annotations
 
 import asyncio
 
 import pytest
 
-from security.conftest import LLMResponse, MockModel
 from arcrun.events import EventBus, verify_chain
 from arcrun.types import Tool
+from security.conftest import LLMResponse, MockModel
 
 
 async def _noop(params: dict, ctx: object) -> str:
@@ -20,7 +21,8 @@ async def _noop(params: dict, ctx: object) -> str:
 
 def _make_tool() -> Tool:
     return Tool(
-        name="echo", description="Echo",
+        name="echo",
+        description="Echo",
         input_schema={"type": "object", "properties": {"input": {"type": "string"}}},
         execute=_noop,
     )
@@ -87,10 +89,7 @@ class TestTimingAttacks:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=emit_batch, args=(f"t{i}", 50))
-            for i in range(10)
-        ]
+        threads = [threading.Thread(target=emit_batch, args=(f"t{i}", 50)) for i in range(10)]
         for t in threads:
             t.start()
         for t in threads:
@@ -105,7 +104,6 @@ class TestTimingAttacks:
     async def test_cancel_during_tool_execution(self):
         """Cancelling a run during tool execution is handled gracefully."""
         from arcrun.loop import run_async
-
         from security.conftest import ToolCall as _TC
 
         # Simulate a slow tool
@@ -114,18 +112,21 @@ class TestTimingAttacks:
             return "done"
 
         tool = Tool(
-            name="slow", description="Slow",
+            name="slow",
+            description="Slow",
             input_schema={"type": "object", "properties": {}},
             execute=slow_tool,
         )
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[_TC(id="tc1", name="slow", arguments={})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Done.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[_TC(id="tc1", name="slow", arguments={})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Done.", stop_reason="end_turn"),
+            ]
+        )
 
         handle = await run_async(model, [tool], "prompt", "task")
         await asyncio.sleep(0.1)  # Let run start

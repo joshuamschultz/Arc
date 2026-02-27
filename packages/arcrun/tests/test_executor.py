@@ -1,13 +1,13 @@
 """Tests for shared tool executor."""
+
 import pytest
+from conftest import Message, ToolCall
 
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.types import SandboxConfig, Tool
-
-from conftest import Message, ToolCall
 
 
 async def _echo(params: dict, ctx: object) -> str:
@@ -65,7 +65,7 @@ class TestExecuteToolCall:
         sandbox = Sandbox(config=SandboxConfig(allowed_tools=["other"]), event_bus=bus)
         tc = ToolCall(id="tc1", name="echo", arguments={"input": "x"})
 
-        result_msg, ok = await execute_tool_call(tc, state, sandbox)
+        _result_msg, ok = await execute_tool_call(tc, state, sandbox)
         assert ok is False
         assert state.tool_calls_made == 0
 
@@ -78,7 +78,7 @@ class TestExecuteToolCall:
         sandbox = Sandbox(config=None, event_bus=bus)
         tc = ToolCall(id="tc1", name="nonexistent", arguments={})
 
-        result_msg, ok = await execute_tool_call(tc, state, sandbox)
+        _result_msg, ok = await execute_tool_call(tc, state, sandbox)
         assert ok is False
         assert state.tool_calls_made == 0
 
@@ -101,7 +101,7 @@ class TestExecuteToolCall:
         sandbox = Sandbox(config=None, event_bus=bus)
         tc = ToolCall(id="tc1", name="strict", arguments={"count": "not_int"})
 
-        result_msg, ok = await execute_tool_call(tc, state, sandbox)
+        _result_msg, ok = await execute_tool_call(tc, state, sandbox)
         assert ok is False
         assert state.tool_calls_made == 0
 
@@ -110,12 +110,14 @@ class TestExecuteToolCall:
         from arcrun.executor import execute_tool_call
 
         bus = _bus()
-        bomb = Tool(name="bomb", description="Explodes", input_schema={"type": "object"}, execute=_explode)
+        bomb = Tool(
+            name="bomb", description="Explodes", input_schema={"type": "object"}, execute=_explode
+        )
         state = _state(bus, tools=[bomb])
         sandbox = Sandbox(config=None, event_bus=bus)
         tc = ToolCall(id="tc1", name="bomb", arguments={})
 
-        result_msg, ok = await execute_tool_call(tc, state, sandbox)
+        _result_msg, ok = await execute_tool_call(tc, state, sandbox)
         assert ok is False
         assert state.tool_calls_made == 0
         error_events = [e for e in bus.events if e.type == "tool.error"]
@@ -139,6 +141,7 @@ class TestExecuteToolCall:
     @pytest.mark.asyncio
     async def test_tool_timeout(self):
         import asyncio
+
         from arcrun.executor import execute_tool_call
 
         async def slow_tool(params, ctx):
@@ -147,9 +150,11 @@ class TestExecuteToolCall:
 
         bus = _bus()
         tool = Tool(
-            name="slow", description="Slow",
+            name="slow",
+            description="Slow",
             input_schema={"type": "object"},
-            execute=slow_tool, timeout_seconds=0.01,
+            execute=slow_tool,
+            timeout_seconds=0.01,
         )
         state = _state(bus, tools=[tool])
         sandbox = Sandbox(config=None, event_bus=bus)
@@ -172,8 +177,10 @@ class TestExecuteToolCall:
 
         bus = _bus()
         tool = Tool(
-            name="verbose", description="Verbose error",
-            input_schema={"type": "object"}, execute=verbose_error,
+            name="verbose",
+            description="Verbose error",
+            input_schema={"type": "object"},
+            execute=verbose_error,
         )
         state = _state(bus, tools=[tool])
         sandbox = Sandbox(config=None, event_bus=bus)
@@ -193,6 +200,7 @@ class TestExecuteToolCall:
     @pytest.mark.asyncio
     async def test_global_timeout_used_when_no_per_tool(self):
         import asyncio
+
         from arcrun.executor import execute_tool_call
 
         async def slow_tool(params, ctx):
@@ -201,8 +209,10 @@ class TestExecuteToolCall:
 
         bus = _bus()
         tool = Tool(
-            name="slow", description="Slow",
-            input_schema={"type": "object"}, execute=slow_tool,
+            name="slow",
+            description="Slow",
+            input_schema={"type": "object"},
+            execute=slow_tool,
         )
         state = _state(bus, tools=[tool])
         state.tool_timeout = 0.01

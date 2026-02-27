@@ -113,14 +113,46 @@ class TestRetrySuccess:
 
 
 class TestRetryExhaustion:
-    async def test_max_retries_exceeded_raises(self, messages, default_config):
+    async def test_max_retries_exceeded_raises_non_429(self, messages, default_config):
         # max_retries=3 means 4 attempts total (1 initial + 3 retries)
-        errors = [_api_error(429)] * 4
+        errors = [_api_error(500)] * 4
         inner = _make_inner(errors)
         module = RetryModule(default_config, inner)
-        with pytest.raises(ArcLLMAPIError, match="429"):
+        with pytest.raises(ArcLLMAPIError, match="500"):
             await module.invoke(messages)
         assert inner.invoke.await_count == 4
+
+    async def test_rate_limit_uses_higher_budget(self, messages):
+        """429 errors get rate_limit_max_retries (default 6) not max_retries (3)."""
+        config = {
+            "max_retries": 3,
+            "rate_limit_max_retries": 6,
+            "backoff_base_seconds": 0.01,
+            "max_wait_seconds": 1.0,
+        }
+        # 7 errors = 1 initial + 6 retries, all exhausted
+        errors = [_api_error(429)] * 7
+        inner = _make_inner(errors)
+        module = RetryModule(config, inner)
+        with pytest.raises(ArcLLMAPIError, match="429"):
+            await module.invoke(messages)
+        assert inner.invoke.await_count == 7
+
+    async def test_rate_limit_succeeds_within_higher_budget(self, messages):
+        """429 errors succeed if they resolve within rate_limit_max_retries."""
+        config = {
+            "max_retries": 3,
+            "rate_limit_max_retries": 6,
+            "backoff_base_seconds": 0.01,
+            "max_wait_seconds": 1.0,
+        }
+        # Fails 5 times, succeeds on 6th retry (attempt index 5)
+        errors = [_api_error(429)] * 5 + [_OK_RESPONSE]
+        inner = _make_inner(errors)
+        module = RetryModule(config, inner)
+        result = await module.invoke(messages)
+        assert result.content == "ok"
+        assert inner.invoke.await_count == 6
 
     async def test_raises_original_error_type(self, messages, default_config):
         inner = _make_inner([httpx.ConnectError("refused")] * 4)
@@ -171,9 +203,7 @@ class TestRetryPassthrough:
 
 class TestRetryBackoff:
     @patch("arcllm.modules.retry.asyncio.sleep", new_callable=AsyncMock)
-    async def test_backoff_increases_exponentially(
-        self, mock_sleep, messages
-    ):
+    async def test_backoff_increases_exponentially(self, mock_sleep, messages):
         config = {
             "max_retries": 3,
             "backoff_base_seconds": 1.0,
@@ -237,18 +267,35 @@ class TestRetryBackoff:
 
 class TestRetryConfig:
     async def test_custom_max_retries(self, messages):
+        # Use 500 to test max_retries (not rate_limit_max_retries)
         config = {
             "max_retries": 1,
             "backoff_base_seconds": 0.01,
             "max_wait_seconds": 1.0,
-            "retryable_status_codes": [429],
+            "retryable_status_codes": [500],
         }
-        inner = _make_inner([_api_error(429)] * 3)
+        inner = _make_inner([_api_error(500)] * 3)
         module = RetryModule(config, inner)
         with pytest.raises(ArcLLMAPIError):
             await module.invoke(messages)
         # 1 initial + 1 retry = 2 attempts
         assert inner.invoke.await_count == 2
+
+    async def test_custom_rate_limit_max_retries(self, messages):
+        """rate_limit_max_retries controls 429 retry budget independently."""
+        config = {
+            "max_retries": 1,
+            "rate_limit_max_retries": 3,
+            "backoff_base_seconds": 0.01,
+            "max_wait_seconds": 1.0,
+            "retryable_status_codes": [429],
+        }
+        inner = _make_inner([_api_error(429)] * 4)
+        module = RetryModule(config, inner)
+        with pytest.raises(ArcLLMAPIError):
+            await module.invoke(messages)
+        # 1 initial + 3 rate-limit retries = 4 attempts
+        assert inner.invoke.await_count == 4
 
     async def test_custom_retry_codes(self, messages):
         config = {
@@ -297,6 +344,11 @@ class TestRetryValidation:
         with pytest.raises(ArcLLMConfigError, match="max_wait_seconds must be > 0"):
             RetryModule({"max_wait_seconds": 0}, inner)
 
+    def test_negative_rate_limit_max_retries_rejected(self):
+        inner = _make_inner([_OK_RESPONSE])
+        with pytest.raises(ArcLLMConfigError, match="rate_limit_max_retries must be >= 0"):
+            RetryModule({"rate_limit_max_retries": -1}, inner)
+
     def test_zero_max_retries_allowed(self):
         """max_retries=0 means 1 attempt only (no retries)."""
         inner = _make_inner([_OK_RESPONSE])
@@ -329,16 +381,35 @@ class TestRetryAfterHeader:
         mock_sleep.assert_awaited_once_with(5.0)
 
     @patch("arcllm.modules.retry.asyncio.sleep", new_callable=AsyncMock)
-    async def test_retry_after_capped_at_max_wait(self, mock_sleep, messages):
-        """Retry-After value is capped at max_wait_seconds."""
+    async def test_retry_after_not_capped_for_429(self, mock_sleep, messages):
+        """429 Retry-After is NOT capped — provider knows when capacity returns."""
         config = {
             "max_retries": 1,
+            "rate_limit_max_retries": 2,
             "backoff_base_seconds": 1.0,
             "max_wait_seconds": 3.0,
             "retryable_status_codes": [429],
         }
         error = ArcLLMAPIError(
             status_code=429, body="rate limited", provider="test", retry_after=10.0
+        )
+        inner = _make_inner([error, _OK_RESPONSE])
+        module = RetryModule(config, inner)
+        await module.invoke(messages)
+        # Full 10.0s honored, not capped to 3.0
+        mock_sleep.assert_awaited_once_with(10.0)
+
+    @patch("arcllm.modules.retry.asyncio.sleep", new_callable=AsyncMock)
+    async def test_retry_after_capped_for_non_429(self, mock_sleep, messages):
+        """Non-429 Retry-After is still capped at max_wait_seconds."""
+        config = {
+            "max_retries": 1,
+            "backoff_base_seconds": 1.0,
+            "max_wait_seconds": 3.0,
+            "retryable_status_codes": [503],
+        }
+        error = ArcLLMAPIError(
+            status_code=503, body="unavailable", provider="test", retry_after=10.0
         )
         inner = _make_inner([error, _OK_RESPONSE])
         module = RetryModule(config, inner)
@@ -372,14 +443,25 @@ class TestRetryAfterHeader:
 
 class TestRetryLogging:
     async def test_logs_retry_attempts(self, messages, default_config, caplog):
-        inner = _make_inner([_api_error(429), _OK_RESPONSE])
+        # Use 500 for predictable max_retries=3
+        inner = _make_inner([_api_error(500), _OK_RESPONSE])
         module = RetryModule(default_config, inner)
         with caplog.at_level(logging.WARNING, logger="arcllm.modules.retry"):
             await module.invoke(messages)
         assert "Retry attempt 1/3" in caplog.text
 
+    async def test_logs_429_uses_rate_limit_budget(self, messages, default_config, caplog):
+        """429 logging shows rate_limit_max_retries, not max_retries."""
+        inner = _make_inner([_api_error(429), _OK_RESPONSE])
+        module = RetryModule(default_config, inner)
+        with caplog.at_level(logging.WARNING, logger="arcllm.modules.retry"):
+            await module.invoke(messages)
+        # Default rate_limit_max_retries=6
+        assert "Retry attempt 1/6" in caplog.text
+
     async def test_logs_exhaustion(self, messages, default_config, caplog):
-        inner = _make_inner([_api_error(429)] * 4)
+        # Use 500 for predictable max_retries=3
+        inner = _make_inner([_api_error(500)] * 4)
         module = RetryModule(default_config, inner)
         with caplog.at_level(logging.ERROR, logger="arcllm.modules.retry"):
             with pytest.raises(ArcLLMAPIError):

@@ -143,9 +143,7 @@ def _build_adapter(
     if vault_cfg.backend and vault_resolver is not None:
         vault_path = config.provider.vault_path
         api_key_env = config.provider.api_key_env
-        resolved_api_key = vault_resolver.resolve_api_key(
-            api_key_env, vault_path or None
-        )
+        resolved_api_key = vault_resolver.resolve_api_key(api_key_env, vault_path or None)
 
     adapter_class = _get_adapter_class(provider_name)
     return adapter_class(config, resolved_model, resolved_api_key=resolved_api_key)
@@ -239,9 +237,7 @@ def load_model(
         for classification, rule in rules.items():
             rule_provider = rule.get("provider")
             if not rule_provider:
-                raise ArcLLMConfigError(
-                    f"Routing rule '{classification}' missing 'provider'"
-                )
+                raise ArcLLMConfigError(f"Routing rule '{classification}' missing 'provider'")
             adapters[classification] = _build_adapter(
                 rule_provider, rule.get("model"), vault_cfg, _vault_resolver_cache
             )
@@ -310,9 +306,7 @@ def load_model(
             telemetry_config["budget_scope"] = budget_scope
 
         # Source default_max_tokens from global config defaults
-        telemetry_config.setdefault(
-            "default_max_tokens", _global_config_cache.defaults.max_tokens
-        )
+        telemetry_config.setdefault("default_max_tokens", _global_config_cache.defaults.max_tokens)
 
         result = TelemetryModule(telemetry_config, result)
 

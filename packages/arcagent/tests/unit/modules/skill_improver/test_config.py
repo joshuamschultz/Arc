@@ -123,4 +123,4 @@ class TestSkillImproverConfigValidation:
 
     def test_wrong_type_for_float_field(self) -> None:
         with pytest.raises(ValidationError):
-            SkillImproverConfig(max_token_ratio="bad")  # type: ignore[arg-type]  # noqa: S106 — not a password
+            SkillImproverConfig(max_token_ratio="bad")  # type: ignore[arg-type]

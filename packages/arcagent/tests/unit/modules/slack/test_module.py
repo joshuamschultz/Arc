@@ -65,9 +65,7 @@ class TestModuleStartup:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
-        subscribed_events = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed_events = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "agent:shutdown" in subscribed_events
 
     @pytest.mark.asyncio
@@ -75,9 +73,7 @@ class TestModuleStartup:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
-        subscribed_events = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed_events = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "agent:ready" in subscribed_events
 
     @pytest.mark.asyncio
@@ -85,9 +81,7 @@ class TestModuleStartup:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
-        subscribed_events = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed_events = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "schedule:failed" in subscribed_events
 
     @pytest.mark.asyncio
@@ -118,9 +112,7 @@ class TestModuleStartup:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             MockBot.return_value = mock_bot
@@ -144,9 +136,7 @@ class TestModuleShutdown:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
@@ -161,9 +151,7 @@ class TestModuleShutdown:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
@@ -181,9 +169,7 @@ class TestSetAgentChatFn:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             mock_bot.set_agent_chat_fn = MagicMock()
@@ -206,9 +192,7 @@ class TestScheduleEventHandlers:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             mock_bot.send_notification = AsyncMock()
@@ -239,9 +223,7 @@ class TestNotifyUserTool:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             mock_bot.send_notification = AsyncMock()
@@ -252,9 +234,7 @@ class TestNotifyUserTool:
             tool = ctx.tool_registry.register.call_args[0][0]
             result = await tool.execute(message="Important finding: X is broken")
 
-            mock_bot.send_notification.assert_called_once_with(
-                "Important finding: X is broken"
-            )
+            mock_bot.send_notification.assert_called_once_with("Important finding: X is broken")
             import json
 
             data = json.loads(result)
@@ -265,9 +245,7 @@ class TestNotifyUserTool:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
 
-        with patch(
-            "arcagent.modules.slack.bot.SlackBot"
-        ) as MockBot:
+        with patch("arcagent.modules.slack.bot.SlackBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
             MockBot.return_value = mock_bot

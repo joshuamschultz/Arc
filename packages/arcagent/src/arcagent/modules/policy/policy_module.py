@@ -158,9 +158,7 @@ class PolicyModule:
             return
 
         session_id = ctx.data.get("session_id", "")
-        await self._safe_evaluate(
-            self._session_messages, model, session_id=session_id
-        )
+        await self._safe_evaluate(self._session_messages, model, session_id=session_id)
 
     async def _safe_evaluate(
         self,

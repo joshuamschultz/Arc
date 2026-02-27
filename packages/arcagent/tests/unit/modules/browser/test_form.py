@@ -82,9 +82,7 @@ class TestBrowserFillForm:
         tools = create_form_tools(cdp, ax, config, bus)
         fill_tool = next(t for t in tools if t.name == "browser_fill_form")
 
-        result = await fill_tool.execute(
-            fields={"First Name": "John", "Last Name": "Doe"}
-        )
+        result = await fill_tool.execute(fields={"First Name": "John", "Last Name": "Doe"})
         assert "2" in result  # Reports 2 fields filled
 
         # Verify Input.insertText was used (not char-by-char)
@@ -108,7 +106,5 @@ class TestBrowserFillForm:
         tools = create_form_tools(cdp, ax, config, bus)
         fill_tool = next(t for t in tools if t.name == "browser_fill_form")
 
-        result = await fill_tool.execute(
-            fields={"Nonexistent Field": "value"}
-        )
+        result = await fill_tool.execute(fields={"Nonexistent Field": "value"})
         assert "not found" in result.lower() or "failed" in result.lower()

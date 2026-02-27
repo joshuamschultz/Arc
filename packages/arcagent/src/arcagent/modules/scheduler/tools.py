@@ -22,10 +22,16 @@ from arcagent.modules.scheduler.store import ScheduleStore
 _logger = logging.getLogger("arcagent.scheduler.tools")
 
 # Fields that schedule_update is allowed to modify.
-_UPDATABLE_FIELDS = frozenset({
-    "prompt", "enabled", "expression", "every_seconds",
-    "timeout_seconds", "active_hours",
-})
+_UPDATABLE_FIELDS = frozenset(
+    {
+        "prompt",
+        "enabled",
+        "expression",
+        "every_seconds",
+        "timeout_seconds",
+        "active_hours",
+    }
+)
 
 
 def create_scheduler_tools(
@@ -89,10 +95,7 @@ def create_scheduler_tools(
         """Update an existing schedule with allowlisted fields only."""
         try:
             # Only allow explicitly permitted fields.
-            updates = {
-                k: v for k, v in kwargs.items()
-                if v is not None and k in _UPDATABLE_FIELDS
-            }
+            updates = {k: v for k, v in kwargs.items() if v is not None and k in _UPDATABLE_FIELDS}
             if not updates:
                 return json.dumps({"error": "No updatable fields provided"})
             if "prompt" in updates:

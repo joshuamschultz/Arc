@@ -1,4 +1,5 @@
 """Message construction helpers. Uses arcllm types directly."""
+
 from __future__ import annotations
 
 from typing import Any

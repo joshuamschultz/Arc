@@ -90,9 +90,7 @@ class TeamMemoryService:
 
         # Classification filter
         if self._classifier is not None:
-            results = self._classifier.filter_results(
-                results, agent_classification
-            )
+            results = self._classifier.filter_results(results, agent_classification)
 
         # Audit log search (NIST 800-53 AU-2)
         if self._audit:
@@ -165,9 +163,7 @@ class TeamMemoryService:
 
         # Classification filter
         if self._classifier is not None:
-            entries = self._classifier.filter_results(
-                entries, agent_classification
-            )
+            entries = self._classifier.filter_results(entries, agent_classification)
 
         return entries
 

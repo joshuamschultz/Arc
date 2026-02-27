@@ -17,7 +17,6 @@ from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.telegram import TelegramModule
-from arcagent.modules.telegram.bot import TelegramBot
 
 
 def _make_telemetry() -> AgentTelemetry:
@@ -28,11 +27,11 @@ def _make_telemetry() -> AgentTelemetry:
 
 
 def _make_bus() -> ModuleBus:
-    config = ArcAgentConfig(
+    ArcAgentConfig(
         agent=AgentConfig(name="test", workspace="./test-workspace"),
         llm=LLMConfig(model="test/model"),
     )
-    telemetry = _make_telemetry()
+    _make_telemetry()
     return ModuleBus()
 
 
@@ -179,6 +178,7 @@ class TestProactiveNotification:
         assert tool.name == "notify_user"
 
         import json
+
         result = await tool.execute(message="Found critical issue in module X")
         data = json.loads(result)
         assert data["status"] == "sent"

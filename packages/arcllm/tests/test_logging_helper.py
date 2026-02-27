@@ -39,8 +39,12 @@ class TestLogStructured:
         test_logger = logging.getLogger("test.structured")
         with caplog.at_level(logging.INFO, logger="test.structured"):
             log_structured(
-                test_logger, logging.INFO, "Test",
-                present="yes", missing=None, also_here=1,
+                test_logger,
+                logging.INFO,
+                "Test",
+                present="yes",
+                missing=None,
+                also_here=1,
             )
         assert "present=yes" in caplog.text
         assert "also_here=1" in caplog.text
@@ -56,7 +60,9 @@ class TestLogStructured:
         test_logger = logging.getLogger("test.structured")
         with caplog.at_level(logging.INFO, logger="test.structured"):
             log_structured(
-                test_logger, logging.INFO, "Test",
+                test_logger,
+                logging.INFO,
+                "Test",
                 model="evil\nINJECTED",
             )
         assert "model=evil\\nINJECTED" in caplog.text

@@ -36,8 +36,12 @@ def make_entry(
 ) -> ScheduleEntry:
     """Create a valid ScheduleEntry for tests."""
     return ScheduleEntry(
-        id=id, type=type, prompt=prompt, every_seconds=every_seconds,
-        enabled=enabled, **kwargs,
+        id=id,
+        type=type,
+        prompt=prompt,
+        every_seconds=every_seconds,
+        enabled=enabled,
+        **kwargs,
     )
 
 

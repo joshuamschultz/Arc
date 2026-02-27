@@ -8,6 +8,7 @@ correctly through the decorator chain.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from arcllm.exceptions import ArcLLMBudgetError
 from arcllm.modules.routing import RoutingModule
 from arcllm.modules.telemetry import TelemetryModule, clear_budgets

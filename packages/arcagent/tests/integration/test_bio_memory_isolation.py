@@ -40,7 +40,8 @@ def _write_episode(episodes_dir: Path, slug: str, tags: list[str], body: str) ->
     fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False).strip()
     filename = f"2026-02-25-{slug}.md"
     (episodes_dir / filename).write_text(
-        f"---\n{fm_text}\n---\n\n{body}\n", encoding="utf-8",
+        f"---\n{fm_text}\n---\n\n{body}\n",
+        encoding="utf-8",
     )
 
 
@@ -73,7 +74,9 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
         d.mkdir(parents=True)
 
     # Agent A daily notes
-    dn_a_fm = yaml.dump({"date": "2026-02-25", "agent": "agent_a"}, default_flow_style=False).strip()
+    dn_a_fm = yaml.dump(
+        {"date": "2026-02-25", "agent": "agent_a"}, default_flow_style=False
+    ).strip()
     (dn_a / "2026-02-25.md").write_text(
         f"---\n{dn_a_fm}\n---\n\n# 2026-02-25\n\n## 10:00 UTC\n- Agent A researched topic-x\n",
         encoding="utf-8",
@@ -81,10 +84,16 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
     # Agent A working memory
     fm = yaml.dump({"type": "note"}, default_flow_style=False).strip()
     (mem_a / "working.md").write_text(
-        f"---\n{fm}\n---\n\nAgent A is researching topic-x.", encoding="utf-8",
+        f"---\n{fm}\n---\n\nAgent A is researching topic-x.",
+        encoding="utf-8",
     )
     # Agent A episode
-    _write_episode(ep_a, "agent-a-discovered-bug", ["bug", "important"], "Agent A found a critical bug in module X.")
+    _write_episode(
+        ep_a,
+        "agent-a-discovered-bug",
+        ["bug", "important"],
+        "Agent A found a critical bug in module X.",
+    )
     # Agent A private entity
     _write_entity(ent_a / "alice-smith.md", "Alice Smith", "Alice is Agent A's primary contact.")
 
@@ -98,7 +107,9 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
         d.mkdir(parents=True)
 
     # Agent B daily notes
-    dn_b_fm = yaml.dump({"date": "2026-02-25", "agent": "agent_b"}, default_flow_style=False).strip()
+    dn_b_fm = yaml.dump(
+        {"date": "2026-02-25", "agent": "agent_b"}, default_flow_style=False
+    ).strip()
     (dn_b / "2026-02-25.md").write_text(
         f"---\n{dn_b_fm}\n---\n\n# 2026-02-25\n\n## 14:00 UTC\n- Agent B deployed service-y\n",
         encoding="utf-8",
@@ -106,18 +117,32 @@ def team_layout(tmp_path: Path) -> dict[str, Path]:
     # Agent B working memory
     fm = yaml.dump({"type": "note"}, default_flow_style=False).strip()
     (mem_b / "working.md").write_text(
-        f"---\n{fm}\n---\n\nAgent B is deploying service-y.", encoding="utf-8",
+        f"---\n{fm}\n---\n\nAgent B is deploying service-y.",
+        encoding="utf-8",
     )
     # Agent B episode
-    _write_episode(ep_b, "agent-b-deployed-service", ["deploy", "ops"], "Agent B deployed service Y to production.")
+    _write_episode(
+        ep_b,
+        "agent-b-deployed-service",
+        ["deploy", "ops"],
+        "Agent B deployed service Y to production.",
+    )
     # Agent B private entity
     _write_entity(ent_b / "bob-jones.md", "Bob Jones", "Bob is Agent B's primary contact.")
 
     # Shared team entities
     shared_ent = team / "shared" / "entities"
     shared_ent.mkdir(parents=True)
-    _write_entity(shared_ent / "acme-corp.md", "Acme Corp", "Acme Corp is our primary customer. Both agents work with them.")
-    _write_entity(shared_ent / "project-phoenix.md", "Project Phoenix", "Cross-team initiative led by both agents.")
+    _write_entity(
+        shared_ent / "acme-corp.md",
+        "Acme Corp",
+        "Acme Corp is our primary customer. Both agents work with them.",
+    )
+    _write_entity(
+        shared_ent / "project-phoenix.md",
+        "Project Phoenix",
+        "Cross-team initiative led by both agents.",
+    )
 
     return {
         "team": team,
@@ -135,11 +160,13 @@ class TestPrivateMemoryIsolation:
     """Agent A cannot see Agent B's private memory."""
 
     def test_agent_a_cannot_see_agent_b_episodes(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -151,11 +178,13 @@ class TestPrivateMemoryIsolation:
         assert "2026-02-25-agent-b-deployed-service.md" not in episode_names
 
     def test_agent_b_cannot_see_agent_a_episodes(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_b = Retriever(
-            team_layout["mem_b"], config,
+            team_layout["mem_b"],
+            config,
             workspace=team_layout["ws_b"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -167,11 +196,13 @@ class TestPrivateMemoryIsolation:
         assert "2026-02-25-agent-a-discovered-bug.md" not in episode_names
 
     def test_agent_a_cannot_see_agent_b_daily_notes(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -184,11 +215,13 @@ class TestPrivateMemoryIsolation:
         assert "Agent B" not in combined
 
     def test_agent_a_cannot_see_agent_b_working_memory(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -205,11 +238,13 @@ class TestPrivateEntityIsolation:
     """Agent A cannot see Agent B's private entities."""
 
     def test_agent_a_sees_own_entities_not_agent_b(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -221,11 +256,13 @@ class TestPrivateEntityIsolation:
         assert "bob-jones.md" not in names
 
     def test_agent_b_sees_own_entities_not_agent_a(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_b = Retriever(
-            team_layout["mem_b"], config,
+            team_layout["mem_b"],
+            config,
             workspace=team_layout["ws_b"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -238,12 +275,14 @@ class TestPrivateEntityIsolation:
 
     @pytest.mark.anyio
     async def test_recall_rejects_cross_agent_entity(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         """memory_recall should not return another agent's entity."""
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -262,11 +301,13 @@ class TestTeamEntitySharing:
     """Both agents can see shared team entities."""
 
     def test_agent_a_sees_team_entities(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -278,11 +319,13 @@ class TestTeamEntitySharing:
         assert "project-phoenix.md" in names
 
     def test_agent_b_sees_team_entities(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever_b = Retriever(
-            team_layout["mem_b"], config,
+            team_layout["mem_b"],
+            config,
             workspace=team_layout["ws_b"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -295,12 +338,14 @@ class TestTeamEntitySharing:
 
     @pytest.mark.anyio
     async def test_search_finds_team_entities(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         """memory_search returns team entities for both agents."""
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -312,7 +357,8 @@ class TestTeamEntitySharing:
 
     @pytest.mark.anyio
     async def test_team_entities_scored_lower_than_private(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         """Team entities receive a penalty vs private entities of equal relevance."""
         config = BioMemoryConfig()
@@ -325,7 +371,8 @@ class TestTeamEntitySharing:
         )
 
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )
@@ -345,11 +392,13 @@ class TestNoTeamEntities:
     """When team_entities_dir is None, only private memory is searched."""
 
     def test_no_team_dir_only_private_entities(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=None,  # No team
         )
@@ -363,11 +412,13 @@ class TestNoTeamEntities:
 
     @pytest.mark.anyio
     async def test_search_without_team_only_returns_private(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         config = BioMemoryConfig()
         retriever = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=None,
         )
@@ -383,7 +434,8 @@ class TestFullIsolationSearch:
 
     @pytest.mark.anyio
     async def test_unscoped_search_isolates_properly(
-        self, team_layout: dict[str, Path],
+        self,
+        team_layout: dict[str, Path],
     ) -> None:
         """An unscoped search (all tiers) should return:
         - Agent's own episodes, daily notes, working memory
@@ -393,7 +445,8 @@ class TestFullIsolationSearch:
         """
         config = BioMemoryConfig()
         retriever_a = Retriever(
-            team_layout["mem_a"], config,
+            team_layout["mem_a"],
+            config,
             workspace=team_layout["ws_a"],
             team_entities_dir=team_layout["shared_ent"],
         )

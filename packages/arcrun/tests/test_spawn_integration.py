@@ -1,11 +1,10 @@
 """Integration tests for recursive agent spawning via run()."""
 
 import pytest
+from conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun.loop import run
 from arcrun.types import Tool
-
-from conftest import LLMResponse, MockModel, ToolCall
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:

@@ -27,19 +27,13 @@ def edit_tool(workspace: Path) -> Any:
 class TestEditTool:
     """Core edit functionality."""
 
-    async def test_replace_unique_string(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_replace_unique_string(self, workspace: Path, edit_tool: Any) -> None:
         (workspace / "file.txt").write_text("hello world")
-        result = await edit_tool(
-            file_path="file.txt", old_string="hello", new_string="goodbye"
-        )
+        result = await edit_tool(file_path="file.txt", old_string="hello", new_string="goodbye")
         assert "Replaced 1" in result
         assert (workspace / "file.txt").read_text() == "goodbye world"
 
-    async def test_replace_all_occurrences(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_replace_all_occurrences(self, workspace: Path, edit_tool: Any) -> None:
         (workspace / "file.txt").write_text("aaa bbb aaa")
         result = await edit_tool(
             file_path="file.txt",
@@ -54,38 +48,26 @@ class TestEditTool:
         self, workspace: Path, edit_tool: Any
     ) -> None:
         (workspace / "file.txt").write_text("aaa bbb aaa")
-        result = await edit_tool(
-            file_path="file.txt", old_string="aaa", new_string="ccc"
-        )
+        result = await edit_tool(file_path="file.txt", old_string="aaa", new_string="ccc")
         assert "Error" in result
         assert "2 times" in result
         # File should be unchanged
         assert (workspace / "file.txt").read_text() == "aaa bbb aaa"
 
-    async def test_old_string_not_found(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_old_string_not_found(self, workspace: Path, edit_tool: Any) -> None:
         (workspace / "file.txt").write_text("hello world")
-        result = await edit_tool(
-            file_path="file.txt", old_string="missing", new_string="x"
-        )
+        result = await edit_tool(file_path="file.txt", old_string="missing", new_string="x")
         assert "Error" in result
         assert "not found" in result
 
     async def test_file_not_found(self, edit_tool: Any) -> None:
-        result = await edit_tool(
-            file_path="missing.txt", old_string="a", new_string="b"
-        )
+        result = await edit_tool(file_path="missing.txt", old_string="a", new_string="b")
         assert "Error" in result
         assert "not found" in result
 
-    async def test_edit_directory_returns_error(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_edit_directory_returns_error(self, workspace: Path, edit_tool: Any) -> None:
         (workspace / "subdir").mkdir()
-        result = await edit_tool(
-            file_path="subdir", old_string="a", new_string="b"
-        )
+        result = await edit_tool(file_path="subdir", old_string="a", new_string="b")
         assert "Error" in result
         assert "Not a file" in result
 
@@ -94,15 +76,11 @@ class TestEditTool:
     ) -> None:
         """When count==1, replace_all=False should replace that one."""
         (workspace / "file.txt").write_text("old value here")
-        result = await edit_tool(
-            file_path="file.txt", old_string="old", new_string="new"
-        )
+        result = await edit_tool(file_path="file.txt", old_string="old", new_string="new")
         assert "Replaced 1" in result
         assert (workspace / "file.txt").read_text() == "new value here"
 
-    async def test_replacement_count_accuracy(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_replacement_count_accuracy(self, workspace: Path, edit_tool: Any) -> None:
         """replace_all=False should report 1, not total count."""
         (workspace / "file.txt").write_text("unique_string here")
         result = await edit_tool(
@@ -118,15 +96,11 @@ class TestEditToolSecurity:
 
     async def test_empty_old_string_blocked(self, edit_tool: Any) -> None:
         """Empty old_string would match everywhere — must be blocked."""
-        result = await edit_tool(
-            file_path="any.txt", old_string="", new_string="injected"
-        )
+        result = await edit_tool(file_path="any.txt", old_string="", new_string="injected")
         assert "Error" in result
         assert "empty" in result
 
-    async def test_symlink_blocked(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_symlink_blocked(self, workspace: Path, edit_tool: Any) -> None:
         target = workspace / "real.txt"
         target.write_text("original content")
         link = workspace / "link.txt"
@@ -141,13 +115,9 @@ class TestEditToolSecurity:
         # Original unchanged
         assert target.read_text() == "original content"
 
-    async def test_binary_file_returns_error(
-        self, workspace: Path, edit_tool: Any
-    ) -> None:
+    async def test_binary_file_returns_error(self, workspace: Path, edit_tool: Any) -> None:
         (workspace / "binary.bin").write_bytes(b"\x80\x81\x82\x83")
-        result = await edit_tool(
-            file_path="binary.bin", old_string="x", new_string="y"
-        )
+        result = await edit_tool(file_path="binary.bin", old_string="x", new_string="y")
         assert "Error" in result
         assert "not valid UTF-8" in result
 

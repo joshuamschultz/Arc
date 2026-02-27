@@ -17,24 +17,26 @@ from arcagent.modules.browser.errors import ElementNotFoundError
 _logger = logging.getLogger("arcagent.modules.browser.accessibility")
 
 # Roles considered interactive (get ref IDs for LLM targeting)
-_INTERACTIVE_ROLES = frozenset({
-    "button",
-    "checkbox",
-    "combobox",
-    "heading",
-    "link",
-    "listbox",
-    "menuitem",
-    "option",
-    "radio",
-    "searchbox",
-    "slider",
-    "spinbutton",
-    "switch",
-    "tab",
-    "textbox",
-    "treeitem",
-})
+_INTERACTIVE_ROLES = frozenset(
+    {
+        "button",
+        "checkbox",
+        "combobox",
+        "heading",
+        "link",
+        "listbox",
+        "menuitem",
+        "option",
+        "radio",
+        "searchbox",
+        "slider",
+        "spinbutton",
+        "switch",
+        "tab",
+        "textbox",
+        "treeitem",
+    }
+)
 
 
 @dataclass
@@ -199,7 +201,7 @@ class AccessibilityManager:
     def _format_static(self, role: str, name: str) -> str:
         """Format a non-interactive element."""
         if name:
-            return f"{role} \"{name}\""
+            return f'{role} "{name}"'
         return ""
 
 

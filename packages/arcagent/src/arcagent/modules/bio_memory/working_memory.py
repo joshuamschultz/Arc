@@ -49,7 +49,9 @@ class WorkingMemory:
         truncated = clean[:max_chars]
 
         fm_text = yaml.dump(
-            frontmatter, default_flow_style=False, sort_keys=False,
+            frontmatter,
+            default_flow_style=False,
+            sort_keys=False,
         ).strip()
         parts = [f"---\n{fm_text}\n---", "", truncated, ""]
         await asyncio.to_thread(atomic_write_text, self._path, "\n".join(parts))
@@ -64,7 +66,9 @@ class WorkingMemory:
             return
         fm_text = yaml.dump({}, default_flow_style=False, sort_keys=False).strip()
         await asyncio.to_thread(
-            atomic_write_text, self._path, f"---\n{fm_text}\n---\n",
+            atomic_write_text,
+            self._path,
+            f"---\n{fm_text}\n---\n",
         )
 
     def estimate_tokens(self, text: str) -> int:

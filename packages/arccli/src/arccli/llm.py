@@ -165,10 +165,10 @@ def provider(name: str, as_json: bool) -> None:
 
     try:
         cfg = load_provider_config(name)
-    except ArcLLMConfigError:
+    except ArcLLMConfigError as e:
         raise click.ClickException(
             f"Provider '{name}' not found. Run `arc llm providers` to see available."
-        )
+        ) from e
 
     if as_json:
         print_json(
@@ -231,7 +231,7 @@ def models(provider_filter: str | None, tools: bool, vision: bool, as_json: bool
     for name in names:
         try:
             cfg = load_provider_config(name)
-        except Exception:
+        except Exception:  # noqa: S112 - skip providers that fail to load
             continue
         for model_name, meta in cfg.models.items():
             if tools and not meta.supports_tools:
@@ -324,7 +324,7 @@ def call(
             otel=otel,
         )
     except Exception as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
     messages = []
     if system_msg:
@@ -365,7 +365,7 @@ def call(
     try:
         asyncio.run(_run())
     except Exception as e:
-        raise click.ClickException(str(e))
+        raise click.ClickException(str(e)) from e
 
 
 # ---------------------------------------------------------------------------

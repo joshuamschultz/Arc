@@ -4,11 +4,11 @@ __version__ = "0.1.0"
 
 from arcteam.audit import AuditLogger
 from arcteam.config import TeamConfig
+from arcteam.memory.config import TeamMemoryConfig
+from arcteam.memory.service import TeamMemoryService
 from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry
 from arcteam.storage import FileBackend, MemoryBackend, StorageBackend
-from arcteam.memory.config import TeamMemoryConfig
-from arcteam.memory.service import TeamMemoryService
 from arcteam.types import (
     AuditRecord,
     Channel,

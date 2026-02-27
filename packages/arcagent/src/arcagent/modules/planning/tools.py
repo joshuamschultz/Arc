@@ -36,7 +36,8 @@ def _save_tasks(tasks_path: Path, tasks: list[dict[str, Any]]) -> None:
 
 
 def _find_task(
-    tasks: list[dict[str, Any]], task_id: str,
+    tasks: list[dict[str, Any]],
+    task_id: str,
 ) -> dict[str, Any] | None:
     """Find a task by ID in the task list."""
     return next((t for t in tasks if t["id"] == task_id), None)
@@ -145,9 +146,7 @@ def create_planning_tools(workspace: Path) -> list[RegisteredTool]:
         return json.dumps(target)
 
     @native_tool(
-        description=(
-            "Mark a task as done and record the result summary."
-        ),
+        description=("Mark a task as done and record the result summary."),
         source="planning",
         timeout_seconds=10,
         params={
@@ -174,11 +173,13 @@ def create_planning_tools(workspace: Path) -> list[RegisteredTool]:
         _save_tasks(tasks_path, tasks)
 
         _logger.info("Task %s completed", id)
-        return json.dumps({
-            "id": id,
-            "status": "done",
-            "result": result,
-        })
+        return json.dumps(
+            {
+                "id": id,
+                "status": "done",
+                "result": result,
+            }
+        )
 
     return [
         task_create.tool,

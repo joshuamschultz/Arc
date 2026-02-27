@@ -427,7 +427,9 @@ class TestContextGuardTruncation:
         module = _make_module(tmp_path)
         # Default budget is 2000 tokens = 8000 chars
         # Create content much larger than that
-        large_content = "\n".join([f"Line {i:04d} with some additional text to make it longer" for i in range(500)])
+        large_content = "\n".join(
+            [f"Line {i:04d} with some additional text to make it longer" for i in range(500)]
+        )
         ctx = _make_ctx(
             "agent:pre_tool",
             {
@@ -577,14 +579,25 @@ class TestMemorySearchResultFormatting:
     async def test_memory_search_with_results(self, tmp_path: Path) -> None:
         """Memory search formats results with boundary markers."""
         from arcagent.modules.memory.hybrid_search import SearchResult
+
         module = _make_module(tmp_path)
 
         # Mock hybrid_search to return results
         from unittest.mock import AsyncMock
-        module._hybrid_search.search = AsyncMock(return_value=[
-            SearchResult(source="notes/2026-02-15.md", content="Test content", score=0.9, match_type="bm25"),
-            SearchResult(source="context.md", content="More content", score=0.7, match_type="bm25"),
-        ])
+
+        module._hybrid_search.search = AsyncMock(
+            return_value=[
+                SearchResult(
+                    source="notes/2026-02-15.md",
+                    content="Test content",
+                    score=0.9,
+                    match_type="bm25",
+                ),
+                SearchResult(
+                    source="context.md", content="More content", score=0.7, match_type="bm25"
+                ),
+            ]
+        )
 
         result = await module._handle_memory_search(query="test")
 
@@ -755,5 +768,3 @@ class TestBashTargetsMemoryShlex:
             assert module._bash_targets_memory("cat notes/test.md")
         finally:
             os.chdir(old_cwd)
-
-

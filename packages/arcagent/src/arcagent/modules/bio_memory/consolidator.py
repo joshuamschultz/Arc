@@ -46,8 +46,20 @@ _MAX_NEW_ENTITIES_PER_SESSION = 3
 _MAX_NEW_LINKS_PER_SESSION = 10
 
 # Pre-filter signal words (two-gate significance — SimpleMem research)
-_SIGNAL_WORDS = ("correct", "change", "update", "decide", "important", "remember",
-                 "learn", "prefer", "always", "never", "mistake", "fix")
+_SIGNAL_WORDS = (
+    "correct",
+    "change",
+    "update",
+    "decide",
+    "important",
+    "remember",
+    "learn",
+    "prefer",
+    "always",
+    "never",
+    "mistake",
+    "fix",
+)
 
 # Cap conversation formatting to prevent unbounded LLM prompts
 _MAX_CONVERSATION_CHARS = 50_000
@@ -176,6 +188,7 @@ class Consolidator:
 
         try:
             from arcllm.types import Message
+
             response = await model.invoke([Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             return bool(data.get("significant", False))
@@ -209,6 +222,7 @@ class Consolidator:
 
         try:
             from arcllm.types import Message
+
             response = await model.invoke([Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
         except _LLM_PARSE_ERRORS:
@@ -239,7 +253,9 @@ class Consolidator:
             "entities": entities,
         }
         fm_text = yaml.dump(
-            frontmatter, default_flow_style=False, sort_keys=False,
+            frontmatter,
+            default_flow_style=False,
+            sort_keys=False,
         ).strip()
 
         content = f"---\n{fm_text}\n---\n\n{narrative}\n"
@@ -336,6 +352,7 @@ class Consolidator:
 
         try:
             from arcllm.types import Message
+
             response = await model.invoke([Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             if not isinstance(data, dict):
@@ -348,7 +365,8 @@ class Consolidator:
     # -- LC-4: Update touched entities --
 
     async def _update_touched_entities(
-        self, touched_list: list[str],
+        self,
+        touched_list: list[str],
     ) -> int:
         """Update last_verified and append Recent Activity for touched entities."""
         updated = 0
@@ -382,7 +400,8 @@ class Consolidator:
     # -- LC-4.5: Append structured facts --
 
     def _append_entity_facts(
-        self, entity_facts: dict[str, list[dict[str, Any]]],
+        self,
+        entity_facts: dict[str, list[dict[str, Any]]],
     ) -> int:
         """Append compact fact triplets to entity Key Facts sections."""
         appended = 0
@@ -438,7 +457,8 @@ class Consolidator:
     # -- LC-5: Apply corrections --
 
     async def _apply_corrections(
-        self, corrections_list: list[dict[str, str]],
+        self,
+        corrections_list: list[dict[str, str]],
     ) -> int:
         """Append corrections to entity Constraints and Lessons section."""
         applied = 0
@@ -475,7 +495,8 @@ class Consolidator:
     # -- LC-6: Co-occurrence linking --
 
     def _add_co_occurrence_links(
-        self, co_occurrence_pairs: list[list[str]],
+        self,
+        co_occurrence_pairs: list[list[str]],
     ) -> int:
         """Add bidirectional wiki-links for co-occurring entities.
 
@@ -519,7 +540,8 @@ class Consolidator:
     # -- LC-7: New entity stubs --
 
     async def _create_entity_stubs(
-        self, new_entities: list[dict[str, str]],
+        self,
+        new_entities: list[dict[str, str]],
     ) -> int:
         """Create stub files for new entities with v2.1 schema."""
         created = 0
@@ -549,7 +571,8 @@ class Consolidator:
         return created
 
     def _build_entity_stub(
-        self, entity: dict[str, str],
+        self,
+        entity: dict[str, str],
     ) -> tuple[Path, str, dict[str, Any], str, str] | None:
         """Build entity stub content. Returns (path, content, fm, slug, type) or None."""
         entity_id = entity.get("id", "")
@@ -586,7 +609,9 @@ class Consolidator:
             "classification": "unclassified",
         }
         fm_text = yaml.dump(
-            frontmatter, default_flow_style=False, sort_keys=False,
+            frontmatter,
+            default_flow_style=False,
+            sort_keys=False,
         ).strip()
 
         fact_lines = self._format_initial_facts(entity.get("facts", []), today)
@@ -604,7 +629,9 @@ class Consolidator:
         return target_path, content, frontmatter, slug, entity_type
 
     def _format_initial_facts(
-        self, raw_facts: list[Any], today: str,
+        self,
+        raw_facts: list[Any],
+        today: str,
     ) -> str:
         """Format raw fact dicts as compact triplet lines."""
         lines = ""
@@ -619,7 +646,10 @@ class Consolidator:
         return lines
 
     async def _try_team_promote(
-        self, slug: str, content: str, frontmatter: dict[str, Any],
+        self,
+        slug: str,
+        content: str,
+        frontmatter: dict[str, Any],
     ) -> None:
         """Attempt team promotion if service is available."""
         if not self._team_service_factory:
@@ -629,6 +659,7 @@ class Consolidator:
             return
         try:
             from arcteam.memory.types import EntityMetadata  # type: ignore[import-untyped]
+
             metadata = EntityMetadata(**frontmatter)
             await team_svc.promote(
                 entity_id=slug,
@@ -666,6 +697,7 @@ class Consolidator:
 
         try:
             from arcllm.types import Message
+
             response = await model.invoke([Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             entries = [

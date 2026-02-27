@@ -182,6 +182,7 @@ class TestUnknownClassificationWarning:
 
     def test_unknown_value_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         import logging
+
         with caplog.at_level(logging.WARNING, logger="arcteam.memory.classification"):
             result = ClassificationChecker.parse_classification("SECERT")
         assert result == Classification.UNCLASSIFIED
@@ -189,6 +190,7 @@ class TestUnknownClassificationWarning:
 
     def test_valid_values_no_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         import logging
+
         with caplog.at_level(logging.WARNING, logger="arcteam.memory.classification"):
             ClassificationChecker.parse_classification("SECRET")
         assert "Unknown" not in caplog.text
@@ -263,6 +265,7 @@ class TestDecisionsStorage:
         decisions_path = tmp_path / "decisions.jsonl"
         assert decisions_path.exists()
         import json
+
         line = decisions_path.read_text().strip()
         record = json.loads(line)
         assert record["title"] == "Use BM25Plus"

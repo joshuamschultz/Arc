@@ -60,16 +60,14 @@ class TestModuleStartup:
 
     @pytest.mark.asyncio
     async def test_startup_subscribes_to_events(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
         try:
-            subscribed = [
-                call.args[0]
-                for call in ctx.bus.subscribe.call_args_list
-            ]
+            subscribed = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
             assert "agent:assemble_prompt" in subscribed
             assert "agent:shutdown" in subscribed
         finally:
@@ -77,7 +75,8 @@ class TestModuleStartup:
 
     @pytest.mark.asyncio
     async def test_startup_registers_entity(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
@@ -92,7 +91,8 @@ class TestModuleStartup:
 
     @pytest.mark.asyncio
     async def test_startup_starts_poll_task(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
@@ -115,7 +115,8 @@ class TestModuleShutdown:
 
     @pytest.mark.asyncio
     async def test_double_shutdown_is_safe(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         module = _make_module(tmp_path)
         ctx = make_ctx(tmp_path)
@@ -128,7 +129,8 @@ class TestModuleShutdown:
 class TestEntityIdFallback:
     @pytest.mark.asyncio
     async def test_entity_id_from_agent_name(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """When entity_id is empty, derive from agent config name."""
         config = make_config_dict(entity_id="")
@@ -203,5 +205,3 @@ class TestTeamRootResolution:
             workspace=workspace,
         )
         assert module._resolve_team_root() == tmp_path / "team"
-
-

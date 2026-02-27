@@ -62,6 +62,9 @@ Basic_Agent/
 my_agent/
 team/
 
+# Deployment (contains secrets in parameters.json)
+deploy/
+
 # Demo UI
 demo/
 

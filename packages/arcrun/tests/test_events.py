@@ -1,4 +1,5 @@
 """Tests for event system."""
+
 import threading
 from collections.abc import Mapping
 from types import MappingProxyType
@@ -127,8 +128,9 @@ class TestHashChainComputation:
 
     def test_canonical_bytes_sorted_keys(self):
         """Different key order produces same bytes."""
-        from arcrun.events import _canonical_bytes
         from collections import OrderedDict
+
+        from arcrun.events import _canonical_bytes
 
         b1 = _canonical_bytes("t", 0.0, "r", {"z": 1, "a": 2}, 0)
         b2 = _canonical_bytes("t", 0.0, "r", OrderedDict([("a", 2), ("z", 1)]), 0)
@@ -307,10 +309,7 @@ class TestThreadSafeEventBus:
             except Exception as exc:
                 errors.append(exc)
 
-        threads = [
-            threading.Thread(target=emit_events, args=(f"t{i}", 20))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=emit_events, args=(f"t{i}", 20)) for i in range(5)]
         for t in threads:
             t.start()
         for t in threads:

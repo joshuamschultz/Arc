@@ -48,9 +48,7 @@ class RoutingModule(LLMProvider):
         if not adapters:
             raise ArcLLMConfigError("RoutingModule requires at least one adapter")
 
-        self._default_classification: str = config.get(
-            "default_classification", "unclassified"
-        )
+        self._default_classification: str = config.get("default_classification", "unclassified")
         if self._default_classification not in adapters:
             raise ArcLLMConfigError(
                 f"default_classification '{self._default_classification}' "
@@ -94,8 +92,7 @@ class RoutingModule(LLMProvider):
             if adapter is None:
                 if self._enforcement == "block":
                     raise ArcLLMConfigError(
-                        f"Unknown classification '{classification}'. "
-                        "No matching route configured."
+                        f"Unknown classification '{classification}'. No matching route configured."
                     )
                 # Warn mode — fall back to default
                 logger.warning(

@@ -56,12 +56,14 @@ def create_messaging_tools(
             )
             sent = await svc.send(msg)
             _logger.info("Sent message %s to %s", sent.id, to)
-            return json.dumps({
-                "id": sent.id,
-                "thread_id": sent.thread_id,
-                "seq": sent.seq,
-                "status": "sent",
-            })
+            return json.dumps(
+                {
+                    "id": sent.id,
+                    "thread_id": sent.thread_id,
+                    "seq": sent.seq,
+                    "status": "sent",
+                }
+            )
         except (ValueError, TypeError) as exc:
             return json.dumps({"error": str(exc)})
 
@@ -131,18 +133,20 @@ def create_messaging_tools(
             if not stream or not thread_id:
                 return json.dumps({"error": "stream and thread_id are required"})
             msgs = await svc.get_thread(stream, thread_id)
-            return json.dumps([
-                {
-                    "seq": m.seq,
-                    "id": m.id,
-                    "sender": m.sender,
-                    "body": m.body,
-                    "msg_type": m.msg_type,
-                    "ts": m.ts,
-                    "thread_id": m.thread_id,
-                }
-                for m in msgs
-            ])
+            return json.dumps(
+                [
+                    {
+                        "seq": m.seq,
+                        "id": m.id,
+                        "sender": m.sender,
+                        "body": m.body,
+                        "msg_type": m.msg_type,
+                        "ts": m.ts,
+                        "thread_id": m.thread_id,
+                    }
+                    for m in msgs
+                ]
+            )
         except (ValueError, TypeError) as exc:
             return json.dumps({"error": str(exc)})
 
@@ -150,17 +154,19 @@ def create_messaging_tools(
         """List all registered entities in the team."""
         try:
             entities = await registry.list_entities()
-            return json.dumps([
-                {
-                    "id": e.id,
-                    "name": e.name,
-                    "type": e.type,
-                    "roles": e.roles,
-                    "capabilities": e.capabilities,
-                    "status": e.status,
-                }
-                for e in entities
-            ])
+            return json.dumps(
+                [
+                    {
+                        "id": e.id,
+                        "name": e.name,
+                        "type": e.type,
+                        "roles": e.roles,
+                        "capabilities": e.capabilities,
+                        "status": e.status,
+                    }
+                    for e in entities
+                ]
+            )
         except (ValueError, TypeError) as exc:
             return json.dumps({"error": str(exc)})
 
@@ -168,14 +174,16 @@ def create_messaging_tools(
         """List all available channels."""
         try:
             channels = await svc.list_channels()
-            return json.dumps([
-                {
-                    "name": ch.name,
-                    "description": ch.description,
-                    "members": ch.members,
-                }
-                for ch in channels
-            ])
+            return json.dumps(
+                [
+                    {
+                        "name": ch.name,
+                        "description": ch.description,
+                        "members": ch.members,
+                    }
+                    for ch in channels
+                ]
+            )
         except (ValueError, TypeError) as exc:
             return json.dumps({"error": str(exc)})
 
@@ -295,8 +303,7 @@ def create_messaging_tools(
         RegisteredTool(
             name="messaging_list_channels",
             description=(
-                "List all available messaging channels, their descriptions, "
-                "and current members."
+                "List all available messaging channels, their descriptions, and current members."
             ),
             input_schema={
                 "type": "object",

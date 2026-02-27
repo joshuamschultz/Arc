@@ -44,7 +44,9 @@ class TestIndexRebuild:
     @pytest.mark.asyncio
     async def test_rebuild_with_entities(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         await storage.write_entity(
             "bob",
             _make_metadata(entity_id="bob", name="Bob", links_to=["alice"]),
@@ -60,7 +62,9 @@ class TestIndexRebuild:
     @pytest.mark.asyncio
     async def test_rebuild_sets_path(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         index = await mgr.rebuild()
         assert index["alice"].path == "person/alice.md"
 
@@ -77,7 +81,9 @@ class TestDirtyFlag:
     @pytest.mark.asyncio
     async def test_get_index_rebuilds_when_dirty(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         await mgr.touch_dirty()
         index = await mgr.get_index()
         assert "alice" in index
@@ -85,7 +91,9 @@ class TestDirtyFlag:
     @pytest.mark.asyncio
     async def test_get_index_uses_cache_when_clean(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         await mgr.rebuild()
         # Add another entity but DON'T touch dirty
         await storage.write_entity("bob", _make_metadata(entity_id="bob", name="Bob"), "# Bob")
@@ -100,7 +108,9 @@ class TestLookup:
     @pytest.mark.asyncio
     async def test_lookup_found(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         await mgr.rebuild()
         entry = await mgr.lookup("alice")
         assert entry is not None
@@ -120,7 +130,9 @@ class TestBacklinks:
     @pytest.mark.asyncio
     async def test_backlinks(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         await storage.write_entity(
             "bob",
             _make_metadata(entity_id="bob", name="Bob", links_to=["alice"]),
@@ -138,7 +150,9 @@ class TestBacklinks:
     @pytest.mark.asyncio
     async def test_backlinks_empty(self, setup: tuple) -> None:
         mgr, storage, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice"
+        )
         await mgr.rebuild()
         backlinks = await mgr.get_backlinks("alice")
         assert backlinks == []

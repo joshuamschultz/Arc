@@ -52,8 +52,7 @@ _MODULE_REGISTRY: dict[str, dict[str, Any]] = {
         "default_enabled": False,
         "prompts": [],
         "setup_hint": (
-            "Run 'arc agent setup-telegram {path}' after"
-            " to configure bot token and chat ID"
+            "Run 'arc agent setup-telegram {path}' after to configure bot token and chat ID"
         ),
     },
 }

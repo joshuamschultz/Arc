@@ -4,6 +4,7 @@ Tests that code execution has proper resource limits.
 These tests verify the subprocess-based execute tool handles
 resource bombs gracefully (container mode provides stronger isolation).
 """
+
 from __future__ import annotations
 
 import json

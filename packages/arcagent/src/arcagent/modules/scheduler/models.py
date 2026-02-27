@@ -165,8 +165,7 @@ class ScheduleEntry(BaseModel):
                 raise ValueError(msg)
         if self.timeout_seconds > DEFAULT_MAX_TIMEOUT_SECONDS:
             msg = (
-                f"Timeout {self.timeout_seconds}s exceeds maximum "
-                f"({DEFAULT_MAX_TIMEOUT_SECONDS}s)"
+                f"Timeout {self.timeout_seconds}s exceeds maximum ({DEFAULT_MAX_TIMEOUT_SECONDS}s)"
             )
             raise ValueError(msg)
         return self

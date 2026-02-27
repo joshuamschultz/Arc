@@ -176,9 +176,7 @@ class TestPostRespondTurnCounting:
 
         with (
             patch.object(mod, "_get_eval_model", return_value=mock_model),
-            patch(
-                "arcagent.modules.policy.policy_module.spawn_background"
-            ) as mock_spawn,
+            patch("arcagent.modules.policy.policy_module.spawn_background") as mock_spawn,
         ):
             messages = [{"role": "user", "content": "hi"}]
 
@@ -214,9 +212,7 @@ class TestShutdownEval:
     async def test_shutdown_skips_without_messages(self, tmp_path: Path) -> None:
         mod = _make_module(tmp_path)
 
-        with patch.object(
-            mod, "_safe_evaluate", new_callable=AsyncMock
-        ) as mock_eval:
+        with patch.object(mod, "_safe_evaluate", new_callable=AsyncMock) as mock_eval:
             ctx = _make_ctx("agent:shutdown", {})
             await mod._on_shutdown(ctx)
             mock_eval.assert_not_called()
@@ -226,9 +222,7 @@ class TestShutdownEval:
         mod = _make_module(tmp_path)
         mod._session_messages = [{"role": "user", "content": "test"}]
 
-        with patch.object(
-            mod, "_safe_evaluate", new_callable=AsyncMock
-        ) as mock_eval:
+        with patch.object(mod, "_safe_evaluate", new_callable=AsyncMock) as mock_eval:
             ctx = _make_ctx("agent:shutdown", {})
             await mod._on_shutdown(ctx)
             mock_eval.assert_not_called()
@@ -242,9 +236,7 @@ class TestSafeEvaluate:
         eval_config = EvalConfig(fallback_behavior="skip")
         mod = _make_module(tmp_path, eval_config=eval_config)
 
-        with patch.object(
-            mod._engine, "evaluate", side_effect=RuntimeError("eval failed")
-        ):
+        with patch.object(mod._engine, "evaluate", side_effect=RuntimeError("eval failed")):
             # Should not raise
             await mod._safe_evaluate(
                 [{"role": "user", "content": "test"}],
@@ -256,9 +248,7 @@ class TestSafeEvaluate:
         eval_config = EvalConfig(fallback_behavior="error")
         mod = _make_module(tmp_path, eval_config=eval_config)
 
-        with patch.object(
-            mod._engine, "evaluate", side_effect=RuntimeError("eval failed")
-        ):
+        with patch.object(mod._engine, "evaluate", side_effect=RuntimeError("eval failed")):
             with pytest.raises(RuntimeError, match="eval failed"):
                 await mod._safe_evaluate(
                     [{"role": "user", "content": "test"}],

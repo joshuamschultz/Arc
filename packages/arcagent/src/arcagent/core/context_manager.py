@@ -210,6 +210,7 @@ class ContextManager:
             # Emit event for memory module (async, non-blocking)
             # Memory module will handle creating daily notes and saving context
             import asyncio
+
             try:
                 task = asyncio.create_task(
                     self._bus.emit(

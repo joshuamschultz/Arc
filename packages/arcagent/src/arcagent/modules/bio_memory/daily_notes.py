@@ -47,12 +47,15 @@ class DailyNotes:
             if not path.exists():
                 frontmatter = {"date": today, "agent": agent_id}
                 fm_text = yaml.dump(
-                    frontmatter, default_flow_style=False, sort_keys=False,
+                    frontmatter,
+                    default_flow_style=False,
+                    sort_keys=False,
                 ).strip()
                 content = f"---\n{fm_text}\n---\n\n# {today}\n\n"
             else:
                 content = await asyncio.to_thread(
-                    path.read_text, encoding="utf-8",
+                    path.read_text,
+                    encoding="utf-8",
                 )
 
             new_lines = [f"\n## {timestamp}\n"]

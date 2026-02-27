@@ -26,7 +26,9 @@ def today_str() -> str:
 
 
 def resolve_entity_path(
-    slug: str, entities_dir: Path, workspace: Path,
+    slug: str,
+    entities_dir: Path,
+    workspace: Path,
 ) -> Path | None:
     """Resolve entity slug to file path. Checks entities_dir and subdirs.
 
@@ -66,7 +68,7 @@ def update_frontmatter_field(text: str, field: str, value: Any) -> str:
         return text
 
     fm_text = text[4:end]
-    body = text[end + 4:]
+    body = text[end + 4 :]
 
     try:
         fm = yaml.safe_load(fm_text)
@@ -100,7 +102,8 @@ def append_to_section(text: str, section_header: str, line: str) -> str:
 
 
 def add_link_to_frontmatter(
-    entity_path: Path, target_slug: str,
+    entity_path: Path,
+    target_slug: str,
 ) -> bool:
     """Add [[target_slug]] to entity's links_to if not already present."""
     fm = read_frontmatter(entity_path)
@@ -123,13 +126,14 @@ def add_link_to_frontmatter(
         return False
     fm["links_to"] = links_to
     fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False).strip()
-    body = text[end + 4:]
+    body = text[end + 4 :]
     atomic_write_text(entity_path, f"---\n{fm_text}\n---{body}")
     return True
 
 
 def normalize_entity_file(
-    path: Path, entities_dir: Path,
+    path: Path,
+    entities_dir: Path,
 ) -> None:
     """Ensure entity file has v2.1 YAML frontmatter.
 
@@ -163,7 +167,9 @@ def normalize_entity_file(
         "classification": "unclassified",
     }
     fm_text = yaml.dump(
-        frontmatter, default_flow_style=False, sort_keys=False,
+        frontmatter,
+        default_flow_style=False,
+        sort_keys=False,
     ).strip()
 
     new_text = f"---\n{fm_text}\n---\n\n{text}"

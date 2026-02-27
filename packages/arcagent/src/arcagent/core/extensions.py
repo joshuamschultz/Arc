@@ -81,17 +81,18 @@ class ExtensionAPI:
         """
         tagged_source = f"{self._source_prefix}{self._extension_name}"
 
-        if not hasattr(tool, 'source') or not hasattr(tool, 'transport'):
+        if not hasattr(tool, "source") or not hasattr(tool, "transport"):
             # Convert arcrun.Tool to RegisteredTool
             from arcagent.core.tool_registry import RegisteredTool as RegTool
             from arcagent.core.tool_registry import ToolTransport
+
             tool = RegTool(
                 name=tool.name,
                 description=tool.description,
                 input_schema=tool.input_schema,
                 transport=ToolTransport.NATIVE,
                 execute=tool.execute,
-                timeout_seconds=getattr(tool, 'timeout_seconds', None),
+                timeout_seconds=getattr(tool, "timeout_seconds", None),
                 source=tagged_source,
             )
         elif not tool.source.startswith(self._source_prefix):
@@ -364,8 +365,13 @@ class ExtensionLoader:
             return
 
         self._run_factory(
-            factory, ext_name, str(py_file), sandbox_mode, workspace,
-            source_prefix, sandbox_allowed,
+            factory,
+            ext_name,
+            str(py_file),
+            sandbox_mode,
+            workspace,
+            source_prefix,
+            sandbox_allowed,
         )
 
     def _load_entry_points(self, workspace: Path) -> None:
@@ -391,8 +397,13 @@ class ExtensionLoader:
 
             sandbox_mode, sandbox_allowed = self._resolve_sandbox_config(ext_name)
             self._run_factory(
-                factory, ext_name, source, sandbox_mode, workspace,
-                _EXTENSION_SOURCE_PREFIX, sandbox_allowed,
+                factory,
+                ext_name,
+                source,
+                sandbox_mode,
+                workspace,
+                _EXTENSION_SOURCE_PREFIX,
+                sandbox_allowed,
             )
 
     @staticmethod

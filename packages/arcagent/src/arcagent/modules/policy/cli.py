@@ -72,14 +72,16 @@ def cli_group(workspace: Path) -> click.Group:
             text = b["text"]
             if len(text) > 60:
                 text = text[:57] + "..."
-            rows.append([
-                b["id"],
-                text,
-                b["score"],
-                b["uses"],
-                b["created"],
-                b["reviewed"],
-            ])
+            rows.append(
+                [
+                    b["id"],
+                    text,
+                    b["score"],
+                    b["uses"],
+                    b["created"],
+                    b["reviewed"],
+                ]
+            )
 
         print_table(
             ["ID", "Text", "Score", "Uses", "Created", "Reviewed"],
@@ -109,15 +111,24 @@ def cli_group(workspace: Path) -> click.Group:
         d = defaults
         cfg = loaded_config
         pairs: list[tuple[str, str]] = [
-            ("eval_interval_turns", str(
-                cfg.get("eval_interval_turns", d.eval_interval_turns),
-            )),
-            ("max_bullets", str(
-                cfg.get("max_bullets", d.max_bullets),
-            )),
-            ("max_bullet_text_length", str(
-                cfg.get("max_bullet_text_length", d.max_bullet_text_length),
-            )),
+            (
+                "eval_interval_turns",
+                str(
+                    cfg.get("eval_interval_turns", d.eval_interval_turns),
+                ),
+            ),
+            (
+                "max_bullets",
+                str(
+                    cfg.get("max_bullets", d.max_bullets),
+                ),
+            ),
+            (
+                "max_bullet_text_length",
+                str(
+                    cfg.get("max_bullet_text_length", d.max_bullet_text_length),
+                ),
+            ),
         ]
 
         click_echo("Policy config (from arcagent.toml + defaults):")
@@ -162,13 +173,15 @@ def _parse_bullets(content: str) -> list[dict[str, str]]:
     for line in content.split("\n"):
         match = _BULLET_RE.match(line.strip())
         if match:
-            results.append({
-                "id": match.group("id"),
-                "text": match.group("text").strip(),
-                "score": match.group("score"),
-                "uses": match.group("uses"),
-                "reviewed": match.group("reviewed").strip(),
-                "created": match.group("created").strip(),
-                "source": match.group("source").strip(),
-            })
+            results.append(
+                {
+                    "id": match.group("id"),
+                    "text": match.group("text").strip(),
+                    "score": match.group("score"),
+                    "uses": match.group("uses"),
+                    "reviewed": match.group("reviewed").strip(),
+                    "created": match.group("created").strip(),
+                    "source": match.group("source").strip(),
+                }
+            )
     return results

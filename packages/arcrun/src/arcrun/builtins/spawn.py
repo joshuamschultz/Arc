@@ -13,7 +13,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from arcrun.events import Event, EventBus
 from arcrun.state import RunState
@@ -73,8 +74,7 @@ def make_spawn_tool(
         child_specialization = params.get("system_prompt")
         if child_specialization:
             child_system_prompt = (
-                f"{system_prompt}\n\n"
-                f"--- Child Specialization ---\n{child_specialization}"
+                f"{system_prompt}\n\n--- Child Specialization ---\n{child_specialization}"
             )
             prompt_overridden = True
         else:
@@ -97,15 +97,18 @@ def make_spawn_tool(
         bubble_handler = _make_bubble_handler(child_run_id, state.event_bus)
 
         # Audit event: spawn start (NIST AU-2/AU-3)
-        state.event_bus.emit("spawn.start", {
-            "child_run_id": child_run_id,
-            "parent_run_id": state.run_id,
-            "parent_depth": state.depth,
-            "system_prompt_overridden": prompt_overridden,
-            "tool_subset": [t.name for t in child_tools],
-            "max_child_turns": max_child_turns,
-            "timeout_seconds": spawn_timeout_seconds,
-        })
+        state.event_bus.emit(
+            "spawn.start",
+            {
+                "child_run_id": child_run_id,
+                "parent_run_id": state.run_id,
+                "parent_depth": state.depth,
+                "system_prompt_overridden": prompt_overridden,
+                "tool_subset": [t.name for t in child_tools],
+                "max_child_turns": max_child_turns,
+                "timeout_seconds": spawn_timeout_seconds,
+            },
+        )
 
         # Import here to avoid circular import at module level
         from arcrun.loop import run
@@ -129,28 +132,34 @@ def make_spawn_tool(
                 )
 
             # Audit event: spawn complete
-            state.event_bus.emit("spawn.complete", {
-                "child_run_id": child_run_id,
-                "parent_run_id": state.run_id,
-                "turns_used": result.turns,
-                "cost_usd": result.cost_usd,
-                "success": True,
-            })
+            state.event_bus.emit(
+                "spawn.complete",
+                {
+                    "child_run_id": child_run_id,
+                    "parent_run_id": state.run_id,
+                    "turns_used": result.turns,
+                    "cost_usd": result.cost_usd,
+                    "success": True,
+                },
+            )
 
             return result.content or "(no content)"
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _logger.warning(
                 "Child run %s timed out after %ds",
                 child_run_id,
                 spawn_timeout_seconds,
             )
-            state.event_bus.emit("spawn.complete", {
-                "child_run_id": child_run_id,
-                "parent_run_id": state.run_id,
-                "success": False,
-                "error": "timeout",
-            })
+            state.event_bus.emit(
+                "spawn.complete",
+                {
+                    "child_run_id": child_run_id,
+                    "parent_run_id": state.run_id,
+                    "success": False,
+                    "error": "timeout",
+                },
+            )
             return f"Error: child task timed out after {spawn_timeout_seconds}s"
 
         except Exception as exc:
@@ -161,12 +170,15 @@ def make_spawn_tool(
                 type(exc).__name__,
                 str(exc)[:_MAX_ERROR_LEN],
             )
-            state.event_bus.emit("spawn.complete", {
-                "child_run_id": child_run_id,
-                "parent_run_id": state.run_id,
-                "success": False,
-                "error": type(exc).__name__,
-            })
+            state.event_bus.emit(
+                "spawn.complete",
+                {
+                    "child_run_id": child_run_id,
+                    "parent_run_id": state.run_id,
+                    "success": False,
+                    "error": type(exc).__name__,
+                },
+            )
             # Sanitized error — no internal details leaked to LLM (LLM02)
             return "Error: child task failed"
 

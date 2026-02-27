@@ -186,8 +186,7 @@ def _discover_chat_id(token: str, bot_username: str) -> int:
         time.sleep(1)
 
     raise click.ClickException(
-        "Timed out waiting for a message. "
-        f"Make sure you sent a message to @{bot_username}."
+        f"Timed out waiting for a message. Make sure you sent a message to @{bot_username}."
     )
 
 

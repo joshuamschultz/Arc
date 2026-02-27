@@ -21,7 +21,9 @@ def _make_metadata(**overrides: object) -> EntityMetadata:
     return EntityMetadata(**defaults)  # type: ignore[arg-type]
 
 
-def _make_index(entity_id: str = "john-doe", path: str = "person/john-doe.md") -> dict[str, IndexEntry]:
+def _make_index(
+    entity_id: str = "john-doe", path: str = "person/john-doe.md"
+) -> dict[str, IndexEntry]:
     return {entity_id: IndexEntry(entity_id=entity_id, path=path, entity_type="person")}
 
 

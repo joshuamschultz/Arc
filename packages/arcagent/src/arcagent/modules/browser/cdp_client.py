@@ -44,12 +44,14 @@ _DEFAULT_FLAGS: list[str] = [
 ]
 
 # Chrome flags that must never appear in user config — security risk
-_BLOCKED_FLAGS: frozenset[str] = frozenset({
-    "--disable-web-security",
-    "--allow-file-access-from-files",
-    "--disable-site-isolation-trials",
-    "--allow-running-insecure-content",
-})
+_BLOCKED_FLAGS: frozenset[str] = frozenset(
+    {
+        "--disable-web-security",
+        "--allow-file-access-from-files",
+        "--disable-site-isolation-trials",
+        "--allow-running-insecure-content",
+    }
+)
 
 # Typical Chrome binary locations by platform
 _CHROME_PATHS: dict[str, list[str]] = {
@@ -149,9 +151,11 @@ class CDPClientManager:
             # External CDP endpoint — skip Chrome launch
             self._ws_url = self._config.cdp_url
             # Warn if external endpoint is not using wss://
-            if self._ws_url.startswith("ws://") and not self._ws_url.startswith(
-                "ws://127.0.0.1"
-            ) and not self._ws_url.startswith("ws://localhost"):
+            if (
+                self._ws_url.startswith("ws://")
+                and not self._ws_url.startswith("ws://127.0.0.1")
+                and not self._ws_url.startswith("ws://localhost")
+            ):
                 _logger.warning(
                     "External CDP URL uses unencrypted ws://. "
                     "Use wss:// for non-local connections."

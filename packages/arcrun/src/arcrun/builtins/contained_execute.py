@@ -184,7 +184,7 @@ def make_contained_execute_tool(
                 asyncio.to_thread(_sync_run, code),
                 timeout=timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise SandboxTimeoutError(f"Execution exceeded {timeout_seconds}s timeout") from None
 
     return Tool(

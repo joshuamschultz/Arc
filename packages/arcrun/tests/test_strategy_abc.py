@@ -1,6 +1,6 @@
 """Tests for Strategy ABC and ReactStrategy wrapper."""
-import pytest
 
+import pytest
 from conftest import LLMResponse, MockModel
 
 from arcrun.types import Tool
@@ -41,7 +41,7 @@ class TestStrategyABC:
     def test_strategy_has_abstract_call(self):
         from arcrun.strategies import Strategy
 
-        assert hasattr(Strategy, "__call__")
+        assert callable(Strategy)
 
 
 class TestReactStrategy:
@@ -60,13 +60,12 @@ class TestReactStrategy:
 
     @pytest.mark.asyncio
     async def test_react_strategy_produces_loop_result(self):
-        from arcrun.strategies.react import ReactStrategy
-
         from arcrun._messages import system_message, user_message
         from arcrun.events import EventBus
         from arcrun.registry import ToolRegistry
         from arcrun.sandbox import Sandbox
         from arcrun.state import RunState
+        from arcrun.strategies.react import ReactStrategy
         from arcrun.types import LoopResult
 
         model = MockModel([LLMResponse(content="Hello!", stop_reason="end_turn")])

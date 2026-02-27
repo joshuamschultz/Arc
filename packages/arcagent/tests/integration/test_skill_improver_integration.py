@@ -2,32 +2,23 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
-from arcagent.core.config import AgentConfig, ArcAgentConfig, EvalConfig, LLMConfig
+from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
 from arcagent.core.module_bus import EventContext, ModuleBus, ModuleContext
 from arcagent.core.skill_registry import SkillMeta, SkillRegistry
 from arcagent.modules.skill_improver.candidate_store import CandidateStore
 from arcagent.modules.skill_improver.config import SkillImproverConfig
-from arcagent.modules.skill_improver.engine import SkillOptimizer
-from arcagent.modules.skill_improver.evaluator import SkillEvaluator
 from arcagent.modules.skill_improver.guardrails import Guardrails
 from arcagent.modules.skill_improver.models import (
     Candidate,
-    DimensionScore,
-    EvalResult,
     SkillTrace,
-    ToolCallRecord,
 )
-from arcagent.modules.skill_improver.reflector import SkillReflector
 from arcagent.modules.skill_improver.skill_improver_module import SkillImproverModule
-from arcagent.modules.skill_improver.trace_collector import TraceCollector
-
 
 SKILL_TEXT = """\
 ## SKILL INTENT [IMMUTABLE]
@@ -122,7 +113,7 @@ class TestFullModuleLifecycle:
         await module._on_ready(ready_ctx)
 
         # Simulate reading the skill file 5 times
-        for i in range(5):
+        for _i in range(5):
             read_ctx = _make_ctx(
                 tool="read",
                 args={"file_path": str(skill_file)},
@@ -131,7 +122,9 @@ class TestFullModuleLifecycle:
 
             # Simulate a tool call within the span
             bash_ctx = _make_ctx(
-                tool="bash", args={"command": "echo test"}, duration=0.01,
+                tool="bash",
+                args={"command": "echo test"},
+                duration=0.01,
             )
             await module._on_post_tool(bash_ctx)
 
@@ -151,14 +144,18 @@ class TestGuardrailEnforcement:
 
     @pytest.mark.asyncio
     async def test_no_optimization_with_few_traces(
-        self, workspace: Path,
+        self,
+        workspace: Path,
     ) -> None:
         config = SkillImproverConfig(min_traces=30)
         guardrails = Guardrails(config)
         traces = [
             SkillTrace(
-                trace_id=f"t{i}", session_id="s1", skill_name="test",
-                skill_version=0, turn_number=i,
+                trace_id=f"t{i}",
+                session_id="s1",
+                skill_name="test",
+                skill_version=0,
+                turn_number=i,
                 started_at=datetime(2026, 2, 25, 10, 0, 0, tzinfo=UTC),
             )
             for i in range(5)
@@ -177,23 +174,34 @@ class TestExemptSkill:
         guardrails = Guardrails(config)
         traces = [
             SkillTrace(
-                trace_id="t1", session_id="s1", skill_name="auth-skill",
-                skill_version=0, turn_number=1,
+                trace_id="t1",
+                session_id="s1",
+                skill_name="auth-skill",
+                skill_version=0,
+                turn_number=1,
                 started_at=datetime(2026, 2, 25, 10, 0, 0, tzinfo=UTC),
             )
             for _ in range(50)
         ]
         # With security-critical tag, should not be eligible
-        assert guardrails.check_eligible(
-            "auth-skill", traces,
-            skill_tags=["security-critical"],
-        ) is False
+        assert (
+            guardrails.check_eligible(
+                "auth-skill",
+                traces,
+                skill_tags=["security-critical"],
+            )
+            is False
+        )
 
         # Without exempt tags, should be eligible
-        assert guardrails.check_eligible(
-            "auth-skill", traces,
-            skill_tags=["utility"],
-        ) is True
+        assert (
+            guardrails.check_eligible(
+                "auth-skill",
+                traces,
+                skill_tags=["utility"],
+            )
+            is True
+        )
 
 
 class TestRollbackScenario:
@@ -201,7 +209,10 @@ class TestRollbackScenario:
 
     @pytest.mark.asyncio
     async def test_rollback_applies_previous_and_cooloff(
-        self, workspace: Path, skill_file: Path, telemetry: MagicMock,
+        self,
+        workspace: Path,
+        skill_file: Path,
+        telemetry: MagicMock,
     ) -> None:
         store = CandidateStore(workspace)
         module = SkillImproverModule(
@@ -213,8 +224,11 @@ class TestRollbackScenario:
         # Save two candidates
         c1 = Candidate(id="c1", text="# V1\nOriginal", token_count=3, generation=0)
         c2 = Candidate(
-            id="c2", text="# V2\nImproved", token_count=3,
-            parent_id="c1", generation=1,
+            id="c2",
+            text="# V2\nImproved",
+            token_count=3,
+            parent_id="c1",
+            generation=1,
         )
         store.save("plan-travel", c1)
         store.save("plan-travel", c2, active=True)

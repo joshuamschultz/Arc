@@ -18,13 +18,13 @@ def print_table(headers: list[str], rows: list[list[str]]) -> None:
                 widths[i] = max(widths[i], len(str(cell)))
 
     # Format header
-    header_line = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
+    header_line = "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=False))
     separator = "  ".join("-" * w for w in widths)
 
     click_echo(header_line)
     click_echo(separator)
     for row in rows:
-        line = "  ".join(str(cell).ljust(w) for cell, w in zip(row, widths))
+        line = "  ".join(str(cell).ljust(w) for cell, w in zip(row, widths, strict=False))
         click_echo(line)
 
 

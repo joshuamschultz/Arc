@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -306,7 +305,7 @@ class TestBM25QueryFailure:
     async def test_bm25_search_handles_operational_error(self, tmp_path: Path) -> None:
         """BM25 search returns empty list on OperationalError."""
         search = _make_search(tmp_path)
-        conn = search._ensure_db()
+        search._ensure_db()
 
         # Force an operational error by using a malformed query that gets through sanitization
         # but fails at SQLite level (unlikely but covered for safety)

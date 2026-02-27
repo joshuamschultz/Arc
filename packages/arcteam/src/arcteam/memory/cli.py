@@ -95,9 +95,7 @@ async def run_memory_command(args: argparse.Namespace) -> int:
             print("\n" + entity.content)
 
         elif args.entity_command == "list":
-            entries = await service.list_entities(
-                entity_type=getattr(args, "entity_type", None)
-            )
+            entries = await service.list_entities(entity_type=getattr(args, "entity_type", None))
             if not entries:
                 print("No entities found.")
             for e in entries:

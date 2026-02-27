@@ -23,9 +23,7 @@ def _create_workspace(workspace: Path) -> None:
 class TestResolveWorkspacePath:
     """Core path resolution and security boundary tests."""
 
-    def test_relative_path_resolves_inside_workspace(
-        self, workspace: Path
-    ) -> None:
+    def test_relative_path_resolves_inside_workspace(self, workspace: Path) -> None:
         result = resolve_workspace_path("foo.txt", workspace)
         assert result == workspace / "foo.txt"
 
@@ -38,9 +36,7 @@ class TestResolveWorkspacePath:
         result = resolve_workspace_path(str(target), workspace)
         assert result == target
 
-    def test_absolute_path_outside_workspace_raises(
-        self, workspace: Path
-    ) -> None:
+    def test_absolute_path_outside_workspace_raises(self, workspace: Path) -> None:
         with pytest.raises(ToolError) as exc_info:
             resolve_workspace_path("/etc/passwd", workspace)
         assert exc_info.value.code == "TOOL_PATH_OUTSIDE_WORKSPACE"
@@ -79,9 +75,7 @@ class TestResolveWorkspacePath:
         target.write_text("content")
         link = workspace / "link.txt"
         link.symlink_to(target)
-        result = resolve_workspace_path(
-            "link.txt", workspace, allow_symlinks=True
-        )
+        result = resolve_workspace_path("link.txt", workspace, allow_symlinks=True)
         assert result == target.resolve()
 
 
@@ -123,9 +117,7 @@ class TestAllowedPaths:
         extra.mkdir()
         target = extra / "data.txt"
         target.write_text("shared data")
-        result = resolve_workspace_path(
-            str(target), workspace, allowed_paths=[extra]
-        )
+        result = resolve_workspace_path(str(target), workspace, allowed_paths=[extra])
         assert result == target
 
     def test_path_outside_workspace_and_allowed_paths_raises(
@@ -134,18 +126,12 @@ class TestAllowedPaths:
         extra = tmp_path / "shared"
         extra.mkdir()
         with pytest.raises(ToolError) as exc_info:
-            resolve_workspace_path(
-                "/etc/passwd", workspace, allowed_paths=[extra]
-            )
+            resolve_workspace_path("/etc/passwd", workspace, allowed_paths=[extra])
         assert exc_info.value.code == "TOOL_PATH_OUTSIDE_WORKSPACE"
 
-    def test_empty_allowed_paths_behaves_like_none(
-        self, workspace: Path
-    ) -> None:
+    def test_empty_allowed_paths_behaves_like_none(self, workspace: Path) -> None:
         with pytest.raises(ToolError) as exc_info:
-            resolve_workspace_path(
-                "/etc/passwd", workspace, allowed_paths=[]
-            )
+            resolve_workspace_path("/etc/passwd", workspace, allowed_paths=[])
         assert exc_info.value.code == "TOOL_PATH_OUTSIDE_WORKSPACE"
 
     def test_workspace_path_still_works_with_allowed_paths(
@@ -153,7 +139,5 @@ class TestAllowedPaths:
     ) -> None:
         extra = tmp_path / "shared"
         extra.mkdir()
-        result = resolve_workspace_path(
-            "foo.txt", workspace, allowed_paths=[extra]
-        )
+        result = resolve_workspace_path("foo.txt", workspace, allowed_paths=[extra])
         assert result == workspace / "foo.txt"

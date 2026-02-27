@@ -27,9 +27,7 @@ async def _get_element_center(cdp: Any, backend_node_id: int) -> tuple[float, fl
     Raises:
         ElementNotFoundError: If the element has no valid bounding box.
     """
-    box_result = await cdp.send(
-        "DOM", "getBoxModel", {"backendNodeId": backend_node_id}
-    )
+    box_result = await cdp.send("DOM", "getBoxModel", {"backendNodeId": backend_node_id})
     content = box_result.get("model", {}).get("content", [])
 
     if len(content) >= 8:
@@ -107,9 +105,7 @@ def create_interact_tools(
         backend_id = ax.resolve_ref(ref)
 
         # Use Runtime.callFunctionOn with arguments to avoid JS injection
-        resolve_result = await cdp.send(
-            "DOM", "resolveNode", {"backendNodeId": backend_id}
-        )
+        resolve_result = await cdp.send("DOM", "resolveNode", {"backendNodeId": backend_id})
         object_id = resolve_result.get("object", {}).get("objectId", "")
 
         await cdp.send(

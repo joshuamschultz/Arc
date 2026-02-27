@@ -169,19 +169,23 @@ class TestWalkModules:
 
     def test_all_defaults_accepted(self):
         # Accept defaults for all modules (y for enabled-by-default, n for disabled)
-        confirms = iter([
-            True,   # memory enable
-            True,   # memory entity_extraction
-            True,   # policy enable
-            True,   # scheduler enable
-            False,  # browser disable
-            False,  # telegram disable
-        ])
-        prompts = iter([
-            2000,   # memory context_budget_tokens
-            5,      # policy eval_interval_turns
-            30,     # scheduler check_interval_seconds
-        ])
+        confirms = iter(
+            [
+                True,  # memory enable
+                True,  # memory entity_extraction
+                True,  # policy enable
+                True,  # scheduler enable
+                False,  # browser disable
+                False,  # telegram disable
+            ]
+        )
+        prompts = iter(
+            [
+                2000,  # memory context_budget_tokens
+                5,  # policy eval_interval_turns
+                30,  # scheduler check_interval_seconds
+            ]
+        )
         with (
             patch("click.confirm", side_effect=confirms),
             patch("click.prompt", side_effect=prompts),
@@ -196,14 +200,16 @@ class TestWalkModules:
 
     def test_enable_disabled_module(self):
         # Enable browser which is disabled by default
-        confirms = iter([
-            False,  # memory disable
-            False,  # policy disable
-            False,  # scheduler disable
-            True,   # browser enable
-            True,   # browser headless
-            False,  # telegram disable
-        ])
+        confirms = iter(
+            [
+                False,  # memory disable
+                False,  # policy disable
+                False,  # scheduler disable
+                True,  # browser enable
+                True,  # browser headless
+                False,  # telegram disable
+            ]
+        )
         with (
             patch("click.confirm", side_effect=confirms),
             patch("click.prompt", side_effect=[]),

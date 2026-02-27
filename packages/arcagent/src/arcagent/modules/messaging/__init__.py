@@ -213,22 +213,23 @@ class MessagingModule:
         if self._last_unread:
             total = sum(self._last_unread.values())
             lines.append("")
-            lines.append(f"You have {total} unread message(s). "
-                         "Check inbox and handle them.")
+            lines.append(f"You have {total} unread message(s). Check inbox and handle them.")
             for stream, count in self._last_unread.items():
                 lines.append(f"  - {stream}: {count}")
 
         # Behavioral rules — concise.
-        lines.extend([
-            "",
-            "### Communication Rules",
-            "",
-            "- Reply to `action_required: true` DMs promptly.",
-            "- Channel messages are FYI — only respond if relevant to your role.",
-            "- Use `thread_id` from the original message when replying in threads.",
-            "- If stuck, message the relevant teammate. Don't work in silence.",
-            "- Use `notify_user` for the human. Use `messaging_send` for agents/channels.",
-        ])
+        lines.extend(
+            [
+                "",
+                "### Communication Rules",
+                "",
+                "- Reply to `action_required: true` DMs promptly.",
+                "- Channel messages are FYI — only respond if relevant to your role.",
+                "- Use `thread_id` from the original message when replying in threads.",
+                "- If stuck, message the relevant teammate. Don't work in silence.",
+                "- Use `notify_user` for the human. Use `messaging_send` for agents/channels.",
+            ]
+        )
 
         sections["messaging"] = "\n".join(lines)
 
@@ -255,9 +256,7 @@ class MessagingModule:
                 )
 
                 # Update cached unread counts for prompt injection.
-                self._last_unread = {
-                    stream: len(msgs) for stream, msgs in inbox.items()
-                }
+                self._last_unread = {stream: len(msgs) for stream, msgs in inbox.items()}
 
                 # Route messages through agent.chat() for full processing.
                 if self._agent_chat_fn is not None:
@@ -277,18 +276,20 @@ class MessagingModule:
         all_messages: list[dict[str, Any]] = []
         for stream, msgs in inbox.items():
             for m in msgs:
-                all_messages.append({
-                    "stream": stream,
-                    "seq": m.seq,
-                    "id": m.id,
-                    "sender": m.sender,
-                    "body": m.body,
-                    "msg_type": m.msg_type,
-                    "priority": m.priority,
-                    "action_required": m.action_required,
-                    "thread_id": m.thread_id,
-                    "ts": m.ts,
-                })
+                all_messages.append(
+                    {
+                        "stream": stream,
+                        "seq": m.seq,
+                        "id": m.id,
+                        "sender": m.sender,
+                        "body": m.body,
+                        "msg_type": m.msg_type,
+                        "priority": m.priority,
+                        "action_required": m.action_required,
+                        "thread_id": m.thread_id,
+                        "ts": m.ts,
+                    }
+                )
 
         if not all_messages:
             return
@@ -331,7 +332,10 @@ class MessagingModule:
                         if msgs:
                             last = msgs[-1]
                             await self._svc.ack(
-                                stream, entity_id, seq=last.seq, byte_pos=0,
+                                stream,
+                                entity_id,
+                                seq=last.seq,
+                                byte_pos=0,
                             )
 
             except Exception:

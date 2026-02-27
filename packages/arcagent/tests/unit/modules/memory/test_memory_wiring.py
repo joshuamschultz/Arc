@@ -252,7 +252,7 @@ class TestGetEvalModelFallback:
             mock_load.return_value = MagicMock()
             try:
                 module._get_eval_model()
-                assert False, "Should have raised"
+                raise AssertionError("Should have raised")
             except RuntimeError as e:
                 assert "No eval model config" in str(e)
 
@@ -267,7 +267,7 @@ class TestGetEvalModelFallback:
             mock_load.side_effect = RuntimeError("Load failed")
             try:
                 module._get_eval_model()
-                assert False, "Should have raised"
+                raise AssertionError("Should have raised")
             except RuntimeError as e:
                 assert "Load failed" in str(e)
 
@@ -354,5 +354,3 @@ class TestOnPostRespondEmptyMessages:
 
             # Should have returned early, no background tasks
             assert len(module._background_tasks) == 0
-
-

@@ -49,16 +49,24 @@ class TestStatus:
     """CLI 'status' command shows workspace overview."""
 
     def test_status_empty_workspace(
-        self, runner: CliRunner, cli: click.Group,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
     ) -> None:
         result = runner.invoke(cli, ["status"])
         assert result.exit_code == 0
 
     def test_status_with_episodes(
-        self, runner: CliRunner, cli: click.Group, workspace: Path,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
+        workspace: Path,
     ) -> None:
         _write_episode(
-            workspace, "ep1", {"tags": ["test"]}, "Episode 1",
+            workspace,
+            "ep1",
+            {"tags": ["test"]},
+            "Episode 1",
         )
         result = runner.invoke(cli, ["status"])
         assert result.exit_code == 0
@@ -69,16 +77,22 @@ class TestEpisodesList:
     """CLI 'episodes list' shows all episodes."""
 
     def test_no_episodes(
-        self, runner: CliRunner, cli: click.Group,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
     ) -> None:
         result = runner.invoke(cli, ["episodes", "list"])
         assert result.exit_code == 0
 
     def test_with_episodes(
-        self, runner: CliRunner, cli: click.Group, workspace: Path,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
+        workspace: Path,
     ) -> None:
         _write_episode(
-            workspace, "2026-02-21-test",
+            workspace,
+            "2026-02-21-test",
             {"tags": ["test"], "title": "test"},
             "Test body",
         )
@@ -90,13 +104,18 @@ class TestEntitiesList:
     """CLI 'entities list' shows all entity files."""
 
     def test_no_entities_dir(
-        self, runner: CliRunner, cli: click.Group,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
     ) -> None:
         result = runner.invoke(cli, ["entities", "list"])
         assert result.exit_code == 0
 
     def test_with_entities(
-        self, runner: CliRunner, cli: click.Group, workspace: Path,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
+        workspace: Path,
     ) -> None:
         entities_dir = workspace / "entities"
         entities_dir.mkdir()
@@ -104,7 +123,8 @@ class TestEntitiesList:
             {"entity_type": "person", "name": "Josh", "status": "active"},
         ).strip()
         (entities_dir / "josh.md").write_text(
-            f"---\n{fm_text}\n---\n\n# Josh\n", encoding="utf-8",
+            f"---\n{fm_text}\n---\n\n# Josh\n",
+            encoding="utf-8",
         )
         result = runner.invoke(cli, ["entities", "list"])
         assert result.exit_code == 0
@@ -115,7 +135,10 @@ class TestEntitiesNormalize:
     """CLI 'entities normalize' adds frontmatter to legacy files."""
 
     def test_normalizes_legacy_file(
-        self, runner: CliRunner, cli: click.Group, workspace: Path,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
+        workspace: Path,
     ) -> None:
         entities_dir = workspace / "entities"
         entities_dir.mkdir()
@@ -125,7 +148,9 @@ class TestEntitiesNormalize:
         assert "Normalized 1" in result.output
 
     def test_no_entities_dir(
-        self, runner: CliRunner, cli: click.Group,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
     ) -> None:
         result = runner.invoke(cli, ["entities", "normalize"])
         assert result.exit_code == 0
@@ -135,7 +160,9 @@ class TestConsolidateDeep:
     """CLI 'consolidate-deep' command."""
 
     def test_runs_without_error(
-        self, runner: CliRunner, cli: click.Group,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
     ) -> None:
         result = runner.invoke(cli, ["consolidate-deep"])
         assert result.exit_code == 0
@@ -145,13 +172,18 @@ class TestWorkingShow:
     """CLI 'working show' displays working.md."""
 
     def test_no_working(
-        self, runner: CliRunner, cli: click.Group,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
     ) -> None:
         result = runner.invoke(cli, ["working", "show"])
         assert result.exit_code == 0
 
     def test_with_working(
-        self, runner: CliRunner, cli: click.Group, workspace: Path,
+        self,
+        runner: CliRunner,
+        cli: click.Group,
+        workspace: Path,
     ) -> None:
         memory_dir = workspace / "memory"
         memory_dir.mkdir(parents=True, exist_ok=True)

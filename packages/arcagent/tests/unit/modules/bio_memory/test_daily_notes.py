@@ -33,7 +33,8 @@ class TestAppend:
 
     @pytest.mark.asyncio
     async def test_creates_file_on_first_append(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         path = await daily_notes.append(["First entry"], agent_id="test-agent")
         assert path.exists()
@@ -43,7 +44,8 @@ class TestAppend:
 
     @pytest.mark.asyncio
     async def test_file_has_frontmatter(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         path = await daily_notes.append(["Entry"])
         text = path.read_text(encoding="utf-8")
@@ -53,7 +55,8 @@ class TestAppend:
 
     @pytest.mark.asyncio
     async def test_appends_to_existing_file(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         await daily_notes.append(["First entry"])
         path = await daily_notes.append(["Second entry"])
@@ -63,7 +66,8 @@ class TestAppend:
 
     @pytest.mark.asyncio
     async def test_multiple_entries_in_single_append(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         path = await daily_notes.append(["Entry A", "Entry B", "Entry C"])
         text = path.read_text(encoding="utf-8")
@@ -73,7 +77,8 @@ class TestAppend:
 
     @pytest.mark.asyncio
     async def test_creates_directory_if_missing(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         assert not daily_notes.directory.exists()
         await daily_notes.append(["Entry"])
@@ -81,7 +86,8 @@ class TestAppend:
 
     @pytest.mark.asyncio
     async def test_entries_are_sanitized(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         """Entries over max_length are truncated."""
         long_entry = "x" * 2000
@@ -96,14 +102,16 @@ class TestReadDate:
 
     @pytest.mark.asyncio
     async def test_read_nonexistent_date(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         result = await daily_notes.read_date("2020-01-01")
         assert result == ""
 
     @pytest.mark.asyncio
     async def test_read_existing_date(
-        self, daily_notes: DailyNotes,
+        self,
+        daily_notes: DailyNotes,
     ) -> None:
         path = await daily_notes.append(["Test entry"])
         date_str = path.stem  # YYYY-MM-DD
@@ -115,6 +123,8 @@ class TestDirectory:
     """DailyNotes.directory property returns the correct path."""
 
     def test_directory_matches_config(
-        self, daily_notes: DailyNotes, memory_dir: Path,
+        self,
+        daily_notes: DailyNotes,
+        memory_dir: Path,
     ) -> None:
         assert daily_notes.directory == memory_dir / "daily-notes"

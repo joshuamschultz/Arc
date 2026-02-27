@@ -132,14 +132,19 @@ class SchedulerEngine:
         except TimeoutError:
             elapsed = time.monotonic() - start_time
             _logger.warning(
-                "Schedule %s timed out after %.1fs", entry.id, elapsed,
+                "Schedule %s timed out after %.1fs",
+                entry.id,
+                elapsed,
             )
             self.on_execution_failed(entry, TimeoutError(f"Timed out after {timeout}s"))
             return None
         except Exception as exc:
             elapsed = time.monotonic() - start_time
             _logger.error(
-                "Schedule %s failed after %.1fs: %s", entry.id, elapsed, exc,
+                "Schedule %s failed after %.1fs: %s",
+                entry.id,
+                elapsed,
+                exc,
             )
             self.on_execution_failed(entry, exc)
             return None
@@ -187,7 +192,9 @@ class SchedulerEngine:
     # --- Circuit breaker ---
 
     def on_execution_failed(
-        self, entry: ScheduleEntry, error: BaseException,
+        self,
+        entry: ScheduleEntry,
+        error: BaseException,
     ) -> ScheduleEntry:
         """Handle execution failure. Returns updated entry.
 
@@ -213,7 +220,8 @@ class SchedulerEngine:
             updates["enabled"] = False
             _logger.warning(
                 "Circuit breaker tripped for %s after %d failures",
-                entry.id, new_failures,
+                entry.id,
+                new_failures,
             )
 
         try:
@@ -223,12 +231,15 @@ class SchedulerEngine:
 
         # Emit bus event so other modules (e.g. Telegram) can notify user.
         if self._bus is not None:
-            self._emit_bus_event("schedule:failed", {
-                "schedule_id": entry.id,
-                "schedule_name": entry.prompt[:80],
-                "error": str(error),
-                "consecutive_failures": new_failures,
-            })
+            self._emit_bus_event(
+                "schedule:failed",
+                {
+                    "schedule_id": entry.id,
+                    "schedule_name": entry.prompt[:80],
+                    "error": str(error),
+                    "consecutive_failures": new_failures,
+                },
+            )
 
         # Return updated entry for caller.
         data = entry.model_dump()
@@ -264,7 +275,9 @@ class SchedulerEngine:
         return {"metadata": meta_data}
 
     def _should_fire_interval(
-        self, entry: ScheduleEntry, now: datetime,
+        self,
+        entry: ScheduleEntry,
+        now: datetime,
     ) -> bool:
         if not entry.metadata.last_run:
             return True
@@ -300,7 +313,10 @@ class SchedulerEngine:
         return target <= now
 
     def _on_execution_complete(
-        self, entry: ScheduleEntry, result: Any, elapsed: float,
+        self,
+        entry: ScheduleEntry,
+        result: Any,
+        elapsed: float,
     ) -> None:
         """Update metadata and emit bus event after successful execution."""
         updates = self._build_metadata_update(
@@ -323,12 +339,15 @@ class SchedulerEngine:
         # Emit bus event so other modules (e.g. Telegram) can deliver results.
         if self._bus is not None:
             content = (getattr(result, "content", None) or str(result)) if result else ""
-            self._emit_bus_event("schedule:completed", {
-                "schedule_id": entry.id,
-                "schedule_name": entry.prompt[:80],
-                "result": content,
-                "elapsed": elapsed,
-            })
+            self._emit_bus_event(
+                "schedule:completed",
+                {
+                    "schedule_id": entry.id,
+                    "schedule_name": entry.prompt[:80],
+                    "result": content,
+                    "elapsed": elapsed,
+                },
+            )
 
     async def _timer_loop(self) -> None:
         """Periodically evaluate all schedules and enqueue those that fire."""

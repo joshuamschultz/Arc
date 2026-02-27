@@ -2,12 +2,13 @@
 
 Tests that recursive spawning is properly limited by depth controls.
 """
+
 from __future__ import annotations
 
 import pytest
 
-from security.conftest import LLMResponse, MockModel, ToolCall
 from arcrun.types import Tool
+from security.conftest import LLMResponse, MockModel, ToolCall
 
 
 class TestSpawnDepthBomb:
@@ -16,27 +17,36 @@ class TestSpawnDepthBomb:
         """Spawning at max_depth returns error, not infinite recursion."""
         from arcrun.loop import run
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="spawn_task", arguments={"task": "recurse"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Depth limit reached.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(id="tc1", name="spawn_task", arguments={"task": "recurse"})
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Depth limit reached.", stop_reason="end_turn"),
+            ]
+        )
 
         async def noop(params: dict, ctx: object) -> str:
             return "ok"
 
         tool = Tool(
-            name="echo", description="Echo",
+            name="echo",
+            description="Echo",
             input_schema={"type": "object", "properties": {"input": {"type": "string"}}},
             execute=noop,
         )
 
         # Run at max_depth — spawn should fail with error message
         result = await run(
-            model, [tool], "prompt", "task",
-            depth=3, max_depth=3,
+            model,
+            [tool],
+            "prompt",
+            "task",
+            depth=3,
+            max_depth=3,
         )
         # spawn_task isn't in tool list, so it gets tool.error
         assert result.turns >= 1
@@ -47,22 +57,25 @@ class TestSpawnDepthBomb:
         from arcrun.loop import run
 
         # Model tries to call spawn_task 5 times simultaneously
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[
-                    ToolCall(id=f"tc{i}", name="echo", arguments={"input": f"task-{i}"})
-                    for i in range(5)
-                ],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="All done.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(id=f"tc{i}", name="echo", arguments={"input": f"task-{i}"})
+                        for i in range(5)
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="All done.", stop_reason="end_turn"),
+            ]
+        )
 
         async def noop(params: dict, ctx: object) -> str:
             return f"echo: {params.get('input', '')}"
 
         tool = Tool(
-            name="echo", description="Echo",
+            name="echo",
+            description="Echo",
             input_schema={"type": "object", "properties": {"input": {"type": "string"}}},
             execute=noop,
         )
@@ -76,15 +89,18 @@ class TestSpawnDepthBomb:
         """The depth parameter comes from the runtime, not the model."""
         from arcrun.loop import run
 
-        model = MockModel([
-            LLMResponse(content="OK", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(content="OK", stop_reason="end_turn"),
+            ]
+        )
 
         async def noop(params: dict, ctx: object) -> str:
             return "ok"
 
         tool = Tool(
-            name="echo", description="Echo",
+            name="echo",
+            description="Echo",
             input_schema={"type": "object", "properties": {}},
             execute=noop,
         )

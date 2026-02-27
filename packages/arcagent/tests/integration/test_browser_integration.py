@@ -102,7 +102,8 @@ class TestBrowserIntegration:
                 "</body></html>"
             )
             await cdp.send(
-                "Page", "navigate",
+                "Page",
+                "navigate",
                 {"url": f"data:text/html,{page_html}"},
             )
 
@@ -126,7 +127,8 @@ class TestBrowserIntegration:
             await cdp.connect()
 
             await cdp.send(
-                "Page", "navigate",
+                "Page",
+                "navigate",
                 {"url": "data:text/html,<html><body><h1>Screenshot</h1></body></html>"},
             )
 
@@ -162,19 +164,22 @@ class TestBrowserIntegration:
                 "</body></html>"
             )
             await cdp.send(
-                "Page", "navigate",
+                "Page",
+                "navigate",
                 {"url": f"data:text/html,{page_html}"},
             )
 
             # Click the button via JS
             await cdp.send(
-                "Runtime", "evaluate",
+                "Runtime",
+                "evaluate",
                 {"expression": "document.getElementById('btn').click()"},
             )
 
             # Verify the input was updated
             result = await cdp.send(
-                "Runtime", "evaluate",
+                "Runtime",
+                "evaluate",
                 {"expression": "document.getElementById('inp').value"},
             )
             value = result.get("result", {}).get("value", "")
@@ -182,11 +187,13 @@ class TestBrowserIntegration:
 
             # Type into the input via JS
             await cdp.send(
-                "Runtime", "evaluate",
+                "Runtime",
+                "evaluate",
                 {"expression": "document.getElementById('inp').value = 'typed text'"},
             )
             result = await cdp.send(
-                "Runtime", "evaluate",
+                "Runtime",
+                "evaluate",
                 {"expression": "document.getElementById('inp').value"},
             )
             assert result.get("result", {}).get("value") == "typed text"

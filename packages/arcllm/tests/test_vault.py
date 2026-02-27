@@ -5,6 +5,7 @@ import time
 from unittest.mock import patch
 
 import pytest
+
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.vault import VaultBackend, VaultResolver
 

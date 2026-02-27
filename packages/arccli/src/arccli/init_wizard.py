@@ -256,7 +256,7 @@ def init(
 
     if not key_ok:
         click_echo("")
-        click_echo(f"  Set your API key:")
+        click_echo("  Set your API key:")
         click_echo(f"    export {env_var}=<your-key>")
         click_echo("")
         click_echo(f"  Or add it to {env_path}:")
@@ -275,7 +275,6 @@ def init(
 def _create_quick_agent(arc_dir: Path, name: str) -> None:
     """Create a minimal agent directory for quick start."""
     # Import here to avoid circular dependency
-    from arccli.agent import _resolve_agent_dir
 
     # Use ~/.arc/agents/<name> as the default location
     agents_dir = arc_dir / "agents"
@@ -313,10 +312,7 @@ def _create_quick_agent(arc_dir: Path, name: str) -> None:
         (agent_dir / "identity.md").write_text(identity)
 
         config = (
-            '# Agent config\ntier = "open"\n\n'
-            "[modules]\n"
-            "[modules.bio_memory]\n"
-            "enabled = true\n"
+            '# Agent config\ntier = "open"\n\n[modules]\n[modules.bio_memory]\nenabled = true\n'
         )
         (agent_dir / "arcagent.toml").write_text(config)
 

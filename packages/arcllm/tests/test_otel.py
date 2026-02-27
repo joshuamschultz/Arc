@@ -56,7 +56,7 @@ class TestOtelModule:
         module = OtelModule(_default_config(), inner)
         messages = [Message(role="user", content="hi")]
         tools = [MagicMock()]
-        response = await module.invoke(messages, tools=tools, max_tokens=100)
+        await module.invoke(messages, tools=tools, max_tokens=100)
         inner.invoke.assert_awaited_once_with(messages, tools, max_tokens=100)
 
     @pytest.mark.asyncio
@@ -83,9 +83,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -106,9 +104,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -128,9 +124,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -149,9 +143,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -170,9 +162,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -191,9 +181,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -212,9 +200,7 @@ class TestOtelModule:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -253,9 +239,7 @@ class TestOtelModuleValidation:
         from arcllm.modules.otel import OtelModule
 
         with pytest.raises(ArcLLMConfigError, match="protocol"):
-            OtelModule(
-                {"exporter": "none", "protocol": "invalid_proto"}, _make_inner()
-            )
+            OtelModule({"exporter": "none", "protocol": "invalid_proto"}, _make_inner())
 
     def test_sample_rate_below_zero_rejected(self):
         """Sample rate < 0 raises ArcLLMConfigError."""
@@ -276,9 +260,7 @@ class TestOtelModuleValidation:
         from arcllm.modules.otel import OtelModule
 
         with pytest.raises(ArcLLMConfigError, match="Unknown"):
-            OtelModule(
-                {"exporter": "none", "bogus_key": "value"}, _make_inner()
-            )
+            OtelModule({"exporter": "none", "bogus_key": "value"}, _make_inner())
 
     def test_sdk_not_installed_raises_error(self):
         """OTel enabled but SDK not installed raises clear error."""
@@ -311,7 +293,7 @@ class TestOtelSdkSetup:
             ),
             patch("arcllm.modules.otel._setup_sdk") as mock_setup,
         ):
-            module = OtelModule(
+            OtelModule(
                 {
                     "exporter": "otlp",
                     "endpoint": "http://collector:4317",
@@ -326,7 +308,7 @@ class TestOtelSdkSetup:
         from arcllm.modules.otel import OtelModule
 
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule({"exporter": "console"}, _make_inner())
+            OtelModule({"exporter": "console"}, _make_inner())
             mock_setup.assert_called_once()
 
     def test_none_exporter_no_processor(self):
@@ -334,7 +316,7 @@ class TestOtelSdkSetup:
         from arcllm.modules.otel import OtelModule
 
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule({"exporter": "none"}, _make_inner())
+            OtelModule({"exporter": "none"}, _make_inner())
             mock_setup.assert_not_called()
 
     def test_auth_headers_passed(self):
@@ -342,7 +324,7 @@ class TestOtelSdkSetup:
         from arcllm.modules.otel import OtelModule
 
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule(
+            OtelModule(
                 {
                     "exporter": "otlp",
                     "headers": {"Authorization": "Bearer tok"},
@@ -357,7 +339,7 @@ class TestOtelSdkSetup:
         from arcllm.modules.otel import OtelModule
 
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule(
+            OtelModule(
                 {"exporter": "otlp", "service_name": "my-agent"},
                 _make_inner(),
             )
@@ -370,7 +352,7 @@ class TestOtelSdkSetup:
 
         attrs = {"deployment.environment": "production", "service.version": "1.0"}
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule(
+            OtelModule(
                 {"exporter": "otlp", "resource_attributes": attrs},
                 _make_inner(),
             )
@@ -382,7 +364,7 @@ class TestOtelSdkSetup:
         from arcllm.modules.otel import OtelModule
 
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule(
+            OtelModule(
                 {"exporter": "otlp", "sample_rate": 0.5},
                 _make_inner(),
             )
@@ -394,7 +376,7 @@ class TestOtelSdkSetup:
         from arcllm.modules.otel import OtelModule
 
         with patch("arcllm.modules.otel._setup_sdk") as mock_setup:
-            module = OtelModule(
+            OtelModule(
                 {
                     "exporter": "otlp",
                     "certificate_file": "/path/ca.pem",

@@ -2,6 +2,7 @@
 
 All tests mock the Docker SDK. No real containers are started.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -122,7 +123,7 @@ class TestContainerExecution:
     async def test_successful_execution_returns_json(self):
         from arcrun.builtins.contained_execute import make_contained_execute_tool
 
-        mock_docker, mock_container = self._make_mock_docker(
+        mock_docker, _mock_container = self._make_mock_docker(
             stdout=b"hello world", stderr=b"", exit_code=0
         )
         with patch.dict(sys.modules, {"docker": mock_docker}):
@@ -142,7 +143,7 @@ class TestContainerExecution:
     async def test_container_config_has_lockdown_defaults(self):
         from arcrun.builtins.contained_execute import make_contained_execute_tool
 
-        mock_docker, mock_container = self._make_mock_docker()
+        mock_docker, _mock_container = self._make_mock_docker()
         with patch.dict(sys.modules, {"docker": mock_docker}):
             with patch("pathlib.Path.exists", return_value=True):
                 tool = make_contained_execute_tool(image="python:3.11-slim")
@@ -153,7 +154,7 @@ class TestContainerExecution:
         assert create_call.called
         kwargs = create_call.call_args
         # Verify key lockdown settings exist in call
-        call_kwargs = kwargs.kwargs if kwargs.kwargs else kwargs[1] if len(kwargs) > 1 else {}
+        kwargs.kwargs if kwargs.kwargs else kwargs[1] if len(kwargs) > 1 else {}
         # At minimum, image should be passed
         assert create_call.call_args is not None
 
@@ -161,7 +162,7 @@ class TestContainerExecution:
     async def test_custom_constraints_override_defaults(self):
         from arcrun.builtins.contained_execute import make_contained_execute_tool
 
-        mock_docker, mock_container = self._make_mock_docker()
+        mock_docker, _mock_container = self._make_mock_docker()
         with patch.dict(sys.modules, {"docker": mock_docker}):
             with patch("pathlib.Path.exists", return_value=True):
                 tool = make_contained_execute_tool(
@@ -193,7 +194,7 @@ class TestContainerExecution:
         """Exit code 137 raises SandboxOOMError."""
         from arcrun.builtins.contained_execute import SandboxOOMError, make_contained_execute_tool
 
-        mock_docker, mock_container = self._make_mock_docker(
+        mock_docker, _mock_container = self._make_mock_docker(
             stdout=b"", stderr=b"Killed", exit_code=137
         )
         with patch.dict(sys.modules, {"docker": mock_docker}):
@@ -228,7 +229,10 @@ class TestContainerExecution:
     @pytest.mark.asyncio
     async def test_timeout_raises_sandbox_timeout_error(self):
         """Execution exceeding timeout raises SandboxTimeoutError."""
-        from arcrun.builtins.contained_execute import SandboxTimeoutError, make_contained_execute_tool
+        from arcrun.builtins.contained_execute import (
+            SandboxTimeoutError,
+            make_contained_execute_tool,
+        )
 
         mock_docker, mock_container = self._make_mock_docker()
         stop = threading.Event()
@@ -244,9 +248,7 @@ class TestContainerExecution:
 
         with patch.dict(sys.modules, {"docker": mock_docker}):
             with patch("pathlib.Path.exists", return_value=True):
-                tool = make_contained_execute_tool(
-                    image="python:3.11-slim", timeout_seconds=0.1
-                )
+                tool = make_contained_execute_tool(image="python:3.11-slim", timeout_seconds=0.1)
                 with pytest.raises(SandboxTimeoutError, match="timeout"):
                     await tool.execute({"code": "pass"}, _make_ctx())
 
@@ -255,7 +257,10 @@ class TestContainerExecution:
     @pytest.mark.asyncio
     async def test_code_size_limit_raises_runtime_error(self):
         """Code exceeding MAX_CODE_BYTES raises SandboxRuntimeError."""
-        from arcrun.builtins.contained_execute import SandboxRuntimeError, make_contained_execute_tool
+        from arcrun.builtins.contained_execute import (
+            SandboxRuntimeError,
+            make_contained_execute_tool,
+        )
 
         mock_docker = MagicMock()
         with patch.dict(sys.modules, {"docker": mock_docker}):
@@ -270,7 +275,7 @@ class TestContainerExecution:
         """Container should run as nobody (65534:65534)."""
         from arcrun.builtins.contained_execute import make_contained_execute_tool
 
-        mock_docker, mock_container = self._make_mock_docker()
+        mock_docker, _mock_container = self._make_mock_docker()
         with patch.dict(sys.modules, {"docker": mock_docker}):
             with patch("pathlib.Path.exists", return_value=True):
                 tool = make_contained_execute_tool(image="python:3.11-slim")
@@ -285,7 +290,7 @@ class TestContainerExecution:
         """tmpfs mount should include noexec and nosuid flags."""
         from arcrun.builtins.contained_execute import make_contained_execute_tool
 
-        mock_docker, mock_container = self._make_mock_docker()
+        mock_docker, _mock_container = self._make_mock_docker()
         with patch.dict(sys.modules, {"docker": mock_docker}):
             with patch("pathlib.Path.exists", return_value=True):
                 tool = make_contained_execute_tool(image="python:3.11-slim")

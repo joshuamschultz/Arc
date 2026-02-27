@@ -1,8 +1,6 @@
 """Integration tests for CodeExec: strategy selection + ExecuteTool + CodeExecStrategy."""
-import json
 
 import pytest
-
 from conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun.builtins import make_execute_tool
@@ -30,21 +28,28 @@ class TestCodeExecIntegration:
     async def test_run_with_allowed_strategies_selects(self):
         from arcrun.loop import run
 
-        model = MockModel([
-            # Selection call: model picks "code"
-            LLMResponse(
-                tool_calls=[ToolCall(
-                    id="sel1",
-                    name="select_strategy",
-                    arguments={"strategy": "code"},
-                )],
-                stop_reason="tool_use",
-            ),
-            # Strategy execution: model responds
-            LLMResponse(content="Done with code.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                # Selection call: model picks "code"
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id="sel1",
+                            name="select_strategy",
+                            arguments={"strategy": "code"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                # Strategy execution: model responds
+                LLMResponse(content="Done with code.", stop_reason="end_turn"),
+            ]
+        )
         result = await run(
-            model, _tools_with_execute(), "Be helpful.", "Compute 2+2",
+            model,
+            _tools_with_execute(),
+            "Be helpful.",
+            "Compute 2+2",
             allowed_strategies=["react", "code"],
         )
         assert result.strategy_used == "code"
@@ -54,21 +59,28 @@ class TestCodeExecIntegration:
     async def test_code_exec_end_to_end(self):
         from arcrun.loop import run
 
-        model = MockModel([
-            # Model writes code
-            LLMResponse(
-                tool_calls=[ToolCall(
-                    id="tc1",
-                    name="execute_python",
-                    arguments={"code": "print(2 + 2)"},
-                )],
-                stop_reason="tool_use",
-            ),
-            # Model responds with result
-            LLMResponse(content="The answer is 4.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                # Model writes code
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id="tc1",
+                            name="execute_python",
+                            arguments={"code": "print(2 + 2)"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                # Model responds with result
+                LLMResponse(content="The answer is 4.", stop_reason="end_turn"),
+            ]
+        )
         result = await run(
-            model, _tools_with_execute(), "Be helpful.", "What is 2+2?",
+            model,
+            _tools_with_execute(),
+            "Be helpful.",
+            "What is 2+2?",
             allowed_strategies=["code"],
         )
         assert result.content == "The answer is 4."
@@ -83,20 +95,27 @@ class TestCodeExecIntegration:
     async def test_sandbox_denies_execute_python(self):
         from arcrun.loop import run
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(
-                    id="tc1",
-                    name="execute_python",
-                    arguments={"code": "print('hack')"},
-                )],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Denied.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id="tc1",
+                            name="execute_python",
+                            arguments={"code": "print('hack')"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Denied.", stop_reason="end_turn"),
+            ]
+        )
         cfg = SandboxConfig(allowed_tools=["echo"])
         result = await run(
-            model, _tools_with_execute(), "Be helpful.", "Run code",
+            model,
+            _tools_with_execute(),
+            "Be helpful.",
+            "Run code",
             allowed_strategies=["code"],
             sandbox=cfg,
         )
@@ -108,19 +127,26 @@ class TestCodeExecIntegration:
     async def test_event_completeness(self):
         from arcrun.loop import run
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(
-                    id="sel1",
-                    name="select_strategy",
-                    arguments={"strategy": "code"},
-                )],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Done.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id="sel1",
+                            name="select_strategy",
+                            arguments={"strategy": "code"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Done.", stop_reason="end_turn"),
+            ]
+        )
         result = await run(
-            model, _tools_with_execute(), "Be helpful.", "Task",
+            model,
+            _tools_with_execute(),
+            "Be helpful.",
+            "Task",
             allowed_strategies=["react", "code"],
         )
         event_types = {e.type for e in result.events}
@@ -137,7 +163,10 @@ class TestCodeExecIntegration:
 
         model = MockModel([LLMResponse(content="Hello!", stop_reason="end_turn")])
         result = await run(
-            model, _tools_with_execute(), "Be helpful.", "Say hello",
+            model,
+            _tools_with_execute(),
+            "Be helpful.",
+            "Say hello",
         )
         assert result.content == "Hello!"
         assert result.strategy_used == "react"

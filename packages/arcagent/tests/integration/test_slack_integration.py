@@ -17,7 +17,6 @@ from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.slack import SlackModule
-from arcagent.modules.slack.bot import SlackBot
 
 
 def _make_telemetry() -> AgentTelemetry:

@@ -43,15 +43,11 @@ class TestBashTool:
         assert "out" in result
         assert "err" in result
 
-    async def test_no_output_returns_placeholder(
-        self, bash_tool: Any
-    ) -> None:
+    async def test_no_output_returns_placeholder(self, bash_tool: Any) -> None:
         result = await bash_tool(command="true")
         assert result == "(no output)"
 
-    async def test_runs_in_workspace_directory(
-        self, workspace: Path, bash_tool: Any
-    ) -> None:
+    async def test_runs_in_workspace_directory(self, workspace: Path, bash_tool: Any) -> None:
         result = await bash_tool(command="pwd")
         assert str(workspace.resolve()) in result
 
@@ -60,9 +56,7 @@ class TestBashTool:
         assert "Error" in result
         assert "timed out" in result
 
-    async def test_timeout_process_already_exited(
-        self, bash_tool: Any
-    ) -> None:
+    async def test_timeout_process_already_exited(self, bash_tool: Any) -> None:
         """Lines 59-60: ProcessLookupError when process already exited."""
         # Use a very short timeout with a command that exits immediately
         # This tests the exception path where process.kill() raises ProcessLookupError
@@ -70,14 +64,10 @@ class TestBashTool:
         # Should complete successfully (process exits before timeout)
         assert "timed out" not in result
 
-    async def test_output_truncation(
-        self, workspace: Path, bash_tool: Any
-    ) -> None:
+    async def test_output_truncation(self, workspace: Path, bash_tool: Any) -> None:
         # Generate output larger than max
         char_count = _MAX_OUTPUT_CHARS + 1000
-        result = await bash_tool(
-            command=f"python3 -c \"print('x' * {char_count})\""
-        )
+        result = await bash_tool(command=f"python3 -c \"print('x' * {char_count})\"")
         assert "truncated" in result
 
     async def test_multiline_output(self, bash_tool: Any) -> None:

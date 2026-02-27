@@ -12,9 +12,7 @@ from arcagent.modules.memory.config import MemoryConfig
 from arcagent.modules.memory.markdown_memory import NoteManager
 
 
-def _make_ctx(
-    event: str, data: dict[str, Any] | None = None
-) -> EventContext:
+def _make_ctx(event: str, data: dict[str, Any] | None = None) -> EventContext:
     return EventContext(
         event=event,
         data=data or {},
@@ -89,6 +87,7 @@ class TestGetRecentNotes:
         notes_dir.mkdir()
 
         from datetime import date
+
         today = date.today()
         today_file = notes_dir / f"{today.isoformat()}.md"
         today_file.write_text("Today's notes content")
@@ -104,6 +103,7 @@ class TestGetRecentNotes:
         notes_dir.mkdir()
 
         from datetime import date, timedelta
+
         yesterday = date.today() - timedelta(days=1)
         yesterday_file = notes_dir / f"{yesterday.isoformat()}.md"
         yesterday_file.write_text("Yesterday's notes")
@@ -118,6 +118,7 @@ class TestGetRecentNotes:
         notes_dir.mkdir()
 
         from datetime import date, timedelta
+
         today = date.today()
         yesterday = today - timedelta(days=1)
         (notes_dir / f"{today.isoformat()}.md").write_text("Today content")
@@ -153,6 +154,7 @@ class TestTokenBudget:
         notes_dir.mkdir()
 
         from datetime import date
+
         today = date.today()
         # Create notes longer than budget (~10 tokens = ~40 chars)
         long_content = "A" * 200
@@ -170,6 +172,7 @@ class TestTokenBudget:
         notes_dir.mkdir()
 
         from datetime import date, timedelta
+
         yesterday = date.today() - timedelta(days=1)
         long_content = "B" * 200
         (notes_dir / f"{yesterday.isoformat()}.md").write_text(long_content)

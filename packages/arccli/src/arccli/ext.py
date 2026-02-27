@@ -60,7 +60,12 @@ def ext() -> None:
 
 
 @ext.command("list")
-@click.option("--agent", "agent_dir", default=None, help="Agent directory to include workspace extensions.")
+@click.option(
+    "--agent",
+    "agent_dir",
+    default=None,
+    help="Agent directory to include workspace extensions.",
+)
 def ext_list(agent_dir: str | None) -> None:
     """List discovered extensions.
 
@@ -91,7 +96,8 @@ def ext_list(agent_dir: str | None) -> None:
         click_echo("No extensions found.")
         click_echo(f"  Global dir: {_GLOBAL_EXT_DIR}")
         if agent_dir:
-            click_echo(f"  Agent dir:  {Path(agent_dir).expanduser().resolve() / 'workspace' / 'extensions'}")
+            agent_ext = Path(agent_dir).expanduser().resolve() / "workspace" / "extensions"
+            click_echo(f"  Agent dir:  {agent_ext}")
 
 
 # ---------------------------------------------------------------------------
@@ -197,19 +203,19 @@ def ext_validate(path: str) -> None:
         spec.loader.exec_module(mod)
     except Exception as e:
         click_echo(f"  [FAIL] Import error: {e}")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     if not hasattr(mod, "extension"):
-        click_echo(f"  [FAIL] No `extension()` factory function found")
+        click_echo("  [FAIL] No `extension()` factory function found")
         raise SystemExit(1)
 
-    factory = getattr(mod, "extension")
+    factory = mod.extension
     if not callable(factory):
-        click_echo(f"  [FAIL] `extension` is not callable")
+        click_echo("  [FAIL] `extension` is not callable")
         raise SystemExit(1)
 
     click_echo(f"  [OK] {ext_path.name}")
-    click_echo(f"       Factory: extension()")
+    click_echo("       Factory: extension()")
     click_echo(f"       Path:    {ext_path}")
 
 

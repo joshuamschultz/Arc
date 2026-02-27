@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from arcllm._pii import PiiDetector, PiiMatch, RegexPiiDetector
+from arcllm._pii import PiiMatch
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.security import SecurityModule
 from arcllm.types import (
@@ -14,13 +14,11 @@ from arcllm.types import (
     LLMResponse,
     Message,
     TextBlock,
-    Tool,
     ToolCall,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -95,9 +93,7 @@ class TestPiiOutboundText:
     async def test_redacts_multiple_pii_types(self):
         inner = _make_inner()
         module = SecurityModule(_base_config(), inner)
-        messages = [
-            Message(role="user", content="SSN 123-45-6789, email user@test.com")
-        ]
+        messages = [Message(role="user", content="SSN 123-45-6789, email user@test.com")]
 
         await module.invoke(messages)
 
@@ -358,9 +354,7 @@ class TestFeatureToggles:
 
     async def test_signing_disabled_pii_only(self):
         inner = _make_inner()
-        module = SecurityModule(
-            _base_config(signing_enabled=False), inner
-        )
+        module = SecurityModule(_base_config(signing_enabled=False), inner)
         messages = [Message(role="user", content="SSN 123-45-6789")]
 
         result = await module.invoke(messages)
@@ -369,15 +363,11 @@ class TestFeatureToggles:
         sent = inner.invoke.call_args[0][0]
         assert "[PII:SSN]" in sent[0].content
         # No signature
-        assert result.metadata is None or "request_signature" not in (
-            result.metadata or {}
-        )
+        assert result.metadata is None or "request_signature" not in (result.metadata or {})
 
     async def test_both_disabled_passthrough(self):
         inner = _make_inner()
-        module = SecurityModule(
-            _base_config(pii_enabled=False, signing_enabled=False), inner
-        )
+        module = SecurityModule(_base_config(pii_enabled=False, signing_enabled=False), inner)
         messages = [Message(role="user", content="SSN 123-45-6789")]
 
         result = await module.invoke(messages)

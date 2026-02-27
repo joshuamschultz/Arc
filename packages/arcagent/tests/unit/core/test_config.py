@@ -24,7 +24,8 @@ from arcagent.core.errors import ConfigError
 @pytest.fixture()
 def valid_toml(tmp_path: Path) -> Path:
     config = tmp_path / "arcagent.toml"
-    config.write_text(textwrap.dedent("""\
+    config.write_text(
+        textwrap.dedent("""\
         [agent]
         name = "test-agent"
         org = "blackarc"
@@ -33,20 +34,23 @@ def valid_toml(tmp_path: Path) -> Path:
         [llm]
         model = "anthropic/claude-sonnet-4-5-20250929"
         max_tokens = 4096
-    """))
+    """)
+    )
     return config
 
 
 @pytest.fixture()
 def minimal_toml(tmp_path: Path) -> Path:
     config = tmp_path / "arcagent.toml"
-    config.write_text(textwrap.dedent("""\
+    config.write_text(
+        textwrap.dedent("""\
         [agent]
         name = "minimal"
 
         [llm]
         model = "anthropic/claude-sonnet-4-5-20250929"
-    """))
+    """)
+    )
     return config
 
 
@@ -71,13 +75,15 @@ class TestLoadConfig:
 
     def test_validation_error_includes_field_path(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.toml"
-        bad.write_text(textwrap.dedent("""\
+        bad.write_text(
+            textwrap.dedent("""\
             [agent]
             name = "test"
 
             [llm]
             max_tokens = "not_a_number"
-        """))
+        """)
+        )
         with pytest.raises(ConfigError) as exc_info:
             load_config(bad)
         assert exc_info.value.code == "CONFIG_VALIDATION"
@@ -282,7 +288,8 @@ class TestConfigWithNewSections:
 
     def test_eval_from_toml(self, tmp_path: Path) -> None:
         config = tmp_path / "arcagent.toml"
-        config.write_text(textwrap.dedent("""\
+        config.write_text(
+            textwrap.dedent("""\
             [agent]
             name = "test"
 
@@ -296,7 +303,8 @@ class TestConfigWithNewSections:
             temperature = 0.1
             fallback_behavior = "error"
             max_concurrent = 4
-        """))
+        """)
+        )
         cfg = load_config(config)
         assert cfg.eval.provider == "openai"
         assert cfg.eval.model == "gpt-4o-mini"
@@ -306,7 +314,8 @@ class TestConfigWithNewSections:
 
     def test_session_from_toml(self, tmp_path: Path) -> None:
         config = tmp_path / "arcagent.toml"
-        config.write_text(textwrap.dedent("""\
+        config.write_text(
+            textwrap.dedent("""\
             [agent]
             name = "test"
 
@@ -316,14 +325,13 @@ class TestConfigWithNewSections:
             [session]
             retention_count = 100
             retention_days = 60
-        """))
+        """)
+        )
         cfg = load_config(config)
         assert cfg.session.retention_count == 100
         assert cfg.session.retention_days == 60
 
-    def test_env_override_eval(
-        self, minimal_toml: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_env_override_eval(self, minimal_toml: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ARCAGENT_EVAL__MODEL", "openai/gpt-4o-mini")
         cfg = load_config(minimal_toml)
         assert cfg.eval.model == "openai/gpt-4o-mini"
@@ -332,7 +340,8 @@ class TestConfigWithNewSections:
 class TestFullConfig:
     def test_full_toml(self, tmp_path: Path) -> None:
         config = tmp_path / "full.toml"
-        config.write_text(textwrap.dedent("""\
+        config.write_text(
+            textwrap.dedent("""\
             [agent]
             name = "full-agent"
             org = "blackarc"
@@ -387,7 +396,8 @@ class TestFullConfig:
 
             [modules.memory.config]
             search_weights = {semantic = 0.7, keyword = 0.3}
-        """))
+        """)
+        )
         cfg = load_config(config)
         assert cfg.agent.name == "full-agent"
         assert cfg.agent.workspace == "/opt/agents/full"

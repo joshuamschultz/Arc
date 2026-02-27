@@ -9,7 +9,6 @@ from arcllm.config import load_provider_config as _real_load_provider_config
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -164,9 +163,11 @@ class TestErrorHandling:
 
         # Patch load_provider_config to succeed, but module won't exist
         with patch("arcllm.registry.load_provider_config") as mock_config:
-            mock_config.return_value = type("FakeConfig", (), {
-                "provider": type("FakeProvider", (), {"default_model": "test"})()
-            })()
+            mock_config.return_value = type(
+                "FakeConfig",
+                (),
+                {"provider": type("FakeProvider", (), {"default_model": "test"})()},
+            )()
             with pytest.raises(ArcLLMConfigError, match="adapter module"):
                 load_model("nosuchadapter")
 
@@ -356,9 +357,7 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model(
-            "anthropic", retry=True, fallback=True, rate_limit=True
-        )
+        model = load_model("anthropic", retry=True, fallback=True, rate_limit=True)
         assert isinstance(model, RetryModule)
         assert isinstance(model._inner, FallbackModule)
         assert isinstance(model._inner._inner, RateLimitModule)
@@ -399,9 +398,7 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model(
-            "anthropic", telemetry={"cost_input_per_1m": 99.0}
-        )
+        model = load_model("anthropic", telemetry={"cost_input_per_1m": 99.0})
         assert isinstance(model, TelemetryModule)
         # Explicit override wins
         assert model._cost_input == 99.0
@@ -529,9 +526,7 @@ class TestModuleStacking:
         assert isinstance(model._inner._inner._inner, RetryModule)
         assert isinstance(model._inner._inner._inner._inner, FallbackModule)
         assert isinstance(model._inner._inner._inner._inner._inner, RateLimitModule)
-        assert isinstance(
-            model._inner._inner._inner._inner._inner._inner, AnthropicAdapter
-        )
+        assert isinstance(model._inner._inner._inner._inner._inner._inner, AnthropicAdapter)
 
     def test_load_model_otel_false_overrides_config(self):
         """otel=False disables even if config.toml enables it."""

@@ -7,10 +7,10 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

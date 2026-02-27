@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +15,6 @@ from arcagent.core.config import (
     ArcAgentConfig,
     IdentityConfig,
     LLMConfig,
-    SessionConfig,
     TelemetryConfig,
     VaultConfig,
 )
@@ -51,14 +49,10 @@ class TestInit:
     def test_creates_agent(self, agent: ArcAgent) -> None:
         assert agent._config.agent.name == "test-agent"
 
-    def test_components_not_initialized_before_startup(
-        self, agent: ArcAgent
-    ) -> None:
+    def test_components_not_initialized_before_startup(self, agent: ArcAgent) -> None:
         assert not agent._started
 
-    def test_workspace_cached_at_init(
-        self, agent: ArcAgent, agent_config: ArcAgentConfig
-    ) -> None:
+    def test_workspace_cached_at_init(self, agent: ArcAgent, agent_config: ArcAgentConfig) -> None:
         """Workspace path is resolved and cached once at __init__."""
         expected = Path(agent_config.agent.workspace).resolve()
         assert agent._workspace == expected
@@ -69,9 +63,7 @@ class TestInit:
 
 
 class TestStartup:
-    async def test_startup_initializes_components(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_startup_initializes_components(self, agent: ArcAgent) -> None:
         await agent.startup()
         assert agent._started
         assert agent._telemetry is not None
@@ -80,15 +72,11 @@ class TestStartup:
         assert agent._tool_registry is not None
         assert agent._context is not None
 
-    async def test_startup_generates_identity(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_startup_generates_identity(self, agent: ArcAgent) -> None:
         await agent.startup()
         assert agent._identity.did.startswith("did:arc:testorg:executor/")
 
-    async def test_startup_emits_init_event(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_startup_emits_init_event(self, agent: ArcAgent) -> None:
         events: list[str] = []
 
         async def on_init(ctx: Any) -> None:
@@ -100,9 +88,7 @@ class TestStartup:
         await agent._bus.emit("agent:init", {})
         assert "init" in events
 
-    async def test_vault_resolver_created_when_configured(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_vault_resolver_created_when_configured(self, tmp_path: Path) -> None:
         config = ArcAgentConfig(
             agent=AgentConfig(name="test", workspace=str(tmp_path)),
             llm=LLMConfig(model="test/model"),
@@ -116,24 +102,18 @@ class TestStartup:
         with pytest.raises(ModuleNotFoundError):
             await agent.startup()
 
-    async def test_vault_resolver_none_when_not_configured(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_vault_resolver_none_when_not_configured(self, agent: ArcAgent) -> None:
         await agent.startup()
         assert agent._vault_resolver is None
 
 
 class TestShutdown:
-    async def test_shutdown_reverses_startup(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_shutdown_reverses_startup(self, agent: ArcAgent) -> None:
         await agent.startup()
         await agent.shutdown()
         assert not agent._started
 
-    async def test_shutdown_emits_shutdown_event(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_shutdown_emits_shutdown_event(self, agent: ArcAgent) -> None:
         events: list[str] = []
         await agent.startup()
 
@@ -144,9 +124,7 @@ class TestShutdown:
         await agent.shutdown()
         assert "shutdown" in events
 
-    async def test_shutdown_without_startup_is_safe(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_shutdown_without_startup_is_safe(self, agent: ArcAgent) -> None:
         """Shutdown before startup should not raise."""
         await agent.shutdown()  # No-op
 
@@ -166,9 +144,7 @@ class TestRun:
     ) -> None:
         mock_model = MagicMock()
         mock_load_model.return_value = mock_model
-        mock_arcrun_run.return_value = MagicMock(
-            content="result", tool_calls_made=0
-        )
+        mock_arcrun_run.return_value = MagicMock(content="result", tool_calls_made=0)
 
         await agent.startup()
         result = await agent.run("test task")
@@ -178,7 +154,7 @@ class TestRun:
 
 class TestArcRunBridge:
     async def test_bridge_maps_tool_start(self) -> None:
-        config = ArcAgentConfig(
+        ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
@@ -203,7 +179,7 @@ class TestArcRunBridge:
         assert callable(bridge)
 
     async def test_bridge_maps_turn_events(self) -> None:
-        config = ArcAgentConfig(
+        ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
@@ -267,9 +243,7 @@ class TestErrorEvent:
 
 
 class TestVaultValidation:
-    async def test_vault_backend_without_colon_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_vault_backend_without_colon_rejected(self, tmp_path: Path) -> None:
         from arcagent.core.errors import ConfigError
 
         config = ArcAgentConfig(
@@ -284,9 +258,7 @@ class TestVaultValidation:
             await agent.startup()
         assert exc_info.value.code == "CONFIG_INVALID_VAULT_BACKEND"
 
-    async def test_vault_backend_with_traversal_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_vault_backend_with_traversal_rejected(self, tmp_path: Path) -> None:
         from arcagent.core.errors import ConfigError
 
         config = ArcAgentConfig(
@@ -422,11 +394,11 @@ class TestChat:
         await agent.startup()
 
         # Create a session first
-        result1 = await agent.chat("First")
+        await agent.chat("First")
         session_id = agent._session.session_id
 
         # Resume with same session_id
-        result2 = await agent.chat("Second", session_id=session_id)
+        await agent.chat("Second", session_id=session_id)
         assert agent._session.session_id == session_id
 
     @patch("arcagent.core.agent.load_eval_model")
@@ -470,15 +442,13 @@ class TestChat:
         mock_arcrun_run.return_value = MagicMock(content="I am helpful")
 
         await agent.startup()
-        result = await agent.chat("Help me")
+        await agent.chat("Help me")
 
         msgs = agent._session.get_messages()
         assistant_msgs = [m for m in msgs if m.get("role") == "assistant"]
         assert len(assistant_msgs) >= 1
 
-    async def test_startup_initializes_session_manager(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_startup_initializes_session_manager(self, agent: ArcAgent) -> None:
         """SessionManager is initialized during startup."""
         await agent.startup()
         assert agent._session is not None
@@ -493,13 +463,11 @@ class TestChat:
 class TestBridgeNoRunningLoop:
     """Lines 89-90: RuntimeError catch when no running loop."""
 
-    def test_bridge_warns_when_no_running_loop(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_bridge_warns_when_no_running_loop(self, caplog: pytest.LogCaptureFixture) -> None:
         """Lines 89-90: RuntimeError caught, warning logged when no event loop."""
         from arcagent.core.agent import create_arcrun_bridge
 
-        config = ArcAgentConfig(
+        ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
             telemetry=TelemetryConfig(enabled=False),
@@ -563,9 +531,7 @@ class TestMaybeCompactEdgeCases:
         from arcagent.core.config import ContextConfig
 
         # Set a very low compact_threshold to force compaction
-        config = agent_config.model_copy(
-            update={"context": ContextConfig(compact_threshold=0.01)}
-        )
+        config = agent_config.model_copy(update={"context": ContextConfig(compact_threshold=0.01)})
         agent = ArcAgent(config=config)
 
         mock_model = MagicMock()
@@ -585,16 +551,12 @@ class TestMaybeCompactEdgeCases:
 class TestReloadEdgeCases:
     """Lines 357-358, 364: reload() edge cases."""
 
-    async def test_reload_raises_when_not_started(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_reload_raises_when_not_started(self, agent: ArcAgent) -> None:
         """Lines 357-358: RuntimeError when reload() called before startup."""
         with pytest.raises(RuntimeError, match="not started"):
             await agent.reload()
 
-    async def test_reload_returns_when_bus_none(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_reload_returns_when_bus_none(self, agent: ArcAgent) -> None:
         """Line 364: return when bus/tool_registry is None in reload."""
         await agent.startup()
         # Artificially set bus to None
@@ -607,9 +569,7 @@ class TestReloadEdgeCases:
 class TestSkillsPropertyEdgeCase:
     """Line 390: skills property returns [] when skill_registry is None."""
 
-    def test_skills_returns_empty_when_registry_none(
-        self, agent: ArcAgent
-    ) -> None:
+    def test_skills_returns_empty_when_registry_none(self, agent: ArcAgent) -> None:
         """Line 390: return [] when skill_registry is None."""
         # Before startup, skill_registry is None
         assert agent._skill_registry is None
@@ -620,9 +580,7 @@ class TestSkillsPropertyEdgeCase:
 class TestShutdownEdgeCases:
     """Line 406: shutdown returns early when bus/tool_registry is None."""
 
-    async def test_shutdown_returns_when_bus_none(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_shutdown_returns_when_bus_none(self, agent: ArcAgent) -> None:
         """Line 406: return when bus/tool_registry is None in shutdown."""
         await agent.startup()
         # Artificially set bus to None
@@ -635,9 +593,7 @@ class TestShutdownEdgeCases:
 class TestSkillPromptInjectionEdgeCases:
     """Line 432: _setup_skill_prompt_injection returns when bus/skill_registry is None."""
 
-    async def test_skill_prompt_injection_returns_when_bus_none(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_skill_prompt_injection_returns_when_bus_none(self, agent: ArcAgent) -> None:
         """Line 432: return when bus/skill_registry is None."""
         await agent.startup()
         # Artificially set bus to None
@@ -650,9 +606,7 @@ class TestSkillPromptInjectionEdgeCases:
 class TestLoadModulesEdgeCases:
     """Line 456: _load_modules_by_convention returns when bus is None."""
 
-    async def test_load_modules_returns_when_bus_none(
-        self, agent: ArcAgent
-    ) -> None:
+    async def test_load_modules_returns_when_bus_none(self, agent: ArcAgent) -> None:
         """Line 456: return when bus is None in _load_modules_by_convention."""
         from arcagent.core.module_bus import ModuleContext
 
@@ -677,18 +631,14 @@ class TestLoadModulesEdgeCases:
 class TestVaultResolverEdgeCases:
     """Lines 475, 482-483: vault resolver edge cases."""
 
-    def test_create_vault_resolver_returns_none_when_backend_empty(
-        self, agent: ArcAgent
-    ) -> None:
+    def test_create_vault_resolver_returns_none_when_backend_empty(self, agent: ArcAgent) -> None:
         """Lines 475: return None when backend_ref is empty."""
         # Config has no vault backend
         assert agent._config.vault.backend == ""
         resolver = agent._create_vault_resolver()
         assert resolver is None
 
-    async def test_vault_resolver_import_failure_raises(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_vault_resolver_import_failure_raises(self, tmp_path: Path) -> None:
         """Lines 482-483: vault resolver import failure raises."""
         from arcagent.core.config import VaultConfig
 

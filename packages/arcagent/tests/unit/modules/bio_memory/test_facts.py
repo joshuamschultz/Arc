@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from arcagent.modules.bio_memory.facts import (
     Fact,
     find_contradiction,
@@ -34,8 +32,12 @@ class TestFormatFact:
 
     def test_with_contradiction(self) -> None:
         line = format_fact(
-            "works_at", "Cisco", 0.9, "2026-02-25",
-            was_value="IBM", was_confidence=0.8,
+            "works_at",
+            "Cisco",
+            0.9,
+            "2026-02-25",
+            was_value="IBM",
+            was_confidence=0.8,
         )
         assert line == "- works_at: Cisco .9 2026-02-25 | was: IBM .8"
 
@@ -103,8 +105,12 @@ class TestParseFact:
 
     def test_roundtrip_with_contradiction(self) -> None:
         original = format_fact(
-            "role", "CTO", 0.95, "2026-02-25",
-            was_value="VP", was_confidence=0.85,
+            "role",
+            "CTO",
+            0.95,
+            "2026-02-25",
+            was_value="VP",
+            was_confidence=0.85,
         )
         parsed = parse_fact(original)
         assert parsed is not None

@@ -66,9 +66,7 @@ def _match_pattern(hostname: str, pattern: str) -> bool:
 
 async def _get_current_url(cdp: Any) -> str:
     """Get the current page URL via Runtime.evaluate."""
-    result = await cdp.send(
-        "Runtime", "evaluate", {"expression": "window.location.href"}
-    )
+    result = await cdp.send("Runtime", "evaluate", {"expression": "window.location.href"})
     url: str = result.get("result", {}).get("value", "")
     return url
 

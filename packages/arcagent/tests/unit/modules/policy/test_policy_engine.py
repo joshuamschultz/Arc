@@ -10,9 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-def _mock_model(
-    *, return_value: Any = None, side_effect: Exception | None = None
-) -> MagicMock:
+def _mock_model(*, return_value: Any = None, side_effect: Exception | None = None) -> MagicMock:
     """Create a mock LLM model with invoke() returning LLMResponse-like object."""
     model = MagicMock()
     if side_effect is not None:
@@ -20,6 +18,7 @@ def _mock_model(
     else:
         model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
     return model
+
 
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.modules.policy.policy_engine import (
@@ -88,8 +87,7 @@ class TestPolicyBulletParsing:
     def test_parse_policy_without_header(self, tmp_path: Path) -> None:
         engine = _make_engine(tmp_path)
         content = (
-            "- [P01] Test {score:5, uses:0,"
-            " reviewed:2026-02-15, created:2026-02-15, source:s1}\n"
+            "- [P01] Test {score:5, uses:0, reviewed:2026-02-15, created:2026-02-15, source:s1}\n"
         )
         bullets = engine._parse_policy(content)
         assert len(bullets) == 1
@@ -102,9 +100,13 @@ class TestPolicySerialization:
         engine = _make_engine(tmp_path)
         bullets = [
             PolicyBullet(
-                id="P01", text="Run tests first",
-                score=8, uses=5, reviewed="2026-02-15",
-                created="2026-01-01", source="sess-abc",
+                id="P01",
+                text="Run tests first",
+                score=8,
+                uses=5,
+                reviewed="2026-02-15",
+                created="2026-01-01",
+                source="sess-abc",
             )
         ]
         result = engine._serialize_policy(bullets)
@@ -292,13 +294,14 @@ class TestAsymmetricScoring:
         engine = _make_engine(tmp_path)
         policy_path = tmp_path / "policy.md"
         bullet = (
-            "- [P01] Rule {score:5, uses:1,"
-            " reviewed:2026-02-15, created:2026-01-01, source:s1}\n"
+            "- [P01] Rule {score:5, uses:1, reviewed:2026-02-15, created:2026-01-01, source:s1}\n"
         )
         policy_path.write_text(f"# Policy\n\n{bullet}")
         delta = PolicyDelta(
-            additions=[], updates=[BulletUpdate(bullet_id="P01", score_delta=1)],
-            rewrites=[], session_id="s",
+            additions=[],
+            updates=[BulletUpdate(bullet_id="P01", score_delta=1)],
+            rewrites=[],
+            session_id="s",
         )
         await engine._curate(delta)
         assert "score:6" in policy_path.read_text()
@@ -308,13 +311,14 @@ class TestAsymmetricScoring:
         engine = _make_engine(tmp_path)
         policy_path = tmp_path / "policy.md"
         bullet = (
-            "- [P01] Rule {score:7, uses:1,"
-            " reviewed:2026-02-15, created:2026-01-01, source:s1}\n"
+            "- [P01] Rule {score:7, uses:1, reviewed:2026-02-15, created:2026-01-01, source:s1}\n"
         )
         policy_path.write_text(f"# Policy\n\n{bullet}")
         delta = PolicyDelta(
-            additions=[], updates=[BulletUpdate(bullet_id="P01", score_delta=-2)],
-            rewrites=[], session_id="s",
+            additions=[],
+            updates=[BulletUpdate(bullet_id="P01", score_delta=-2)],
+            rewrites=[],
+            session_id="s",
         )
         await engine._curate(delta)
         assert "score:5" in policy_path.read_text()
@@ -352,11 +356,15 @@ class TestEmptyPolicy:
         policy_path = tmp_path / "policy.md"
         # No policy file exists yet
 
-        model = _mock_model(return_value=json.dumps({
-            "additions": ["Always verify outputs"],
-            "updates": [],
-            "rewrites": [],
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "additions": ["Always verify outputs"],
+                    "updates": [],
+                    "rewrites": [],
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "Do something"},
@@ -381,7 +389,9 @@ class TestAtomicPolicyWrite:
 
         delta = PolicyDelta(
             additions=["New lesson"],
-            updates=[], rewrites=[], session_id="s1",
+            updates=[],
+            rewrites=[],
+            session_id="s1",
         )
         await engine._curate(delta)
 
@@ -400,7 +410,9 @@ class TestSourceTracking:
 
         delta = PolicyDelta(
             additions=["Track this"],
-            updates=[], rewrites=[], session_id="sess-track",
+            updates=[],
+            rewrites=[],
+            session_id="sess-track",
         )
         await engine._curate(delta)
 
@@ -421,7 +433,8 @@ class TestSourceTracking:
         delta = PolicyDelta(
             additions=[],
             updates=[BulletUpdate(bullet_id="P01", score_delta=1)],
-            rewrites=[], session_id="new-sess",
+            rewrites=[],
+            session_id="new-sess",
         )
         await engine._curate(delta)
 
@@ -509,15 +522,17 @@ class TestReflectExistingPolicy:
         policy_path = tmp_path / "policy.md"
         policy_path.write_text("# Policy\n- existing rule score:5\n")
 
-        model = _mock_model(return_value=json.dumps({
-            "additions": ["new rule"],
-            "updates": [],
-            "rewrites": [],
-        }))
-
-        delta, current_text = await engine._reflect(
-            [{"role": "user", "content": "hello"}], model
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "additions": ["new rule"],
+                    "updates": [],
+                    "rewrites": [],
+                }
+            )
         )
+
+        delta, current_text = await engine._reflect([{"role": "user", "content": "hello"}], model)
         assert "existing rule" in current_text
         assert delta is not None
         assert len(delta.additions) == 1
@@ -528,15 +543,17 @@ class TestReflectEmptyResult:
 
     async def test_reflect_returns_none_for_empty_delta(self, tmp_path: Path) -> None:
         engine = _make_engine(tmp_path)
-        model = _mock_model(return_value=json.dumps({
-            "additions": [],
-            "updates": [],
-            "rewrites": [],
-        }))
-
-        delta, _ = await engine._reflect(
-            [{"role": "user", "content": "hello"}], model
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "additions": [],
+                    "updates": [],
+                    "rewrites": [],
+                }
+            )
         )
+
+        delta, _ = await engine._reflect([{"role": "user", "content": "hello"}], model)
         assert delta is None
 
 

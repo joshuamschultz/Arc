@@ -170,15 +170,18 @@ class TestAuditRedaction:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.INFO, logger="arcagent.audit"):
-            telemetry.audit_event("vault.access", {
-                "vault_path": "secret/keys",
-                "api_key": "sk-live-12345",
-                "password": "hunter2",
-                "username": "admin",
-            })
+            telemetry.audit_event(
+                "vault.access",
+                {
+                    "vault_path": "secret/keys",
+                    "api_key": "sk-live-12345",
+                    "password": "hunter2",
+                    "username": "admin",
+                },
+            )
         data = json.loads(caplog.records[0].message)
         assert data["details"]["api_key"] == "[REDACTED]"
-        assert data["details"]["password"] == "[REDACTED]"  # noqa: S105
+        assert data["details"]["password"] == "[REDACTED]"
         assert data["details"]["username"] == "admin"  # Not sensitive
 
     async def test_nested_sensitive_keys_redacted(
@@ -187,11 +190,14 @@ class TestAuditRedaction:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.INFO, logger="arcagent.audit"):
-            telemetry.audit_event("test", {
-                "config": {"secret_value": "hidden", "name": "visible"},
-            })
+            telemetry.audit_event(
+                "test",
+                {
+                    "config": {"secret_value": "hidden", "name": "visible"},
+                },
+            )
         data = json.loads(caplog.records[0].message)
-        assert data["details"]["config"]["secret_value"] == "[REDACTED]"  # noqa: S105
+        assert data["details"]["config"]["secret_value"] == "[REDACTED]"
         assert data["details"]["config"]["name"] == "visible"
 
     async def test_non_sensitive_keys_preserved(
@@ -200,10 +206,13 @@ class TestAuditRedaction:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         with caplog.at_level(logging.INFO, logger="arcagent.audit"):
-            telemetry.audit_event("tool.executed", {
-                "tool": "read_file",
-                "duration_ms": 42,
-            })
+            telemetry.audit_event(
+                "tool.executed",
+                {
+                    "tool": "read_file",
+                    "duration_ms": 42,
+                },
+            )
         data = json.loads(caplog.records[0].message)
         assert data["details"]["tool"] == "read_file"
         assert data["details"]["duration_ms"] == 42

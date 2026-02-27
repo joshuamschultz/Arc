@@ -215,14 +215,18 @@ class SessionManager:
             return
 
         try:
-            response = await model.invoke([Message(
-                role="user",
-                content=(
-                    f"Extract the key facts, decisions, and important state from "
-                    f"this conversation segment. Be concise (2-3 bullet points max):\n\n"
-                    f"{msg_text}"
-                ),
-            )])
+            response = await model.invoke(
+                [
+                    Message(
+                        role="user",
+                        content=(
+                            f"Extract the key facts, decisions, and important state from "
+                            f"this conversation segment. Be concise (2-3 bullet points max):\n\n"
+                            f"{msg_text}"
+                        ),
+                    )
+                ]
+            )
             facts = response.content
             if not facts or not facts.strip():
                 return
@@ -251,9 +255,7 @@ class SessionManager:
         # NFKC normalizes compatibility decomposition + canonical composition
         sanitized = unicodedata.normalize("NFKC", text)
         # Remove zero-width and other invisible Unicode characters
-        sanitized = re.sub(
-            r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]", "", sanitized
-        )
+        sanitized = re.sub(r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]", "", sanitized)
         # Remove ASCII control characters (keep \n, \t for readability)
         sanitized = "".join(
             c for c in sanitized if c in ("\n", "\t") or (ord(c) >= 32 and ord(c) != 127)
@@ -273,10 +275,14 @@ class SessionManager:
         msg_text = format_messages(messages, limit=0, type_filter="message")
 
         try:
-            response = await model.invoke([Message(
-                role="user",
-                content=f"Summarize this conversation segment concisely:\n\n{msg_text}",
-            )])
+            response = await model.invoke(
+                [
+                    Message(
+                        role="user",
+                        content=f"Summarize this conversation segment concisely:\n\n{msg_text}",
+                    )
+                ]
+            )
             summary: str = response.content or ""
             return summary[: self._config.compaction_summary_max_chars]
         except Exception:

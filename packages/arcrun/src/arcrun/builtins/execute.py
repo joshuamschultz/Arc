@@ -1,4 +1,5 @@
 """ExecuteTool — sandboxed Python subprocess execution."""
+
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +41,8 @@ def make_execute_tool(
                 f.write(code)
 
             proc = await asyncio.create_subprocess_exec(
-                sys.executable, code_path,
+                sys.executable,
+                code_path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=tmpdir,
@@ -50,10 +52,8 @@ def make_execute_tool(
 
             timed_out = False
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout_seconds
-                )
-            except asyncio.TimeoutError:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+            except TimeoutError:
                 timed_out = True
                 try:
                     os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -66,16 +66,21 @@ def make_execute_tool(
 
             duration_ms = (time.time() - start) * 1000
 
-            return json.dumps({
-                "stdout": stdout[:max_output_bytes].decode(errors="replace"),
-                "stderr": stderr[:max_output_bytes].decode(errors="replace"),
-                "exit_code": proc.returncode if not timed_out else -1,
-                "duration_ms": round(duration_ms, 1),
-            })
+            return json.dumps(
+                {
+                    "stdout": stdout[:max_output_bytes].decode(errors="replace"),
+                    "stderr": stderr[:max_output_bytes].decode(errors="replace"),
+                    "exit_code": proc.returncode if not timed_out else -1,
+                    "duration_ms": round(duration_ms, 1),
+                }
+            )
 
     return Tool(
         name="execute_python",
-        description="Execute Python code in a sandboxed subprocess. Returns stdout, stderr, exit_code, and duration.",
+        description=(
+            "Execute Python code in a sandboxed subprocess. "
+            "Returns stdout, stderr, exit_code, and duration."
+        ),
         input_schema={
             "type": "object",
             "properties": {

@@ -84,7 +84,8 @@ class TestConcurrentSearchAndPromote:
     async def test_search_during_promote(self, service: TeamMemoryService) -> None:
         # Pre-populate
         await service.promote(
-            "alice", "# Alice\n\nResearcher in physics.",
+            "alice",
+            "# Alice\n\nResearcher in physics.",
             _meta(entity_id="alice", name="Alice"),
             agent_id="agent-1",
         )
@@ -97,14 +98,13 @@ class TestConcurrentSearchAndPromote:
 
         async def do_promote() -> object:
             return await service.promote(
-                "bob", "# Bob\n\nAlso researches physics.",
+                "bob",
+                "# Bob\n\nAlso researches physics.",
                 _meta(entity_id="bob", name="Bob"),
                 agent_id="agent-2",
             )
 
-        results = await asyncio.gather(
-            do_search(), do_promote(), do_search(), do_search()
-        )
+        results = await asyncio.gather(do_search(), do_promote(), do_search(), do_search())
         # No exceptions = pass
         assert len(results) == 4
 
@@ -117,7 +117,8 @@ class TestConcurrentIndexRebuild:
         # Pre-populate
         for i in range(5):
             await service.promote(
-                f"p-{i}", f"# Person {i}",
+                f"p-{i}",
+                f"# Person {i}",
                 _meta(entity_id=f"p-{i}", name=f"Person {i}"),
                 agent_id="agent-1",
             )

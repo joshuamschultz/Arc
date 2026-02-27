@@ -30,6 +30,25 @@ _SENTENCE_END = re.compile(r"[.!?]\s")
 _BOT_MENTION = re.compile(r"<@[A-Z0-9]+>\s*")
 
 
+def _user_facing_error(exc: Exception) -> str:
+    """Map exceptions to user-friendly error messages.
+
+    Avoids leaking internal details while giving the user
+    actionable information about what went wrong.
+    """
+    # Import here to avoid hard dependency on arcllm from the bot module
+    try:
+        from arcllm.exceptions import ArcLLMAPIError
+    except ImportError:
+        return "Error processing your message. Please try again."
+
+    if isinstance(exc, ArcLLMAPIError) and exc.status_code == 429:
+        return "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
+    if isinstance(exc, ArcLLMAPIError) and exc.status_code in {500, 502, 503}:
+        return "The LLM provider is temporarily unavailable. Please try again shortly."
+    return "Error processing your message. Please try again."
+
+
 def split_message(text: str, max_length: int = 4000) -> list[str]:
     """Split text into chunks respecting natural boundaries.
 
@@ -328,11 +347,12 @@ class SlackBot:
 
         try:
             result = await self._agent_chat_fn(text, session_id=self._current_session_id)
-        except Exception:
+        except Exception as exc:
             _logger.exception("Error calling agent.chat()")
+            error_msg = _user_facing_error(exc)
             await self._app.client.chat_postMessage(
                 channel=channel,
-                text="Error processing your message. Please try again.",
+                text=error_msg,
             )
             self._emit_event("slack:error", {"error": "agent_chat_failed"})
             return

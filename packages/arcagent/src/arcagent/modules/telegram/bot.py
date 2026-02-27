@@ -27,6 +27,24 @@ _logger = logging.getLogger("arcagent.telegram.bot")
 _SENTENCE_END = re.compile(r"[.!?]\s")
 
 
+def _user_facing_error(exc: Exception) -> str:
+    """Map exceptions to user-friendly error messages.
+
+    Avoids leaking internal details while giving the user
+    actionable information about what went wrong.
+    """
+    try:
+        from arcllm.exceptions import ArcLLMAPIError
+    except ImportError:
+        return "Error processing your message. Please try again."
+
+    if isinstance(exc, ArcLLMAPIError) and exc.status_code == 429:
+        return "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
+    if isinstance(exc, ArcLLMAPIError) and exc.status_code in {500, 502, 503}:
+        return "The LLM provider is temporarily unavailable. Please try again shortly."
+    return "Error processing your message. Please try again."
+
+
 def split_message(text: str, max_length: int = 4096) -> list[str]:
     """Split text into chunks respecting natural boundaries.
 
@@ -370,7 +388,7 @@ class TelegramBot:
 
             try:
                 await self._process_message(item)
-            except Exception:  # Broad catch intentional — queue worker must not crash
+            except Exception as exc:  # Broad catch intentional — queue worker must not crash
                 _logger.exception("Error processing telegram message")
                 self._emit_event(
                     "telegram:error",
@@ -384,7 +402,7 @@ class TelegramBot:
                 if update and update.message:
                     try:
                         await update.message.reply_text(
-                            "Error processing your message. Please try again."
+                            _user_facing_error(exc),
                         )
                     except Exception:  # Best-effort notification must not crash queue
                         _logger.exception("Failed to send error reply")

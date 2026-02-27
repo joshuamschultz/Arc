@@ -214,9 +214,7 @@ class TestVaultFallback:
             key_dir=str(tmp_path / "keys"),
             vault_path="secret/agents/test",
         )
-        identity = AgentIdentity.from_config(
-            config, vault_resolver=mock_resolver
-        )
+        identity = AgentIdentity.from_config(config, vault_resolver=mock_resolver)
         assert identity.did == original.did
         assert identity.can_sign
 
@@ -234,9 +232,7 @@ class TestVaultFallback:
             key_dir=str(key_dir),
             vault_path="secret/agents/test",
         )
-        identity = AgentIdentity.from_config(
-            config, vault_resolver=mock_resolver
-        )
+        identity = AgentIdentity.from_config(config, vault_resolver=mock_resolver)
         assert identity.did == original.did
         assert identity.can_sign
 

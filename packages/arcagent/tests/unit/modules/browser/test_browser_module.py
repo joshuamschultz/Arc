@@ -58,9 +58,7 @@ class TestBrowserModuleStartup:
             llm_config=config.llm,
         )
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
@@ -90,9 +88,7 @@ class TestBrowserModuleStartup:
             llm_config=config.llm,
         )
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"

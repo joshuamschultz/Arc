@@ -22,7 +22,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --all-packages
+        run: uv sync --all-packages --all-groups
 
       - name: Ruff check
         run: uv run ruff check .
@@ -61,7 +61,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --all-packages --python ${{ matrix.python-version }}
+        run: uv sync --all-packages --all-groups --python ${{ matrix.python-version }}
 
       - name: Run tests (arcllm)
         run: uv run pytest packages/arcllm/tests/ -v --tb=short

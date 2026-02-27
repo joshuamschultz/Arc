@@ -1,9 +1,11 @@
 """Internal mutable state for a single run() execution."""
+
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry

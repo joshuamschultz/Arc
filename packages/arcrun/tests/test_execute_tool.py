@@ -1,10 +1,11 @@
 """Tests for make_execute_tool() factory and execution."""
+
 import json
 
 import pytest
 
-from arcrun.types import Tool, ToolContext
 from arcrun.events import EventBus
+from arcrun.types import Tool, ToolContext
 
 
 def _make_ctx() -> ToolContext:

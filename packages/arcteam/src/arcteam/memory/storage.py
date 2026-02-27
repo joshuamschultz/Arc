@@ -73,9 +73,7 @@ class MemoryStorage:
         # Defense-in-depth: verify resolved path is within entities_dir
         resolved = path.resolve()
         if not str(resolved).startswith(str(self._entities_dir.resolve())):
-            raise EntityValidationError(
-                f"Path traversal detected: {entity_type}/{entity_id}"
-            )
+            raise EntityValidationError(f"Path traversal detected: {entity_type}/{entity_id}")
         return path
 
     def resolve_entity_path(self, relative_path: str) -> Path:
@@ -94,9 +92,7 @@ class MemoryStorage:
 
     # --- Async interface (delegates to thread pool) ---
 
-    async def read_entity(
-        self, entity_id: str, index: dict[str, IndexEntry]
-    ) -> EntityFile | None:
+    async def read_entity(self, entity_id: str, index: dict[str, IndexEntry]) -> EntityFile | None:
         """Read entity file. Returns None if not found."""
         entry = index.get(entity_id)
         if entry is None:
@@ -113,18 +109,14 @@ class MemoryStorage:
             return None
         return EntityFile(metadata=metadata, content=content)
 
-    async def write_entity(
-        self, entity_id: str, metadata: EntityMetadata, content: str
-    ) -> Path:
+    async def write_entity(self, entity_id: str, metadata: EntityMetadata, content: str) -> Path:
         """Atomic write: entity file with frontmatter + body. Returns written path."""
         path = self._entity_path(metadata.entity_type, entity_id)
         meta_dict = metadata.model_dump()
         await asyncio.to_thread(self._sync_write, path, meta_dict, content)
         return path
 
-    async def delete_entity(
-        self, entity_id: str, index: dict[str, IndexEntry]
-    ) -> bool:
+    async def delete_entity(self, entity_id: str, index: dict[str, IndexEntry]) -> bool:
         """Delete entity file. Returns True if existed."""
         entry = index.get(entity_id)
         if entry is None:

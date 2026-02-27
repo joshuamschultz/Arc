@@ -11,7 +11,7 @@ from arccli.formatting import click_echo, print_table
 
 _GLOBAL_SKILL_DIR = Path.home() / ".arcagent" / "skills"
 
-_SKILL_TEMPLATE = '''\
+_SKILL_TEMPLATE = """\
 ---
 name: {name}
 description: "{name} skill — edit this description"
@@ -35,7 +35,7 @@ Step-by-step instructions for the agent.
 ## Examples
 
 Provide examples of input/output or usage patterns.
-'''
+"""
 
 
 @click.group("skill")
@@ -49,7 +49,12 @@ def skill() -> None:
 
 
 @skill.command("list")
-@click.option("--agent", "agent_dir", default=None, help="Agent directory to include workspace skills.")
+@click.option(
+    "--agent",
+    "agent_dir",
+    default=None,
+    help="Agent directory to include workspace skills.",
+)
 def skill_list(agent_dir: str | None) -> None:
     """List discovered skills.
 
@@ -57,6 +62,7 @@ def skill_list(agent_dir: str | None) -> None:
     """
     try:
         from arcagent.core.skill_registry import SkillRegistry
+
         registry = SkillRegistry()
         workspace = Path(agent_dir).expanduser().resolve() if agent_dir else Path("/nonexistent")
         skills = registry.discover(workspace, _GLOBAL_SKILL_DIR)
@@ -67,7 +73,8 @@ def skill_list(agent_dir: str | None) -> None:
         click_echo("No skills found.")
         click_echo(f"  Global dir: {_GLOBAL_SKILL_DIR}")
         if agent_dir:
-            click_echo(f"  Agent dir:  {Path(agent_dir).expanduser().resolve() / 'workspace' / 'skills'}")
+            agent_skills = Path(agent_dir).expanduser().resolve() / "workspace" / "skills"
+            click_echo(f"  Agent dir:  {agent_skills}")
         return
 
     rows = []
@@ -137,7 +144,7 @@ def skill_validate(path: str) -> None:
     frontmatter = _extract_frontmatter(content)
 
     if frontmatter is None:
-        click_echo(f"  [FAIL] No YAML frontmatter found (expected --- delimiters)")
+        click_echo("  [FAIL] No YAML frontmatter found (expected --- delimiters)")
         raise SystemExit(1)
 
     parsed = _parse_yaml_simple(frontmatter)
@@ -169,7 +176,12 @@ def skill_validate(path: str) -> None:
 
 @skill.command("search")
 @click.argument("query")
-@click.option("--agent", "agent_dir", default=None, help="Agent directory to include workspace skills.")
+@click.option(
+    "--agent",
+    "agent_dir",
+    default=None,
+    help="Agent directory to include workspace skills.",
+)
 def skill_search(query: str, agent_dir: str | None) -> None:
     """Search skills by name or description.
 
@@ -178,6 +190,7 @@ def skill_search(query: str, agent_dir: str | None) -> None:
     """
     try:
         from arcagent.core.skill_registry import SkillRegistry
+
         registry = SkillRegistry()
         workspace = Path(agent_dir).expanduser().resolve() if agent_dir else Path("/nonexistent")
         skills = registry.discover(workspace, _GLOBAL_SKILL_DIR)
@@ -253,11 +266,13 @@ def _discover_skills_fallback(agent_dir: str | None) -> list[dict]:
             if fm:
                 parsed = _parse_yaml_simple(fm)
                 if parsed.get("name"):
-                    skills.append({
-                        "name": parsed.get("name", md_file.stem),
-                        "description": parsed.get("description", ""),
-                        "category": parsed.get("category", ""),
-                        "file_path": str(md_file),
-                    })
+                    skills.append(
+                        {
+                            "name": parsed.get("name", md_file.stem),
+                            "description": parsed.get("description", ""),
+                            "category": parsed.get("category", ""),
+                            "file_path": str(md_file),
+                        }
+                    )
 
     return skills

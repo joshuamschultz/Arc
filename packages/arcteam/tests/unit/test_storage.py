@@ -280,7 +280,9 @@ class TestAppendAutoSeq:
 
         async def writer() -> None:
             seq, _ = await file_backend.append_auto_seq(
-                "streams", "s1", {"data": "msg"},
+                "streams",
+                "s1",
+                {"data": "msg"},
             )
             results.append(seq)
 

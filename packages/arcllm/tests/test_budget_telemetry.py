@@ -8,6 +8,7 @@ injection via the load_model() kwarg.
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from arcllm.exceptions import ArcLLMBudgetError
 from arcllm.modules.telemetry import TelemetryModule, clear_budgets
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage
@@ -156,9 +157,7 @@ class TestBudgetTelemetryIntegration:
         result = await module.invoke(messages, max_tokens=100)
 
         expected = (
-            (100 * 3.0 + 50 * 15.0) / 1_000_000
-            + 1000 * 0.30 / 1_000_000
-            + 500 * 3.75 / 1_000_000
+            (100 * 3.0 + 50 * 15.0) / 1_000_000 + 1000 * 0.30 / 1_000_000 + 500 * 3.75 / 1_000_000
         )
         assert result.cost_usd == pytest.approx(expected)
 

@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.routing import RoutingModule
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage
@@ -119,9 +120,7 @@ class TestRoutingUnknown:
 
 
 class TestRoutingAdapterLifecycle:
-    async def test_close_closes_all_adapters(
-        self, adapters: dict[str, MagicMock]
-    ) -> None:
+    async def test_close_closes_all_adapters(self, adapters: dict[str, MagicMock]) -> None:
         config = _make_routing_config()
         router = RoutingModule(config, adapters)
         await router.close()
@@ -140,9 +139,7 @@ class TestRoutingAdapterLifecycle:
         # Even though cui failed, unclassified should have been closed
         adapters["unclassified"].close.assert_awaited_once()
 
-    def test_validate_config_checks_all_adapters(
-        self, adapters: dict[str, MagicMock]
-    ) -> None:
+    def test_validate_config_checks_all_adapters(self, adapters: dict[str, MagicMock]) -> None:
         config = _make_routing_config()
         router = RoutingModule(config, adapters)
         assert router.validate_config() is True
@@ -177,16 +174,12 @@ class TestRoutingAdapterLifecycle:
 
 
 class TestRoutingProperties:
-    def test_name_from_default_adapter(
-        self, adapters: dict[str, MagicMock]
-    ) -> None:
+    def test_name_from_default_adapter(self, adapters: dict[str, MagicMock]) -> None:
         config = _make_routing_config(default_classification="unclassified")
         router = RoutingModule(config, adapters)
         assert router.name == "openai"
 
-    def test_model_name_from_default_adapter(
-        self, adapters: dict[str, MagicMock]
-    ) -> None:
+    def test_model_name_from_default_adapter(self, adapters: dict[str, MagicMock]) -> None:
         config = _make_routing_config(default_classification="unclassified")
         router = RoutingModule(config, adapters)
         assert router.model_name == "gpt-4o-mini"
@@ -198,13 +191,9 @@ class TestRoutingProperties:
 
 
 class TestRoutingValidation:
-    def test_invalid_enforcement_rejected(
-        self, adapters: dict[str, MagicMock]
-    ) -> None:
+    def test_invalid_enforcement_rejected(self, adapters: dict[str, MagicMock]) -> None:
         with pytest.raises(ArcLLMConfigError, match="enforcement"):
-            RoutingModule(
-                _make_routing_config(enforcement="ignore"), adapters
-            )
+            RoutingModule(_make_routing_config(enforcement="ignore"), adapters)
 
     def test_default_classification_must_exist_in_adapters(self) -> None:
         adapters = {"cui": _make_adapter()}

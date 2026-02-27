@@ -25,7 +25,9 @@ def _make_metadata(**overrides: object) -> EntityMetadata:
 
 
 @pytest.fixture
-async def setup(tmp_path: Path) -> tuple[SearchEngine, MemoryStorage, IndexManager, TeamMemoryConfig]:
+async def setup(
+    tmp_path: Path,
+) -> tuple[SearchEngine, MemoryStorage, IndexManager, TeamMemoryConfig]:
     config = TeamMemoryConfig(root=tmp_path)
     storage = MemoryStorage(config.entities_dir)
     index_mgr = IndexManager(config.entities_dir, storage, config)
@@ -45,7 +47,9 @@ class TestSearchBasic:
     @pytest.mark.asyncio
     async def test_search_empty_query(self, setup: tuple) -> None:
         engine, storage, index_mgr, _ = setup
-        await storage.write_entity("alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice\n\nA researcher.")
+        await storage.write_entity(
+            "alice", _make_metadata(entity_id="alice", name="Alice"), "# Alice\n\nA researcher."
+        )
         await index_mgr.rebuild()
         results = await engine.search("")
         assert results == []
@@ -127,26 +131,30 @@ class TestWikiLinkTraversal:
 
     @pytest.mark.asyncio
     async def test_traversal_respects_max_hops(self, setup: tuple) -> None:
-        engine, storage, index_mgr, config = setup
+        _engine, storage, _index_mgr, config = setup
         # Chain: A -> B -> C -> D with max_hops=1
         config_limited = TeamMemoryConfig(root=config.root, max_hops=1)
         index_mgr_limited = IndexManager(config_limited.entities_dir, storage, config_limited)
         engine_limited = SearchEngine(storage, index_mgr_limited, config_limited)
 
         await storage.write_entity(
-            "a", _make_metadata(entity_id="a", name="A", links_to=["b"]),
+            "a",
+            _make_metadata(entity_id="a", name="A", links_to=["b"]),
             "# A\n\nUnique term xylophone research.",
         )
         await storage.write_entity(
-            "b", _make_metadata(entity_id="b", name="B", links_to=["c"]),
+            "b",
+            _make_metadata(entity_id="b", name="B", links_to=["c"]),
             "# B\n\nB collaborates with A.",
         )
         await storage.write_entity(
-            "c", _make_metadata(entity_id="c", name="C", links_to=["d"]),
+            "c",
+            _make_metadata(entity_id="c", name="C", links_to=["d"]),
             "# C\n\nC is distant from A.",
         )
         await storage.write_entity(
-            "d", _make_metadata(entity_id="d", name="D"),
+            "d",
+            _make_metadata(entity_id="d", name="D"),
             "# D\n\nD is very distant from A.",
         )
         await index_mgr_limited.rebuild()

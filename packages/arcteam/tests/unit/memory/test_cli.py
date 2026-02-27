@@ -46,12 +46,18 @@ class TestMemoryCLIParser:
 
     def test_promote_command(self) -> None:
         parser = build_memory_parser()
-        args = parser.parse_args([
-            "promote", "alice",
-            "--name", "Alice",
-            "--type", "person",
-            "--content", "# Alice",
-        ])
+        args = parser.parse_args(
+            [
+                "promote",
+                "alice",
+                "--name",
+                "Alice",
+                "--type",
+                "person",
+                "--content",
+                "# Alice",
+            ]
+        )
         assert args.command == "promote"
         assert args.entity_id == "alice"
 

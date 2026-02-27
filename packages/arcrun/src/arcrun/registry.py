@@ -1,4 +1,5 @@
 """Dynamic mutable tool collection."""
+
 from __future__ import annotations
 
 from arcllm.types import Tool as LLMTool

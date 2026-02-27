@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import re
-import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -160,11 +159,19 @@ class EntityExtractor:
 
             if entity_path.exists():
                 self._update_entity_file(
-                    entity_path, name, entity_type, aliases, facts,
+                    entity_path,
+                    name,
+                    entity_type,
+                    aliases,
+                    facts,
                 )
             else:
                 self._create_entity_file(
-                    entity_path, name, entity_type, aliases, facts,
+                    entity_path,
+                    name,
+                    entity_type,
+                    aliases,
+                    facts,
                 )
 
     def _resolve_slug(self, name: str) -> str:
@@ -278,7 +285,9 @@ class EntityExtractor:
         atomic_write_text(path, "\n".join(parts))
 
     def _format_fact(
-        self, fact: dict[str, Any], timestamp: str,
+        self,
+        fact: dict[str, Any],
+        timestamp: str,
     ) -> str:
         """Format a single fact as a markdown list item."""
         predicate = self._sanitize_fact_text(str(fact.get("predicate", "")))
@@ -332,10 +341,12 @@ class EntityExtractor:
         for line in content.split("\n"):
             match = _FACT_LINE_RE.match(line.strip())
             if match:
-                facts.append({
-                    "predicate": match.group(1),
-                    "value": match.group(2),
-                })
+                facts.append(
+                    {
+                        "predicate": match.group(1),
+                        "value": match.group(2),
+                    }
+                )
         return facts
 
     @staticmethod

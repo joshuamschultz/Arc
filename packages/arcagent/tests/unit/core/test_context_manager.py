@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,7 +31,7 @@ def mock_telemetry() -> MagicMock:
 
 @pytest.fixture()
 def mock_bus(mock_telemetry: MagicMock) -> ModuleBus:
-    config = ArcAgentConfig(
+    ArcAgentConfig(
         agent={"name": "test-agent"},
         llm={"model": "test/model"},
     )
@@ -68,24 +68,18 @@ class TestAssembleSystemPrompt:
         prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
         assert isinstance(prompt, str)
 
-    async def test_partial_files(
-        self, ctx_mgr: ContextManager, tmp_path: Path
-    ) -> None:
+    async def test_partial_files(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         """Only identity.md exists."""
         (tmp_path / "identity.md").write_text("# Identity\nTest agent.")
         prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
         assert "Identity" in prompt
 
-    async def test_section_headers_included(
-        self, ctx_mgr: ContextManager, tmp_path: Path
-    ) -> None:
+    async def test_section_headers_included(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         (tmp_path / "identity.md").write_text("content")
         prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
         assert "--- identity ---" in prompt.lower() or "identity" in prompt.lower()
 
-    async def test_works_without_bus(
-        self, ctx_mgr: ContextManager, tmp_path: Path
-    ) -> None:
+    async def test_works_without_bus(self, ctx_mgr: ContextManager, tmp_path: Path) -> None:
         """No bus parameter = no event emitted, still works."""
         (tmp_path / "identity.md").write_text("I am agent")
         prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
@@ -116,6 +110,7 @@ class TestAssemblePromptEvent:
         self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
     ) -> None:
         """Handler can add a 'notes' section to the prompt."""
+
         async def inject_notes(ctx: EventContext) -> None:
             ctx.data["sections"]["notes"] = "Today I learned about testing."
 
@@ -129,6 +124,7 @@ class TestAssemblePromptEvent:
         self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
     ) -> None:
         """If handler raises, prompt is still assembled (best-effort injection)."""
+
         async def bad_handler(ctx: EventContext) -> None:
             raise RuntimeError("handler exploded")
 
@@ -143,6 +139,7 @@ class TestAssemblePromptEvent:
         self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
     ) -> None:
         """Sections appear in order: identity, notes, context."""
+
         async def inject_notes(ctx: EventContext) -> None:
             ctx.data["sections"]["notes"] = "Daily notes content"
 
@@ -241,9 +238,7 @@ class TestObservationMasking:
 
 
 class TestThresholdTriggers:
-    def test_below_prune_threshold_no_action(
-        self, ctx_mgr: ContextManager
-    ) -> None:
+    def test_below_prune_threshold_no_action(self, ctx_mgr: ContextManager) -> None:
         """Below 70% — no pruning needed."""
         messages = [{"role": "user", "content": "hi"}]
         result = ctx_mgr.transform_context(messages)
@@ -276,9 +271,7 @@ class TestThresholdTriggers:
         tool_msg = next(m for m in result if m.get("tool_call_id") == "tc1")
         assert "[output pruned" in tool_msg["content"]
 
-    def test_emergency_threshold_truncates(
-        self, mock_telemetry: MagicMock
-    ) -> None:
+    def test_emergency_threshold_truncates(self, mock_telemetry: MagicMock) -> None:
         """Above 95% — force truncation of oldest messages."""
         config = ContextConfig(
             max_tokens=50,
@@ -304,9 +297,7 @@ class TestTransformContext:
         result = ctx_mgr.transform_context(messages)
         assert isinstance(result, list)
 
-    def test_preserves_messages_under_budget(
-        self, ctx_mgr: ContextManager
-    ) -> None:
+    def test_preserves_messages_under_budget(self, ctx_mgr: ContextManager) -> None:
         messages = [
             {"role": "user", "content": "short"},
             {"role": "assistant", "content": "reply"},
@@ -334,24 +325,18 @@ class TestContextEdgeCases:
         # Should still return a string, not crash
         assert isinstance(prompt, str)
 
-    def test_token_ratio_with_no_usage(
-        self, ctx_mgr: ContextManager
-    ) -> None:
+    def test_token_ratio_with_no_usage(self, ctx_mgr: ContextManager) -> None:
         """Line 120: No reported usage, token_ratio should return 0.0."""
         # Initial state with no usage reported
         ratio = ctx_mgr.token_ratio()
         assert ratio == 0.0
 
-    def test_estimate_ratio_empty_messages(
-        self, ctx_mgr: ContextManager
-    ) -> None:
+    def test_estimate_ratio_empty_messages(self, ctx_mgr: ContextManager) -> None:
         """Line 145: Empty message list."""
         ratio = ctx_mgr._estimate_ratio([])
         assert ratio == 0.0
 
-    def test_prune_observations_with_pydantic_model(
-        self, ctx_mgr: ContextManager
-    ) -> None:
+    def test_prune_observations_with_pydantic_model(self, ctx_mgr: ContextManager) -> None:
         """Line 171: Message is Pydantic model, not dict."""
         from pydantic import BaseModel
 
@@ -370,9 +355,7 @@ class TestContextEdgeCases:
         tool_msg = next(m for m in result if m.tool_call_id == "tc1")
         assert "[output pruned" in tool_msg.content
 
-    def test_transform_context_empty_messages(
-        self, ctx_mgr: ContextManager
-    ) -> None:
+    def test_transform_context_empty_messages(self, ctx_mgr: ContextManager) -> None:
         """Line 189: Empty message list."""
         result = ctx_mgr.transform_context([])
         assert result == []

@@ -28,9 +28,7 @@ def find_tool(workspace: Path) -> Any:
 class TestFindTool:
     """Core find functionality."""
 
-    async def test_find_by_glob(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_by_glob(self, workspace: Path, find_tool: Any) -> None:
         (workspace / "app.py").write_text("code")
         (workspace / "test.py").write_text("test")
         (workspace / "readme.md").write_text("docs")
@@ -39,9 +37,7 @@ class TestFindTool:
         assert "test.py" in result
         assert "readme.md" not in result
 
-    async def test_find_recursive(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_recursive(self, workspace: Path, find_tool: Any) -> None:
         sub = workspace / "src" / "utils"
         sub.mkdir(parents=True)
         (sub / "helpers.py").write_text("code")
@@ -62,9 +58,7 @@ class TestFindTool:
         assert lines[0] == "new.py"
         assert lines[1] == "old.py"
 
-    async def test_find_with_path(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_with_path(self, workspace: Path, find_tool: Any) -> None:
         sub = workspace / "sub"
         sub.mkdir()
         (sub / "inside.txt").write_text("in")
@@ -73,25 +67,19 @@ class TestFindTool:
         assert "inside.txt" in result
         assert "outside.txt" not in result
 
-    async def test_find_max_results_limit(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_max_results_limit(self, workspace: Path, find_tool: Any) -> None:
         for i in range(20):
             (workspace / f"file{i:02d}.txt").write_text(f"content {i}")
         result = await find_tool(pattern="*.txt", max_results=5)
         lines = [l for l in result.strip().split("\n") if l.strip()]
         assert len(lines) <= 6  # 5 results + possible truncation note
 
-    async def test_find_no_matches(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_no_matches(self, workspace: Path, find_tool: Any) -> None:
         (workspace / "file.py").write_text("code")
         result = await find_tool(pattern="*.rs")
         assert "No matches" in result
 
-    async def test_find_returns_relative_paths(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_returns_relative_paths(self, workspace: Path, find_tool: Any) -> None:
         sub = workspace / "src"
         sub.mkdir()
         (sub / "main.py").write_text("code")
@@ -100,25 +88,19 @@ class TestFindTool:
         # Should not contain absolute path
         assert str(workspace) not in result
 
-    async def test_find_not_a_directory_error(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_not_a_directory_error(self, workspace: Path, find_tool: Any) -> None:
         """Line 60: Path is not a directory."""
         (workspace / "file.txt").write_text("content")
         result = await find_tool(pattern="*.py", path="file.txt")
         assert "Error: Not a directory" in result
 
-    async def test_find_stat_error_skips_file(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_stat_error_skips_file(self, workspace: Path, find_tool: Any) -> None:
         """Lines 71-72: OSError on stat() skips file."""
         (workspace / "good.py").write_text("code")
         result = await find_tool(pattern="*.py")
         assert "good.py" in result
 
-    async def test_find_skips_non_files(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_find_skips_non_files(self, workspace: Path, find_tool: Any) -> None:
         """Line 74: Non-file entries (directories) are skipped."""
         (workspace / "code.py").write_text("content")
         (workspace / "subdir").mkdir()
@@ -133,21 +115,15 @@ class TestFindTool:
 class TestFindTraversalProtection:
     """Pattern traversal attack tests."""
 
-    async def test_double_dot_pattern_rejected(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_double_dot_pattern_rejected(self, workspace: Path, find_tool: Any) -> None:
         result = await find_tool(pattern="../../etc/*")
         assert "Error: Pattern must not contain '..'" in result
 
-    async def test_double_dot_in_middle_rejected(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_double_dot_in_middle_rejected(self, workspace: Path, find_tool: Any) -> None:
         result = await find_tool(pattern="sub/../../../etc/passwd")
         assert "Error: Pattern must not contain '..'" in result
 
-    async def test_single_dot_pattern_allowed(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_single_dot_pattern_allowed(self, workspace: Path, find_tool: Any) -> None:
         """Single dot in pattern should be fine (e.g., *.py)."""
         (workspace / "code.py").write_text("code")
         result = await find_tool(pattern="*.py")
@@ -187,9 +163,7 @@ class TestFindToolFactory:
 class TestFindOSError:
     """Lines 71-72: OSError on stat() during find is caught."""
 
-    async def test_broken_symlink_skipped(
-        self, workspace: Path, find_tool: Any
-    ) -> None:
+    async def test_broken_symlink_skipped(self, workspace: Path, find_tool: Any) -> None:
         # Create a valid file and a broken symlink
         (workspace / "good.txt").write_text("content")
         (workspace / "broken.txt").symlink_to(workspace / "nonexistent")

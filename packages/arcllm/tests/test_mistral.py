@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from arcllm.adapters.mistral import MistralAdapter, _MISTRAL_STOP_REASON_MAP
+from arcllm.adapters.mistral import MistralAdapter
 from arcllm.config import ModelMetadata, ProviderConfig, ProviderSettings
 from arcllm.types import LLMResponse, Message, Tool
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

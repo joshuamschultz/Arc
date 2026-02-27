@@ -101,7 +101,9 @@ def parse_facts(text: str) -> list[Fact]:
 
 
 def find_contradiction(
-    existing: list[Fact], predicate: str, new_value: str,
+    existing: list[Fact],
+    predicate: str,
+    new_value: str,
 ) -> Fact | None:
     """Find an existing fact with the same predicate but different value."""
     for fact in existing:

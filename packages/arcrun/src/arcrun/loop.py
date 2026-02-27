@@ -1,9 +1,11 @@
 """Entry points + RunHandle. Pure orchestration."""
+
 from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from arcrun._messages import system_message, user_message
 from arcrun.events import EventBus
@@ -113,11 +115,16 @@ async def run(
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
-        tools, system_prompt, task,
+        tools,
+        system_prompt,
+        task,
         messages=messages,
-        on_event=on_event, sandbox=sandbox,
-        transform_context=transform_context, tool_timeout=tool_timeout,
-        depth=depth, max_depth=max_depth,
+        on_event=on_event,
+        sandbox=sandbox,
+        transform_context=transform_context,
+        tool_timeout=tool_timeout,
+        depth=depth,
+        max_depth=max_depth,
         tool_choice=tool_choice,
     )
 
@@ -146,11 +153,16 @@ async def run_async(
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
-        tools, system_prompt, task,
+        tools,
+        system_prompt,
+        task,
         messages=messages,
-        on_event=on_event, sandbox=sandbox,
-        transform_context=transform_context, tool_timeout=tool_timeout,
-        depth=depth, max_depth=max_depth,
+        on_event=on_event,
+        sandbox=sandbox,
+        transform_context=transform_context,
+        tool_timeout=tool_timeout,
+        depth=depth,
+        max_depth=max_depth,
         tool_choice=tool_choice,
     )
 

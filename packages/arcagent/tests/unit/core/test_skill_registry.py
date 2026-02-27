@@ -35,9 +35,7 @@ def _write_skill(directory: Path, filename: str, name: str, description: str) ->
 class TestSkillDiscovery:
     """Skill discovery from workspace and global directories."""
 
-    def test_discover_from_workspace_skills(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_discover_from_workspace_skills(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         _write_skill(skills_dir, "review.md", "code-review", "Review code quality")
@@ -46,18 +44,14 @@ class TestSkillDiscovery:
         assert len(registry.skills) == 1
         assert registry.skills[0].name == "code-review"
 
-    def test_discover_from_global_dir(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_discover_from_global_dir(self, workspace: Path, global_dir: Path) -> None:
         _write_skill(global_dir, "debug.md", "debug", "Debug issues")
         registry = SkillRegistry()
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 1
         assert registry.skills[0].name == "debug"
 
-    def test_discover_from_agent_created(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_discover_from_agent_created(self, workspace: Path, global_dir: Path) -> None:
         created_dir = workspace / "skills" / "_agent-created"
         created_dir.mkdir(parents=True)
         _write_skill(created_dir, "custom.md", "custom-tool", "Agent-created skill")
@@ -66,9 +60,7 @@ class TestSkillDiscovery:
         assert len(registry.skills) == 1
         assert registry.skills[0].name == "custom-tool"
 
-    def test_discover_multiple_sources(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_discover_multiple_sources(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         _write_skill(skills_dir, "a.md", "skill-a", "Skill A")
@@ -78,9 +70,7 @@ class TestSkillDiscovery:
         names = {s.name for s in registry.skills}
         assert names == {"skill-a", "skill-b"}
 
-    def test_discover_skips_non_md_files(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_discover_skips_non_md_files(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         (skills_dir / "notes.txt").write_text("not a skill")
@@ -89,16 +79,12 @@ class TestSkillDiscovery:
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 1
 
-    def test_discover_empty_directories(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_discover_empty_directories(self, workspace: Path, global_dir: Path) -> None:
         registry = SkillRegistry()
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 0
 
-    def test_discover_nonexistent_directories(
-        self, tmp_path: Path
-    ) -> None:
+    def test_discover_nonexistent_directories(self, tmp_path: Path) -> None:
         registry = SkillRegistry()
         registry.discover(tmp_path / "nope", tmp_path / "also_nope")
         assert len(registry.skills) == 0
@@ -107,9 +93,7 @@ class TestSkillDiscovery:
 class TestFrontmatterParsing:
     """YAML frontmatter parsing tests."""
 
-    def test_parse_all_fields(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_parse_all_fields(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         (skills_dir / "full.md").write_text(
@@ -134,45 +118,31 @@ class TestFrontmatterParsing:
         assert skill.tags == ["quality", "security"]
         assert skill.category == "development"
 
-    def test_skip_missing_required_name(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_skip_missing_required_name(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
-        (skills_dir / "bad.md").write_text(
-            "---\ndescription: No name field\n---\n\nContent\n"
-        )
+        (skills_dir / "bad.md").write_text("---\ndescription: No name field\n---\n\nContent\n")
         registry = SkillRegistry()
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 0
 
-    def test_skip_missing_required_description(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_skip_missing_required_description(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
-        (skills_dir / "bad.md").write_text(
-            "---\nname: no-desc\n---\n\nContent\n"
-        )
+        (skills_dir / "bad.md").write_text("---\nname: no-desc\n---\n\nContent\n")
         registry = SkillRegistry()
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 0
 
-    def test_skip_malformed_yaml(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_skip_malformed_yaml(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
-        (skills_dir / "bad.md").write_text(
-            "---\nname: [invalid yaml\n---\n\nContent\n"
-        )
+        (skills_dir / "bad.md").write_text("---\nname: [invalid yaml\n---\n\nContent\n")
         registry = SkillRegistry()
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 0
 
-    def test_skip_no_frontmatter(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_skip_no_frontmatter(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         (skills_dir / "plain.md").write_text("# Just markdown\n\nNo frontmatter.\n")
@@ -180,9 +150,7 @@ class TestFrontmatterParsing:
         registry.discover(workspace, global_dir)
         assert len(registry.skills) == 0
 
-    def test_file_path_stored(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_file_path_stored(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         path = _write_skill(skills_dir, "tracked.md", "tracked", "Has path")
@@ -194,9 +162,7 @@ class TestFrontmatterParsing:
 class TestFormatForPrompt:
     """Prompt formatting tests."""
 
-    def test_format_xml(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_format_xml(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         _write_skill(skills_dir, "a.md", "skill-a", "Does A")
@@ -205,7 +171,7 @@ class TestFormatForPrompt:
         registry.discover(workspace, global_dir)
         result = registry.format_for_prompt()
         assert "<available-skills>" in result
-        assert '</available-skills>' in result
+        assert "</available-skills>" in result
         assert '<skill name="skill-a">Does A</skill>' in result
         assert '<skill name="skill-b">Does B</skill>' in result
 
@@ -217,9 +183,7 @@ class TestFormatForPrompt:
 class TestSkillCache:
     """Cache behavior tests."""
 
-    def test_clear_resets_skills(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_clear_resets_skills(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         _write_skill(skills_dir, "a.md", "skill-a", "Does A")
@@ -229,9 +193,7 @@ class TestSkillCache:
         registry.clear()
         assert len(registry.skills) == 0
 
-    def test_get_skill_by_name(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_get_skill_by_name(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         _write_skill(skills_dir, "target.md", "target", "Target skill")
@@ -249,9 +211,7 @@ class TestSkillCache:
 class TestAgentCreatedRescan:
     """Targeted re-scan of agent-created skills."""
 
-    def test_rescan_adds_new_skill(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_rescan_adds_new_skill(self, workspace: Path, global_dir: Path) -> None:
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
         _write_skill(skills_dir, "existing.md", "existing", "Existing skill")
@@ -272,9 +232,7 @@ class TestAgentCreatedRescan:
 class TestSkillEdgeCases:
     """Edge cases and error handling."""
 
-    def test_parse_skill_file_read_error(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_parse_skill_file_read_error(self, workspace: Path, global_dir: Path) -> None:
         """Lines 117-119: OSError when reading skill file."""
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
@@ -287,15 +245,11 @@ class TestSkillEdgeCases:
         registry.discover(workspace, global_dir)
         # At least shouldn't crash
 
-    def test_frontmatter_not_dict(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_frontmatter_not_dict(self, workspace: Path, global_dir: Path) -> None:
         """Lines 132-133: YAML frontmatter is not a dict."""
         skills_dir = workspace / "skills"
         skills_dir.mkdir()
-        (skills_dir / "list.md").write_text(
-            "---\n- item1\n- item2\n---\n\nContent\n"
-        )
+        (skills_dir / "list.md").write_text("---\n- item1\n- item2\n---\n\nContent\n")
         registry = SkillRegistry()
         registry.discover(workspace, global_dir)
         # Should skip the invalid frontmatter
@@ -315,9 +269,7 @@ class TestSkillEdgeCases:
         # Should skip files without proper frontmatter
         assert len(registry.skills) == 0
 
-    def test_format_for_prompt_edge_case(
-        self, workspace: Path, global_dir: Path
-    ) -> None:
+    def test_format_for_prompt_edge_case(self, workspace: Path, global_dir: Path) -> None:
         """Test format_for_prompt with various skill configurations."""
         skills_dir = workspace / "skills"
         skills_dir.mkdir()

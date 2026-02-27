@@ -15,9 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-def _mock_model(
-    *, return_value: Any = None, side_effect: Exception | None = None
-) -> MagicMock:
+def _mock_model(*, return_value: Any = None, side_effect: Exception | None = None) -> MagicMock:
     """Create a mock LLM model with invoke() returning LLMResponse-like object."""
     model = MagicMock()
     if side_effect is not None:
@@ -25,6 +23,7 @@ def _mock_model(
     else:
         model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
     return model
+
 
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -55,7 +54,7 @@ def _make_bus(config: ArcAgentConfig | None = None) -> ModuleBus:
             agent=AgentConfig(name="test", workspace="./test-workspace"),
             llm=LLMConfig(model="test/model"),
         )
-    telemetry = _make_telemetry()
+    _make_telemetry()
     return ModuleBus()
 
 

@@ -1057,9 +1057,17 @@ async def _serve(agent_dir: Path, shutdown_event: asyncio.Event, verbose: bool) 
     """Async serve function — startup agent, wait for shutdown, cleanup."""
     arc_agent, config, _config_path = _load_arcagent(agent_dir)
 
-    if verbose:
-        import logging
+    # Ensure workspace is scaffolded (idempotent — skips existing files)
+    _scaffold_workspace(agent_dir, config.agent.name)
 
+    # Configure logging to stderr so systemd captures it
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(name)s %(levelname)s: %(message)s",
+    )
+    if verbose:
         logging.getLogger("arcagent.scheduler").setLevel(logging.DEBUG)
 
     await arc_agent.startup()
@@ -1114,6 +1122,7 @@ async def _agent_run_once(
     as_json: bool,
 ) -> None:
     arc_agent, config, _config_path = _load_arcagent(agent_dir)
+    _scaffold_workspace(agent_dir, config.agent.name)
 
     if model_override:
         config.llm.model = model_override
@@ -1624,6 +1633,7 @@ async def _chat_interactive_arcagent(
 ) -> None:
     """Interactive REPL chat via ArcAgent."""
     arc_agent, config, _config_path = _load_arcagent(agent_dir)
+    _scaffold_workspace(agent_dir, config.agent.name)
 
     if model_override:
         config.llm.model = model_override

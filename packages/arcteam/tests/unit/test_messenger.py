@@ -21,25 +21,39 @@ async def svc() -> MessagingService:
     svc = MessagingService(backend, registry, audit)
 
     # Register test entities
-    await registry.register(Entity(
-        id="agent://a1", name="Agent One", type=EntityType.AGENT,
-        roles=["ops", "dev"],
-    ))
-    await registry.register(Entity(
-        id="agent://a2", name="Agent Two", type=EntityType.AGENT,
-        roles=["ops"],
-    ))
-    await registry.register(Entity(
-        id="user://josh", name="Josh", type=EntityType.USER,
-        roles=["admin"],
-    ))
+    await registry.register(
+        Entity(
+            id="agent://a1",
+            name="Agent One",
+            type=EntityType.AGENT,
+            roles=["ops", "dev"],
+        )
+    )
+    await registry.register(
+        Entity(
+            id="agent://a2",
+            name="Agent Two",
+            type=EntityType.AGENT,
+            roles=["ops"],
+        )
+    )
+    await registry.register(
+        Entity(
+            id="user://josh",
+            name="Josh",
+            type=EntityType.USER,
+            roles=["admin"],
+        )
+    )
 
     # Create a channel with members
-    await svc.create_channel(Channel(
-        name="project-alpha",
-        description="Project Alpha",
-        members=["agent://a1", "agent://a2", "user://josh"],
-    ))
+    await svc.create_channel(
+        Channel(
+            name="project-alpha",
+            description="Project Alpha",
+            members=["agent://a1", "agent://a2", "user://josh"],
+        )
+    )
 
     return svc
 
@@ -120,22 +134,26 @@ class TestAutoAssign:
 
     async def test_monotonic_seq(self, svc: MessagingService) -> None:
         for i in range(5):
-            await svc.send(Message(
-                sender="agent://a1",
-                to=["channel://project-alpha"],
-                body=f"msg {i}",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://a1",
+                    to=["channel://project-alpha"],
+                    body=f"msg {i}",
+                )
+            )
         messages = await svc.poll("arc.channel.project-alpha", "agent://a2")
         seqs = [m.seq for m in messages]
         assert seqs == [1, 2, 3, 4, 5]
 
     async def test_auto_thread_id(self, svc: MessagingService) -> None:
         """New message gets thread_id = own id."""
-        sent = await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="new thread",
-        ))
+        sent = await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="new thread",
+            )
+        )
         assert sent.thread_id == sent.id
 
 
@@ -143,17 +161,21 @@ class TestThreading:
     """Threading: explicit thread_id groups messages into conversations."""
 
     async def test_reply_thread(self, svc: MessagingService) -> None:
-        original = await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="original message",
-        ))
-        reply = await svc.send(Message(
-            sender="agent://a2",
-            to=["channel://project-alpha"],
-            body="reply to original",
-            thread_id=original.id,
-        ))
+        original = await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="original message",
+            )
+        )
+        reply = await svc.send(
+            Message(
+                sender="agent://a2",
+                to=["channel://project-alpha"],
+                body="reply to original",
+                thread_id=original.id,
+            )
+        )
         assert reply.thread_id == original.id
 
 
@@ -162,20 +184,24 @@ class TestPoll:
 
     async def test_poll_respects_limit(self, svc: MessagingService) -> None:
         for i in range(10):
-            await svc.send(Message(
-                sender="agent://a1",
-                to=["channel://project-alpha"],
-                body=f"msg {i}",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://a1",
+                    to=["channel://project-alpha"],
+                    body=f"msg {i}",
+                )
+            )
         messages = await svc.poll("arc.channel.project-alpha", "agent://a2", max_messages=3)
         assert len(messages) == 3
 
     async def test_poll_no_cursor_reads_from_beginning(self, svc: MessagingService) -> None:
-        await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="first",
-        ))
+        await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="first",
+            )
+        )
         messages = await svc.poll("arc.channel.project-alpha", "agent://a2")
         assert len(messages) == 1
         assert messages[0].body == "first"
@@ -186,11 +212,13 @@ class TestAck:
 
     async def test_ack_advances_cursor(self, svc: MessagingService) -> None:
         for i in range(5):
-            await svc.send(Message(
-                sender="agent://a1",
-                to=["channel://project-alpha"],
-                body=f"msg {i}",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://a1",
+                    to=["channel://project-alpha"],
+                    body=f"msg {i}",
+                )
+            )
 
         # Poll all 5
         messages = await svc.poll("arc.channel.project-alpha", "agent://a2")
@@ -205,11 +233,13 @@ class TestAck:
         assert messages[0].seq == 4
 
     async def test_ack_rejects_backward(self, svc: MessagingService) -> None:
-        await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="msg",
-        ))
+        await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="msg",
+            )
+        )
         await svc.ack("arc.channel.project-alpha", "agent://a2", seq=5, byte_pos=0)
         await svc.ack("arc.channel.project-alpha", "agent://a2", seq=2, byte_pos=0)  # Backward
 
@@ -223,23 +253,29 @@ class TestPollAll:
 
     async def test_poll_all(self, svc: MessagingService) -> None:
         # Send to channel
-        await svc.send(Message(
-            sender="user://josh",
-            to=["channel://project-alpha"],
-            body="channel msg",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["channel://project-alpha"],
+                body="channel msg",
+            )
+        )
         # Send DM to a1
-        await svc.send(Message(
-            sender="agent://a2",
-            to=["agent://a1"],
-            body="dm msg",
-        ))
+        await svc.send(
+            Message(
+                sender="agent://a2",
+                to=["agent://a1"],
+                body="dm msg",
+            )
+        )
         # Send to role
-        await svc.send(Message(
-            sender="user://josh",
-            to=["role://ops"],
-            body="role msg",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["role://ops"],
+                body="role msg",
+            )
+        )
 
         result = await svc.poll_all("agent://a1")
         assert "arc.agent.a1" in result
@@ -275,11 +311,19 @@ class TestBodyTooLarge:
         # Use model_construct to bypass Pydantic validation (simulates programmatic input)
         big_body = "x" * 70000
         msg = Message.model_construct(
-            seq=0, id="", ts="", sender="agent://a1",
-            to=["channel://project-alpha"], thread_id=None,
-            msg_type=MsgType.INFO, priority=Priority.NORMAL,
-            action_required=False, body=big_body,
-            refs=[], status="sent", meta={},
+            seq=0,
+            id="",
+            ts="",
+            sender="agent://a1",
+            to=["channel://project-alpha"],
+            thread_id=None,
+            msg_type=MsgType.INFO,
+            priority=Priority.NORMAL,
+            action_required=False,
+            body=big_body,
+            refs=[],
+            status="sent",
+            meta={},
         )
         with pytest.raises(ValueError, match="64KB"):
             await svc.send(msg)
@@ -293,11 +337,13 @@ class TestInvalidURI:
 
     async def test_invalid_uri_dlq(self, svc: MessagingService) -> None:
         with pytest.raises(ValueError, match="Invalid URI"):
-            await svc.send(Message(
-                sender="agent://a1",
-                to=["http://bad-uri"],
-                body="test",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://a1",
+                    to=["http://bad-uri"],
+                    body="test",
+                )
+            )
         dlq = await svc.dlq_list()
         assert any(d["meta"].get("dlq_reason") == "invalid_address" for d in dlq)
 
@@ -307,11 +353,13 @@ class TestUnregisteredSender:
 
     async def test_unregistered_sender_dlq(self, svc: MessagingService) -> None:
         with pytest.raises(ValueError, match="not registered"):
-            await svc.send(Message(
-                sender="agent://unknown",
-                to=["channel://project-alpha"],
-                body="test",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://unknown",
+                    to=["channel://project-alpha"],
+                    body="test",
+                )
+            )
         dlq = await svc.dlq_list()
         assert any(d["meta"].get("dlq_reason") == "sender_unauthorized" for d in dlq)
 
@@ -320,11 +368,13 @@ class TestAuditOnSend:
     """All send operations generate audit records."""
 
     async def test_send_audit(self, svc: MessagingService) -> None:
-        await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="audited message",
-        ))
+        await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="audited message",
+            )
+        )
         records = await svc._backend.read_stream("audit", "audit", after_seq=0, limit=1000)
         send_records = [r for r in records if r["event_type"] == "message.sent"]
         assert len(send_records) >= 1
@@ -334,29 +384,37 @@ class TestGetThread:
     """get_thread: returns all messages in thread chronologically."""
 
     async def test_get_thread(self, svc: MessagingService) -> None:
-        original = await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="original",
-        ))
-        await svc.send(Message(
-            sender="agent://a2",
-            to=["channel://project-alpha"],
-            body="reply 1",
-            thread_id=original.id,
-        ))
-        await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="reply 2",
-            thread_id=original.id,
-        ))
+        original = await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="original",
+            )
+        )
+        await svc.send(
+            Message(
+                sender="agent://a2",
+                to=["channel://project-alpha"],
+                body="reply 1",
+                thread_id=original.id,
+            )
+        )
+        await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="reply 2",
+                thread_id=original.id,
+            )
+        )
         # Unrelated message
-        await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="not in thread",
-        ))
+        await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="not in thread",
+            )
+        )
 
         thread = await svc.get_thread("arc.channel.project-alpha", original.id)
         assert len(thread) == 3
@@ -373,21 +431,25 @@ class TestChannelMembership:
         # Create a channel without user://josh as member
         await svc.create_channel(Channel(name="private", members=["agent://a1"]))
         with pytest.raises(ValueError, match="not a member"):
-            await svc.send(Message(
-                sender="agent://a2",
-                to=["channel://private"],
-                body="should fail",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://a2",
+                    to=["channel://private"],
+                    body="should fail",
+                )
+            )
         dlq = await svc.dlq_list()
         assert any(d["meta"].get("dlq_reason") == "not_channel_member" for d in dlq)
 
     async def test_member_allowed(self, svc: MessagingService) -> None:
         """Channel member can send successfully."""
-        sent = await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="member message",
-        ))
+        sent = await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="member message",
+            )
+        )
         assert sent.seq >= 1
 
 
@@ -395,24 +457,30 @@ class TestDeepThreading:
     """Deep threading: all replies in a thread share the same thread_id."""
 
     async def test_deep_thread_same_id(self, svc: MessagingService) -> None:
-        original = await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="thread root",
-        ))
-        reply1 = await svc.send(Message(
-            sender="agent://a2",
-            to=["channel://project-alpha"],
-            body="first reply",
-            thread_id=original.id,
-        ))
+        original = await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="thread root",
+            )
+        )
+        reply1 = await svc.send(
+            Message(
+                sender="agent://a2",
+                to=["channel://project-alpha"],
+                body="first reply",
+                thread_id=original.id,
+            )
+        )
         # All replies pass the same thread_id
-        reply2 = await svc.send(Message(
-            sender="agent://a1",
-            to=["channel://project-alpha"],
-            body="reply to reply",
-            thread_id=original.id,
-        ))
+        reply2 = await svc.send(
+            Message(
+                sender="agent://a1",
+                to=["channel://project-alpha"],
+                body="reply to reply",
+                thread_id=original.id,
+            )
+        )
         assert reply1.thread_id == original.id
         assert reply2.thread_id == original.id
 

@@ -30,32 +30,52 @@ async def populated_svc(svc: MessagingService) -> MessagingService:
     registry = svc._registry
 
     # Register entities
-    await registry.register(Entity(
-        id="agent://proc-01", name="Procurement 01", type=EntityType.AGENT,
-        roles=["procurement", "research"],
-    ))
-    await registry.register(Entity(
-        id="agent://proc-02", name="Procurement 02", type=EntityType.AGENT,
-        roles=["procurement"],
-    ))
-    await registry.register(Entity(
-        id="agent://analyst", name="Analyst", type=EntityType.AGENT,
-        roles=["research"],
-    ))
-    await registry.register(Entity(
-        id="user://josh", name="Josh", type=EntityType.USER,
-        roles=["admin"],
-    ))
+    await registry.register(
+        Entity(
+            id="agent://proc-01",
+            name="Procurement 01",
+            type=EntityType.AGENT,
+            roles=["procurement", "research"],
+        )
+    )
+    await registry.register(
+        Entity(
+            id="agent://proc-02",
+            name="Procurement 02",
+            type=EntityType.AGENT,
+            roles=["procurement"],
+        )
+    )
+    await registry.register(
+        Entity(
+            id="agent://analyst",
+            name="Analyst",
+            type=EntityType.AGENT,
+            roles=["research"],
+        )
+    )
+    await registry.register(
+        Entity(
+            id="user://josh",
+            name="Josh",
+            type=EntityType.USER,
+            roles=["admin"],
+        )
+    )
 
     # Create channels
-    await svc.create_channel(Channel(
-        name="project-alpha",
-        members=["agent://proc-01", "agent://proc-02", "user://josh"],
-    ))
-    await svc.create_channel(Channel(
-        name="research",
-        members=["agent://proc-01", "agent://analyst"],
-    ))
+    await svc.create_channel(
+        Channel(
+            name="project-alpha",
+            members=["agent://proc-01", "agent://proc-02", "user://josh"],
+        )
+    )
+    await svc.create_channel(
+        Channel(
+            name="research",
+            members=["agent://proc-01", "agent://analyst"],
+        )
+    )
 
     return svc
 
@@ -67,14 +87,16 @@ class TestFullAgentWorkflow:
         svc = populated_svc
 
         # Send message to channel
-        sent = await svc.send(Message(
-            sender="user://josh",
-            to=["channel://project-alpha"],
-            body="Please analyze vendor proposals",
-            msg_type=MsgType.TASK,
-            priority=Priority.HIGH,
-            action_required=True,
-        ))
+        sent = await svc.send(
+            Message(
+                sender="user://josh",
+                to=["channel://project-alpha"],
+                body="Please analyze vendor proposals",
+                msg_type=MsgType.TASK,
+                priority=Priority.HIGH,
+                action_required=True,
+            )
+        )
         assert sent.seq == 1
 
         # Agent polls
@@ -99,25 +121,31 @@ class TestMultiAgentScenario:
         svc = populated_svc
 
         # Josh sends to channel
-        await svc.send(Message(
-            sender="user://josh",
-            to=["channel://project-alpha"],
-            body="Channel message",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["channel://project-alpha"],
+                body="Channel message",
+            )
+        )
 
         # Josh sends to role
-        await svc.send(Message(
-            sender="user://josh",
-            to=["role://procurement"],
-            body="All procurement agents: status update",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["role://procurement"],
+                body="All procurement agents: status update",
+            )
+        )
 
         # Josh sends DM to analyst
-        await svc.send(Message(
-            sender="user://josh",
-            to=["agent://analyst"],
-            body="Private note to analyst",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["agent://analyst"],
+                body="Private note to analyst",
+            )
+        )
 
         # proc-01 polls all (has procurement+research roles, is in project-alpha+research channels)
         result = await svc.poll_all("agent://proc-01")
@@ -142,11 +170,13 @@ class TestCursorCrashRecovery:
         svc = populated_svc
 
         # Send message
-        await svc.send(Message(
-            sender="user://josh",
-            to=["channel://project-alpha"],
-            body="important task",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["channel://project-alpha"],
+                body="important task",
+            )
+        )
 
         # Agent polls but doesn't ack (simulates crash)
         messages = await svc.poll("arc.channel.project-alpha", "agent://proc-01")
@@ -165,12 +195,20 @@ class TestAuditChainVerification:
         svc = populated_svc
 
         # Perform various operations
-        await svc.send(Message(
-            sender="user://josh", to=["channel://project-alpha"], body="msg 1",
-        ))
-        await svc.send(Message(
-            sender="agent://proc-01", to=["agent://proc-02"], body="dm",
-        ))
+        await svc.send(
+            Message(
+                sender="user://josh",
+                to=["channel://project-alpha"],
+                body="msg 1",
+            )
+        )
+        await svc.send(
+            Message(
+                sender="agent://proc-01",
+                to=["agent://proc-02"],
+                body="dm",
+            )
+        )
         await svc.join_channel("research", "agent://proc-02")
 
         # Verify chain
@@ -187,15 +225,23 @@ class TestDLQCaptures:
 
         # Unregistered sender
         with pytest.raises(ValueError):
-            await svc.send(Message(
-                sender="agent://unknown", to=["channel://project-alpha"], body="test",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://unknown",
+                    to=["channel://project-alpha"],
+                    body="test",
+                )
+            )
 
         # Invalid URI
         with pytest.raises(ValueError):
-            await svc.send(Message(
-                sender="agent://proc-01", to=["bad://uri"], body="test",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://proc-01",
+                    to=["bad://uri"],
+                    body="test",
+                )
+            )
 
         # Check DLQ
         dlq = await svc.dlq_list()

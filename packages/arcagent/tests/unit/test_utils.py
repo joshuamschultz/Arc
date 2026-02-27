@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
@@ -88,5 +87,3 @@ class TestSanitizeFts5Query:
         # All special chars, nothing left
         result = sanitize_fts5_query("*** {}")
         assert result == ""
-
-

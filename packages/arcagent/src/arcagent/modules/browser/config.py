@@ -25,8 +25,13 @@ class BrowserSecurityConfig(ModuleConfig):
     url_patterns: list[str] = Field(default_factory=list)
     blocked_schemes: list[str] = Field(
         default_factory=lambda: [
-            "file", "chrome", "chrome-extension", "javascript",
-            "data", "blob", "ftp",
+            "file",
+            "chrome",
+            "chrome-extension",
+            "javascript",
+            "data",
+            "blob",
+            "ftp",
         ]
     )
     allow_js_execution: bool = True
@@ -90,17 +95,9 @@ class BrowserConfig(ModuleConfig):
     out-of-the-box with zero configuration.
     """
 
-    security: BrowserSecurityConfig = Field(
-        default_factory=BrowserSecurityConfig
-    )
-    connection: BrowserConnectionConfig = Field(
-        default_factory=BrowserConnectionConfig
-    )
-    timeouts: BrowserTimeoutConfig = Field(
-        default_factory=BrowserTimeoutConfig
-    )
-    cookies: BrowserCookieConfig = Field(
-        default_factory=BrowserCookieConfig
-    )
+    security: BrowserSecurityConfig = Field(default_factory=BrowserSecurityConfig)
+    connection: BrowserConnectionConfig = Field(default_factory=BrowserConnectionConfig)
+    timeouts: BrowserTimeoutConfig = Field(default_factory=BrowserTimeoutConfig)
+    cookies: BrowserCookieConfig = Field(default_factory=BrowserCookieConfig)
     accessibility_tree_depth: int = 10
     chrome_memory_limit_mb: int = 512

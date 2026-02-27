@@ -1,9 +1,9 @@
 """Integration tests — full end-to-end scenarios."""
+
 import pytest
-
-from arcrun.types import Tool, SandboxConfig
-
 from conftest import LLMResponse, MockModel, ToolCall
+
+from arcrun.types import SandboxConfig, Tool
 
 
 async def _search(params: dict, ctx: object) -> str:
@@ -45,22 +45,28 @@ class TestIntegration:
         """Model reasons, calls tools, gets results, makes more calls, finishes."""
         from arcrun.loop import run
 
-        model = MockModel([
-            # Turn 1: model searches
-            LLMResponse(
-                content="Let me search for that.",
-                tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "python async"})],
-                stop_reason="tool_use",
-            ),
-            # Turn 2: model calculates based on search
-            LLMResponse(
-                content="Now let me calculate.",
-                tool_calls=[ToolCall(id="tc2", name="calculate", arguments={"expression": "2+2"})],
-                stop_reason="tool_use",
-            ),
-            # Turn 3: model finishes
-            LLMResponse(content="The answer is 4.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                # Turn 1: model searches
+                LLMResponse(
+                    content="Let me search for that.",
+                    tool_calls=[
+                        ToolCall(id="tc1", name="search", arguments={"query": "python async"})
+                    ],
+                    stop_reason="tool_use",
+                ),
+                # Turn 2: model calculates based on search
+                LLMResponse(
+                    content="Now let me calculate.",
+                    tool_calls=[
+                        ToolCall(id="tc2", name="calculate", arguments={"expression": "2+2"})
+                    ],
+                    stop_reason="tool_use",
+                ),
+                # Turn 3: model finishes
+                LLMResponse(content="The answer is 4.", stop_reason="end_turn"),
+            ]
+        )
 
         result = await run(model, _tools(), "Be helpful.", "Find and calculate")
         assert result.content == "The answer is 4."
@@ -73,22 +79,27 @@ class TestIntegration:
         from arcrun.loop import run
 
         events = []
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "test"})],
-                stop_reason="tool_use",
-            ),
-            # Model tries dynamic tool
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc2", name="dynamic", arguments={})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="OK.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "test"})],
+                    stop_reason="tool_use",
+                ),
+                # Model tries dynamic tool
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc2", name="dynamic", arguments={})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="OK.", stop_reason="end_turn"),
+            ]
+        )
 
         cfg = SandboxConfig(allowed_tools=["search", "calculate"])
-        result = await run(
-            model, _tools(), "prompt", "task",
+        await run(
+            model,
+            _tools(),
+            "prompt",
+            "task",
             sandbox=cfg,
             on_event=lambda e: events.append(e),
         )
@@ -101,13 +112,15 @@ class TestIntegration:
         """Every action has corresponding event."""
         from arcrun.loop import run
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "x"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Done.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "x"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Done.", stop_reason="end_turn"),
+            ]
+        )
 
         result = await run(model, _tools(), "prompt", "task")
         types = [e.type for e in result.events]
@@ -131,14 +144,16 @@ class TestIntegration:
         """LoopResult totals match individual events."""
         from arcrun.loop import run
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "x"})],
-                stop_reason="tool_use",
-                cost_usd=0.001,
-            ),
-            LLMResponse(content="Done.", stop_reason="end_turn", cost_usd=0.002),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="search", arguments={"query": "x"})],
+                    stop_reason="tool_use",
+                    cost_usd=0.001,
+                ),
+                LLMResponse(content="Done.", stop_reason="end_turn", cost_usd=0.002),
+            ]
+        )
 
         result = await run(model, _tools(), "prompt", "task")
         assert result.cost_usd == pytest.approx(0.003, abs=1e-9)

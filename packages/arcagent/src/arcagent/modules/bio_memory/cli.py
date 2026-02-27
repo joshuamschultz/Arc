@@ -48,26 +48,16 @@ def cli_group(workspace: Path) -> click.Group:
         # Daily notes
         daily_notes_dir = md / "daily-notes"
         daily_note_count = (
-            len(list(daily_notes_dir.glob("*.md")))
-            if daily_notes_dir.is_dir()
-            else 0
+            len(list(daily_notes_dir.glob("*.md"))) if daily_notes_dir.is_dir() else 0
         )
 
         # Episodes
         episodes_dir = md / "episodes"
-        episode_count = (
-            len(list(episodes_dir.glob("*.md")))
-            if episodes_dir.is_dir()
-            else 0
-        )
+        episode_count = len(list(episodes_dir.glob("*.md"))) if episodes_dir.is_dir() else 0
 
         # Entities
         entities_dir = ws / "entities"
-        entity_count = (
-            len(list(entities_dir.rglob("*.md")))
-            if entities_dir.is_dir()
-            else 0
-        )
+        entity_count = len(list(entities_dir.rglob("*.md"))) if entities_dir.is_dir() else 0
 
         click.echo("Bio-Memory Status:")
         click.echo(f"  Working memory: {'active' if working_exists else 'empty'}")

@@ -1,7 +1,7 @@
 """Tests for ReAct strategy loop."""
-import asyncio
 
 import pytest
+from conftest import LLMResponse, Message, MockModel, ToolCall
 
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
@@ -9,8 +9,6 @@ from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies.react import react_loop
 from arcrun.types import SandboxConfig, Tool
-
-from conftest import LLMResponse, Message, MockModel, ToolCall
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -66,14 +64,16 @@ class TestReactLoop:
     async def test_multi_turn_tool_call(self):
         bus = EventBus(run_id="test")
         state = _make_state(bus)
-        model = MockModel([
-            LLMResponse(
-                content=None,
-                tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "hello"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Got the echo result.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "hello"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Got the echo result.", stop_reason="end_turn"),
+            ]
+        )
         sandbox = Sandbox(config=None, event_bus=bus)
 
         result = await react_loop(model, state, sandbox, max_turns=5)
@@ -88,13 +88,15 @@ class TestReactLoop:
         cfg = SandboxConfig(allowed_tools=["other_tool"])
         sandbox = Sandbox(config=cfg, event_bus=bus)
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "x"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="OK denied.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "x"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="OK denied.", stop_reason="end_turn"),
+            ]
+        )
 
         result = await react_loop(model, state, sandbox, max_turns=5)
         denied = [e for e in bus.events if e.type == "tool.denied"]
@@ -113,13 +115,15 @@ class TestReactLoop:
         state = _make_state(bus, tools=[fail_tool])
         sandbox = Sandbox(config=None, event_bus=bus)
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="fail", arguments={})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Handled error.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="fail", arguments={})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Handled error.", stop_reason="end_turn"),
+            ]
+        )
 
         result = await react_loop(model, state, sandbox, max_turns=5)
         error_events = [e for e in bus.events if e.type == "tool.error"]
@@ -143,13 +147,15 @@ class TestReactLoop:
         state = _make_state(bus, tools=[strict_tool])
         sandbox = Sandbox(config=None, event_bus=bus)
 
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="strict", arguments={"count": "not_int"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Fixed it.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="strict", arguments={"count": "not_int"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Fixed it.", stop_reason="end_turn"),
+            ]
+        )
 
         result = await react_loop(model, state, sandbox, max_turns=5)
         assert result.content == "Fixed it."
@@ -158,13 +164,15 @@ class TestReactLoop:
     async def test_max_turns_hit(self):
         bus = EventBus(run_id="test")
         state = _make_state(bus)
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id=f"tc{i}", name="echo", arguments={"input": "x"})],
-                stop_reason="tool_use",
-            )
-            for i in range(5)
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id=f"tc{i}", name="echo", arguments={"input": "x"})],
+                    stop_reason="tool_use",
+                )
+                for i in range(5)
+            ]
+        )
         sandbox = Sandbox(config=None, event_bus=bus)
 
         result = await react_loop(model, state, sandbox, max_turns=2)
@@ -176,14 +184,16 @@ class TestReactLoop:
     async def test_text_and_tool_calls_preserved(self):
         bus = EventBus(run_id="test")
         state = _make_state(bus)
-        model = MockModel([
-            LLMResponse(
-                content="Let me think...",
-                tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "y"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Done.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    content="Let me think...",
+                    tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "y"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Done.", stop_reason="end_turn"),
+            ]
+        )
         sandbox = Sandbox(config=None, event_bus=bus)
 
         result = await react_loop(model, state, sandbox, max_turns=5)
@@ -194,13 +204,15 @@ class TestReactLoop:
     async def test_all_core_events_emitted(self):
         bus = EventBus(run_id="test")
         state = _make_state(bus)
-        model = MockModel([
-            LLMResponse(
-                tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "hi"})],
-                stop_reason="tool_use",
-            ),
-            LLMResponse(content="Done.", stop_reason="end_turn"),
-        ])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "hi"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Done.", stop_reason="end_turn"),
+            ]
+        )
         sandbox = Sandbox(config=None, event_bus=bus)
 
         await react_loop(model, state, sandbox, max_turns=5)

@@ -1,4 +1,5 @@
 """Strategy interface and selection."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -59,10 +60,13 @@ async def select_strategy(
     from arcrun._messages import system_message, user_message
 
     bus = state.event_bus
-    bus.emit("strategy.selection.start", {
-        "allowed_strategies": allowed,
-        "task": state.messages[-1].content if state.messages else "",
-    })
+    bus.emit(
+        "strategy.selection.start",
+        {
+            "allowed_strategies": allowed,
+            "task": state.messages[-1].content if state.messages else "",
+        },
+    )
 
     from arcllm.types import Tool as LLMTool
 
@@ -100,16 +104,22 @@ async def select_strategy(
             chosen = response.tool_calls[0].arguments.get("strategy")
             reasoning = response.tool_calls[0].arguments.get("reasoning", "")
             if chosen in allowed:
-                bus.emit("strategy.selection.complete", {
-                    "selected": chosen,
-                    "reasoning": reasoning,
-                })
+                bus.emit(
+                    "strategy.selection.complete",
+                    {
+                        "selected": chosen,
+                        "reasoning": reasoning,
+                    },
+                )
                 return chosen
     except Exception as exc:
         bus.emit("strategy.selection.error", {"error": str(exc)})
 
-    bus.emit("strategy.selection.fallback", {
-        "attempted": allowed,
-        "defaulted_to": "react",
-    })
+    bus.emit(
+        "strategy.selection.fallback",
+        {
+            "attempted": allowed,
+            "defaulted_to": "react",
+        },
+    )
     return "react"

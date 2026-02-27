@@ -65,8 +65,11 @@ class TestModuleLifecycle:
 
     @pytest.mark.asyncio
     async def test_startup_registers_all_events(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        bus: ModuleBus,
+        module_ctx: ModuleContext,
     ) -> None:
         module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
         await module.startup(module_ctx)
@@ -79,8 +82,11 @@ class TestModuleLifecycle:
 
     @pytest.mark.asyncio
     async def test_startup_shutdown_cycle(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        bus: ModuleBus,
+        module_ctx: ModuleContext,
     ) -> None:
         module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
         await module.startup(module_ctx)
@@ -92,8 +98,11 @@ class TestWorkingMemoryLifecycle:
 
     @pytest.mark.asyncio
     async def test_assemble_prompt_with_no_files(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        bus: ModuleBus,
+        module_ctx: ModuleContext,
     ) -> None:
         module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
         await module.startup(module_ctx)
@@ -104,8 +113,11 @@ class TestWorkingMemoryLifecycle:
 
     @pytest.mark.asyncio
     async def test_assemble_prompt_with_working_memory(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        bus: ModuleBus,
+        module_ctx: ModuleContext,
     ) -> None:
         # Create working memory file
         memory_dir = workspace / "memory"
@@ -129,8 +141,11 @@ class TestBashVetoIntegration:
 
     @pytest.mark.asyncio
     async def test_bash_memory_path_vetoed(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        bus: ModuleBus,
+        module_ctx: ModuleContext,
     ) -> None:
         module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
         await module.startup(module_ctx)
@@ -146,8 +161,11 @@ class TestBashVetoIntegration:
 
     @pytest.mark.asyncio
     async def test_non_memory_bash_allowed(
-        self, workspace: Path, telemetry: MagicMock,
-        bus: ModuleBus, module_ctx: ModuleContext,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        bus: ModuleBus,
+        module_ctx: ModuleContext,
     ) -> None:
         module = BioMemoryModule(workspace=workspace, telemetry=telemetry)
         await module.startup(module_ctx)

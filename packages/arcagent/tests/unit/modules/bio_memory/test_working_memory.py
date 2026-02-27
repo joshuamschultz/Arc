@@ -39,7 +39,9 @@ class TestRead:
 
     @pytest.mark.asyncio
     async def test_read_existing_file(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         (memory_dir / "working.md").write_text("hello world", encoding="utf-8")
         result = await wm.read()
@@ -51,7 +53,9 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_creates_file(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         await wm.write(
             content="Test note",
@@ -62,7 +66,9 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_has_yaml_frontmatter(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         await wm.write(
             content="Test note",
@@ -79,7 +85,9 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_body_after_frontmatter(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         await wm.write(
             content="My note content",
@@ -87,12 +95,14 @@ class TestWrite:
         )
         text = (memory_dir / "working.md").read_text(encoding="utf-8")
         end = text.find("\n---", 3)
-        body = text[end + 4:].strip()
+        body = text[end + 4 :].strip()
         assert "My note content" in body
 
     @pytest.mark.asyncio
     async def test_write_overwrites_existing(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         await wm.write(content="First", frontmatter={"turn_number": 1})
         await wm.write(content="Second", frontmatter={"turn_number": 2})
@@ -102,7 +112,8 @@ class TestWrite:
 
     @pytest.mark.asyncio
     async def test_write_enforces_token_budget(
-        self, memory_dir: Path,
+        self,
+        memory_dir: Path,
     ) -> None:
         """Content exceeding working_budget is truncated."""
         cfg = BioMemoryConfig(working_budget=10)  # ~40 chars
@@ -111,7 +122,7 @@ class TestWrite:
         await wm.write(content=long_content, frontmatter={})
         text = (memory_dir / "working.md").read_text(encoding="utf-8")
         end = text.find("\n---", 3)
-        body = text[end + 4:].strip()
+        body = text[end + 4 :].strip()
         # Body should be truncated to approximately working_budget * CHARS_PER_TOKEN
         assert len(body) <= 10 * 4 + 10  # some slack for formatting
 
@@ -121,7 +132,9 @@ class TestSanitization:
 
     @pytest.mark.asyncio
     async def test_write_strips_zero_width_chars(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         """Zero-width characters stripped from written content."""
         poisoned = "Clean\u200btext\u200fhere\ufeff"
@@ -134,7 +147,9 @@ class TestSanitization:
 
     @pytest.mark.asyncio
     async def test_write_strips_control_chars(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         """ASCII control characters stripped (except tab/newline/CR)."""
         content = "Normal\x00\x01\x02text"
@@ -150,7 +165,9 @@ class TestClear:
 
     @pytest.mark.asyncio
     async def test_clear_empties_content(
-        self, wm: WorkingMemory, memory_dir: Path,
+        self,
+        wm: WorkingMemory,
+        memory_dir: Path,
     ) -> None:
         await wm.write(content="Data here", frontmatter={"turn_number": 1})
         await wm.clear()
@@ -158,7 +175,7 @@ class TestClear:
         # File should still exist (preserves workspace detection) but body empty
         assert text.startswith("---\n")
         end = text.find("\n---", 3)
-        body = text[end + 4:].strip()
+        body = text[end + 4 :].strip()
         assert body == ""
 
     @pytest.mark.asyncio

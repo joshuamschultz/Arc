@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -177,9 +176,7 @@ class TestRateLimitModule:
 
     @patch("arcllm.modules.rate_limit.asyncio.sleep", new_callable=AsyncMock)
     @patch("arcllm.modules.rate_limit.time.monotonic")
-    async def test_logs_warning_when_throttled(
-        self, mock_mono, mock_sleep, messages, caplog
-    ):
+    async def test_logs_warning_when_throttled(self, mock_mono, mock_sleep, messages, caplog):
         t = 1000.0
         mock_mono.return_value = t
         inner = _make_inner("anthropic")
@@ -232,12 +229,8 @@ class TestRateLimitValidation:
 
     def test_zero_burst_rejected(self):
         inner = _make_inner()
-        with pytest.raises(
-            ArcLLMConfigError, match="burst_capacity must be >= 1"
-        ):
-            RateLimitModule(
-                {"requests_per_minute": 60, "burst_capacity": 0}, inner
-            )
+        with pytest.raises(ArcLLMConfigError, match="burst_capacity must be >= 1"):
+            RateLimitModule({"requests_per_minute": 60, "burst_capacity": 0}, inner)
 
     def test_burst_defaults_to_rpm(self):
         inner = _make_inner()

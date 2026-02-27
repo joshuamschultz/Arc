@@ -1,6 +1,7 @@
 """Tests for PII detection and redaction."""
 
 import pytest
+
 from arcllm._pii import PiiMatch, RegexPiiDetector, redact_text
 from arcllm.exceptions import ArcLLMConfigError
 

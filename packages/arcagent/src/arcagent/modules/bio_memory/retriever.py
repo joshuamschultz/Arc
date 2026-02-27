@@ -136,7 +136,9 @@ class Retriever:
         return False
 
     def _frontmatter_grep(
-        self, query: str, files: list[Path],
+        self,
+        query: str,
+        files: list[Path],
     ) -> set[Path]:
         """Pass 1: grep YAML frontmatter for tag/entity matches."""
         matches: set[Path] = set()
@@ -201,12 +203,14 @@ class Retriever:
                 score *= _TEAM_SCORE_PENALTY
 
             source = self._relative_source(path)
-            results.append(RetrievalResult(
-                source=source,
-                content=content,
-                score=score,
-                match_type=match_type,
-            ))
+            results.append(
+                RetrievalResult(
+                    source=source,
+                    content=content,
+                    score=score,
+                    match_type=match_type,
+                )
+            )
 
         return results
 
@@ -258,16 +262,21 @@ class Retriever:
                         content_cache[link_path] = content
                 except (OSError, UnicodeDecodeError):
                     continue
-                linked.append(RetrievalResult(
-                    source=source,
-                    content=content,
-                    score=result.score * _WIKI_LINK_DECAY,
-                    match_type="wiki_link",
-                ))
+                linked.append(
+                    RetrievalResult(
+                        source=source,
+                        content=content,
+                        score=result.score * _WIKI_LINK_DECAY,
+                        match_type="wiki_link",
+                    )
+                )
         return linked
 
     def _follow_wiki_links(
-        self, content: str, depth: int = 1, idx: EntityIndex | None = None,
+        self,
+        content: str,
+        depth: int = 1,
+        idx: EntityIndex | None = None,
     ) -> list[Path]:
         """Extract [[wiki-links]] from content, resolve to file paths.
 
@@ -316,7 +325,9 @@ class Retriever:
         return paths
 
     def _discover_files(
-        self, scope: str | None = None, idx: EntityIndex | None = None,
+        self,
+        scope: str | None = None,
+        idx: EntityIndex | None = None,
     ) -> list[Path]:
         """Find indexable files, optionally filtered by scope.
 
@@ -355,7 +366,8 @@ class Retriever:
         return files
 
     def _enforce_budget(
-        self, results: list[RetrievalResult],
+        self,
+        results: list[RetrievalResult],
     ) -> list[RetrievalResult]:
         """Apply overflow strategy to fit within retrieved_budget tokens."""
         max_chars = self._config.retrieved_budget * CHARS_PER_TOKEN
@@ -371,12 +383,14 @@ class Retriever:
                 total += len(result.content)
             else:
                 # Truncate this result to fit
-                trimmed.append(RetrievalResult(
-                    source=result.source,
-                    content=result.content[:remaining],
-                    score=result.score,
-                    match_type=result.match_type,
-                ))
+                trimmed.append(
+                    RetrievalResult(
+                        source=result.source,
+                        content=result.content[:remaining],
+                        score=result.score,
+                        match_type=result.match_type,
+                    )
+                )
                 total += remaining
                 break
 

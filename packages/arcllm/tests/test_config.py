@@ -6,17 +6,14 @@ import pytest
 
 from arcllm import ArcLLMConfigError, ArcLLMError
 from arcllm.config import (
-    DefaultsConfig,
     GlobalConfig,
     ModelMetadata,
-    ModuleConfig,
     ProviderConfig,
     ProviderSettings,
     _validate_provider_name,
     load_global_config,
     load_provider_config,
 )
-
 
 # --- Global config loading ---
 
@@ -191,7 +188,7 @@ def test_invalid_types_in_provider_config_raises_config_error(tmp_path):
     providers_dir.mkdir()
     invalid_toml = providers_dir / "badtypes.toml"
     invalid_toml.write_text(
-        '[provider]\napi_format = 123\nbase_url = true\n'
+        "[provider]\napi_format = 123\nbase_url = true\n"
         'api_key_env = "OK"\ndefault_model = "OK"\ndefault_temperature = "nope"\n'
     )
 

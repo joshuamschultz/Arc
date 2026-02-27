@@ -78,14 +78,17 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_empty_dir_returns_empty(
-        self, retriever: Retriever,
+        self,
+        retriever: Retriever,
     ) -> None:
         results = await retriever.search("anything")
         assert results == []
 
     @pytest.mark.asyncio
     async def test_search_finds_matching_episode(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         _write_episode(
             memory_dir,
@@ -95,12 +98,15 @@ class TestSearch:
         )
         results = await retriever.search("deadline")
         assert len(results) >= 1
-        assert any("deadline" in r.source.lower() or "deadline" in r.content.lower()
-                    for r in results)
+        assert any(
+            "deadline" in r.source.lower() or "deadline" in r.content.lower() for r in results
+        )
 
     @pytest.mark.asyncio
     async def test_search_returns_retrieval_result_type(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         _write_episode(
             memory_dir,
@@ -118,12 +124,14 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_respects_top_k(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         for i in range(5):
             _write_episode(
                 memory_dir,
-                f"2026-02-{20+i}-event{i}",
+                f"2026-02-{20 + i}-event{i}",
                 {"tags": ["common"]},
                 f"Event {i} with common keyword.",
             )
@@ -132,7 +140,9 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_includes_working_md(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         (memory_dir / "working.md").write_text(
             "---\ntags: [active]\n---\n\nCurrent active task.",
@@ -143,7 +153,9 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_includes_daily_notes(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         dn_dir = memory_dir / "daily-notes"
         dn_dir.mkdir(parents=True, exist_ok=True)
@@ -156,11 +168,16 @@ class TestSearch:
 
     @pytest.mark.asyncio
     async def test_search_with_scope_filters_results(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Scope parameter filters which files are searched."""
         _write_episode(
-            memory_dir, "2026-02-21-ep", {"tags": ["target"]}, "target keyword",
+            memory_dir,
+            "2026-02-21-ep",
+            {"tags": ["target"]},
+            "target keyword",
         )
         (memory_dir / "working.md").write_text(
             "---\ntags: [target]\n---\n\ntarget keyword in working",
@@ -177,10 +194,13 @@ class TestEntitySearch:
 
     @pytest.mark.asyncio
     async def test_search_finds_entities(
-        self, retriever: Retriever, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "josh-schultz",
+            entities_dir,
+            "josh-schultz",
             {"entity_type": "person", "tags": ["founder"]},
             "Josh is the founder of CTG Federal.",
         )
@@ -190,10 +210,13 @@ class TestEntitySearch:
 
     @pytest.mark.asyncio
     async def test_search_finds_entities_in_subdirectories(
-        self, retriever: Retriever, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        entities_dir: Path,
     ) -> None:
         _write_entity(
-            entities_dir, "ctg-federal",
+            entities_dir,
+            "ctg-federal",
             {"entity_type": "org", "tags": ["company"]},
             "CTG Federal is a government contractor.",
             subdir="orgs",
@@ -203,7 +226,10 @@ class TestEntitySearch:
 
     @pytest.mark.asyncio
     async def test_search_none_scope_includes_entities(
-        self, retriever: Retriever, memory_dir: Path, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
+        entities_dir: Path,
     ) -> None:
         """Scope=None searches all tiers including entities."""
         _write_episode(memory_dir, "ep1", {"tags": ["alpha"]}, "alpha content")
@@ -214,7 +240,10 @@ class TestEntitySearch:
 
     @pytest.mark.asyncio
     async def test_search_entities_scope_excludes_episodes(
-        self, retriever: Retriever, memory_dir: Path, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
+        entities_dir: Path,
     ) -> None:
         _write_episode(memory_dir, "ep1", {"tags": ["beta"]}, "beta ep")
         _write_entity(entities_dir, "beta-ent", {"tags": ["beta"]}, "beta entity")
@@ -228,7 +257,9 @@ class TestTeamEntitySearch:
 
     @pytest.mark.asyncio
     async def test_team_entities_scored_lower(
-        self, memory_dir: Path, workspace: Path,
+        self,
+        memory_dir: Path,
+        workspace: Path,
     ) -> None:
         # Create team entities dir
         team_dir = workspace / "team_entities"
@@ -257,7 +288,9 @@ class TestRecall:
 
     @pytest.mark.asyncio
     async def test_recall_existing_episode(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         _write_episode(
             memory_dir,
@@ -271,14 +304,17 @@ class TestRecall:
 
     @pytest.mark.asyncio
     async def test_recall_missing_returns_none(
-        self, retriever: Retriever,
+        self,
+        retriever: Retriever,
     ) -> None:
         result = await retriever.recall("nonexistent")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_recall_path_traversal_blocked(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Path traversal via ../.. in name must return None (SEC-9)."""
         # Create a file outside memory_dir
@@ -289,7 +325,9 @@ class TestRecall:
 
     @pytest.mark.asyncio
     async def test_recall_absolute_path_traversal_blocked(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Absolute path in name must not escape memory_dir."""
         result = await retriever.recall("/etc/passwd")
@@ -297,7 +335,9 @@ class TestRecall:
 
     @pytest.mark.asyncio
     async def test_recall_entity_by_name(
-        self, retriever: Retriever, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        entities_dir: Path,
     ) -> None:
         """recall() finds entity files in workspace/entities/."""
         _write_entity(entities_dir, "josh-schultz", {}, "Josh's entity file.")
@@ -307,11 +347,17 @@ class TestRecall:
 
     @pytest.mark.asyncio
     async def test_recall_entity_in_subdirectory(
-        self, retriever: Retriever, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        entities_dir: Path,
     ) -> None:
         """recall() finds entities in subdirectories."""
         _write_entity(
-            entities_dir, "ctg-federal", {}, "CTG entity.", subdir="orgs",
+            entities_dir,
+            "ctg-federal",
+            {},
+            "CTG entity.",
+            subdir="orgs",
         )
         result = await retriever.recall("ctg-federal")
         assert result is not None
@@ -323,7 +369,9 @@ class TestWikiLinkFollowing:
 
     @pytest.mark.asyncio
     async def test_wiki_link_followed(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Search result from a file with [[wiki-link]] pulls in linked file."""
         _write_episode(
@@ -345,7 +393,9 @@ class TestWikiLinkFollowing:
 
     @pytest.mark.asyncio
     async def test_dangling_wiki_link_ignored(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Wiki-links to nonexistent files are silently skipped."""
         _write_episode(
@@ -361,11 +411,16 @@ class TestWikiLinkFollowing:
 
     @pytest.mark.asyncio
     async def test_wiki_link_resolves_to_entity(
-        self, retriever: Retriever, memory_dir: Path, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
+        entities_dir: Path,
     ) -> None:
         """Wiki-link [[entity-id]] resolves to workspace/entities/ files."""
         _write_episode(
-            memory_dir, "2026-02-21-note", {"tags": ["note"]},
+            memory_dir,
+            "2026-02-21-note",
+            {"tags": ["note"]},
             "Discussed [[josh-schultz]] today.",
         )
         _write_entity(entities_dir, "josh-schultz", {"tags": ["person"]}, "Josh entity.")
@@ -378,7 +433,9 @@ class TestDiscoverFiles:
     """File discovery finds all indexable files."""
 
     def test_discovers_episodes(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1 body")
         _write_episode(memory_dir, "ep2", {"tags": []}, "Ep2 body")
@@ -386,14 +443,18 @@ class TestDiscoverFiles:
         assert len(files) >= 2
 
     def test_discovers_working_md(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         (memory_dir / "working.md").write_text("data", encoding="utf-8")
         files = retriever._discover_files()
         assert any(f.name == "working.md" for f in files)
 
     def test_discovers_daily_notes(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         dn_dir = memory_dir / "daily-notes"
         dn_dir.mkdir(parents=True, exist_ok=True)
@@ -406,7 +467,9 @@ class TestDiscoverFiles:
         assert files == []
 
     def test_scope_episodes_only(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Scope='episodes' excludes daily notes and working files."""
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1")
@@ -419,7 +482,9 @@ class TestDiscoverFiles:
         assert len(files) == 1
 
     def test_scope_daily_notes_only(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Scope='daily_notes' returns only daily note files."""
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1")
@@ -431,7 +496,9 @@ class TestDiscoverFiles:
         assert files[0].name == "2026-02-25.md"
 
     def test_scope_working_only(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         """Scope='working' returns only working.md."""
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1")
@@ -441,7 +508,9 @@ class TestDiscoverFiles:
         assert files[0].name == "working.md"
 
     def test_scope_entities_discovers_entity_files(
-        self, retriever: Retriever, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        entities_dir: Path,
     ) -> None:
         """Scope='entities' discovers workspace/entities/ files."""
         _write_entity(entities_dir, "ent1", {}, "Entity one")
@@ -450,7 +519,10 @@ class TestDiscoverFiles:
         assert len(files) == 2
 
     def test_scope_entities_excludes_episodes(
-        self, retriever: Retriever, memory_dir: Path, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
+        entities_dir: Path,
     ) -> None:
         _write_episode(memory_dir, "ep1", {"tags": []}, "Ep1")
         _write_entity(entities_dir, "ent1", {}, "Entity one")
@@ -462,13 +534,17 @@ class TestIsWithinBounds:
     """Path validation covers both memory and entities directories."""
 
     def test_memory_path_within_bounds(
-        self, retriever: Retriever, memory_dir: Path,
+        self,
+        retriever: Retriever,
+        memory_dir: Path,
     ) -> None:
         path = (memory_dir / "episodes" / "test.md").resolve()
         assert retriever._is_within_bounds(path)
 
     def test_entity_path_within_bounds(
-        self, retriever: Retriever, entities_dir: Path,
+        self,
+        retriever: Retriever,
+        entities_dir: Path,
     ) -> None:
         path = (entities_dir / "test.md").resolve()
         assert retriever._is_within_bounds(path)
@@ -483,7 +559,9 @@ class TestBudgetEnforcement:
 
     @pytest.mark.asyncio
     async def test_enforce_budget_trims_results(
-        self, memory_dir: Path, workspace: Path,
+        self,
+        memory_dir: Path,
+        workspace: Path,
     ) -> None:
         cfg = BioMemoryConfig(retrieved_budget=5)  # ~20 chars budget
         ret = Retriever(memory_dir=memory_dir, config=cfg, workspace=workspace)
@@ -491,7 +569,7 @@ class TestBudgetEnforcement:
         for i in range(5):
             _write_episode(
                 memory_dir,
-                f"2026-02-{20+i}-big{i}",
+                f"2026-02-{20 + i}-big{i}",
                 {"tags": ["big"]},
                 "x" * 200,
             )

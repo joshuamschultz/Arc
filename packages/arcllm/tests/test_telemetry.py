@@ -4,6 +4,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.telemetry import TelemetryModule
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage

@@ -71,7 +71,10 @@ class TestModuleProtocol:
 
     @pytest.mark.asyncio
     async def test_startup_registers_handlers(
-        self, module: BioMemoryModule, module_ctx: ModuleContext, bus: ModuleBus,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
         # Should have registered handlers for these events
@@ -83,15 +86,15 @@ class TestModuleProtocol:
 
     @pytest.mark.asyncio
     async def test_startup_registers_tools(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
         tool_registry: MagicMock,
     ) -> None:
         await module.startup(module_ctx)
         # Should register 4 tools (search, note, recall, consolidate_deep)
         assert tool_registry.register.call_count == 4
-        tool_names = [
-            call.args[0].name for call in tool_registry.register.call_args_list
-        ]
+        tool_names = [call.args[0].name for call in tool_registry.register.call_args_list]
         assert "memory_search" in tool_names
         assert "memory_note" in tool_names
         assert "memory_recall" in tool_names
@@ -107,8 +110,11 @@ class TestBashVeto:
 
     @pytest.mark.asyncio
     async def test_bash_targeting_memory_vetoed(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus, workspace: Path,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
+        workspace: Path,
     ) -> None:
         await module.startup(module_ctx)
 
@@ -134,7 +140,9 @@ class TestBashVeto:
 
     @pytest.mark.asyncio
     async def test_bash_not_targeting_memory_allowed(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
         bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
@@ -154,8 +162,11 @@ class TestBashVetoSecurity:
 
     @pytest.mark.asyncio
     async def test_bash_sed_targeting_memory_vetoed(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus, workspace: Path,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
+        workspace: Path,
     ) -> None:
         """sed with memory subpath detected by dangerous command check."""
         await module.startup(module_ctx)
@@ -170,7 +181,9 @@ class TestBashVetoSecurity:
 
     @pytest.mark.asyncio
     async def test_bash_malformed_shell_fallback(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
         bus: ModuleBus,
     ) -> None:
         """Malformed shell with memory path still vetoed (fallback to substring)."""
@@ -186,7 +199,9 @@ class TestBashVetoSecurity:
 
     @pytest.mark.asyncio
     async def test_non_bash_tool_not_vetoed(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
         bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
@@ -205,7 +220,9 @@ class TestToolHandlers:
 
     @pytest.mark.asyncio
     async def test_memory_note_episode_target(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """memory_note with target='episode' creates episode file (T-2 PRD)."""
         # Create the memory/episodes directory
@@ -224,7 +241,9 @@ class TestToolHandlers:
 
     @pytest.mark.asyncio
     async def test_memory_note_sanitizes_content(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """memory_note strips zero-width characters (ASI-06)."""
         memory_dir = module._memory_dir
@@ -242,7 +261,9 @@ class TestToolHandlers:
 
     @pytest.mark.asyncio
     async def test_memory_search_emits_audit(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """memory_search emits audit event (NIST AU-2)."""
         await module._handle_memory_search(query="test")
@@ -252,7 +273,9 @@ class TestToolHandlers:
 
     @pytest.mark.asyncio
     async def test_memory_recall_emits_audit(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """memory_recall emits audit event (NIST AU-2)."""
         await module._handle_memory_recall(name="test-entity")
@@ -262,7 +285,9 @@ class TestToolHandlers:
 
     @pytest.mark.asyncio
     async def test_memory_note_emits_audit(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """memory_note emits audit event for working target (NIST AU-2)."""
         memory_dir = module._memory_dir
@@ -279,8 +304,12 @@ class TestPostToolAudit:
 
     @pytest.mark.asyncio
     async def test_post_tool_audits_write_to_memory(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus, workspace: Path, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
+        workspace: Path,
+        telemetry: MagicMock,
     ) -> None:
         """Write tool targeting memory path emits audit event."""
         await module.startup(module_ctx)
@@ -301,8 +330,11 @@ class TestPostToolAudit:
 
     @pytest.mark.asyncio
     async def test_post_tool_ignores_non_memory_write(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
+        telemetry: MagicMock,
     ) -> None:
         """Write tool NOT targeting memory does not emit audit."""
         await module.startup(module_ctx)
@@ -320,8 +352,11 @@ class TestPostToolAudit:
 
     @pytest.mark.asyncio
     async def test_post_tool_ignores_non_write_tools(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
+        telemetry: MagicMock,
     ) -> None:
         """Non-write/edit tools don't trigger audit."""
         await module.startup(module_ctx)
@@ -358,7 +393,10 @@ class TestAssemblePrompt:
 
     @pytest.mark.asyncio
     async def test_injects_working_memory(
-        self, module: BioMemoryModule, module_ctx: ModuleContext, bus: ModuleBus,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
         memory_dir = module._memory_dir
@@ -366,7 +404,8 @@ class TestAssemblePrompt:
 
         # Create working memory file
         (memory_dir / "working.md").write_text(
-            "---\ntype: note\n---\n\nCurrent task notes.\n", encoding="utf-8",
+            "---\ntype: note\n---\n\nCurrent task notes.\n",
+            encoding="utf-8",
         )
 
         result = await bus.emit("agent:assemble_prompt", {})
@@ -377,8 +416,11 @@ class TestAssemblePrompt:
 
     @pytest.mark.asyncio
     async def test_injects_entity_hint_when_dir_exists(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
-        bus: ModuleBus, workspace: Path,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
+        workspace: Path,
     ) -> None:
         await module.startup(module_ctx)
         module._memory_dir.mkdir(parents=True, exist_ok=True)
@@ -393,7 +435,10 @@ class TestAssemblePrompt:
 
     @pytest.mark.asyncio
     async def test_no_context_when_empty(
-        self, module: BioMemoryModule, module_ctx: ModuleContext, bus: ModuleBus,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
         result = await bus.emit("agent:assemble_prompt", {})
@@ -406,7 +451,10 @@ class TestPostRespond:
 
     @pytest.mark.asyncio
     async def test_captures_messages(
-        self, module: BioMemoryModule, module_ctx: ModuleContext, bus: ModuleBus,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
     ) -> None:
         await module.startup(module_ctx)
         messages = [{"role": "user", "content": "hello"}]
@@ -419,7 +467,10 @@ class TestOnShutdown:
 
     @pytest.mark.asyncio
     async def test_skips_when_no_messages(
-        self, module: BioMemoryModule, module_ctx: ModuleContext, bus: ModuleBus,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
     ) -> None:
         """No messages means no consolidation."""
         await module.startup(module_ctx)
@@ -429,8 +480,11 @@ class TestOnShutdown:
 
     @pytest.mark.asyncio
     async def test_skips_when_light_disabled(
-        self, workspace: Path, telemetry: MagicMock,
-        module_ctx: ModuleContext, bus: ModuleBus,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        module_ctx: ModuleContext,
+        bus: ModuleBus,
     ) -> None:
         """light_on_shutdown=False skips consolidation."""
         m = BioMemoryModule(
@@ -444,7 +498,9 @@ class TestOnShutdown:
 
     @pytest.mark.asyncio
     async def test_warns_when_no_eval_model(
-        self, module: BioMemoryModule, module_ctx: ModuleContext,
+        self,
+        module: BioMemoryModule,
+        module_ctx: ModuleContext,
         bus: ModuleBus,
     ) -> None:
         """No eval model logs warning."""
@@ -459,7 +515,8 @@ class TestShutdownWithTasks:
 
     @pytest.mark.asyncio
     async def test_awaits_background_tasks(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         completed = False
 
@@ -478,10 +535,12 @@ class TestMemoryNoteUnknownTarget:
 
     @pytest.mark.asyncio
     async def test_unknown_target(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         result = await module._handle_memory_note(
-            content="test", target="invalid",
+            content="test",
+            target="invalid",
         )
         assert "Unknown target" in result
 
@@ -491,7 +550,9 @@ class TestMemorySearchWithResults:
 
     @pytest.mark.asyncio
     async def test_returns_formatted_results(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         memory_dir = module._memory_dir
         episodes_dir = memory_dir / "episodes"
@@ -514,7 +575,9 @@ class TestMemoryRecallWithResult:
 
     @pytest.mark.asyncio
     async def test_returns_content_when_found(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         memory_dir = module._memory_dir
         episodes_dir = memory_dir / "episodes"
@@ -535,7 +598,8 @@ class TestDeepConsolidation:
 
     @pytest.mark.asyncio
     async def test_deep_no_model(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         """Deep consolidation without eval model returns unavailable."""
         result = await module._handle_deep_consolidation()
@@ -543,7 +607,9 @@ class TestDeepConsolidation:
 
     @pytest.mark.asyncio
     async def test_deep_skipped_result(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """Deep consolidation skipped formats correctly."""
         mock_model = MagicMock()
@@ -557,7 +623,9 @@ class TestDeepConsolidation:
 
     @pytest.mark.asyncio
     async def test_deep_with_results(
-        self, module: BioMemoryModule, telemetry: MagicMock,
+        self,
+        module: BioMemoryModule,
+        telemetry: MagicMock,
     ) -> None:
         """Deep consolidation with recent activity formats entity/graph/stale stats."""
         mock_model = MagicMock()
@@ -589,12 +657,15 @@ class TestGetTeamService:
     """_get_team_service lazy-initializes TeamMemoryService."""
 
     def test_returns_none_when_no_team_config(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         assert module._get_team_service() is None
 
     def test_returns_none_when_arcteam_import_fails(
-        self, workspace: Path, telemetry: MagicMock,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
     ) -> None:
         m = BioMemoryModule(
             workspace=workspace,
@@ -610,7 +681,8 @@ class TestGetTeamService:
         assert result is None
 
     def test_returns_cached_service(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         fake_service = MagicMock()
         module._team_service = fake_service
@@ -621,12 +693,15 @@ class TestGetTeamEntitiesDir:
     """_get_team_entities_dir resolves team entity path."""
 
     def test_returns_none_when_no_team_config(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         assert module._get_team_entities_dir() is None
 
     def test_returns_none_when_no_root(
-        self, workspace: Path, telemetry: MagicMock,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
     ) -> None:
         m = BioMemoryModule(
             workspace=workspace,
@@ -636,7 +711,10 @@ class TestGetTeamEntitiesDir:
         assert m._get_team_entities_dir() is None
 
     def test_returns_path_when_exists(
-        self, workspace: Path, telemetry: MagicMock, tmp_path: Path,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        tmp_path: Path,
     ) -> None:
         team_root = tmp_path / "team"
         team_entities = team_root / "entities"
@@ -650,7 +728,10 @@ class TestGetTeamEntitiesDir:
         assert m._get_team_entities_dir() == team_entities
 
     def test_returns_none_when_dir_missing(
-        self, workspace: Path, telemetry: MagicMock, tmp_path: Path,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        tmp_path: Path,
     ) -> None:
         m = BioMemoryModule(
             workspace=workspace,
@@ -660,7 +741,10 @@ class TestGetTeamEntitiesDir:
         assert m._get_team_entities_dir() is None
 
     def test_pydantic_model_team_config(
-        self, workspace: Path, telemetry: MagicMock, tmp_path: Path,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
+        tmp_path: Path,
     ) -> None:
         """team_config may be a Pydantic model (TeamSection) instead of dict."""
         from arcagent.core.config import TeamSection
@@ -677,7 +761,9 @@ class TestGetTeamEntitiesDir:
         assert m._get_team_entities_dir() == team_entities
 
     def test_pydantic_model_empty_root(
-        self, workspace: Path, telemetry: MagicMock,
+        self,
+        workspace: Path,
+        telemetry: MagicMock,
     ) -> None:
         """Pydantic model with empty root returns None."""
         from arcagent.core.config import TeamSection
@@ -690,7 +776,9 @@ class TestGetTeamEntitiesDir:
         assert m._get_team_entities_dir() is None
 
     def test_relative_path_resolved_against_workspace_parent(
-        self, tmp_path: Path, telemetry: MagicMock,
+        self,
+        tmp_path: Path,
+        telemetry: MagicMock,
     ) -> None:
         """Relative team root is resolved against workspace parent."""
         # Simulate: agent at /project/agents/my_agent/workspace
@@ -715,13 +803,15 @@ class TestGetEvalModel:
     """_get_eval_model caches and returns model."""
 
     def test_returns_none_without_config(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         result = module._get_eval_model()
         assert result is None
 
     def test_caches_model(
-        self, module: BioMemoryModule,
+        self,
+        module: BioMemoryModule,
     ) -> None:
         """After first call sets _eval_model, second call returns cached."""
         fake_model = MagicMock()
@@ -738,7 +828,9 @@ class TestIsMemoryPathEntities:
     """_is_memory_path covers entities directory branch."""
 
     def test_entities_path_detected(
-        self, module: BioMemoryModule, workspace: Path,
+        self,
+        module: BioMemoryModule,
+        workspace: Path,
     ) -> None:
         entities_dir = workspace / "entities"
         entities_dir.mkdir(parents=True, exist_ok=True)
@@ -747,7 +839,9 @@ class TestIsMemoryPathEntities:
         assert module._is_memory_path(entity_path.resolve()) is True
 
     def test_unrelated_path_not_detected(
-        self, module: BioMemoryModule, tmp_path: Path,
+        self,
+        module: BioMemoryModule,
+        tmp_path: Path,
     ) -> None:
         unrelated = tmp_path / "other" / "file.md"
         unrelated.parent.mkdir(parents=True, exist_ok=True)

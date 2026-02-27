@@ -186,9 +186,7 @@ class TestAuditContentLogging:
 
     async def test_include_both(self, messages, caplog):
         inner = _make_inner()
-        module = AuditModule(
-            {"include_messages": True, "include_response": True}, inner
-        )
+        module = AuditModule({"include_messages": True, "include_response": True}, inner)
 
         with caplog.at_level(logging.DEBUG, logger="arcllm.modules.audit"):
             await module.invoke(messages)

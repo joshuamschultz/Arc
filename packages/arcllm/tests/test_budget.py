@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError, ArcLLMError
 from arcllm.modules.telemetry import (
     BudgetAccumulator,
@@ -625,12 +626,8 @@ class TestClassificationFormatValidation:
         from arcllm.exceptions import ArcLLMConfigError
 
         with pytest.raises(ArcLLMConfigError, match="Invalid classification format"):
-            await self._router.invoke(
-                self._messages, classification="'; DROP TABLE--"
-            )
+            await self._router.invoke(self._messages, classification="'; DROP TABLE--")
 
     async def test_valid_classification_accepted(self) -> None:
-        result = await self._router.invoke(
-            self._messages, classification="unclassified"
-        )
+        result = await self._router.invoke(self._messages, classification="unclassified")
         assert result.content == "ok"

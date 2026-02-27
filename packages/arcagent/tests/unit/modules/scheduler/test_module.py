@@ -55,9 +55,7 @@ class TestModuleStartup:
         await module.startup(ctx)
         # Should subscribe to agent:shutdown
         ctx.bus.subscribe.assert_called()
-        subscribed_events = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed_events = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "agent:shutdown" in subscribed_events
 
 

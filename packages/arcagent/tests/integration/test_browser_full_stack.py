@@ -87,9 +87,7 @@ class TestBrowserModuleDiscovery:
         from arcagent.core.module_loader import ModuleLoader
 
         config = _make_config()
-        modules_dir = (
-            Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
-        )
+        modules_dir = Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
 
         loader = ModuleLoader()
         manifests = loader.discover(modules_dir, config)
@@ -106,9 +104,7 @@ class TestBrowserModuleDiscovery:
             llm=LLMConfig(model="test/model"),
             modules={"browser": ModuleEntry(enabled=False)},
         )
-        modules_dir = (
-            Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
-        )
+        modules_dir = Path(__file__).resolve().parents[2] / "src" / "arcagent" / "modules"
 
         loader = ModuleLoader()
         manifests = loader.discover(modules_dir, config)
@@ -144,9 +140,7 @@ class TestBrowserToolRegistration:
 
         module = BrowserModule(workspace=tmp_path)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()
@@ -213,9 +207,7 @@ class TestToolRegistryToArcRunBridge:
 
         module = BrowserModule(workspace=tmp_path)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()
@@ -256,9 +248,7 @@ class TestToolRegistryToArcRunBridge:
 
         await module.shutdown()
 
-    async def test_arcrun_tool_execution_fires_bus_events(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_arcrun_tool_execution_fires_bus_events(self, tmp_path: Path) -> None:
         """Executing an arcrun-bridged tool fires pre/post events and audit."""
         from arcrun import ToolContext
 
@@ -284,9 +274,7 @@ class TestToolRegistryToArcRunBridge:
 
         module = BrowserModule(workspace=tmp_path)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()
@@ -316,17 +304,14 @@ class TestToolRegistryToArcRunBridge:
         # Verify audit trail was fired
         telemetry.audit_event.assert_called()
         audit_calls = [
-            call for call in telemetry.audit_event.call_args_list
-            if call[0][0] == "tool.executed"
+            call for call in telemetry.audit_event.call_args_list if call[0][0] == "tool.executed"
         ]
         assert len(audit_calls) >= 1
         assert audit_calls[0][0][1]["tool"] == "browser_reload"
 
         await module.shutdown()
 
-    async def test_arcrun_navigate_tool_with_url_policy(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_arcrun_navigate_tool_with_url_policy(self, tmp_path: Path) -> None:
         """Navigate tool enforces URL policy through the ArcRun bridge."""
         from arcrun import ToolContext
 
@@ -352,9 +337,7 @@ class TestToolRegistryToArcRunBridge:
 
         module = BrowserModule(workspace=tmp_path)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()
@@ -377,9 +360,7 @@ class TestToolRegistryToArcRunBridge:
 
         # Blocked scheme should raise through the full stack
         with pytest.raises(Exception, match=r"file.*blocked|Scheme"):
-            await nav_tool.execute(
-                args={"url": "file:///etc/passwd"}, ctx=tool_ctx
-            )
+            await nav_tool.execute(args={"url": "file:///etc/passwd"}, ctx=tool_ctx)
 
         await module.shutdown()
 
@@ -387,9 +368,7 @@ class TestToolRegistryToArcRunBridge:
 class TestAgentLevelBrowserLoading:
     """Full ArcAgent startup discovers and loads browser module."""
 
-    async def test_agent_startup_loads_browser_module(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_agent_startup_loads_browser_module(self, tmp_path: Path) -> None:
         """ArcAgent.startup() discovers and registers browser module."""
         from arcagent.core.agent import ArcAgent
 
@@ -402,9 +381,7 @@ class TestAgentLevelBrowserLoading:
 
         agent = ArcAgent(config=config)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()
@@ -460,9 +437,7 @@ class TestAgentLevelBrowserLoading:
 class TestBrowserEventWiring:
     """Bus events fire correctly through the full stack."""
 
-    async def test_browser_connected_event_on_startup(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_browser_connected_event_on_startup(self, tmp_path: Path) -> None:
         """browser.connected event fires during startup with cdp_url and tool_count."""
         from arcagent.modules.browser.browser_module import BrowserModule
 
@@ -497,9 +472,7 @@ class TestBrowserEventWiring:
 
         module = BrowserModule(workspace=tmp_path)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()
@@ -514,9 +487,7 @@ class TestBrowserEventWiring:
 
         await module.shutdown()
 
-    async def test_browser_disconnected_event_on_shutdown(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_browser_disconnected_event_on_shutdown(self, tmp_path: Path) -> None:
         """browser.disconnected event fires during agent:shutdown."""
         from arcagent.modules.browser.browser_module import BrowserModule
 
@@ -550,9 +521,7 @@ class TestBrowserEventWiring:
 
         module = BrowserModule(workspace=tmp_path)
 
-        with patch(
-            "arcagent.modules.browser.browser_module.CDPClientManager"
-        ) as mock_cdp_cls:
+        with patch("arcagent.modules.browser.browser_module.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.disconnect = AsyncMock()

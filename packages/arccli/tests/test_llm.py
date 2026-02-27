@@ -1,14 +1,12 @@
 """Tests for arc llm subcommands."""
 
 import json
-import sys
 from unittest.mock import AsyncMock, patch
 
+from arcllm.types import LLMResponse, Usage
 from click.testing import CliRunner
 
 from arccli.main import cli
-from arcllm.types import LLMResponse, Usage
-
 
 runner = CliRunner()
 
@@ -407,7 +405,12 @@ class TestValidate:
         assert result.exit_code == 0
         # Should show some form of pass/fail indicator
         output_lower = result.output.lower()
-        assert "ok" in output_lower or "pass" in output_lower or "yes" in output_lower or "valid" in output_lower
+        assert (
+            "ok" in output_lower
+            or "pass" in output_lower
+            or "yes" in output_lower
+            or "valid" in output_lower
+        )
 
     def test_validate_provider_filter(self):
         result = runner.invoke(cli, ["llm", "validate", "--provider", "anthropic"])

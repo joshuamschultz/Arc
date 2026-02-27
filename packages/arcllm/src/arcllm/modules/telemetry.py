@@ -131,9 +131,7 @@ class BudgetAccumulator:
             self.monthly_spend += safe_cost
             self.daily_spend += safe_cost
 
-    def check_limits(
-        self, monthly_limit: float, daily_limit: float
-    ) -> str | None:
+    def check_limits(self, monthly_limit: float, daily_limit: float) -> str | None:
         """Return exceeded limit type or None if within bounds.
 
         Checks monthly first (takes priority).
@@ -230,9 +228,7 @@ class TelemetryModule(BaseModule):
         self._alert_pct: float = config.get("alert_threshold_pct", 80)
         self._enforcement: str = config.get("enforcement", "block")
         self._budget_scope: str | None = config.get("budget_scope")
-        self._default_max_tokens: int = config.get(
-            "default_max_tokens", _DEFAULT_MAX_TOKENS
-        )
+        self._default_max_tokens: int = config.get("default_max_tokens", _DEFAULT_MAX_TOKENS)
 
         self._budget_enabled = any(
             v is not None for v in (self._monthly_limit, self._daily_limit, self._per_call_max)
@@ -256,9 +252,7 @@ class TelemetryModule(BaseModule):
                     "budget_scope is required when budget limits are configured"
                 )
             _validate_budget_scope(self._budget_scope)
-            self._accumulator: BudgetAccumulator = _get_or_create_accumulator(
-                self._budget_scope
-            )
+            self._accumulator: BudgetAccumulator = _get_or_create_accumulator(self._budget_scope)
 
     def _calculate_cost(self, usage: Usage) -> float:
         """Calculate USD cost from token counts and per-1M pricing."""
@@ -328,8 +322,13 @@ class TelemetryModule(BaseModule):
             estimated = self._estimate_cost(max_tokens)
             if self._accumulator.check_pre_flight(estimated, self._per_call_max):
                 self._enforce_limit(
-                    span, scope, "per_call", self._per_call_max,
-                    self._accumulator.monthly_spend, estimated, budget_meta,
+                    span,
+                    scope,
+                    "per_call",
+                    self._per_call_max,
+                    self._accumulator.monthly_spend,
+                    estimated,
+                    budget_meta,
                 )
 
         # Cumulative limit check
@@ -346,7 +345,13 @@ class TelemetryModule(BaseModule):
                 else self._accumulator.daily_spend
             )
             self._enforce_limit(
-                span, scope, exceeded, limit_usd, current, None, budget_meta,
+                span,
+                scope,
+                exceeded,
+                limit_usd,
+                current,
+                None,
+                budget_meta,
             )
 
         # Alert threshold check (warning only, never blocks)

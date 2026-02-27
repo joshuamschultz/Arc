@@ -26,9 +26,7 @@ _VERIFY_BATCH_SIZE = 1000
 _HMAC_EXCLUDE = frozenset({"hmac_sha256", "seq"})
 
 
-def _compute_record_hmac(
-    record_dict: dict[str, Any], prev_hmac: str, hmac_key: bytes
-) -> str:
+def _compute_record_hmac(record_dict: dict[str, Any], prev_hmac: str, hmac_key: bytes) -> str:
     """Compute chained HMAC: prev_hmac + json.dumps(record_without_hmac, sort_keys=True)."""
     clean = {k: v for k, v in record_dict.items() if k not in _HMAC_EXCLUDE}
     payload = prev_hmac + json.dumps(clean, sort_keys=True)
@@ -120,9 +118,7 @@ class AuditLogger:
             for record in records:
                 seq = record.get("audit_seq", 0)
                 if seq != expected_seq:
-                    logger.warning(
-                        "Audit sequence gap: expected %d, got %d", expected_seq, seq
-                    )
+                    logger.warning("Audit sequence gap: expected %d, got %d", expected_seq, seq)
                     return False, last_verified
 
                 stored_hmac = record.get("hmac_sha256", "")

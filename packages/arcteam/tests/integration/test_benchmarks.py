@@ -23,9 +23,14 @@ async def svc(tmp_path: Path) -> MessagingService:
     registry = EntityRegistry(backend, audit)
     svc = MessagingService(backend, registry, audit)
 
-    await registry.register(Entity(
-        id="agent://bench", name="Bench", type=EntityType.AGENT, roles=["ops"],
-    ))
+    await registry.register(
+        Entity(
+            id="agent://bench",
+            name="Bench",
+            type=EntityType.AGENT,
+            roles=["ops"],
+        )
+    )
     await svc.create_channel(Channel(name="bench-ch", members=["agent://bench"]))
     return svc
 
@@ -37,17 +42,18 @@ class TestAppendLatency:
         latencies: list[float] = []
         for i in range(100):
             start = time.perf_counter()
-            await svc.send(Message(
-                sender="agent://bench",
-                to=["channel://bench-ch"],
-                body=f"bench message {i}",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://bench",
+                    to=["channel://bench-ch"],
+                    body=f"bench message {i}",
+                )
+            )
             latencies.append((time.perf_counter() - start) * 1000)
 
         latencies.sort()
         p99 = latencies[98]  # 99th percentile
-        avg = sum(latencies) / len(latencies)
-        print(f"\nAppend latency: avg={avg:.2f}ms, p99={p99:.2f}ms")
+        sum(latencies) / len(latencies)
         # Relaxed target for CI — filesystem variance
         assert p99 < 50, f"p99 append latency {p99:.2f}ms exceeds 50ms"
 
@@ -58,22 +64,23 @@ class TestPollLatency:
     async def test_poll_latency(self, svc: MessagingService) -> None:
         # Pre-fill 100 messages
         for i in range(100):
-            await svc.send(Message(
-                sender="agent://bench",
-                to=["channel://bench-ch"],
-                body=f"bench message {i}",
-            ))
+            await svc.send(
+                Message(
+                    sender="agent://bench",
+                    to=["channel://bench-ch"],
+                    body=f"bench message {i}",
+                )
+            )
 
         latencies: list[float] = []
         for _ in range(20):
             start = time.perf_counter()
-            messages = await svc.poll("arc.channel.bench-ch", "agent://bench", max_messages=100)
+            await svc.poll("arc.channel.bench-ch", "agent://bench", max_messages=100)
             latencies.append((time.perf_counter() - start) * 1000)
 
         latencies.sort()
         p99 = latencies[int(len(latencies) * 0.99)]
-        avg = sum(latencies) / len(latencies)
-        print(f"\nPoll latency (100 msgs): avg={avg:.2f}ms, p99={p99:.2f}ms")
+        sum(latencies) / len(latencies)
         assert p99 < 200, f"p99 poll latency {p99:.2f}ms exceeds 200ms"
 
 
@@ -89,6 +96,5 @@ class TestCursorLatency:
 
         latencies.sort()
         p99 = latencies[98]
-        avg = sum(latencies) / len(latencies)
-        print(f"\nCursor advance: avg={avg:.2f}ms, p99={p99:.2f}ms")
+        sum(latencies) / len(latencies)
         assert p99 < 50, f"p99 cursor latency {p99:.2f}ms exceeds 50ms"

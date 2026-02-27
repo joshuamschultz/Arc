@@ -270,7 +270,7 @@ class TestExtensionErrorIsolation:
             telemetry=mock_telemetry,
             config=config,
         )
-        manifests = await loader.discover_and_load(workspace, global_ext_dir)
+        await loader.discover_and_load(workspace, global_ext_dir)
         # Good extension should still load
         assert "good_tool" in tool_registry.tools
 
@@ -351,7 +351,7 @@ class TestExtensionHotReload:
         loader.clear(tool_registry, mock_bus)
         assert "v1_tool" not in tool_registry.tools
 
-        manifests = await loader.discover_and_load(workspace, global_ext_dir)
+        await loader.discover_and_load(workspace, global_ext_dir)
         assert "v1_tool" in tool_registry.tools
 
 
@@ -412,9 +412,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"sneaky": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"sneaky": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -463,9 +461,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"safe": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"safe": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -497,9 +493,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"runner": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"runner": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -533,9 +527,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"fail_strict": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"fail_strict": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -560,9 +552,7 @@ def extension(api):
         ext_dir.mkdir()
         _write_extension(ext_dir, "strict_ext", "strict_tool")
 
-        config = ExtensionConfig(
-            extensions={"strict_ext": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"strict_ext": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -644,14 +634,16 @@ class TestEntryPointDiscovery:
             async def _exec(**kw: Any) -> str:
                 return "from entry point"
 
-            api.register_tool(RegisteredTool(
-                name="ep_tool",
-                description="Entry point tool",
-                input_schema={"type": "object", "properties": {}},
-                transport=ToolTransport.NATIVE,
-                execute=_exec,
-                source="extension:ep_ext",
-            ))
+            api.register_tool(
+                RegisteredTool(
+                    name="ep_tool",
+                    description="Entry point tool",
+                    input_schema={"type": "object", "properties": {}},
+                    transport=ToolTransport.NATIVE,
+                    execute=_exec,
+                    source="extension:ep_ext",
+                )
+            )
 
         mock_ep = MagicMock()
         mock_ep.name = "ep_ext"
@@ -732,8 +724,7 @@ class TestEntryPointDiscovery:
             await loader.discover_and_load(workspace, global_ext_dir)
 
         audit_calls = [
-            c for c in mock_telemetry.audit_event.call_args_list
-            if c[0][0] == "extension.loaded"
+            c for c in mock_telemetry.audit_event.call_args_list if c[0][0] == "extension.loaded"
         ]
         assert len(audit_calls) == 1
         assert audit_calls[0][0][1]["name"] == "audited_ep"
@@ -765,7 +756,8 @@ class TestEntryPointDiscovery:
 
         assert len(manifests) == 0
         fail_calls = [
-            c for c in mock_telemetry.audit_event.call_args_list
+            c
+            for c in mock_telemetry.audit_event.call_args_list
             if c[0][0] == "extension.load_failed"
         ]
         assert len(fail_calls) == 1
@@ -898,9 +890,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"fail_os": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"fail_os": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -940,9 +930,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"path_reader": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"path_reader": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1013,9 +1001,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"path_writer": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"path_writer": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1137,9 +1123,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"fail_path": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"fail_path": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1176,9 +1160,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"url_opener": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"url_opener": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1213,9 +1195,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"fail_url": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"fail_url": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1306,9 +1286,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"sneaky_tool": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"sneaky_tool": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1396,7 +1374,7 @@ def extension(api):
             telemetry=mock_telemetry,
             config=config,
         )
-        manifests = await loader.discover_and_load(workspace, global_ext_dir)
+        await loader.discover_and_load(workspace, global_ext_dir)
         assert "custom_tool" in tool_registry.tools
 
 
@@ -1427,9 +1405,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"paths_ext": ExtensionEntry(sandbox_mode="paths")}
-        )
+        config = ExtensionConfig(extensions={"paths_ext": ExtensionEntry(sandbox_mode="paths")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1476,9 +1452,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"ws_reader": ExtensionEntry(sandbox_mode="paths")}
-        )
+        config = ExtensionConfig(extensions={"ws_reader": ExtensionEntry(sandbox_mode="paths")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1608,9 +1582,7 @@ def extension(api):
         ext_dir.mkdir()
         _write_extension(ext_dir, "paths_ext", "paths_tool")
 
-        config = ExtensionConfig(
-            extensions={"paths_ext": ExtensionEntry(sandbox_mode="paths")}
-        )
+        config = ExtensionConfig(extensions={"paths_ext": ExtensionEntry(sandbox_mode="paths")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1664,9 +1636,7 @@ class TestSandboxModeValidation:
         ext_dir.mkdir()
         _write_extension(ext_dir, "disabled_ext", "disabled_tool")
 
-        config = ExtensionConfig(
-            extensions={"disabled_ext": ExtensionEntry(enabled=False)}
-        )
+        config = ExtensionConfig(extensions={"disabled_ext": ExtensionEntry(enabled=False)})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1703,7 +1673,7 @@ class TestExtensionEdgeCases:
             config=config,
         )
         # Should not crash, just skip the bad extension
-        manifests = await loader.discover_and_load(workspace, global_ext_dir)
+        await loader.discover_and_load(workspace, global_ext_dir)
         # Bad extension is skipped, no manifests from it
         mock_telemetry.audit_event.assert_any_call(
             "extension.load_failed",
@@ -1808,9 +1778,7 @@ def extension(api):
 """)
         (workspace / "test.txt").write_text("content")
 
-        config = ExtensionConfig(
-            extensions={"reader": ExtensionEntry(sandbox="workspace")}
-        )
+        config = ExtensionConfig(extensions={"reader": ExtensionEntry(sandbox="workspace")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1842,9 +1810,7 @@ def extension(api):
     pass
 """)
 
-        config = ExtensionConfig(
-            extensions={"writer": ExtensionEntry(sandbox="workspace")}
-        )
+        config = ExtensionConfig(extensions={"writer": ExtensionEntry(sandbox="workspace")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1880,9 +1846,7 @@ def extension(api):
         pass
 """)
 
-        config = ExtensionConfig(
-            extensions={"subprocess_ext": ExtensionEntry(sandbox="strict")}
-        )
+        config = ExtensionConfig(extensions={"subprocess_ext": ExtensionEntry(sandbox="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -1984,7 +1948,7 @@ class TestEntryPointEdgeCases:
             telemetry=mock_telemetry,
             config=config,
         )
-        manifests = await loader.discover_and_load(workspace, global_ext_dir)
+        await loader.discover_and_load(workspace, global_ext_dir)
         assert "import_tool" in tool_registry.tools
 
 
@@ -2128,9 +2092,7 @@ def extension(api):
 """
         )
 
-        config = ExtensionConfig(
-            extensions={"popen_ext": ExtensionEntry(sandbox_mode="strict")}
-        )
+        config = ExtensionConfig(extensions={"popen_ext": ExtensionEntry(sandbox_mode="strict")})
         loader = ExtensionLoader(
             tool_registry=tool_registry,
             bus=mock_bus,
@@ -2164,7 +2126,6 @@ class TestOldPythonEntryPointCompat:
         mock_ep.load.return_value = noop_factory
 
         # Mock entry_points() to return a dict (old API)
-        mock_eps_dict = {"arcagent.extensions": [mock_ep]}
 
         with patch("arcagent.core.extensions._discover_entry_points") as mock_discover:
             # Simulate the old API path
@@ -2204,9 +2165,7 @@ class TestUnderscorePrefixSkipped:
             "def extension(api): api.register_tool('normal_tool', lambda: None, {})"
         )
 
-        tool_registry = ToolRegistry(
-            config=ToolsConfig(), bus=mock_bus, telemetry=mock_telemetry
-        )
+        tool_registry = ToolRegistry(config=ToolsConfig(), bus=mock_bus, telemetry=mock_telemetry)
         config = ExtensionConfig()
         loader = ExtensionLoader(
             tool_registry=tool_registry,
@@ -2292,9 +2251,7 @@ class TestSandboxRestrictedOperations:
             "        pass\n"
         )
 
-        tool_registry = ToolRegistry(
-            config=ToolsConfig(), bus=mock_bus, telemetry=mock_telemetry
-        )
+        tool_registry = ToolRegistry(config=ToolsConfig(), bus=mock_bus, telemetry=mock_telemetry)
         config = ExtensionConfig(sandbox_mode="strict")
         loader = ExtensionLoader(
             tool_registry=tool_registry,

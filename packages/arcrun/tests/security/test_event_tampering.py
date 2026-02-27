@@ -2,13 +2,13 @@
 
 Tests that the SHA-256 hash chain detects all forms of event manipulation.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from arcrun.events import (
     GENESIS_PREV_HASH,
-    ChainVerificationResult,
     Event,
     EventBus,
     verify_chain,

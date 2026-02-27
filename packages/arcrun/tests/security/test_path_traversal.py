@@ -3,6 +3,7 @@
 Tests that sandboxed code execution cannot access files outside
 its designated directory.
 """
+
 from __future__ import annotations
 
 import json

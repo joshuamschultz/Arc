@@ -43,6 +43,17 @@ signing = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcllm"]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106", "S108", "E402", "E501", "N806", "E741", "B007"]
+"walkthrough/**/*.ipynb" = ["S101", "B007", "S307", "S110", "T20", "F401", "E501", "F821", "E741", "E402"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

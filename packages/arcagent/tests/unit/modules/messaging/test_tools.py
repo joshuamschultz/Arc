@@ -51,7 +51,8 @@ async def started_module(tmp_path: Path):
 class TestToolRegistration:
     @pytest.mark.asyncio
     async def test_five_messaging_tools_registered(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         _, ctx = started_module
         calls = ctx.tool_registry.register.call_args_list
@@ -67,18 +68,22 @@ class TestToolRegistration:
 class TestSendTool:
     @pytest.mark.asyncio
     async def test_send_to_another_agent(
-        self, started_module, tmp_path: Path,
+        self,
+        started_module,
+        tmp_path: Path,
     ) -> None:
         module, ctx = started_module
         # Register a second agent so we can message them.
         from arcteam.types import Entity, EntityType
 
-        await module._registry.register(Entity(
-            id="agent://brad",
-            name="Brad",
-            type=EntityType.AGENT,
-            roles=["executor"],
-        ))
+        await module._registry.register(
+            Entity(
+                id="agent://brad",
+                name="Brad",
+                type=EntityType.AGENT,
+                roles=["executor"],
+            )
+        )
 
         tool = _find_tool(
             ctx.tool_registry.register.call_args_list,
@@ -95,7 +100,8 @@ class TestSendTool:
 
     @pytest.mark.asyncio
     async def test_send_no_recipient_errors(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         _, ctx = started_module
         tool = _find_tool(
@@ -121,22 +127,27 @@ class TestCheckInboxTool:
 
     @pytest.mark.asyncio
     async def test_inbox_with_message(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         module, ctx = started_module
         # Register sender and send a message to our agent.
         from arcteam.types import Entity, EntityType, Message
 
-        await module._registry.register(Entity(
-            id="agent://sender",
-            name="Sender",
-            type=EntityType.AGENT,
-        ))
-        await module._svc.send(Message(
-            sender="agent://sender",
-            to=["agent://tool_tester"],
-            body="You have a task",
-        ))
+        await module._registry.register(
+            Entity(
+                id="agent://sender",
+                name="Sender",
+                type=EntityType.AGENT,
+            )
+        )
+        await module._svc.send(
+            Message(
+                sender="agent://sender",
+                to=["agent://tool_tester"],
+                body="You have a task",
+            )
+        )
 
         tool = _find_tool(
             ctx.tool_registry.register.call_args_list,
@@ -150,45 +161,56 @@ class TestCheckInboxTool:
 class TestCheckInboxThreadContext:
     @pytest.mark.asyncio
     async def test_reply_includes_thread_context(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         """When a reply arrives, check_inbox includes prior thread messages."""
         module, ctx = started_module
         from arcteam.types import Entity, EntityType, Message
 
-        await module._registry.register(Entity(
-            id="agent://alice",
-            name="Alice",
-            type=EntityType.AGENT,
-        ))
+        await module._registry.register(
+            Entity(
+                id="agent://alice",
+                name="Alice",
+                type=EntityType.AGENT,
+            )
+        )
 
         # Step 1: Alice sends original message to our agent.
-        original = await module._svc.send(Message(
-            sender="agent://alice",
-            to=["agent://tool_tester"],
-            body="Please do X then report to user://josh",
-        ))
+        original = await module._svc.send(
+            Message(
+                sender="agent://alice",
+                to=["agent://tool_tester"],
+                body="Please do X then report to user://josh",
+            )
+        )
 
         # Ack the original so it's "read".
         await module._svc.ack(
-            "arc.agent.tool_tester", "agent://tool_tester",
-            seq=original.seq, byte_pos=0,
+            "arc.agent.tool_tester",
+            "agent://tool_tester",
+            seq=original.seq,
+            byte_pos=0,
         )
 
         # Step 2: Our agent sends request to alice (part of multi-step).
-        outbound = await module._svc.send(Message(
-            sender="agent://tool_tester",
-            to=["agent://alice"],
-            body="What are your capabilities?",
-        ))
+        await module._svc.send(
+            Message(
+                sender="agent://tool_tester",
+                to=["agent://alice"],
+                body="What are your capabilities?",
+            )
+        )
 
         # Step 3: Alice replies in the same thread.
-        reply = await module._svc.send(Message(
-            sender="agent://alice",
-            to=["agent://tool_tester"],
-            body="Here are my capabilities: ...",
-            thread_id=original.id,
-        ))
+        reply = await module._svc.send(
+            Message(
+                sender="agent://alice",
+                to=["agent://tool_tester"],
+                body="Here are my capabilities: ...",
+                thread_id=original.id,
+            )
+        )
 
         tool = _find_tool(
             ctx.tool_registry.register.call_args_list,
@@ -209,23 +231,28 @@ class TestCheckInboxThreadContext:
 
     @pytest.mark.asyncio
     async def test_no_thread_context_for_new_messages(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         """New messages (thread_id == id) don't include thread_context."""
         module, ctx = started_module
         from arcteam.types import Entity, EntityType, Message
 
-        await module._registry.register(Entity(
-            id="agent://bob",
-            name="Bob",
-            type=EntityType.AGENT,
-        ))
+        await module._registry.register(
+            Entity(
+                id="agent://bob",
+                name="Bob",
+                type=EntityType.AGENT,
+            )
+        )
 
-        await module._svc.send(Message(
-            sender="agent://bob",
-            to=["agent://tool_tester"],
-            body="Fresh message, no reply",
-        ))
+        await module._svc.send(
+            Message(
+                sender="agent://bob",
+                to=["agent://tool_tester"],
+                body="Fresh message, no reply",
+            )
+        )
 
         tool = _find_tool(
             ctx.tool_registry.register.call_args_list,
@@ -256,7 +283,8 @@ class TestListEntitiesTool:
 class TestListChannelsTool:
     @pytest.mark.asyncio
     async def test_list_channels_empty(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         _, ctx = started_module
         tool = _find_tool(
@@ -269,16 +297,19 @@ class TestListChannelsTool:
 
     @pytest.mark.asyncio
     async def test_list_channels_after_create(
-        self, started_module,
+        self,
+        started_module,
     ) -> None:
         module, ctx = started_module
         from arcteam.types import Channel
 
-        await module._svc.create_channel(Channel(
-            name="ops",
-            description="Operations",
-            members=["agent://tool_tester"],
-        ))
+        await module._svc.create_channel(
+            Channel(
+                name="ops",
+                description="Operations",
+                members=["agent://tool_tester"],
+            )
+        )
 
         tool = _find_tool(
             ctx.tool_registry.register.call_args_list,
@@ -288,5 +319,3 @@ class TestListChannelsTool:
         data = json.loads(result)
         assert len(data) == 1
         assert data[0]["name"] == "ops"
-
-

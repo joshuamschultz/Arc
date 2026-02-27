@@ -14,7 +14,7 @@ from typing import Any
 import click
 from dotenv import load_dotenv
 
-from arccli.formatting import click_echo, print_json, print_kv, print_table
+from arccli.formatting import click_echo, print_json, print_kv
 
 _ENV_PATHS = [
     Path.cwd() / ".env",
@@ -41,11 +41,25 @@ def run_group() -> None:
 
 @run_group.command("task")
 @click.argument("prompt")
-@click.option("--model", default="anthropic/claude-haiku-4-5-20251001", help="provider/model")
-@click.option("--system", "system_prompt", default="You are a helpful assistant.", help="System prompt.")
+@click.option(
+    "--model",
+    default="anthropic/claude-haiku-4-5-20251001",
+    help="provider/model",
+)
+@click.option(
+    "--system",
+    "system_prompt",
+    default="You are a helpful assistant.",
+    help="System prompt.",
+)
 @click.option("--max-turns", default=10, type=int, help="Max loop iterations.")
 @click.option("--tool-timeout", default=None, type=float, help="Global tool timeout (seconds).")
-@click.option("--strategy", default=None, type=click.Choice(["react", "code"]), help="Force strategy.")
+@click.option(
+    "--strategy",
+    default=None,
+    type=click.Choice(["react", "code"]),
+    help="Force strategy.",
+)
 @click.option("--with-code-exec", is_flag=True, help="Add execute_python tool.")
 @click.option("--code-timeout", default=30, type=float, help="execute_python timeout.")
 @click.option("--with-calc", is_flag=True, help="Add built-in calculator tool.")
@@ -76,20 +90,22 @@ def run_task(
       arc run task "Analyze data" --with-code-exec --show-events --json
     """
     _load_env()
-    asyncio.run(_execute_task(
-        prompt=prompt,
-        model_id=model,
-        system_prompt=system_prompt,
-        max_turns=max_turns,
-        tool_timeout=tool_timeout,
-        strategy=strategy,
-        with_code_exec=with_code_exec,
-        code_timeout=code_timeout,
-        with_calc=with_calc,
-        verbose=verbose,
-        show_events=show_events,
-        as_json=as_json,
-    ))
+    asyncio.run(
+        _execute_task(
+            prompt=prompt,
+            model_id=model,
+            system_prompt=system_prompt,
+            max_turns=max_turns,
+            tool_timeout=tool_timeout,
+            strategy=strategy,
+            with_code_exec=with_code_exec,
+            code_timeout=code_timeout,
+            with_calc=with_calc,
+            verbose=verbose,
+            show_events=show_events,
+            as_json=as_json,
+        )
+    )
 
 
 async def _execute_task(
@@ -121,6 +137,7 @@ async def _execute_task(
     tools: list[Tool] = []
 
     if with_calc:
+
         async def calculate(params: dict, ctx: ToolContext) -> str:
             expr = params["expression"]
             allowed = set("0123456789+-*/().% ")
@@ -131,18 +148,20 @@ async def _execute_task(
             except Exception as e:
                 return f"Error: {e}"
 
-        tools.append(Tool(
-            name="calculate",
-            description="Evaluate a math expression. Supports +, -, *, /, (), %.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "expression": {"type": "string", "description": "Math expression"},
+        tools.append(
+            Tool(
+                name="calculate",
+                description="Evaluate a math expression. Supports +, -, *, /, (), %.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "expression": {"type": "string", "description": "Math expression"},
+                    },
+                    "required": ["expression"],
                 },
-                "required": ["expression"],
-            },
-            execute=calculate,
-        ))
+                execute=calculate,
+            )
+        )
 
     if with_code_exec:
         tools.append(make_execute_tool(timeout_seconds=code_timeout))
@@ -152,6 +171,7 @@ async def _execute_task(
 
     # Event logging
     from collections import Counter
+
     collected: list[Any] = []
 
     def event_handler(event: Any) -> None:
@@ -171,7 +191,9 @@ async def _execute_task(
         elif event.type == "tool.error":
             click_echo(f"  [error]  {event.data['name']}: {event.data['error']}")
         elif event.type == "llm.call":
-            click_echo(f"  [llm]    stop={event.data['stop_reason']}, latency={event.data['latency_ms']:.0f}ms")
+            stop = event.data["stop_reason"]
+            latency = event.data["latency_ms"]
+            click_echo(f"  [llm]    stop={stop}, latency={latency:.0f}ms")
         elif event.type == "turn.start":
             click_echo(f"  [turn]   --- turn {event.data['turn_number']} ---")
 
@@ -194,19 +216,21 @@ async def _execute_task(
     )
 
     if as_json:
-        print_json({
-            "content": result.content,
-            "turns": result.turns,
-            "tool_calls_made": result.tool_calls_made,
-            "tokens_used": result.tokens_used,
-            "strategy_used": result.strategy_used,
-            "cost_usd": result.cost_usd,
-            "event_count": len(result.events),
-            "events": [
-                {"type": e.type, "timestamp": e.timestamp, "data": e.data}
-                for e in result.events
-            ],
-        })
+        print_json(
+            {
+                "content": result.content,
+                "turns": result.turns,
+                "tool_calls_made": result.tool_calls_made,
+                "tokens_used": result.tokens_used,
+                "strategy_used": result.strategy_used,
+                "cost_usd": result.cost_usd,
+                "event_count": len(result.events),
+                "events": [
+                    {"type": e.type, "timestamp": e.timestamp, "data": e.data}
+                    for e in result.events
+                ],
+            }
+        )
     else:
         if verbose:
             click_echo("-" * 50)
@@ -295,8 +319,8 @@ def run_version(as_json: bool) -> None:
     """Show arcrun version and capabilities."""
     import arcllm
     import arcrun
-
     from arcrun.strategies import STRATEGIES, _load_strategies
+
     if not STRATEGIES:
         _load_strategies()
 
@@ -306,10 +330,17 @@ def run_version(as_json: bool) -> None:
         "strategies": list(STRATEGIES.keys()),
         "builtins": ["execute_python"],
         "public_api": [
-            "run", "run_async", "RunHandle",
-            "Tool", "ToolContext", "ToolRegistry",
-            "LoopResult", "SandboxConfig",
-            "Event", "EventBus", "Strategy",
+            "run",
+            "run_async",
+            "RunHandle",
+            "Tool",
+            "ToolContext",
+            "ToolRegistry",
+            "LoopResult",
+            "SandboxConfig",
+            "Event",
+            "EventBus",
+            "Strategy",
             "make_execute_tool",
         ],
     }
@@ -317,12 +348,14 @@ def run_version(as_json: bool) -> None:
     if as_json:
         print_json(data)
     else:
-        print_kv([
-            ("arcrun", data["arcrun"]),
-            ("arcllm", data["arcllm"]),
-            ("strategies", ", ".join(data["strategies"])),
-            ("builtins", ", ".join(data["builtins"])),
-        ])
+        print_kv(
+            [
+                ("arcrun", data["arcrun"]),
+                ("arcllm", data["arcllm"]),
+                ("strategies", ", ".join(data["strategies"])),
+                ("builtins", ", ".join(data["builtins"])),
+            ]
+        )
         click_echo()
         click_echo("Public API:")
         for item in data["public_api"]:

@@ -8,12 +8,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
-
-def _mock_model(
-    *, return_value: Any = None, side_effect: Exception | None = None
-) -> MagicMock:
+def _mock_model(*, return_value: Any = None, side_effect: Exception | None = None) -> MagicMock:
     """Create a mock LLM model with invoke() returning LLMResponse-like object."""
     model = MagicMock()
     if side_effect is not None:
@@ -21,6 +17,7 @@ def _mock_model(
     else:
         model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
     return model
+
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.core.session_manager import SessionManager
@@ -144,7 +141,7 @@ class TestResumeSession:
         jsonl_path = sessions_dir / "test-session.jsonl"
         jsonl_path.write_text(
             '{"type":"message","role":"user","content":"good"}\n'
-            'THIS IS INVALID JSON\n'
+            "THIS IS INVALID JSON\n"
             '{"type":"message","role":"assistant","content":"also good"}\n'
         )
 
@@ -189,7 +186,7 @@ class TestGetMessages:
 class TestCompaction:
     async def test_compaction_produces_summary_entry(self, tmp_path: Path) -> None:
         sm = _make_session_manager(tmp_path)
-        session_id = await sm.create_session()
+        await sm.create_session()
 
         # Add enough messages to trigger compaction
         for i in range(20):
@@ -202,9 +199,7 @@ class TestCompaction:
         # Should have fewer messages after compaction
         msgs = sm.get_messages()
         # First entry should be compaction summary
-        has_summary = any(
-            m.get("type") == "compaction_summary" for m in msgs
-        )
+        has_summary = any(m.get("type") == "compaction_summary" for m in msgs)
         assert has_summary
 
     async def test_compaction_preserves_recent_messages(self, tmp_path: Path) -> None:
@@ -265,6 +260,7 @@ class TestCleanupOldSessions:
         sessions_dir.mkdir(parents=True)
 
         import time
+
         for i in range(5):
             path = sessions_dir / f"session-{i:03d}.jsonl"
             path.write_text(f'{{"content":"s{i}"}}\n')
@@ -304,9 +300,9 @@ class TestEdgeCases:
         jsonl_path = sessions_dir / "test.jsonl"
         jsonl_path.write_text(
             '{"type":"message","role":"user","content":"first"}\n'
-            '\n'
+            "\n"
             '{"type":"message","role":"assistant","content":"second"}\n'
-            '\n\n'
+            "\n\n"
             '{"type":"message","role":"user","content":"third"}\n'
         )
 
@@ -430,9 +426,7 @@ class TestContextSanitizationUnicode:
         await sm.create_session()
 
         # Model returns text with zero-width chars (injection attempt)
-        mock_model = _mock_model(
-            return_value="Facts\u200b with \ufeffinvisible chars"
-        )
+        mock_model = _mock_model(return_value="Facts\u200b with \ufeffinvisible chars")
 
         messages = [
             {"type": "message", "role": "user", "content": "hello"},

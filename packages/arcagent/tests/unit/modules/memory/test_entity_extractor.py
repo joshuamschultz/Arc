@@ -11,9 +11,7 @@ import pytest
 import yaml
 
 
-def _mock_model(
-    *, return_value: Any = None, side_effect: Exception | None = None
-) -> MagicMock:
+def _mock_model(*, return_value: Any = None, side_effect: Exception | None = None) -> MagicMock:
     """Create a mock LLM model with invoke() returning LLMResponse-like object."""
     model = MagicMock()
     if side_effect is not None:
@@ -21,6 +19,7 @@ def _mock_model(
     else:
         model.invoke = AsyncMock(return_value=MagicMock(content=return_value))
     return model
+
 
 from arcagent.core.config import EvalConfig
 from arcagent.modules.memory.entity_extractor import EntityExtractor
@@ -84,14 +83,22 @@ class TestNewEntityCreation:
     @pytest.mark.asyncio()
     async def test_new_entity_creates_md_file(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        model = _mock_model(return_value=json.dumps({
-            "entities": [{
-                "name": "Josh Schultz",
-                "type": "person",
-                "aliases": ["Josh"],
-                "facts": [{"predicate": "role", "value": "engineer", "confidence": 0.9}],
-            }]
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "name": "Josh Schultz",
+                            "type": "person",
+                            "aliases": ["Josh"],
+                            "facts": [
+                                {"predicate": "role", "value": "engineer", "confidence": 0.9}
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "I'm Josh Schultz, a software engineer"},
@@ -131,14 +138,22 @@ class TestExistingEntityUpdate:
             "- role: engineer (0.9) [2026-02-14T10:00:00+00:00]\n"
         )
 
-        model = _mock_model(return_value=json.dumps({
-            "entities": [{
-                "name": "Josh Schultz",
-                "type": "person",
-                "aliases": ["Josh"],
-                "facts": [{"predicate": "location", "value": "Chicago", "confidence": 0.8}],
-            }]
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "name": "Josh Schultz",
+                            "type": "person",
+                            "aliases": ["Josh"],
+                            "facts": [
+                                {"predicate": "location", "value": "Chicago", "confidence": 0.8}
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "I live in Chicago"},
@@ -171,14 +186,22 @@ class TestContradictionDetection:
             "- location: NYC (0.9) [2026-02-14T10:00:00+00:00]\n"
         )
 
-        model = _mock_model(return_value=json.dumps({
-            "entities": [{
-                "name": "Josh Schultz",
-                "type": "person",
-                "aliases": [],
-                "facts": [{"predicate": "location", "value": "Chicago", "confidence": 0.9}],
-            }]
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "name": "Josh Schultz",
+                            "type": "person",
+                            "aliases": [],
+                            "facts": [
+                                {"predicate": "location", "value": "Chicago", "confidence": 0.9}
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "I moved to Chicago recently"},
@@ -216,8 +239,7 @@ class TestAliasMatching:
         entities_dir = tmp_path / "entities"
         entities_dir.mkdir(parents=True)
         (entities_dir / "josh-schultz.md").write_text(
-            "---\nname: Josh Schultz\ntype: person\n"
-            "aliases:\n- Mr. Schultz\n- Joshua\n---\n"
+            "---\nname: Josh Schultz\ntype: person\naliases:\n- Mr. Schultz\n- Joshua\n---\n"
         )
 
         slug = ext._resolve_slug("Mr. Schultz")
@@ -231,14 +253,20 @@ class TestAtomicWrite:
     async def test_entity_written_atomically(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
 
-        model = _mock_model(return_value=json.dumps({
-            "entities": [{
-                "name": "Test Entity",
-                "type": "concept",
-                "aliases": [],
-                "facts": [{"predicate": "is", "value": "test", "confidence": 0.5}],
-            }]
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "name": "Test Entity",
+                            "type": "concept",
+                            "aliases": [],
+                            "facts": [{"predicate": "is", "value": "test", "confidence": 0.5}],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "Tell me about the test entity concept"},
@@ -328,12 +356,18 @@ class TestEntityExtractionEdgeCases:
     @pytest.mark.asyncio()
     async def test_entity_with_no_name_skipped(self, tmp_path: Path) -> None:
         ext = _make_extractor(tmp_path)
-        model = _mock_model(return_value=json.dumps({
-            "entities": [{
-                "type": "concept",
-                "facts": [{"predicate": "is", "value": "test"}],
-            }]
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "type": "concept",
+                            "facts": [{"predicate": "is", "value": "test"}],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "Tell me about the concept"},
@@ -436,18 +470,26 @@ class TestFactValueSanitization:
     async def test_stored_facts_are_sanitized(self, tmp_path: Path) -> None:
         """End-to-end: extracted facts have sanitized predicate and value."""
         ext = _make_extractor(tmp_path)
-        model = _mock_model(return_value=json.dumps({
-            "entities": [{
-                "name": "Test",
-                "type": "concept",
-                "aliases": [],
-                "facts": [{
-                    "predicate": "has\u200b_type",
-                    "value": "injected\x00value\ufeff",
-                    "confidence": 0.9,
-                }],
-            }]
-        }))
+        model = _mock_model(
+            return_value=json.dumps(
+                {
+                    "entities": [
+                        {
+                            "name": "Test",
+                            "type": "concept",
+                            "aliases": [],
+                            "facts": [
+                                {
+                                    "predicate": "has\u200b_type",
+                                    "value": "injected\x00value\ufeff",
+                                    "confidence": 0.9,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
 
         messages = [
             {"role": "user", "content": "Tell me about the test concept here"},

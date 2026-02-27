@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from arcagent.utils.sanitizer import sanitize_text, sanitize_wiki_link
 
 

@@ -118,13 +118,8 @@ class SearchEngine:
         Invalidates when index keys OR last_updated timestamps change,
         ensuring content updates are reflected.
         """
-        fingerprint = frozenset(
-            (eid, entry.last_updated) for eid, entry in index.items()
-        )
-        if (
-            self._corpus_cache is not None
-            and self._cached_index_fingerprint == fingerprint
-        ):
+        fingerprint = frozenset((eid, entry.last_updated) for eid, entry in index.items())
+        if self._corpus_cache is not None and self._cached_index_fingerprint == fingerprint:
             return self._corpus_cache, self._entity_ids_cache or [], self._contents_cache or {}
 
         # Read all entity files
@@ -199,9 +194,7 @@ class SearchEngine:
         results: list[tuple[str, float, int]] = []
 
         # BFS queue using deque for O(1) popleft
-        bfs_queue: deque[tuple[str, int]] = deque(
-            (eid, 0) for eid, _ in initial_results
-        )
+        bfs_queue: deque[tuple[str, int]] = deque((eid, 0) for eid, _ in initial_results)
 
         while bfs_queue:
             current_id, current_hop = bfs_queue.popleft()

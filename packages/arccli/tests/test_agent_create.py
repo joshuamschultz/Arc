@@ -29,8 +29,17 @@ class TestCreate:
         config_path = tmp_path / "my-agent" / "arcagent.toml"
         config = tomllib.loads(config_path.read_text())
         expected_sections = [
-            "agent", "llm", "identity", "vault", "tools",
-            "telemetry", "context", "eval", "modules", "session", "extensions",
+            "agent",
+            "llm",
+            "identity",
+            "vault",
+            "tools",
+            "telemetry",
+            "context",
+            "eval",
+            "modules",
+            "session",
+            "extensions",
         ]
         for section in expected_sections:
             assert section in config, f"Missing config section: {section}"

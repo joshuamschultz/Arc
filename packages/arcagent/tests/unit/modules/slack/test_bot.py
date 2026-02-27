@@ -11,7 +11,6 @@ import pytest
 from arcagent.modules.slack.bot import SlackBot, split_message
 from arcagent.modules.slack.config import SlackConfig
 
-
 # ── split_message tests ─────────────────────────────────────────
 
 
@@ -109,9 +108,7 @@ def _attach_mock_app(bot: SlackBot) -> MagicMock:
     app = MagicMock()
     app.client = MagicMock()
     app.client.chat_postMessage = AsyncMock()
-    app.client.conversations_open = AsyncMock(
-        return_value={"channel": {"id": "D99999"}}
-    )
+    app.client.conversations_open = AsyncMock(return_value={"channel": {"id": "D99999"}})
     bot._app = app
     return app
 
@@ -187,9 +184,7 @@ class TestHandleMessage:
         await bot._handle_message(event)
 
         mock_chat.assert_called_once_with("hello", session_id="test-session")
-        app.client.chat_postMessage.assert_called_once_with(
-            channel="D12345", text="Hello back"
-        )
+        app.client.chat_postMessage.assert_called_once_with(channel="D12345", text="Hello back")
 
     @pytest.mark.asyncio
     async def test_unauthorized_user_silently_ignored(self, tmp_path: Path) -> None:
@@ -355,9 +350,7 @@ class TestProcessMessage:
 
         await bot._process_message("hi", "D12345")
 
-        app.client.chat_postMessage.assert_called_once_with(
-            channel="D12345", text="(No response)"
-        )
+        app.client.chat_postMessage.assert_called_once_with(channel="D12345", text="(No response)")
 
     @pytest.mark.asyncio
     async def test_skips_if_no_chat_fn(self, tmp_path: Path) -> None:
@@ -403,6 +396,44 @@ class TestProcessMessage:
             text="Error processing your message. Please try again.",
         )
 
+    async def test_rate_limit_error_shows_specific_message(self, tmp_path: Path) -> None:
+        """429 errors tell the user they're rate limited."""
+        from arcllm.exceptions import ArcLLMAPIError
+
+        bot = _make_bot(tmp_path)
+        bot._current_session_id = "test-session"
+        app = _attach_mock_app(bot)
+
+        error = ArcLLMAPIError(status_code=429, body="rate limited", provider="azure")
+        mock_chat = AsyncMock(side_effect=error)
+        bot.set_agent_chat_fn(mock_chat)
+
+        await bot._process_message("hi", "D12345")
+
+        app.client.chat_postMessage.assert_called_once_with(
+            channel="D12345",
+            text="I'm currently rate limited by the LLM provider. Please try again in a minute or two.",
+        )
+
+    async def test_server_error_shows_specific_message(self, tmp_path: Path) -> None:
+        """500/502/503 errors tell the user the provider is unavailable."""
+        from arcllm.exceptions import ArcLLMAPIError
+
+        bot = _make_bot(tmp_path)
+        bot._current_session_id = "test-session"
+        app = _attach_mock_app(bot)
+
+        error = ArcLLMAPIError(status_code=502, body="bad gateway", provider="azure")
+        mock_chat = AsyncMock(side_effect=error)
+        bot.set_agent_chat_fn(mock_chat)
+
+        await bot._process_message("hi", "D12345")
+
+        app.client.chat_postMessage.assert_called_once_with(
+            channel="D12345",
+            text="The LLM provider is temporarily unavailable. Please try again shortly.",
+        )
+
 
 # ── Send Notification ──────────────────────────────────────────
 
@@ -431,9 +462,7 @@ class TestSendNotification:
         await bot.send_notification("hello")
 
         app.client.conversations_open.assert_called_once_with(users="U123")
-        app.client.chat_postMessage.assert_called_once_with(
-            channel="D99999", text="hello"
-        )
+        app.client.chat_postMessage.assert_called_once_with(channel="D99999", text="hello")
         # Channel should now be cached
         assert bot._dm_channel_id == "D99999"
 
@@ -568,8 +597,6 @@ class TestStatePersistence:
         bot = _make_bot(tmp_path)
         bot._user_id = "U123"
         bot._save_state()
-
-        import stat
 
         mode = bot._state_path.stat().st_mode & 0o777
         assert mode == 0o600

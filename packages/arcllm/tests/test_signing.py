@@ -9,7 +9,6 @@ from arcllm._signing import HmacSigner, canonical_payload, create_signer
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import Message, Tool
 
-
 # ---------------------------------------------------------------------------
 # HmacSigner
 # ---------------------------------------------------------------------------

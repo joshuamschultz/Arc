@@ -1,4 +1,5 @@
 """Shared tool execution pipeline. Used by all strategies."""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,13 +8,13 @@ from typing import Any
 
 import jsonschema
 
+# Re-export for type reference
+from arcllm.types import Message
+
 from arcrun._messages import tool_result
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.types import ToolContext
-
-# Re-export for type reference
-from arcllm.types import Message
 
 _MAX_ERROR_LEN = 200
 
@@ -57,12 +58,10 @@ async def execute_tool_call(
     tool_start = time.time()
     try:
         if timeout is not None:
-            result = await asyncio.wait_for(
-                tool_def.execute(tc.arguments, ctx), timeout=timeout
-            )
+            result = await asyncio.wait_for(tool_def.execute(tc.arguments, ctx), timeout=timeout)
         else:
             result = await tool_def.execute(tc.arguments, ctx)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         bus.emit("tool.error", {"name": tc.name, "error": f"timeout after {timeout}s"})
         return tool_result(tc.id, f"Error: tool timed out after {timeout}s"), False
     except Exception as exc:
@@ -72,11 +71,14 @@ async def execute_tool_call(
         return tool_result(tc.id, f"Error: {type(exc).__name__}: {truncated}"), False
 
     duration_ms = (time.time() - tool_start) * 1000
-    bus.emit("tool.end", {
-        "name": tc.name,
-        "result_length": len(result),
-        "duration_ms": duration_ms,
-    })
+    bus.emit(
+        "tool.end",
+        {
+            "name": tc.name,
+            "result_length": len(result),
+            "duration_ms": duration_ms,
+        },
+    )
 
     state.tool_calls_made += 1
     return tool_result(tc.id, result), True

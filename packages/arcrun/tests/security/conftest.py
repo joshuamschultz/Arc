@@ -1,4 +1,5 @@
 """Shared fixtures for security tests."""
+
 from __future__ import annotations
 
 import asyncio

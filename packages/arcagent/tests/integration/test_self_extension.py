@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -124,9 +122,7 @@ class TestSelfExtension:
         tool_names = {t.name for t in arcrun_tools}
         assert "llm_tool" in tool_names
         # Built-in tools also present
-        assert {"read", "write", "edit", "bash", "grep", "find", "ls"}.issubset(
-            tool_names
-        )
+        assert {"read", "write", "edit", "bash", "grep", "find", "ls"}.issubset(tool_names)
 
         await agent.shutdown()
 
@@ -186,9 +182,7 @@ class TestSelfExtension:
         ext_dir.mkdir()
 
         # Bad extension
-        (ext_dir / "bad.py").write_text(
-            "def extension(api):\n    raise RuntimeError('boom')\n"
-        )
+        (ext_dir / "bad.py").write_text("def extension(api):\n    raise RuntimeError('boom')\n")
 
         # Good extension
         _write_extension(ext_dir, "good_ext", "good_tool")
@@ -218,10 +212,7 @@ class TestSelfExtension:
             await agent.startup()
 
         # Audit log should contain extension.loaded event
-        audit_records = [
-            r for r in caplog.records
-            if "extension.loaded" in r.getMessage()
-        ]
+        audit_records = [r for r in caplog.records if "extension.loaded" in r.getMessage()]
         assert len(audit_records) >= 1
         assert "audited_ext" in audit_records[0].getMessage()
 
@@ -258,7 +249,6 @@ def extension(api):
         await agent._bus.emit("agent:post_respond", {"result": "test"})
 
         # Check that the hook was called
-        import importlib
         import sys
 
         hook_module = sys.modules.get("arcagent_ext_hook_ext")

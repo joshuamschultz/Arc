@@ -70,9 +70,7 @@ def agent_config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
 class TestFullStartupShutdown:
     """T4.2.1: config → identity → telemetry → bus → tools → context → agent startup."""
 
-    async def test_startup_initializes_all_components(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_startup_initializes_all_components(self, agent_config: ArcAgentConfig) -> None:
         agent = ArcAgent(config=agent_config)
         await agent.startup()
 
@@ -92,9 +90,7 @@ class TestFullStartupShutdown:
 
         await agent.shutdown()
 
-    async def test_startup_creates_workspace(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_startup_creates_workspace(self, tmp_path: Path) -> None:
         ws = tmp_path / "new_workspace"
         config = ArcAgentConfig(
             agent=AgentConfig(
@@ -149,9 +145,7 @@ class TestRunWithMockLLM:
         (workspace / "context.md").write_text("Context: test-only")
 
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(
-            content="task completed", tool_calls_made=1
-        )
+        mock_arcrun_run.return_value = MagicMock(content="task completed", tool_calls_made=1)
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -227,9 +221,7 @@ class TestRunWithMockLLM:
 class TestBusEventFlow:
     """T4.2.3: Module Bus event flow during tool execution."""
 
-    async def test_tool_execution_emits_events(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_tool_execution_emits_events(self, agent_config: ArcAgentConfig) -> None:
         """Full event flow: register tool → wrap → execute → events fire."""
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -268,9 +260,7 @@ class TestBusEventFlow:
 
         await agent.shutdown()
 
-    async def test_event_ordering(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_event_ordering(self, agent_config: ArcAgentConfig) -> None:
         """Events fire in correct order: pre_tool before post_tool."""
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -312,9 +302,7 @@ class TestBusEventFlow:
 class TestVetoEndToEnd:
     """T4.2.4: veto blocks tool execution end-to-end."""
 
-    async def test_veto_prevents_tool_execution(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_veto_prevents_tool_execution(self, agent_config: ArcAgentConfig) -> None:
         """A policy handler vetoes a tool call; tool never executes."""
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -352,9 +340,7 @@ class TestVetoEndToEnd:
         assert not executed
         await agent.shutdown()
 
-    async def test_veto_reason_preserved(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_veto_reason_preserved(self, agent_config: ArcAgentConfig) -> None:
         """Veto reason is available in the raised exception."""
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -390,9 +376,7 @@ class TestVetoEndToEnd:
 class TestContextManagerPruning:
     """T4.2.5: context manager prunes during arcrun.run."""
 
-    async def test_transform_context_prunes_when_over_threshold(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_transform_context_prunes_when_over_threshold(self, tmp_path: Path) -> None:
         """Context manager prunes old tool outputs when over threshold."""
         config = ArcAgentConfig(
             agent=AgentConfig(
@@ -426,17 +410,15 @@ class TestContextManagerPruning:
 
         # At least one tool output should be pruned
         pruned_count = sum(
-            1 for m in result
-            if isinstance(m.get("content"), str)
-            and "[output pruned" in m["content"]
+            1
+            for m in result
+            if isinstance(m.get("content"), str) and "[output pruned" in m["content"]
         )
         assert pruned_count >= 1
 
         await agent.shutdown()
 
-    async def test_transform_context_noop_below_threshold(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_transform_context_noop_below_threshold(self, tmp_path: Path) -> None:
         """Context manager does nothing when below prune threshold."""
         config = ArcAgentConfig(
             agent=AgentConfig(
@@ -469,9 +451,7 @@ class TestContextManagerPruning:
 class TestGracefulShutdown:
     """T4.2.6: graceful shutdown with reverse teardown."""
 
-    async def test_shutdown_emits_event_then_cleans_up(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_shutdown_emits_event_then_cleans_up(self, agent_config: ArcAgentConfig) -> None:
         """Shutdown fires shutdown event, then reverses component init."""
         agent = ArcAgent(config=agent_config)
         await agent.startup()
@@ -509,18 +489,14 @@ class TestGracefulShutdown:
         # Tool registry cleared
         assert len(agent._tool_registry.tools) == 0
 
-    async def test_double_shutdown_is_safe(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_double_shutdown_is_safe(self, agent_config: ArcAgentConfig) -> None:
         """Calling shutdown twice does not raise."""
         agent = ArcAgent(config=agent_config)
         await agent.startup()
         await agent.shutdown()
         await agent.shutdown()  # Should be a no-op
 
-    async def test_startup_shutdown_restart(
-        self, agent_config: ArcAgentConfig
-    ) -> None:
+    async def test_startup_shutdown_restart(self, agent_config: ArcAgentConfig) -> None:
         """Agent can be started, stopped, and started again."""
         agent = ArcAgent(config=agent_config)
 

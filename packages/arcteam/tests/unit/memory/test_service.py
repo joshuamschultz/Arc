@@ -46,8 +46,10 @@ class TestServiceSearch:
     async def test_search_finds_promoted_entity(self, service: TeamMemoryService) -> None:
         meta = _make_metadata(entity_id="alice", name="Alice")
         await service.promote(
-            "alice", "# Alice\n\nAlice is a nuclear physicist.",
-            meta, agent_id="agent-1",
+            "alice",
+            "# Alice\n\nAlice is a nuclear physicist.",
+            meta,
+            agent_id="agent-1",
         )
         results = await service.search("nuclear physicist")
         assert len(results) > 0
@@ -142,7 +144,8 @@ class TestServiceStatus:
     @pytest.mark.asyncio
     async def test_status_with_entities(self, service: TeamMemoryService) -> None:
         await service.promote(
-            "alice", "# Alice",
+            "alice",
+            "# Alice",
             _make_metadata(entity_id="alice", name="Alice"),
             agent_id="agent-1",
         )

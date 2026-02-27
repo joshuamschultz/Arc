@@ -1,4 +1,5 @@
 """Tests for arcrun type definitions."""
+
 import asyncio
 
 import pytest
@@ -61,7 +62,11 @@ class TestToolContext:
 
         cancel = asyncio.Event()
         ctx = ToolContext(
-            run_id="r", tool_call_id="t", turn_number=0, event_bus=None, cancelled=cancel,
+            run_id="r",
+            tool_call_id="t",
+            turn_number=0,
+            event_bus=None,
+            cancelled=cancel,
         )
         assert not ctx.cancelled.is_set()
         cancel.set()
@@ -147,8 +152,12 @@ class TestLoopResult:
         bus.emit("b")
 
         result = LoopResult(
-            content="done", turns=1, tool_calls_made=0,
-            tokens_used={}, strategy_used="react", cost_usd=0.0,
+            content="done",
+            turns=1,
+            tool_calls_made=0,
+            tokens_used={},
+            strategy_used="react",
+            cost_usd=0.0,
             events=bus.events,
         )
         verification = result.verify_integrity()
@@ -159,8 +168,12 @@ class TestLoopResult:
         from arcrun.types import LoopResult
 
         result = LoopResult(
-            content="done", turns=1, tool_calls_made=0,
-            tokens_used={}, strategy_used="react", cost_usd=0.0,
+            content="done",
+            turns=1,
+            tool_calls_made=0,
+            tokens_used={},
+            strategy_used="react",
+            cost_usd=0.0,
         )
         verification = result.verify_integrity()
         assert verification.valid is True

@@ -8,12 +8,11 @@ These tests verify that the full spawn pipeline works end-to-end:
 
 Requires ANTHROPIC_API_KEY in the environment (or .env file).
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
-import sys
-import json
 from pathlib import Path
 
 import pytest
@@ -61,6 +60,7 @@ async def _get_capital_tool(params: dict, ctx: object) -> str:
 def _make_tool(name: str, description: str, fn, schema: dict, timeout: float = 30.0):
     """Create an arcrun Tool."""
     from arcrun.types import Tool
+
     return Tool(
         name=name,
         description=description,
@@ -73,7 +73,8 @@ def _make_tool(name: str, description: str, fn, schema: dict, timeout: float = 3
 def _build_tools():
     """Build the tool set for tests."""
     echo = _make_tool(
-        "echo", "Echo text back to the user",
+        "echo",
+        "Echo text back to the user",
         _echo_tool,
         {
             "type": "object",
@@ -82,7 +83,8 @@ def _build_tools():
         },
     )
     add = _make_tool(
-        "add", "Add two numbers together",
+        "add",
+        "Add two numbers together",
         _add_tool,
         {
             "type": "object",
@@ -94,7 +96,8 @@ def _build_tools():
         },
     )
     capital = _make_tool(
-        "get_capital", "Look up the capital city of a country",
+        "get_capital",
+        "Look up the capital city of a country",
         _get_capital_tool,
         {
             "type": "object",
@@ -108,6 +111,7 @@ def _build_tools():
 def _load_model():
     """Load a real arcllm model (Haiku for speed + cost)."""
     from arcllm import load_model
+
     return load_model("anthropic", model="claude-haiku-4-5-20251001")
 
 
@@ -148,15 +152,11 @@ async def test_single_spawn_real_llm():
 
     # Verify spawn events were emitted
     event_types = [e.type for e in events]
-    assert "spawn.start" in event_types, (
-        f"Expected spawn.start event, got: {event_types}"
-    )
-    assert "spawn.complete" in event_types, (
-        f"Expected spawn.complete event, got: {event_types}"
-    )
+    assert "spawn.start" in event_types, f"Expected spawn.start event, got: {event_types}"
+    assert "spawn.complete" in event_types, f"Expected spawn.complete event, got: {event_types}"
 
     # Verify the spawn completed successfully
-    spawn_complete = [e for e in events if e.type == "spawn.complete"][0]
+    spawn_complete = next(e for e in events if e.type == "spawn.complete")
     assert spawn_complete.data.get("success") is True, (
         f"Expected successful spawn, got: {spawn_complete.data}"
     )
@@ -166,13 +166,6 @@ async def test_single_spawn_real_llm():
     assert len(child_events) > 0, "Expected child events to bubble up"
 
     # Print summary for visibility
-    print(f"\n--- Single Spawn E2E ---")
-    print(f"Final answer: {result.content[:200]}")
-    print(f"Turns: {result.turns}")
-    print(f"Tool calls: {result.tool_calls_made}")
-    print(f"Tokens: {result.tokens_used}")
-    print(f"Cost: ${result.cost_usd:.4f}")
-    print(f"Events: {len(events)} total, {len(child_events)} from child")
 
     await model.close()
 
@@ -213,12 +206,7 @@ async def test_parallel_spawns_real_llm():
 
     # Check that two spawns occurred
     spawn_starts = [e for e in events if e.type == "spawn.start"]
-    spawn_completes = [e for e in events if e.type == "spawn.complete"]
-    print(f"\n--- Parallel Spawn E2E ---")
-    print(f"Final answer: {result.content[:300]}")
-    print(f"Spawn starts: {len(spawn_starts)}, completes: {len(spawn_completes)}")
-    print(f"Turns: {result.turns}, Tool calls: {result.tool_calls_made}")
-    print(f"Cost: ${result.cost_usd:.4f}")
+    [e for e in events if e.type == "spawn.complete"]
 
     # At least one spawn should have happened
     assert len(spawn_starts) >= 1, "Expected at least one spawn"
@@ -259,16 +247,11 @@ async def test_child_uses_tools_real_llm():
 
     # Verify child used the add tool (via bubbled events)
     child_tool_events = [
-        e for e in events
-        if e.type.startswith("child.") and "tool.start" in e.type
+        e for e in events if e.type.startswith("child.") and "tool.start" in e.type
     ]
 
-    print(f"\n--- Child Tool Use E2E ---")
-    print(f"Final answer: {result.content[:200]}")
-    print(f"Child tool events: {len(child_tool_events)}")
     for e in child_tool_events:
-        print(f"  {e.type}: {e.data.get('tool_name', 'unknown')}")
-    print(f"Cost: ${result.cost_usd:.4f}")
+        pass
 
     await model.close()
 
@@ -285,7 +268,7 @@ async def test_spawn_audit_trail_real_llm():
     tools = _build_tools()
     events = []
 
-    result = await run(
+    await run(
         model=model,
         tools=tools,
         system_prompt="You are a helpful assistant. Use spawn_task when asked.",
@@ -305,27 +288,22 @@ async def test_spawn_audit_trail_real_llm():
     assert "spawn.complete" in event_types, f"Missing spawn.complete: {event_types}"
 
     # Inspect spawn.start event data
-    spawn_start = [e for e in events if e.type == "spawn.start"][0]
+    spawn_start = next(e for e in events if e.type == "spawn.start")
     assert "child_run_id" in spawn_start.data
     assert "parent_run_id" in spawn_start.data
     assert "parent_depth" in spawn_start.data
 
     # Inspect spawn.complete event data
-    spawn_complete = [e for e in events if e.type == "spawn.complete"][0]
+    spawn_complete = next(e for e in events if e.type == "spawn.complete")
     assert "child_run_id" in spawn_complete.data
     assert "success" in spawn_complete.data
 
     # Child events bubbled with prefix
-    child_events = [e for e in events if e.type.startswith("child.")]
-    child_run_id = spawn_start.data["child_run_id"]
+    [e for e in events if e.type.startswith("child.")]
+    spawn_start.data["child_run_id"]
 
-    print(f"\n--- Audit Trail E2E ---")
-    print(f"Total events: {len(events)}")
-    print(f"Child events: {len(child_events)}")
-    print(f"Child run ID: {child_run_id}")
-    print(f"All event types:")
     for t in event_types:
-        print(f"  {t}")
+        pass
 
     await model.close()
 
@@ -335,20 +313,13 @@ async def test_spawn_audit_trail_real_llm():
 if __name__ == "__main__":
     # Allow running directly: python test_spawn_e2e.py
     async def main():
-        print("=== E2E Spawn Tests (Real LLM) ===\n")
 
-        print("Test 1: Single spawn round-trip")
         await test_single_spawn_real_llm()
 
-        print("\nTest 2: Parallel spawns")
         await test_parallel_spawns_real_llm()
 
-        print("\nTest 3: Child uses tools")
         await test_child_uses_tools_real_llm()
 
-        print("\nTest 4: Audit trail completeness")
         await test_spawn_audit_trail_real_llm()
-
-        print("\n=== All E2E tests passed ===")
 
     asyncio.run(main())

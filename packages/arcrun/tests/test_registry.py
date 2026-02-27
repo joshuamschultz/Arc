@@ -1,5 +1,4 @@
 """Tests for dynamic tool registry."""
-import pytest
 
 from arcrun.events import EventBus
 from arcrun.types import Tool
@@ -10,7 +9,9 @@ async def _noop(params: dict, ctx: object) -> str:
 
 
 def _make_tool(name: str = "t1") -> Tool:
-    return Tool(name=name, description=f"Tool {name}", input_schema={"type": "object"}, execute=_noop)
+    return Tool(
+        name=name, description=f"Tool {name}", input_schema={"type": "object"}, execute=_noop
+    )
 
 
 class TestToolRegistry:

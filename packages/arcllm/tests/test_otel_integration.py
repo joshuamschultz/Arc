@@ -3,10 +3,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opentelemetry.trace import StatusCode
+
 from arcllm.exceptions import ArcLLMAPIError
 from arcllm.modules.rate_limit import clear_buckets
 from arcllm.types import LLMResponse, Message, Usage
-from opentelemetry.trace import StatusCode
 
 
 def _make_response(**overrides) -> LLMResponse:
@@ -83,12 +84,8 @@ class TestRetrySpans:
         from arcllm.modules.retry import RetryModule
 
         error = ArcLLMAPIError(429, "rate limited", "test")
-        inner = _make_inner(
-            side_effect=[error, _make_response()]
-        )
-        module = RetryModule(
-            {"max_retries": 2, "backoff_base_seconds": 0.001}, inner
-        )
+        inner = _make_inner(side_effect=[error, _make_response()])
+        module = RetryModule({"max_retries": 2, "backoff_base_seconds": 0.001}, inner)
         mock_tracer, spans = _make_mock_tracer()
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
@@ -102,12 +99,8 @@ class TestRetrySpans:
         from arcllm.modules.retry import RetryModule
 
         error = ArcLLMAPIError(429, "rate limited", "test")
-        inner = _make_inner(
-            side_effect=[error, _make_response()]
-        )
-        module = RetryModule(
-            {"max_retries": 2, "backoff_base_seconds": 0.001}, inner
-        )
+        inner = _make_inner(side_effect=[error, _make_response()])
+        module = RetryModule({"max_retries": 2, "backoff_base_seconds": 0.001}, inner)
         mock_tracer, spans = _make_mock_tracer()
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
@@ -122,12 +115,8 @@ class TestRetrySpans:
         from arcllm.modules.retry import RetryModule
 
         error = ArcLLMAPIError(429, "rate limited", "test")
-        inner = _make_inner(
-            side_effect=[error, _make_response()]
-        )
-        module = RetryModule(
-            {"max_retries": 2, "backoff_base_seconds": 0.001}, inner
-        )
+        inner = _make_inner(side_effect=[error, _make_response()])
+        module = RetryModule({"max_retries": 2, "backoff_base_seconds": 0.001}, inner)
         mock_tracer, spans = _make_mock_tracer()
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
@@ -143,9 +132,7 @@ class TestRetrySpans:
 
         error = ArcLLMAPIError(429, "rate limited", "test")
         inner = _make_inner(side_effect=[error, error])
-        module = RetryModule(
-            {"max_retries": 1, "backoff_base_seconds": 0.001}, inner
-        )
+        module = RetryModule({"max_retries": 1, "backoff_base_seconds": 0.001}, inner)
         mock_tracer, spans = _make_mock_tracer()
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
@@ -186,9 +173,7 @@ class TestFallbackSpans:
         mock_tracer, spans = _make_mock_tracer()
         with (
             patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer),
-            patch(
-                "arcllm.modules.fallback._load_fallback_model", return_value=fallback_provider
-            ),
+            patch("arcllm.modules.fallback._load_fallback_model", return_value=fallback_provider),
         ):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -207,9 +192,7 @@ class TestFallbackSpans:
         mock_tracer, spans = _make_mock_tracer()
         with (
             patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer),
-            patch(
-                "arcllm.modules.fallback._load_fallback_model", return_value=fallback_provider
-            ),
+            patch("arcllm.modules.fallback._load_fallback_model", return_value=fallback_provider),
         ):
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
@@ -247,7 +230,8 @@ class TestRateLimitSpans:
             await module.invoke(messages)
         rl_span = next(s for s in spans if s._name == "arcllm.rate_limit")
         rl_span.set_attribute.assert_any_call(
-            "arcllm.rate_limit.wait_ms", pytest.approx(0.0, abs=100),
+            "arcllm.rate_limit.wait_ms",
+            pytest.approx(0.0, abs=100),
         )
 
     @pytest.mark.asyncio
@@ -260,9 +244,7 @@ class TestRateLimitSpans:
         # Force the bucket to return non-zero wait
         with patch.object(module._bucket, "acquire", return_value=0.5):
             mock_tracer, spans = _make_mock_tracer()
-            with patch(
-                "arcllm.modules.base.trace.get_tracer", return_value=mock_tracer
-            ):
+            with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
                 messages = [Message(role="user", content="hi")]
                 await module.invoke(messages)
         rl_span = next(s for s in spans if s._name == "arcllm.rate_limit")
@@ -292,9 +274,7 @@ class TestTelemetrySpans:
         from arcllm.modules.telemetry import TelemetryModule
 
         inner = _make_inner()
-        module = TelemetryModule(
-            {"cost_input_per_1m": 3.0, "cost_output_per_1m": 15.0}, inner
-        )
+        module = TelemetryModule({"cost_input_per_1m": 3.0, "cost_output_per_1m": 15.0}, inner)
         mock_tracer, spans = _make_mock_tracer()
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]
@@ -334,8 +314,6 @@ class TestAuditSpans:
             messages = [Message(role="user", content="hi")]
             await module.invoke(messages)
         audit_span = next(s for s in spans if s._name == "arcllm.audit")
-        attr_calls = {
-            c[0][0]: c[0][1] for c in audit_span.set_attribute.call_args_list
-        }
+        attr_calls = {c[0][0]: c[0][1] for c in audit_span.set_attribute.call_args_list}
         assert attr_calls.get("arcllm.audit.message_count") == 1
         assert "arcllm.audit.content_length" in attr_calls

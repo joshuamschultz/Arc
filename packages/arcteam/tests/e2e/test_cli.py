@@ -7,8 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 
 def run_cli(root: Path, *args: str) -> subprocess.CompletedProcess:  # type: ignore[type-arg]
     """Run arc-team CLI with given arguments."""
@@ -21,18 +19,56 @@ class TestFullFlow:
 
     def test_full_messaging_flow(self, tmp_path: Path) -> None:
         # Register agents
-        r = run_cli(tmp_path, "register", "agent://a1", "--name", "Agent One", "--type", "agent", "--roles", "ops")
+        r = run_cli(
+            tmp_path,
+            "register",
+            "agent://a1",
+            "--name",
+            "Agent One",
+            "--type",
+            "agent",
+            "--roles",
+            "ops",
+        )
         assert r.returncode == 0
         assert "Registered" in r.stdout
 
-        r = run_cli(tmp_path, "register", "agent://a2", "--name", "Agent Two", "--type", "agent", "--roles", "ops")
+        r = run_cli(
+            tmp_path,
+            "register",
+            "agent://a2",
+            "--name",
+            "Agent Two",
+            "--type",
+            "agent",
+            "--roles",
+            "ops",
+        )
         assert r.returncode == 0
 
-        r = run_cli(tmp_path, "register", "user://josh", "--name", "Josh", "--type", "user", "--roles", "admin")
+        r = run_cli(
+            tmp_path,
+            "register",
+            "user://josh",
+            "--name",
+            "Josh",
+            "--type",
+            "user",
+            "--roles",
+            "admin",
+        )
         assert r.returncode == 0
 
         # Create channel with members
-        r = run_cli(tmp_path, "channel", "ops-channel", "--members", "agent://a1,agent://a2", "--description", "Ops")
+        r = run_cli(
+            tmp_path,
+            "channel",
+            "ops-channel",
+            "--members",
+            "agent://a1,agent://a2",
+            "--description",
+            "Ops",
+        )
         assert r.returncode == 0
         assert "Channel created" in r.stdout
 
@@ -47,8 +83,16 @@ class TestFullFlow:
         assert "agent://a1" in r.stdout
 
         # Send message to channel
-        r = run_cli(tmp_path, "--as", "agent://a1", "send",
-                     "--to", "channel://ops-channel", "--body", "Hello ops!")
+        r = run_cli(
+            tmp_path,
+            "--as",
+            "agent://a1",
+            "send",
+            "--to",
+            "channel://ops-channel",
+            "--body",
+            "Hello ops!",
+        )
         assert r.returncode == 0
         assert "Sent:" in r.stdout
 
@@ -67,10 +111,11 @@ class TestDMFlow:
         run_cli(tmp_path, "register", "user://josh", "--name", "Josh", "--type", "user")
 
         # Send DM
-        r = run_cli(tmp_path, "--as", "user://josh", "send",
-                     "--to", "agent://a1", "--body", "Hey agent!")
+        r = run_cli(
+            tmp_path, "--as", "user://josh", "send", "--to", "agent://a1", "--body", "Hey agent!"
+        )
         assert r.returncode == 0
-        msg_id = r.stdout.strip().split("Sent: ")[1].split(" ")[0]
+        r.stdout.strip().split("Sent: ")[1].split(" ")[0]
 
         # Read DM
         r = run_cli(tmp_path, "--as", "agent://a1", "read", "--dm", "a1")
@@ -82,12 +127,22 @@ class TestRoleFlow:
     """E2E: send to role -> inbox shows role messages."""
 
     def test_role_messaging(self, tmp_path: Path) -> None:
-        run_cli(tmp_path, "register", "agent://a1", "--name", "A1", "--type", "agent", "--roles", "ops")
+        run_cli(
+            tmp_path, "register", "agent://a1", "--name", "A1", "--type", "agent", "--roles", "ops"
+        )
         run_cli(tmp_path, "register", "user://josh", "--name", "Josh", "--type", "user")
 
         # Send to role
-        r = run_cli(tmp_path, "--as", "user://josh", "send",
-                     "--to", "role://ops", "--body", "All ops check in")
+        r = run_cli(
+            tmp_path,
+            "--as",
+            "user://josh",
+            "send",
+            "--to",
+            "role://ops",
+            "--body",
+            "All ops check in",
+        )
         assert r.returncode == 0
 
         # Check inbox for a1 (has ops role)

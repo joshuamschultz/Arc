@@ -134,12 +134,14 @@ def cli_group(workspace: Path) -> click.Group:
                 line,
             )
             if fact_match:
-                rows.append([
-                    fact_match.group(1),
-                    fact_match.group(2),
-                    fact_match.group(3),
-                    fact_match.group(4)[:10],
-                ])
+                rows.append(
+                    [
+                        fact_match.group(1),
+                        fact_match.group(2),
+                        fact_match.group(3),
+                        fact_match.group(4)[:10],
+                    ]
+                )
 
         if rows:
             print_table(["Predicate", "Value", "Confidence", "Date"], rows)
@@ -149,7 +151,8 @@ def cli_group(workspace: Path) -> click.Group:
     @memory.command("search")
     @click.argument("query")
     @click.option(
-        "--scope", default=None,
+        "--scope",
+        default=None,
         help="Filter by source type (notes, entities, context).",
     )
     @click.option("--limit", default=10, type=int, help="Max results.")
@@ -197,27 +200,23 @@ def cli_group(workspace: Path) -> click.Group:
 
         # Entity count (markdown files in entities/)
         entities_dir = ws / "entities"
-        entity_count = (
-            len(list(entities_dir.glob("*.md"))) if entities_dir.is_dir() else 0
-        )
+        entity_count = len(list(entities_dir.glob("*.md"))) if entities_dir.is_dir() else 0
 
         # Search DB size
         db_path = ws / "search.db"
         db_size = _format_size(db_path.stat().st_size) if db_path.exists() else "n/a"
 
         # Total workspace size
-        total_size = sum(
-            f.stat().st_size
-            for f in ws.rglob("*")
-            if f.is_file()
-        )
+        total_size = sum(f.stat().st_size for f in ws.rglob("*") if f.is_file())
 
-        print_kv([
-            ("Notes", str(note_count)),
-            ("Entities", str(entity_count)),
-            ("Search DB", db_size),
-            ("Workspace size", _format_size(total_size)),
-        ])
+        print_kv(
+            [
+                ("Notes", str(note_count)),
+                ("Entities", str(entity_count)),
+                ("Search DB", db_size),
+                ("Workspace size", _format_size(total_size)),
+            ]
+        )
 
     return memory
 

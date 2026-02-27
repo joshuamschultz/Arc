@@ -332,9 +332,7 @@ class TestModuleLoaderEdgeCases:
         with pytest.raises(ConfigError, match="Failed to parse MODULE.yaml"):
             loader.discover(modules_dir, config_with_module)
 
-    def test_discover_yaml_not_dict_raises(
-        self, tmp_path: Path, config: ArcAgentConfig
-    ) -> None:
+    def test_discover_yaml_not_dict_raises(self, tmp_path: Path, config: ArcAgentConfig) -> None:
         """Line 77: ConfigError when parsed YAML is not a dict."""
         from arcagent.core.module_loader import ModuleLoader
 
@@ -351,9 +349,7 @@ class TestModuleLoaderEdgeCases:
         with pytest.raises(ConfigError, match="not a mapping"):
             loader.discover(modules_dir, config_with_module)
 
-    def test_discover_missing_name_raises(
-        self, tmp_path: Path, config: ArcAgentConfig
-    ) -> None:
+    def test_discover_missing_name_raises(self, tmp_path: Path, config: ArcAgentConfig) -> None:
         """Line 86: ConfigError when name is missing from YAML."""
         from arcagent.core.module_loader import ModuleLoader
 
@@ -432,6 +428,7 @@ class FailingModule:
         loader = ModuleLoader()
         # Import will succeed, but instantiation will fail
         import sys
+
         sys.path.insert(0, str(tmp_path))
         try:
             module = loader.load(manifest, module_ctx)
@@ -439,9 +436,7 @@ class FailingModule:
         finally:
             sys.path.pop(0)
 
-    def test_instantiate_skips_self_param(
-        self, tmp_path: Path, module_ctx: ModuleContext
-    ) -> None:
+    def test_instantiate_skips_self_param(self, tmp_path: Path, module_ctx: ModuleContext) -> None:
         """Line 200: _instantiate continues when param is 'self'."""
         from arcagent.core.module_loader import ModuleLoader, ModuleManifest
 
@@ -507,19 +502,21 @@ class TestInstantiateException:
 class TestLoadAllSkipsNone:
     """Line 222: load_all skips modules that return None."""
 
-    def test_load_all_skips_failed_modules(
-        self, module_ctx: ModuleContext
-    ) -> None:
+    def test_load_all_skips_failed_modules(self, module_ctx: ModuleContext) -> None:
         from arcagent.core.module_loader import ModuleLoader, ModuleManifest
 
         loader = ModuleLoader()
 
         # Patch load to return None for first, object for second
         results = [None, object()]
-        with patch.object(loader, "discover", return_value=[
-            ModuleManifest(name="bad", entry_point="x:Y"),
-            ModuleManifest(name="good", entry_point="x:Y"),
-        ]):
+        with patch.object(
+            loader,
+            "discover",
+            return_value=[
+                ModuleManifest(name="bad", entry_point="x:Y"),
+                ModuleManifest(name="good", entry_point="x:Y"),
+            ],
+        ):
             with patch.object(loader, "load", side_effect=results):
                 modules = loader.load_all(Path("/fake"), module_ctx)
         assert len(modules) == 1

@@ -100,19 +100,29 @@ class BioMemoryModule:
         """Register bus handlers + memory tools."""
         bus = ctx.bus
         bus.subscribe(
-            "agent:assemble_prompt", self._on_assemble_prompt, priority=50,
+            "agent:assemble_prompt",
+            self._on_assemble_prompt,
+            priority=50,
         )
         bus.subscribe(
-            "agent:post_respond", self._on_post_respond, priority=100,
+            "agent:post_respond",
+            self._on_post_respond,
+            priority=100,
         )
         bus.subscribe(
-            "agent:pre_tool", self._on_pre_tool, priority=10,
+            "agent:pre_tool",
+            self._on_pre_tool,
+            priority=10,
         )
         bus.subscribe(
-            "agent:post_tool", self._on_post_tool, priority=100,
+            "agent:post_tool",
+            self._on_post_tool,
+            priority=100,
         )
         bus.subscribe(
-            "agent:shutdown", self._on_shutdown, priority=100,
+            "agent:shutdown",
+            self._on_shutdown,
+            priority=100,
         )
 
         self._register_tools(ctx.tool_registry)
@@ -125,7 +135,8 @@ class BioMemoryModule:
                 len(self._background_tasks),
             )
             await asyncio.gather(
-                *self._background_tasks, return_exceptions=True,
+                *self._background_tasks,
+                return_exceptions=True,
             )
 
     # -- Team integration --
@@ -139,6 +150,7 @@ class BioMemoryModule:
         try:
             from arcteam.memory.config import TeamMemoryConfig  # type: ignore[import-untyped]
             from arcteam.memory.service import TeamMemoryService  # type: ignore[import-untyped]
+
             # Resolve team root to absolute path before passing to TeamMemoryConfig.
             # Relative paths (e.g. "../shared") resolve against workspace parent
             # (where arcagent.toml lives), consistent with messaging module.
@@ -298,99 +310,107 @@ class BioMemoryModule:
 
     def _register_tools(self, tool_registry: Any) -> None:
         """Register memory tools."""
-        tool_registry.register(RegisteredTool(
-            name="memory_search",
-            description="Search agent memory using grep + wiki-link graph traversal.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query (keywords or entity names)",
-                        "maxLength": 500,
+        tool_registry.register(
+            RegisteredTool(
+                name="memory_search",
+                description="Search agent memory using grep + wiki-link graph traversal.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Search query (keywords or entity names)",
+                            "maxLength": 500,
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Filter: episodes, daily_notes, working, entities",
+                            "enum": ["episodes", "daily_notes", "working", "entities"],
+                        },
+                        "top_k": {
+                            "type": "integer",
+                            "description": "Maximum results",
+                            "default": 5,
+                        },
                     },
-                    "scope": {
-                        "type": "string",
-                        "description": "Filter: episodes, daily_notes, working, entities",
-                        "enum": ["episodes", "daily_notes", "working", "entities"],
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Maximum results",
-                        "default": 5,
-                    },
+                    "required": ["query"],
+                    "additionalProperties": False,
                 },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-            transport=ToolTransport.NATIVE,
-            execute=self._handle_memory_search,
-        ))
+                transport=ToolTransport.NATIVE,
+                execute=self._handle_memory_search,
+            )
+        )
 
-        tool_registry.register(RegisteredTool(
-            name="memory_note",
-            description="Record a note — appends to working memory or creates an episode.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "Note content to record",
-                        "maxLength": 2000,
+        tool_registry.register(
+            RegisteredTool(
+                name="memory_note",
+                description="Record a note — appends to working memory or creates an episode.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "Note content to record",
+                            "maxLength": 2000,
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "Where to write: working (default) or episode",
+                            "enum": ["working", "episode"],
+                            "default": "working",
+                        },
                     },
-                    "target": {
-                        "type": "string",
-                        "description": "Where to write: working (default) or episode",
-                        "enum": ["working", "episode"],
-                        "default": "working",
-                    },
+                    "required": ["content"],
+                    "additionalProperties": False,
                 },
-                "required": ["content"],
-                "additionalProperties": False,
-            },
-            transport=ToolTransport.NATIVE,
-            execute=self._handle_memory_note,
-        ))
+                transport=ToolTransport.NATIVE,
+                execute=self._handle_memory_note,
+            )
+        )
 
-        tool_registry.register(RegisteredTool(
-            name="memory_recall",
-            description="Recall a specific memory by name (episode or entity).",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Name or slug of the memory to recall",
-                        "maxLength": 200,
+        tool_registry.register(
+            RegisteredTool(
+                name="memory_recall",
+                description="Recall a specific memory by name (episode or entity).",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Name or slug of the memory to recall",
+                            "maxLength": 200,
+                        },
                     },
+                    "required": ["name"],
+                    "additionalProperties": False,
                 },
-                "required": ["name"],
-                "additionalProperties": False,
-            },
-            transport=ToolTransport.NATIVE,
-            execute=self._handle_memory_recall,
-        ))
+                transport=ToolTransport.NATIVE,
+                execute=self._handle_memory_recall,
+            )
+        )
 
-        tool_registry.register(RegisteredTool(
-            name="memory_consolidate_deep",
-            description=(
-                "Trigger deep memory consolidation"
-                " (entity rewrites, graph analysis, merge detection)."
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "dry_run": {
-                        "type": "boolean",
-                        "description": "Preview changes without writing",
-                        "default": False,
+        tool_registry.register(
+            RegisteredTool(
+                name="memory_consolidate_deep",
+                description=(
+                    "Trigger deep memory consolidation"
+                    " (entity rewrites, graph analysis, merge detection)."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Preview changes without writing",
+                            "default": False,
+                        },
                     },
+                    "additionalProperties": False,
                 },
-                "additionalProperties": False,
-            },
-            transport=ToolTransport.NATIVE,
-            execute=self._handle_deep_consolidation,
-        ))
+                transport=ToolTransport.NATIVE,
+                execute=self._handle_deep_consolidation,
+            )
+        )
 
     # -- Tool handlers --
 
@@ -402,7 +422,9 @@ class BioMemoryModule:
     ) -> str:
         """Handle memory_search tool invocation."""
         results = await self._retriever.search(
-            query=query, top_k=top_k, scope=scope,
+            query=query,
+            top_k=top_k,
+            scope=scope,
         )
         self._telemetry.audit_event(
             "memory.searched",
@@ -458,7 +480,9 @@ class BioMemoryModule:
 
             frontmatter = {"title": slug, "date": timestamp, "tags": ["manual-note"]}
             fm_text = yaml.dump(
-                frontmatter, default_flow_style=False, sort_keys=False,
+                frontmatter,
+                default_flow_style=False,
+                sort_keys=False,
             ).strip()
             episode_content = f"---\n{fm_text}\n---\n\n{clean}\n"
             atomic_write_text(target_path, episode_content)
@@ -483,7 +507,8 @@ class BioMemoryModule:
         return f'<memory-result source="{name}">\n{result}\n</memory-result>'
 
     async def _handle_deep_consolidation(
-        self, dry_run: bool = False,
+        self,
+        dry_run: bool = False,
     ) -> str:
         """Handle memory_consolidate_deep tool invocation."""
         # Lazy import to avoid circular deps at module level
@@ -526,8 +551,7 @@ class BioMemoryModule:
         stale = result.get("stale", {})
         if stale:
             parts.append(
-                f"  Stale: {stale.get('flagged', 0)} flagged, "
-                f"{stale.get('archived', 0)} archived"
+                f"  Stale: {stale.get('flagged', 0)} flagged, {stale.get('archived', 0)} archived"
             )
         return "\n".join(parts)
 

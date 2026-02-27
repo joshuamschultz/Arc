@@ -56,15 +56,11 @@ class TestBaseModuleSpan:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             with module._span("test.span"):
                 pass
-        mock_tracer.start_as_current_span.assert_called_once_with(
-            "test.span", attributes=None
-        )
+        mock_tracer.start_as_current_span.assert_called_once_with("test.span", attributes=None)
 
     def test_span_yields_span_object(self):
         """_span() context manager yields the span."""
@@ -81,9 +77,7 @@ class TestBaseModuleSpan:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             with pytest.raises(ValueError, match="boom"):
                 with module._span("test.span"):
@@ -98,9 +92,7 @@ class TestBaseModuleSpan:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             with pytest.raises(ValueError):
                 with module._span("test.span"):
@@ -122,16 +114,12 @@ class TestBaseModuleSpan:
         mock_tracer.start_as_current_span.return_value.__enter__ = MagicMock(
             return_value=mock_span
         )
-        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(
-            return_value=False
-        )
+        mock_tracer.start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
         attrs = {"key": "value", "count": 42}
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             with module._span("test.span", attributes=attrs):
                 pass
-        mock_tracer.start_as_current_span.assert_called_once_with(
-            "test.span", attributes=attrs
-        )
+        mock_tracer.start_as_current_span.assert_called_once_with("test.span", attributes=attrs)
 
     def test_span_noop_without_sdk(self):
         """No crash when tracer is no-op (SDK not configured)."""
