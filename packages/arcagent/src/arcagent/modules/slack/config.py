@@ -21,3 +21,6 @@ class SlackConfig(ModuleConfig):
     max_message_length: int = 4000
     bot_token_env_var: str = "ARCAGENT_SLACK_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
     app_token_env_var: str = "ARCAGENT_SLACK_APP_TOKEN"  # noqa: S105 — env var name, not a secret
+    downloads_dir: str = "files"
+    max_file_size_mb: int = 20
+    allowed_extensions: list[str] = []  # noqa: RUF012 — empty = allow all

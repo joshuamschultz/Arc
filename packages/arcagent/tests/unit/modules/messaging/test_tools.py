@@ -50,19 +50,21 @@ async def started_module(tmp_path: Path):
 
 class TestToolRegistration:
     @pytest.mark.asyncio
-    async def test_five_messaging_tools_registered(
+    async def test_messaging_tools_registered(
         self,
         started_module,
     ) -> None:
         _, ctx = started_module
         calls = ctx.tool_registry.register.call_args_list
         names = [c.args[0].name for c in calls]
-        assert len(names) == 5
+        assert len(names) == 7
         assert "messaging_send" in names
         assert "messaging_check_inbox" in names
         assert "messaging_read_thread" in names
         assert "messaging_list_entities" in names
         assert "messaging_list_channels" in names
+        assert "store_team_file" in names
+        assert "list_team_files" in names
 
 
 class TestSendTool:

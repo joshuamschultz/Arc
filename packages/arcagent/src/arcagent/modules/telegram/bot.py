@@ -91,10 +91,11 @@ def split_message(text: str, max_length: int = 4096) -> list[str]:
             remaining = remaining[split_pos + 1 :]
             continue
 
-        # Try sentence boundary
-        matches = list(_SENTENCE_END.finditer(chunk))
-        if matches:
-            last_match = matches[-1]
+        # Try sentence boundary — find last match without materializing all
+        last_match = None
+        for m in _SENTENCE_END.finditer(chunk):
+            last_match = m
+        if last_match is not None:
             split_pos = last_match.end() - 1  # Include punctuation, not space
             chunks.append(remaining[:split_pos])
             remaining = remaining[split_pos:].lstrip()
@@ -130,11 +131,31 @@ class TelegramBot:
         self._chat_id: int | None = None
         self._current_session_id: str | None = None
         self._running = False
+        self._bot_id: int | None = None
+        self._file_handler: Any | None = None
 
         # State persistence path
         self._state_dir = workspace / "telegram"
         self._state_path = self._state_dir / "state.json"
         self._load_state()
+
+        # Initialize file handler
+        self._init_file_handler()
+
+    def _init_file_handler(self) -> None:
+        """Initialize the shared FileHandler for file downloads."""
+        try:
+            from arcagent.modules.file_handler import FileHandler
+
+            max_bytes = self._config.max_file_size_mb * 1024 * 1024
+            self._file_handler = FileHandler(
+                workspace=self._workspace,
+                max_file_size=max_bytes,
+            )
+            _logger.debug("FileHandler initialized (max %dMB)", self._config.max_file_size_mb)
+        except Exception:
+            _logger.debug("FileHandler not available; file uploads will be ignored")
+            self._file_handler = None
 
     def set_agent_chat_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
         """Bind the agent.chat() callback (deferred binding)."""
@@ -175,10 +196,20 @@ class TelegramBot:
         self._application.add_handler(CommandHandler("start", self._handle_start))
         self._application.add_handler(CommandHandler("new", self._handle_new))
         self._application.add_handler(CommandHandler("status", self._handle_status))
-        # Free text handler (must be last)
+
+        # Text messages (must be before catch-all)
         self._application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
+
+        # File/attachment handlers — documents, photos, voice, audio, video
+        self._application.add_handler(
+            MessageHandler(
+                filters.Document.ALL | filters.PHOTO | filters.VOICE | filters.AUDIO | filters.VIDEO,
+                self._handle_attachment,
+            )
+        )
+
         # Catch-all error handler so update errors don't vanish silently
         self._application.add_error_handler(self._on_error)
 
@@ -191,6 +222,7 @@ class TelegramBot:
 
         # Verify bot token and log identity
         bot_info = await self._application.bot.get_me()
+        self._bot_id = bot_info.id
         _logger.info(
             "Telegram bot authenticated: @%s (id=%d)",
             bot_info.username,
@@ -249,16 +281,13 @@ class TelegramBot:
 
         self._emit_event(
             "telegram:notification_sent",
-            {
-                "chat_id": self._chat_id,
-                "chunks": len(chunks),
-            },
+            {"chat_id": self._chat_id, "chunks": len(chunks)},
         )
 
     # ── Command Handlers ──────────────────────────────────────────
 
     async def _handle_start(self, update: Any, context: Any) -> None:
-        """Handle /start — register chat, create session."""
+        """Handle /start — bind chat and create session."""
         if update.effective_chat is None:
             return
 
@@ -272,7 +301,9 @@ class TelegramBot:
         self._current_session_id = str(uuid.uuid4())
         self._save_state()
 
-        await update.message.reply_text(f"Connected. Session: {self._current_session_id[:8]}...")
+        await update.message.reply_text(
+            f"Connected. Session: {self._current_session_id[:8]}..."
+        )
         self._emit_event(
             "telegram:message_received",
             {
@@ -324,6 +355,8 @@ class TelegramBot:
         )
         await update.message.reply_text(status_text)
 
+    # ── Message Handling ──────────────────────────────────────────
+
     async def _handle_message(self, update: Any, context: Any) -> None:
         """Handle free-text messages — route to agent.chat()."""
         if update.effective_chat is None or update.message is None:
@@ -331,6 +364,10 @@ class TelegramBot:
 
         chat_id = update.effective_chat.id
         _logger.debug("Received message from chat_id=%d", chat_id)
+
+        # Skip own bot messages (prevent self-talk loops)
+        if update.message.from_user and self._bot_id and update.message.from_user.id == self._bot_id:
+            return
 
         if not self._is_authorized(chat_id):
             _logger.warning(
@@ -373,6 +410,175 @@ class TelegramBot:
                 "update": update,
             }
         )
+
+    async def _handle_attachment(self, update: Any, context: Any) -> None:
+        """Handle file/photo/voice/audio/video attachments."""
+        if update.effective_chat is None or update.message is None:
+            return
+
+        chat_id = update.effective_chat.id
+
+        # Skip own bot messages
+        if update.message.from_user and self._bot_id and update.message.from_user.id == self._bot_id:
+            return
+
+        if not self._is_authorized(chat_id):
+            self._emit_event("telegram:auth_rejected", {"chat_id": chat_id})
+            return
+
+        if self._file_handler is None:
+            _logger.debug("FileHandler not available; ignoring attachment")
+            return
+
+        # Store chat_id if not already set
+        if self._chat_id is None:
+            self._chat_id = chat_id
+
+        # Create session if none exists
+        if self._current_session_id is None:
+            self._current_session_id = str(uuid.uuid4())
+            self._save_state()
+
+        await update.effective_chat.send_action("typing")
+
+        # Collect file context from all attachment types
+        file_context = await self._download_telegram_files(update.message)
+
+        # Caption text (user can add text with a file)
+        caption = update.message.caption or ""
+        prompt = f"{caption}\n\n{file_context}" if caption else file_context
+
+        if not prompt:
+            return
+
+        self._emit_event(
+            "telegram:message_received",
+            {
+                "chat_id": chat_id,
+                "session_id": self._current_session_id,
+                "has_attachment": True,
+            },
+        )
+
+        # Enqueue for sequential processing
+        await self._message_queue.put(
+            {
+                "text": prompt,
+                "chat_id": chat_id,
+                "update": update,
+            }
+        )
+
+    async def _download_telegram_files(self, message: Any) -> str:
+        """Download files from a Telegram message and build context.
+
+        Handles: document, photo, voice, audio, video.
+        Returns formatted context string.
+        """
+        context_blocks: list[str] = []
+
+        # Document (files with any extension)
+        if message.document:
+            ctx = await self._download_single_telegram_file(
+                file_id=message.document.file_id,
+                filename=message.document.file_name or "document",
+                file_size=message.document.file_size or 0,
+            )
+            if ctx:
+                context_blocks.append(ctx)
+
+        # Photo (get largest resolution — last in the list)
+        if message.photo:
+            photo = message.photo[-1]  # Largest size
+            ctx = await self._download_single_telegram_file(
+                file_id=photo.file_id,
+                filename=f"photo_{photo.file_unique_id}.jpg",
+                file_size=photo.file_size or 0,
+            )
+            if ctx:
+                context_blocks.append(ctx)
+
+        # Voice message
+        if message.voice:
+            ctx = await self._download_single_telegram_file(
+                file_id=message.voice.file_id,
+                filename=f"voice_{message.voice.file_unique_id}.ogg",
+                file_size=message.voice.file_size or 0,
+            )
+            if ctx:
+                context_blocks.append(ctx)
+
+        # Audio file
+        if message.audio:
+            ctx = await self._download_single_telegram_file(
+                file_id=message.audio.file_id,
+                filename=message.audio.file_name or f"audio_{message.audio.file_unique_id}.mp3",
+                file_size=message.audio.file_size or 0,
+            )
+            if ctx:
+                context_blocks.append(ctx)
+
+        # Video
+        if message.video:
+            ctx = await self._download_single_telegram_file(
+                file_id=message.video.file_id,
+                filename=message.video.file_name or f"video_{message.video.file_unique_id}.mp4",
+                file_size=message.video.file_size or 0,
+            )
+            if ctx:
+                context_blocks.append(ctx)
+
+        return "\n\n".join(context_blocks)
+
+    async def _download_single_telegram_file(
+        self,
+        file_id: str,
+        filename: str,
+        file_size: int,
+    ) -> str | None:
+        """Download a single Telegram file and return its context string."""
+        if self._application is None or self._file_handler is None:
+            return None
+
+        # Check allowed extensions
+        if self._config.allowed_extensions:
+            ext = Path(filename).suffix.lower().lstrip(".")
+            if ext not in self._config.allowed_extensions:
+                _logger.info("Skipping file %s — extension not allowed", filename)
+                return None
+
+        # Check file size
+        max_bytes = self._config.max_file_size_mb * 1024 * 1024
+        if file_size > max_bytes:
+            _logger.info("Skipping file %s — too large (%d bytes)", filename, file_size)
+            return f"*Skipped `{filename}` — exceeds {self._config.max_file_size_mb}MB limit*"
+
+        try:
+            tg_file = await self._application.bot.get_file(file_id)
+            data = await tg_file.download_as_bytearray()
+
+            path = await self._file_handler.download_from_bytes(bytes(data), filename)
+            if path is None:
+                return None
+
+            extracted = self._file_handler.extract_text(path)
+            context = self._file_handler.build_context(path, extracted)
+
+            self._emit_event(
+                "telegram:file_received",
+                {
+                    "filename": filename,
+                    "size": file_size,
+                    "extracted": extracted is not None,
+                    "path": str(path),
+                },
+            )
+
+            return context
+
+        except Exception:
+            _logger.exception("Failed to download Telegram file: %s", filename)
+            return None
 
     # ── Queue Processing ──────────────────────────────────────────
 

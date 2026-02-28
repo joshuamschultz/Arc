@@ -136,11 +136,30 @@ class SlackBot:
         self._current_session_id: str | None = None
         self._dm_channel_id: str | None = None
         self._running = False
+        self._file_handler: Any | None = None
 
         # State persistence path
         self._state_dir = workspace / "slack"
         self._state_path = self._state_dir / "state.json"
         self._load_state()
+
+        # Initialize file handler
+        self._init_file_handler()
+
+    def _init_file_handler(self) -> None:
+        """Initialize the shared FileHandler for file downloads."""
+        try:
+            from arcagent.modules.file_handler import FileHandler
+
+            max_bytes = self._config.max_file_size_mb * 1024 * 1024
+            self._file_handler = FileHandler(
+                workspace=self._workspace,
+                max_file_size=max_bytes,
+            )
+            _logger.debug("FileHandler initialized (max %dMB)", self._config.max_file_size_mb)
+        except Exception:
+            _logger.debug("FileHandler not available; file uploads will be ignored")
+            self._file_handler = None
 
     def set_agent_chat_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
         """Bind the agent.chat() callback (deferred binding)."""
@@ -256,16 +275,13 @@ class SlackBot:
 
         self._emit_event(
             "slack:notification_sent",
-            {
-                "user_id": self._user_id,
-                "chunks": len(chunks),
-            },
+            {"user_id": self._user_id, "chunks": len(chunks)},
         )
 
-    # ── Message Handler ──────────────────────────────────────────
+    # ── Message Handling ─────────────────────────────────────────
 
     async def _handle_message(self, event: dict[str, Any]) -> None:
-        """Handle inbound DM events from Slack."""
+        """Route inbound DM events from Slack."""
         # Skip bot messages (prevent infinite loops)
         if event.get("bot_id"):
             return
@@ -274,13 +290,11 @@ class SlackBot:
         channel = event.get("channel", "")
         text = event.get("text", "")
 
-        if not user_id or not text:
+        if not user_id:
             return
 
         # Strip bot mentions
-        text = _BOT_MENTION.sub("", text).strip()
-        if not text:
-            return
+        text = _BOT_MENTION.sub("", text).strip() if text else ""
 
         # Authorization check
         if not self._is_authorized(user_id):
@@ -310,13 +324,89 @@ class SlackBot:
             },
         )
 
-        # Dispatch text commands or process as chat message
-        if await self._dispatch_command(text, channel, user_id):
+        # Handle file attachments
+        file_context = await self._handle_files(event)
+
+        # Combine text + file context
+        prompt = text
+        if file_context:
+            prompt = f"{text}\n\n{file_context}" if text else file_context
+
+        # Need either text or files to proceed
+        if not prompt:
+            return
+
+        # Dispatch text commands (only when no files attached — commands don't have files)
+        if not file_context and await self._dispatch_command(text, channel, user_id):
             return
 
         # Process message through agent.chat()
         async with self._lock:
-            await self._process_message(text, channel)
+            await self._process_message(prompt, channel)
+
+    async def _handle_files(self, event: dict[str, Any]) -> str:
+        """Download and extract text from Slack file attachments.
+
+        Returns a formatted context string for all files, or empty string.
+        """
+        files = event.get("files")
+        if not files or self._file_handler is None or self._app is None:
+            return ""
+
+        bot_token = os.environ.get(self._config.bot_token_env_var, "")
+        context_blocks: list[str] = []
+
+        for file_info in files:
+            filename = file_info.get("name", "unknown")
+            file_size = file_info.get("size", 0)
+
+            # Check allowed extensions
+            if self._config.allowed_extensions:
+                ext = Path(filename).suffix.lower().lstrip(".")
+                if ext not in self._config.allowed_extensions:
+                    _logger.info("Skipping file %s — extension not allowed", filename)
+                    continue
+
+            # Check file size before downloading
+            max_bytes = self._config.max_file_size_mb * 1024 * 1024
+            if file_size > max_bytes:
+                _logger.info("Skipping file %s — too large (%d bytes)", filename, file_size)
+                context_blocks.append(
+                    f"*Skipped `{filename}` — exceeds {self._config.max_file_size_mb}MB limit*"
+                )
+                continue
+
+            # Slack private download URL
+            download_url = file_info.get("url_private_download") or file_info.get("url_private")
+            if not download_url:
+                _logger.debug("No download URL for file %s", filename)
+                continue
+
+            # Download with bot token auth
+            path = await self._file_handler.download_from_url(
+                url=download_url,
+                headers={"Authorization": f"Bearer {bot_token}"},
+                filename=filename,
+            )
+
+            if path is None:
+                continue
+
+            # Extract text and build context
+            extracted = self._file_handler.extract_text(path)
+            context_blocks.append(self._file_handler.build_context(path, extracted))
+
+            self._emit_event(
+                "slack:file_received",
+                {
+                    "filename": filename,
+                    "size": file_size,
+                    "extracted": extracted is not None,
+                    "path": str(path),
+                },
+            )
+
+        return "\n\n".join(context_blocks)
 
     async def _dispatch_command(self, text: str, channel: str, user_id: str) -> bool:
         """Dispatch text commands. Returns True if a command was handled."""
@@ -383,7 +473,7 @@ class SlackBot:
     # ── Text Command Handlers ────────────────────────────────────
 
     async def _handle_start(self, channel: str, user_id: str) -> None:
-        """Handle 'start' text command — register user, create session."""
+        """Handle 'start' text command — bind user and create session."""
         self._user_id = user_id
         self._dm_channel_id = channel
         self._current_session_id = str(uuid.uuid4())

@@ -4,6 +4,7 @@ __version__ = "0.1.0"
 
 from arcteam.audit import AuditLogger
 from arcteam.config import TeamConfig
+from arcteam.files import TeamFileStore
 from arcteam.memory.config import TeamMemoryConfig
 from arcteam.memory.service import TeamMemoryService
 from arcteam.messenger import MessagingService
@@ -36,6 +37,7 @@ __all__ = [
     "Priority",
     "StorageBackend",
     "TeamConfig",
+    "TeamFileStore",
     "TeamMemoryConfig",
     "TeamMemoryService",
 ]

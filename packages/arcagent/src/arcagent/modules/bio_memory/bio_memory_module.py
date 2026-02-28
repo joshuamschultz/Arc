@@ -90,6 +90,7 @@ class BioMemoryModule:
             workspace=self._workspace,
             team_service_factory=self._get_team_service,
             agent_id=self._agent_id,
+            call_timeout=float(self._eval_config.timeout_seconds),
         )
 
     @property

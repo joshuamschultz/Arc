@@ -21,6 +21,24 @@ from arcagent.modules.messaging.config import MessagingConfig
 _logger = logging.getLogger("arcagent.messaging")
 
 
+def _user_facing_error(exc: Exception) -> str:
+    """Map exceptions to user-friendly error messages for DLQ notifications.
+
+    Shared pattern with Slack and Telegram bots — avoids leaking
+    internal details while giving actionable information.
+    """
+    try:
+        from arcllm.exceptions import ArcLLMAPIError
+    except ImportError:
+        return "Error processing message. The system will retry automatically."
+
+    if isinstance(exc, ArcLLMAPIError) and exc.status_code == 429:
+        return "Rate limited by the LLM provider. Messages queued for retry."
+    if isinstance(exc, ArcLLMAPIError) and exc.status_code in {500, 502, 503}:
+        return "LLM provider temporarily unavailable. Messages queued for retry."
+    return "Error processing message. The system will retry automatically."
+
+
 class MessagingModule:
     """Inter-agent messaging module — Module Bus participant.
 
@@ -141,6 +159,7 @@ class MessagingModule:
             svc=self._svc,
             registry=self._registry,
             config=self._config,
+            team_root=team_root,
         )
         for tool in tools:
             ctx.tool_registry.register(tool)

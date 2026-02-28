@@ -21,3 +21,6 @@ class TelegramConfig(ModuleConfig):
     poll_interval: float = 1.0
     max_message_length: int = 4096
     bot_token_env_var: str = "ARCAGENT_TELEGRAM_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
+    downloads_dir: str = "files"
+    max_file_size_mb: int = 20
+    allowed_extensions: list[str] = []  # noqa: RUF012 — empty = allow all

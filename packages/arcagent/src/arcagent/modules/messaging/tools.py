@@ -1,13 +1,14 @@
 """LLM-callable tools for the messaging module.
 
 Creates RegisteredTool instances that the LLM can call to send/receive
-messages, discover entities, and manage channels.
+messages, discover entities, manage channels, and store team files.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
@@ -20,6 +21,7 @@ def create_messaging_tools(
     svc: Any,  # MessagingService — late import avoids hard dependency
     registry: Any,  # EntityRegistry
     config: MessagingConfig,
+    team_root: Path | None = None,
 ) -> list[RegisteredTool]:
     """Create the messaging tools for the LLM to call."""
 
@@ -28,6 +30,7 @@ def create_messaging_tools(
     from arcteam.types import Message, MsgType, Priority
 
     entity_id = config.entity_id
+    entity_name = config.entity_name or entity_id
 
     async def _handle_send(
         to: str = "",
@@ -187,7 +190,46 @@ def create_messaging_tools(
         except (ValueError, TypeError) as exc:
             return json.dumps({"error": str(exc)})
 
-    return [
+    # -- Team file storage tool (requires team_root) --
+
+    async def _handle_store_team_file(
+        file_path: str = "",
+        **kwargs: Any,
+    ) -> str:
+        """Store a file in the team's shared directory."""
+        if team_root is None:
+            return json.dumps({"error": "Team root not configured"})
+        try:
+            from arcteam.files import TeamFileStore
+
+            store = TeamFileStore(team_root)
+            result = await store.store(
+                source_path=Path(file_path),
+                agent_name=entity_name,
+            )
+            return json.dumps({"status": "stored", **result})
+        except (FileNotFoundError, ValueError) as exc:
+            return json.dumps({"error": str(exc)})
+
+    async def _handle_list_team_files(
+        agent_name: str = "",
+        **kwargs: Any,
+    ) -> str:
+        """List files in the team's shared directory."""
+        if team_root is None:
+            return json.dumps({"error": "Team root not configured"})
+        try:
+            from arcteam.files import TeamFileStore
+
+            store = TeamFileStore(team_root)
+            files = await store.list_files(
+                agent_name=agent_name or None,
+            )
+            return json.dumps({"files": files, "count": len(files)})
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+
+    tools = [
         RegisteredTool(
             name="messaging_send",
             description=(
@@ -315,3 +357,57 @@ def create_messaging_tools(
             source="messaging",
         ),
     ]
+
+    # Only register file tools when team_root is available
+    if team_root is not None:
+        tools.extend([
+            RegisteredTool(
+                name="store_team_file",
+                description=(
+                    "Store a file in the team's shared directory so other agents "
+                    "can access it. Use the file path from a received attachment."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {
+                            "type": "string",
+                            "description": (
+                                "Path to the file to share (e.g. from a downloaded "
+                                "Slack/Telegram attachment in the inbox)."
+                            ),
+                        },
+                    },
+                    "required": ["file_path"],
+                },
+                transport=ToolTransport.NATIVE,
+                execute=_handle_store_team_file,
+                timeout_seconds=30,
+                source="messaging",
+            ),
+            RegisteredTool(
+                name="list_team_files",
+                description=(
+                    "List files in the team's shared directory. "
+                    "Optionally filter by agent name."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "agent_name": {
+                            "type": "string",
+                            "description": (
+                                "Filter to a specific agent's files. "
+                                "Leave empty to list all shared files."
+                            ),
+                        },
+                    },
+                },
+                transport=ToolTransport.NATIVE,
+                execute=_handle_list_team_files,
+                timeout_seconds=30,
+                source="messaging",
+            ),
+        ])
+
+    return tools

@@ -53,8 +53,8 @@ class TestModuleStartup:
         ctx = make_ctx(tmp_path)
         await module.startup(ctx)
         try:
-            # Should register 5 messaging tools.
-            assert ctx.tool_registry.register.call_count == 5
+            # Should register 7 tools: 5 messaging + 2 team file tools.
+            assert ctx.tool_registry.register.call_count == 7
         finally:
             await module.shutdown()
 

@@ -8,6 +8,7 @@ session end as a safety net.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -79,6 +80,7 @@ class Consolidator:
         workspace: Path | None = None,
         team_service_factory: Callable[[], Any] | None = None,
         agent_id: str = "",
+        call_timeout: float = 60.0,
     ) -> None:
         self._memory_dir = memory_dir
         self._config = config
@@ -89,8 +91,20 @@ class Consolidator:
         self._entities_dir = self._workspace / config.entities_dirname
         self._team_service_factory = team_service_factory
         self._agent_id = agent_id
+        self._call_timeout = call_timeout
         # Per-session UUID for boundary markers (SEC-11)
         self._boundary_id = uuid.uuid4().hex[:12]
+
+    async def _invoke(self, model: Any, messages: list[Any]) -> Any:
+        """Invoke eval model with per-call timeout.
+
+        Each consolidation step gets its own bounded timeout so one slow
+        call doesn't kill the entire pipeline.
+        """
+        return await asyncio.wait_for(
+            model.invoke(messages),
+            timeout=self._call_timeout,
+        )
 
     async def periodic_consolidate(
         self,
@@ -189,10 +203,10 @@ class Consolidator:
         try:
             from arcllm.types import Message
 
-            response = await model.invoke([Message(role="user", content=prompt)])
+            response = await self._invoke(model, [Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             return bool(data.get("significant", False))
-        except _LLM_PARSE_ERRORS:
+        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
             _logger.warning("Significance evaluation failed, treating as not significant")
             return False
 
@@ -223,9 +237,9 @@ class Consolidator:
         try:
             from arcllm.types import Message
 
-            response = await model.invoke([Message(role="user", content=prompt)])
+            response = await self._invoke(model, [Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
-        except _LLM_PARSE_ERRORS:
+        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
             _logger.warning("Episode creation failed, skipping")
             return
 
@@ -353,12 +367,12 @@ class Consolidator:
         try:
             from arcllm.types import Message
 
-            response = await model.invoke([Message(role="user", content=prompt)])
+            response = await self._invoke(model, [Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             if not isinstance(data, dict):
                 return {}
             return data
-        except _LLM_PARSE_ERRORS:
+        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
             _logger.warning("Entity analysis LLM call failed")
             return {}
 
@@ -698,7 +712,7 @@ class Consolidator:
         try:
             from arcllm.types import Message
 
-            response = await model.invoke([Message(role="user", content=prompt)])
+            response = await self._invoke(model, [Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             entries = [
                 sanitize_text(e, max_length=1000)
@@ -711,5 +725,5 @@ class Consolidator:
                     "memory.daily_note_appended",
                     details={"entry_count": len(entries)},
                 )
-        except _LLM_PARSE_ERRORS:
+        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
             _logger.warning("Daily note summarization failed, skipping")
