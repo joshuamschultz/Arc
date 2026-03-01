@@ -44,3 +44,6 @@ class MessagingConfig(ModuleConfig):
 
     # Maximum messages per poll cycle per stream.
     max_messages_per_poll: int = 20
+
+    # Team roster cache TTL in seconds.
+    roster_ttl_seconds: float = 60.0

@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from arcllm import Message
-from arcrun import Event
+from arcrun import Event, RunHandle
 from arcrun import run as arcrun_run
+from arcrun import run_async as arcrun_run_async
 
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.context_manager import ContextManager
@@ -93,6 +94,186 @@ def create_arcrun_bridge(bus: ModuleBus) -> Callable[[Event], None]:
                 )
 
     return bridge
+
+
+def create_arcllm_bridge(bus: ModuleBus) -> Callable[[Any], None]:
+    """Create on_event callback for ArcLLM's load_model().
+
+    Maps ArcLLM TraceRecord event_types to Module Bus events:
+      llm_call       → llm:call_complete
+      config_change  → llm:config_change
+      circuit_change → llm:circuit_change
+
+    ArcLLM's on_event is synchronous (Callable[[TraceRecord], None]),
+    so we schedule the async bus.emit via the running event loop.
+    Accepts both TraceRecord (Pydantic) and plain dict inputs.
+    """
+    _event_map = {
+        "llm_call": "llm:call_complete",
+        "config_change": "llm:config_change",
+        "circuit_change": "llm:circuit_change",
+    }
+    # Hold strong references to pending tasks so they aren't GC'd
+    _pending: set[asyncio.Task[Any]] = set()
+
+    def bridge(record: Any) -> None:
+        data = record.model_dump() if hasattr(record, "model_dump") else record
+        event_type = data.get("event_type", "")
+        bus_event = _event_map.get(event_type)
+        if bus_event is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                task = loop.create_task(bus.emit(bus_event, data))
+                _pending.add(task)
+                task.add_done_callback(_pending.discard)
+            except RuntimeError:
+                _logger.warning(
+                    "No running event loop for LLM bridge event: %s",
+                    event_type,
+                )
+
+    return bridge
+
+
+def _build_messages_dict(
+    task: str, result: Any, messages: list[Any] | None
+) -> list[dict[str, Any]]:
+    """Serialize messages for agent:post_respond bus event.
+
+    Uses model_dump() for Pydantic models; falls back to raw dict.
+    Synthesizes a minimal exchange when no message history exists
+    so memory modules can process single-turn run() calls.
+    """
+    if messages:
+        return [m.model_dump() if hasattr(m, "model_dump") else m for m in messages]
+    response_text = getattr(result, "content", None) or ""
+    return [
+        {"role": "user", "content": task},
+        {"role": "assistant", "content": response_text},
+    ]
+
+
+_MAX_STEERING_MESSAGE_LEN = 32_768  # 32 KiB — generous but bounded
+
+
+def _validate_steering_message(message: str) -> None:
+    """Validate a steer/follow_up message.
+
+    Prevents empty or oversized payloads from reaching the queue.
+    """
+    if not message or not message.strip():
+        msg = "Steering message must not be empty"
+        raise ValueError(msg)
+    if len(message) > _MAX_STEERING_MESSAGE_LEN:
+        msg = f"Steering message exceeds {_MAX_STEERING_MESSAGE_LEN} character limit"
+        raise ValueError(msg)
+
+
+class AgentHandle:
+    """Control interface for a running agent execution.
+
+    Wraps ArcRun's RunHandle to add agent-level lifecycle:
+    bus events (agent:post_respond), audit trail, and session
+    management are deferred until result() is awaited.
+
+    Args:
+        handle: The underlying ArcRun RunHandle.
+        bus: Module bus for emitting agent-layer events.
+        telemetry: Telemetry instance for audit events.
+        session_id: Current session identifier (empty for run_async).
+        task: The original task string.
+        messages: Session message history, or None for single-turn.
+        session: SessionManager for committing results (chat_async only).
+    """
+
+    def __init__(
+        self,
+        handle: RunHandle,
+        bus: ModuleBus,
+        telemetry: AgentTelemetry,
+        session_id: str,
+        task: str,
+        messages: list[Message] | None,
+        session: SessionManager | None = None,
+    ) -> None:
+        self._handle = handle
+        self._bus = bus
+        self._telemetry = telemetry
+        self._session_id = session_id
+        self._task = task
+        self._messages = messages
+        self._session = session
+        self._result_consumed = False
+        self._completed = False
+
+    async def steer(self, message: str) -> None:
+        """Interrupt current execution with new direction."""
+        self._check_not_completed("steer")
+        _validate_steering_message(message)
+        await self._handle.steer(message)
+        self._telemetry.audit_event(
+            "agent.steer",
+            {"session_id": self._session_id, "message_len": len(message)},
+        )
+
+    async def follow_up(self, message: str) -> None:
+        """Queue a follow-up message for end of current turn."""
+        self._check_not_completed("follow_up")
+        _validate_steering_message(message)
+        await self._handle.follow_up(message)
+        self._telemetry.audit_event(
+            "agent.follow_up",
+            {"session_id": self._session_id, "message_len": len(message)},
+        )
+
+    async def cancel(self) -> None:
+        """Cancel execution. Returns partial result via result()."""
+        self._check_not_completed("cancel")
+        await self._handle.cancel()
+        self._telemetry.audit_event(
+            "agent.cancel",
+            {"session_id": self._session_id},
+        )
+
+    async def result(self) -> Any:
+        """Await completion and emit agent:post_respond.
+
+        May only be called once. Raises RuntimeError on repeat calls
+        to prevent duplicate bus events and session side effects.
+        Commits assistant message and runs compaction when a session
+        is attached (chat_async path).
+        """
+        if self._result_consumed:
+            msg = "AgentHandle.result() has already been awaited"
+            raise RuntimeError(msg)
+        self._result_consumed = True
+
+        loop_result = await self._handle.result()
+        self._completed = True
+
+        messages_dict = _build_messages_dict(self._task, loop_result, self._messages)
+        await self._bus.emit(
+            "agent:post_respond",
+            {"result": loop_result, "messages": messages_dict, "session_id": self._session_id},
+        )
+
+        # Commit assistant response to session (mirrors chat() blocking path)
+        if self._session is not None:
+            response_text = getattr(loop_result, "content", None) or ""
+            await self._session.append_message({"role": "assistant", "content": response_text})
+
+        return loop_result
+
+    @property
+    def state(self) -> Any:
+        """Read-only access to RunState."""
+        return self._handle.state
+
+    def _check_not_completed(self, method: str) -> None:
+        """Raise if execution has already completed."""
+        if self._completed:
+            msg = f"Cannot call {method}() after result() has been awaited"
+            raise RuntimeError(msg)
 
 
 class ArcAgent:
@@ -214,7 +395,8 @@ class ArcAgent:
         self._skill_registry = SkillRegistry()
         global_skills = Path("~/.arcagent/skills").expanduser()
         self._skill_registry.discover(workspace, global_skills)
-        # Inject skills into system prompt via bus event
+        # Inject tools and skills into system prompt via bus events
+        self._setup_tool_prompt_injection()
         self._setup_skill_prompt_injection()
 
         # 10. Extension Loader
@@ -254,6 +436,8 @@ class ArcAgent:
             {
                 "run_fn": self.run,
                 "chat_fn": self.chat,
+                "run_async_fn": self.run_async,
+                "chat_async_fn": self.chat_async,
             },
         )
 
@@ -287,14 +471,21 @@ class ArcAgent:
             self._model = load_eval_model(self._config.llm.model)
         return self._model
 
-    async def _execute_loop(
-        self,
-        task: str,
-        *,
-        messages: list[Any] | None = None,
-        tool_choice: dict[str, Any] | None = None,
-    ) -> Any:
-        """Shared execution: build tools, emit events, run loop."""
+    async def _build_run_context(
+        self, task: str
+    ) -> tuple[
+        AgentTelemetry,
+        ModuleBus,
+        Any,  # model
+        list[Any],  # arcrun tools
+        str,  # system_prompt
+        Callable[[Event], None],  # bridge
+    ]:
+        """Prepare shared run context for both blocking and async paths.
+
+        Returns the common objects needed to invoke arcrun.
+        Emits agent:pre_respond before returning.
+        """
         telemetry, tool_registry, context, bus = self._ensure_started()
         model = self._ensure_model()
 
@@ -303,6 +494,17 @@ class ArcAgent:
         bridge = create_arcrun_bridge(bus)
 
         await bus.emit("agent:pre_respond", {"task": task})
+        return telemetry, bus, model, tools, system_prompt, bridge
+
+    async def _execute_loop(
+        self,
+        task: str,
+        *,
+        messages: list[Any] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> Any:
+        """Blocking execution: build tools, emit events, run loop."""
+        telemetry, bus, model, tools, system_prompt, bridge = await self._build_run_context(task)
         try:
             async with telemetry.session_span(task):
                 _logger.info("Running agent loop for task: %s", task[:80])
@@ -313,7 +515,7 @@ class ArcAgent:
                     task=task,
                     messages=messages,
                     on_event=bridge,
-                    transform_context=context.transform_context,
+                    transform_context=self._context.transform_context if self._context else None,
                     tool_choice=tool_choice,
                 )
         except Exception as exc:
@@ -324,40 +526,87 @@ class ArcAgent:
             raise
 
         session_id = self._session.session_id if self._session else ""
-        if messages:
-            messages_dict = [m.model_dump() if hasattr(m, "model_dump") else m for m in messages]
-        else:
-            # Synthesize messages for run() path so memory modules
-            # (entity extraction, consolidation) can process the exchange.
-            response_text = getattr(result, "content", None) or ""
-            messages_dict = [
-                {"role": "user", "content": task},
-                {"role": "assistant", "content": response_text},
-            ]
+        messages_dict = _build_messages_dict(task, result, messages)
         await bus.emit(
             "agent:post_respond",
             {"result": result, "messages": messages_dict, "session_id": session_id},
         )
         return result
 
+    async def _execute_loop_async(
+        self,
+        task: str,
+        *,
+        messages: list[Message] | None = None,
+        tool_choice: dict[str, Any] | None = None,
+        session: SessionManager | None = None,
+    ) -> AgentHandle:
+        """Non-blocking execution: returns handle for steering.
+
+        Telemetry span wrapping is caller-responsibility since the
+        handle controls the execution lifetime.
+        """
+        telemetry, bus, model, tools, system_prompt, bridge = await self._build_run_context(task)
+        context = self._context
+        session_id = self._session.session_id if self._session else ""
+        try:
+            handle = await arcrun_run_async(
+                model=model,
+                tools=tools,
+                system_prompt=system_prompt,
+                task=task,
+                messages=messages,
+                on_event=bridge,
+                transform_context=context.transform_context if context else None,
+                tool_choice=tool_choice,
+            )
+        except Exception as exc:
+            await bus.emit(
+                "agent:error",
+                {"task": task, "error": str(exc), "error_type": type(exc).__name__},
+            )
+            raise
+        return AgentHandle(
+            handle=handle,
+            bus=bus,
+            telemetry=telemetry,
+            session_id=session_id,
+            task=task,
+            messages=messages,
+            session=session,
+        )
+
     async def run(self, task: str, *, tool_choice: dict[str, Any] | None = None) -> Any:
         """Execute a single task through the agent loop."""
         return await self._execute_loop(task, tool_choice=tool_choice)
 
-    async def chat(self, message: str, *, session_id: str | None = None) -> Any:
-        """Multi-turn conversation with persistent message history."""
+    async def run_async(
+        self, task: str, *, tool_choice: dict[str, Any] | None = None
+    ) -> AgentHandle:
+        """Execute a task, returning a handle for steering/cancellation."""
+        return await self._execute_loop_async(task, tool_choice=tool_choice)
+
+    async def _prepare_chat_session(self, message: str, session_id: str | None) -> SessionManager:
+        """Ensure session exists and append the user turn.
+
+        Raises RuntimeError if agent is not started.
+        """
         if self._session is None:
             msg = "Agent not started. Call startup() first."
             raise RuntimeError(msg)
         session = self._session
 
-        # Create or resume session
         if session_id is not None:
             await session.resume_session(session_id)
         elif not session.session_id:
             await session.create_session()
 
         await session.append_message({"role": "user", "content": message})
+        return session
+
+    async def chat(self, message: str, *, session_id: str | None = None) -> Any:
+        """Multi-turn conversation with persistent message history."""
+        session = await self._prepare_chat_session(message, session_id)
 
         result = await self._execute_loop(
             message,
@@ -370,6 +619,20 @@ class ArcAgent:
         # Check compaction threshold after each turn
         await self._maybe_compact(session)
         return result
+
+    async def chat_async(self, message: str, *, session_id: str | None = None) -> AgentHandle:
+        """Multi-turn conversation returning a steerable handle.
+
+        Unlike chat(), result() automatically commits the assistant
+        response to the session. Compaction is caller-responsibility.
+        """
+        session = await self._prepare_chat_session(message, session_id)
+
+        return await self._execute_loop_async(
+            message,
+            messages=[Message(**m) for m in session.get_messages()],
+            session=session,
+        )
 
     async def _maybe_compact(self, session: SessionManager) -> None:
         """Trigger compaction if context ratio exceeds compact_threshold."""
@@ -458,6 +721,36 @@ class ArcAgent:
         self._model = None
         self._started = False
         _logger.info("Agent %s shut down", self._config.agent.name)
+
+    def _setup_tool_prompt_injection(self) -> None:
+        """Subscribe to agent:assemble_prompt to inject tool catalog."""
+        bus = self._bus
+        tool_registry = self._tool_registry
+        telemetry = self._telemetry
+        if bus is None or tool_registry is None:
+            return
+
+        async def _inject_tools(ctx: Any) -> None:
+            sections = ctx.data.get("sections")
+            if not isinstance(sections, dict):
+                return
+            # Only audit on actual rebuild (cache miss)
+            was_cached = tool_registry.is_prompt_cached
+            prompt_text = tool_registry.format_for_prompt()
+            if prompt_text:
+                sections["tools"] = prompt_text
+                if not was_cached and telemetry is not None:
+                    telemetry.audit_event(
+                        "prompt.tools_catalog_rebuilt",
+                        {"tool_count": len(tool_registry.tools)},
+                    )
+
+        bus.subscribe(
+            event="agent:assemble_prompt",
+            handler=_inject_tools,
+            priority=85,
+            module_name="tool_registry",
+        )
 
     def _setup_skill_prompt_injection(self) -> None:
         """Subscribe to agent:assemble_prompt to inject skill list."""

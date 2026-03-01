@@ -189,7 +189,14 @@ class RunHandle:
         self._state.followup_queue.put_nowait(message)
 
     async def cancel(self) -> None:
-        """Hard stop. Sets cancel signal. Returns partial result."""
+        """Hard stop. Drains queues and sets cancel signal."""
+        # Drain pending messages to prevent stale items on partial result
+        for q in (self._state.steer_queue, self._state.followup_queue):
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
         self._state.cancel_event.set()
 
     async def result(self) -> LoopResult:

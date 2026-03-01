@@ -31,8 +31,8 @@ class RunState:
     token_budget: int | None = None
     cost_budget: float | None = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
-    steer_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
-    followup_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue)
+    steer_queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
+    followup_queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     transform_context: Callable[..., Any] | None = None
     tool_timeout: float | None = None
     strategy_name: str = ""

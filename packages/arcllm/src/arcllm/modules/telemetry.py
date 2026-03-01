@@ -11,13 +11,14 @@ import threading
 import time
 import unicodedata
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from opentelemetry import trace
 
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
 from arcllm.modules._logging import log_structured, validate_log_level
 from arcllm.modules.base import BaseModule, validate_config_keys
+from arcllm.trace_store import TraceRecord
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool, Usage
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,11 @@ _VALID_CONFIG_KEYS = {
     "enforcement",
     "budget_scope",
     "default_max_tokens",
+    # Trace recording (all optional — disabled if none present)
+    "on_event",
+    "trace_store",
+    "agent_label",
+    "store_raw_bodies",
 }
 
 # Fallback for pre-flight cost estimation when max_tokens not passed by caller
@@ -230,6 +236,12 @@ class TelemetryModule(BaseModule):
         self._budget_scope: str | None = config.get("budget_scope")
         self._default_max_tokens: int = config.get("default_max_tokens", _DEFAULT_MAX_TOKENS)
 
+        # Trace recording config (all optional)
+        self._on_event: Any | None = config.get("on_event")
+        self._trace_store: Any | None = config.get("trace_store")
+        self._agent_label: str | None = config.get("agent_label")
+        self._store_raw_bodies: bool = config.get("store_raw_bodies", True)
+
         self._budget_enabled = any(
             v is not None for v in (self._monthly_limit, self._daily_limit, self._per_call_max)
         )
@@ -386,6 +398,82 @@ class TelemetryModule(BaseModule):
             span.set_attribute("arcllm.budget.per_call_max_usd", self._per_call_max)
         span.set_attribute("arcllm.budget.action", action)
 
+    def get_budget_state(self) -> dict[str, Any] | None:
+        """Return current budget state for REST API queries.
+
+        Returns None if budget is not enabled.
+        """
+        if not self._budget_enabled:
+            return None
+        return {
+            "scope": self._budget_scope,
+            "monthly_spend": self._accumulator.monthly_spend,
+            "daily_spend": self._accumulator.daily_spend,
+            "monthly_limit": self._monthly_limit,
+            "daily_limit": self._daily_limit,
+            "per_call_max": self._per_call_max,
+            "enforcement": self._enforcement,
+            "alert_threshold_pct": self._alert_pct,
+        }
+
+    def _build_trace_record(
+        self,
+        response: LLMResponse,
+        cost: float,
+        phase_timings: dict[str, float],
+        messages: list[Message],
+        tools: list[Tool] | None,
+        kwargs: dict[str, Any],
+        status: Literal["success", "error", "timeout"] = "success",
+        error: str | None = None,
+    ) -> TraceRecord:
+        """Build a TraceRecord from invoke() data."""
+        request_body: dict[str, Any] | None = None
+        response_body: dict[str, Any] | None = None
+
+        if self._store_raw_bodies:
+            request_body = {
+                "messages": [m.model_dump() for m in messages],
+                "tools": [t.model_dump() for t in tools] if tools else None,
+                **{k: v for k, v in kwargs.items() if k != "max_tokens"},
+            }
+            if kwargs.get("max_tokens") is not None:
+                request_body["max_tokens"] = kwargs["max_tokens"]
+
+            response_body = {
+                "content": response.content,
+                "tool_calls": [tc.model_dump() for tc in response.tool_calls],
+                "stop_reason": response.stop_reason,
+            }
+
+        usage = response.usage
+        return TraceRecord(
+            provider=self._inner.name,
+            model=response.model,
+            agent_label=self._agent_label,
+            budget_scope=self._budget_scope,
+            request_body=request_body,
+            response_body=response_body,
+            duration_ms=phase_timings.get("total_ms", 0.0),
+            cost_usd=cost,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            cache_write_tokens=usage.cache_write_tokens,
+            stop_reason=response.stop_reason,
+            status=status,
+            error=error,
+            phase_timings=phase_timings,
+        )
+
+    async def _emit_trace(self, record: TraceRecord) -> None:
+        """Append to trace_store and fire on_event callback (outside locks)."""
+        if self._trace_store is not None:
+            await self._trace_store.append(record)
+        if self._on_event is not None:
+            self._on_event(record)
+
     async def invoke(
         self,
         messages: list[Message],
@@ -393,19 +481,17 @@ class TelemetryModule(BaseModule):
         **kwargs: Any,
     ) -> LLMResponse:
         with self._span("arcllm.telemetry") as tel_span:
+            t0 = time.monotonic()
+
             # Budget pre-check (before calling inner provider)
             budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
 
-            start = time.monotonic()
+            t_pre = time.monotonic()
             response = await self._inner.invoke(messages, tools, **kwargs)
-            elapsed = time.monotonic() - start
+            t_llm = time.monotonic()
 
             usage = response.usage
             cost = self._calculate_cost(usage)
-            duration_ms = round(elapsed * 1000, 1)
-
-            tel_span.set_attribute("arcllm.telemetry.duration_ms", duration_ms)
-            tel_span.set_attribute("arcllm.telemetry.cost_usd", cost)
 
             # Budget post-deduct (after successful call)
             if self._budget_enabled:
@@ -421,13 +507,31 @@ class TelemetryModule(BaseModule):
                 updates["metadata"] = {**existing_meta, **budget_meta}
             response = response.model_copy(update=updates)
 
+            t_post = time.monotonic()
+
+            # Phase timings
+            prompt_assembly_ms = round((t_pre - t0) * 1000, 1)
+            llm_call_ms = round((t_llm - t_pre) * 1000, 1)
+            post_processing_ms = round((t_post - t_llm) * 1000, 1)
+            total_ms = round((t_post - t0) * 1000, 1)
+
+            phase_timings = {
+                "prompt_assembly_ms": prompt_assembly_ms,
+                "llm_call_ms": llm_call_ms,
+                "post_processing_ms": post_processing_ms,
+                "total_ms": total_ms,
+            }
+
+            tel_span.set_attribute("arcllm.telemetry.duration_ms", total_ms)
+            tel_span.set_attribute("arcllm.telemetry.cost_usd", cost)
+
             log_structured(
                 logger,
                 self._log_level,
                 "LLM call",
                 provider=self._inner.name,
                 model=response.model,
-                duration_ms=duration_ms,
+                duration_ms=total_ms,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
                 total_tokens=usage.total_tokens,
@@ -436,5 +540,12 @@ class TelemetryModule(BaseModule):
                 cost_usd=cost,
                 stop_reason=response.stop_reason,
             )
+
+            # Build and emit trace record (fire-and-forget for trace_store)
+            if self._trace_store is not None or self._on_event is not None:
+                record = self._build_trace_record(
+                    response, cost, phase_timings, messages, tools, kwargs,
+                )
+                await self._emit_trace(record)
 
             return response

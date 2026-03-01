@@ -11,12 +11,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from arcagent.core.module_bus import EventContext, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.messaging.config import MessagingConfig
+from arcagent.utils.sanitizer import sanitize_text
 
 _logger = logging.getLogger("arcagent.messaging")
 
@@ -67,6 +71,8 @@ class MessagingModule:
         self._last_unread: dict[str, int] = {}  # stream -> unread count cache
         self._agent_chat_fn: Any = None  # agent.chat() — bound via agent:ready
         self._processing_lock = asyncio.Lock()  # Serialize message processing
+        self._roster_cache: str | None = None
+        self._roster_cache_time: float = 0.0
 
     def _resolve_team_root(self) -> Path:
         """Resolve team root directory.
@@ -203,12 +209,75 @@ class MessagingModule:
         """Handle agent:shutdown event."""
         await self.shutdown()
 
+    async def _build_roster(self) -> str:
+        """Build XML roster from EntityRegistry with TTL caching.
+
+        Uses dynamic field rendering via model_dump(exclude_defaults=True)
+        so new Entity fields auto-appear without code changes.
+        """
+        now = time.monotonic()
+        ttl = self._config.roster_ttl_seconds
+
+        if self._roster_cache is not None and (now - self._roster_cache_time) < ttl:
+            return self._roster_cache
+
+        if self._registry is None:
+            return ""
+
+        entities = await self._registry.list_entities()
+        if not entities:
+            self._roster_cache = ""
+            self._roster_cache_time = now
+            return ""
+
+        lines = ["<team-roster>"]
+        for entity in entities:
+            # Dynamic field rendering — all non-default values
+            data = entity.model_dump(exclude_defaults=True)
+            safe_name = xml_escape(str(data.get("name", "")), {'"': "&quot;"})
+            attrs = f'name="{safe_name}"'
+            if "id" in data:
+                safe_id = xml_escape(str(data["id"]), {'"': "&quot;"})
+                attrs += f' id="{safe_id}"'
+
+            lines.append(f"  <entity {attrs}>")
+            for key, value in data.items():
+                if key in ("name", "id"):
+                    continue
+                # Validate key is a safe XML element name (NCName)
+                if not re.fullmatch(r"[a-zA-Z_][a-zA-Z0-9_\-\.]*", key):
+                    _logger.warning("Skipping entity field with unsafe key: %r", key)
+                    continue
+                if isinstance(value, list):
+                    safe_val = xml_escape(", ".join(str(v) for v in value))
+                else:
+                    safe_val = xml_escape(str(value))
+                lines.append(f"    <{key}>{safe_val}</{key}>")
+            lines.append("  </entity>")
+
+        lines.append("</team-roster>")
+
+        self._roster_cache = "\n".join(lines)
+        self._roster_cache_time = now
+
+        # Audit roster rebuild
+        if self._telemetry is not None:
+            self._telemetry.audit_event(
+                "prompt.roster_rebuilt",
+                {"entity_count": len(entities)},
+            )
+
+        return self._roster_cache
+
     async def _on_assemble_prompt(self, ctx: EventContext) -> None:
-        """Inject team messaging behavior into the system prompt."""
+        """Inject team messaging behavior and roster into the system prompt."""
         sections = ctx.data.get("sections", {})
 
-        entity_id = self._config.entity_id
-        entity_name = self._config.entity_name or entity_id
+        # Sanitize identity fields before prompt interpolation (LLM01, ASI06).
+        entity_id = sanitize_text(self._config.entity_id, max_length=200)
+        entity_name = sanitize_text(
+            self._config.entity_name or self._config.entity_id, max_length=200,
+        )
 
         lines = [
             "## Team Messaging",
@@ -234,7 +303,8 @@ class MessagingModule:
             lines.append("")
             lines.append(f"You have {total} unread message(s). Check inbox and handle them.")
             for stream, count in self._last_unread.items():
-                lines.append(f"  - {stream}: {count}")
+                safe_stream = sanitize_text(stream, max_length=200)
+                lines.append(f"  - {safe_stream}: {count}")
 
         # Behavioral rules — concise.
         lines.extend(
@@ -250,7 +320,13 @@ class MessagingModule:
             ]
         )
 
-        sections["messaging"] = "\n".join(lines)
+        # Add team roster
+        roster = await self._build_roster()
+        if roster:
+            lines.append("")
+            lines.append(roster)
+
+        sections["teams"] = "\n".join(lines)
 
     async def _poll_loop(self) -> None:
         """Background polling loop. Routes new messages through agent.chat().
@@ -320,14 +396,21 @@ class MessagingModule:
                 "",
             ]
             for msg in all_messages:
+                # Sanitize all inter-agent fields before prompt interpolation (LLM01).
+                sender = sanitize_text(str(msg["sender"]), max_length=200)
+                body = sanitize_text(str(msg["body"]), max_length=4000)
+                msg_type = sanitize_text(str(msg["msg_type"]), max_length=50)
+                priority = sanitize_text(str(msg["priority"]), max_length=50)
+
                 action_flag = " [ACTION REQUIRED]" if msg["action_required"] else ""
                 lines.append(
-                    f"**From {msg['sender']}** ({msg['msg_type']}, "
-                    f"{msg['priority']} priority){action_flag}:"
+                    f"**From {sender}** ({msg_type}, "
+                    f"{priority} priority){action_flag}:"
                 )
-                lines.append(f"> {msg['body']}")
+                lines.append(f"> {body}")
                 if msg["thread_id"] and msg["thread_id"] != msg["id"]:
-                    lines.append(f"  (thread: {msg['thread_id']})")
+                    thread_id = sanitize_text(str(msg["thread_id"]), max_length=200)
+                    lines.append(f"  (thread: {thread_id})")
                 lines.append("")
 
             lines.append(

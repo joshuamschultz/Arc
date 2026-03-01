@@ -5,6 +5,16 @@ All notable changes to ArcRun will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-01
+
+### Changed
+
+- **Code formatting & lint compliance** — Applied consistent formatting across all source files: multi-line function signatures, explicit `strict=False` on `zip()` calls, expanded `bus.emit()` calls for readability. Zero ruff violations.
+- **Ruff lint config** — Added comprehensive rule selection (`E`, `W`, `F`, `I`, `N`, `UP`, `B`, `A`, `S`, `T20`, `RUF`) and per-file ignores for tests, sandbox builtins, and walkthroughs.
+- **Import modernization** — Replaced `typing.Callable` with `collections.abc.Callable` per PEP 585 (`UP` rules).
+- **Exception type update** — `asyncio.TimeoutError` replaced with builtin `TimeoutError` per Python 3.11+ deprecation.
+- **Spawn string formatting** — Simplified f-string concatenation in child system prompt construction.
+
 ## [0.2.0] - 2026-02-21
 
 ### Added

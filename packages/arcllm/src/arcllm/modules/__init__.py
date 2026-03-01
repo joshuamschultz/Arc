@@ -4,6 +4,7 @@ from arcllm.modules.audit import AuditModule
 from arcllm.modules.base import BaseModule
 from arcllm.modules.fallback import FallbackModule
 from arcllm.modules.otel import OtelModule
+from arcllm.modules.queue import QueueModule
 from arcllm.modules.rate_limit import RateLimitModule
 from arcllm.modules.retry import RetryModule
 from arcllm.modules.security import SecurityModule
@@ -14,6 +15,7 @@ __all__ = [
     "BaseModule",
     "FallbackModule",
     "OtelModule",
+    "QueueModule",
     "RateLimitModule",
     "RetryModule",
     "SecurityModule",

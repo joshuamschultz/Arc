@@ -500,12 +500,46 @@ class TestModuleStacking:
         model = load_model("anthropic", otel={"exporter": "none"})
         assert isinstance(model, OtelModule)
 
+    def test_load_model_with_queue(self):
+        """queue=True wraps adapter with QueueModule."""
+        from arcllm.modules.queue import QueueModule
+        from arcllm.registry import load_model
+
+        model = load_model("anthropic", queue=True)
+        assert isinstance(model, QueueModule)
+
+    def test_load_model_with_queue_dict(self):
+        """queue={...} wraps adapter with QueueModule using custom config."""
+        from arcllm.modules.queue import QueueModule
+        from arcllm.registry import load_model
+
+        model = load_model("anthropic", queue={"max_concurrent": 5})
+        assert isinstance(model, QueueModule)
+        assert model._max_concurrent == 5
+
+    def test_load_model_queue_false_overrides_config(self):
+        """queue=False disables even if config.toml enables it."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+        from arcllm.config import GlobalConfig, ModuleConfig
+        from arcllm.modules.queue import QueueModule
+        from arcllm.registry import load_model
+
+        mock_global = GlobalConfig(
+            defaults={"provider": "anthropic", "temperature": 0.7, "max_tokens": 4096},
+            modules={"queue": ModuleConfig(enabled=True, max_concurrent=2)},
+        )
+        with patch("arcllm.registry.load_global_config", return_value=mock_global):
+            model = load_model("anthropic", queue=False)
+        assert not isinstance(model, QueueModule)
+        assert isinstance(model, AnthropicAdapter)
+
     def test_load_model_otel_full_stack(self):
-        """Full stack: Otel(Telemetry(Audit(Retry(Fallback(RateLimit(adapter))))))."""
+        """Full stack: Otel(Queue(Telemetry(Audit(Retry(Fallback(RateLimit(adapter)))))))."""
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.audit import AuditModule
         from arcllm.modules.fallback import FallbackModule
         from arcllm.modules.otel import OtelModule
+        from arcllm.modules.queue import QueueModule
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.modules.retry import RetryModule
         from arcllm.modules.telemetry import TelemetryModule
@@ -517,16 +551,18 @@ class TestModuleStacking:
             fallback=True,
             rate_limit=True,
             telemetry=True,
+            queue=True,
             audit=True,
             otel={"exporter": "none"},
         )
         assert isinstance(model, OtelModule)
-        assert isinstance(model._inner, TelemetryModule)
-        assert isinstance(model._inner._inner, AuditModule)
-        assert isinstance(model._inner._inner._inner, RetryModule)
-        assert isinstance(model._inner._inner._inner._inner, FallbackModule)
-        assert isinstance(model._inner._inner._inner._inner._inner, RateLimitModule)
-        assert isinstance(model._inner._inner._inner._inner._inner._inner, AnthropicAdapter)
+        assert isinstance(model._inner, QueueModule)
+        assert isinstance(model._inner._inner, TelemetryModule)
+        assert isinstance(model._inner._inner._inner, AuditModule)
+        assert isinstance(model._inner._inner._inner._inner, RetryModule)
+        assert isinstance(model._inner._inner._inner._inner._inner, FallbackModule)
+        assert isinstance(model._inner._inner._inner._inner._inner._inner, RateLimitModule)
+        assert isinstance(model._inner._inner._inner._inner._inner._inner._inner, AnthropicAdapter)
 
     def test_load_model_otel_false_overrides_config(self):
         """otel=False disables even if config.toml enables it."""

@@ -108,6 +108,7 @@ class ToolsConfig(BaseModel):
     process: dict[str, ProcessToolEntry] = {}
     policy: ToolConfig = ToolConfig()
     allowed_module_prefixes: list[str] = Field(default=["arcagent."])
+    preamble: str = ""
 
 
 class ModuleEntry(BaseModel):
@@ -228,6 +229,7 @@ _ENV_DENYLIST_PREFIXES = frozenset(
         "vault__backend",
         "tools__native",
         "tools__process",
+        "tools__preamble",
         "identity__key_dir",
     }
 )

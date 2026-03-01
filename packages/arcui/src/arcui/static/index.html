@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Platform — LLM Telemetry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/arc-platform.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div class="topbar"></div>
+    <nav class="sidebar"></nav>
+    <main class="main-content">
+
+      <!-- Connection Banner -->
+      <div id="connection-banner" class="connection-banner disconnected">
+        <span class="connection-dot"></span>
+        <span>Disconnected</span>
+      </div>
+
+      <div class="page-header">
+        <h1>LLM Telemetry &amp; Traces</h1>
+        <div class="page-header-actions">
+          <div class="pill-nav" id="main-tabs">
+            <span class="pill-nav-item active" data-tab="overview">Overview</span>
+            <span class="pill-nav-item" data-tab="traces">Traces</span>
+            <span class="pill-nav-item" data-tab="cost">Cost</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== OVERVIEW TAB ==================== -->
+      <div class="tab-panel active" id="tab-overview">
+
+        <!-- Top Stats -->
+        <div class="grid-4 mb-20">
+          <div class="stat-card stale-overlay">
+            <div class="stat-card-label">LLM Calls (24h)</div>
+            <div class="stat-card-value" id="stat-requests">0</div>
+            <div class="stat-card-sub" id="stat-requests-sub">&nbsp;</div>
+          </div>
+          <div class="stat-card stale-overlay">
+            <div class="stat-card-label">Total Tokens</div>
+            <div class="stat-card-value" id="stat-tokens">0</div>
+            <div class="stat-card-sub" id="stat-tokens-sub">&nbsp;</div>
+          </div>
+          <div class="stat-card stale-overlay">
+            <div class="stat-card-label">Avg Latency</div>
+            <div class="stat-card-value" id="stat-latency">0ms</div>
+            <div class="stat-card-sub" id="stat-latency-sub">&nbsp;</div>
+          </div>
+          <div class="stat-card stale-overlay">
+            <div class="stat-card-label">Total Cost (24h)</div>
+            <div class="stat-card-value" id="stat-cost">$0.00</div>
+            <div class="stat-card-sub" id="stat-cost-sub">&nbsp;</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <!-- Token Volume Chart -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Token Volume (Hourly)</span>
+              <div class="pill-nav">
+                <span class="pill-nav-item active">24h</span>
+                <span class="pill-nav-item">7d</span>
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="chart-area" id="token-volume" style="height:180px;"></div>
+            </div>
+          </div>
+
+          <!-- Cost by Provider -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Cost Breakdown by Provider</span>
+            </div>
+            <div class="card-body" id="provider-breakdown">
+              <div class="empty-state"><p>No data yet</p></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Circuit Breaker Status -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Provider Circuit Breakers</span>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <table>
+              <thead>
+                <tr><th>Provider</th><th>State</th><th>Failures</th><th>Last Transition</th></tr>
+              </thead>
+              <tbody id="cb-tbody">
+                <tr><td colspan="4" class="text-muted" style="text-align:center;">No circuit breakers registered</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== TRACES TAB ==================== -->
+      <div class="tab-panel" id="tab-traces">
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Recent LLM Calls</span>
+            <div class="flex gap-8">
+              <select class="filter-select" id="filter-provider">
+                <option value="">All Providers</option>
+              </select>
+              <select class="filter-select" id="filter-agent">
+                <option value="">All Agents</option>
+              </select>
+              <button class="btn btn-ghost btn-sm" id="btn-export">Export</button>
+            </div>
+          </div>
+          <div class="card-body" style="padding:0;overflow-x:auto;max-height:500px;overflow-y:auto;position:relative;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Trace ID</th>
+                  <th>Agent</th>
+                  <th>Model</th>
+                  <th>Tokens In</th>
+                  <th>Tokens Out</th>
+                  <th>Latency</th>
+                  <th>Cost</th>
+                  <th>Status</th>
+                  <th>Time</th>
+                </tr>
+              </thead>
+              <tbody id="trace-tbody"></tbody>
+            </table>
+            <button class="resume-live-btn hidden" id="resume-live">Resume Live</button>
+          </div>
+        </div>
+
+        <!-- Trace Detail (expandable) -->
+        <div class="card hidden" id="trace-detail">
+          <div class="card-header">
+            <span class="card-title">Trace Detail: <span id="detail-trace-id"></span></span>
+            <button class="btn btn-ghost btn-sm" id="close-detail">Close</button>
+          </div>
+          <div class="card-body">
+            <div class="grid-2" style="gap:20px;">
+              <div>
+                <div class="text-xs text-dimmed mb-8">Request</div>
+                <div class="code-block" id="detail-request" style="max-height:200px;overflow-y:auto;">-</div>
+              </div>
+              <div>
+                <div class="text-xs text-dimmed mb-8">Response</div>
+                <div class="code-block" id="detail-response" style="max-height:200px;overflow-y:auto;">-</div>
+              </div>
+            </div>
+            <div style="margin-top:16px;">
+              <div class="text-xs text-dimmed mb-8">Span Timeline</div>
+              <div id="detail-timeline" style="display:flex;align-items:center;gap:4px;height:24px;background:var(--bg-deepest);border-radius:var(--radius-sm);padding:0 8px;">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== COST TAB ==================== -->
+      <div class="tab-panel" id="tab-cost">
+
+        <!-- Savings Alert (shown when >20% savings possible) -->
+        <div class="savings-alert mb-20 hidden" id="savings-alert">
+          <span>Potential savings: <strong id="savings-amount">$0.00</strong> (<span id="savings-pct">0%</span>) by switching to the cheapest model.</span>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <!-- Per-Agent Cost -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Cost by Agent</span>
+            </div>
+            <div class="card-body" id="agent-cost-bars">
+              <div class="empty-state"><p>No data yet</p></div>
+            </div>
+          </div>
+
+          <!-- Per-Provider Cost -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Cost by Provider</span>
+            </div>
+            <div class="card-body" id="provider-cost-bars">
+              <div class="empty-state"><p>No data yet</p></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Comparison Card -->
+        <div class="card mb-20 hidden" id="model-comparison-card">
+          <div class="card-header">
+            <span class="card-title">Model Comparison</span>
+          </div>
+          <div class="card-body">
+            <div class="model-comparison">
+              <div>
+                <div class="text-xs text-dimmed">Cheapest</div>
+                <div class="text-white font-bold" id="cheapest-model">-</div>
+              </div>
+              <span class="vs">vs</span>
+              <div>
+                <div class="text-xs text-dimmed">Most Used</div>
+                <div class="text-white font-bold" id="most-used-model">-</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Model Efficiency Table -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Model Cost Efficiency</span>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <table class="efficiency-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th class="sortable">$/Token</th>
+                  <th>Requests</th>
+                  <th>Total Tokens</th>
+                  <th>Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="efficiency-tbody">
+                <tr><td colspan="5" class="text-muted" style="text-align:center;">No data yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Budget Gauges -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Budget Status</span>
+          </div>
+          <div class="card-body" id="budget-gauges">
+            <div class="empty-state"><p>No budgets configured</p></div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Scripts (order matters) -->
+  <script src="assets/arc-shell.js"></script>
+  <script src="assets/formatters.js"></script>
+  <script src="assets/dom-batcher.js"></script>
+  <script src="assets/store.js"></script>
+  <script src="assets/ws-client.js"></script>
+  <script src="assets/connection-ui.js"></script>
+  <script src="assets/log-table.js"></script>
+  <script>
+    /* --- Init Shell --- */
+    ARC.renderShell();
+    ARC.renderChartBars(document.getElementById('token-volume'), 48, 160);
+
+    /* --- Tab Navigation --- */
+    document.getElementById('main-tabs').addEventListener('click', (e) => {
+      const item = e.target.closest('.pill-nav-item');
+      if (!item) return;
+      const tab = item.dataset.tab;
+      document.querySelectorAll('#main-tabs .pill-nav-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + tab)?.classList.add('active');
+    });
+
+    /* --- Connection --- */
+    const connUI = new ConnectionUI(document.getElementById('connection-banner'));
+    const token = new URLSearchParams(window.location.search).get('token') || '';
+    // Strip token from URL to prevent leakage via browser history / referrer
+    if (token && window.history.replaceState) {
+      const url = new URL(window.location);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    }
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new RobustWebSocket(wsProto + '//' + location.host + '/ws', token);
+
+    ws.addEventListener('statechange', (e) => connUI.update(e.detail));
+    ws.addEventListener('message', (e) => {
+      connUI.markFresh();
+      const data = e.detail;
+      if (data.type === 'event_batch') {
+        ArcStore.handleEventBatch(data);
+      }
+    });
+
+    if (token) ws.connect();
+
+    /* --- LogTable --- */
+    const logTable = new LogTable(
+      document.getElementById('trace-tbody'),
+      { resumeBtn: document.getElementById('resume-live') }
+    );
+
+    ArcStore.addEventListener('trace-event', (e) => {
+      logTable.addRow(e.detail);
+    });
+
+    /* --- Trace Detail --- */
+    document.getElementById('trace-tbody').addEventListener('click', (e) => {
+      const row = e.target.closest('tr');
+      if (!row) return;
+      const traceId = row.dataset.traceId;
+      if (!traceId) return;
+
+      document.getElementById('trace-detail').classList.remove('hidden');
+      document.getElementById('detail-trace-id').textContent = traceId;
+
+      // Fetch trace detail
+      fetch('/api/traces/' + traceId, {
+        headers: { 'Authorization': 'Bearer ' + token }
+      })
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('detail-request').textContent =
+          JSON.stringify(data.request_body || data, null, 2);
+        document.getElementById('detail-response').textContent =
+          JSON.stringify(data.response_body || {}, null, 2);
+
+        // Render span timeline using DOM API to prevent XSS
+        const timeline = document.getElementById('detail-timeline');
+        const timings = data.phase_timings || {};
+        const total = Object.values(timings).reduce((a, b) => a + b, 0) || 1;
+        const colors = ['var(--status-info)', 'var(--accent)', 'var(--status-online)',
+                        'var(--status-warning)', 'var(--text-dimmed)'];
+        timeline.innerHTML = '';
+        let i = 0;
+        for (const [phase, ms] of Object.entries(timings)) {
+          const pct = (ms / total * 100).toFixed(1);
+          const color = colors[i++ % colors.length];
+          const bar = document.createElement('div');
+          bar.style.cssText = `width:${pct}%;height:12px;background:${color};border-radius:2px;`;
+          bar.title = `${phase}: ${Math.round(ms)}ms`;
+          timeline.appendChild(bar);
+        }
+      })
+      .catch(() => {
+        document.getElementById('detail-request').textContent = 'Failed to load';
+      });
+    });
+
+    document.getElementById('close-detail').addEventListener('click', () => {
+      document.getElementById('trace-detail').classList.add('hidden');
+    });
+
+    /* --- Polling for REST data --- */
+    async function fetchAPI(path) {
+      if (!token) return null;
+      try {
+        const r = await fetch(path, { headers: { 'Authorization': 'Bearer ' + token } });
+        if (!r.ok) return null;
+        return await r.json();
+      } catch { return null; }
+    }
+
+    async function refreshStats() {
+      const data = await fetchAPI('/api/stats?window=24h');
+      if (!data || data.error) return;
+      ArcStore.updateStats(data);
+
+      domBatcher.schedule(() => {
+        document.getElementById('stat-requests').textContent = Fmt.number(data.request_count);
+        document.getElementById('stat-tokens').textContent = Fmt.tokens(data.total_tokens);
+        document.getElementById('stat-latency').textContent = Fmt.latency(data.latency_avg);
+        document.getElementById('stat-latency-sub').textContent =
+          'P95: ' + Fmt.latency(data.latency_p95) + ' \u00b7 P99: ' + Fmt.latency(data.latency_p99);
+        document.getElementById('stat-cost').textContent = Fmt.cost(data.total_cost);
+
+        // Provider breakdown
+        const providers = data.provider_counts || {};
+        const totalCost = data.total_cost || 0;
+        const provEl = document.getElementById('provider-breakdown');
+        if (Object.keys(providers).length > 0) {
+          const modelStats = data.model_stats || {};
+          let html = '';
+          for (const [prov, count] of Object.entries(providers)) {
+            const pct = data.request_count > 0 ? (count / data.request_count * 100).toFixed(0) : 0;
+            html += `<div style="margin-bottom:12px;">
+              <div class="flex justify-between items-center mb-8">
+                <span class="text-sm text-white">${Fmt.escapeHTML(prov)}</span>
+                <span class="mono text-sm">${count} calls (${pct}%)</span>
+              </div>
+              <div class="progress-bar" style="height:8px;"><div class="fill" style="width:${pct}%;"></div></div>
+            </div>`;
+          }
+          provEl.innerHTML = html;
+        }
+      });
+    }
+
+    async function refreshCircuitBreakers() {
+      const data = await fetchAPI('/api/circuit-breakers');
+      if (!data) return;
+      ArcStore.setCircuitBreakers(data.circuit_breakers || []);
+      const cbs = data.circuit_breakers || [];
+
+      domBatcher.schedule(() => {
+        const tbody = document.getElementById('cb-tbody');
+        if (cbs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" class="text-muted" style="text-align:center;">No circuit breakers registered</td></tr>';
+          return;
+        }
+        tbody.innerHTML = cbs.map(cb => {
+          const stateClass = cb.state === 'CLOSED' ? 'badge-online' :
+                             cb.state === 'OPEN' ? 'badge-error' : 'badge-warning';
+          return `<tr>
+            <td class="text-white">${Fmt.escapeHTML(cb.provider || cb.name || '-')}</td>
+            <td><span class="badge ${stateClass}">${cb.state || '-'}</span></td>
+            <td class="mono">${cb.consecutive_failures || 0}</td>
+            <td class="text-muted">${Fmt.relativeTime(cb.last_transition || '')}</td>
+          </tr>`;
+        }).join('');
+      });
+    }
+
+    async function refreshCostEfficiency() {
+      const data = await fetchAPI('/api/cost-efficiency?window=24h');
+      if (!data || data.error) return;
+      ArcStore.setCostEfficiency(data);
+
+      domBatcher.schedule(() => {
+        const models = data.models || [];
+        const tbody = document.getElementById('efficiency-tbody');
+        if (models.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="text-align:center;">No data yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = models.map(m =>
+          `<tr>
+            <td class="text-white">${Fmt.escapeHTML(m.model)}</td>
+            <td class="mono">${m.cost_per_token.toFixed(8)}</td>
+            <td class="mono">${Fmt.number(m.request_count)}</td>
+            <td class="mono">${Fmt.tokens(m.total_tokens)}</td>
+            <td class="mono">${Fmt.cost(m.total_cost)}</td>
+          </tr>`
+        ).join('');
+
+        // Model comparison
+        if (data.cheapest_model && data.most_used_model) {
+          document.getElementById('model-comparison-card').classList.remove('hidden');
+          document.getElementById('cheapest-model').textContent = data.cheapest_model;
+          document.getElementById('most-used-model').textContent = data.most_used_model;
+        }
+
+        // Savings alert
+        if (data.potential_savings_pct > 20) {
+          document.getElementById('savings-alert').classList.remove('hidden');
+          document.getElementById('savings-amount').textContent = Fmt.cost(data.potential_savings_usd);
+          document.getElementById('savings-pct').textContent = Fmt.percent(data.potential_savings_pct);
+        } else {
+          document.getElementById('savings-alert').classList.add('hidden');
+        }
+      });
+    }
+
+    async function refreshBudgets() {
+      const data = await fetchAPI('/api/budget');
+      if (!data) return;
+      ArcStore.setBudgets(data.budgets || []);
+      const budgets = data.budgets || [];
+
+      domBatcher.schedule(() => {
+        const el = document.getElementById('budget-gauges');
+        if (budgets.length === 0) {
+          el.innerHTML = '<div class="empty-state"><p>No budgets configured</p></div>';
+          return;
+        }
+        el.innerHTML = '<div class="flex gap-20">' + budgets.map(b => {
+          const limit = b.monthly_limit || 1;
+          const pct = Math.min((b.monthly_spend / limit) * 100, 100).toFixed(0);
+          return `<div style="text-align:center;">
+            <div class="gauge" style="--pct:${pct}"><span class="gauge-label">${pct}%</span></div>
+            <div class="text-xs text-muted mt-8">${Fmt.escapeHTML(b.scope || 'default')}</div>
+            <div class="mono text-xs">${Fmt.cost(b.monthly_spend)} / ${Fmt.cost(limit)}</div>
+          </div>`;
+        }).join('') + '</div>';
+      });
+    }
+
+    /* --- Export Button --- */
+    document.getElementById('btn-export').addEventListener('click', async () => {
+      if (!token) return;
+      try {
+        const resp = await fetch('/api/export?format=json', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!resp.ok) return;
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'traces.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch { /* download failed silently */ }
+    });
+
+    /* --- Initial load + polling --- */
+    refreshStats();
+    refreshCircuitBreakers();
+    refreshCostEfficiency();
+    refreshBudgets();
+
+    setInterval(refreshStats, 5000);
+    setInterval(refreshCircuitBreakers, 10000);
+    setInterval(refreshCostEfficiency, 15000);
+    setInterval(refreshBudgets, 15000);
+  </script>
+</body>
+</html>

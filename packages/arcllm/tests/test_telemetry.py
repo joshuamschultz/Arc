@@ -85,7 +85,7 @@ class TestTelemetryModule:
 
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_logs_timing_and_usage(self, mock_mono, messages, caplog):
-        mock_mono.side_effect = [1000.0, 1000.5]  # 500ms elapsed
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.5, 1000.5]  # 500ms llm_call
         inner = _make_inner("anthropic")
         module = TelemetryModule(_make_config(), inner)
 
@@ -103,7 +103,7 @@ class TestTelemetryModule:
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_logs_cost_calculation(self, mock_mono, messages, caplog):
         """Verify cost = (100 * 3.00 / 1e6) + (50 * 15.00 / 1e6) = 0.001050."""
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         module = TelemetryModule(_make_config(), inner)
 
@@ -114,7 +114,7 @@ class TestTelemetryModule:
 
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_logs_cache_tokens_when_present(self, mock_mono, messages, caplog):
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         inner.invoke = AsyncMock(return_value=_CACHED_RESPONSE)
         module = TelemetryModule(_make_config(), inner)
@@ -127,7 +127,7 @@ class TestTelemetryModule:
 
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_no_cache_fields_when_absent(self, mock_mono, messages, caplog):
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         module = TelemetryModule(_make_config(), inner)
 
@@ -149,7 +149,7 @@ class TestTelemetryModule:
              = 0.000300 + 0.000750 + 0.000024 + 0.000075
              = 0.001149
         """
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         inner.invoke = AsyncMock(return_value=_CACHED_RESPONSE)
         module = TelemetryModule(_make_config(), inner)
@@ -161,7 +161,7 @@ class TestTelemetryModule:
 
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_cost_zero_when_zero_tokens(self, mock_mono, messages, caplog):
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         inner.invoke = AsyncMock(return_value=_ZERO_TOKEN_RESPONSE)
         module = TelemetryModule(_make_config(), inner)
@@ -173,7 +173,7 @@ class TestTelemetryModule:
 
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_custom_log_level(self, mock_mono, messages, caplog):
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         config = _make_config(log_level="DEBUG")
         module = TelemetryModule(config, inner)
@@ -185,7 +185,7 @@ class TestTelemetryModule:
 
         # Should appear at DEBUG level
         with caplog.at_level(logging.DEBUG, logger="arcllm.modules.telemetry"):
-            mock_mono.side_effect = [2000.0, 2000.1]
+            mock_mono.side_effect = [2000.0, 2000.0, 2000.1, 2000.1]
             await module.invoke(messages)
         assert "provider=" in caplog.text
 
@@ -201,7 +201,7 @@ class TestTelemetryModule:
 
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_returns_response_unchanged(self, mock_mono, messages):
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         module = TelemetryModule(_make_config(), inner)
         result = await module.invoke(messages)
@@ -332,7 +332,7 @@ class TestTelemetryValidationExtended:
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_cache_tokens_zero_logged_not_omitted(self, mock_mono, messages, caplog):
         """cache_read_tokens=0 (not None) should appear in log, unlike None which is omitted."""
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         inner.invoke = AsyncMock(
             return_value=LLMResponse(
@@ -359,7 +359,7 @@ class TestTelemetryValidationExtended:
     @patch("arcllm.modules.telemetry.time.monotonic")
     async def test_model_name_sanitized_in_log(self, mock_mono, messages, caplog):
         """Model names with newlines are escaped to prevent log injection."""
-        mock_mono.side_effect = [1000.0, 1000.1]
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
         inner = _make_inner()
         inner.invoke = AsyncMock(
             return_value=LLMResponse(
@@ -383,3 +383,299 @@ class TestTelemetryValidationExtended:
         inner = _make_inner()
         with pytest.raises(ArcLLMConfigError, match="Unknown TelemetryModule config keys"):
             TelemetryModule(_make_config(cost_imput_per_1m=5.0), inner)
+
+
+# ---------------------------------------------------------------------------
+# TestTelemetryTraceRecording — on_event + trace_store (Tasks 1.5-1.7)
+# ---------------------------------------------------------------------------
+
+
+class TestTelemetryTraceRecording:
+    """Tests for TraceRecord building, on_event callback, and trace_store."""
+
+    async def test_on_event_fires_after_invoke(self, messages):
+        """on_event callback receives a TraceRecord after each invoke."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner("anthropic")
+        module = TelemetryModule(
+            _make_config(on_event=events.append), inner
+        )
+
+        await module.invoke(messages)
+
+        assert len(events) == 1
+        rec = events[0]
+        assert isinstance(rec, TraceRecord)
+        assert rec.provider == "anthropic"
+        assert rec.model == "test-model"
+        assert rec.input_tokens == 100
+        assert rec.output_tokens == 50
+        assert rec.total_tokens == 150
+        assert rec.stop_reason == "end_turn"
+        assert rec.status == "success"
+
+    async def test_on_event_not_called_when_none(self, messages):
+        """No callback invocation when on_event is None."""
+        inner = _make_inner()
+        module = TelemetryModule(_make_config(), inner)
+
+        # Should not raise
+        await module.invoke(messages)
+
+    async def test_trace_store_receives_record(self, messages):
+        """trace_store.append() called with TraceRecord after invoke."""
+        from arcllm.trace_store import TraceRecord
+
+        store = AsyncMock()
+        inner = _make_inner("openai")
+        module = TelemetryModule(
+            _make_config(trace_store=store), inner
+        )
+
+        await module.invoke(messages)
+
+        store.append.assert_awaited_once()
+        rec = store.append.call_args[0][0]
+        assert isinstance(rec, TraceRecord)
+        assert rec.provider == "openai"
+
+    async def test_cost_usd_in_trace_record(self, messages):
+        """TraceRecord.cost_usd matches calculated cost."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append), inner
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        # cost = (100 * 3.00 + 50 * 15.00) / 1_000_000 = 0.001050
+        assert abs(rec.cost_usd - 0.001050) < 1e-9
+
+    @patch("arcllm.modules.telemetry.time.monotonic")
+    async def test_phase_timings_present(self, mock_mono, messages):
+        """TraceRecord contains phase timing breakdown."""
+        from arcllm.trace_store import TraceRecord
+
+        # t0=0, t_pre=10ms, t_llm=510ms, t_post=520ms
+        mock_mono.side_effect = [0.0, 0.010, 0.510, 0.520]
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append), inner
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        assert "prompt_assembly_ms" in rec.phase_timings
+        assert "llm_call_ms" in rec.phase_timings
+        assert "post_processing_ms" in rec.phase_timings
+        assert "total_ms" in rec.phase_timings
+        assert rec.phase_timings["prompt_assembly_ms"] == 10.0
+        assert rec.phase_timings["llm_call_ms"] == 500.0
+        assert rec.phase_timings["post_processing_ms"] == 10.0
+        assert rec.phase_timings["total_ms"] == 520.0
+        assert rec.duration_ms == 520.0
+
+    async def test_request_body_captured_when_store_raw_bodies_true(self, messages):
+        """Request body stored when store_raw_bodies=True (default)."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append, store_raw_bodies=True), inner
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        assert rec.request_body is not None
+        assert "messages" in rec.request_body
+        assert rec.response_body is not None
+        assert "content" in rec.response_body
+
+    async def test_request_body_none_when_store_raw_bodies_false(self, messages):
+        """Request/response bodies are None when store_raw_bodies=False."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append, store_raw_bodies=False), inner
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        assert rec.request_body is None
+        assert rec.response_body is None
+
+    async def test_store_raw_bodies_defaults_to_true(self, messages):
+        """Default behavior stores raw bodies."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append), inner
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        assert rec.request_body is not None
+
+    async def test_agent_label_set_on_record(self, messages):
+        """agent_label from config appears on TraceRecord."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append, agent_label="agent-007"), inner
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        assert rec.agent_label == "agent-007"
+
+    async def test_budget_scope_set_on_record(self, messages):
+        """budget_scope from config appears on TraceRecord."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(
+                on_event=events.append,
+                budget_scope="agent:test",
+                monthly_limit_usd=100.0,
+            ),
+            inner,
+        )
+
+        await module.invoke(messages)
+
+        rec = events[0]
+        assert rec.budget_scope == "agent:test"
+
+    async def test_both_on_event_and_trace_store(self, messages):
+        """Both on_event and trace_store fire independently."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        store = AsyncMock()
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append, trace_store=store), inner
+        )
+
+        await module.invoke(messages)
+
+        assert len(events) == 1
+        store.append.assert_awaited_once()
+
+    async def test_multiple_invokes_emit_multiple_records(self, messages):
+        """Each invoke produces a separate TraceRecord."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append), inner
+        )
+
+        await module.invoke(messages)
+        await module.invoke(messages)
+        await module.invoke(messages)
+
+        assert len(events) == 3
+        # All should have distinct trace_ids
+        ids = {e.trace_id for e in events}
+        assert len(ids) == 3
+
+
+# ---------------------------------------------------------------------------
+# TestGetBudgetState — Task 2.6
+# ---------------------------------------------------------------------------
+
+
+class TestGetBudgetState:
+    """get_budget_state() returns BudgetAccumulator state for REST API."""
+
+    def test_returns_none_when_budget_disabled(self):
+        inner = _make_inner()
+        module = TelemetryModule(_make_config(), inner)
+        assert module.get_budget_state() is None
+
+    def test_returns_state_when_budget_enabled(self):
+        from arcllm.modules.telemetry import clear_budgets
+
+        clear_budgets()
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(
+                budget_scope="agent:budget-state-test",
+                monthly_limit_usd=100.0,
+                daily_limit_usd=10.0,
+                per_call_max_usd=1.0,
+                enforcement="block",
+                alert_threshold_pct=80,
+            ),
+            inner,
+        )
+        state = module.get_budget_state()
+        assert state is not None
+        assert state["scope"] == "agent:budget-state-test"
+        assert state["monthly_limit"] == 100.0
+        assert state["daily_limit"] == 10.0
+        assert state["per_call_max"] == 1.0
+        assert state["enforcement"] == "block"
+        assert state["alert_threshold_pct"] == 80
+        assert state["monthly_spend"] == 0.0
+        assert state["daily_spend"] == 0.0
+
+    @patch("arcllm.modules.telemetry.time.monotonic")
+    async def test_spend_reflected_after_invoke(self, mock_mono, messages):
+        mock_mono.side_effect = [1000.0, 1000.0, 1000.1, 1000.1]
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(
+                budget_scope="agent:spend-test",
+                monthly_limit_usd=100.0,
+            ),
+            inner,
+        )
+
+        await module.invoke(messages)
+
+        state = module.get_budget_state()
+        assert state is not None
+        # cost = (100 * 3.00 + 50 * 15.00) / 1_000_000 = 0.001050
+        assert state["monthly_spend"] > 0.0
+        assert abs(state["monthly_spend"] - 0.001050) < 1e-9
+        assert abs(state["daily_spend"] - 0.001050) < 1e-9
+
+    def test_state_includes_defaults_when_partial_config(self):
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(
+                budget_scope="agent:partial",
+                monthly_limit_usd=50.0,
+            ),
+            inner,
+        )
+        state = module.get_budget_state()
+        assert state is not None
+        assert state["daily_limit"] is None
+        assert state["per_call_max"] is None
+        assert state["enforcement"] == "block"
+        assert state["alert_threshold_pct"] == 80

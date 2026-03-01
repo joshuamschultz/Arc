@@ -398,6 +398,142 @@ class TestNativeToolAsyncWrapper:
         assert result == "echo: world"
 
 
+class TestFormatForPrompt:
+    """Tests for ToolRegistry.format_for_prompt() — R1, R5 requirements."""
+
+    def test_empty_registry_returns_empty(self, registry: ToolRegistry) -> None:
+        """R1.6: Empty catalog produces no section."""
+        assert registry.format_for_prompt() == ""
+
+    def test_single_tool_renders_xml(self, registry: ToolRegistry) -> None:
+        """R1.3: Catalog uses XML format."""
+        registry.register(_make_tool("read_file"))
+        result = registry.format_for_prompt()
+        assert "<available-tools>" in result
+        assert "</available-tools>" in result
+        assert 'name="read_file"' in result
+        assert "<description>" in result
+
+    def test_tool_with_when_to_use(self, registry: ToolRegistry) -> None:
+        """R1: when_to_use renders as child element."""
+        tool = _make_tool("send")
+        tool.when_to_use = "When communicating with teammates"
+        registry.register(tool)
+        result = registry.format_for_prompt()
+        assert "<when-to-use>When communicating with teammates</when-to-use>" in result
+
+    def test_tool_with_example(self, registry: ToolRegistry) -> None:
+        """R1: example renders as child element."""
+        tool = _make_tool("read")
+        tool.example = "read(path='/etc/hosts')"
+        registry.register(tool)
+        result = registry.format_for_prompt()
+        assert "<example>" in result
+
+    def test_tool_with_category(self, registry: ToolRegistry) -> None:
+        """R1: category renders as attribute."""
+        tool = _make_tool("send")
+        tool.category = "messaging"
+        registry.register(tool)
+        result = registry.format_for_prompt()
+        assert 'category="messaging"' in result
+
+    def test_xml_escaping(self, registry: ToolRegistry) -> None:
+        """R1.4: All string values are XML-escaped."""
+        tool = RegisteredTool(
+            name='tool<"evil">',
+            description="desc with <tags> & ampersands",
+            input_schema={"type": "object", "properties": {}},
+            transport=ToolTransport.NATIVE,
+            execute=lambda: None,
+            when_to_use="use when <needed>",
+            example='example("a&b")',
+            category='cat"quote',
+        )
+        registry.register(tool)
+        result = registry.format_for_prompt()
+        # XML-escaped characters should appear
+        assert "&lt;" in result
+        assert "&amp;" in result
+        assert "&quot;" in result
+
+    def test_tools_sorted_alphabetically(self, registry: ToolRegistry) -> None:
+        """Tools sorted by name in catalog."""
+        registry.register(_make_tool("zebra"))
+        registry.register(_make_tool("alpha"))
+        registry.register(_make_tool("middle"))
+        result = registry.format_for_prompt()
+        alpha_pos = result.index("alpha")
+        middle_pos = result.index("middle")
+        zebra_pos = result.index("zebra")
+        assert alpha_pos < middle_pos < zebra_pos
+
+    def test_cache_hit_returns_same_object(self, registry: ToolRegistry) -> None:
+        """R1.5: Second call returns cached result."""
+        registry.register(_make_tool("test"))
+        first = registry.format_for_prompt()
+        second = registry.format_for_prompt()
+        assert first is second  # Same object — cache hit
+
+    def test_cache_invalidated_on_register(self, registry: ToolRegistry) -> None:
+        """R1.5: register() clears cache."""
+        registry.register(_make_tool("first"))
+        first = registry.format_for_prompt()
+        registry.register(_make_tool("second"))
+        second = registry.format_for_prompt()
+        assert first is not second  # Cache was invalidated
+        assert "second" in second
+
+    def test_optional_fields_omitted_when_empty(self, registry: ToolRegistry) -> None:
+        """Optional fields not rendered when empty."""
+        registry.register(_make_tool("basic"))
+        result = registry.format_for_prompt()
+        assert "<when-to-use>" not in result
+        assert "<example>" not in result
+        assert "category=" not in result
+
+    def test_preamble_included(self, registry: ToolRegistry) -> None:
+        """R5.1: Default preamble present in output."""
+        registry.register(_make_tool("test"))
+        result = registry.format_for_prompt()
+        assert "<preamble>" in result
+
+    def test_custom_preamble(self) -> None:
+        """R5.2: Preamble overridable via config."""
+        custom_config = ToolsConfig(preamble="Custom preamble text")
+        reg = ToolRegistry(config=custom_config, bus=MagicMock(), telemetry=MagicMock())
+        reg.register(_make_tool("test"))
+        result = reg.format_for_prompt()
+        assert "Custom preamble text" in result
+
+    def test_preamble_xml_escaped(self) -> None:
+        """R5.3: Preamble text is XML-escaped."""
+        config = ToolsConfig(preamble="Use tools <carefully> & wisely")
+        reg = ToolRegistry(config=config, bus=MagicMock(), telemetry=MagicMock())
+        reg.register(_make_tool("test"))
+        result = reg.format_for_prompt()
+        assert "&lt;carefully&gt;" in result
+        assert "&amp;" in result
+
+    @pytest.mark.asyncio
+    async def test_shutdown_clears_prompt_cache(self) -> None:
+        """R1.2: Tools removed via shutdown() disappear from next prompt assembly."""
+        reg = ToolRegistry(config=ToolsConfig(), bus=MagicMock(), telemetry=MagicMock())
+        reg.register(_make_tool("test"))
+        assert reg.format_for_prompt() != ""
+        await reg.shutdown()
+        assert reg.format_for_prompt() == ""
+
+    def test_is_prompt_cached_property(self, registry: ToolRegistry) -> None:
+        """Public property exposes cache state without accessing private attrs."""
+        assert not registry.is_prompt_cached
+        registry.register(_make_tool("test"))
+        registry.format_for_prompt()
+        assert registry.is_prompt_cached
+        registry.register(_make_tool("another"))
+        assert not registry.is_prompt_cached
+
+
 class TestWrappedExecuteKwargs:
     """Line 228: wrapped_execute passes kwargs when args is None."""
 

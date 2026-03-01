@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from arcrun import Tool as ArcRunTool
 from arcrun import ToolContext
@@ -26,6 +27,11 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.telemetry import AgentTelemetry
 
 _logger = logging.getLogger("arcagent.tool_registry")
+
+_DEFAULT_PREAMBLE = (
+    "You have the following tools available. "
+    "Use them as needed to accomplish your tasks."
+)
 
 
 class ToolTransport(Enum):
@@ -48,6 +54,9 @@ class RegisteredTool:
     execute: Any  # Callable[..., Awaitable[Any]]
     timeout_seconds: int = 30
     source: str = ""
+    when_to_use: str = ""
+    example: str = ""
+    category: str = ""
 
 
 # -- Type map for native_tool decorator schema generation --
@@ -67,6 +76,9 @@ def native_tool(
     timeout_seconds: int = 30,
     params: dict[str, str | dict[str, Any]] | None = None,
     required: list[str] | None = None,
+    when_to_use: str = "",
+    example: str = "",
+    category: str = "",
 ) -> Callable[..., Any]:
     """Decorator that converts an async function into a RegisteredTool.
 
@@ -137,6 +149,9 @@ def native_tool(
             execute=fn,
             timeout_seconds=timeout_seconds,
             source=source,
+            when_to_use=when_to_use,
+            example=example,
+            category=category,
         )
         fn.tool = tool  # type: ignore[attr-defined]
         return fn
@@ -220,15 +235,59 @@ class ToolRegistry:
         self._bus = bus
         self._telemetry = telemetry
         self._tools: dict[str, RegisteredTool] = {}
+        self._prompt_cache: str | None = None
+        self._preamble: str = config.preamble or _DEFAULT_PREAMBLE
 
     @property
     def tools(self) -> dict[str, RegisteredTool]:
         return self._tools
 
+    @property
+    def is_prompt_cached(self) -> bool:
+        """Whether the prompt catalog is currently cached."""
+        return self._prompt_cache is not None
+
+    def format_for_prompt(self) -> str:
+        """XML-formatted tool catalog for system prompt injection.
+
+        Returns empty string if no tools are registered.
+        Cached — invalidated on register().
+        """
+        if self._prompt_cache is not None:
+            return self._prompt_cache
+
+        if not self._tools:
+            self._prompt_cache = ""
+            return ""
+
+        lines = ["<available-tools>"]
+        lines.append(f"  <preamble>{xml_escape(self._preamble)}</preamble>")
+
+        for tool in sorted(self._tools.values(), key=lambda t: t.name):
+            safe_name = xml_escape(tool.name, {'"': "&quot;"})
+            safe_desc = xml_escape(tool.description)
+            attrs = f'name="{safe_name}"'
+            if tool.category:
+                escaped_cat = xml_escape(tool.category, {'"': "&quot;"})
+                attrs += f' category="{escaped_cat}"'
+
+            lines.append(f"  <tool {attrs}>")
+            lines.append(f"    <description>{safe_desc}</description>")
+            if tool.when_to_use:
+                lines.append(f"    <when-to-use>{xml_escape(tool.when_to_use)}</when-to-use>")
+            if tool.example:
+                lines.append(f"    <example>{xml_escape(tool.example)}</example>")
+            lines.append("  </tool>")
+
+        lines.append("</available-tools>")
+        self._prompt_cache = "\n".join(lines)
+        return self._prompt_cache
+
     def register(self, tool: RegisteredTool) -> None:
         """Register a tool after policy check."""
         self._check_policy(tool.name)
         self._tools[tool.name] = tool
+        self._prompt_cache = None  # Invalidate cached catalog
         _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
 
     def _check_policy(self, tool_name: str) -> None:
@@ -378,4 +437,5 @@ class ToolRegistry:
     async def shutdown(self) -> None:
         """Clean up all tool connections."""
         self._tools.clear()
+        self._prompt_cache = None
         _logger.info("Tool registry shut down")

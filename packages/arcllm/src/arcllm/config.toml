@@ -49,6 +49,12 @@ enabled = false
 requests_per_minute = 60
 burst_capacity = 60
 
+[modules.queue]
+enabled = false
+max_concurrent = 2
+call_timeout = 60.0
+max_queued = 10
+
 [modules.otel]
 enabled = false
 exporter = "otlp"

@@ -21,6 +21,8 @@ from arcllm.exceptions import (
     ArcLLMConfigError,
     ArcLLMError,
     ArcLLMParseError,
+    QueueFullError,
+    QueueTimeoutError,
 )
 from arcllm.registry import clear_cache, load_model
 from arcllm.types import (
@@ -69,6 +71,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "RateLimitModule": "arcllm.modules.rate_limit",
     "RetryModule": "arcllm.modules.retry",
     "OtelModule": "arcllm.modules.otel",
+    "QueueModule": "arcllm.modules.queue",
     "SecurityModule": "arcllm.modules.security",
     "TelemetryModule": "arcllm.modules.telemetry",
     "VaultResolver": "arcllm.vault",
@@ -118,6 +121,9 @@ __all__ = [
     "OtelModule",
     "ProviderConfig",
     "ProviderSettings",
+    "QueueFullError",
+    "QueueModule",
+    "QueueTimeoutError",
     "RateLimitModule",
     "RetryModule",
     "SecurityModule",

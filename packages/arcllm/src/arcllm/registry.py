@@ -2,6 +2,7 @@
 
 import importlib
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from arcllm.config import ProviderConfig, load_global_config, load_provider_config
@@ -154,11 +155,16 @@ def load_model(
     model: str | None = None,
     *,
     budget_scope: str | None = None,
+    on_event: Callable[[Any], None] | None = None,
+    trace_store: Any | None = None,
+    agent_label: str | None = None,
     routing: bool | dict[str, Any] | None = None,
     retry: bool | dict[str, Any] | None = None,
     fallback: bool | dict[str, Any] | None = None,
     rate_limit: bool | dict[str, Any] | None = None,
+    circuit_breaker: bool | dict[str, Any] | None = None,
     telemetry: bool | dict[str, Any] | None = None,
+    queue: bool | dict[str, Any] | None = None,
     audit: bool | dict[str, Any] | None = None,
     security: bool | dict[str, Any] | None = None,
     otel: bool | dict[str, Any] | None = None,
@@ -182,7 +188,8 @@ def load_model(
         - ``None`` (default): use config.toml enabled flag
 
     Stacking order (outermost first):
-        Otel → Telemetry → Audit → Security → Retry → Fallback → RateLimit → [Router|Adapter].
+        Otel → Queue → Telemetry → CircuitBreaker → Audit → Security →
+        Retry → Fallback → RateLimit → [Router|Adapter].
 
     Args:
         provider: Provider name (e.g., "anthropic", "openai").
@@ -190,13 +197,22 @@ def load_model(
         model: Model identifier. If None, uses default_model from provider config.
         budget_scope: Budget tracking scope (e.g., "agent:agent-007"). Required
             when budget limits are configured in telemetry.
+        on_event: Optional callback fired after every invoke() with a TraceRecord.
+            Fires OUTSIDE any locks. Zero overhead when None.
+        trace_store: Optional TraceStore for persistent recording. Records appended
+            after every invoke(). Independent of on_event — either, both, or neither.
+        agent_label: Label attached to TraceRecords for multi-agent identification.
         routing: RoutingModule configuration override. When enabled, replaces the
             single adapter with a classification-based router.
         retry: RetryModule configuration override.
         fallback: FallbackModule configuration override.
         rate_limit: RateLimitModule configuration override.
+        circuit_breaker: CircuitBreakerModule configuration override. Per-provider
+            circuit breaker with CLOSED/OPEN/HALF_OPEN state machine.
         telemetry: TelemetryModule configuration override. Pricing data is
             automatically injected from provider model metadata.
+        queue: QueueModule configuration override. Bounded concurrency with
+            backpressure and send-time timeouts for LLM calls.
         audit: AuditModule configuration override. PII-safe metadata logging.
         security: SecurityModule configuration override. PII redaction + request signing.
         otel: OtelModule configuration override. OpenTelemetry distributed tracing.
@@ -273,6 +289,14 @@ def load_model(
 
         result = RetryModule(retry_config, result)
 
+    cb_config = _resolve_module_config("circuit_breaker", circuit_breaker)
+    if cb_config is not None:
+        from arcllm.modules.circuit_breaker import CircuitBreakerModule
+
+        if on_event is not None:
+            cb_config["on_event"] = on_event
+        result = CircuitBreakerModule(cb_config, result)
+
     security_config = _resolve_module_config("security", security)
     if security_config is not None:
         from arcllm.modules.security import SecurityModule
@@ -308,7 +332,21 @@ def load_model(
         # Source default_max_tokens from global config defaults
         telemetry_config.setdefault("default_max_tokens", _global_config_cache.defaults.max_tokens)
 
+        # Thread trace_store, on_event, and agent_label into telemetry config
+        if on_event is not None:
+            telemetry_config["on_event"] = on_event
+        if trace_store is not None:
+            telemetry_config["trace_store"] = trace_store
+        if agent_label is not None:
+            telemetry_config["agent_label"] = agent_label
+
         result = TelemetryModule(telemetry_config, result)
+
+    queue_config = _resolve_module_config("queue", queue)
+    if queue_config is not None:
+        from arcllm.modules.queue import QueueModule
+
+        result = QueueModule(queue_config, result)
 
     otel_config = _resolve_module_config("otel", otel)
     if otel_config is not None:

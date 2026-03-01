@@ -42,3 +42,13 @@ class TestMessagingConfig:
         """team_root belongs at agent level, not in module config."""
         with pytest.raises(ValidationError):
             MessagingConfig(team_root="./team")  # type: ignore[call-arg]
+
+    def test_roster_ttl_seconds_default(self) -> None:
+        """R6.2: Default roster TTL is 60 seconds."""
+        cfg = MessagingConfig()
+        assert cfg.roster_ttl_seconds == 60.0
+
+    def test_roster_ttl_seconds_custom(self) -> None:
+        """R6.3: roster_ttl_seconds configurable."""
+        cfg = MessagingConfig(roster_ttl_seconds=30.0)
+        assert cfg.roster_ttl_seconds == 30.0

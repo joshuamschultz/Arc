@@ -75,3 +75,28 @@ class ArcLLMAPIError(ArcLLMError):
             body[:_MAX_ERROR_BODY_DISPLAY] + "..." if len(body) > _MAX_ERROR_BODY_DISPLAY else body
         )
         super().__init__(f"{provider} API error (HTTP {status_code}): {display_body}")
+
+
+class QueueFullError(ArcLLMError):
+    """Raised when queue backpressure rejects a call.
+
+    The queue has reached ``max_queued`` waiting callers.  The caller
+    should decide whether to drop, retry later, or alert.
+    """
+
+    def __init__(self, current_waiters: int, max_queued: int) -> None:
+        self.current_waiters = current_waiters
+        self.max_queued = max_queued
+        super().__init__(f"Queue full: {current_waiters} calls waiting (max {max_queued})")
+
+
+class QueueTimeoutError(ArcLLMError):
+    """Raised when a call exceeds the send-time timeout.
+
+    The timeout starts *after* the semaphore is acquired — it measures
+    actual provider response time, not queue wait.
+    """
+
+    def __init__(self, timeout: float) -> None:
+        self.timeout = timeout
+        super().__init__(f"LLM call timed out after {timeout:.1f}s (send-time)")

@@ -5,6 +5,56 @@ All notable changes to the Arc monorepo will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-03-01
+
+New LLM provider adapters, model catalog refresh, rate-limit-aware retry, code quality hardening, and PyPI publishing infrastructure.
+
+---
+
+### ArcLLM `0.3.0`
+
+#### Added
+- **4 new provider adapters** — Azure OpenAI (commercial + GCC-High), Google Gemini, Cohere, and xAI (Grok). Total adapters: 15.
+- **QueueModule** — Bounded concurrency with backpressure (`max_concurrent`, `call_timeout`, `max_queued`). Send-time-only timeouts with OTel instrumentation.
+- **CircuitBreakerModule** — Per-provider CLOSED/OPEN/HALF_OPEN state machine with configurable thresholds, cooldown, and event emission.
+- **TraceStore** — Append-only, SHA-256 hash-chained LLM call recording with `JSONLTraceStore` (daily rotation, cursor pagination, chain verification). RFC 8785 canonical JSON hashing.
+- **ConfigController** — Runtime config get/set with atomic swap, immutable snapshots, change callbacks, and audit trail.
+- **Rate-limit-aware retry** — Dedicated `rate_limit_max_retries` (default: 6) for 429 responses with `Retry-After` header support.
+- **Provider TOML catalogs** — Azure OpenAI, Google, Cohere, xAI with full model specs and pricing.
+- **Queue error types** — `QueueFullError`, `QueueTimeoutError` for structured error handling.
+
+#### Changed
+- All provider model catalogs updated to latest models and pricing (Anthropic Claude 4.6, OpenAI GPT-4o/o-series, Mistral, Groq, etc.).
+- Anthropic default model updated to `claude-sonnet-4-6`.
+- Module stack order updated: Otel → Queue → Telemetry → CircuitBreaker → Audit → Security → Retry → Fallback → RateLimit.
+- `load_model()` API expanded with `on_event`, `trace_store`, `agent_label`, `circuit_breaker`, `queue` parameters.
+- Comprehensive ruff lint configuration added.
+
+---
+
+### ArcRun `0.3.0`
+
+#### Changed
+- Code formatting and lint compliance across all source files.
+- Import modernization: `typing.Callable` → `collections.abc.Callable` (PEP 585).
+- `asyncio.TimeoutError` → builtin `TimeoutError` (Python 3.11+).
+- Comprehensive ruff lint configuration added.
+
+---
+
+### Monorepo
+
+#### Added
+- **ArcPrompt package** — Placeholder package with PyPI publish workflow.
+- **PyPI publishing infrastructure** — GitHub Actions workflows for all packages.
+
+#### Changed
+- Root ruff config expanded with per-file ignores for tests and walkthroughs.
+- README updated with expanded project overview.
+- Workspace config updated to include arcprompt.
+
+---
+
 ## [0.2.0] - 2026-02-21
 
 Security hardening, budget enforcement, tamper-evident audit trails, biological memory, team knowledge management, and CLI initialization across the full stack.
