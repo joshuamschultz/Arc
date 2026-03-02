@@ -2,12 +2,18 @@
 
 Reuses ArcLLM's VaultResolver for secret resolution when configured,
 with file-based fallback for development environments.
+
+Identity persistence: the agent's own ``arcagent.toml`` is the single
+source of truth for its DID.  On first run (``did = ""``), a new keypair
+is generated and the full DID is written back into the config file so
+the agent always knows which key is its own on subsequent restarts.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -151,42 +157,119 @@ class AgentIdentity:
         vault_resolver: Any = None,
         org: str = "default",
         agent_type: str = "executor",
+        config_path: Path | None = None,
     ) -> AgentIdentity:
-        """Create identity from config with vault → file → generate fallback.
+        """Resolve identity from config, generating and persisting if needed.
 
         Resolution order:
-        1. Vault (if vault_resolver provided and config.vault_path set)
-        2. File-based (config.key_dir / {did}.key)
-        3. Generate new keypair and save to key_dir
+        1. ``config.did`` set (exact full format) → load from vault or file
+        2. ``config.did`` empty → generate new keypair, save keys,
+           **write DID back into arcagent.toml** so this agent always
+           knows its identity on next restart.
+
+        The agent's config file is the single source of truth for its DID.
+        No separate persistence files — each agent owns its identity in its
+        own config.
+
+        Raises IdentityError if config.did is set but malformed, or if the
+        DID is set but the corresponding key cannot be found.
         """
         key_dir = Path(config.key_dir).expanduser()
+        did_to_load = cls._validate_did(config.did)
 
-        # If DID is known, try loading existing keys
-        if config.did:
-            # Try vault first
+        # If DID is set, load the matching key — no fallback to generation
+        if did_to_load:
             if vault_resolver is not None and config.vault_path:
                 try:
-                    return cls._load_from_vault(config.did, vault_resolver, config.vault_path)
+                    return cls._load_from_vault(did_to_load, vault_resolver, config.vault_path)
                 except Exception:
                     _logger.warning(
                         "Vault lookup failed for %s, falling back to file",
-                        config.did,
+                        did_to_load,
                     )
 
-            # Try file
-            try:
-                return cls.load_keys(config.did, key_dir)
-            except IdentityError:
-                _logger.warning(
-                    "Key file not found for %s, will generate new",
-                    config.did,
-                )
+            # Must find the key file — hard fail if missing (no silent regen)
+            return cls.load_keys(did_to_load, key_dir)
 
-        # Generate new identity
+        # No DID in config — generate new identity
         identity = cls.generate(org=org, agent_type=agent_type)
         identity.save_keys(key_dir)
+
+        # Write the DID back into the agent's config file
+        if config_path is not None:
+            cls._write_did_to_config(config_path, identity.did)
+
         _logger.info("Generated new identity: %s", identity.did)
         return identity
+
+    @staticmethod
+    def _validate_did(did: str) -> str:
+        """Validate DID format strictly. No partial hashes, no guessing.
+
+        Must be empty (auto-generate) or exact full format:
+        ``did:arc:{org}:{type}/{hash}``
+
+        Raises IdentityError if the DID is set but malformed.
+        """
+        if not did:
+            return ""
+        if not did.startswith("did:arc:"):
+            raise IdentityError(
+                code="IDENTITY_INVALID_DID",
+                message=(
+                    f"Invalid DID format: '{did}'. "
+                    f"Must be full format 'did:arc:{{org}}:{{type}}/{{hash}}' "
+                    f"or empty for auto-generation."
+                ),
+                details={"did": did},
+            )
+        # Validate structure: did:arc:org:type/hash
+        parts = did.split(":")
+        if len(parts) != 4 or "/" not in parts[3]:
+            raise IdentityError(
+                code="IDENTITY_INVALID_DID",
+                message=(
+                    f"Malformed DID structure: '{did}'. "
+                    f"Expected 'did:arc:{{org}}:{{type}}/{{hash}}'."
+                ),
+                details={"did": did},
+            )
+        return did
+
+    @staticmethod
+    def _write_did_to_config(config_path: Path, did: str) -> None:
+        """Write generated DID back into the agent's arcagent.toml.
+
+        Updates the ``did = ""`` line under ``[identity]`` with the full DID.
+        This is the only persistence mechanism — no separate .did files.
+        Each agent's config is its own source of truth.
+        """
+        try:
+            content = config_path.read_text(encoding="utf-8")
+        except (OSError, FileNotFoundError):
+            _logger.warning("Cannot read config to persist DID: %s", config_path)
+            return
+
+        # Replace did = "" or did = '' (empty) with the full DID
+        updated = re.sub(
+            r'^(\s*did\s*=\s*)["\'][\s]*["\']',
+            rf'\1"{did}"',
+            content,
+            count=1,
+            flags=re.MULTILINE,
+        )
+
+        if updated == content:
+            _logger.warning(
+                "Could not find empty did field in %s to update. "
+                "Manually set: did = \"%s\"",
+                config_path,
+                did,
+            )
+            return
+
+        config_path.write_text(updated, encoding="utf-8")
+        _logger.info("Persisted DID to config: %s → %s", config_path, did)
 
     @classmethod
     def _load_from_vault(cls, did: str, vault_resolver: Any, vault_path: str) -> AgentIdentity:

@@ -1137,6 +1137,16 @@ tr.selected td { background: var(--accent-fill); }
   font-family: var(--font);
   cursor: pointer;
 }
+.filter-select:focus {
+  border-color: var(--accent);
+}
+input.filter-select {
+  cursor: text;
+  appearance: none;
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--accent); }
+.sort-arrow { font-size: 10px; opacity: 0.7; }
 
 /* --- Responsive Utility --- */
 .flex { display: flex; }
@@ -1239,6 +1249,18 @@ tr.selected td { background: var(--accent-fill); }
   font-size: 11px;
   color: var(--text-dimmed);
   text-transform: uppercase;
+}
+
+/* --- Settings Config Grid --- */
+.cfg-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 10px 16px;
+  align-items: center;
+}
+.cfg-label {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* --- Resume Live Button --- */

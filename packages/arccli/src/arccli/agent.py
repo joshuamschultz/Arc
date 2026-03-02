@@ -1024,16 +1024,23 @@ def _run_validation(agent_dir: Path) -> None:
 @agent.command("serve")
 @click.argument("path")
 @click.option("--verbose", is_flag=True, help="Log schedule fires and results.")
-def agent_serve(path: str, verbose: bool) -> None:
+@click.option("--ui", is_flag=True, help="Start ArcUI dashboard alongside agent.")
+@click.option("--ui-port", default=8420, type=int, help="ArcUI port (default: 8420).")
+def agent_serve(path: str, verbose: bool, ui: bool, ui_port: int) -> None:
     """Run agent as a long-lived daemon with active scheduler.
 
     The agent stays warm and executes scheduled tasks (cron, interval,
     one-time) until stopped with SIGTERM or SIGINT.
 
+    Use --ui to start the ArcUI telemetry dashboard in the same process,
+    wired to the agent's LLM provider for real-time event streaming.
+
     \b
     Examples:
       arc agent serve my-agent
       arc agent serve my-agent --verbose
+      arc agent serve my-agent --ui
+      arc agent serve my-agent --ui --ui-port 9000
     """
     import signal
 
@@ -1048,40 +1055,267 @@ def agent_serve(path: str, verbose: bool) -> None:
         loop.add_signal_handler(sig, shutdown_event.set)
 
     try:
-        loop.run_until_complete(_serve(agent_dir, shutdown_event, verbose))
+        loop.run_until_complete(
+            _serve(agent_dir, shutdown_event, verbose, ui=ui, ui_port=ui_port)
+        )
     finally:
         loop.close()
 
 
-async def _serve(agent_dir: Path, shutdown_event: asyncio.Event, verbose: bool) -> None:
+async def _serve(
+    agent_dir: Path,
+    shutdown_event: asyncio.Event,
+    verbose: bool,
+    *,
+    ui: bool = False,
+    ui_port: int = 8420,
+) -> None:
     """Async serve function — startup agent, wait for shutdown, cleanup."""
     arc_agent, config, _config_path = _load_arcagent(agent_dir)
 
     # Ensure workspace is scaffolded (idempotent — skips existing files)
     _scaffold_workspace(agent_dir, config.agent.name)
 
-    # Configure logging to stderr so systemd captures it
+    # Configure logging to stderr so systemd captures it.
+    # Only show WARNING+ by default; arcagent core at INFO.
+    # Third-party libraries (httpx, telegram, etc.) stay quiet.
     import logging
 
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format="%(name)s %(levelname)s: %(message)s",
     )
+    # Core arcagent loggers at INFO so startup/pulse/module events show
+    logging.getLogger("arcagent").setLevel(logging.INFO)
+    # Suppress noisy audit JSON and per-tool-call logs unless verbose
+    logging.getLogger("arcagent.audit").setLevel(logging.WARNING)
+    logging.getLogger("arcagent.tool_registry").setLevel(logging.WARNING)
     if verbose:
-        logging.getLogger("arcagent.scheduler").setLevel(logging.DEBUG)
+        logging.getLogger("arcagent").setLevel(logging.DEBUG)
+        logging.getLogger("arcagent.audit").setLevel(logging.INFO)
+        logging.getLogger("arcagent.tool_registry").setLevel(logging.INFO)
+        logging.getLogger("httpx").setLevel(logging.INFO)
 
     await arc_agent.startup()
     agent_name = config.agent.name
     click_echo(f"Serving agent: {agent_name}")
     click_echo("Scheduler active. Press Ctrl+C to stop.")
+
+    uvi_server = None
+    if ui:
+        uvi_server, ui_app = _start_ui(arc_agent, config, ui_port)
+        # Warm-start aggregator with existing traces (async — must run here)
+        if ui_app.state.trace_store is not None:
+            await ui_app.state.aggregator.warm_start(ui_app.state.trace_store)
+
     click_echo("-" * 40)
 
     try:
-        await shutdown_event.wait()
+        if uvi_server is not None:
+            uvi_task = asyncio.create_task(_run_uvicorn_safe(uvi_server))
+            # Wait for either shutdown signal or uvicorn failure
+            done, _ = await asyncio.wait(
+                [asyncio.create_task(shutdown_event.wait()), uvi_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # If uvicorn died (port conflict, etc.), log and continue agent
+            if uvi_task in done:
+                exc = uvi_task.exception()
+                if exc is not None:
+                    click_echo(f"ArcUI failed: {exc}")
+                    click_echo("Agent continues without dashboard.")
+                    await shutdown_event.wait()
+                else:
+                    # uvicorn exited cleanly — trigger shutdown
+                    shutdown_event.set()
+            else:
+                # Shutdown signal received — stop uvicorn
+                uvi_server.should_exit = True
+                await uvi_task
+        else:
+            await shutdown_event.wait()
     finally:
         click_echo("\nShutting down...")
         await arc_agent.shutdown()
         click_echo("Done.")
+
+
+async def _run_uvicorn_safe(server: Any) -> None:
+    """Run uvicorn.Server.serve() catching SystemExit from bind failures."""
+    try:
+        await server.serve()
+    except SystemExit as exc:
+        raise OSError(f"uvicorn exited with code {exc.code}") from exc
+
+
+def _start_ui(arc_agent: Any, config: Any, port: int) -> tuple[Any, Any]:
+    """Wire ArcUI dashboard to the agent's LLM provider.
+
+    Sets global telemetry defaults so ALL arcllm TelemetryModule instances
+    (primary model, eval model, background jobs) automatically route traces
+    to the shared trace_store and UI event pipeline.
+
+    Returns:
+        (uvicorn.Server, Starlette app) tuple.
+    """
+    import uvicorn
+
+    from arcui import attach_llm, create_app
+
+    # Create trace store for persistent recording
+    trace_store = _create_trace_store(arc_agent)
+
+    # Build agent metadata for UI display
+    agent_info: dict[str, str] = {"name": config.agent.name}
+    if hasattr(arc_agent, "_identity") and arc_agent._identity is not None:
+        agent_info["did"] = arc_agent._identity.did
+    agent_info["model"] = config.llm.model
+
+    app = create_app(trace_store=trace_store, agent_info=agent_info)
+
+    # Set global telemetry defaults BEFORE loading any models.
+    # Every arcllm TelemetryModule (primary, eval, background) will
+    # automatically route traces to trace_store + UI event pipeline.
+    event_buffer = app.state.event_buffer
+    aggregator = app.state.aggregator
+
+    def _global_on_event(record: Any) -> None:
+        data = record.model_dump() if hasattr(record, "model_dump") else record
+        event_buffer.push(data)
+        aggregator.ingest(data)
+
+    try:
+        from arcllm.modules.telemetry import set_global_defaults
+
+        set_global_defaults(
+            on_event=_global_on_event,
+            trace_store=trace_store,
+            agent_did=agent_info.get("did"),
+        )
+    except ImportError:
+        pass
+
+    # Force model loading, ensure telemetry, and wire events to ArcUI
+    model = arc_agent._ensure_model()
+    model = _ensure_telemetry_for_ui(model, app, config, trace_store)
+    arc_agent._model = model  # Replace cached model with wrapped version
+
+    attach_llm(app, model, label=config.agent.name)
+    app.state.event_buffer.start()
+
+    uvi_config = uvicorn.Config(
+        app, host="127.0.0.1", port=port, log_level="info",
+    )
+    token = app.state.auth_config.viewer_token
+    click_echo(f"ArcUI dashboard: http://127.0.0.1:{port}?token={token}")
+    if agent_info.get("did"):
+        click_echo(f"Agent DID: {agent_info['did']}")
+    return uvicorn.Server(uvi_config), app
+
+
+def _create_trace_store(arc_agent: Any) -> Any:
+    """Create a JSONLTraceStore from the agent's workspace path.
+
+    Returns None if arcllm trace_store is unavailable.
+    """
+    try:
+        from arcllm.trace_store import JSONLTraceStore
+
+        workspace = arc_agent._workspace
+        return JSONLTraceStore(workspace)
+    except (ImportError, AttributeError):
+        return None
+
+
+def _ensure_telemetry_for_ui(
+    model: Any, app: Any, config: Any, trace_store: Any = None,
+) -> Any:
+    """Ensure model has a TelemetryModule with on_event wired to ArcUI.
+
+    If TelemetryModule already exists on the stack, chains the UI callback
+    into it and injects agent_label + trace_store if missing.
+    Otherwise, wraps the model with a new TelemetryModule.
+    Returns the (possibly wrapped) model.
+    """
+    try:
+        from arcllm.modules.telemetry import TelemetryModule
+    except ImportError:
+        return model
+
+    event_buffer = app.state.event_buffer
+    aggregator = app.state.aggregator
+    agent_name = config.agent.name
+
+    def ui_on_event(record: Any) -> None:
+        data = record.model_dump() if hasattr(record, "model_dump") else record
+        event_buffer.push(data)
+        aggregator.ingest(data)
+
+    # Walk the stack — if TelemetryModule exists, chain into it
+    current = model
+    while current is not None:
+        if isinstance(current, TelemetryModule):
+            # Inject agent_label if not set (load_eval_model doesn't pass it)
+            if current._agent_label is None:
+                current._agent_label = agent_name
+
+            # Inject agent_did if available
+            if current._agent_did is None:
+                agent_did = app.state.agent_info.get("did")
+                if agent_did:
+                    current._agent_did = agent_did
+
+            # Inject trace_store if not set
+            if current._trace_store is None and trace_store is not None:
+                current._trace_store = trace_store
+
+            # Chain UI callback into on_event
+            existing = current._on_event
+            if existing is not None:
+                original = existing
+
+                def chained(
+                    rec: Any, orig: Any = original, new: Any = ui_on_event,
+                ) -> None:
+                    orig(rec)
+                    new(rec)
+
+                current._on_event = chained
+            else:
+                current._on_event = ui_on_event
+            return model  # Already has telemetry, just wired UI into it
+
+        current = getattr(current, "_inner", None)
+
+    # No TelemetryModule on the stack — wrap the model with one
+    telemetry_config: dict[str, Any] = {
+        "on_event": ui_on_event,
+        "agent_label": agent_name,
+    }
+    agent_did = app.state.agent_info.get("did")
+    if agent_did:
+        telemetry_config["agent_did"] = agent_did
+    if trace_store is not None:
+        telemetry_config["trace_store"] = trace_store
+    _inject_pricing(telemetry_config, config.llm.model)
+    return TelemetryModule(telemetry_config, model)
+
+
+def _inject_pricing(telemetry_config: dict[str, Any], model_id: str) -> None:
+    """Try to inject cost-per-token pricing from provider metadata."""
+    try:
+        from arcllm.config_loader import load_provider_config
+
+        provider, _, model_name = model_id.partition("/")
+        prov_config = load_provider_config(provider)
+        meta = prov_config.models.get(model_name)
+        if meta is not None:
+            telemetry_config["cost_input_per_1m"] = meta.cost_input_per_1m
+            telemetry_config["cost_output_per_1m"] = meta.cost_output_per_1m
+            telemetry_config["cost_cache_read_per_1m"] = meta.cost_cache_read_per_1m
+            telemetry_config["cost_cache_write_per_1m"] = meta.cost_cache_write_per_1m
+    except Exception:
+        pass  # Pricing is optional — UI works without cost data
 
 
 # ---------------------------------------------------------------------------

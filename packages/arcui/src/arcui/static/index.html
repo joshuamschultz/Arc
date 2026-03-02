@@ -14,6 +14,9 @@
     <nav class="sidebar"></nav>
     <main class="main-content">
 
+      <!-- ==================== TELEMETRY PAGE ==================== -->
+      <div data-page-content="telemetry">
+
       <!-- Connection Banner -->
       <div id="connection-banner" class="connection-banner disconnected">
         <span class="connection-dot"></span>
@@ -62,8 +65,9 @@
           <!-- Token Volume Chart -->
           <div class="card">
             <div class="card-header">
-              <span class="card-title">Token Volume (Hourly)</span>
+              <span class="card-title" id="chart-title">Token Volume (24h)</span>
               <div class="pill-nav">
+                <span class="pill-nav-item">1h</span>
                 <span class="pill-nav-item active">24h</span>
                 <span class="pill-nav-item">7d</span>
               </div>
@@ -81,6 +85,73 @@
             <div class="card-body" id="provider-breakdown">
               <div class="empty-state"><p>No data yet</p></div>
             </div>
+          </div>
+        </div>
+
+        <!-- Performance by Model -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Model Performance</span>
+            <div class="pill-nav" id="perf-window-toggle">
+              <span class="pill-nav-item" data-window="1h">1h</span>
+              <span class="pill-nav-item active" data-window="24h">24h</span>
+              <span class="pill-nav-item" data-window="7d">7d</span>
+            </div>
+          </div>
+          <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Calls</th>
+                  <th>Success Rate</th>
+                  <th>Errors</th>
+                  <th>Retries</th>
+                  <th>Avg Latency</th>
+                  <th>P95 Latency</th>
+                  <th>Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="perf-model-tbody">
+                <tr><td colspan="8" class="text-muted" style="text-align:center;">No data yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Performance by Agent -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Agent Performance</span>
+          </div>
+          <div class="card-body" style="padding:0;overflow-x:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Agent</th>
+                  <th>Calls</th>
+                  <th>Success Rate</th>
+                  <th>Errors</th>
+                  <th>Retries</th>
+                  <th>Avg Latency</th>
+                  <th>P95 Latency</th>
+                  <th>Total Cost</th>
+                </tr>
+              </thead>
+              <tbody id="perf-agent-tbody">
+                <tr><td colspan="8" class="text-muted" style="text-align:center;">No data yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Queue Status -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">LLM Queue</span>
+          </div>
+          <div class="card-body" id="queue-stats">
+            <div class="empty-state"><p>No queue modules registered</p></div>
           </div>
         </div>
 
@@ -106,13 +177,23 @@
       <div class="tab-panel" id="tab-traces">
         <div class="card mb-20">
           <div class="card-header">
-            <span class="card-title">Recent LLM Calls</span>
-            <div class="flex gap-8">
+            <span class="card-title">Recent LLM Calls <span id="trace-count" class="text-dimmed text-xs mono"></span></span>
+            <div class="flex gap-8 items-center">
+              <input type="text" id="filter-search" placeholder="Search traces..." class="filter-select" style="width:160px;">
               <select class="filter-select" id="filter-provider">
                 <option value="">All Providers</option>
               </select>
+              <select class="filter-select" id="filter-model">
+                <option value="">All Models</option>
+              </select>
               <select class="filter-select" id="filter-agent">
                 <option value="">All Agents</option>
+              </select>
+              <select class="filter-select" id="filter-status">
+                <option value="">All Status</option>
+                <option value="ok">OK</option>
+                <option value="error">Error</option>
+                <option value="timeout">Timeout</option>
               </select>
               <button class="btn btn-ghost btn-sm" id="btn-export">Export</button>
             </div>
@@ -123,13 +204,15 @@
                 <tr>
                   <th>Trace ID</th>
                   <th>Agent</th>
+                  <th>DID</th>
                   <th>Model</th>
-                  <th>Tokens In</th>
-                  <th>Tokens Out</th>
-                  <th>Latency</th>
-                  <th>Cost</th>
+                  <th>Tools</th>
+                  <th class="sortable" data-sort="input_tokens" style="cursor:pointer;">Tokens In <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="output_tokens" style="cursor:pointer;">Tokens Out <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="duration_ms" style="cursor:pointer;">Latency <span class="sort-arrow"></span></th>
+                  <th class="sortable" data-sort="cost_usd" style="cursor:pointer;">Cost <span class="sort-arrow"></span></th>
                   <th>Status</th>
-                  <th>Time</th>
+                  <th class="sortable" data-sort="timestamp" style="cursor:pointer;">Time <span class="sort-arrow"></span></th>
                 </tr>
               </thead>
               <tbody id="trace-tbody"></tbody>
@@ -142,22 +225,46 @@
         <div class="card hidden" id="trace-detail">
           <div class="card-header">
             <span class="card-title">Trace Detail: <span id="detail-trace-id"></span></span>
-            <button class="btn btn-ghost btn-sm" id="close-detail">Close</button>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-ghost btn-sm" id="export-trace">Export JSON</button>
+              <button class="btn btn-ghost btn-sm" id="close-detail">Close</button>
+            </div>
           </div>
           <div class="card-body">
-            <div class="grid-2" style="gap:20px;">
-              <div>
-                <div class="text-xs text-dimmed mb-8">Request</div>
-                <div class="code-block" id="detail-request" style="max-height:200px;overflow-y:auto;">-</div>
-              </div>
-              <div>
-                <div class="text-xs text-dimmed mb-8">Response</div>
-                <div class="code-block" id="detail-response" style="max-height:200px;overflow-y:auto;">-</div>
-              </div>
+            <!-- Summary bar -->
+            <div id="detail-summary" style="display:flex;gap:24px;margin-bottom:16px;flex-wrap:wrap;" class="text-sm"></div>
+
+            <!-- Tool Calls -->
+            <div id="detail-tools-section" class="hidden" style="margin-bottom:16px;">
+              <div class="text-xs text-dimmed mb-8">Tool Calls</div>
+              <div id="detail-tools" style="display:flex;flex-direction:column;gap:8px;"></div>
             </div>
-            <div style="margin-top:16px;">
+
+            <!-- Span Timeline -->
+            <div style="margin-bottom:16px;">
               <div class="text-xs text-dimmed mb-8">Span Timeline</div>
               <div id="detail-timeline" style="display:flex;align-items:center;gap:4px;height:24px;background:var(--bg-deepest);border-radius:var(--radius-sm);padding:0 8px;">
+              </div>
+              <div id="detail-timeline-legend" style="margin-top:6px;display:flex;flex-wrap:wrap;"></div>
+            </div>
+
+            <!-- Request / Response (side by side, fixed equal height) -->
+            <div style="display:flex;justify-content:flex-end;margin-bottom:6px;">
+              <div class="pill-nav" id="body-view-toggle">
+                <span class="pill-nav-item active" data-view="structured">Structured</span>
+                <span class="pill-nav-item" data-view="raw">Raw JSON</span>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;">
+              <div style="min-width:0;">
+                <div class="text-xs text-dimmed" style="margin-bottom:8px;">Request Body</div>
+                <div class="code-block" id="detail-request" style="height:350px;overflow-y:auto;overflow-x:auto;font-size:11px;white-space:pre-wrap;word-break:break-word;">-</div>
+                <div class="code-block hidden" id="detail-request-raw" style="height:350px;overflow-y:auto;overflow-x:auto;font-size:11px;white-space:pre-wrap;word-break:break-word;">-</div>
+              </div>
+              <div style="min-width:0;">
+                <div class="text-xs text-dimmed" style="margin-bottom:8px;">Response Body</div>
+                <div class="code-block" id="detail-response" style="height:350px;overflow-y:auto;overflow-x:auto;font-size:11px;white-space:pre-wrap;word-break:break-word;">-</div>
+                <div class="code-block hidden" id="detail-response-raw" style="height:350px;overflow-y:auto;overflow-x:auto;font-size:11px;white-space:pre-wrap;word-break:break-word;">-</div>
               </div>
             </div>
           </div>
@@ -248,6 +355,272 @@
         </div>
       </div>
 
+    </div><!-- /page-telemetry -->
+
+      <!-- ==================== SETTINGS PAGE ==================== -->
+      <div data-page-content="settings" class="hidden">
+
+        <div class="page-header">
+          <h1>Settings</h1>
+          <div class="page-header-actions">
+            <span id="config-status" class="text-xs text-dimmed"></span>
+            <button class="btn btn-primary btn-sm" id="cfg-save">Save Changes</button>
+            <button class="btn btn-secondary btn-sm" id="cfg-reset">Reset</button>
+            <span id="cfg-save-status" class="text-xs" style="margin-left:4px;"></span>
+          </div>
+        </div>
+
+        <!-- Defaults -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Defaults</span>
+          </div>
+          <div class="card-body">
+            <div class="cfg-grid">
+              <label class="cfg-label">Provider</label>
+              <input type="text" id="cfg-defaults-provider" class="filter-input" style="width:200px;" placeholder="anthropic">
+
+              <label class="cfg-label">Temperature</label>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <input type="range" id="cfg-defaults-temperature" min="0" max="2" step="0.05" value="0.7" style="flex:1;max-width:240px;accent-color:var(--accent);">
+                <span id="cfg-defaults-temperature-val" class="mono text-sm text-white" style="min-width:36px;">0.70</span>
+              </div>
+
+              <label class="cfg-label">Max Tokens</label>
+              <input type="number" id="cfg-defaults-max_tokens" class="filter-input" style="width:120px;" min="1" max="200000">
+            </div>
+          </div>
+        </div>
+
+        <!-- Vault -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Vault</span>
+          </div>
+          <div class="card-body">
+            <div class="cfg-grid">
+              <label class="cfg-label">Backend</label>
+              <input type="text" id="cfg-vault-backend" class="filter-input" style="width:280px;" placeholder="module:ClassName">
+
+              <label class="cfg-label">Cache TTL (s)</label>
+              <input type="number" id="cfg-vault-cache_ttl_seconds" class="filter-input" style="width:100px;" min="0">
+
+              <label class="cfg-label">URL</label>
+              <input type="text" id="cfg-vault-url" class="filter-input" style="width:280px;" placeholder="https://vault.example.com">
+
+              <label class="cfg-label">Region</label>
+              <input type="text" id="cfg-vault-region" class="filter-input" style="width:160px;" placeholder="us-east-1">
+            </div>
+          </div>
+        </div>
+
+        <!-- Module Cards (2-col grid) -->
+        <div class="grid-2 mb-20">
+
+          <!-- Telemetry -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Telemetry</span>
+              <div class="toggle-switch" id="cfg-mod-telemetry-enabled" data-module="telemetry"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Log Level</label>
+                <select id="cfg-mod-telemetry-log_level" class="filter-select" style="width:120px;">
+                  <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
+                </select>
+                <label class="cfg-label">Monthly Limit ($)</label>
+                <input type="number" id="cfg-mod-telemetry-monthly_limit_usd" class="filter-input" style="width:120px;" min="0" step="0.01" placeholder="None">
+                <label class="cfg-label">Daily Limit ($)</label>
+                <input type="number" id="cfg-mod-telemetry-daily_limit_usd" class="filter-input" style="width:120px;" min="0" step="0.01" placeholder="None">
+                <label class="cfg-label">Per-Call Max ($)</label>
+                <input type="number" id="cfg-mod-telemetry-per_call_max_usd" class="filter-input" style="width:120px;" min="0" step="0.01" placeholder="None">
+                <label class="cfg-label">Alert Threshold %</label>
+                <input type="number" id="cfg-mod-telemetry-alert_threshold_pct" class="filter-input" style="width:80px;" min="0" max="100" placeholder="80">
+                <label class="cfg-label">Enforcement</label>
+                <select id="cfg-mod-telemetry-enforcement" class="filter-select" style="width:100px;">
+                  <option value="">None</option><option>warn</option><option>block</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Retry -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Retry</span>
+              <div class="toggle-switch" id="cfg-mod-retry-enabled" data-module="retry"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Max Retries</label>
+                <input type="number" id="cfg-mod-retry-max_retries" class="filter-input" style="width:80px;" min="0" max="20">
+                <label class="cfg-label">Backoff Base (s)</label>
+                <input type="number" id="cfg-mod-retry-backoff_base_seconds" class="filter-input" style="width:100px;" min="0" step="0.1">
+              </div>
+            </div>
+          </div>
+
+          <!-- Fallback -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Fallback</span>
+              <div class="toggle-switch" id="cfg-mod-fallback-enabled" data-module="fallback"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Provider Chain</label>
+                <div>
+                  <div id="cfg-fallback-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+                  <div style="display:flex;gap:8px;">
+                    <input type="text" id="cfg-fallback-input" class="filter-input" style="width:160px;" placeholder="Add provider">
+                    <button class="btn btn-ghost btn-sm" id="cfg-fallback-add">Add</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Rate Limit -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Rate Limit</span>
+              <div class="toggle-switch" id="cfg-mod-rate_limit-enabled" data-module="rate_limit"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Requests/Min</label>
+                <input type="number" id="cfg-mod-rate_limit-requests_per_minute" class="filter-input" style="width:100px;" min="1">
+                <label class="cfg-label">Burst Capacity</label>
+                <input type="number" id="cfg-mod-rate_limit-burst_capacity" class="filter-input" style="width:100px;" min="1">
+              </div>
+            </div>
+          </div>
+
+          <!-- Queue -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Queue</span>
+              <div class="toggle-switch" id="cfg-mod-queue-enabled" data-module="queue"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Max Concurrent</label>
+                <input type="number" id="cfg-mod-queue-max_concurrent" class="filter-input" style="width:80px;" min="1">
+                <label class="cfg-label">Call Timeout (s)</label>
+                <input type="number" id="cfg-mod-queue-call_timeout" class="filter-input" style="width:100px;" min="1" step="0.1">
+                <label class="cfg-label">Max Queued</label>
+                <input type="number" id="cfg-mod-queue-max_queued" class="filter-input" style="width:80px;" min="1">
+              </div>
+            </div>
+          </div>
+
+          <!-- Routing -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Routing</span>
+              <div class="toggle-switch" id="cfg-mod-routing-enabled" data-module="routing"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Enforcement</label>
+                <select id="cfg-mod-routing-enforcement" class="filter-select" style="width:100px;">
+                  <option>warn</option><option>block</option>
+                </select>
+                <label class="cfg-label">Default Class</label>
+                <input type="text" id="cfg-mod-routing-default_classification" class="filter-input" style="width:160px;">
+              </div>
+            </div>
+          </div>
+
+          <!-- Audit -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Audit</span>
+              <div class="toggle-switch" id="cfg-mod-audit-enabled" data-module="audit"></div>
+            </div>
+            <div class="card-body">
+              <div class="text-xs text-dimmed">Metadata-safe logging for all LLM calls. Enable to capture audit trail.</div>
+            </div>
+          </div>
+
+          <!-- Security -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Security</span>
+              <div class="toggle-switch" id="cfg-mod-security-enabled" data-module="security"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">PII Detection</label>
+                <div class="toggle-switch" id="cfg-mod-security-pii_enabled"></div>
+                <label class="cfg-label">PII Detector</label>
+                <select id="cfg-mod-security-pii_detector" class="filter-select" style="width:100px;">
+                  <option>regex</option>
+                </select>
+                <label class="cfg-label">Request Signing</label>
+                <div class="toggle-switch" id="cfg-mod-security-signing_enabled"></div>
+                <label class="cfg-label">Signing Algorithm</label>
+                <input type="text" id="cfg-mod-security-signing_algorithm" class="filter-input" style="width:160px;" readonly>
+                <label class="cfg-label">Signing Key Env</label>
+                <input type="text" id="cfg-mod-security-signing_key_env" class="filter-input" style="width:200px;">
+              </div>
+            </div>
+          </div>
+
+          <!-- OpenTelemetry -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">OpenTelemetry</span>
+              <div class="toggle-switch" id="cfg-mod-otel-enabled" data-module="otel"></div>
+            </div>
+            <div class="card-body">
+              <div class="cfg-grid">
+                <label class="cfg-label">Exporter</label>
+                <select id="cfg-mod-otel-exporter" class="filter-select" style="width:120px;">
+                  <option>otlp</option><option>console</option><option>none</option>
+                </select>
+                <label class="cfg-label">Endpoint</label>
+                <input type="text" id="cfg-mod-otel-endpoint" class="filter-input" style="width:260px;">
+                <label class="cfg-label">Protocol</label>
+                <select id="cfg-mod-otel-protocol" class="filter-select" style="width:100px;">
+                  <option>grpc</option><option>http</option>
+                </select>
+                <label class="cfg-label">Service Name</label>
+                <input type="text" id="cfg-mod-otel-service_name" class="filter-input" style="width:160px;">
+                <label class="cfg-label">Sample Rate</label>
+                <input type="number" id="cfg-mod-otel-sample_rate" class="filter-input" style="width:80px;" min="0" max="1" step="0.01">
+                <label class="cfg-label">Insecure</label>
+                <div class="toggle-switch" id="cfg-mod-otel-insecure"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ArcRun Configuration (placeholder) -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">ArcRun Configuration</span>
+            <span class="badge badge-neutral">Coming Soon</span>
+          </div>
+          <div class="card-body">
+            <div class="empty-state"><p>Runtime loop configuration will be available here.</p></div>
+          </div>
+        </div>
+
+        <!-- Agent Configuration (placeholder) -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Agent Configuration</span>
+            <span class="badge badge-neutral">Coming Soon</span>
+          </div>
+          <div class="card-body">
+            <div class="empty-state"><p>Per-agent configuration and identity management will be available here.</p></div>
+          </div>
+        </div>
+
+      </div><!-- /page-settings -->
+
     </main>
   </div>
 
@@ -260,9 +633,51 @@
   <script src="assets/connection-ui.js"></script>
   <script src="assets/log-table.js"></script>
   <script>
-    /* --- Init Shell --- */
+    /* --- Init Shell + Sidebar Nav --- */
     ARC.renderShell();
-    ARC.renderChartBars(document.getElementById('token-volume'), 48, 160);
+    ARC.initSidebarNav();
+
+    /* --- Token Volume Chart (real data) --- */
+    let _chartWindow = '24h';
+    function renderTokenChart(buckets) {
+      const container = document.getElementById('token-volume');
+      if (!container || !buckets) return;
+      const maxTokens = Math.max(...buckets.map(b => b.total_tokens), 1);
+      container.innerHTML = '';
+      const maxH = 160;
+      for (const bucket of buckets) {
+        const h = bucket.total_tokens > 0
+          ? Math.max(4, Math.round((bucket.total_tokens / maxTokens) * maxH))
+          : 2;
+        const bar = document.createElement('div');
+        bar.className = 'chart-bar' + (bucket.request_count === 0 ? ' secondary' : '');
+        bar.style.height = h + 'px';
+        bar.title = `${Fmt.number(bucket.total_tokens)} tokens, ${bucket.request_count} calls`;
+        container.appendChild(bar);
+      }
+    }
+
+    async function fetchTimeseries() {
+      const data = await fetchAPI('/api/stats/timeseries?window=' + _chartWindow);
+      if (data && data.buckets) renderTokenChart(data.buckets);
+    }
+
+    // Chart window toggle
+    document.querySelectorAll('#token-volume').forEach(el => {
+      const nav = el.closest('.card')?.querySelector('.pill-nav');
+      if (nav) {
+        nav.addEventListener('click', (e) => {
+          const item = e.target.closest('.pill-nav-item');
+          if (!item) return;
+          nav.querySelectorAll('.pill-nav-item').forEach(i => i.classList.remove('active'));
+          item.classList.add('active');
+          _chartWindow = item.textContent.trim().toLowerCase();
+          const titleEl = document.getElementById('chart-title');
+          if (titleEl) titleEl.textContent = 'Token Volume (' + _chartWindow + ')';
+          fetchTimeseries();
+        });
+      }
+    });
 
     /* --- Tab Navigation --- */
     document.getElementById('main-tabs').addEventListener('click', (e) => {
@@ -299,16 +714,273 @@
     if (token) ws.connect();
 
     /* --- LogTable --- */
+    const traceCountEl = document.getElementById('trace-count');
     const logTable = new LogTable(
       document.getElementById('trace-tbody'),
-      { resumeBtn: document.getElementById('resume-live') }
+      {
+        resumeBtn: document.getElementById('resume-live'),
+        onCountChange: (shown, total) => {
+          traceCountEl.textContent = shown === total ? `(${total})` : `(${shown}/${total})`;
+        },
+      }
     );
+
+    // Wire filter dropdowns
+    for (const [elId, filterKey] of [
+      ['filter-provider', 'provider'],
+      ['filter-model', 'model'],
+      ['filter-agent', 'agent'],
+      ['filter-status', 'status'],
+    ]) {
+      document.getElementById(elId)?.addEventListener('change', (e) => {
+        logTable.setFilter(filterKey, e.target.value);
+      });
+    }
+
+    // Wire search input (debounced)
+    let _searchTimer = null;
+    document.getElementById('filter-search')?.addEventListener('input', (e) => {
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(() => logTable.setFilter('search', e.target.value), 150);
+    });
+
+    // Wire sortable column headers
+    document.querySelectorAll('#tab-traces th.sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const { field, dir } = logTable.setSort(th.dataset.sort);
+        // Update arrow indicators
+        document.querySelectorAll('#tab-traces th.sortable .sort-arrow').forEach(el => { el.textContent = ''; });
+        th.querySelector('.sort-arrow').textContent = dir === 'asc' ? ' \u25B2' : ' \u25BC';
+      });
+    });
 
     ArcStore.addEventListener('trace-event', (e) => {
       logTable.addRow(e.detail);
     });
 
     /* --- Trace Detail --- */
+    let _currentTraceData = null;
+
+    function renderToolCalls(toolCalls, container) {
+      container.innerHTML = '';
+      if (!toolCalls || toolCalls.length === 0) return;
+      for (const tc of toolCalls) {
+        const card = document.createElement('div');
+        card.style.cssText = 'background:var(--bg-deepest);border-radius:var(--radius-sm);padding:12px;border-left:3px solid var(--accent);';
+        const nameEl = document.createElement('div');
+        nameEl.style.cssText = 'font-weight:600;color:var(--accent);margin-bottom:6px;font-family:var(--font-mono);font-size:13px;';
+        nameEl.textContent = tc.name || 'unknown';
+        card.appendChild(nameEl);
+
+        const args = tc.arguments || tc.input || {};
+        for (const [key, val] of Object.entries(args)) {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:8px;margin-bottom:4px;font-size:12px;';
+          const keyEl = document.createElement('span');
+          keyEl.style.cssText = 'color:var(--text-dimmed);min-width:80px;flex-shrink:0;';
+          keyEl.textContent = key + ':';
+          const valEl = document.createElement('span');
+          valEl.style.cssText = 'color:var(--text-primary);font-family:var(--font-mono);word-break:break-all;white-space:pre-wrap;';
+          valEl.textContent = typeof val === 'string' ? val : JSON.stringify(val);
+          row.appendChild(keyEl);
+          row.appendChild(valEl);
+          card.appendChild(row);
+        }
+        container.appendChild(card);
+      }
+    }
+
+    function renderDetailSummary(data, container) {
+      container.innerHTML = '';
+      const attempt = data.attempt_number || 0;
+      const retryLabel = attempt > 0 ? `Attempt #${attempt + 1}` : null;
+      const items = [
+        ['Provider', data.provider],
+        ['Model', data.model],
+        ['Agent', data.agent_label],
+        ['DID', data.agent_did],
+        ['Duration', Fmt.latency(data.duration_ms || 0)],
+        ['Cost', Fmt.cost(data.cost_usd || 0)],
+        ['Tokens', Fmt.number(data.total_tokens || 0)],
+        ['Stop', data.stop_reason],
+        ['Retry', retryLabel],
+        ['Group', data.retry_group_id ? data.retry_group_id.substring(0, 8) + '...' : null],
+        ['Status', data.status],
+        ['Error', data.error],
+      ];
+      for (const [label, value] of items) {
+        if (!value) continue;
+        const el = document.createElement('span');
+        const labelEl = document.createElement('span');
+        labelEl.className = 'text-dimmed';
+        labelEl.textContent = label + ': ';
+        const valEl = document.createElement('span');
+        valEl.className = 'mono';
+        valEl.textContent = value;
+        el.appendChild(labelEl);
+        el.appendChild(valEl);
+        container.appendChild(el);
+      }
+    }
+
+    function renderRequestBody(body, container) {
+      container.innerHTML = '';
+      if (!body) { container.textContent = '-'; return; }
+
+      const messages = body.messages || [];
+      const tools = body.tools || [];
+      const extras = Object.entries(body).filter(([k]) => !['messages', 'tools'].includes(k));
+
+      // Messages — each as a collapsible block with role badge
+      if (messages.length > 0) {
+        const msgHeader = document.createElement('div');
+        msgHeader.style.cssText = 'font-weight:600;font-size:11px;color:var(--text-dimmed);margin-bottom:8px;';
+        msgHeader.textContent = `Messages (${messages.length})`;
+        container.appendChild(msgHeader);
+
+        const roleColors = {
+          system: 'var(--status-warning)',
+          user: 'var(--status-info)',
+          assistant: 'var(--accent)',
+          tool: 'var(--status-online)',
+        };
+
+        for (const msg of messages) {
+          const role = msg.role || 'unknown';
+          const isSystem = role === 'system';
+          const block = document.createElement('details');
+          block.open = !isSystem; // Collapse system by default
+          block.style.cssText = 'margin-bottom:6px;border-left:2px solid ' + (roleColors[role] || 'var(--border-primary)') + ';padding-left:8px;';
+
+          const summary = document.createElement('summary');
+          summary.style.cssText = 'cursor:pointer;font-size:11px;display:flex;gap:6px;align-items:center;';
+          const badge = document.createElement('span');
+          badge.style.cssText = 'font-weight:600;color:' + (roleColors[role] || 'var(--text-secondary)') + ';text-transform:uppercase;font-size:10px;letter-spacing:0.5px;';
+          badge.textContent = role;
+          const preview = document.createElement('span');
+          preview.className = 'text-dimmed';
+          const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
+          preview.textContent = content.substring(0, 80) + (content.length > 80 ? '...' : '');
+          summary.appendChild(badge);
+          summary.appendChild(preview);
+          block.appendChild(summary);
+
+          const bodyEl = document.createElement('div');
+          bodyEl.style.cssText = 'font-size:11px;white-space:pre-wrap;word-break:break-word;margin-top:4px;color:var(--text-secondary);max-height:200px;overflow-y:auto;';
+
+          // Show tool_call_id or name for tool messages
+          if (msg.tool_call_id) {
+            const idLine = document.createElement('div');
+            idLine.style.cssText = 'font-size:10px;color:var(--text-dimmed);margin-bottom:4px;';
+            idLine.textContent = 'tool_call_id: ' + msg.tool_call_id;
+            bodyEl.appendChild(idLine);
+          }
+
+          const text = document.createTextNode(content);
+          bodyEl.appendChild(text);
+          block.appendChild(bodyEl);
+          container.appendChild(block);
+        }
+      }
+
+      // Tools definitions
+      if (tools.length > 0) {
+        const toolHeader = document.createElement('details');
+        toolHeader.style.cssText = 'margin-top:8px;';
+        const toolSum = document.createElement('summary');
+        toolSum.style.cssText = 'cursor:pointer;font-weight:600;font-size:11px;color:var(--text-dimmed);';
+        toolSum.textContent = `Tool Definitions (${tools.length})`;
+        toolHeader.appendChild(toolSum);
+        const toolList = document.createElement('div');
+        toolList.style.cssText = 'font-size:11px;color:var(--text-secondary);margin-top:4px;';
+        for (const t of tools) {
+          const item = document.createElement('div');
+          item.style.cssText = 'margin-bottom:4px;padding:4px 8px;background:var(--bg-secondary);border-radius:var(--radius-sm);';
+          item.innerHTML = '<span class="text-accent mono">' + Fmt.escapeHTML(t.name || '?') + '</span>';
+          if (t.description) {
+            const desc = document.createElement('span');
+            desc.className = 'text-dimmed';
+            desc.textContent = ' — ' + t.description.substring(0, 100);
+            item.appendChild(desc);
+          }
+          toolList.appendChild(item);
+        }
+        toolHeader.appendChild(toolList);
+        container.appendChild(toolHeader);
+      }
+
+      // Extra kwargs (max_tokens, etc.)
+      if (extras.length > 0) {
+        const extrasEl = document.createElement('div');
+        extrasEl.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-dimmed);';
+        for (const [k, v] of extras) {
+          if (v === null || v === undefined) continue;
+          extrasEl.innerHTML += '<div><span class="mono">' + Fmt.escapeHTML(k) + ':</span> ' + Fmt.escapeHTML(String(v)) + '</div>';
+        }
+        container.appendChild(extrasEl);
+      }
+
+      if (messages.length === 0 && tools.length === 0) {
+        container.textContent = JSON.stringify(body, null, 2);
+      }
+    }
+
+    function renderResponseBody(body, container) {
+      container.innerHTML = '';
+      if (!body || Object.keys(body).length === 0) { container.textContent = '-'; return; }
+
+      // Content
+      if (body.content) {
+        const contentHeader = document.createElement('div');
+        contentHeader.style.cssText = 'font-weight:600;font-size:11px;color:var(--text-dimmed);margin-bottom:4px;';
+        contentHeader.textContent = 'Content';
+        container.appendChild(contentHeader);
+        const contentEl = document.createElement('div');
+        contentEl.style.cssText = 'font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-secondary);margin-bottom:12px;max-height:200px;overflow-y:auto;';
+        contentEl.textContent = typeof body.content === 'string' ? body.content : JSON.stringify(body.content, null, 2);
+        container.appendChild(contentEl);
+      }
+
+      // Tool calls
+      const toolCalls = body.tool_calls || [];
+      if (toolCalls.length > 0) {
+        const tcHeader = document.createElement('div');
+        tcHeader.style.cssText = 'font-weight:600;font-size:11px;color:var(--text-dimmed);margin-bottom:6px;';
+        tcHeader.textContent = `Tool Calls (${toolCalls.length})`;
+        container.appendChild(tcHeader);
+
+        for (const tc of toolCalls) {
+          const card = document.createElement('div');
+          card.style.cssText = 'margin-bottom:6px;padding:8px;background:var(--bg-secondary);border-radius:var(--radius-sm);border-left:2px solid var(--accent);';
+          const nameEl = document.createElement('div');
+          nameEl.style.cssText = 'font-weight:600;color:var(--accent);font-family:var(--font-mono);font-size:12px;margin-bottom:4px;';
+          nameEl.textContent = tc.name || 'unknown';
+          card.appendChild(nameEl);
+          const args = tc.arguments || tc.input || {};
+          if (typeof args === 'object' && Object.keys(args).length > 0) {
+            const argsEl = document.createElement('div');
+            argsEl.style.cssText = 'font-size:11px;white-space:pre-wrap;word-break:break-word;color:var(--text-secondary);max-height:150px;overflow-y:auto;';
+            argsEl.textContent = JSON.stringify(args, null, 2);
+            card.appendChild(argsEl);
+          }
+          container.appendChild(card);
+        }
+      }
+
+      // Stop reason
+      if (body.stop_reason) {
+        const stopEl = document.createElement('div');
+        stopEl.style.cssText = 'margin-top:8px;font-size:11px;color:var(--text-dimmed);';
+        stopEl.textContent = 'Stop reason: ' + body.stop_reason;
+        container.appendChild(stopEl);
+      }
+
+      // Fallback for unexpected structure
+      if (!body.content && toolCalls.length === 0 && !body.stop_reason) {
+        container.textContent = JSON.stringify(body, null, 2);
+      }
+    }
+
     document.getElementById('trace-tbody').addEventListener('click', (e) => {
       const row = e.target.closest('tr');
       if (!row) return;
@@ -324,26 +996,69 @@
       })
       .then(r => r.json())
       .then(data => {
-        document.getElementById('detail-request').textContent =
+        _currentTraceData = data;
+
+        // Summary bar
+        renderDetailSummary(data, document.getElementById('detail-summary'));
+
+        // Tool calls from response
+        const toolCalls = (data.response_body || {}).tool_calls || [];
+        const toolsSection = document.getElementById('detail-tools-section');
+        const toolsContainer = document.getElementById('detail-tools');
+        if (toolCalls.length > 0) {
+          toolsSection.classList.remove('hidden');
+          renderToolCalls(toolCalls, toolsContainer);
+        } else {
+          toolsSection.classList.add('hidden');
+        }
+
+        // Structured request/response rendering
+        // Structured view
+        renderRequestBody(data.request_body || data, document.getElementById('detail-request'));
+        renderResponseBody(data.response_body || {}, document.getElementById('detail-response'));
+        // Raw JSON view (full audit data)
+        document.getElementById('detail-request-raw').textContent =
           JSON.stringify(data.request_body || data, null, 2);
-        document.getElementById('detail-response').textContent =
+        document.getElementById('detail-response-raw').textContent =
           JSON.stringify(data.response_body || {}, null, 2);
 
-        // Render span timeline using DOM API to prevent XSS
+        // Render span timeline + legend
         const timeline = document.getElementById('detail-timeline');
+        const legend = document.getElementById('detail-timeline-legend');
         const timings = data.phase_timings || {};
-        const total = Object.values(timings).reduce((a, b) => a + b, 0) || 1;
-        const colors = ['var(--status-info)', 'var(--accent)', 'var(--status-online)',
-                        'var(--status-warning)', 'var(--text-dimmed)'];
+        // Skip total_ms from bar rendering (it's the sum, not a phase)
+        const phases = Object.entries(timings).filter(([k]) => k !== 'total_ms');
+        const total = phases.reduce((a, [, ms]) => a + ms, 0) || 1;
+        const phaseColors = {
+          'prompt_assembly_ms': 'var(--status-info)',
+          'llm_call_ms': 'var(--accent)',
+          'post_processing_ms': 'var(--status-online)',
+        };
+        const defaultColors = ['var(--status-warning)', 'var(--text-dimmed)'];
         timeline.innerHTML = '';
-        let i = 0;
-        for (const [phase, ms] of Object.entries(timings)) {
+        if (legend) legend.innerHTML = '';
+        let ci = 0;
+        for (const [phase, ms] of phases) {
           const pct = (ms / total * 100).toFixed(1);
-          const color = colors[i++ % colors.length];
+          const color = phaseColors[phase] || defaultColors[ci++ % defaultColors.length];
           const bar = document.createElement('div');
           bar.style.cssText = `width:${pct}%;height:12px;background:${color};border-radius:2px;`;
           bar.title = `${phase}: ${Math.round(ms)}ms`;
           timeline.appendChild(bar);
+          // Legend entry
+          if (legend) {
+            const item = document.createElement('span');
+            item.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:11px;';
+            const dot = document.createElement('span');
+            dot.style.cssText = `width:8px;height:8px;border-radius:50%;background:${color};display:inline-block;`;
+            const label = document.createElement('span');
+            label.className = 'text-dimmed';
+            const name = phase.replace(/_ms$/, '').replace(/_/g, ' ');
+            label.textContent = `${name}: ${Math.round(ms)}ms (${pct}%)`;
+            item.appendChild(dot);
+            item.appendChild(label);
+            legend.appendChild(item);
+          }
         }
       })
       .catch(() => {
@@ -353,6 +1068,32 @@
 
     document.getElementById('close-detail').addEventListener('click', () => {
       document.getElementById('trace-detail').classList.add('hidden');
+      _currentTraceData = null;
+    });
+
+    document.getElementById('export-trace').addEventListener('click', () => {
+      if (!_currentTraceData) return;
+      const blob = new Blob([JSON.stringify(_currentTraceData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'trace-' + (_currentTraceData.trace_id || 'unknown') + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    /* --- Structured / Raw JSON toggle --- */
+    document.getElementById('body-view-toggle').addEventListener('click', (e) => {
+      const item = e.target.closest('.pill-nav-item');
+      if (!item) return;
+      const view = item.dataset.view;
+      document.querySelectorAll('#body-view-toggle .pill-nav-item').forEach(el => el.classList.remove('active'));
+      item.classList.add('active');
+      const isRaw = view === 'raw';
+      document.getElementById('detail-request').classList.toggle('hidden', isRaw);
+      document.getElementById('detail-request-raw').classList.toggle('hidden', !isRaw);
+      document.getElementById('detail-response').classList.toggle('hidden', isRaw);
+      document.getElementById('detail-response-raw').classList.toggle('hidden', !isRaw);
     });
 
     /* --- Polling for REST data --- */
@@ -378,12 +1119,10 @@
           'P95: ' + Fmt.latency(data.latency_p95) + ' \u00b7 P99: ' + Fmt.latency(data.latency_p99);
         document.getElementById('stat-cost').textContent = Fmt.cost(data.total_cost);
 
-        // Provider breakdown
+        // Provider breakdown (Overview tab)
         const providers = data.provider_counts || {};
-        const totalCost = data.total_cost || 0;
         const provEl = document.getElementById('provider-breakdown');
         if (Object.keys(providers).length > 0) {
-          const modelStats = data.model_stats || {};
           let html = '';
           for (const [prov, count] of Object.entries(providers)) {
             const pct = data.request_count > 0 ? (count / data.request_count * 100).toFixed(0) : 0;
@@ -396,6 +1135,46 @@
             </div>`;
           }
           provEl.innerHTML = html;
+        }
+
+        // Cost by Provider (Cost tab)
+        const provCosts = data.provider_costs || {};
+        const provCostEl = document.getElementById('provider-cost-bars');
+        const totalCost = data.total_cost || 0;
+        if (Object.keys(provCosts).length > 0) {
+          let html = '';
+          for (const [prov, cost] of Object.entries(provCosts)) {
+            const pct = totalCost > 0 ? (cost / totalCost * 100).toFixed(0) : 0;
+            const count = providers[prov] || 0;
+            html += `<div style="margin-bottom:12px;">
+              <div class="flex justify-between items-center mb-8">
+                <span class="text-sm text-white">${Fmt.escapeHTML(prov)}</span>
+                <span class="mono text-sm">${Fmt.cost(cost)} (${pct}%) · ${count} calls</span>
+              </div>
+              <div class="progress-bar" style="height:8px;"><div class="fill" style="width:${pct}%;"></div></div>
+            </div>`;
+          }
+          provCostEl.innerHTML = html;
+        }
+
+        // Cost by Agent (Cost tab)
+        const agentCosts = data.agent_costs || {};
+        const agentCostEl = document.getElementById('agent-cost-bars');
+        if (Object.keys(agentCosts).length > 0) {
+          const agentCounts = data.agent_counts || {};
+          let html = '';
+          for (const [agent, cost] of Object.entries(agentCosts)) {
+            const pct = totalCost > 0 ? (cost / totalCost * 100).toFixed(0) : 0;
+            const count = agentCounts[agent] || 0;
+            html += `<div style="margin-bottom:12px;">
+              <div class="flex justify-between items-center mb-8">
+                <span class="text-sm text-white">${Fmt.escapeHTML(agent)}</span>
+                <span class="mono text-sm">${Fmt.cost(cost)} (${pct}%) · ${count} calls</span>
+              </div>
+              <div class="progress-bar" style="height:8px;"><div class="fill" style="width:${pct}%;"></div></div>
+            </div>`;
+          }
+          agentCostEl.innerHTML = html;
         }
       });
     }
@@ -489,6 +1268,92 @@
       });
     }
 
+    /* --- Performance Tables --- */
+    let _perfWindow = '24h';
+
+    function renderPerfRows(rows, tbodyId) {
+      const tbody = document.getElementById(tbodyId);
+      if (!tbody) return;
+      if (!rows || rows.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center;">No data yet</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = rows.map(r => {
+        const rateClass = r.success_rate >= 99 ? 'text-accent' :
+                          r.success_rate >= 95 ? 'badge-warning' : 'badge-error';
+        return `<tr>
+          <td class="text-white">${Fmt.escapeHTML(r.name)}</td>
+          <td class="mono">${Fmt.number(r.request_count)}</td>
+          <td class="mono ${rateClass}">${r.success_rate}%</td>
+          <td class="mono">${r.error_count > 0 ? '<span class="badge badge-error">' + r.error_count + '</span>' : '0'}</td>
+          <td class="mono">${r.retry_count > 0 ? '<span class="badge badge-warning">' + r.retry_count + '</span>' : '0'}</td>
+          <td class="mono">${Fmt.latency(r.latency_avg)}</td>
+          <td class="mono">${Fmt.latency(r.latency_p95)}</td>
+          <td class="mono">${Fmt.cost(r.total_cost)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function refreshPerformance() {
+      const data = await fetchAPI('/api/performance?window=' + _perfWindow);
+      if (!data || data.error) return;
+      domBatcher.schedule(() => {
+        renderPerfRows(data.models, 'perf-model-tbody');
+        renderPerfRows(data.agents, 'perf-agent-tbody');
+      });
+    }
+
+    // Performance window toggle
+    document.getElementById('perf-window-toggle')?.addEventListener('click', (e) => {
+      const item = e.target.closest('.pill-nav-item');
+      if (!item) return;
+      document.querySelectorAll('#perf-window-toggle .pill-nav-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      _perfWindow = item.dataset.window;
+      refreshPerformance();
+    });
+
+    /* --- Queue Stats --- */
+    async function refreshQueueStats() {
+      const data = await fetchAPI('/api/queue');
+      if (!data) return;
+      const queues = data.queues || [];
+
+      domBatcher.schedule(() => {
+        const el = document.getElementById('queue-stats');
+        if (queues.length === 0) {
+          el.innerHTML = '<div class="empty-state"><p>No queue modules registered</p></div>';
+          return;
+        }
+        el.innerHTML = queues.map((q, i) => `
+          <div class="grid-4 mb-8" style="gap:12px;">
+            <div>
+              <div class="text-xs text-dimmed">Active / Max</div>
+              <div class="mono text-white">${q.active} / ${q.max_concurrent}</div>
+            </div>
+            <div>
+              <div class="text-xs text-dimmed">Waiting / Max</div>
+              <div class="mono text-white">${q.waiting} / ${q.max_queued}</div>
+            </div>
+            <div>
+              <div class="text-xs text-dimmed">Avg Wait</div>
+              <div class="mono text-white">${Fmt.latency(q.avg_wait_ms)}</div>
+            </div>
+            <div>
+              <div class="text-xs text-dimmed">Timeout</div>
+              <div class="mono text-white">${q.call_timeout_s}s</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:24px;margin-top:8px;">
+            <span class="text-xs"><span class="text-dimmed">Enqueued:</span> <span class="mono">${Fmt.number(q.total_enqueued)}</span></span>
+            <span class="text-xs"><span class="text-dimmed">Completed:</span> <span class="mono">${Fmt.number(q.total_completed)}</span></span>
+            <span class="text-xs"><span class="text-dimmed">Rejected:</span> <span class="mono ${q.total_rejected > 0 ? 'badge-error' : ''}">${Fmt.number(q.total_rejected)}</span></span>
+            <span class="text-xs"><span class="text-dimmed">Timeouts:</span> <span class="mono ${q.total_timeouts > 0 ? 'badge-error' : ''}">${Fmt.number(q.total_timeouts)}</span></span>
+          </div>
+        `).join('<hr style="border-color:var(--border-primary);margin:12px 0;">');
+      });
+    }
+
     /* --- Export Button --- */
     document.getElementById('btn-export').addEventListener('click', async () => {
       if (!token) return;
@@ -507,16 +1372,344 @@
       } catch { /* download failed silently */ }
     });
 
+    /* --- Load historical traces on page init --- */
+    async function fetchTraces() {
+      const data = await fetchAPI('/api/traces?limit=200');
+      if (data && data.traces && data.traces.length > 0) {
+        ArcStore.setTraces(data.traces);
+        logTable.setRows(data.traces);
+      }
+    }
+
     /* --- Initial load + polling --- */
+    fetchTraces();
     refreshStats();
     refreshCircuitBreakers();
     refreshCostEfficiency();
     refreshBudgets();
+    refreshPerformance();
+    refreshQueueStats();
+    fetchTimeseries();
 
     setInterval(refreshStats, 5000);
+    setInterval(fetchTimeseries, 10000);
     setInterval(refreshCircuitBreakers, 10000);
     setInterval(refreshCostEfficiency, 15000);
     setInterval(refreshBudgets, 15000);
+    setInterval(refreshPerformance, 10000);
+    setInterval(refreshQueueStats, 5000);
+
+    /* --- Settings Page: Full ArcLLM Config --- */
+    let _arcllmConfig = null;
+    let _fallbackChain = [];
+
+    // --- Toggle switch helpers ---
+    function setToggle(id, value) {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('on', !!value);
+    }
+    function getToggle(id) {
+      const el = document.getElementById(id);
+      return el ? el.classList.contains('on') : false;
+    }
+    document.querySelectorAll('.toggle-switch').forEach(el => {
+      el.addEventListener('click', () => el.classList.toggle('on'));
+    });
+
+    // --- Input helpers ---
+    function setVal(id, val) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (val == null) { el.value = ''; return; }
+      el.value = val;
+    }
+    function getVal(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+    function getNum(id) { const v = getVal(id); return v !== '' ? parseFloat(v) : undefined; }
+    function getInt(id) { const v = getVal(id); return v !== '' ? parseInt(v, 10) : undefined; }
+
+    // --- Tag list for fallback chain ---
+    function renderFallbackTags() {
+      const container = document.getElementById('cfg-fallback-tags');
+      if (!container) return;
+      container.innerHTML = _fallbackChain.map((prov, i) =>
+        `<span class="tag" style="display:inline-flex;align-items:center;gap:4px;">
+          <span class="mono">${Fmt.escapeHTML(prov)}</span>
+          <span style="cursor:pointer;color:var(--text-dimmed);font-size:14px;line-height:1;" data-fbremove="${i}">&times;</span>
+        </span>`
+      ).join('');
+      container.querySelectorAll('[data-fbremove]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          _fallbackChain.splice(parseInt(btn.dataset.fbremove), 1);
+          renderFallbackTags();
+        });
+      });
+    }
+    function addFallbackProvider() {
+      const input = document.getElementById('cfg-fallback-input');
+      const val = input.value.trim();
+      if (val && !_fallbackChain.includes(val)) {
+        _fallbackChain.push(val);
+        renderFallbackTags();
+        input.value = '';
+      }
+    }
+    document.getElementById('cfg-fallback-add')?.addEventListener('click', addFallbackProvider);
+    document.getElementById('cfg-fallback-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); addFallbackProvider(); }
+    });
+
+    // --- Temperature slider live update ---
+    document.getElementById('cfg-defaults-temperature')?.addEventListener('input', (e) => {
+      const valEl = document.getElementById('cfg-defaults-temperature-val');
+      if (valEl) valEl.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+
+    // --- Populate form from config dict ---
+    function populateArcLLMConfig(cfg) {
+      _arcllmConfig = cfg;
+
+      // Defaults
+      const d = cfg.defaults || {};
+      setVal('cfg-defaults-provider', d.provider);
+      setVal('cfg-defaults-temperature', d.temperature);
+      const tempValEl = document.getElementById('cfg-defaults-temperature-val');
+      if (tempValEl) tempValEl.textContent = (d.temperature || 0.7).toFixed(2);
+      setVal('cfg-defaults-max_tokens', d.max_tokens);
+
+      // Vault
+      const v = cfg.vault || {};
+      setVal('cfg-vault-backend', v.backend);
+      setVal('cfg-vault-cache_ttl_seconds', v.cache_ttl_seconds);
+      setVal('cfg-vault-url', v.url);
+      setVal('cfg-vault-region', v.region);
+
+      // Modules
+      const mods = cfg.modules || {};
+
+      // Telemetry
+      const tel = mods.telemetry || {};
+      setToggle('cfg-mod-telemetry-enabled', tel.enabled);
+      setVal('cfg-mod-telemetry-log_level', tel.log_level || 'INFO');
+      setVal('cfg-mod-telemetry-monthly_limit_usd', tel.monthly_limit_usd);
+      setVal('cfg-mod-telemetry-daily_limit_usd', tel.daily_limit_usd);
+      setVal('cfg-mod-telemetry-per_call_max_usd', tel.per_call_max_usd);
+      setVal('cfg-mod-telemetry-alert_threshold_pct', tel.alert_threshold_pct);
+      setVal('cfg-mod-telemetry-enforcement', tel.enforcement || '');
+
+      // Retry
+      const ret = mods.retry || {};
+      setToggle('cfg-mod-retry-enabled', ret.enabled);
+      setVal('cfg-mod-retry-max_retries', ret.max_retries);
+      setVal('cfg-mod-retry-backoff_base_seconds', ret.backoff_base_seconds);
+
+      // Fallback
+      const fb = mods.fallback || {};
+      setToggle('cfg-mod-fallback-enabled', fb.enabled);
+      _fallbackChain = [...(fb.chain || [])];
+      renderFallbackTags();
+
+      // Rate Limit
+      const rl = mods.rate_limit || {};
+      setToggle('cfg-mod-rate_limit-enabled', rl.enabled);
+      setVal('cfg-mod-rate_limit-requests_per_minute', rl.requests_per_minute);
+      setVal('cfg-mod-rate_limit-burst_capacity', rl.burst_capacity);
+
+      // Queue
+      const q = mods.queue || {};
+      setToggle('cfg-mod-queue-enabled', q.enabled);
+      setVal('cfg-mod-queue-max_concurrent', q.max_concurrent);
+      setVal('cfg-mod-queue-call_timeout', q.call_timeout);
+      setVal('cfg-mod-queue-max_queued', q.max_queued);
+
+      // Routing
+      const ro = mods.routing || {};
+      setToggle('cfg-mod-routing-enabled', ro.enabled);
+      setVal('cfg-mod-routing-enforcement', ro.enforcement || 'warn');
+      setVal('cfg-mod-routing-default_classification', ro.default_classification);
+
+      // Audit
+      setToggle('cfg-mod-audit-enabled', (mods.audit || {}).enabled);
+
+      // Security
+      const sec = mods.security || {};
+      setToggle('cfg-mod-security-enabled', sec.enabled);
+      setToggle('cfg-mod-security-pii_enabled', sec.pii_enabled !== false);
+      setVal('cfg-mod-security-pii_detector', sec.pii_detector || 'regex');
+      setToggle('cfg-mod-security-signing_enabled', sec.signing_enabled !== false);
+      setVal('cfg-mod-security-signing_algorithm', sec.signing_algorithm || 'hmac-sha256');
+      setVal('cfg-mod-security-signing_key_env', sec.signing_key_env);
+
+      // OTel
+      const otel = mods.otel || {};
+      setToggle('cfg-mod-otel-enabled', otel.enabled);
+      setVal('cfg-mod-otel-exporter', otel.exporter || 'otlp');
+      setVal('cfg-mod-otel-endpoint', otel.endpoint);
+      setVal('cfg-mod-otel-protocol', otel.protocol || 'grpc');
+      setVal('cfg-mod-otel-service_name', otel.service_name);
+      setVal('cfg-mod-otel-sample_rate', otel.sample_rate);
+      setToggle('cfg-mod-otel-insecure', otel.insecure);
+
+      document.getElementById('config-status').textContent = 'Loaded from config.toml';
+    }
+
+    // --- Collect form into config dict ---
+    function collectArcLLMConfig() {
+      const cfg = { defaults: {}, vault: {}, modules: {} };
+
+      cfg.defaults.provider = getVal('cfg-defaults-provider');
+      cfg.defaults.temperature = getNum('cfg-defaults-temperature') ?? 0.7;
+      cfg.defaults.max_tokens = getInt('cfg-defaults-max_tokens') ?? 4096;
+
+      cfg.vault.backend = getVal('cfg-vault-backend');
+      cfg.vault.cache_ttl_seconds = getInt('cfg-vault-cache_ttl_seconds') ?? 300;
+      cfg.vault.url = getVal('cfg-vault-url');
+      cfg.vault.region = getVal('cfg-vault-region');
+
+      // Telemetry
+      const tel = { enabled: getToggle('cfg-mod-telemetry-enabled'), log_level: getVal('cfg-mod-telemetry-log_level') || 'INFO' };
+      const telMonthly = getNum('cfg-mod-telemetry-monthly_limit_usd');
+      if (telMonthly !== undefined) tel.monthly_limit_usd = telMonthly;
+      const telDaily = getNum('cfg-mod-telemetry-daily_limit_usd');
+      if (telDaily !== undefined) tel.daily_limit_usd = telDaily;
+      const telPerCall = getNum('cfg-mod-telemetry-per_call_max_usd');
+      if (telPerCall !== undefined) tel.per_call_max_usd = telPerCall;
+      const telAlert = getInt('cfg-mod-telemetry-alert_threshold_pct');
+      if (telAlert !== undefined) tel.alert_threshold_pct = telAlert;
+      const telEnf = getVal('cfg-mod-telemetry-enforcement');
+      if (telEnf) tel.enforcement = telEnf;
+      cfg.modules.telemetry = tel;
+
+      // Retry
+      cfg.modules.retry = {
+        enabled: getToggle('cfg-mod-retry-enabled'),
+        max_retries: getInt('cfg-mod-retry-max_retries') ?? 3,
+        backoff_base_seconds: getNum('cfg-mod-retry-backoff_base_seconds') ?? 1.0,
+      };
+
+      // Fallback
+      cfg.modules.fallback = {
+        enabled: getToggle('cfg-mod-fallback-enabled'),
+        chain: [..._fallbackChain],
+      };
+
+      // Rate Limit
+      cfg.modules.rate_limit = {
+        enabled: getToggle('cfg-mod-rate_limit-enabled'),
+        requests_per_minute: getInt('cfg-mod-rate_limit-requests_per_minute') ?? 60,
+        burst_capacity: getInt('cfg-mod-rate_limit-burst_capacity') ?? 60,
+      };
+
+      // Queue
+      cfg.modules.queue = {
+        enabled: getToggle('cfg-mod-queue-enabled'),
+        max_concurrent: getInt('cfg-mod-queue-max_concurrent') ?? 2,
+        call_timeout: getNum('cfg-mod-queue-call_timeout') ?? 60.0,
+        max_queued: getInt('cfg-mod-queue-max_queued') ?? 10,
+      };
+
+      // Routing
+      cfg.modules.routing = {
+        enabled: getToggle('cfg-mod-routing-enabled'),
+        enforcement: getVal('cfg-mod-routing-enforcement') || 'warn',
+        default_classification: getVal('cfg-mod-routing-default_classification') || 'unclassified',
+      };
+
+      // Audit
+      cfg.modules.audit = { enabled: getToggle('cfg-mod-audit-enabled') };
+
+      // Security
+      cfg.modules.security = {
+        enabled: getToggle('cfg-mod-security-enabled'),
+        pii_enabled: getToggle('cfg-mod-security-pii_enabled'),
+        pii_detector: getVal('cfg-mod-security-pii_detector') || 'regex',
+        signing_enabled: getToggle('cfg-mod-security-signing_enabled'),
+        signing_algorithm: getVal('cfg-mod-security-signing_algorithm') || 'hmac-sha256',
+        signing_key_env: getVal('cfg-mod-security-signing_key_env') || 'ARCLLM_SIGNING_KEY',
+      };
+
+      // OTel
+      cfg.modules.otel = {
+        enabled: getToggle('cfg-mod-otel-enabled'),
+        exporter: getVal('cfg-mod-otel-exporter') || 'otlp',
+        endpoint: getVal('cfg-mod-otel-endpoint'),
+        protocol: getVal('cfg-mod-otel-protocol') || 'grpc',
+        service_name: getVal('cfg-mod-otel-service_name'),
+        sample_rate: getNum('cfg-mod-otel-sample_rate') ?? 1.0,
+        insecure: getToggle('cfg-mod-otel-insecure'),
+      };
+
+      return cfg;
+    }
+
+    // --- Load config from backend ---
+    async function loadArcLLMConfig() {
+      const statusEl = document.getElementById('config-status');
+      statusEl.textContent = 'Loading...';
+      try {
+        const headers = {};
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        const resp = await fetch('/api/arcllm-config', { headers });
+        if (!resp.ok) {
+          const body = await resp.text();
+          console.warn('arcllm-config load failed:', resp.status, body);
+          statusEl.textContent = `Config error (${resp.status})`;
+          return;
+        }
+        const data = await resp.json();
+        if (data && !data.error) {
+          populateArcLLMConfig(data);
+        } else {
+          statusEl.textContent = data?.error || 'Failed to load config';
+        }
+      } catch (err) {
+        console.error('arcllm-config fetch error:', err);
+        statusEl.textContent = 'Network error loading config';
+      }
+    }
+
+    // --- Save config ---
+    document.getElementById('cfg-save')?.addEventListener('click', async () => {
+      const statusEl = document.getElementById('cfg-save-status');
+      if (!token) {
+        if (statusEl) { statusEl.textContent = 'Authentication required'; statusEl.style.color = 'var(--status-error)'; }
+        return;
+      }
+      statusEl.textContent = 'Saving...';
+      statusEl.style.color = 'var(--text-muted)';
+
+      const updates = collectArcLLMConfig();
+      try {
+        const resp = await fetch('/api/arcllm-config', {
+          method: 'PATCH',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(updates),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          populateArcLLMConfig(data);
+          statusEl.textContent = 'Saved to config.toml';
+          statusEl.style.color = 'var(--status-online)';
+        } else {
+          statusEl.textContent = data.error || 'Save failed';
+          statusEl.style.color = 'var(--status-error)';
+        }
+      } catch {
+        statusEl.textContent = 'Network error';
+        statusEl.style.color = 'var(--status-error)';
+      }
+      setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    });
+
+    // Reset to last loaded config
+    document.getElementById('cfg-reset')?.addEventListener('click', () => {
+      if (_arcllmConfig) populateArcLLMConfig(_arcllmConfig);
+    });
+
+    // Load config when navigating to settings
+    document.querySelector('.sidebar')?.addEventListener('click', (e) => {
+      const item = e.target.closest('.sidebar-item');
+      if (item && item.dataset.page === 'settings') loadArcLLMConfig();
+    });
   </script>
 </body>
 </html>

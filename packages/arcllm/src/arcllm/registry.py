@@ -1,6 +1,7 @@
 """Provider registry — convention-based adapter discovery and load_model()."""
 
 import importlib
+import re
 import threading
 from collections.abc import Callable
 from typing import Any
@@ -8,6 +9,10 @@ from typing import Any
 from arcllm.config import ProviderConfig, load_global_config, load_provider_config
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider
+
+# ASI04 / NIST SI-10: Validate provider names to prevent path traversal
+# and arbitrary module import via naming convention adapter discovery.
+_VALID_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 # Module-level caches: loaded once per provider, reused across calls.
 # Lock protects cache-miss writes for thread safety (PEP 703 ready).
@@ -35,9 +40,23 @@ def clear_cache() -> None:
 
     reset_sdk()
 
-    from arcllm.modules.telemetry import clear_budgets
+    from arcllm.modules.telemetry import clear_budgets, clear_global_defaults
 
     clear_budgets()
+    clear_global_defaults()
+
+
+def _validate_provider_name(provider_name: str) -> None:
+    """Reject provider names that could cause path traversal or code injection.
+
+    Only lowercase alphanumeric + underscore allowed, max 64 chars.
+    Blocks: '../evil', 'os.system', 'builtins', etc.
+    """
+    if not _VALID_PROVIDER_RE.match(provider_name):
+        raise ArcLLMConfigError(
+            f"Invalid provider name '{provider_name}'. "
+            f"Must match [a-z][a-z0-9_]{{0,63}}."
+        )
 
 
 def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
@@ -47,6 +66,8 @@ def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
         provider_name -> module: arcllm.adapters.{provider_name}
         provider_name -> class:  {provider_name.title()}Adapter
     """
+    _validate_provider_name(provider_name)
+
     if provider_name in _adapter_class_cache:
         return _adapter_class_cache[provider_name]
 

@@ -20,6 +20,7 @@ from arcui.aggregator import RollingAggregator
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.connection import ConnectionManager
 from arcui.event_buffer import EventBuffer
+from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
@@ -37,6 +38,12 @@ async def _health(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+async def _agent_info(request: Request) -> JSONResponse:
+    """GET /api/info — agent identity and metadata."""
+    info = getattr(request.app.state, "agent_info", None) or {}
+    return JSONResponse(info)
+
+
 async def _index(request: Request) -> HTMLResponse:
     """Serve the dashboard HTML."""
     index_path = _STATIC_DIR / "index.html"
@@ -50,6 +57,7 @@ def create_app(
     auth_config: AuthConfig | None = None,
     trace_store: Any | None = None,
     config_controller: Any | None = None,
+    agent_info: dict[str, str] | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -57,6 +65,7 @@ def create_app(
         auth_config: Token/role configuration. Auto-generated if None.
         trace_store: ArcLLM JSONLTraceStore instance for trace queries.
         config_controller: ArcLLM ConfigController instance.
+        agent_info: Agent metadata (name, did, model, provider) for UI display.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -66,8 +75,10 @@ def create_app(
     routes = [
         Route("/", _index),
         Route("/api/health", _health),
+        Route("/api/info", _agent_info),
         *traces_routes.routes,
         *config_routes.routes,
+        *arcllm_config_routes.routes,
         *stats_routes.routes,
         *export_routes.routes,
         *cost_efficiency_routes.routes,
@@ -94,7 +105,9 @@ def create_app(
     app.state.event_buffer = event_buffer
     app.state.circuit_breakers = []
     app.state.telemetry_modules = []
+    app.state.queue_modules = []
     app.state.on_event_callbacks = []
+    app.state.agent_info = agent_info or {}
 
     return app
 
@@ -123,9 +136,10 @@ def attach_llm(app: Starlette, instance: Any, label: str | None = None) -> None:
         event_buffer.push(data)
         aggregator.ingest(data)
 
-    # Walk the module stack to find circuit breakers and telemetry modules
+    # Walk the module stack to find circuit breakers, telemetry, and queue modules
     try:
         from arcllm.modules.circuit_breaker import CircuitBreakerModule
+        from arcllm.modules.queue import QueueModule
         from arcllm.modules.telemetry import TelemetryModule
 
         current = instance
@@ -134,6 +148,8 @@ def attach_llm(app: Starlette, instance: Any, label: str | None = None) -> None:
                 app.state.circuit_breakers.append(current)
             if isinstance(current, TelemetryModule):
                 app.state.telemetry_modules.append(current)
+            if isinstance(current, QueueModule):
+                app.state.queue_modules.append(current)
             current = getattr(current, "_inner", None)
     except ImportError:
         logger.debug("arcllm not available, skipping module stack discovery")
@@ -178,7 +194,11 @@ def serve(
 
     # Warm-start aggregator from existing trace data
     if trace_store is not None:
-        app.state.aggregator.warm_start(trace_store)
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(
+            app.state.aggregator.warm_start(trace_store)
+        )
 
     # Start the event buffer flush loop
     app.state.event_buffer.start()

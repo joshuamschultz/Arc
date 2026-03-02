@@ -6,6 +6,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+_VALID_WINDOWS = frozenset({"1h", "24h", "7d"})
+
 
 async def get_cost_efficiency(request: Request) -> JSONResponse:
     """GET /api/cost-efficiency — per-model cost efficiency ranking."""
@@ -14,6 +16,8 @@ async def get_cost_efficiency(request: Request) -> JSONResponse:
         return JSONResponse({"error": "No aggregator configured"}, status_code=404)
 
     window = request.query_params.get("window", "24h")
+    if window not in _VALID_WINDOWS:
+        return JSONResponse({"error": "Invalid window. Use 1h, 24h, or 7d."}, status_code=400)
     return JSONResponse(aggregator.cost_efficiency(window))
 
 

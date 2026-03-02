@@ -16,6 +16,8 @@ _MAX_EXPORT_LIMIT = 10000
 async def export_traces(request: Request) -> Response:
     """GET /api/export — export traces as CSV or JSON."""
     fmt = request.query_params.get("format", "json")
+    if fmt not in ("json", "csv"):
+        return JSONResponse({"error": "Invalid format. Use json or csv."}, status_code=400)
     try:
         limit = max(1, min(_MAX_EXPORT_LIMIT, int(request.query_params.get("limit", "500"))))
     except (ValueError, TypeError):

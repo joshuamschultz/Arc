@@ -330,12 +330,13 @@ class ArcAgent:
             agent_did="pending",
         )
 
-        # 3. Identity
+        # 3. Identity — config file is the single source of truth for DID
         self._identity = AgentIdentity.from_config(
             self._config.identity,
             vault_resolver=self._vault_resolver,
             org=self._config.agent.org,
             agent_type=self._config.agent.type,
+            config_path=self._config_path,
         )
 
         # Update telemetry with real DID (avoids full reconstruction)

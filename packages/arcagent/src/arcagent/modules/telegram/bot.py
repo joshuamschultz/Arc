@@ -217,11 +217,31 @@ class TelegramBot:
         self._running = True
         self._queue_task = asyncio.create_task(self._process_queue())
 
-        # Initialize and start polling
-        await self._application.initialize()
+        # Initialize and start polling — retry on transient network failures
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                await self._application.initialize()
+                bot_info = await self._application.bot.get_me()
+                break
+            except Exception as init_err:
+                if attempt == max_retries:
+                    _logger.error(
+                        "Telegram init failed after %d attempts: %s",
+                        max_retries,
+                        init_err,
+                    )
+                    raise
+                delay = 2 ** attempt
+                _logger.warning(
+                    "Telegram init attempt %d/%d failed (%s), retrying in %ds",
+                    attempt,
+                    max_retries,
+                    type(init_err).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
-        # Verify bot token and log identity
-        bot_info = await self._application.bot.get_me()
         self._bot_id = bot_info.id
         _logger.info(
             "Telegram bot authenticated: @%s (id=%d)",

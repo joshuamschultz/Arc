@@ -37,6 +37,7 @@ class TraceRecord(BaseModel, frozen=True):
     provider: str
     model: str
     agent_label: str | None = None
+    agent_did: str | None = None
     budget_scope: str | None = None
 
     # Request body (optional per tier config)
@@ -56,6 +57,10 @@ class TraceRecord(BaseModel, frozen=True):
     stop_reason: str = "end_turn"
     status: Literal["success", "error", "timeout"] = "success"
     error: str | None = None
+
+    # Retry tracking (links attempts in a retry sequence)
+    attempt_number: int = 0
+    retry_group_id: str | None = None
 
     # Sub-phase timing (key → milliseconds)
     phase_timings: dict[str, float] = Field(default_factory=dict)
@@ -153,6 +158,8 @@ class JSONLTraceStore:
         self._workspace = workspace
         self._traces_dir = workspace / "traces"
         self._traces_dir.mkdir(parents=True, exist_ok=True)
+        # NIST AU-9: Protect audit information — owner-only access on traces dir
+        self._traces_dir.chmod(0o700)
         self._lock = asyncio.Lock()
         self._last_hash: str = "0" * 64
         self._current_date: str = ""
@@ -169,7 +176,11 @@ class JSONLTraceStore:
         return datetime.now(UTC).strftime("%Y-%m-%d")
 
     async def _warm_start(self) -> None:
-        """Read the last hash from the most recent JSONL file."""
+        """Read the last hash from the most recent JSONL file.
+
+        Also verifies the tail of the hash chain to detect tampering
+        (NIST AU-10: Non-repudiation).
+        """
         if self._warm_started:
             return
 
@@ -188,7 +199,45 @@ class JSONLTraceStore:
                 except json.JSONDecodeError:
                     logger.warning("Failed to parse last line of %s", last_file)
 
+            # Verify tail of chain (last 10 records) for tamper detection
+            self._verify_tail(lines)
+
         self._warm_started = True
+
+    def _verify_tail(self, lines: list[str], tail_size: int = 10) -> None:
+        """Verify hash chain linkage on the last N records.
+
+        Logs a warning if tampering is detected. Does not block startup —
+        full verification can be triggered via verify_chain().
+        """
+        valid_lines = [ln for ln in lines if ln.strip()]
+        check_lines = valid_lines[-tail_size:] if len(valid_lines) > tail_size else valid_lines
+
+        prev_hash: str | None = None
+        for line in check_lines:
+            try:
+                data = json.loads(line)
+                record = TraceRecord(**data)
+            except (json.JSONDecodeError, Exception):
+                logger.warning("Unparseable record in tail verification")
+                return
+
+            if prev_hash is not None and record.prev_hash != prev_hash:
+                logger.error(
+                    "TAMPER DETECTED: hash chain broken — expected prev=%s, got prev=%s",
+                    prev_hash, record.prev_hash,
+                )
+                return
+
+            expected = record.compute_hash()
+            if record.record_hash != expected:
+                logger.error(
+                    "TAMPER DETECTED: record hash mismatch — stored=%s, computed=%s",
+                    record.record_hash, expected,
+                )
+                return
+
+            prev_hash = record.record_hash
 
     async def _maybe_rotate(self) -> None:
         """Rotate to a new file if the date has changed."""
@@ -227,6 +276,8 @@ class JSONLTraceStore:
                 raise RuntimeError(msg)
             with self._current_file.open("a") as f:
                 f.write(json.dumps(hashed.model_dump()) + "\n")
+            # NIST AU-9: Owner read/write only on audit log files
+            self._current_file.chmod(0o600)
 
     async def query(
         self,

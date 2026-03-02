@@ -29,6 +29,16 @@ class TestCreateApp:
         assert app.state.config_controller is ctrl
 
 
+    def test_creates_with_agent_info(self):
+        info = {"name": "test-agent", "did": "did:arc:local:executor/abc123", "model": "anthropic/claude-sonnet-4-6"}
+        app = create_app(agent_info=info)
+        assert app.state.agent_info == info
+
+    def test_agent_info_defaults_to_empty_dict(self):
+        app = create_app()
+        assert app.state.agent_info == {}
+
+
 class TestAttachLLM:
     def test_attaches_on_event_callback(self):
         app = create_app()

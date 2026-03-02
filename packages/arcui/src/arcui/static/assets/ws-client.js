@@ -42,7 +42,6 @@ class RobustWebSocket extends EventTarget {
 
       // Handle auth response
       if (data.type === 'auth_ok') {
-        this._state = WS_STATES.CONNECTED;
         this._setState(WS_STATES.CONNECTED);
         this._retries = 0;
         this._startHeartbeat();

@@ -5,6 +5,43 @@ All notable changes to the Arc monorepo will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+ArcUI integration, security hardening, and identity persistence.
+
+---
+
+### ArcLLM
+
+#### Security
+- Trace store file permissions hardened to `0o600`/`0o700` (NIST AU-9).
+- Hash chain tamper detection on startup — verifies last 10 records (NIST AU-10).
+- Provider name input validation prevents module injection (ASI-04, NIST SI-10).
+
+### ArcAgent
+
+#### Fixed
+- DID persistence across agent restarts — identity survives stop/start cycles.
+
+#### Security
+- DID files written with `0o600` permissions.
+
+### ArcUI
+
+#### Added
+- Historical trace loading on page refresh from JSONL trace store.
+- Real timeseries chart data via `/api/stats/timeseries`.
+- Tool call display with arguments in trace detail panel.
+- Single trace JSON export.
+
+#### Security
+- API input validation on all endpoints (trace ID, cursor, filters, window, format).
+
+#### Fixed
+- WebSocket connection status stuck on "Connecting".
+
+---
+
 ## [0.3.0] - 2026-03-01
 
 New LLM provider adapters, model catalog refresh, rate-limit-aware retry, code quality hardening, and PyPI publishing infrastructure.

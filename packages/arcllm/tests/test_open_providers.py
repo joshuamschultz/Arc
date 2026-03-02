@@ -32,7 +32,7 @@ LOCAL_PROVIDERS = [
 ]
 
 CLOUD_PROVIDERS = [
-    ("azure_openai", "AZURE_OPENAI_API_KEY", True, "https://REPLACE-WITH-YOUR-RESOURCE"),
+    ("azure_openai", "AZURE_OPENAI_API_KEY", True, "https://"),
     ("cohere", "COHERE_API_KEY", True, "https://api.cohere.com"),
     ("together", "TOGETHER_API_KEY", True, "https://api.together.xyz"),
     ("google", "GOOGLE_API_KEY", True, "https://generativelanguage.googleapis.com"),

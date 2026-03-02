@@ -42,6 +42,7 @@ _VALID_CONFIG_KEYS = {
     "on_event",
     "trace_store",
     "agent_label",
+    "agent_did",
     "store_raw_bodies",
 }
 
@@ -49,6 +50,49 @@ _VALID_CONFIG_KEYS = {
 _DEFAULT_MAX_TOKENS = 4096
 
 _BUDGET_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_:.\-]{0,127}$")
+
+
+# ---------------------------------------------------------------------------
+# Global telemetry defaults — ensures every TelemetryModule instance
+# routes traces to the shared trace_store and on_event callback.
+# Set once via set_global_defaults() during UI/app startup.
+# ---------------------------------------------------------------------------
+
+_global_defaults_lock = threading.Lock()
+_global_defaults: dict[str, Any] = {}
+
+
+def set_global_defaults(
+    *,
+    on_event: Any = None,
+    trace_store: Any = None,
+    agent_did: str | None = None,
+) -> None:
+    """Set global defaults for all TelemetryModule instances.
+
+    All TelemetryModule instances created after this call will use
+    these defaults unless explicitly overridden in their config.
+    Existing instances are NOT retroactively updated.
+
+    Args:
+        on_event: Callback fired after every invoke() with a TraceRecord.
+        trace_store: TraceStore for persistent recording.
+        agent_did: Agent DID for trace attribution.
+    """
+    with _global_defaults_lock:
+        _global_defaults.clear()
+        if on_event is not None:
+            _global_defaults["on_event"] = on_event
+        if trace_store is not None:
+            _global_defaults["trace_store"] = trace_store
+        if agent_did is not None:
+            _global_defaults["agent_did"] = agent_did
+
+
+def clear_global_defaults() -> None:
+    """Clear all global defaults. Use in tests for isolation."""
+    with _global_defaults_lock:
+        _global_defaults.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +280,11 @@ class TelemetryModule(BaseModule):
         self._budget_scope: str | None = config.get("budget_scope")
         self._default_max_tokens: int = config.get("default_max_tokens", _DEFAULT_MAX_TOKENS)
 
-        # Trace recording config (all optional)
-        self._on_event: Any | None = config.get("on_event")
-        self._trace_store: Any | None = config.get("trace_store")
+        # Trace recording config (explicit config > global defaults)
+        self._on_event: Any | None = config.get("on_event") or _global_defaults.get("on_event")
+        self._trace_store: Any | None = config.get("trace_store") or _global_defaults.get("trace_store")
         self._agent_label: str | None = config.get("agent_label")
+        self._agent_did: str | None = config.get("agent_did") or _global_defaults.get("agent_did")
         self._store_raw_bodies: bool = config.get("store_raw_bodies", True)
 
         self._budget_enabled = any(
@@ -431,11 +476,15 @@ class TelemetryModule(BaseModule):
         request_body: dict[str, Any] | None = None
         response_body: dict[str, Any] | None = None
 
+        # Internal keys injected by upstream modules (RetryModule, QueueModule)
+        _internal_keys = {"_retry_attempt", "_retry_group_id", "_queue_wait_ms"}
+
         if self._store_raw_bodies:
             request_body = {
                 "messages": [m.model_dump() for m in messages],
                 "tools": [t.model_dump() for t in tools] if tools else None,
-                **{k: v for k, v in kwargs.items() if k != "max_tokens"},
+                **{k: v for k, v in kwargs.items()
+                   if k != "max_tokens" and k not in _internal_keys},
             }
             if kwargs.get("max_tokens") is not None:
                 request_body["max_tokens"] = kwargs["max_tokens"]
@@ -446,11 +495,16 @@ class TelemetryModule(BaseModule):
                 "stop_reason": response.stop_reason,
             }
 
+        # Extract retry metadata injected by RetryModule
+        attempt_number: int = kwargs.get("_retry_attempt", 0)
+        retry_group_id: str | None = kwargs.get("_retry_group_id")
+
         usage = response.usage
         return TraceRecord(
             provider=self._inner.name,
             model=response.model,
             agent_label=self._agent_label,
+            agent_did=self._agent_did,
             budget_scope=self._budget_scope,
             request_body=request_body,
             response_body=response_body,
@@ -464,6 +518,8 @@ class TelemetryModule(BaseModule):
             stop_reason=response.stop_reason,
             status=status,
             error=error,
+            attempt_number=attempt_number,
+            retry_group_id=retry_group_id,
             phase_timings=phase_timings,
         )
 
@@ -486,8 +542,14 @@ class TelemetryModule(BaseModule):
             # Budget pre-check (before calling inner provider)
             budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
 
+            # Strip internal metadata keys before forwarding to inner provider
+            inner_kwargs = {
+                k: v for k, v in kwargs.items()
+                if not k.startswith("_")
+            }
+
             t_pre = time.monotonic()
-            response = await self._inner.invoke(messages, tools, **kwargs)
+            response = await self._inner.invoke(messages, tools, **inner_kwargs)
             t_llm = time.monotonic()
 
             usage = response.usage

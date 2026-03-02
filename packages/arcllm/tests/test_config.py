@@ -26,10 +26,15 @@ def test_load_global_config():
     assert config.defaults.max_tokens == 4096
 
 
-def test_global_config_modules_all_disabled():
+def test_global_config_modules_default_state():
+    """Telemetry, retry, and queue are enabled by default; others disabled."""
     config = load_global_config()
+    enabled_by_default = {"telemetry", "retry", "queue"}
     for name, module in config.modules.items():
-        assert module.enabled is False, f"Module {name} should be disabled by default"
+        if name in enabled_by_default:
+            assert module.enabled is True, f"{name} should be enabled by default"
+        else:
+            assert module.enabled is False, f"Module {name} should be disabled by default"
 
 
 def test_global_config_module_extra_fields():

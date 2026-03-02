@@ -18,6 +18,7 @@ classifiers = [
 dependencies = [
     "starlette>=0.40",
     "uvicorn[standard]>=0.30",
+    "tomlkit>=0.12",
     "arcllm>=0.1",
 ]
 

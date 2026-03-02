@@ -24,6 +24,7 @@ from arcagent.core.config import (
     TelemetryConfig,
     VaultConfig,
 )
+from arcagent.core.errors import IdentityError
 from arcagent.core.module_bus import ModuleBus
 
 
@@ -437,9 +438,8 @@ class TestErrorHandling:
             telemetry=TelemetryConfig(enabled=False),
         )
         agent = ArcAgent(config=config)
-        # Identity loading will fail: DID specified but key file missing,
-        # then generate will fail because key_dir parent doesn't exist
-        with pytest.raises((OSError, PermissionError)):
+        # DID is set but key file doesn't exist — hard fail, no silent regen
+        with pytest.raises(IdentityError, match="Key file not found"):
             await agent.startup()
 
 

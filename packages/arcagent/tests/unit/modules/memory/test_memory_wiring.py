@@ -64,7 +64,9 @@ class TestEvalModelLazyInit:
         with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
-            mock_load.assert_called_once_with("anthropic/claude-haiku")
+            mock_load.assert_called_once_with(
+                "anthropic/claude-haiku", agent_label="memory",
+            )
             assert model is not None
 
     def test_get_eval_model_falls_back_to_llm_config(self, tmp_path: Path) -> None:
@@ -78,7 +80,9 @@ class TestEvalModelLazyInit:
         with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
-            mock_load.assert_called_once_with("anthropic/claude-haiku")
+            mock_load.assert_called_once_with(
+                "anthropic/claude-haiku", agent_label="memory",
+            )
             assert model is not None
 
     def test_llm_config_preserved_from_constructor(self, tmp_path: Path) -> None:
@@ -97,7 +101,9 @@ class TestEvalModelLazyInit:
         with patch("arcagent.utils.model_helpers.load_eval_model") as mock_load:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
-            mock_load.assert_called_once_with("anthropic/claude-haiku")
+            mock_load.assert_called_once_with(
+                "anthropic/claude-haiku", agent_label="memory",
+            )
             assert model is not None
 
     def test_get_eval_model_caches(self, tmp_path: Path) -> None:

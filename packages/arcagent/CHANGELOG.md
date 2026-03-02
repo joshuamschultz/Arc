@@ -5,6 +5,16 @@ All notable changes to ArcAgent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **DID persistence across restarts** — `AgentIdentity.from_config()` now persists the generated DID to `{key_dir}/{org}_{type}.did` on first creation and loads it on subsequent startups. Prevents agents from getting a new cryptographic identity on every restart, preserving trace history continuity.
+
+### Security
+
+- Identity DID files written with `0o600` permissions (owner read/write only).
+
 ## [0.2.0] - 2026-02-21
 
 ### Added

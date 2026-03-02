@@ -41,14 +41,14 @@ class TestLoadModelHappyPath:
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.registry import load_model
 
-        model = load_model("anthropic")
+        model = load_model("anthropic", telemetry=False, retry=False, queue=False)
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_openai_adapter(self):
         from arcllm.adapters.openai import OpenaiAdapter
         from arcllm.registry import load_model
 
-        model = load_model("openai")
+        model = load_model("openai", telemetry=False, retry=False, queue=False)
         assert isinstance(model, OpenaiAdapter)
 
     def test_load_default_model(self):
@@ -74,7 +74,7 @@ class TestLoadModelHappyPath:
         """Unknown model name is allowed — adapter constructed with model_meta=None."""
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", "claude-nonexistent-99")
+        model = load_model("anthropic", "claude-nonexistent-99", telemetry=False, retry=False, queue=False)
         assert model.model_name == "claude-nonexistent-99"
         assert model._model_meta is None
 
@@ -220,7 +220,7 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True)
+        model = load_model("anthropic", retry=True, telemetry=False, queue=False)
         assert isinstance(model, RetryModule)
 
     def test_load_model_with_retry_dict(self):
@@ -228,7 +228,7 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry={"max_retries": 5})
+        model = load_model("anthropic", retry={"max_retries": 5}, telemetry=False, queue=False)
         assert isinstance(model, RetryModule)
         assert model._max_retries == 5
 
@@ -267,7 +267,7 @@ class TestModuleStacking:
         from arcllm.modules.fallback import FallbackModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", fallback=True)
+        model = load_model("anthropic", fallback=True, telemetry=False, retry=False, queue=False)
         assert isinstance(model, FallbackModule)
 
     def test_load_model_with_fallback_dict(self):
@@ -275,7 +275,7 @@ class TestModuleStacking:
         from arcllm.modules.fallback import FallbackModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", fallback={"chain": ["openai"]})
+        model = load_model("anthropic", fallback={"chain": ["openai"]}, telemetry=False, retry=False, queue=False)
         assert isinstance(model, FallbackModule)
         assert model._chain == ["openai"]
 
@@ -286,7 +286,7 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, fallback=True)
+        model = load_model("anthropic", retry=True, fallback=True, telemetry=False, queue=False)
         # Outermost is Retry
         assert isinstance(model, RetryModule)
         # Inner is Fallback
@@ -295,11 +295,11 @@ class TestModuleStacking:
         assert isinstance(model._inner._inner, AnthropicAdapter)
 
     def test_load_model_no_modules_unchanged(self):
-        """Without module kwargs, adapter returned directly (existing behavior)."""
+        """With all default modules disabled, adapter returned directly."""
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.registry import load_model
 
-        model = load_model("anthropic")
+        model = load_model("anthropic", telemetry=False, retry=False, queue=False)
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_model_retry_kwarg_overrides_config_values(self):
@@ -322,7 +322,7 @@ class TestModuleStacking:
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", rate_limit=True)
+        model = load_model("anthropic", rate_limit=True, telemetry=False, retry=False, queue=False)
         assert isinstance(model, RateLimitModule)
 
     def test_load_model_with_rate_limit_dict(self):
@@ -330,7 +330,7 @@ class TestModuleStacking:
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", rate_limit={"requests_per_minute": 120})
+        model = load_model("anthropic", rate_limit={"requests_per_minute": 120}, telemetry=False, retry=False, queue=False)
         assert isinstance(model, RateLimitModule)
 
     def test_load_model_rate_limit_false_overrides_config(self):
@@ -357,7 +357,7 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, fallback=True, rate_limit=True)
+        model = load_model("anthropic", retry=True, fallback=True, rate_limit=True, telemetry=False, queue=False)
         assert isinstance(model, RetryModule)
         assert isinstance(model._inner, FallbackModule)
         assert isinstance(model._inner._inner, RateLimitModule)
@@ -368,7 +368,7 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", telemetry=True)
+        model = load_model("anthropic", telemetry=True, retry=False, queue=False)
         assert isinstance(model, TelemetryModule)
 
     def test_load_model_telemetry_injects_pricing(self):
@@ -376,7 +376,7 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", telemetry=True)
+        model = load_model("anthropic", telemetry=True, retry=False, queue=False)
         assert isinstance(model, TelemetryModule)
         assert model._cost_input == 3.00
         assert model._cost_output == 15.00
@@ -388,7 +388,7 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", "claude-haiku-4-5-20251001", telemetry=True)
+        model = load_model("anthropic", "claude-haiku-4-5-20251001", telemetry=True, retry=False, queue=False)
         assert isinstance(model, TelemetryModule)
         assert model._cost_input == 0.80
         assert model._cost_output == 4.00
@@ -398,7 +398,7 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", telemetry={"cost_input_per_1m": 99.0})
+        model = load_model("anthropic", telemetry={"cost_input_per_1m": 99.0}, retry=False, queue=False)
         assert isinstance(model, TelemetryModule)
         # Explicit override wins
         assert model._cost_input == 99.0
@@ -420,6 +420,7 @@ class TestModuleStacking:
             fallback=True,
             rate_limit=True,
             telemetry=True,
+            queue=False,
         )
         assert isinstance(model, TelemetryModule)
         assert isinstance(model._inner, RetryModule)
@@ -448,7 +449,7 @@ class TestModuleStacking:
         from arcllm.modules.audit import AuditModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", audit=True)
+        model = load_model("anthropic", audit=True, telemetry=False, retry=False, queue=False)
         assert isinstance(model, AuditModule)
 
     def test_load_model_audit_false_overrides_config(self):
@@ -484,6 +485,7 @@ class TestModuleStacking:
             rate_limit=True,
             telemetry=True,
             audit=True,
+            queue=False,
         )
         assert isinstance(model, TelemetryModule)
         assert isinstance(model._inner, AuditModule)
@@ -601,7 +603,7 @@ class TestModuleStacking:
         from arcllm.modules.otel import OtelModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", otel={"exporter": "none"})
+        model = load_model("anthropic", otel={"exporter": "none"}, telemetry=False, retry=False, queue=False)
         assert isinstance(model, OtelModule)
         assert isinstance(model._inner, AnthropicAdapter)
 

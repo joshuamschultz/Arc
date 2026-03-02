@@ -207,6 +207,7 @@ class ModuleLoader:
             "team_config": ctx.config.team,
             "telemetry": ctx.telemetry,
             "workspace": ctx.workspace,
+            "agent_name": ctx.config.agent.name,
         }
 
         kwargs: dict[str, Any] = {}

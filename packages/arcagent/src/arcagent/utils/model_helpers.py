@@ -24,12 +24,20 @@ def get_eval_model(
     eval_config: EvalConfig,
     llm_config: Any | None,
     logger: logging.Logger = _logger,
+    agent_label: str | None = None,
 ) -> Any:
     """Lazy-init eval model from config, fallback to agent's LLM config.
 
     Respects ``EvalConfig.fallback_behavior``:
     - ``"skip"``: return None on failure (default)
     - ``"error"``: raise on failure
+
+    Args:
+        cached_model: Previously loaded model (returned as-is if not None).
+        eval_config: Eval model configuration.
+        llm_config: Fallback LLM config if eval provider/model not set.
+        logger: Logger instance for diagnostics.
+        agent_label: Label for trace attribution (e.g., "my_agent/eval").
 
     Returns the loaded model or None.
     """
@@ -48,7 +56,7 @@ def get_eval_model(
         return None
 
     try:
-        return load_eval_model(model_id)
+        return load_eval_model(model_id, agent_label=agent_label)
     except Exception:
         if eval_config.fallback_behavior == "error":
             raise

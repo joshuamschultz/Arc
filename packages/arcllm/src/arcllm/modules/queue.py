@@ -58,6 +58,15 @@ class QueueModule(BaseModule):
         self._semaphore = asyncio.BoundedSemaphore(self._max_concurrent)
         self._waiters: int = 0
 
+        # Observable counters for queue monitoring
+        self._total_enqueued: int = 0
+        self._total_completed: int = 0
+        self._total_rejected: int = 0
+        self._total_timeouts: int = 0
+        self._active: int = 0
+        self._wait_sum_ms: float = 0.0
+        self._wait_count: int = 0
+
     async def invoke(
         self,
         messages: list[Message],
@@ -69,6 +78,7 @@ class QueueModule(BaseModule):
 
         # Backpressure: reject immediately if too many callers are waiting
         if self._waiters >= self._max_queued:
+            self._total_rejected += 1
             self._set_rejected_span_attribute()
             logger.warning(
                 "Queue backpressure: %d waiters (max %d)",
@@ -78,32 +88,44 @@ class QueueModule(BaseModule):
             raise QueueFullError(self._waiters, self._max_queued)
 
         self._waiters += 1
+        self._total_enqueued += 1
         entry_time = time.monotonic()
+        entered_semaphore = False
         try:
             async with self._semaphore:
+                entered_semaphore = True
                 self._waiters -= 1
                 wait_ms = int((time.monotonic() - entry_time) * 1000)
+                self._wait_sum_ms += wait_ms
+                self._wait_count += 1
+                self._active += 1
 
                 self._set_span_attributes(wait_ms, depth_at_entry)
 
                 try:
-                    return await asyncio.wait_for(
+                    result = await asyncio.wait_for(
                         self._inner.invoke(messages, tools, **kwargs),
                         timeout=self._call_timeout,
                     )
+                    self._total_completed += 1
+                    return result
                 except TimeoutError:
+                    self._total_timeouts += 1
                     logger.error(
                         "Queue send-time timeout after %.1fs",
                         self._call_timeout,
                     )
                     raise QueueTimeoutError(self._call_timeout) from None
+                finally:
+                    self._active -= 1
         except (QueueTimeoutError, QueueFullError):
             raise
         except BaseException:
-            # Ensure waiter count is decremented if we never entered the
-            # semaphore context (e.g. CancelledError while waiting).
-            # Inside `async with` the decrement already happened.
-            # BoundedSemaphore context manager handles release.
+            if not entered_semaphore:
+                # Decrement waiter count if CancelledError hit before
+                # we entered the semaphore context (where it's already
+                # decremented). Prevents counter drift under cancellation.
+                self._waiters -= 1
             raise
 
     def _set_span_attributes(self, wait_ms: int, depth_at_entry: int) -> None:
@@ -113,6 +135,26 @@ class QueueModule(BaseModule):
             span.set_attribute("arc.queue.wait_ms", wait_ms)
             span.set_attribute("arc.queue.depth", depth_at_entry)
             span.set_attribute("arc.queue.call_timeout_ms", int(self._call_timeout * 1000))
+
+    def queue_stats(self) -> dict[str, Any]:
+        """Return current queue state for REST API and UI display."""
+        avg_wait_ms = (
+            round(self._wait_sum_ms / self._wait_count, 1)
+            if self._wait_count > 0
+            else 0.0
+        )
+        return {
+            "max_concurrent": self._max_concurrent,
+            "max_queued": self._max_queued,
+            "call_timeout_s": self._call_timeout,
+            "active": self._active,
+            "waiting": self._waiters,
+            "total_enqueued": self._total_enqueued,
+            "total_completed": self._total_completed,
+            "total_rejected": self._total_rejected,
+            "total_timeouts": self._total_timeouts,
+            "avg_wait_ms": avg_wait_ms,
+        }
 
     def _set_rejected_span_attribute(self) -> None:
         """Mark the active span as a rejected queue entry."""

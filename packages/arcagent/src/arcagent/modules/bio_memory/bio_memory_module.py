@@ -53,6 +53,7 @@ class BioMemoryModule:
         workspace: Path = Path("."),
         llm_config: Any | None = None,
         team_config: dict[str, Any] | None = None,
+        agent_name: str = "",
     ) -> None:
         self._config = BioMemoryConfig(**(config or {}))
         self._eval_config = eval_config or EvalConfig()
@@ -61,6 +62,7 @@ class BioMemoryModule:
         self._workspace = workspace.resolve() if workspace != Path(".") else workspace
         self._team_config = team_config
         self._team_service: Any = None
+        self._eval_label = f"{agent_name}/memory" if agent_name else "memory"
 
         self._memory_dir = self._workspace / "memory"
         self._eval_model: Any = None
@@ -565,6 +567,7 @@ class BioMemoryModule:
             eval_config=self._eval_config,
             llm_config=self._llm_config,
             logger=_logger,
+            agent_label=self._eval_label,
         )
         if result is not None:
             self._eval_model = result

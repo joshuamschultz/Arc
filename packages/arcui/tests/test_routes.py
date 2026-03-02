@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from starlette.testclient import TestClient
 
@@ -30,6 +30,26 @@ class TestHealthRoute:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
+
+
+class TestInfoRoute:
+    def test_info_returns_agent_metadata(self):
+        auth = AuthConfig({"viewer_token": "viewer-tok", "operator_token": "operator-tok"})
+        info = {"name": "my-agent", "did": "did:arc:local:executor/abc123", "model": "anthropic/claude-sonnet-4-6"}
+        app = create_app(auth_config=auth, agent_info=info)
+        client = TestClient(app)
+        resp = client.get("/api/info", headers={"Authorization": "Bearer viewer-tok"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "my-agent"
+        assert data["did"] == "did:arc:local:executor/abc123"
+        assert data["model"] == "anthropic/claude-sonnet-4-6"
+
+    def test_info_empty_when_no_agent_info(self):
+        _, client, _ = _make_app()
+        resp = client.get("/api/info", headers={"Authorization": "Bearer viewer-tok"})
+        assert resp.status_code == 200
+        assert resp.json() == {}
 
 
 class TestTracesRoute:
@@ -75,10 +95,18 @@ class TestTracesRoute:
         assert resp.status_code == 200
         assert resp.json()["trace_id"] == rec.trace_id
 
-    def test_get_trace_not_found(self):
+    def test_get_trace_invalid_format(self):
         _, client, _ = _make_app()
         resp = client.get(
             "/api/traces/nonexistent",
+            headers={"Authorization": "Bearer viewer-tok"},
+        )
+        assert resp.status_code == 400
+
+    def test_get_trace_not_found(self):
+        _, client, _ = _make_app()
+        resp = client.get(
+            "/api/traces/00000000000000000000000000000000",
             headers={"Authorization": "Bearer viewer-tok"},
         )
         assert resp.status_code == 404
@@ -304,3 +332,292 @@ class TestDashboardRoute:
         resp = client.get("/assets/ws-client.js")
         assert resp.status_code == 200
         assert "RobustWebSocket" in resp.text
+
+
+class TestArcllmConfigRoute:
+    """Tests for /api/arcllm-config (GET/PATCH) — config.toml management."""
+
+    def _make_config_file(self, tmp_path: Path) -> Path:
+        """Create a test config.toml and patch _get_config_dir."""
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[defaults]\nprovider = "anthropic"\ntemperature = 0.7\n'
+            "max_tokens = 4096\n\n"
+            "[vault]\nbackend = \"\"\ncache_ttl_seconds = 300\n"
+            'url = ""\nregion = ""\n\n'
+            "[modules.telemetry]\nenabled = true\n"
+            'log_level = "INFO"\n\n'
+            "[modules.retry]\nenabled = true\nmax_retries = 3\n"
+        )
+        return config
+
+    def test_get_config_returns_json(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.get(
+                "/api/arcllm-config",
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["defaults"]["provider"] == "anthropic"
+        assert data["defaults"]["temperature"] == 0.7
+        assert data["defaults"]["max_tokens"] == 4096
+
+    def test_get_config_viewer_redacts_vault(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.get(
+                "/api/arcllm-config",
+                headers={"Authorization": "Bearer viewer-tok"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Vault fields should be redacted for viewer
+        assert data["vault"]["backend"] == "***"
+        assert data["vault"]["url"] == "***"
+        # Non-sensitive fields should be visible
+        assert data["defaults"]["provider"] == "anthropic"
+
+    def test_get_config_arcllm_not_installed(self):
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=None,
+        ):
+            _, client, _ = _make_app()
+            resp = client.get(
+                "/api/arcllm-config",
+                headers={"Authorization": "Bearer viewer-tok"},
+            )
+        assert resp.status_code == 503
+        assert "not installed" in resp.json()["error"]
+
+    def test_get_config_file_not_found(self, tmp_path: Path):
+        missing = tmp_path / "nonexistent.toml"
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=missing,
+        ):
+            _, client, _ = _make_app()
+            resp = client.get(
+                "/api/arcllm-config",
+                headers={"Authorization": "Bearer viewer-tok"},
+            )
+        assert resp.status_code == 404
+
+    def test_patch_config_requires_operator(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps({"defaults": {"temperature": 0.5}}),
+                headers={"Authorization": "Bearer viewer-tok"},
+            )
+        assert resp.status_code == 403
+
+    def test_patch_config_operator_succeeds(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps({"defaults": {"temperature": 0.5}}),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["defaults"]["temperature"] == 0.5
+        # Verify file was actually updated (atomic write)
+        import tomlkit
+
+        with open(config, "r") as f:
+            doc = tomlkit.load(f)
+        assert doc["defaults"]["temperature"] == 0.5
+
+    def test_patch_config_invalid_json(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=b"not json",
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 400
+        assert "Invalid JSON" in resp.json()["error"]
+
+    def test_patch_config_non_dict_body(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps([1, 2, 3]),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 400
+        assert "JSON object" in resp.json()["error"]
+
+    def test_patch_config_rejects_unknown_section(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps({"malicious": {"evil": True}}),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 400
+        assert "Unknown config section" in resp.json()["error"]
+
+    def test_patch_config_rejects_unknown_key(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps({"defaults": {"evil_key": "value"}}),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 400
+        assert "Unknown key" in resp.json()["error"]
+
+    def test_patch_config_rejects_unknown_module(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps({"modules": {"evil_mod": {"enabled": True}}}),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 400
+        assert "Unknown module" in resp.json()["error"]
+
+    def test_patch_config_deep_merge(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            # Update nested module config
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps(
+                    {"modules": {"telemetry": {"log_level": "DEBUG"}}}
+                ),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 200
+        # Module's existing enabled=true should be preserved
+        data = resp.json()
+        assert data["modules"]["telemetry"]["enabled"] is True
+        assert data["modules"]["telemetry"]["log_level"] == "DEBUG"
+
+    def test_patch_config_arcllm_not_installed(self):
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=None,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=json.dumps({"defaults": {"temperature": 0.5}}),
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 503
+
+    def test_patch_config_body_too_large(self, tmp_path: Path):
+        config = self._make_config_file(tmp_path)
+        with patch(
+            "arcui.routes.arcllm_config._get_config_path",
+            return_value=config,
+        ):
+            _, client, _ = _make_app()
+            resp = client.patch(
+                "/api/arcllm-config",
+                content=b"x" * 100_000,
+                headers={"Authorization": "Bearer operator-tok"},
+            )
+        assert resp.status_code == 413
+
+
+class TestArcllmConfigUnit:
+    """Unit tests for arcllm_config helper functions."""
+
+    def test_tomlkit_to_plain(self):
+        from arcui.routes.arcllm_config import _tomlkit_to_plain
+
+        import tomlkit
+
+        doc = tomlkit.parse(
+            '[defaults]\nprovider = "test"\ntemperature = 0.5\n'
+            "max_tokens = 100\nenabled = true\n"
+        )
+        plain = _tomlkit_to_plain(dict(doc))
+        assert isinstance(plain["defaults"]["provider"], str)
+        assert isinstance(plain["defaults"]["temperature"], float)
+        assert isinstance(plain["defaults"]["max_tokens"], int)
+        assert isinstance(plain["defaults"]["enabled"], bool)
+        # Verify values are correct
+        assert plain["defaults"]["provider"] == "test"
+        assert plain["defaults"]["temperature"] == 0.5
+        assert plain["defaults"]["max_tokens"] == 100
+        assert plain["defaults"]["enabled"] is True
+
+    def test_deep_merge(self):
+        from arcui.routes.arcllm_config import _deep_merge
+
+        target = {"a": {"x": 1, "y": 2}, "b": 3}
+        source = {"a": {"y": 99, "z": 100}}
+        _deep_merge(target, source)
+        assert target == {"a": {"x": 1, "y": 99, "z": 100}, "b": 3}
+
+    def test_validate_updates_valid(self):
+        from arcui.routes.arcllm_config import _validate_updates
+
+        assert _validate_updates({"defaults": {"temperature": 0.5}}) is None
+        assert _validate_updates(
+            {"modules": {"retry": {"max_retries": 5}}}
+        ) is None
+
+    def test_validate_updates_rejects_unknown(self):
+        from arcui.routes.arcllm_config import _validate_updates
+
+        assert "Unknown config section" in _validate_updates({"bad": {}})
+        assert "Unknown key" in _validate_updates(
+            {"defaults": {"bad_key": 1}}
+        )
+        assert "Unknown module" in _validate_updates(
+            {"modules": {"bad_mod": {}}}
+        )

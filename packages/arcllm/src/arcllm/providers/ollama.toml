@@ -93,6 +93,18 @@ cost_output_per_1m = 0.0
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
 
+[models."glm-5:cloud"]
+context_window = 128000
+max_output_tokens = 8192
+supports_tools = true
+supports_vision = false
+supports_thinking = false
+input_modalities = ["text"]
+cost_input_per_1m = 0.0
+cost_output_per_1m = 0.0
+cost_cache_read_per_1m = 0.0
+cost_cache_write_per_1m = 0.0
+
 [models.gemma3]
 context_window = 128000
 max_output_tokens = 8192

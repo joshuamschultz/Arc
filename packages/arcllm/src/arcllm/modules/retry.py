@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import random
+import uuid
 from typing import Any
 
 import httpx
@@ -66,12 +67,22 @@ class RetryModule(BaseModule):
         last_error: Exception | None = None
         effective_max = self._max_retries
 
+        # Generate a group ID to link all attempts in this retry sequence
+        group_id = uuid.uuid4().hex
+
         with self._span("arcllm.retry") as retry_span:
             for attempt in range(self._rate_limit_max_retries + 1):
                 attrs = {"arcllm.retry.attempt": attempt}
+                # Inject retry metadata so downstream modules (TelemetryModule)
+                # can record which attempt this is and link retry sequences.
+                inner_kwargs = {
+                    **kwargs,
+                    "_retry_attempt": attempt,
+                    "_retry_group_id": group_id,
+                }
                 with self._span("arcllm.retry.attempt", attributes=attrs) as attempt_span:
                     try:
-                        return await self._inner.invoke(messages, tools, **kwargs)
+                        return await self._inner.invoke(messages, tools, **inner_kwargs)
                     except (ArcLLMAPIError, httpx.ConnectError, httpx.TimeoutException) as e:
                         if not self._is_retryable(e):
                             raise

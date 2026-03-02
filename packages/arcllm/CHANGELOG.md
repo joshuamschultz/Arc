@@ -5,6 +5,14 @@ All notable changes to ArcLLM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Trace store file permissions** — JSONL audit files now set to `0o600` (owner read/write only) after every append. Traces directory set to `0o700` on init. Maps to NIST AU-9 (Protection of Audit Information).
+- **Hash chain tamper detection on startup** — `JSONLTraceStore._warm_start()` now verifies the last 10 records in the hash chain on warm start. Logs `TAMPER DETECTED` if chain integrity is violated. Maps to NIST AU-10 (Non-repudiation).
+- **Provider name input validation** — `_validate_provider_name()` enforces `[a-z][a-z0-9_]{0,63}` regex on all provider names before `importlib.import_module()`. Prevents path traversal and arbitrary module injection. Maps to OWASP ASI-04 (Agentic Supply Chain) and NIST SI-10 (Information Input Validation).
+
 ## [0.3.0] - 2026-03-01
 
 ### Added

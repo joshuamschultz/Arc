@@ -9,6 +9,7 @@ cache_ttl_seconds = 300
 url = ""
 region = ""
 
+# --- Classification-based routing ---
 [modules.routing]
 enabled = false
 enforcement = "warn"
@@ -22,8 +23,9 @@ default_classification = "unclassified"
 # provider = "openai"
 # model = "gpt-4o-mini"
 
+# --- Telemetry: token counting, cost tracking, TraceRecord emission ---
 [modules.telemetry]
-enabled = false
+enabled = true
 log_level = "INFO"
 # Budget fields (all optional — budget disabled if none present)
 # monthly_limit_usd = 500.00
@@ -32,29 +34,35 @@ log_level = "INFO"
 # alert_threshold_pct = 80
 # enforcement = "block"
 
+# --- Audit: PII-safe metadata logging ---
 [modules.audit]
 enabled = false
 
+# --- Retry: exponential backoff on transient failures ---
 [modules.retry]
-enabled = false
+enabled = true
 max_retries = 3
 backoff_base_seconds = 1.0
 
+# --- Fallback: provider failover chain ---
 [modules.fallback]
 enabled = false
 chain = ["anthropic", "openai"]
 
+# --- Rate limiting: per-minute request caps ---
 [modules.rate_limit]
 enabled = false
 requests_per_minute = 60
 burst_capacity = 60
 
+# --- Queue: bounded concurrency with backpressure ---
 [modules.queue]
-enabled = false
+enabled = true
 max_concurrent = 2
 call_timeout = 60.0
 max_queued = 10
 
+# --- OpenTelemetry distributed tracing ---
 [modules.otel]
 enabled = false
 exporter = "otlp"
@@ -72,6 +80,7 @@ max_batch_size = 512
 max_queue_size = 2048
 schedule_delay_ms = 5000
 
+# --- Security: PII redaction + request signing ---
 [modules.security]
 enabled = false
 pii_enabled = true

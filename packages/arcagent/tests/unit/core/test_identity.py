@@ -161,7 +161,7 @@ class TestKeyFileIntegrity:
 
 
 class TestFromConfig:
-    def test_auto_generate_when_no_keys_exist(self, tmp_path: Path) -> None:
+    def test_auto_generate_when_did_empty(self, tmp_path: Path) -> None:
         config = IdentityConfig(
             did="",
             key_dir=str(tmp_path / "keys"),
@@ -175,7 +175,6 @@ class TestFromConfig:
         assert key_dir.exists()
 
     def test_load_existing_keys(self, tmp_path: Path) -> None:
-        # First generate and save
         original = AgentIdentity.generate(org="test", agent_type="planner")
         key_dir = tmp_path / "keys"
         original.save_keys(key_dir)
@@ -189,8 +188,17 @@ class TestFromConfig:
         assert loaded.did == original.did
         assert loaded.public_key == original.public_key
 
+    def test_did_set_but_key_missing_hard_fails(self, tmp_path: Path) -> None:
+        """If DID is set but key is gone, fail — don't silently regenerate."""
+        config = IdentityConfig(
+            did="did:arc:test:executor/deadbeef",
+            key_dir=str(tmp_path / "empty_keys"),
+        )
+        with pytest.raises(IdentityError, match="Key file not found"):
+            AgentIdentity.from_config(config, org="test", agent_type="executor")
+
     def test_from_config_with_org_and_type(self, tmp_path: Path) -> None:
-        """from_config uses defaults when DID is empty."""
+        """from_config uses org/type when generating new identity."""
         config = IdentityConfig(
             did="",
             key_dir=str(tmp_path / "keys"),
@@ -199,6 +207,57 @@ class TestFromConfig:
         identity = AgentIdentity.from_config(config, org="acme", agent_type="reviewer")
         assert "acme" in identity.did
         assert "reviewer" in identity.did
+
+    def test_writes_did_back_to_config(self, tmp_path: Path) -> None:
+        """Generated DID must be written back into the agent's config file."""
+        config_file = tmp_path / "arcagent.toml"
+        config_file.write_text(
+            '[identity]\ndid = ""\nkey_dir = "' + str(tmp_path / "keys") + '"\n',
+            encoding="utf-8",
+        )
+
+        config = IdentityConfig(
+            did="",
+            key_dir=str(tmp_path / "keys"),
+        )
+        identity = AgentIdentity.from_config(
+            config, org="test", agent_type="executor", config_path=config_file,
+        )
+
+        # Config file now contains the full DID
+        content = config_file.read_text(encoding="utf-8")
+        assert identity.did in content
+        assert 'did = ""' not in content
+
+    def test_second_startup_reuses_identity(self, tmp_path: Path) -> None:
+        """Full round-trip: generate → write config → reload → same identity."""
+        config_file = tmp_path / "arcagent.toml"
+        config_file.write_text(
+            '[identity]\ndid = ""\nkey_dir = "' + str(tmp_path / "keys") + '"\n',
+            encoding="utf-8",
+        )
+
+        # First startup — generates and writes back
+        config1 = IdentityConfig(did="", key_dir=str(tmp_path / "keys"))
+        id1 = AgentIdentity.from_config(
+            config1, org="test", agent_type="executor", config_path=config_file,
+        )
+
+        # Read the updated DID from config file
+        import re
+        content = config_file.read_text(encoding="utf-8")
+        match = re.search(r'did\s*=\s*"([^"]+)"', content)
+        assert match is not None
+        persisted_did = match.group(1)
+
+        # Second startup — loads from config with the written DID
+        config2 = IdentityConfig(did=persisted_did, key_dir=str(tmp_path / "keys"))
+        id2 = AgentIdentity.from_config(
+            config2, org="test", agent_type="executor", config_path=config_file,
+        )
+
+        assert id2.did == id1.did
+        assert id2.public_key == id1.public_key
 
 
 class TestVaultFallback:
@@ -250,3 +309,35 @@ class TestVaultFallback:
         identity = AgentIdentity.from_config(config, vault_resolver=None)
         assert identity.did == original.did
         assert identity.can_sign
+
+
+class TestValidateDid:
+    """DID validation must be strict — no partial hashes, no guessing."""
+
+    def test_empty_returns_empty(self) -> None:
+        assert AgentIdentity._validate_did("") == ""
+
+    def test_full_did_accepted(self) -> None:
+        full = "did:arc:local:executor/9b43ee77"
+        assert AgentIdentity._validate_did(full) == full
+
+    def test_short_hash_rejected(self) -> None:
+        with pytest.raises(IdentityError, match="Invalid DID format"):
+            AgentIdentity._validate_did("9b43ee77")
+
+    def test_partial_prefix_rejected(self) -> None:
+        with pytest.raises(IdentityError, match="Invalid DID format"):
+            AgentIdentity._validate_did("did:other:something")
+
+    def test_missing_hash_rejected(self) -> None:
+        with pytest.raises(IdentityError, match="Malformed DID structure"):
+            AgentIdentity._validate_did("did:arc:local:executor")
+
+    def test_from_config_rejects_short_did(self, tmp_path: Path) -> None:
+        """Short DID in config must hard-fail, not silently generate new."""
+        config = IdentityConfig(
+            did="9b43ee77",
+            key_dir=str(tmp_path / "keys"),
+        )
+        with pytest.raises(IdentityError, match="Invalid DID format"):
+            AgentIdentity.from_config(config, org="test", agent_type="executor")

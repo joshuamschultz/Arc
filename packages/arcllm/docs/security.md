@@ -574,6 +574,73 @@ burst_capacity = 60           # Max burst allowance
 
 ---
 
+## Feature 10: Trace Store Tamper Protection
+
+### What It Does
+
+The JSONL trace store protects audit logs from unauthorized modification through three mechanisms:
+
+1. **File permissions** — Traces directory set to `0o700` (owner-only access), individual JSONL files set to `0o600` (owner read/write only) after every append.
+2. **Hash chain verification on startup** — `_verify_tail()` checks the last 10 records in the hash chain during warm start. Detects record deletion, modification, or insertion.
+3. **Full chain verification** — `verify_chain()` scans all records across all files for complete tamper-evident audit.
+
+### NIST 800-53 Mapping
+
+| Control | Description |
+|---------|-------------|
+| AU-9 | Protection of Audit Information — file permissions prevent unauthorized access |
+| AU-9(3) | Cryptographic Protection — SHA-256 hash chain provides tamper evidence |
+| AU-10 | Non-repudiation — hash chain links prove record ordering and integrity |
+
+### How It Works
+
+```
+Record N: hash = SHA256(JCS(record_data) + prev_hash)
+Record N+1: prev_hash = Record N's hash
+```
+
+If any record is modified, the chain breaks at that point and all subsequent hashes become invalid. Detected on next startup or via explicit `verify_chain()`.
+
+### Tamper Detection
+
+On warm start, the store verifies the tail of the chain. If tampering is detected:
+
+```
+ERROR: TAMPER DETECTED: hash chain broken — expected prev=abc..., got prev=def...
+ERROR: TAMPER DETECTED: record hash mismatch — stored=abc..., computed=def...
+```
+
+---
+
+## Feature 11: Provider Name Validation
+
+### What It Does
+
+Prevents arbitrary module loading through the provider registry's convention-based adapter discovery. Provider names are validated against `[a-z][a-z0-9_]{0,63}` before `importlib.import_module()` is called.
+
+### Why It Matters
+
+Without validation, a malicious provider name like `../evil` or `os.system` could cause path traversal or unintended module imports through the `arcllm.adapters.{provider_name}` convention.
+
+### OWASP / NIST Mapping
+
+| Framework | Control | Description |
+|-----------|---------|-------------|
+| OWASP ASI-04 | Agentic Supply Chain | Prevents loading unauthorized modules at runtime |
+| NIST SI-10 | Information Input Validation | Validates provider names at system boundary |
+
+### Rejected Patterns
+
+```
+"../evil"           → blocked (contains / and .)
+"os"                → blocked (single character after prefix not meeting min length is ok, but builtins like os are just 2 chars — allowed but harmless since arcllm.adapters.os won't exist)
+"builtins__import"  → blocked (contains __)
+"anthropic"         → allowed ✓
+"azure_openai"      → allowed ✓
+```
+
+---
+
 ## Security Checklist for Deployment
 
 - [ ] API keys set via environment variables or vault — not in config files
@@ -586,3 +653,7 @@ burst_capacity = 60           # Max burst allowance
 - [ ] `include_messages` and `include_response` left `false` unless debugging
 - [ ] Log level set to `INFO` or higher in production (not `DEBUG`)
 - [ ] Vault TTL configured to balance freshness vs. round-trip overhead
+- [ ] Trace store directory permissions verified as `0o700`
+- [ ] JSONL trace files permissions verified as `0o600`
+- [ ] `verify_chain()` run after any suspected tampering event
+- [ ] Provider names in config match `[a-z][a-z0-9_]` pattern

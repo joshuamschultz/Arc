@@ -35,6 +35,7 @@ class PolicyModule:
         telemetry: Any = None,
         workspace: Path = Path("."),
         llm_config: Any | None = None,
+        agent_name: str = "",
     ) -> None:
         self._config = PolicyConfig(**(config or {}))
         self._eval_config = eval_config or EvalConfig()
@@ -42,6 +43,7 @@ class PolicyModule:
         self._workspace = workspace.resolve()
         self._llm_config = llm_config
         self._eval_model: Any = None
+        self._eval_label = f"{agent_name}/eval" if agent_name else "eval"
 
         self._engine = PolicyEngine(
             config=self._config,
@@ -98,6 +100,7 @@ class PolicyModule:
             eval_config=self._eval_config,
             llm_config=self._llm_config,
             logger=_logger,
+            agent_label=self._eval_label,
         )
         if result is not None:
             self._eval_model = result

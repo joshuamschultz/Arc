@@ -13,7 +13,7 @@ const ICONS = {
 const PAGES = [
   { id: 'telemetry', label: 'LLM Telemetry', icon: 'telemetry', active: true },
   { divider: true },
-  { id: 'settings', label: 'Settings', icon: 'settings', disabled: true },
+  { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 function renderShell() {
@@ -25,9 +25,8 @@ function renderShell() {
   if (sidebar) {
     const items = PAGES.map(p => {
       if (p.divider) return '<div class="sidebar-divider"></div>';
-      const cls = p.active ? ' active' : (p.disabled ? '' : '');
-      const opacity = p.disabled ? ' style="opacity:0.3;pointer-events:none;"' : '';
-      return `<a class="sidebar-item${cls}"${opacity} title="${p.label}">${ICONS[p.icon]}<span class="sidebar-tooltip">${p.label}</span></a>`;
+      const cls = p.active ? ' active' : '';
+      return `<a class="sidebar-item${cls}" data-page="${p.id}" title="${p.label}">${ICONS[p.icon]}<span class="sidebar-tooltip">${p.label}</span></a>`;
     }).join('');
     sidebar.innerHTML = `<div class="sidebar-group">${items}</div>`;
   }
@@ -58,4 +57,21 @@ function renderChartBars(container, count = 30, maxH = 180) {
   container.innerHTML = html;
 }
 
-window.ARC = { ICONS, PAGES, renderShell, renderChartBars };
+function initSidebarNav() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  sidebar.addEventListener('click', (e) => {
+    const item = e.target.closest('.sidebar-item');
+    if (!item || !item.dataset.page) return;
+    const pageId = item.dataset.page;
+    // Update sidebar active state
+    sidebar.querySelectorAll('.sidebar-item').forEach(el => el.classList.remove('active'));
+    item.classList.add('active');
+    // Toggle page visibility
+    document.querySelectorAll('[data-page-content]').forEach(el => {
+      el.classList.toggle('hidden', el.dataset.pageContent !== pageId);
+    });
+  });
+}
+
+window.ARC = { ICONS, PAGES, renderShell, renderChartBars, initSidebarNav };
