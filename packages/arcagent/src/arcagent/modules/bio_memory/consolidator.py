@@ -14,7 +14,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import yaml
 
@@ -35,7 +35,7 @@ from arcagent.modules.bio_memory.facts import (
 )
 from arcagent.modules.bio_memory.working_memory import WorkingMemory
 from arcagent.utils.io import atomic_write_text, extract_json, format_messages
-from arcagent.utils.sanitizer import read_frontmatter, sanitize_text, sanitize_wiki_link, slugify
+from arcagent.utils.sanitizer import sanitize_text, sanitize_wiki_link, slugify
 
 _logger = logging.getLogger("arcagent.modules.bio_memory.consolidator")
 
@@ -64,6 +64,18 @@ _SIGNAL_WORDS = (
 
 # Cap conversation formatting to prevent unbounded LLM prompts
 _MAX_CONVERSATION_CHARS = 50_000
+
+# Batch team promotion limits (SEC-002, LLM10)
+_MAX_PROMOTIONS_PER_SESSION = 20
+_PROMOTE_CONCURRENCY = 5
+_PROMOTE_BATCH_TIMEOUT = 30.0
+
+
+class MutationResult(NamedTuple):
+    """Result from entity mutation operations."""
+
+    mutation_count: int
+    mutated_slugs: set[str]
 
 
 class Consolidator:
@@ -206,7 +218,7 @@ class Consolidator:
             response = await self._invoke(model, [Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
             return bool(data.get("significant", False))
-        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
+        except (*_LLM_PARSE_ERRORS, TimeoutError):
             _logger.warning("Significance evaluation failed, treating as not significant")
             return False
 
@@ -239,7 +251,7 @@ class Consolidator:
 
             response = await self._invoke(model, [Message(role="user", content=prompt)])
             data = json.loads(extract_json(response.content))
-        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
+        except (*_LLM_PARSE_ERRORS, TimeoutError):
             _logger.warning("Episode creation failed, skipping")
             return
 
@@ -335,10 +347,12 @@ class Consolidator:
             ops["links_added"] = count
             mutated_slugs.update(slugs)
 
-        # LC-7: New entity stubs (already promotes individually during creation)
+        # LC-7: New entity stubs
         new_entities = analysis.get("new_entities", [])
         if new_entities:
-            ops["stubs_created"] = await self._create_entity_stubs(new_entities)
+            result = await self._create_entity_stubs(new_entities)
+            ops["stubs_created"] = result.mutation_count
+            mutated_slugs.update(result.mutated_slugs)
 
         # Batch-promote all mutated entities to team shared knowledge
         if mutated_slugs:
@@ -392,7 +406,7 @@ class Consolidator:
             if not isinstance(data, dict):
                 return {}
             return data
-        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
+        except (*_LLM_PARSE_ERRORS, TimeoutError):
             _logger.warning("Entity analysis LLM call failed")
             return {}
 
@@ -401,11 +415,8 @@ class Consolidator:
     async def _update_touched_entities(
         self,
         touched_list: list[str],
-    ) -> tuple[int, set[str]]:
-        """Update last_verified and append Recent Activity for touched entities.
-
-        Returns (count_updated, set_of_mutated_slugs).
-        """
+    ) -> MutationResult:
+        """Update last_verified and append Recent Activity for touched entities."""
         updated = 0
         mutated: set[str] = set()
         for entity_slug in touched_list:
@@ -434,18 +445,15 @@ class Consolidator:
                 )
             except Exception:
                 _logger.warning("Failed to update entity %s", slug, exc_info=True)
-        return updated, mutated
+        return MutationResult(mutation_count=updated, mutated_slugs=mutated)
 
     # -- LC-4.5: Append structured facts --
 
     def _append_entity_facts(
         self,
         entity_facts: dict[str, list[dict[str, Any]]],
-    ) -> tuple[int, set[str]]:
-        """Append compact fact triplets to entity Key Facts sections.
-
-        Returns (count_appended, set_of_mutated_slugs).
-        """
+    ) -> MutationResult:
+        """Append compact fact triplets to entity Key Facts sections."""
         appended = 0
         mutated: set[str] = set()
         today = today_str()
@@ -497,18 +505,15 @@ class Consolidator:
             except Exception:
                 _logger.warning("Failed to append facts for %s", slug, exc_info=True)
 
-        return appended, mutated
+        return MutationResult(mutation_count=appended, mutated_slugs=mutated)
 
     # -- LC-5: Apply corrections --
 
     async def _apply_corrections(
         self,
         corrections_list: list[dict[str, str]],
-    ) -> tuple[int, set[str]]:
-        """Append corrections to entity Constraints and Lessons section.
-
-        Returns (count_applied, set_of_mutated_slugs).
-        """
+    ) -> MutationResult:
+        """Append corrections to entity Constraints and Lessons section."""
         applied = 0
         mutated: set[str] = set()
         for correction in corrections_list:
@@ -540,20 +545,18 @@ class Consolidator:
                 )
             except Exception:
                 _logger.warning("Failed to apply correction for %s", slug, exc_info=True)
-        return applied, mutated
+        return MutationResult(mutation_count=applied, mutated_slugs=mutated)
 
     # -- LC-6: Co-occurrence linking --
 
     def _add_co_occurrence_links(
         self,
         co_occurrence_pairs: list[list[str]],
-    ) -> tuple[int, set[str]]:
+    ) -> MutationResult:
         """Add bidirectional wiki-links for co-occurring entities.
 
         linked_from is NOT stored in files — computed from index at read-time
         (per research decision D-021). Only links_to is updated.
-
-        Returns (count_added, set_of_mutated_slugs).
         """
         added = 0
         mutated: set[str] = set()
@@ -590,16 +593,17 @@ class Consolidator:
                 )
             except Exception:
                 _logger.warning("Failed to link %s <-> %s", slug_a, slug_b, exc_info=True)
-        return added, mutated
+        return MutationResult(mutation_count=added, mutated_slugs=mutated)
 
     # -- LC-7: New entity stubs --
 
     async def _create_entity_stubs(
         self,
         new_entities: list[dict[str, str]],
-    ) -> int:
+    ) -> MutationResult:
         """Create stub files for new entities with v2.1 schema."""
         created = 0
+        mutated: set[str] = set()
         for entity in new_entities:
             if created >= _MAX_NEW_ENTITIES_PER_SESSION:
                 _logger.info(
@@ -612,18 +616,17 @@ class Consolidator:
             if result is None:
                 continue
 
-            target_path, content, frontmatter, slug, entity_type = result
+            target_path, content, _frontmatter, slug, entity_type = result
             atomic_write_text(target_path, content)
             created += 1
+            mutated.add(slug)
 
             self._telemetry.audit_event(
                 "memory.entity_created",
                 details={"entity": slug, "type": entity_type},
             )
 
-            await self._try_team_promote(slug, content, frontmatter)
-
-        return created
+        return MutationResult(mutation_count=created, mutated_slugs=mutated)
 
     def _build_entity_stub(
         self,
@@ -669,7 +672,10 @@ class Consolidator:
             sort_keys=False,
         ).strip()
 
-        fact_lines = self._format_initial_facts(entity.get("facts", []), today)
+        raw_facts: list[Any] = entity.get("facts", [])  # type: ignore[assignment]
+        if not isinstance(raw_facts, list):
+            raw_facts = []
+        fact_lines = self._format_initial_facts(raw_facts, today)
 
         content = (
             f"---\n{fm_text}\n---\n\n"
@@ -700,38 +706,50 @@ class Consolidator:
                 lines += format_fact(predicate, value, confidence, today) + "\n"
         return lines
 
-    async def _try_team_promote(
+    async def _promote_single_entity(
         self,
         slug: str,
-        content: str,
-        frontmatter: dict[str, Any],
-    ) -> None:
-        """Attempt team promotion if service is available."""
-        if not self._team_service_factory:
-            return
-        team_svc = self._team_service_factory()
-        if not team_svc:
-            return
-        try:
-            from arcteam.memory.types import EntityMetadata  # type: ignore[import-untyped]
+        team_svc: Any,
+        entity_metadata_cls: type,
+    ) -> bool:
+        """Read entity from disk and promote to team store.
 
-            metadata = EntityMetadata(**frontmatter)
-            await team_svc.promote(
-                entity_id=slug,
-                content=content,
-                metadata=metadata,
-                agent_id=self._agent_id,
-            )
-        except ImportError:
-            _logger.debug("arcteam not installed, skipping team promotion")
-        except Exception:
-            _logger.debug("Team promotion failed for %s", slug, exc_info=True)
+        Parses YAML frontmatter inline from already-read content to avoid
+        redundant disk reads (PERF-1).
+        """
+        entity_path = resolve_entity_path(slug, self._entities_dir, self._workspace)
+        if entity_path is None:
+            return False
+
+        content = entity_path.read_text(encoding="utf-8")
+        if not content.startswith("---\n"):
+            return False
+
+        end_idx = content.find("\n---", 3)
+        if end_idx < 0:
+            return False
+
+        fm = yaml.safe_load(content[4:end_idx])
+        if not isinstance(fm, dict):
+            return False
+
+        metadata = entity_metadata_cls(**fm)
+        await team_svc.promote(
+            entity_id=slug,
+            content=content,
+            metadata=metadata,
+            agent_id=self._agent_id,
+        )
+        return True
 
     async def _batch_team_promote(self, slugs: set[str]) -> int:
         """Read mutated entities from disk and promote each to team shared store.
 
         Called at the end of the entity pipeline to sync all mutations
         (facts, corrections, links, touched) — not just new stubs.
+
+        Uses bounded concurrency (semaphore) and aggregate timeout to
+        prevent unbounded resource consumption (LLM10, SEC-002).
         """
         if not self._team_service_factory:
             return 0
@@ -740,37 +758,47 @@ class Consolidator:
             return 0
 
         try:
-            from arcteam.memory.types import EntityMetadata  # type: ignore[import-untyped]
+            from arcteam.memory.types import EntityMetadata
         except ImportError:
             _logger.debug("arcteam not installed, skipping batch team promotion")
             return 0
 
-        promoted = 0
-        for slug in slugs:
-            entity_path = resolve_entity_path(slug, self._entities_dir, self._workspace)
-            if entity_path is None:
-                continue
-            try:
-                content = entity_path.read_text(encoding="utf-8")
-                frontmatter = read_frontmatter(entity_path)
-                if frontmatter is None:
-                    continue
-                metadata = EntityMetadata(**frontmatter)
-                await team_svc.promote(
-                    entity_id=slug,
-                    content=content,
-                    metadata=metadata,
-                    agent_id=self._agent_id,
-                )
-                promoted += 1
-            except Exception:
-                _logger.debug("Batch team promote failed for %s", slug, exc_info=True)
+        # Rate limit: cap promotions per session (SEC-002)
+        ordered = sorted(slugs)[:_MAX_PROMOTIONS_PER_SESSION]
+        if len(slugs) > _MAX_PROMOTIONS_PER_SESSION:
+            _logger.warning(
+                "Promotion rate limit: %d slugs capped to %d",
+                len(slugs),
+                _MAX_PROMOTIONS_PER_SESSION,
+            )
 
+        sem = asyncio.Semaphore(_PROMOTE_CONCURRENCY)
+        results: list[bool] = []
+
+        async def _bounded_promote(slug: str) -> bool:
+            async with sem:
+                try:
+                    return await self._promote_single_entity(slug, team_svc, EntityMetadata)
+                except Exception:
+                    _logger.warning("Team promote failed for %s", slug, exc_info=True)
+                    return False
+
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*[_bounded_promote(s) for s in ordered]),
+                timeout=_PROMOTE_BATCH_TIMEOUT,
+            )
+        except TimeoutError:
+            _logger.warning(
+                "Batch team promote timed out after %.1fs", _PROMOTE_BATCH_TIMEOUT
+            )
+
+        promoted = sum(1 for r in results if r)
         if promoted:
             _logger.info("Team-promoted %d mutated entities", promoted)
             self._telemetry.audit_event(
                 "memory.team_batch_promoted",
-                details={"count": promoted, "slugs": sorted(slugs)},
+                details={"count": promoted, "slugs": ordered},
             )
         return promoted
 
@@ -813,5 +841,5 @@ class Consolidator:
                     "memory.daily_note_appended",
                     details={"entry_count": len(entries)},
                 )
-        except (*_LLM_PARSE_ERRORS, asyncio.TimeoutError):
+        except (*_LLM_PARSE_ERRORS, TimeoutError):
             _logger.warning("Daily note summarization failed, skipping")

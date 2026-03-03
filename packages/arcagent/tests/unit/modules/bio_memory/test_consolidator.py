@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -602,12 +603,13 @@ class TestCreateEntityStubs:
         consolidator: Consolidator,
         entities_dir: Path,
     ) -> None:
-        count = await consolidator._create_entity_stubs(
+        result = await consolidator._create_entity_stubs(
             [
                 {"id": "new-project", "type": "project", "summary": "A new project."},
             ]
         )
-        assert count == 1
+        assert result.mutation_count == 1
+        assert "new-project" in result.mutated_slugs
 
         # Check file exists
         path = entities_dir / "new-project.md"
@@ -625,12 +627,13 @@ class TestCreateEntityStubs:
         entities_dir: Path,
     ) -> None:
         _write_entity(entities_dir, "existing", {}, "Already exists")
-        count = await consolidator._create_entity_stubs(
+        result = await consolidator._create_entity_stubs(
             [
                 {"id": "existing", "type": "project", "summary": "Duplicate"},
             ]
         )
-        assert count == 0
+        assert result.mutation_count == 0
+        assert len(result.mutated_slugs) == 0
 
     @pytest.mark.asyncio
     async def test_rate_limits_creation(
@@ -642,8 +645,9 @@ class TestCreateEntityStubs:
         entities = [
             {"id": f"new-{i}", "type": "concept", "summary": f"Entity {i}"} for i in range(5)
         ]
-        count = await consolidator._create_entity_stubs(entities)
-        assert count == 3  # Rate limited
+        result = await consolidator._create_entity_stubs(entities)
+        assert result.mutation_count == 3  # Rate limited
+        assert len(result.mutated_slugs) == 3
 
 
 class TestNormalizeEntityFile:
@@ -706,12 +710,46 @@ class TestBoundaryMarkers:
         assert len(consolidator._boundary_id) == 12
 
 
+def _mock_arcteam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Inject mock arcteam modules so team promotion imports succeed."""
+    import sys
+
+    mock_types = MagicMock()
+    mock_types.EntityMetadata = lambda **kw: MagicMock(**kw)
+    monkeypatch.setitem(sys.modules, "arcteam", MagicMock())
+    monkeypatch.setitem(sys.modules, "arcteam.memory", MagicMock())
+    monkeypatch.setitem(sys.modules, "arcteam.memory.types", mock_types)
+
+
+def _team_consolidator(
+    memory_dir: Path,
+    config: BioMemoryConfig,
+    working: WorkingMemory,
+    daily_notes: DailyNotes,
+    telemetry: MagicMock,
+    workspace: Path,
+    mock_svc: AsyncMock,
+) -> Consolidator:
+    """Build a Consolidator wired to a mock team service."""
+    return Consolidator(
+        memory_dir=memory_dir,
+        config=config,
+        working=working,
+        daily_notes=daily_notes,
+        telemetry=telemetry,
+        workspace=workspace,
+        team_service_factory=lambda: mock_svc,
+        agent_id="test-agent",
+    )
+
+
 class TestBatchTeamPromote:
     """Batch team promotion of mutated entities."""
 
     @pytest.mark.asyncio
     async def test_batch_promote_calls_team_service(
         self,
+        monkeypatch: pytest.MonkeyPatch,
         memory_dir: Path,
         config: BioMemoryConfig,
         daily_notes: DailyNotes,
@@ -721,44 +759,23 @@ class TestBatchTeamPromote:
         entities_dir: Path,
     ) -> None:
         """Mutated entities are read from disk and promoted to team store."""
-        import sys
+        _mock_arcteam(monkeypatch)
+        mock_svc = AsyncMock()
+        mock_svc.promote = AsyncMock()
+        c = _team_consolidator(
+            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+        )
 
-        # Provide a mock EntityMetadata so the arcteam import succeeds
-        mock_types = MagicMock()
-        mock_types.EntityMetadata = lambda **kw: MagicMock(**kw)
-        sys.modules["arcteam"] = MagicMock()
-        sys.modules["arcteam.memory"] = MagicMock()
-        sys.modules["arcteam.memory.types"] = mock_types
+        _write_entity(
+            entities_dir,
+            "josh-schultz",
+            {"entity_type": "person", "entity_id": "josh-schultz"},
+            "# Josh\n\n## Key Facts\n",
+        )
 
-        try:
-            mock_svc = AsyncMock()
-            mock_svc.promote = AsyncMock()
-
-            consolidator = Consolidator(
-                memory_dir=memory_dir,
-                config=config,
-                working=working,
-                daily_notes=daily_notes,
-                telemetry=telemetry,
-                workspace=workspace,
-                team_service_factory=lambda: mock_svc,
-                agent_id="test-agent",
-            )
-
-            _write_entity(
-                entities_dir,
-                "josh-schultz",
-                {"entity_type": "person", "entity_id": "josh-schultz"},
-                "# Josh\n\n## Key Facts\n",
-            )
-
-            promoted = await consolidator._batch_team_promote({"josh-schultz"})
-            assert promoted == 1
-            assert mock_svc.promote.called
-        finally:
-            sys.modules.pop("arcteam.memory.types", None)
-            sys.modules.pop("arcteam.memory", None)
-            sys.modules.pop("arcteam", None)
+        promoted = await c._batch_team_promote({"josh-schultz"})
+        assert promoted == 1
+        assert mock_svc.promote.called
 
     @pytest.mark.asyncio
     async def test_batch_promote_noop_without_team_service(
@@ -772,8 +789,9 @@ class TestBatchTeamPromote:
         assert promoted == 0
 
     @pytest.mark.asyncio
-    async def test_batch_promote_skips_missing_entities(
+    async def test_batch_promote_factory_returns_none(
         self,
+        monkeypatch: pytest.MonkeyPatch,
         memory_dir: Path,
         config: BioMemoryConfig,
         daily_notes: DailyNotes,
@@ -782,21 +800,129 @@ class TestBatchTeamPromote:
         workspace: Path,
         entities_dir: Path,
     ) -> None:
-        """Missing entities are skipped silently."""
-        mock_svc = AsyncMock()
-        mock_svc.promote = AsyncMock()
-
-        consolidator = Consolidator(
+        """Factory returning None is a no-op."""
+        _mock_arcteam(monkeypatch)
+        c = Consolidator(
             memory_dir=memory_dir,
             config=config,
             working=working,
             daily_notes=daily_notes,
             telemetry=telemetry,
             workspace=workspace,
-            team_service_factory=lambda: mock_svc,
+            team_service_factory=lambda: None,
             agent_id="test-agent",
         )
+        _write_entity(entities_dir, "test", {"entity_type": "concept"}, "# Test\n")
+        promoted = await c._batch_team_promote({"test"})
+        assert promoted == 0
 
-        promoted = await consolidator._batch_team_promote({"does-not-exist"})
+    @pytest.mark.asyncio
+    async def test_batch_promote_skips_missing_entities(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        daily_notes: DailyNotes,
+        working: WorkingMemory,
+        telemetry: MagicMock,
+        workspace: Path,
+    ) -> None:
+        """Missing entities are skipped silently."""
+        _mock_arcteam(monkeypatch)
+        mock_svc = AsyncMock()
+        mock_svc.promote = AsyncMock()
+        c = _team_consolidator(
+            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+        )
+
+        promoted = await c._batch_team_promote({"does-not-exist"})
         assert promoted == 0
         assert not mock_svc.promote.called
+
+    @pytest.mark.asyncio
+    async def test_batch_promote_skips_no_frontmatter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        daily_notes: DailyNotes,
+        working: WorkingMemory,
+        telemetry: MagicMock,
+        workspace: Path,
+        entities_dir: Path,
+    ) -> None:
+        """Entity without frontmatter is skipped."""
+        _mock_arcteam(monkeypatch)
+        mock_svc = AsyncMock()
+        mock_svc.promote = AsyncMock()
+        c = _team_consolidator(
+            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+        )
+
+        # Write entity without frontmatter
+        path = entities_dir / "no-fm.md"
+        path.write_text("# No Frontmatter\nJust content.\n", encoding="utf-8")
+
+        promoted = await c._batch_team_promote({"no-fm"})
+        assert promoted == 0
+        assert not mock_svc.promote.called
+
+    @pytest.mark.asyncio
+    async def test_batch_promote_handles_exception(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        daily_notes: DailyNotes,
+        working: WorkingMemory,
+        telemetry: MagicMock,
+        workspace: Path,
+        entities_dir: Path,
+    ) -> None:
+        """Promote exception for one entity doesn't block others."""
+        _mock_arcteam(monkeypatch)
+        mock_svc = AsyncMock()
+        # First call raises, second succeeds
+        mock_svc.promote = AsyncMock(side_effect=[RuntimeError("network"), None])
+        c = _team_consolidator(
+            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+        )
+
+        _write_entity(entities_dir, "aaa-fail", {"entity_type": "concept"}, "# Fail\n")
+        _write_entity(entities_dir, "bbb-ok", {"entity_type": "concept"}, "# OK\n")
+
+        promoted = await c._batch_team_promote({"aaa-fail", "bbb-ok"})
+        # aaa-fail errors, bbb-ok succeeds (sorted order)
+        assert promoted == 1
+
+    @pytest.mark.asyncio
+    async def test_batch_promote_deterministic_order(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        daily_notes: DailyNotes,
+        working: WorkingMemory,
+        telemetry: MagicMock,
+        workspace: Path,
+        entities_dir: Path,
+    ) -> None:
+        """Slugs are promoted in sorted order for deterministic behavior."""
+        _mock_arcteam(monkeypatch)
+        promoted_slugs: list[str] = []
+        mock_svc = AsyncMock()
+
+        async def _track_promote(**kwargs: Any) -> None:
+            promoted_slugs.append(kwargs["entity_id"])
+
+        mock_svc.promote = _track_promote
+        c = _team_consolidator(
+            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+        )
+
+        _write_entity(entities_dir, "charlie", {"entity_type": "concept"}, "# C\n")
+        _write_entity(entities_dir, "alpha", {"entity_type": "concept"}, "# A\n")
+        _write_entity(entities_dir, "bravo", {"entity_type": "concept"}, "# B\n")
+
+        await c._batch_team_promote({"charlie", "alpha", "bravo"})
+        assert promoted_slugs == ["alpha", "bravo", "charlie"]

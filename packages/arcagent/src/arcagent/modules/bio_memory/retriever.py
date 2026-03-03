@@ -46,6 +46,12 @@ class Retriever:
         self._workspace = workspace or memory_dir.parent
         self._entities_dir = self._workspace / config.entities_dirname
         self._team_entities_dir = team_entities_dir
+        # Cache resolved base paths to avoid repeated realpath syscalls (PERF-4)
+        self._memory_dir_resolved = self._memory_dir.resolve()
+        self._entities_dir_resolved = self._entities_dir.resolve()
+        self._team_dir_resolved = (
+            self._team_entities_dir.resolve() if self._team_entities_dir else None
+        )
 
     async def search(
         self,
@@ -113,22 +119,20 @@ class Retriever:
 
     def _is_within_bounds(self, path: Path) -> bool:
         """Verify resolved path is within memory_dir or entities_dir (path traversal defense)."""
-        resolved_mem = self._memory_dir.resolve()
-        resolved_ent = self._entities_dir.resolve()
         try:
-            path.relative_to(resolved_mem)
+            path.relative_to(self._memory_dir_resolved)
             return True
         except ValueError:
             pass
         try:
-            path.relative_to(resolved_ent)
+            path.relative_to(self._entities_dir_resolved)
             return True
         except ValueError:
             pass
         # Also allow team entities
-        if self._team_entities_dir:
+        if self._team_dir_resolved:
             try:
-                path.relative_to(self._team_entities_dir.resolve())
+                path.relative_to(self._team_dir_resolved)
                 return True
             except ValueError:
                 pass
@@ -216,9 +220,9 @@ class Retriever:
         shared knowledge from private knowledge in search results.
         """
         # Team entities get a 'team/' prefix for visibility
-        if self._team_entities_dir:
+        if self._team_dir_resolved:
             try:
-                rel = path.resolve().relative_to(self._team_entities_dir.resolve())
+                rel = path.resolve().relative_to(self._team_dir_resolved)
                 return f"team/{rel}"
             except ValueError:
                 pass

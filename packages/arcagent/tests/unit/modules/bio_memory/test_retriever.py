@@ -324,6 +324,19 @@ class TestTeamEntitySearch:
         assert not any("local-only" in s for s in sources)
 
 
+    @pytest.mark.asyncio
+    async def test_team_scope_with_no_team_dir(
+        self,
+        memory_dir: Path,
+        workspace: Path,
+    ) -> None:
+        """scope='team' with no team_entities_dir returns empty results."""
+        cfg = BioMemoryConfig()
+        ret = Retriever(memory_dir, cfg, workspace=workspace, team_entities_dir=None)
+        results = await ret.search("anything", scope="team")
+        assert results == []
+
+
 class TestRecall:
     """Retriever.recall() retrieves specific entity/episode by name."""
 
