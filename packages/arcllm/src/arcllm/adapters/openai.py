@@ -112,6 +112,10 @@ class OpenaiAdapter(BaseAdapter):
 
         A single ArcLLM message with role="tool" and multiple ToolResultBlocks
         expands into multiple OpenAI messages (one per tool result).
+
+        For reasoning models (o-series), ``system`` role is mapped to
+        ``developer`` — Azure OpenAI and OpenAI's o-series APIs reject
+        ``system`` messages and require ``developer`` instead.
         """
         result: list[dict[str, Any]] = []
         for msg in messages:
@@ -135,7 +139,11 @@ class OpenaiAdapter(BaseAdapter):
                         )
                     # Skip non-ToolResultBlock content in tool messages
             else:
-                result.append(self._format_message(msg))
+                formatted = self._format_message(msg)
+                # o-series reasoning models require "developer" instead of "system"
+                if self._is_reasoning_model and formatted.get("role") == "system":
+                    formatted["role"] = "developer"
+                result.append(formatted)
         return result
 
     @property

@@ -188,6 +188,39 @@ class TestOpenAIRequestBuilding:
         assert body["messages"][0]["content"] == "You are helpful."
         assert body["messages"][1]["role"] == "user"
 
+    def test_reasoning_model_system_becomes_developer(self):
+        """o-series reasoning models require 'developer' role, not 'system'."""
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        reasoning_meta = ModelMetadata(
+            context_window=200000,
+            max_output_tokens=100000,
+            supports_tools=True,
+            supports_vision=True,
+            supports_thinking=True,
+            input_modalities=["text", "image"],
+            cost_input_per_1m=15.0,
+            cost_output_per_1m=60.0,
+            cost_cache_read_per_1m=3.75,
+            cost_cache_write_per_1m=15.0,
+        )
+        reasoning_config = ProviderConfig(
+            provider=FAKE_PROVIDER_SETTINGS,
+            models={"o1": reasoning_meta},
+        )
+        adapter = OpenaiAdapter(reasoning_config, "o1")
+        messages = [
+            Message(role="system", content="You are a helpful agent."),
+            Message(role="user", content="Hello"),
+        ]
+        body = adapter._build_request_body(messages)
+        assert body["messages"][0]["role"] == "developer"
+        assert body["messages"][0]["content"] == "You are a helpful agent."
+        assert body["messages"][1]["role"] == "user"
+        # Reasoning models use max_completion_tokens, not max_tokens
+        assert "max_completion_tokens" in body
+        assert "max_tokens" not in body
+
     def test_tool_formatting(self):
         from arcllm.adapters.openai import OpenaiAdapter
 
