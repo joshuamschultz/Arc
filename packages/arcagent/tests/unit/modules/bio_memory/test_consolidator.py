@@ -400,8 +400,9 @@ class TestUpdateTouchedEntities:
             {"entity_type": "person", "last_verified": "2026-01-01"},
             "# Josh Schultz\n\n## Recent Activity\n",
         )
-        count = await consolidator._update_touched_entities(["josh-schultz"])
+        count, mutated = await consolidator._update_touched_entities(["josh-schultz"])
         assert count == 1
+        assert "josh-schultz" in mutated
 
         text = (entities_dir / "josh-schultz.md").read_text()
         assert "2026-01-01" not in text or "Referenced in session" in text
@@ -411,8 +412,9 @@ class TestUpdateTouchedEntities:
         self,
         consolidator: Consolidator,
     ) -> None:
-        count = await consolidator._update_touched_entities(["does-not-exist"])
+        count, mutated = await consolidator._update_touched_entities(["does-not-exist"])
         assert count == 0
+        assert len(mutated) == 0
 
 
 class TestAppendEntityFacts:
@@ -429,12 +431,13 @@ class TestAppendEntityFacts:
             {"entity_type": "person"},
             "# Josh\n\n## Key Facts\n\n## Summary\nA person.\n",
         )
-        count = consolidator._append_entity_facts(
+        count, mutated = consolidator._append_entity_facts(
             {
                 "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
             }
         )
         assert count == 1
+        assert "josh" in mutated
         text = (entities_dir / "josh.md").read_text()
         assert "works_at" in text
         assert "Anthropic" in text
@@ -450,12 +453,13 @@ class TestAppendEntityFacts:
             {"entity_type": "person"},
             "# Josh\n\n## Key Facts\n- works_at: IBM .8 2023-01-01\n\n## Summary\n",
         )
-        count = consolidator._append_entity_facts(
+        count, mutated = consolidator._append_entity_facts(
             {
                 "josh": [{"p": "works_at", "v": "Anthropic", "c": 0.9}],
             }
         )
         assert count == 1
+        assert "josh" in mutated
         text = (entities_dir / "josh.md").read_text()
         assert "was: IBM" in text
 
@@ -463,12 +467,13 @@ class TestAppendEntityFacts:
         self,
         consolidator: Consolidator,
     ) -> None:
-        count = consolidator._append_entity_facts(
+        count, mutated = consolidator._append_entity_facts(
             {
                 "missing": [{"p": "role", "v": "engineer", "c": 0.5}],
             }
         )
         assert count == 0
+        assert len(mutated) == 0
 
     def test_skips_empty_predicate_or_value(
         self,
@@ -481,12 +486,13 @@ class TestAppendEntityFacts:
             {"entity_type": "concept"},
             "# Test\n\n## Key Facts\n",
         )
-        count = consolidator._append_entity_facts(
+        count, mutated = consolidator._append_entity_facts(
             {
                 "test": [{"p": "", "v": "val", "c": 0.5}, {"p": "key", "v": "", "c": 0.5}],
             }
         )
         assert count == 0
+        assert len(mutated) == 0
 
     def test_multiple_facts_for_entity(
         self,
@@ -499,7 +505,7 @@ class TestAppendEntityFacts:
             {"entity_type": "project"},
             "# Project\n\n## Key Facts\n\n## Summary\n",
         )
-        count = consolidator._append_entity_facts(
+        count, mutated = consolidator._append_entity_facts(
             {
                 "proj": [
                     {"p": "status", "v": "active", "c": 0.95},
@@ -508,6 +514,7 @@ class TestAppendEntityFacts:
             }
         )
         assert count == 2
+        assert "proj" in mutated
 
 
 class TestApplyCorrections:
@@ -525,12 +532,13 @@ class TestApplyCorrections:
             {"entity_type": "concept"},
             "# Pricing\n\n## Constraints and Lessons\n",
         )
-        count = await consolidator._apply_corrections(
+        count, mutated = await consolidator._apply_corrections(
             [
                 {"entity": "pricing", "correction": "Show methodology first"},
             ]
         )
         assert count == 1
+        assert "pricing" in mutated
         text = (entities_dir / "pricing.md").read_text()
         assert "Show methodology first" in text
 
@@ -546,8 +554,10 @@ class TestCoOccurrenceLinking:
         _write_entity(entities_dir, "entity-a", {"links_to": []}, "Entity A")
         _write_entity(entities_dir, "entity-b", {"links_to": []}, "Entity B")
 
-        count = consolidator._add_co_occurrence_links([["entity-a", "entity-b"]])
+        count, mutated = consolidator._add_co_occurrence_links([["entity-a", "entity-b"]])
         assert count == 2  # One in each direction
+        assert "entity-a" in mutated
+        assert "entity-b" in mutated
 
         from arcagent.utils.sanitizer import read_frontmatter
 
@@ -564,8 +574,9 @@ class TestCoOccurrenceLinking:
         _write_entity(entities_dir, "entity-a", {"links_to": ["[[entity-b]]"]}, "A")
         _write_entity(entities_dir, "entity-b", {"links_to": ["[[entity-a]]"]}, "B")
 
-        count = consolidator._add_co_occurrence_links([["entity-a", "entity-b"]])
+        count, mutated = consolidator._add_co_occurrence_links([["entity-a", "entity-b"]])
         assert count == 0  # Already linked
+        assert len(mutated) == 0
 
     def test_rate_limits_links(
         self,
@@ -578,7 +589,7 @@ class TestCoOccurrenceLinking:
 
         # 6 pairs = 12 links attempted, should cap at 10
         pairs = [[f"ent-{i}", f"ent-{i + 1}"] for i in range(6)]
-        count = consolidator._add_co_occurrence_links(pairs)
+        count, _mutated = consolidator._add_co_occurrence_links(pairs)
         assert count <= 10
 
 
@@ -693,3 +704,99 @@ class TestBoundaryMarkers:
 
     def test_boundary_id_length(self, consolidator: Consolidator) -> None:
         assert len(consolidator._boundary_id) == 12
+
+
+class TestBatchTeamPromote:
+    """Batch team promotion of mutated entities."""
+
+    @pytest.mark.asyncio
+    async def test_batch_promote_calls_team_service(
+        self,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        daily_notes: DailyNotes,
+        working: WorkingMemory,
+        telemetry: MagicMock,
+        workspace: Path,
+        entities_dir: Path,
+    ) -> None:
+        """Mutated entities are read from disk and promoted to team store."""
+        import sys
+
+        # Provide a mock EntityMetadata so the arcteam import succeeds
+        mock_types = MagicMock()
+        mock_types.EntityMetadata = lambda **kw: MagicMock(**kw)
+        sys.modules["arcteam"] = MagicMock()
+        sys.modules["arcteam.memory"] = MagicMock()
+        sys.modules["arcteam.memory.types"] = mock_types
+
+        try:
+            mock_svc = AsyncMock()
+            mock_svc.promote = AsyncMock()
+
+            consolidator = Consolidator(
+                memory_dir=memory_dir,
+                config=config,
+                working=working,
+                daily_notes=daily_notes,
+                telemetry=telemetry,
+                workspace=workspace,
+                team_service_factory=lambda: mock_svc,
+                agent_id="test-agent",
+            )
+
+            _write_entity(
+                entities_dir,
+                "josh-schultz",
+                {"entity_type": "person", "entity_id": "josh-schultz"},
+                "# Josh\n\n## Key Facts\n",
+            )
+
+            promoted = await consolidator._batch_team_promote({"josh-schultz"})
+            assert promoted == 1
+            assert mock_svc.promote.called
+        finally:
+            sys.modules.pop("arcteam.memory.types", None)
+            sys.modules.pop("arcteam.memory", None)
+            sys.modules.pop("arcteam", None)
+
+    @pytest.mark.asyncio
+    async def test_batch_promote_noop_without_team_service(
+        self,
+        consolidator: Consolidator,
+        entities_dir: Path,
+    ) -> None:
+        """Without team service, batch promote is a no-op."""
+        _write_entity(entities_dir, "test", {"entity_type": "concept"}, "# Test\n")
+        promoted = await consolidator._batch_team_promote({"test"})
+        assert promoted == 0
+
+    @pytest.mark.asyncio
+    async def test_batch_promote_skips_missing_entities(
+        self,
+        memory_dir: Path,
+        config: BioMemoryConfig,
+        daily_notes: DailyNotes,
+        working: WorkingMemory,
+        telemetry: MagicMock,
+        workspace: Path,
+        entities_dir: Path,
+    ) -> None:
+        """Missing entities are skipped silently."""
+        mock_svc = AsyncMock()
+        mock_svc.promote = AsyncMock()
+
+        consolidator = Consolidator(
+            memory_dir=memory_dir,
+            config=config,
+            working=working,
+            daily_notes=daily_notes,
+            telemetry=telemetry,
+            workspace=workspace,
+            team_service_factory=lambda: mock_svc,
+            agent_id="test-agent",
+        )
+
+        promoted = await consolidator._batch_team_promote({"does-not-exist"})
+        assert promoted == 0
+        assert not mock_svc.promote.called

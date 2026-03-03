@@ -316,7 +316,11 @@ class BioMemoryModule:
         tool_registry.register(
             RegisteredTool(
                 name="memory_search",
-                description="Search agent memory using grep + wiki-link graph traversal.",
+                description=(
+                    "Search agent memory and team shared knowledge using grep "
+                    "+ wiki-link graph traversal. Use scope='team' to search "
+                    "only team shared knowledge."
+                ),
                 input_schema={
                     "type": "object",
                     "properties": {
@@ -327,8 +331,17 @@ class BioMemoryModule:
                         },
                         "scope": {
                             "type": "string",
-                            "description": "Filter: episodes, daily_notes, working, entities",
-                            "enum": ["episodes", "daily_notes", "working", "entities"],
+                            "description": (
+                                "Filter: episodes, daily_notes, working, "
+                                "entities (local + team), team (team only)"
+                            ),
+                            "enum": [
+                                "episodes",
+                                "daily_notes",
+                                "working",
+                                "entities",
+                                "team",
+                            ],
                         },
                         "top_k": {
                             "type": "integer",

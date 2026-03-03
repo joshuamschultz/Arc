@@ -253,10 +253,10 @@ class TestEntitySearch:
 
 
 class TestTeamEntitySearch:
-    """Retriever applies team score penalty to team entities."""
+    """Retriever includes team entities as first-class results."""
 
     @pytest.mark.asyncio
-    async def test_team_entities_scored_lower(
+    async def test_team_entities_included_in_search(
         self,
         memory_dir: Path,
         workspace: Path,
@@ -279,8 +279,49 @@ class TestTeamEntitySearch:
         team = [r for r in results if "shared-entity" in r.source]
         assert len(local) >= 1
         assert len(team) >= 1
-        # Team score should be lower due to penalty
-        assert team[0].score < local[0].score
+        # Team entities score equally — no penalty
+        assert team[0].score == local[0].score
+
+    @pytest.mark.asyncio
+    async def test_team_entities_prefixed_in_source(
+        self,
+        memory_dir: Path,
+        workspace: Path,
+    ) -> None:
+        """Team entity results show team/ prefix in source path."""
+        team_dir = workspace / "team_entities"
+        team_dir.mkdir()
+        _write_entity(team_dir, "shared-thing", {"tags": ["unique"]}, "unique keyword")
+
+        cfg = BioMemoryConfig()
+        ret = Retriever(memory_dir, cfg, workspace=workspace, team_entities_dir=team_dir)
+        results = await ret.search("unique", scope="team")
+
+        assert len(results) >= 1
+        assert results[0].source.startswith("team/")
+
+    @pytest.mark.asyncio
+    async def test_team_scope_excludes_local(
+        self,
+        memory_dir: Path,
+        workspace: Path,
+    ) -> None:
+        """scope='team' returns only team entities, not local."""
+        team_dir = workspace / "team_entities"
+        team_dir.mkdir()
+        _write_entity(team_dir, "shared-only", {"tags": ["keyword"]}, "keyword content")
+
+        entities_dir = workspace / "entities"
+        entities_dir.mkdir()
+        _write_entity(entities_dir, "local-only", {"tags": ["keyword"]}, "keyword content")
+
+        cfg = BioMemoryConfig()
+        ret = Retriever(memory_dir, cfg, workspace=workspace, team_entities_dir=team_dir)
+        results = await ret.search("keyword", scope="team")
+
+        sources = [r.source for r in results]
+        assert any("shared-only" in s for s in sources)
+        assert not any("local-only" in s for s in sources)
 
 
 class TestRecall:

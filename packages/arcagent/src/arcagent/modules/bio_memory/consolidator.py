@@ -35,7 +35,7 @@ from arcagent.modules.bio_memory.facts import (
 )
 from arcagent.modules.bio_memory.working_memory import WorkingMemory
 from arcagent.utils.io import atomic_write_text, extract_json, format_messages
-from arcagent.utils.sanitizer import sanitize_text, sanitize_wiki_link, slugify
+from arcagent.utils.sanitizer import read_frontmatter, sanitize_text, sanitize_wiki_link, slugify
 
 _logger = logging.getLogger("arcagent.modules.bio_memory.consolidator")
 
@@ -288,7 +288,11 @@ class Consolidator:
         conversation: str,
         model: Any,
     ) -> dict[str, Any]:
-        """Run entity analysis + updates. Returns operation summary."""
+        """Run entity analysis + updates. Returns operation summary.
+
+        All mutated entity slugs are collected and batch-promoted to team
+        shared knowledge at the end of the pipeline.
+        """
         ops: dict[str, Any] = {}
 
         try:
@@ -300,30 +304,46 @@ class Consolidator:
         if not analysis:
             return ops
 
+        # Collect all slugs mutated during this pipeline run
+        mutated_slugs: set[str] = set()
+
         # LC-4: Update touched entities
         touched = analysis.get("touched_entities", [])
         if touched:
-            ops["touched"] = await self._update_touched_entities(touched)
+            count, slugs = await self._update_touched_entities(touched)
+            ops["touched"] = count
+            mutated_slugs.update(slugs)
 
         # LC-4.5: Append structured facts to entities
         entity_facts = analysis.get("entity_facts", {})
         if entity_facts and isinstance(entity_facts, dict):
-            ops["facts_appended"] = self._append_entity_facts(entity_facts)
+            count, slugs = self._append_entity_facts(entity_facts)
+            ops["facts_appended"] = count
+            mutated_slugs.update(slugs)
 
         # LC-5: Apply corrections
         corrections = analysis.get("corrections", [])
         if corrections:
-            ops["corrections"] = await self._apply_corrections(corrections)
+            count, slugs = await self._apply_corrections(corrections)
+            ops["corrections"] = count
+            mutated_slugs.update(slugs)
 
         # LC-6: Co-occurrence linking
         co_occurrences = analysis.get("co_occurrences", [])
         if co_occurrences:
-            ops["links_added"] = self._add_co_occurrence_links(co_occurrences)
+            count, slugs = self._add_co_occurrence_links(co_occurrences)
+            ops["links_added"] = count
+            mutated_slugs.update(slugs)
 
-        # LC-7: New entity stubs
+        # LC-7: New entity stubs (already promotes individually during creation)
         new_entities = analysis.get("new_entities", [])
         if new_entities:
             ops["stubs_created"] = await self._create_entity_stubs(new_entities)
+
+        # Batch-promote all mutated entities to team shared knowledge
+        if mutated_slugs:
+            promoted = await self._batch_team_promote(mutated_slugs)
+            ops["team_promoted"] = promoted
 
         return ops
 
@@ -381,9 +401,13 @@ class Consolidator:
     async def _update_touched_entities(
         self,
         touched_list: list[str],
-    ) -> int:
-        """Update last_verified and append Recent Activity for touched entities."""
+    ) -> tuple[int, set[str]]:
+        """Update last_verified and append Recent Activity for touched entities.
+
+        Returns (count_updated, set_of_mutated_slugs).
+        """
         updated = 0
+        mutated: set[str] = set()
         for entity_slug in touched_list:
             slug = sanitize_wiki_link(entity_slug)
             if slug is None:
@@ -403,22 +427,27 @@ class Consolidator:
 
                 atomic_write_text(entity_path, text)
                 updated += 1
+                mutated.add(slug)
                 self._telemetry.audit_event(
                     "memory.entity_touched",
                     details={"entity": slug},
                 )
             except Exception:
                 _logger.warning("Failed to update entity %s", slug, exc_info=True)
-        return updated
+        return updated, mutated
 
     # -- LC-4.5: Append structured facts --
 
     def _append_entity_facts(
         self,
         entity_facts: dict[str, list[dict[str, Any]]],
-    ) -> int:
-        """Append compact fact triplets to entity Key Facts sections."""
+    ) -> tuple[int, set[str]]:
+        """Append compact fact triplets to entity Key Facts sections.
+
+        Returns (count_appended, set_of_mutated_slugs).
+        """
         appended = 0
+        mutated: set[str] = set()
         today = today_str()
 
         for entity_slug, facts_list in entity_facts.items():
@@ -458,6 +487,8 @@ class Consolidator:
 
                 atomic_write_text(entity_path, text)
                 appended += len(new_lines)
+                if new_lines:
+                    mutated.add(slug)
 
                 self._telemetry.audit_event(
                     "memory.entity_facts_appended",
@@ -466,16 +497,20 @@ class Consolidator:
             except Exception:
                 _logger.warning("Failed to append facts for %s", slug, exc_info=True)
 
-        return appended
+        return appended, mutated
 
     # -- LC-5: Apply corrections --
 
     async def _apply_corrections(
         self,
         corrections_list: list[dict[str, str]],
-    ) -> int:
-        """Append corrections to entity Constraints and Lessons section."""
+    ) -> tuple[int, set[str]]:
+        """Append corrections to entity Constraints and Lessons section.
+
+        Returns (count_applied, set_of_mutated_slugs).
+        """
         applied = 0
+        mutated: set[str] = set()
         for correction in corrections_list:
             entity_slug = correction.get("entity", "")
             correction_text = correction.get("correction", "")
@@ -498,26 +533,30 @@ class Consolidator:
                 text = append_to_section(text, "## Constraints and Lessons", line)
                 atomic_write_text(entity_path, text)
                 applied += 1
+                mutated.add(slug)
                 self._telemetry.audit_event(
                     "memory.entity_corrected",
                     details={"entity": slug, "correction": clean_correction[:100]},
                 )
             except Exception:
                 _logger.warning("Failed to apply correction for %s", slug, exc_info=True)
-        return applied
+        return applied, mutated
 
     # -- LC-6: Co-occurrence linking --
 
     def _add_co_occurrence_links(
         self,
         co_occurrence_pairs: list[list[str]],
-    ) -> int:
+    ) -> tuple[int, set[str]]:
         """Add bidirectional wiki-links for co-occurring entities.
 
         linked_from is NOT stored in files — computed from index at read-time
         (per research decision D-021). Only links_to is updated.
+
+        Returns (count_added, set_of_mutated_slugs).
         """
         added = 0
+        mutated: set[str] = set()
         for pair in co_occurrence_pairs:
             if added >= _MAX_NEW_LINKS_PER_SESSION:
                 _logger.info("Link rate limit reached (%d), stopping", _MAX_NEW_LINKS_PER_SESSION)
@@ -540,8 +579,10 @@ class Consolidator:
             try:
                 if add_link_to_frontmatter(path_a, slug_b):
                     added += 1
+                    mutated.add(slug_a)
                 if add_link_to_frontmatter(path_b, slug_a):
                     added += 1
+                    mutated.add(slug_b)
 
                 self._telemetry.audit_event(
                     "memory.entity_linked",
@@ -549,7 +590,7 @@ class Consolidator:
                 )
             except Exception:
                 _logger.warning("Failed to link %s <-> %s", slug_a, slug_b, exc_info=True)
-        return added
+        return added, mutated
 
     # -- LC-7: New entity stubs --
 
@@ -685,6 +726,53 @@ class Consolidator:
             _logger.debug("arcteam not installed, skipping team promotion")
         except Exception:
             _logger.debug("Team promotion failed for %s", slug, exc_info=True)
+
+    async def _batch_team_promote(self, slugs: set[str]) -> int:
+        """Read mutated entities from disk and promote each to team shared store.
+
+        Called at the end of the entity pipeline to sync all mutations
+        (facts, corrections, links, touched) — not just new stubs.
+        """
+        if not self._team_service_factory:
+            return 0
+        team_svc = self._team_service_factory()
+        if not team_svc:
+            return 0
+
+        try:
+            from arcteam.memory.types import EntityMetadata  # type: ignore[import-untyped]
+        except ImportError:
+            _logger.debug("arcteam not installed, skipping batch team promotion")
+            return 0
+
+        promoted = 0
+        for slug in slugs:
+            entity_path = resolve_entity_path(slug, self._entities_dir, self._workspace)
+            if entity_path is None:
+                continue
+            try:
+                content = entity_path.read_text(encoding="utf-8")
+                frontmatter = read_frontmatter(entity_path)
+                if frontmatter is None:
+                    continue
+                metadata = EntityMetadata(**frontmatter)
+                await team_svc.promote(
+                    entity_id=slug,
+                    content=content,
+                    metadata=metadata,
+                    agent_id=self._agent_id,
+                )
+                promoted += 1
+            except Exception:
+                _logger.debug("Batch team promote failed for %s", slug, exc_info=True)
+
+        if promoted:
+            _logger.info("Team-promoted %d mutated entities", promoted)
+            self._telemetry.audit_event(
+                "memory.team_batch_promoted",
+                details={"count": promoted, "slugs": sorted(slugs)},
+            )
+        return promoted
 
     # -- Daily note summarization --
 

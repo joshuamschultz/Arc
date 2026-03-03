@@ -19,7 +19,6 @@ from arcagent.utils.sanitizer import read_frontmatter, sanitize_wiki_link
 # Scoring constants
 _FRONTMATTER_BOOST = 5.0
 _WIKI_LINK_DECAY = 0.5
-_TEAM_SCORE_PENALTY = 0.8
 
 
 @dataclass
@@ -198,10 +197,6 @@ class Retriever:
                 score += _FRONTMATTER_BOOST
                 match_type = "frontmatter"
 
-            # Apply team penalty for team entity files
-            if self._team_entities_dir and self._is_team_entity(path):
-                score *= _TEAM_SCORE_PENALTY
-
             source = self._relative_source(path)
             results.append(
                 RetrievalResult(
@@ -214,18 +209,19 @@ class Retriever:
 
         return results
 
-    def _is_team_entity(self, path: Path) -> bool:
-        """Check if a file belongs to team entities directory."""
-        if not self._team_entities_dir:
-            return False
-        try:
-            path.resolve().relative_to(self._team_entities_dir.resolve())
-            return True
-        except ValueError:
-            return False
-
     def _relative_source(self, path: Path) -> str:
-        """Compute relative source path for display."""
+        """Compute relative source path for display.
+
+        Team entities are prefixed with 'team/' so agents can distinguish
+        shared knowledge from private knowledge in search results.
+        """
+        # Team entities get a 'team/' prefix for visibility
+        if self._team_entities_dir:
+            try:
+                rel = path.resolve().relative_to(self._team_entities_dir.resolve())
+                return f"team/{rel}"
+            except ValueError:
+                pass
         # Try memory_dir first (backward compat)
         try:
             return str(path.relative_to(self._memory_dir))
@@ -331,7 +327,8 @@ class Retriever:
     ) -> list[Path]:
         """Find indexable files, optionally filtered by scope.
 
-        Scope values: "episodes", "daily_notes", "working", "entities", or None (all).
+        Scope values: "episodes", "daily_notes", "working", "entities",
+        "team", or None (all).
         """
         files: list[Path] = []
 
@@ -353,13 +350,15 @@ class Retriever:
             if working.exists():
                 files.append(working)
 
-        # Entities (index-backed avoids rglob)
+        # Agent-local entities
         if scope is None or scope == "entities":
             if idx is not None:
                 files.extend(idx.all_files())
             elif self._entities_dir.exists():
                 files.extend(self._entities_dir.rglob("*.md"))
-            # Team entities (lower priority — separate directory, no index)
+
+        # Team shared entities — included in entities scope, team scope, and global scope
+        if scope in (None, "entities", "team"):
             if self._team_entities_dir and self._team_entities_dir.exists():
                 files.extend(self._team_entities_dir.rglob("*.md"))
 
