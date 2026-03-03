@@ -202,10 +202,9 @@ class PulseEngine:
         )
 
         prompt = (
-            f'PULSE CHECK: "{check.name}" '
-            f"(every {check.interval_minutes} min, last run: {elapsed_str})\n\n"
-            f"{check.action}\n\n"
-            "Execute the action above by invoking the appropriate tools."
+            f"Scheduled task: {check.name} "
+            f"(runs every {check.interval_minutes} min, last run: {elapsed_str})\n\n"
+            f"{check.action}"
         )
         start = time.monotonic()
 
