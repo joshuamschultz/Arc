@@ -149,9 +149,7 @@ class OpenaiAdapter(BaseAdapter):
     @property
     def _is_reasoning_model(self) -> bool:
         """Check if the current model is a reasoning model (o-series)."""
-        if self._model_meta and self._model_meta.supports_thinking:
-            return True
-        return False
+        return bool(self._model_meta and self._model_meta.supports_thinking)
 
     def _build_request_body(
         self,

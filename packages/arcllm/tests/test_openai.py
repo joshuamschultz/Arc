@@ -56,6 +56,24 @@ FAKE_CONFIG = ProviderConfig(
     models={FAKE_MODEL: FAKE_MODEL_META},
 )
 
+REASONING_MODEL_META = ModelMetadata(
+    context_window=200000,
+    max_output_tokens=100000,
+    supports_tools=True,
+    supports_vision=True,
+    supports_thinking=True,
+    input_modalities=["text", "image"],
+    cost_input_per_1m=15.0,
+    cost_output_per_1m=60.0,
+    cost_cache_read_per_1m=3.75,
+    cost_cache_write_per_1m=15.0,
+)
+
+REASONING_CONFIG = ProviderConfig(
+    provider=FAKE_PROVIDER_SETTINGS,
+    models={"o1": REASONING_MODEL_META},
+)
+
 
 @pytest.fixture(autouse=True)
 def _set_test_api_key(monkeypatch):
@@ -192,23 +210,7 @@ class TestOpenAIRequestBuilding:
         """o-series reasoning models require 'developer' role, not 'system'."""
         from arcllm.adapters.openai import OpenaiAdapter
 
-        reasoning_meta = ModelMetadata(
-            context_window=200000,
-            max_output_tokens=100000,
-            supports_tools=True,
-            supports_vision=True,
-            supports_thinking=True,
-            input_modalities=["text", "image"],
-            cost_input_per_1m=15.0,
-            cost_output_per_1m=60.0,
-            cost_cache_read_per_1m=3.75,
-            cost_cache_write_per_1m=15.0,
-        )
-        reasoning_config = ProviderConfig(
-            provider=FAKE_PROVIDER_SETTINGS,
-            models={"o1": reasoning_meta},
-        )
-        adapter = OpenaiAdapter(reasoning_config, "o1")
+        adapter = OpenaiAdapter(REASONING_CONFIG, "o1")
         messages = [
             Message(role="system", content="You are a helpful agent."),
             Message(role="user", content="Hello"),
@@ -217,7 +219,6 @@ class TestOpenAIRequestBuilding:
         assert body["messages"][0]["role"] == "developer"
         assert body["messages"][0]["content"] == "You are a helpful agent."
         assert body["messages"][1]["role"] == "user"
-        # Reasoning models use max_completion_tokens, not max_tokens
         assert "max_completion_tokens" in body
         assert "max_tokens" not in body
 

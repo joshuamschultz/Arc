@@ -47,15 +47,8 @@ def _user_facing_error(exc: Exception) -> str:
             return "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
         if exc.status_code in {500, 502, 503}:
             return "The LLM provider is temporarily unavailable. Please try again shortly."
-        if exc.status_code == 400:
-            body = getattr(exc, "body", "") or ""
-            if "content_filter" in body.lower():
-                return "Your message was blocked by the content safety filter. Please rephrase and try again."
-            return "The request was rejected by the LLM provider (bad request). Please try again."
-        if exc.status_code == 401:
-            return "Authentication error with the LLM provider. Please check API key configuration."
-        if exc.status_code == 404:
-            return "The configured model deployment was not found. Please check deployment configuration."
+        if exc.status_code == 400 and "content_filter" in exc.body.lower():
+            return "Your message was blocked by the content safety filter. Please rephrase and try again."
 
     if isinstance(exc, TimeoutError):
         return "The request timed out. Please try again with a simpler message."
@@ -452,11 +445,7 @@ class SlackBot:
         try:
             result = await self._agent_chat_fn(text, session_id=self._current_session_id)
         except Exception as exc:
-            _logger.exception(
-                "Error calling agent.chat(): %s: %s",
-                type(exc).__name__,
-                str(exc)[:500],
-            )
+            _logger.exception("Error calling agent.chat()")
             error_msg = _user_facing_error(exc)
             await self._app.client.chat_postMessage(
                 channel=channel,
