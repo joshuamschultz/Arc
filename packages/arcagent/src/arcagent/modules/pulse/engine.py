@@ -27,6 +27,9 @@ _logger = logging.getLogger("arcagent.pulse")
 
 AgentRunFn = Callable[..., Awaitable[Any]]
 
+# Circuit breaker: skip a check after this many consecutive failures
+_CHECK_CIRCUIT_BREAKER_THRESHOLD = 5
+
 # --- Parser regexes ---
 
 _SECTION_RE = re.compile(r"^##\s+(\S+)", re.MULTILINE)
@@ -202,7 +205,7 @@ class PulseEngine:
             f'PULSE CHECK: "{check.name}" '
             f"(every {check.interval_minutes} min, last run: {elapsed_str})\n\n"
             f"{check.action}\n\n"
-            "Do NOT describe what you would do. Actually call the tools."
+            "Execute the action above by invoking the appropriate tools."
         )
         start = time.monotonic()
 
@@ -255,6 +258,13 @@ class PulseEngine:
 
         for check in checks:
             cs = state.checks.get(check.name, PulseCheckState())
+            if cs.consecutive_failures >= _CHECK_CIRCUIT_BREAKER_THRESHOLD:
+                _logger.warning(
+                    "Pulse: skipping check '%s' - %d consecutive failures (circuit breaker)",
+                    check.name,
+                    cs.consecutive_failures,
+                )
+                continue
             if cs.last_run is None:
                 overdue.append((365 * 24 * 3600, check))
                 continue
