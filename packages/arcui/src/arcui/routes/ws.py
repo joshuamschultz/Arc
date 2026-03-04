@@ -1,18 +1,22 @@
-"""WebSocket route — /ws with first-message auth."""
+"""WebSocket route — /ws with first-message auth and subscription support."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
 from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-logger = logging.getLogger(__name__)
+from arcui.subscription import Subscription
+from arcui.ws_helpers import (
+    MAX_WS_MESSAGE_SIZE,
+    authenticate_ws,
+    heartbeat_loop,
+    run_ws_tasks,
+)
 
-_AUTH_TIMEOUT_SECONDS = 5.0
-_HEARTBEAT_INTERVAL_SECONDS = 30.0
+logger = logging.getLogger(__name__)
 
 
 async def websocket_endpoint(ws: WebSocket) -> None:
@@ -21,27 +25,27 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
     auth_config = ws.app.state.auth_config
     connection_manager = ws.app.state.connection_manager
+    subscription_manager = getattr(ws.app.state, "subscription_manager", None)
+    audit = getattr(ws.app.state, "audit", None)
 
-    # First-message auth: expect {"token": "..."} within 5 seconds
-    try:
-        raw = await asyncio.wait_for(ws.receive_text(), timeout=_AUTH_TIMEOUT_SECONDS)
-        msg = json.loads(raw)
-        token = msg.get("token", "")
-    except (TimeoutError, json.JSONDecodeError, KeyError):
-        await ws.send_json({"error": "Auth timeout or invalid message"})
-        await ws.close(code=4001)
-        return
-
-    role = auth_config.validate_token(token)
+    # --- Auth phase ---
+    role, _msg = await authenticate_ws(ws, auth_config)
     if role is None:
-        await ws.send_json({"error": "Invalid token"})
-        await ws.close(code=4003)
+        if audit:
+            audit.audit_event("auth.failure", {"transport": "browser_ws"})
         return
 
     await ws.send_json({"type": "auth_ok", "role": role})
 
+    if audit:
+        audit.audit_event("auth.success", {"transport": "browser_ws", "role": role})
+
     # Register client queue
     queue = connection_manager.create_queue()
+
+    # Register with SubscriptionManager (default: receive all)
+    if subscription_manager is not None:
+        subscription_manager.set_subscription(queue, Subscription())
 
     async def _send_events() -> None:
         """Stream events from queue to WebSocket."""
@@ -52,37 +56,43 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         except (WebSocketDisconnect, RuntimeError):
             pass
 
-    async def _heartbeat() -> None:
-        """Send periodic ping to keep connection alive."""
-        try:
-            while True:
-                await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
-                await ws.send_json({"type": "ping"})
-        except (WebSocketDisconnect, RuntimeError):
-            pass
-
     async def _receive() -> None:
-        """Receive messages from client (pong, etc)."""
+        """Receive messages from client (pong, subscribe, etc)."""
         try:
             while True:
-                await ws.receive_text()  # Consume client messages
+                raw_msg = await ws.receive_text()
+
+                # DoS prevention: reject oversized messages
+                if len(raw_msg) > MAX_WS_MESSAGE_SIZE:
+                    logger.warning("Oversized browser message (%d bytes), skipping", len(raw_msg))
+                    continue
+
+                try:
+                    data = json.loads(raw_msg)
+                    if data.get("type") == "subscribe" and subscription_manager is not None:
+                        sub = Subscription(
+                            agents=data.get("agents"),
+                            layers=data.get("layers"),
+                            teams=data.get("teams"),
+                        )
+                        subscription_manager.set_subscription(queue, sub)
+                        logger.info("Browser updated subscription: %s", sub)
+                        if audit:
+                            audit.audit_event(
+                                "subscription.update",
+                                {"agents": data.get("agents"), "layers": data.get("layers")},
+                            )
+                except json.JSONDecodeError:
+                    pass  # Ignore non-JSON messages (pong, etc)
         except (WebSocketDisconnect, RuntimeError):
             pass
 
     try:
-        # Run send, heartbeat, and receive concurrently
-        _done, pending = await asyncio.wait(
-            [
-                asyncio.create_task(_send_events()),
-                asyncio.create_task(_heartbeat()),
-                asyncio.create_task(_receive()),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
+        await run_ws_tasks(_send_events(), heartbeat_loop(ws), _receive())
     finally:
         connection_manager.unregister(queue)
+        if subscription_manager is not None:
+            subscription_manager.remove_subscription(queue)
 
 
 routes = [

@@ -24,7 +24,13 @@ def _make_app(
 class TestHealthRoute:
     def test_health_no_auth_needed(self):
         _, client, _ = _make_app()
-        # Health endpoint is at /api/health but needs auth
+        # Health endpoint is exempt from auth
+        resp = client.get("/api/health")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
+    def test_health_works_with_auth_too(self):
+        _, client, _ = _make_app()
         resp = client.get(
             "/api/health", headers={"Authorization": "Bearer viewer-tok"}
         )
@@ -171,6 +177,44 @@ class TestStatsRoute:
         assert resp.status_code == 200
         data = resp.json()
         assert "request_count" in data
+
+    def test_get_stats_unknown_agent_returns_404(self):
+        _, client, _ = _make_app()
+        resp = client.get(
+            "/api/stats?agent_id=nonexistent",
+            headers={"Authorization": "Bearer viewer-tok"},
+        )
+        assert resp.status_code == 404
+
+    def test_get_stats_invalid_window_400(self):
+        _, client, _ = _make_app()
+        resp = client.get(
+            "/api/stats?window=invalid",
+            headers={"Authorization": "Bearer viewer-tok"},
+        )
+        assert resp.status_code == 400
+        assert "Invalid window" in resp.json()["error"]
+
+    def test_get_timeseries(self):
+        _, client, _ = _make_app()
+        resp = client.get(
+            "/api/stats/timeseries",
+            headers={"Authorization": "Bearer viewer-tok"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "buckets" in data
+
+    def test_get_performance(self):
+        _, client, _ = _make_app()
+        resp = client.get(
+            "/api/performance",
+            headers={"Authorization": "Bearer viewer-tok"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "models" in data
+        assert "agents" in data
 
     def test_get_circuit_breakers_empty(self):
         _, client, _ = _make_app()
@@ -444,7 +488,7 @@ class TestArcllmConfigRoute:
         # Verify file was actually updated (atomic write)
         import tomlkit
 
-        with open(config, "r") as f:
+        with open(config) as f:
             doc = tomlkit.load(f)
         assert doc["defaults"]["temperature"] == 0.5
 
@@ -576,9 +620,9 @@ class TestArcllmConfigUnit:
     """Unit tests for arcllm_config helper functions."""
 
     def test_tomlkit_to_plain(self):
-        from arcui.routes.arcllm_config import _tomlkit_to_plain
-
         import tomlkit
+
+        from arcui.routes.arcllm_config import _tomlkit_to_plain
 
         doc = tomlkit.parse(
             '[defaults]\nprovider = "test"\ntemperature = 0.5\n'

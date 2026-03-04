@@ -11,6 +11,8 @@ import json
 import logging
 from typing import Any
 
+from arcui.ws_helpers import safe_enqueue
+
 logger = logging.getLogger(__name__)
 
 # Default per-client queue depth. Balances memory per client (~8KB at 1000
@@ -42,15 +44,7 @@ class ConnectionManager:
         """
         message = json.dumps(data) if not isinstance(data, str) else data
         for queue in self._clients:
-            if queue.full():
-                try:
-                    queue.get_nowait()  # Drop oldest
-                except asyncio.QueueEmpty:
-                    pass
-            try:
-                queue.put_nowait(message)
-            except asyncio.QueueFull:
-                pass  # Should not happen after drop, but defensive
+            safe_enqueue(queue, message)
 
     @property
     def client_count(self) -> int:

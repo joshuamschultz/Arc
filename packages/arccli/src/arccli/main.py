@@ -9,6 +9,7 @@ from arccli.llm import llm
 from arccli.run import run_group
 from arccli.skill import skill
 from arccli.team import team
+from arccli.ui import ui
 
 
 @click.group()
@@ -23,3 +24,4 @@ cli.add_command(run_group)
 cli.add_command(ext)
 cli.add_command(skill)
 cli.add_command(team)
+cli.add_command(ui)

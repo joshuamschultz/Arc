@@ -79,3 +79,26 @@ class TestWebSocketEventStreaming:
             data = ws.receive_json()
             assert data["type"] == "event_batch"
             assert data["events"][0]["trace_id"] == "test-123"
+
+
+class TestWebSocketSubscribe:
+    """Browser subscribe message handling."""
+
+    def test_subscribe_message_accepted(self) -> None:
+        app, client, _ = _make_ws_app()
+        with client.websocket_connect("/ws") as ws:
+            ws.send_text(json.dumps({"token": "ws-viewer"}))
+            resp = ws.receive_json()
+            assert resp["type"] == "auth_ok"
+
+            # Send subscribe message
+            ws.send_text(json.dumps({
+                "type": "subscribe",
+                "agents": ["a1"],
+                "layers": ["llm"],
+            }))
+
+            # Should still receive broadcasts (subscribe is a filter, not ack)
+            app.state.connection_manager.broadcast({"type": "test"})
+            data = ws.receive_json()
+            assert data["type"] == "test"

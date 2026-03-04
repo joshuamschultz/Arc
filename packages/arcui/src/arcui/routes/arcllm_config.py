@@ -64,7 +64,7 @@ def _get_config_path() -> Path | None:
 
 def _read_config(config_path: Path) -> dict[str, Any]:
     """Read config.toml and return as a plain dict."""
-    with open(config_path, "r", encoding="utf-8") as f:
+    with open(config_path, encoding="utf-8") as f:
         return dict(tomlkit.load(f))
 
 
@@ -224,7 +224,7 @@ async def patch_arcllm_config(request: Request) -> JSONResponse:
 
     try:
         # Read existing config with tomlkit (preserves comments)
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             doc = tomlkit.load(f)
 
         # Deep merge updates into the tomlkit document

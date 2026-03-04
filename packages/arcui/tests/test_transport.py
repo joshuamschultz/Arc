@@ -110,7 +110,7 @@ class TestInMemoryTransportSendReceive:
 
 class TestInMemoryTransportClose:
     async def test_close_stops_receive(self):
-        client, server = InMemoryTransport.create_pair()
+        client, _server = InMemoryTransport.create_pair()
         await client.close()
         # After close, receive should raise or return sentinel
         with pytest.raises((asyncio.CancelledError, RuntimeError)):

@@ -33,24 +33,40 @@ class TestAuthConfig:
         cfg = AuthConfig()
         assert len(cfg.viewer_token) == 64  # secrets.token_hex(32) = 64 hex chars
         assert len(cfg.operator_token) == 64
+        assert len(cfg.agent_token) == 64
         assert cfg.viewer_token != cfg.operator_token
+        assert cfg.agent_token != cfg.viewer_token
+        assert cfg.agent_token != cfg.operator_token
 
     def test_uses_provided_tokens(self):
-        cfg = AuthConfig({"viewer_token": "v-token", "operator_token": "o-token"})
+        cfg = AuthConfig({
+            "viewer_token": "v-token",
+            "operator_token": "o-token",
+            "agent_token": "a-token",
+        })
         assert cfg.viewer_token == "v-token"
         assert cfg.operator_token == "o-token"
+        assert cfg.agent_token == "a-token"
 
     def test_validate_viewer_token(self):
-        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz"})
+        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz", "agent_token": "agt"})
         assert cfg.validate_token("abc") == "viewer"
 
     def test_validate_operator_token(self):
-        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz"})
+        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz", "agent_token": "agt"})
         assert cfg.validate_token("xyz") == "operator"
 
+    def test_validate_agent_token(self):
+        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz", "agent_token": "agt"})
+        assert cfg.validate_token("agt") == "agent"
+
     def test_validate_invalid_token(self):
-        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz"})
+        cfg = AuthConfig({"viewer_token": "abc", "operator_token": "xyz", "agent_token": "agt"})
         assert cfg.validate_token("bad") is None
+
+    def test_agent_token_auto_generated_if_not_provided(self):
+        cfg = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        assert len(cfg.agent_token) == 64
 
 
 class TestAuthMiddleware:
@@ -98,3 +114,53 @@ class TestAuthMiddleware:
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["public"] is True
+
+    def test_health_endpoint_exempt_from_auth(self):
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+
+        async def health(request):
+            return JSONResponse({"status": "ok"})
+
+        app = Starlette(
+            routes=[Route("/api/health", health), Route("/api/test", lambda r: JSONResponse({"ok": True}))]
+        )
+        app.add_middleware(AuthMiddleware, auth_config=auth)
+        client = TestClient(app)
+
+        # Health should work without auth
+        resp = client.get("/api/health")
+        assert resp.status_code == 200
+
+        # Other API routes still require auth
+        resp = client.get("/api/test")
+        assert resp.status_code == 401
+
+    def test_agent_token_blocked_on_rest_api(self):
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o", "agent_token": "a"})
+
+        async def test_route(request):
+            return JSONResponse({"role": request.state.role})
+
+        app = Starlette(routes=[Route("/api/test", test_route)])
+        app.add_middleware(AuthMiddleware, auth_config=auth)
+        client = TestClient(app)
+
+        # Agent token should be rejected for REST API
+        resp = client.get("/api/test", headers={"Authorization": "Bearer a"})
+        assert resp.status_code == 403
+        assert "Agent tokens cannot access" in resp.json()["error"]
+
+    def test_agent_token_allowed_on_agent_ws_path(self):
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o", "agent_token": "a"})
+
+        async def agent_route(request):
+            return JSONResponse({"role": request.state.role})
+
+        app = Starlette(routes=[Route("/api/agent/connect", agent_route)])
+        app.add_middleware(AuthMiddleware, auth_config=auth)
+        client = TestClient(app)
+
+        # Agent token should work for /api/agent/ paths
+        resp = client.get("/api/agent/connect", headers={"Authorization": "Bearer a"})
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "agent"

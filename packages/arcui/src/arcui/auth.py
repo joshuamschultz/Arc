@@ -22,16 +22,20 @@ class AuthConfig:
         cfg = config or {}
         self.viewer_token: str = cfg.get("viewer_token") or secrets.token_hex(32)
         self.operator_token: str = cfg.get("operator_token") or secrets.token_hex(32)
+        self.agent_token: str = cfg.get("agent_token") or secrets.token_hex(32)
 
     def validate_token(self, token: str) -> str | None:
         """Return role for token, or None if invalid.
 
         Uses constant-time comparison to prevent timing side-channel attacks.
+        Roles: "operator" (read + control), "viewer" (read), "agent" (connect + stream).
         """
         if hmac.compare_digest(token, self.operator_token):
             return "operator"
         if hmac.compare_digest(token, self.viewer_token):
             return "viewer"
+        if hmac.compare_digest(token, self.agent_token):
+            return "agent"
         return None
 
 
@@ -49,8 +53,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Skip auth for non-API routes (static files, health checks)
+        # Skip auth for non-API routes (static files, etc)
         if not request.url.path.startswith("/api/"):
+            request.state.role = None
+            return await call_next(request)
+
+        # Health endpoint is public (load balancers, k8s probes)
+        if request.url.path == "/api/health":
             request.state.role = None
             return await call_next(request)
 
@@ -67,6 +76,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if role is None:
             return JSONResponse(
                 {"error": "Invalid authorization token"}, status_code=401
+            )
+
+        # Agent tokens are only valid for WebSocket endpoints, not REST API
+        if role == "agent" and not request.url.path.startswith("/api/agent/"):
+            return JSONResponse(
+                {"error": "Agent tokens cannot access REST API"}, status_code=403
             )
 
         request.state.role = role

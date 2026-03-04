@@ -17,9 +17,13 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from arcui.aggregator import RollingAggregator
+from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.connection import ConnectionManager
 from arcui.event_buffer import EventBuffer
+from arcui.registry import AgentRegistry
+from arcui.routes import agent_ws as agent_ws_routes
+from arcui.routes import agents as agents_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
@@ -27,6 +31,7 @@ from arcui.routes import export as export_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import ws as ws_routes
+from arcui.subscription import SubscriptionManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +63,7 @@ def create_app(
     trace_store: Any | None = None,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
+    max_agents: int = 100,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -66,6 +72,7 @@ def create_app(
         trace_store: ArcLLM JSONLTraceStore instance for trace queries.
         config_controller: ArcLLM ConfigController instance.
         agent_info: Agent metadata (name, did, model, provider) for UI display.
+        max_agents: Maximum concurrent agent connections (default 100).
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -83,6 +90,8 @@ def create_app(
         *export_routes.routes,
         *cost_efficiency_routes.routes,
         *ws_routes.routes,
+        *agent_ws_routes.routes,
+        *agents_routes.routes,
     ]
 
     # Mount static files if the directory exists
@@ -95,14 +104,22 @@ def create_app(
     # Shared state accessible from routes via request.app.state
     connection_manager = ConnectionManager()
     aggregator = RollingAggregator()
-    event_buffer = EventBuffer(connection_manager)
+    subscription_manager = SubscriptionManager()
+    agent_registry = AgentRegistry(max_agents=max_agents)
+    event_buffer = EventBuffer(
+        connection_manager, subscription_manager=subscription_manager
+    )
 
+    app.state.audit = UIAuditLogger()
     app.state.auth_config = auth
     app.state.trace_store = trace_store
     app.state.config_controller = config_controller
     app.state.connection_manager = connection_manager
     app.state.aggregator = aggregator
     app.state.event_buffer = event_buffer
+    app.state.subscription_manager = subscription_manager
+    app.state.agent_registry = agent_registry
+    app.state.pending_controls = {}
     app.state.circuit_breakers = []
     app.state.telemetry_modules = []
     app.state.queue_modules = []
@@ -196,9 +213,7 @@ def serve(
     if trace_store is not None:
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(
-            app.state.aggregator.warm_start(trace_store)
-        )
+        asyncio.run(app.state.aggregator.warm_start(trace_store))
 
     # Start the event buffer flush loop
     app.state.event_buffer.start()

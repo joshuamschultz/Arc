@@ -444,11 +444,11 @@ class RollingAggregator:
                 err = data["error_count"]
                 success_rate = round((req - err) / req * 100, 1) if req > 0 else 0.0
 
-                def _pct(p: float) -> float:
-                    if n == 0:
+                def _pct(p: float, *, _n: int = n, _samples: list[float] = samples) -> float:
+                    if _n == 0:
                         return 0.0
-                    idx = min(math.ceil(p / 100 * n) - 1, n - 1)
-                    return round(samples[max(0, idx)], 1)
+                    idx = min(math.ceil(p / 100 * _n) - 1, _n - 1)
+                    return round(_samples[max(0, idx)], 1)
 
                 rows.append({
                     "name": name,

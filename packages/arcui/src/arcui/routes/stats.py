@@ -18,9 +18,40 @@ def _validated_window(request: Request) -> str | None:
     return window
 
 
+def _get_aggregator_for_request(request: Request) -> tuple[object | None, JSONResponse | None]:
+    """Return the appropriate aggregator: per-agent or global.
+
+    If ``?agent_id=`` is provided, looks up the per-agent aggregator
+    from the agent registry. Returns (aggregator, error_response).
+    """
+    agent_id = request.query_params.get("agent_id")
+    if agent_id is not None:
+        registry = getattr(request.app.state, "agent_registry", None)
+        if registry is None:
+            return None, JSONResponse(
+                {"error": "Agent registry not available"}, status_code=404
+            )
+        entry = registry.get(agent_id)
+        if entry is None:
+            return None, JSONResponse(
+                {"error": f"Agent {agent_id} not found"}, status_code=404
+            )
+        if entry.aggregator is None:
+            return None, JSONResponse(
+                {"error": "No per-agent aggregator"}, status_code=404
+            )
+        return entry.aggregator, None
+    return request.app.state.aggregator, None
+
+
 async def get_stats(request: Request) -> JSONResponse:
-    """GET /api/stats — rolling aggregation stats."""
-    aggregator = request.app.state.aggregator
+    """GET /api/stats — rolling aggregation stats.
+
+    Supports ``?agent_id=`` for per-agent drill-down.
+    """
+    aggregator, err = _get_aggregator_for_request(request)
+    if err is not None:
+        return err
     if aggregator is None:
         return JSONResponse({"error": "No aggregator configured"}, status_code=404)
 
@@ -31,8 +62,13 @@ async def get_stats(request: Request) -> JSONResponse:
 
 
 async def get_timeseries(request: Request) -> JSONResponse:
-    """GET /api/stats/timeseries — per-bucket data for chart rendering."""
-    aggregator = request.app.state.aggregator
+    """GET /api/stats/timeseries — per-bucket data for chart rendering.
+
+    Supports ``?agent_id=`` for per-agent drill-down.
+    """
+    aggregator, err = _get_aggregator_for_request(request)
+    if err is not None:
+        return err
     if aggregator is None:
         return JSONResponse({"error": "No aggregator configured"}, status_code=404)
 
@@ -61,8 +97,13 @@ async def get_budget(request: Request) -> JSONResponse:
 
 
 async def get_performance(request: Request) -> JSONResponse:
-    """GET /api/performance — per-model and per-agent performance stats."""
-    aggregator = request.app.state.aggregator
+    """GET /api/performance — per-model and per-agent performance stats.
+
+    Supports ``?agent_id=`` for per-agent drill-down.
+    """
+    aggregator, err = _get_aggregator_for_request(request)
+    if err is not None:
+        return err
     if aggregator is None:
         return JSONResponse({"error": "No aggregator configured"}, status_code=404)
 
