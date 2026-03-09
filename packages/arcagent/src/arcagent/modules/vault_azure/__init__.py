@@ -36,8 +36,13 @@ class AzureKeyVaultBackend:
     Requires: pip install azure-identity azure-keyvault-secrets
     """
 
-    def __init__(self, vault_url: str = "") -> None:
+    def __init__(
+        self,
+        vault_url: str = "",
+        cache_ttl_seconds: int = 300,
+    ) -> None:
         self._vault_url = vault_url or os.environ.get("AZURE_KEYVAULT_URL", "")
+        self._cache_ttl_seconds = cache_ttl_seconds
         self._client: object | None = None
         self._available: bool | None = None
 
