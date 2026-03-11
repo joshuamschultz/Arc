@@ -406,6 +406,7 @@ class ArcAgent:
             bus=self._bus,
             telemetry=self._telemetry,
             config=self._config.extensions,
+            vault_resolver=self._vault_resolver,
         )
         global_ext = Path(self._config.extensions.global_dir).expanduser()
         await self._extension_loader.discover_and_load(workspace, global_ext)

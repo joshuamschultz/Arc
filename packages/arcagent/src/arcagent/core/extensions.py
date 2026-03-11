@@ -51,7 +51,7 @@ class ExtensionManifest:
 class ExtensionAPI:
     """API surface exposed to extension factory functions.
 
-    Provides register_tool(), on(), and workspace access.
+    Provides register_tool(), on(), get_secret(), and workspace access.
     All registrations are tracked for hot reload cleanup.
     """
 
@@ -63,6 +63,7 @@ class ExtensionAPI:
         sandbox_mode: str,
         extension_name: str,
         source_prefix: str = _EXTENSION_SOURCE_PREFIX,
+        vault_resolver: Any = None,
     ) -> None:
         self._tool_registry = tool_registry
         self._bus = bus
@@ -70,6 +71,7 @@ class ExtensionAPI:
         self._sandbox_mode = sandbox_mode
         self._extension_name = extension_name
         self._source_prefix = source_prefix
+        self._vault_resolver = vault_resolver
         self._tools_registered: list[str] = []
         self._hooks_registered: list[str] = []
 
@@ -134,6 +136,41 @@ class ExtensionAPI:
         """Read-only access to workspace path."""
         return self._workspace
 
+    def get_secret(self, name: str) -> str | None:
+        """Resolve a secret by name. Single call, unified lookup.
+
+        Resolution order:
+            1. Vault backend (if configured in [vault] of arcagent.toml)
+            2. Environment variable (name uppercased, hyphens → underscores)
+
+        Extensions never need to know where secrets come from. Just call
+        ``api.get_secret("my-secret")`` and it resolves.
+
+        Args:
+            name: Secret name (e.g., "atlassian-base-site"). For env var
+                  fallback, this becomes ``ATLASSIAN_BASE_SITE``.
+        """
+        # 1. Try vault if configured
+        if self._vault_resolver is not None:
+            val = self._vault_resolver.get_secret(name)  # type: ignore[union-attr]
+            if val:
+                return val
+
+        # 2. Fall back to environment variable
+        env_name = name.upper().replace("-", "_")
+        val = os.environ.get(env_name)
+        if val:
+            return val
+
+        _logger.warning(
+            "Extension %s: secret '%s' not found (vault=%s, env=%s)",
+            self._extension_name,
+            name,
+            "configured" if self._vault_resolver else "not configured",
+            env_name,
+        )
+        return None
+
 
 class ExtensionLoader:
     """Discover, load, and manage extensions."""
@@ -144,7 +181,9 @@ class ExtensionLoader:
         bus: ModuleBus,
         telemetry: Any,
         config: ExtensionConfig,
+        vault_resolver: Any = None,
     ) -> None:
+        self._vault_resolver = vault_resolver
         self._tool_registry = tool_registry
         self._bus = bus
         self._telemetry = telemetry
@@ -284,6 +323,7 @@ class ExtensionLoader:
             sandbox_mode=sandbox_mode,
             extension_name=ext_name,
             source_prefix=source_prefix,
+            vault_resolver=self._vault_resolver,
         )
 
         try:
