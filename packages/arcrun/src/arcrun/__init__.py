@@ -11,6 +11,7 @@ from arcrun.builtins import (
 )
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
 from arcrun.loop import RunHandle, run, run_async
+from arcrun.prompts import get_strategy_prompts
 from arcrun.registry import ToolRegistry
 from arcrun.strategies import Strategy
 from arcrun.types import LoopResult, SandboxConfig, Tool, ToolContext
@@ -32,6 +33,7 @@ __all__ = [
     "Tool",
     "ToolContext",
     "ToolRegistry",
+    "get_strategy_prompts",
     "make_execute_tool",
     "make_spawn_tool",
     "run",

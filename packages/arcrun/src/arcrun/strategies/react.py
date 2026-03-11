@@ -29,6 +29,23 @@ class ReactStrategy(Strategy):
             "problems requiring tool interaction."
         )
 
+    @property
+    def prompt_guidance(self) -> str:
+        return (
+            "## Execution Loop\n"
+            "You operate in a Reason-Act-Observe loop. After each tool call you "
+            "receive the result and decide the next action. The loop continues "
+            "until you produce a final response with no tool calls.\n\n"
+            "GUIDELINES:\n"
+            "- Break complex work into discrete tool calls — one action per step\n"
+            "- Examine tool results before deciding the next action\n"
+            "- If a tool call fails, analyze the error and adapt your approach\n"
+            "- After 3 failures on the same approach, try a fundamentally "
+            "different method\n"
+            "- When your task is complete, respond with your final answer "
+            "without calling any tools"
+        )
+
     async def __call__(
         self,
         model: Any,

@@ -47,6 +47,29 @@ class CodeExecStrategy(Strategy):
             "predefined tool calls."
         )
 
+    @property
+    def prompt_guidance(self) -> str:
+        return (
+            "## Code Execution Strategy\n"
+            "You can write and execute Python code to solve tasks. Prefer code "
+            "when the problem involves computation, data processing, or logic "
+            "that is more naturally expressed as a script than as tool calls.\n\n"
+            "GUIDELINES:\n"
+            "- Write focused scripts (20-50 lines) solving one sub-problem at "
+            "a time\n"
+            "- You receive {stdout, stderr, exit_code, duration_ms} after each "
+            "execution\n"
+            "- Each execution is stateless — variables do NOT persist between "
+            "calls\n"
+            "- If code fails, examine the error and fix your approach\n"
+            "- After 3 failures on the same approach, try a fundamentally "
+            "different method\n"
+            "- Use code for: computation, data processing, logic, file "
+            "operations\n"
+            "- Use other tools for: external APIs, user confirmation, "
+            "security-sensitive operations"
+        )
+
     async def __call__(
         self,
         model: Any,

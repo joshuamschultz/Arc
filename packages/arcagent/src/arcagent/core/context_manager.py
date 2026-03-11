@@ -66,12 +66,24 @@ class ContextManager:
     def reported_output_tokens(self) -> int:
         return self._reported_output_tokens
 
-    async def assemble_system_prompt(self, workspace: Path) -> str:
+    async def assemble_system_prompt(
+        self,
+        workspace: Path,
+        extra_sections: dict[str, str] | None = None,
+    ) -> str:
         """Build system prompt from workspace files.
 
         Reads core files (identity.md, context.md), then emits
         agent:assemble_prompt so modules can inject their own sections.
+        Caller-supplied extra_sections (e.g. ArcRun strategy guidance)
+        are merged after bus handlers but before ordering.
+
         Final ordering: identity first, context last, rest alphabetically.
+
+        Args:
+            workspace: Path to the agent workspace directory.
+            extra_sections: Additional named sections to include.
+                Merged after bus event handlers run.
         """
         sections: dict[str, str] = {}
         for filename in _CORE_PROMPT_FILES:
@@ -87,6 +99,10 @@ class ContextManager:
                 "agent:assemble_prompt",
                 {"sections": sections, "workspace": str(workspace)},
             )
+
+        # Merge caller-supplied sections (strategy guidance, etc.)
+        if extra_sections:
+            sections.update(extra_sections)
 
         # Dynamic ordering: identity first, context last, rest sorted
         parts: list[str] = []

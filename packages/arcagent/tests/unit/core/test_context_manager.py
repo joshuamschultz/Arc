@@ -86,6 +86,86 @@ class TestAssembleSystemPrompt:
         assert "I am agent" in prompt
 
 
+class TestExtraSections:
+    """Tests for extra_sections parameter on assemble_system_prompt."""
+
+    async def test_extra_sections_included_in_prompt(
+        self, ctx_mgr: ContextManager, tmp_path: Path
+    ) -> None:
+        (tmp_path / "identity.md").write_text("I am agent")
+        extra = {"strategy_react": "## Loop\nYou operate in a loop."}
+        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=extra)
+        assert "You operate in a loop" in prompt
+
+    async def test_extra_sections_sorted_alphabetically(
+        self, ctx_mgr: ContextManager, tmp_path: Path
+    ) -> None:
+        """Extra sections appear in sorted order between identity and context."""
+        (tmp_path / "identity.md").write_text("Identity content")
+        (tmp_path / "context.md").write_text("Context content")
+        extra = {
+            "spawn_guidance": "Spawn guidance content",
+            "code_exec_guidance": "Code exec content",
+        }
+        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=extra)
+
+        identity_pos = prompt.find("Identity content")
+        code_pos = prompt.find("Code exec content")
+        spawn_pos = prompt.find("Spawn guidance content")
+        context_pos = prompt.find("Context content")
+
+        assert identity_pos < code_pos < spawn_pos < context_pos
+
+    async def test_extra_sections_none_is_safe(
+        self, ctx_mgr: ContextManager, tmp_path: Path
+    ) -> None:
+        (tmp_path / "identity.md").write_text("I am agent")
+        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections=None)
+        assert "I am agent" in prompt
+
+    async def test_extra_sections_empty_dict_is_safe(
+        self, ctx_mgr: ContextManager, tmp_path: Path
+    ) -> None:
+        (tmp_path / "identity.md").write_text("I am agent")
+        prompt = await ctx_mgr.assemble_system_prompt(tmp_path, extra_sections={})
+        assert "I am agent" in prompt
+
+    async def test_extra_sections_merged_after_bus_handlers(
+        self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
+    ) -> None:
+        """Extra sections merge after bus handlers, so they can override."""
+
+        async def inject_via_bus(ctx: Any) -> None:
+            ctx.data["sections"]["tools"] = "Bus-injected tools"
+
+        mock_bus.subscribe("agent:assemble_prompt", inject_via_bus)
+        (tmp_path / "identity.md").write_text("I am agent")
+        extra = {"strategies": "Strategy guidance"}
+
+        prompt = await ctx_mgr_with_bus.assemble_system_prompt(
+            tmp_path, extra_sections=extra
+        )
+        assert "Bus-injected tools" in prompt
+        assert "Strategy guidance" in prompt
+
+    async def test_extra_sections_can_override_bus_section(
+        self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
+    ) -> None:
+        """Caller extra_sections override bus-injected sections with same key."""
+
+        async def inject_via_bus(ctx: Any) -> None:
+            ctx.data["sections"]["overlap"] = "bus version"
+
+        mock_bus.subscribe("agent:assemble_prompt", inject_via_bus)
+        extra = {"overlap": "caller version"}
+
+        prompt = await ctx_mgr_with_bus.assemble_system_prompt(
+            tmp_path, extra_sections=extra
+        )
+        assert "caller version" in prompt
+        assert "bus version" not in prompt
+
+
 class TestAssemblePromptEvent:
     """Tests for agent:assemble_prompt event emission."""
 
