@@ -22,6 +22,17 @@ class Strategy(ABC):
     @abstractmethod
     def description(self) -> str: ...
 
+    @property
+    @abstractmethod
+    def prompt_guidance(self) -> str:
+        """Model-facing guidance on when and how to leverage this strategy.
+
+        Returned text is injected into the system prompt so the LLM
+        understands when this strategy applies and what behavior to
+        expect from the execution loop.
+        """
+        ...
+
     @abstractmethod
     async def __call__(
         self, model: Any, state: RunState, sandbox: Sandbox, max_turns: int

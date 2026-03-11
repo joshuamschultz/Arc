@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from arcllm import Message
-from arcrun import Event, RunHandle
+from arcrun import Event, RunHandle, get_strategy_prompts
 from arcrun import run as arcrun_run
 from arcrun import run_async as arcrun_run_async
 
@@ -485,13 +485,27 @@ class ArcAgent:
         """Prepare shared run context for both blocking and async paths.
 
         Returns the common objects needed to invoke arcrun.
+        Fetches ArcRun strategy prompt guidance and merges it into
+        the system prompt so the model knows when/how to use
+        strategies like spawn_task and code execution.
         Emits agent:pre_respond before returning.
         """
         telemetry, tool_registry, context, bus = self._ensure_started()
         model = self._ensure_model()
 
         tools = tool_registry.to_arcrun_tools()
-        system_prompt = await context.assemble_system_prompt(self._workspace)
+        tool_names = [t.name for t in tools]
+
+        # Strategy prompt guidance: ArcRun tells the model when to
+        # use its capabilities (spawning, code exec, loop behavior).
+        strategy_sections = get_strategy_prompts(
+            spawn_enabled=True,
+            tool_names=tool_names,
+        )
+
+        system_prompt = await context.assemble_system_prompt(
+            self._workspace, extra_sections=strategy_sections
+        )
         bridge = create_arcrun_bridge(bus)
 
         await bus.emit("agent:pre_respond", {"task": task})
