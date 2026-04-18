@@ -458,7 +458,13 @@ class TestPostRespond:
     ) -> None:
         await module.startup(module_ctx)
         messages = [{"role": "user", "content": "hello"}]
-        await bus.emit("agent:post_respond", {"messages": messages})
+        # session_id required — automated/background runs (no session_id)
+        # are intentionally skipped to prevent pulse/scheduler noise
+        # from polluting memory.
+        await bus.emit(
+            "agent:post_respond",
+            {"messages": messages, "session_id": "test-sess"},
+        )
         assert module._messages == messages
 
 

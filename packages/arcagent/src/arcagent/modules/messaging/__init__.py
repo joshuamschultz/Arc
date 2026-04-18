@@ -24,6 +24,27 @@ from arcagent.utils.sanitizer import sanitize_text
 
 _logger = logging.getLogger("arcagent.messaging")
 
+# Matches arcteam.messenger.STREAMS_COLLECTION; kept local to avoid
+# an import-time coupling.
+_STREAMS_COLLECTION = "streams"
+
+
+async def _stream_end_byte_pos_or_zero(svc: Any, stream: str) -> int:
+    """Best-effort end-of-stream byte offset fetch for ack cursor.
+
+    Falls back to ``0`` when the backend lacks the helper. Cursor
+    seek is an optimization, not a correctness guarantee.
+    """
+    backend = getattr(svc, "_backend", None)
+    get_end = getattr(backend, "get_stream_end_byte_pos", None)
+    if get_end is None:
+        return 0
+    try:
+        return int(await get_end(_STREAMS_COLLECTION, stream))
+    except Exception:
+        _logger.debug("stream end byte_pos fetch failed; using 0", exc_info=True)
+        return 0
+
 
 def _user_facing_error(exc: Exception) -> str:
     """Map exceptions to user-friendly error messages for DLQ notifications.
@@ -433,11 +454,15 @@ class MessagingModule:
                     for stream, msgs in inbox.items():
                         if msgs:
                             last = msgs[-1]
+                            # SPEC-017 R-005 — store real byte offset
+                            byte_pos = await _stream_end_byte_pos_or_zero(
+                                self._svc, stream
+                            )
                             await self._svc.ack(
                                 stream,
                                 entity_id,
                                 seq=last.seq,
-                                byte_pos=0,
+                                byte_pos=byte_pos,
                             )
 
             except Exception:

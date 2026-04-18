@@ -29,6 +29,10 @@ class TestCDPClientManagerConnect:
         ws_url = "ws://127.0.0.1:9222/devtools/browser/abc-123"
         with (
             patch(
+                "arcagent.modules.browser.cdp_client._find_chrome",
+                return_value="/fake/path/to/chrome",
+            ),
+            patch(
                 "arcagent.modules.browser.cdp_client.asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
                 return_value=mock_process,

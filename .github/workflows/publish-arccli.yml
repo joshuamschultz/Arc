@@ -1,4 +1,4 @@
-name: Publish arccli
+name: Publish arccmd
 
 on:
   release:

@@ -31,7 +31,7 @@ def version(as_json: bool) -> None:
     import arccli
 
     data = {
-        "arccli": arccli.__version__,
+        "arccmd": arccli.__version__,
         "arcllm": getattr(arcllm, "__version__", "0.1.0"),
         "python": sys.version.split()[0],
     }

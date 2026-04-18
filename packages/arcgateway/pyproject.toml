@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arcgateway"
+version = "0.1.0"
+description = "Gateway daemon — runs ArcAgents behind any chat platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.0,<3",
+    "httpx>=0.27,<1",
+    "arc-agent>=0.2",
+]
+
+# ── Optional extras — adapters are tier-3 modular (PLAN T1.7) ────────────────
+# Install only the adapters you need:
+#   pip install 'arcgateway[telegram]'
+#   pip install 'arcgateway[slack]'
+#   pip install 'arcgateway[telegram,slack]'
+[project.optional-dependencies]
+telegram = [
+    "python-telegram-bot>=20,<22",
+]
+# slack-bolt and slack-sdk are NOT required for arcgateway base.
+# SlackAdapter lazily imports them inside connect() so the package stays
+# importable without these installed. (SPEC-018 T1.7.2 / SPEC-011 D-018)
+slack = [
+    "slack-bolt>=1.18",
+    "slack-sdk>=3",
+]
+
+[project.scripts]
+arcgateway = "arcgateway.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/joshuamschultz/Arc"
+Repository = "https://github.com/joshuamschultz/Arc"
+Issues = "https://github.com/joshuamschultz/Arc/issues"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "S",    # flake8-bandit
+    "T20",  # flake8-print
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# CLI is a user-facing text interface; print() is correct output mechanism here
+"src/arcgateway/cli.py" = ["T201"]
+"tests/**/*.py" = ["S101", "S105", "S106", "S108", "E402", "E501", "N806", "E741", "B007", "B017", "S603", "RUF043", "RUF059", "F811", "F821", "RUF003"]
+# Exception names are SDD-018 §3.1 public API contract; cannot rename.
+# PostgresPairingStore stub has intentionally unused 'dsn' param (deferred impl T1.8.4).
+"src/arcgateway/pairing.py" = ["N818"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["arcagent.*", "arcllm.*", "arcrun.*", "arccli.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["telegram.*"]
+ignore_missing_imports = true
+
+# slack-bolt and slack-sdk are optional extras; suppress missing-import errors.
+[[tool.mypy.overrides]]
+module = ["slack_bolt.*", "slack_sdk.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--strict-markers -v"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"'); opt-in via '-m slow'",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/arcgateway"]
+
+[tool.coverage.run]
+source = ["arcgateway"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+]

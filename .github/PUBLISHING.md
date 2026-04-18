@@ -11,8 +11,8 @@ This is required because PyPI trusted publishing needs a unique
 ├── ci.yml                    # Test on push/PR
 ├── publish-arcllm.yml        # release + manual
 ├── publish-arcrun.yml
-├── publish-arcagent.yml      # blocked until PEP 541 approved
-├── publish-arccli.yml
+├── publish-arcagent.yml      # arc-agent on PyPI
+├── publish-arccli.yml        # arccmd on PyPI
 ├── publish-arcteam.yml
 ├── publish-arcstack.yml
 ├── publish-arcui.yml         # manual only (placeholder)
@@ -21,10 +21,22 @@ This is required because PyPI trusted publishing needs a unique
 └── publish-arctui.yml        # manual only (placeholder)
 ```
 
+## Package Name Mapping
+
+| Directory | PyPI Name | Python Import |
+|-----------|-----------|---------------|
+| `packages/arcagent/` | `arc-agent` | `import arcagent` |
+| `packages/arccli/` | `arccmd` | `import arccli` |
+| `packages/arcllm/` | `arcllm` | `import arcllm` |
+| `packages/arcrun/` | `arcrun` | `import arcrun` |
+| `packages/arcteam/` | `arcteam` | `import arcteam` |
+| `packages/arcui/` | `arcui` | `import arcui` |
+| `packages/arcmas/` | `arcmas` | `import arcmas` |
+
 ## Publishing
 
 **On release:** Active packages trigger on `release: published` AND `workflow_dispatch`.
-Run them in dependency order: arcllm -> arcrun -> arcagent -> arccli/arcteam -> arcstack.
+Run them in dependency order: arcllm -> arcrun -> arc-agent -> arccmd/arcteam -> arcmas.
 
 **Placeholders:** Manual dispatch only. Run once to claim names.
 
@@ -33,9 +45,9 @@ Run them in dependency order: arcllm -> arcrun -> arcagent -> arccli/arcteam -> 
 ```
 arcllm (standalone)
   └── arcrun (depends on arcllm)
-       └── arcagent (depends on arcllm + arcrun)
-            └── arccli (depends on arcagent + arcteam)
-                 └── arcstack (depends on arccli)
+       └── arc-agent (depends on arcllm + arcrun)
+            └── arccmd (depends on arc-agent + arcteam)
+                 └── arcmas (depends on arccmd)
 
 arcteam (standalone — depends on pydantic only)
 ```

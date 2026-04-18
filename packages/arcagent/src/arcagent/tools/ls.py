@@ -98,4 +98,6 @@ def create_tool(
         transport=ToolTransport.NATIVE,
         execute=execute,
         source="arcagent.tools.ls",
+        classification="read_only",
+        capability_tags=["file_read"],
     )

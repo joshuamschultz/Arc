@@ -20,7 +20,7 @@ def _mock_model(*, return_value: Any = None, side_effect: Exception | None = Non
 
 
 from arcagent.core.config import ContextConfig, SessionConfig
-from arcagent.core.session_manager import SessionManager
+from arcagent.core.session_internal.manager import SessionManager
 
 
 def _make_telemetry() -> MagicMock:

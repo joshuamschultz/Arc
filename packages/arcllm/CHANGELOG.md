@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **OpenAI adapter — o-series role mapping** — Auto-converts `role="system"` to `role="developer"` for o-series reasoning models (o1, o3, o4-mini) that reject the system role. Keyed on `supports_thinking=true` in model metadata.
+
+### Fixed
+
+- **Timeout configuration** — Fixed timeout handling in pyproject.toml dependency specification.
+
+### Refactored
+
+- **OpenAI adapter error handling** — Simplified error handling and test fixtures per code review.
+
 ### Security
 
 - **Trace store file permissions** — JSONL audit files now set to `0o600` (owner read/write only) after every append. Traces directory set to `0o700` on init. Maps to NIST AU-9 (Protection of Audit Information).

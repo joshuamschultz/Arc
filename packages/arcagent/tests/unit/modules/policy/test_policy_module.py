@@ -161,9 +161,15 @@ class TestPostRespondTurnCounting:
         mock_model = AsyncMock()
 
         with patch.object(mod, "_get_eval_model", return_value=mock_model):
+            # session_id required — automated runs (pulse/scheduler) are
+            # intentionally skipped so transient tool errors don't
+            # pollute learned policies.
             ctx = _make_ctx(
                 "agent:post_respond",
-                {"messages": [{"role": "user", "content": "hi"}]},
+                {
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "session_id": "sess-1",
+                },
             )
             await mod._on_post_respond(ctx)
             assert mod._turn_count == 1
@@ -179,14 +185,15 @@ class TestPostRespondTurnCounting:
             patch("arcagent.modules.policy.policy_module.spawn_background") as mock_spawn,
         ):
             messages = [{"role": "user", "content": "hi"}]
+            payload = {"messages": messages, "session_id": "sess-1"}
 
             # Turn 1 — no eval
-            ctx = _make_ctx("agent:post_respond", {"messages": messages})
+            ctx = _make_ctx("agent:post_respond", payload)
             await mod._on_post_respond(ctx)
             assert mock_spawn.call_count == 0
 
             # Turn 2 — eval fires
-            ctx = _make_ctx("agent:post_respond", {"messages": messages})
+            ctx = _make_ctx("agent:post_respond", payload)
             await mod._on_post_respond(ctx)
             assert mock_spawn.call_count == 1
 

@@ -119,7 +119,16 @@ class PolicyModule:
                 sections["policy"] = content
 
     async def _on_post_respond(self, ctx: EventContext) -> None:
-        """Fire periodic policy evaluation."""
+        """Fire periodic policy evaluation.
+
+        Only evaluates human interactive sessions (those with a session_id).
+        Skips automated runs like pulse checks and scheduler tasks to prevent
+        transient tool errors from polluting learned policies.
+        """
+        session_id = ctx.data.get("session_id", "")
+        if not session_id:
+            return  # Skip automated/background runs (pulse, scheduler, etc.)
+
         model = self._get_eval_model()
         if model is None:
             return
@@ -127,8 +136,6 @@ class PolicyModule:
         messages = ctx.data.get("messages", [])
         if not messages:
             return
-
-        session_id = ctx.data.get("session_id", "")
 
         # Accumulate messages for session-end policy evaluation
         self._session_messages = messages

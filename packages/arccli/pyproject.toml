@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arccmd"
-version = "0.2.0"
-description = "Unified CLI for Arc products (arcllm, arcrun, arcagent)"
+version = "0.3.0"
+description = "Unified CLI for Arc products (arcllm, arcrun, arc-agent)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -24,13 +24,16 @@ dependencies = [
     "click>=8.0",
     "arcllm",
     "arcrun",
-    "arcagent[telegram]",
+    "arc-agent[telegram]",
     "arcteam",
     "python-dotenv>=1.0",
+    "prompt_toolkit>=3.0",
 ]
 
 [project.scripts]
-arc = "arccli.main:cli"
+arc = "arccli.main:main"
+arc-legacy = "arccli.main_legacy:cli"
+arc-agent-worker = "arccli.agent_worker:main"
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"

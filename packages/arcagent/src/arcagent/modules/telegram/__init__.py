@@ -1,4 +1,28 @@
-"""Telegram messaging module — bidirectional human-agent interaction via Telegram Bot API."""
+"""Telegram messaging module — bidirectional human-agent interaction via Telegram Bot API.
+
+DEPRECATION NOTICE
+==================
+This module (arcagent.modules.telegram) is the **legacy** Telegram integration.
+It remains functional and is NOT being deleted — existing arcagent users continue
+to work without any changes until Milestone M1 migration is complete.
+
+New integrations should use arcgateway.adapters.telegram.TelegramAdapter instead:
+
+    from arcgateway.adapters.telegram import TelegramAdapter
+
+The new adapter:
+- Implements the BasePlatformAdapter Protocol consumed by GatewayRunner.
+- Supports Hermes-pattern polling-conflict bounded retries (T1.10).
+- Supports NetworkError reconnect with exponential backoff.
+- Routes to SessionRouter via the on_message callback.
+- Is an optional dependency (pip install 'arcgateway[telegram]').
+
+Migration path: SPEC-018-hermes-parity-roadmap PLAN T1.7.8 tracks the formal
+deprecation milestone. This notice will be updated to a DeprecationWarning
+import hook once M1 is fully migrated.
+
+See also: packages/arcgateway/src/arcgateway/adapters/telegram.py
+"""
 
 from __future__ import annotations
 

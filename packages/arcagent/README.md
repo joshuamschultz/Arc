@@ -184,24 +184,50 @@ workspace/
 
 ## Built-in Tools
 
-ArcAgent ships with sandboxed filesystem tools:
+ArcAgent ships with sandboxed filesystem tools, each classified for
+parallel-dispatch safety per SPEC-017 R-020:
 
-| Tool | Description |
-|---|---|
-| `bash` | Execute shell commands (sandboxed, timeout-guarded) |
-| `read` | Read file contents with offset/limit |
-| `write` | Write files within workspace |
-| `edit` | String-based find-and-replace editing |
-| `ls` | List directory contents |
-| `find` | Search files by glob pattern |
-| `grep` | Search file contents with regex |
+| Tool | Classification | Description |
+|---|---|---|
+| `bash` | state_modifying | Execute shell commands (sandboxed, timeout-guarded) |
+| `read` | read_only | Read file contents with offset/limit |
+| `write` | state_modifying | Write files within workspace |
+| `edit` | state_modifying | String-based find-and-replace editing |
+| `ls` | read_only | List directory contents |
+| `find` | read_only | Search files by glob pattern |
+| `grep` | read_only | Search file contents with regex |
 
 All tool calls are:
 - Schema-validated before execution
-- Policy-checked against allow/deny lists
+- **Routed through the 5-layer tool policy pipeline** (first-DENY-wins, fail-closed, p95 < 1ms)
 - Timeout-guarded (configurable per tool)
-- Audit-logged via OpenTelemetry
+- Audit-logged via OpenTelemetry + the `policy.evaluate` event stream
 - Hash-chained for tamper-evident trails (via ArcRun)
+
+### Self-modification tools (SPEC-017 R-050, opt-in)
+
+| Tool | Federal tier | Enterprise tier | Personal tier |
+|---|---|---|---|
+| `create_skill(name, markdown_body)` | allowed | allowed | allowed |
+| `improve_skill(name, new_markdown_body)` | allowed | allowed | allowed |
+| `create_tool(name, python_source)` | **DENIED** | approval | allowed |
+| `create_extension(name, python_source, module_yaml)` | **DENIED** | approval | allowed |
+| `list_artifacts(kind)` | allowed | allowed | allowed |
+| `reload_artifacts()` | allowed | allowed | allowed |
+
+Dynamic tool creation runs source through the `DynamicToolLoader`: encoding check → 9-category AST validation → sandbox compile with `RESTRICTED_BUILTINS` → registration. Every action emits a structured audit event. See the runbook at `docs/runbooks/spec-017-operations.md`.
+
+## Proactive Scheduling (SPEC-017 Phase 6)
+
+The `modules/proactive/` module replaces the legacy `pulse` + `scheduler`
+modules with a single engine. Highlights:
+
+- **Drift-free reschedule** — `next_run = last_actual_run + interval - overhead`. Accumulated scheduling overhead does not bias the timeline.
+- **Circuit breaker per schedule** — Resilience4j state machine (CLOSED → OPEN → HALF_OPEN → CLOSED) with exponential backoff.
+- **Clock-warp detection** — Wall clock vs monotonic delta divergence beyond 5s emits a `clock_warp` event.
+- **Heartbeat isolation** — Heartbeat decisions run with a dedicated `HeartbeatContext` that carries only `now_iso` + `idle_since_seconds`. No session state, no tool results, no conversation history.
+- **Leader election** — `LeaderElection` Protocol with `NoOpLeaderElection` (single instance) and `InMemoryElection` (multi-process tests). K8s Lease / Redis Lock implementations satisfy the same Protocol.
+- **Timezone + DST** — IANA timezone config, overnight windows (`end < start`), spring-forward skipped, fall-back not double-fired.
 
 ## Security Model
 
@@ -324,7 +350,7 @@ arcagent/
 - [x] **Phase 1c** — Memory module (markdown memory, hybrid search, entity extraction, policy)
 - [x] **Phase 2a** — Biological memory (identity, working memory, consolidation, retrieval)
 - [x] **Phase 2b** — Shared text sanitizer (centralized ASI-06 defense)
-- [ ] **Phase 3** — MCP/HTTP/Process tool transports, CLI integration via ArcCLI
+- [ ] **Phase 3** — MCP/HTTP/Process tool transports, CLI integration via arccmd
 - [ ] **Phase 4** — ArcTeam fleet coordination, scheduling, shared context
 - [ ] **Phase 5** — Firecracker isolation, module marketplace, FedRAMP authorization package
 

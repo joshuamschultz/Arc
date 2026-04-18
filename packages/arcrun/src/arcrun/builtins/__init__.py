@@ -12,6 +12,12 @@ from arcrun.builtins.contained_execute import (
 )
 from arcrun.builtins.execute import make_execute_tool
 from arcrun.builtins.spawn import make_spawn_tool
+from arcrun.builtins.task_complete import (
+    TaskCompleteArgs,
+    TaskStatus,
+    make_budget_breach_args,
+    make_task_complete_tool,
+)
 
 __all__ = [
     "SandboxError",
@@ -19,6 +25,10 @@ __all__ = [
     "SandboxRuntimeError",
     "SandboxTimeoutError",
     "SandboxUnavailableError",
+    "TaskCompleteArgs",
+    "TaskStatus",
+    "make_budget_breach_args",
     "make_execute_tool",
     "make_spawn_tool",
+    "make_task_complete_tool",
 ]

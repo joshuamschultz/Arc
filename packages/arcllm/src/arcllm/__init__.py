@@ -1,5 +1,7 @@
 """ArcLLM — Unified LLM abstraction layer for autonomous agents."""
 
+__version__ = "0.3.0"
+
 import importlib
 from pathlib import Path
 
@@ -88,6 +90,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "__version__",
     "AnthropicAdapter",
     "ArcLLMAPIError",
     "ArcLLMConfigError",

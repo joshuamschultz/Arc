@@ -1,8 +1,8 @@
 ```
 ╭──────────────────────────────────────────────────────╮
 │                                                      │
-│   ▄▀█ █▀█ █▀▀ █▀▀ █   █                            │
-│   █▀█ █▀▄ █▄▄ █▄▄ █▄▄ █                            │
+│   ▄▀█ █▀█ █▀▀ █▀▀ █▀▄▀█ █▀▄                       │
+│   █▀█ █▀▄ █▄▄ █▄▄ █ ▀ █ █▄▀                       │
 │                                                      │
 │   Unified Command-Line Interface                     │
 │   for the Arc Agent Platform                         │
@@ -12,14 +12,14 @@
 ╰──────────────────────────────────────────────────────╯
 ```
 
-**The single CLI for the entire Arc stack.** ArcCLI wraps [ArcLLM](../arcllm/) (provider-agnostic LLM calls), [ArcRun](../arcrun/) (agentic runtime loop), [ArcAgent](../arcagent/) (agent orchestration), and [ArcTeam](../arcteam/) (multi-agent collaboration) into one unified `arc` command.
+**The single CLI for the entire Arc stack.** arccmd wraps [ArcLLM](../arcllm/) (provider-agnostic LLM calls), [ArcRun](../arcrun/) (agentic runtime loop), [ArcAgent](../arcagent/) (agent orchestration), and [ArcTeam](../arcteam/) (multi-agent collaboration) into one unified `arc` command.
 
 ---
 
 ## Installation
 
 ```bash
-pip install arccli
+pip install arccmd
 ```
 
 Development install (install dependencies first):
@@ -32,7 +32,7 @@ pip install -e ../arcteam
 pip install -e .
 ```
 
-**Requirements:** Python 3.12+
+**Requirements:** Python 3.11+
 
 ---
 

@@ -13,7 +13,12 @@ class TestLoadEvalModel:
             mock_load.return_value = MagicMock()
             result = load_eval_model("anthropic/claude-haiku")
             mock_load.assert_called_once_with(
-                "anthropic", "claude-haiku", retry=True, agent_label=None,
+                "anthropic",
+                "claude-haiku",
+                retry=True,
+                agent_label=None,
+                trace_store=None,
+                on_event=None,
             )
             assert result is not None
 
@@ -24,8 +29,27 @@ class TestLoadEvalModel:
             mock_load.return_value = MagicMock()
             load_eval_model("anthropic")
             mock_load.assert_called_once_with(
-                "anthropic", None, retry=True, agent_label=None,
+                "anthropic",
+                None,
+                retry=True,
+                agent_label=None,
+                trace_store=None,
+                on_event=None,
             )
+
+    def test_forwards_on_event_to_arcllm(self) -> None:
+        """SPEC-017 R-001: on_event parameter threads to arcllm.load_model()."""
+        from arcagent.utils import load_eval_model
+
+        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+            mock_load.return_value = MagicMock()
+
+            def callback(_record: object) -> None:  # pragma: no cover
+                return None
+
+            load_eval_model("anthropic/claude-haiku", on_event=callback)
+            _args, kwargs = mock_load.call_args
+            assert kwargs["on_event"] is callback
 
 
 class TestFormatMessages:

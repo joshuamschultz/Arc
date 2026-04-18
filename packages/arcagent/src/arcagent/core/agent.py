@@ -20,12 +20,11 @@ from arcrun import run as arcrun_run
 from arcrun import run_async as arcrun_run_async
 
 from arcagent.core.config import ArcAgentConfig
-from arcagent.core.context_manager import ContextManager
 from arcagent.core.errors import ConfigError
 from arcagent.core.extensions import ExtensionLoader
 from arcagent.core.identity import AgentIdentity
 from arcagent.core.module_bus import ModuleBus, ModuleContext
-from arcagent.core.session_manager import SessionManager
+from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.skill_registry import SkillMeta, SkillRegistry
 from arcagent.core.telemetry import AgentTelemetry
@@ -57,7 +56,12 @@ def _validate_vault_backend(backend_ref: str) -> None:
         )
 
 
-def create_arcrun_bridge(bus: ModuleBus) -> Callable[[Event], None]:
+def create_arcrun_bridge(
+    bus: ModuleBus,
+    *,
+    model_id: str = "",
+    agent_label: str = "",
+) -> Callable[[Event], None]:
     """Create on_event callback for arcrun.run().
 
     Maps ArcRun events to Module Bus events:
@@ -65,26 +69,40 @@ def create_arcrun_bridge(bus: ModuleBus) -> Callable[[Event], None]:
       tool.end    → agent:post_tool
       turn.start  → agent:pre_plan
       turn.end    → agent:post_plan
-      llm.call    → (telemetry only, no bus event)
+      llm.call    → llm:call_complete
 
     ArcRun's on_event is synchronous (Callable[[Event], None]),
     so we schedule the async bus.emit via the running event loop.
+    Enriches llm.call events with the actual model name and agent label.
     """
     _event_map = {
         "tool.start": "agent:pre_tool",
         "tool.end": "agent:post_tool",
         "turn.start": "agent:pre_plan",
         "turn.end": "agent:post_plan",
+        "llm.call": "llm:call_complete",
     }
     # Hold strong references to pending tasks so they aren't GC'd
     _pending: set[asyncio.Task[Any]] = set()
 
+    # Extract provider and model name from provider/model format
+    _provider = model_id.split("/", 1)[0] if "/" in model_id else "unknown"
+    _model_name = model_id.split("/", 1)[1] if "/" in model_id else model_id
+
     def bridge(event: Event) -> None:
         bus_event = _event_map.get(event.type)
         if bus_event is not None:
+            data = event.data
+            # Enrich llm.call events with actual model/provider/agent
+            if event.type == "llm.call":
+                data = dict(data)
+                data["model"] = _model_name
+                data["provider"] = _provider
+                if agent_label:
+                    data["agent_label"] = agent_label
             try:
                 loop = asyncio.get_running_loop()
-                task = loop.create_task(bus.emit(bus_event, event.data))
+                task = loop.create_task(bus.emit(bus_event, data))
                 _pending.add(task)
                 task.add_done_callback(_pending.discard)
             except RuntimeError:
@@ -468,9 +486,33 @@ class ArcAgent:
         return self._telemetry, self._tool_registry, self._context, self._bus
 
     def _ensure_model(self) -> Any:
-        """Load and cache model on first use."""
+        """Load and cache model on first use.
+
+        Passes a JSONLTraceStore so every LLM call is persisted to
+        workspace/traces/ for historical UI display and audit.
+        Labels the agent so traces are attributed correctly.
+
+        Wires ArcLLM's ``on_event`` callback through ``create_arcllm_bridge``
+        so ``llm_call``, ``config_change``, and ``circuit_change`` events
+        reach the ModuleBus (SPEC-017 R-001).
+        """
         if self._model is None:
-            self._model = load_eval_model(self._config.llm.model)
+            from arcllm.trace_store import JSONLTraceStore
+
+            trace_store = JSONLTraceStore(self._workspace)
+            self._trace_store = trace_store
+            # Bridge ArcLLM TraceRecords onto the ModuleBus. Bus is only
+            # available after startup(); _ensure_model is lazy so this
+            # holds in practice, but guard anyway.
+            on_event = None
+            if self._bus is not None:
+                on_event = create_arcllm_bridge(self._bus)
+            self._model = load_eval_model(
+                self._config.llm.model,
+                trace_store=trace_store,
+                agent_label=self._config.agent.name,
+                on_event=on_event,
+            )
         return self._model
 
     async def _build_run_context(
@@ -507,7 +549,11 @@ class ArcAgent:
         system_prompt = await context.assemble_system_prompt(
             self._workspace, extra_sections=strategy_sections
         )
-        bridge = create_arcrun_bridge(bus)
+        bridge = create_arcrun_bridge(
+            bus,
+            model_id=self._config.llm.model,
+            agent_label=self._config.agent.name,
+        )
 
         await bus.emit("agent:pre_respond", {"task": task})
         return telemetry, bus, model, tools, system_prompt, bridge
@@ -710,7 +756,12 @@ class ArcAgent:
         return self._settings
 
     async def shutdown(self) -> None:
-        """Reverse-order teardown of all components."""
+        """Reverse-order teardown of all components.
+
+        Closes the LLM model's httpx client before dropping the
+        reference so connection pools are released deterministically
+        (SPEC-017 R-004).
+        """
         if not self._started:
             return
 
@@ -734,6 +785,13 @@ class ArcAgent:
         if self._skill_registry is not None:
             self._skill_registry.clear()
 
+        # Close LLM client (releases httpx connection pool). Guarded
+        # because _model is lazy — may never have been materialized.
+        if self._model is not None:
+            try:
+                await self._model.close()
+            except Exception:
+                _logger.exception("Error closing LLM model on shutdown")
         self._model = None
         self._started = False
         _logger.info("Agent %s shut down", self._config.agent.name)

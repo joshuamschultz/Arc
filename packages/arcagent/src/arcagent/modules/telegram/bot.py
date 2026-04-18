@@ -186,7 +186,7 @@ class TelegramBot:
         except ImportError:
             _logger.warning(
                 "python-telegram-bot not installed; telegram module dormant. "
-                "Install with: pip install 'arcagent[telegram]'"
+                "Install with: pip install 'arc-agent[telegram]'"
             )
             return
 

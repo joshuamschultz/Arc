@@ -37,3 +37,10 @@ class RunState:
     tool_timeout: float | None = None
     strategy_name: str = ""
     tool_choice: dict[str, Any] | None = None
+    # SPEC-017 R-030/R-032 — structured task completion.
+    # When ``task_complete`` fires, the tool handler stores its payload
+    # here so the strategy can terminate cleanly on the next check.
+    # ``None`` means no termination requested.
+    completion_payload: dict[str, Any] | None = None
+    # Hard caps from config; enforced at the top of each turn.
+    max_cost_usd: float | None = None

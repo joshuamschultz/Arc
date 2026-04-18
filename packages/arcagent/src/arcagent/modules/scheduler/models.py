@@ -1,4 +1,4 @@
-"""Pydantic models for the scheduler module — SPEC-002."""
+"""Pydantic models for the scheduler module — SPEC-002 / SPEC-018."""
 
 from __future__ import annotations
 
@@ -42,6 +42,12 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 DEFAULT_MIN_INTERVAL_SECONDS = 60
 DEFAULT_MAX_PROMPT_LENGTH = 500
 DEFAULT_MAX_TIMEOUT_SECONDS = 3600
+
+# [SILENT] marker: when present at the start of a cron job prompt,
+# delivery is suppressed on success. Failures always deliver.
+# CronRunner strips this marker before passing the prompt to the agent
+# so the model never sees it as an instruction.
+SILENT_MARKER = "[SILENT]"
 
 
 def _normalize_text(text: str) -> str:
@@ -127,6 +133,17 @@ class ScheduleEntry(BaseModel):
     active_hours: ActiveHours | None = None
     timeout_seconds: int = 300
 
+    # T1.13 (SPEC-018 §3.4 Platform Delivery):
+    # Optional delivery target string ("telegram:chat_id" etc.).
+    # When set, CronRunner sends agent output to this address after execution.
+    deliver_to: str | None = None
+
+    # When True, delivery is suppressed on successful runs.
+    # Failures always deliver regardless of this flag.
+    # CronRunner also sets this to True for the current run if [SILENT]
+    # is present in the prompt.
+    silent_on_success: bool = False
+
     # Audit.
     metadata: ScheduleMetadata = ScheduleMetadata()
 
@@ -169,6 +186,51 @@ class ScheduleEntry(BaseModel):
             )
             raise ValueError(msg)
         return self
+
+
+# ---------------------------------------------------------------------------
+# T1.12 / T1.13 additions (SPEC-018 §3.4)
+# ---------------------------------------------------------------------------
+
+
+class CronJob(BaseModel):
+    """A cron-triggered job definition loaded from [[cron.jobs]] config.
+
+    Mirrors the TOML schema defined in SDD §3.4:
+
+        [[cron.jobs]]
+        name = "morning-digest"
+        schedule = "0 9 * * 1-5"
+        prompt = "summarize overnight Slack DMs"
+        deliver_to = "telegram:joshs-channel"
+        silent_on_success = true
+    """
+
+    name: str
+    schedule: str  # cron expression OR natural-language (resolved by nl_parser)
+    prompt: str
+    deliver_to: str | None = None
+    silent_on_success: bool = False
+
+
+class CronRunResult(BaseModel):
+    """Outcome produced by CronRunner after executing a CronJob.
+
+    Attributes:
+        job_name: Name of the cron job that ran.
+        content: Agent output text (empty string on failure / timeout).
+        success: True when agent completed without exception/timeout.
+        error: Error message when success is False; None otherwise.
+        ran_at: ISO-8601 UTC timestamp of when execution started.
+        silent: Whether silent_on_success was active for this run.
+    """
+
+    job_name: str
+    content: str
+    success: bool
+    error: str | None = None
+    ran_at: str
+    silent: bool = False
 
 
 def generate_schedule_id() -> str:

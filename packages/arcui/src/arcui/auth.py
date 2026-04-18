@@ -58,31 +58,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.state.role = None
             return await call_next(request)
 
-        # Health endpoint is public (load balancers, k8s probes)
-        if request.url.path == "/api/health":
+        # Agent WebSocket endpoint requires agent token auth
+        if request.url.path.startswith("/api/agent/"):
+            # Auth handled by the WebSocket endpoint itself (first-message auth)
             request.state.role = None
             return await call_next(request)
 
-        # Extract bearer token
+        # All other API routes are open — grant viewer role by default.
+        # If a bearer token is provided, validate it for elevated roles.
         auth_header = request.headers.get("authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
 
-        if not token:
-            return JSONResponse(
-                {"error": "Missing authorization token"}, status_code=401
-            )
+        if token:
+            role = self._auth.validate_token(token)
+            request.state.role = role or "viewer"
+        else:
+            request.state.role = "viewer"
 
-        role = self._auth.validate_token(token)
-        if role is None:
-            return JSONResponse(
-                {"error": "Invalid authorization token"}, status_code=401
-            )
-
-        # Agent tokens are only valid for WebSocket endpoints, not REST API
-        if role == "agent" and not request.url.path.startswith("/api/agent/"):
-            return JSONResponse(
-                {"error": "Agent tokens cannot access REST API"}, status_code=403
-            )
-
-        request.state.role = role
         return await call_next(request)

@@ -86,4 +86,6 @@ def create_tool(workspace: Path) -> RegisteredTool:
         # Above the default 120s command timeout to avoid double-timeout
         timeout_seconds=130,
         source="arcagent.tools.bash",
+        classification="state_modifying",
+        capability_tags=["subprocess", "file_write", "state_mutation"],
     )

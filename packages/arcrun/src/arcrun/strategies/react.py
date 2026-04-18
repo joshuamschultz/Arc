@@ -130,6 +130,23 @@ async def react_loop(
         if state.cancel_event.is_set():
             break
 
+        # SPEC-017 R-032 — cost cap. Enforced at the top of each turn
+        # so we never start a turn knowing we're already over budget.
+        if (
+            state.max_cost_usd is not None
+            and state.cost_usd >= state.max_cost_usd
+        ):
+            state.completion_payload = {
+                "status": "failed",
+                "summary": "Cost limit reached before task completed.",
+                "error": "max_cost",
+            }
+            bus.emit(
+                "loop.completed",
+                {"reason": "max_cost", "cost_usd": state.cost_usd},
+            )
+            return _build_result(state, None)
+
         bus.emit("turn.start", {"turn_number": state.turn_count + 1})
 
         # Check steer queue
@@ -188,9 +205,28 @@ async def react_loop(
         result_messages = await _execute_tool_calls(response.tool_calls, state, sandbox)
         state.messages.extend(result_messages)
 
+        # SPEC-017 R-030/R-031 — scan THIS turn's tool calls for a
+        # ``task_complete`` invocation. If present and the dispatch
+        # succeeded (tool result is a success string, not error),
+        # terminate the loop cleanly.
+        completion = _extract_task_complete_payload(response.tool_calls)
+        if completion is not None:
+            state.completion_payload = completion
+            bus.emit("loop.completed", dict(completion))
+            _end_turn(state, bus)
+            return _build_result(state, completion.get("summary"))
+
         _end_turn(state, bus)
 
     if state.turn_count >= max_turns:
+        # SPEC-017 R-032 — max_turns breach synthesizes a failed
+        # task_complete so consumers see a structured terminator,
+        # not silent truncation.
+        state.completion_payload = {
+            "status": "failed",
+            "summary": "Turn limit reached before task completed.",
+            "error": "max_turns",
+        }
         bus.emit(
             "loop.max_turns",
             {
@@ -198,8 +234,25 @@ async def react_loop(
                 "max_turns": max_turns,
             },
         )
+        bus.emit("loop.completed", dict(state.completion_payload))
 
     return _build_result(state, None)
+
+
+def _extract_task_complete_payload(tool_calls: list[Any]) -> dict[str, Any] | None:
+    """Return the ``task_complete`` arguments if present in this batch.
+
+    Scans the assistant's proposed tool calls for an invocation of
+    ``task_complete`` and returns its argument dict. Multiple
+    invocations are unusual — we take the first, matching
+    ``response.stop_reason == "end_turn"`` semantics.
+    """
+    for tc in tool_calls:
+        if getattr(tc, "name", "") == "task_complete":
+            args = getattr(tc, "arguments", None)
+            if isinstance(args, dict):
+                return dict(args)
+    return None
 
 
 def _accumulate_usage(state: RunState, response: Any) -> None:

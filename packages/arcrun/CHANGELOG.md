@@ -5,6 +5,29 @@ All notable changes to ArcRun will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2026-04-18
+
+SPEC-017 loop hardening: parallel tool dispatch, structured task completion, budget caps.
+
+### Added
+
+- **Parallel tool dispatch** (`parallel_dispatch.py`) — `BatchClassifier` partitions tool batches by classification (read-only vs state-modifying) with an implicit-dependency heuristic (shared path args force sequential). `ParallelDispatcher` runs read-only batches via `asyncio.gather(return_exceptions=True)` bounded by `asyncio.Semaphore` (default 10, FIPS mode 4). `SequentialDispatcher` fallback for mixed batches. `dispatch_batch()` is the top-level entry point. Submission-order result preservation regardless of completion order. Optional monotonic sequence numbers for audit ordering.
+- **`task_complete` builtin** (`builtins/task_complete.py`) — Structured loop-termination signal. `TaskCompleteArgs` Pydantic model with `status` (`success|partial|failed`), `summary`, optional `artifacts`/`next_steps`/`error`. `make_task_complete_tool()` for registration, `make_budget_breach_args()` helper for programmatic budget-breach payloads.
+- **Loop termination integration** (`strategies/react.py`) — React strategy detects `task_complete` calls per turn, emits `loop.completed` event with the payload, and terminates cleanly.
+- **Budget caps** — `RunState` gains `max_cost_usd` and `completion_payload`. React strategy enforces `max_turns` (synthesized `failed` completion) and `max_cost_usd` (checked before each turn) per SPEC-017 R-032.
+
+### Changed
+
+- **Strategy prompt provider** — Strategies now expose `prompt_guidance` (abstract property on `Strategy` ABC) describing when and how the model should leverage each execution strategy. New `get_strategy_prompts()` public API assembles guidance sections for spawning, code execution, and strategy selection based on active tools and allowed strategies. Prompts flow UP to the agent layer without breaking separation of concerns.
+- **Public API** — `get_strategy_prompts()` and `parallel_dispatch` module added to the `arcrun` export surface.
+- **`RunState`** — New optional fields `completion_payload`, `max_cost_usd`. Backward-compatible defaults so existing callers are unaffected.
+
+### Fixed
+
+- **`TestThreadSafeEventBus.test_lock_exists`** — Works on Python 3.13 where `threading.Lock` became a factory rather than a type.
+
 ## [0.3.0] - 2026-03-01
 
 ### Changed

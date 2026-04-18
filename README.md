@@ -99,10 +99,10 @@ Each layer is independently usable. You can call `arcllm` directly for a single 
 | Package | PyPI | What It Does |
 |---------|------|-------------|
 | [arcllm](packages/arcllm/) | [![PyPI](https://img.shields.io/pypi/v/arcllm)](https://pypi.org/project/arcllm/) | Unified interface to 11 LLM providers via direct HTTP. No provider SDKs. Opt-in modules for retry, fallback, rate limiting, PII redaction, request signing, audit logging, and OpenTelemetry. |
-| [arcrun](packages/arcrun/) | [![PyPI](https://img.shields.io/pypi/v/arcrun)](https://pypi.org/project/arcrun/) | Async ReAct execution loop with deny-by-default tool sandboxing, JSON Schema parameter validation, structured event bus, and pluggable execution strategies. |
-| [arcagent](packages/arcagent/) | [![PyPI](https://img.shields.io/pypi/v/arcagent)](https://pypi.org/project/arcagent/) | Full agent lifecycle: Ed25519 cryptographic identity (DIDs), TOML-driven configuration, module bus with priority-ordered event dispatch, context window management, session persistence, skill discovery, and extension sandboxing. |
+| [arcrun](packages/arcrun/) v0.4.0 | [![PyPI](https://img.shields.io/pypi/v/arcrun)](https://pypi.org/project/arcrun/) | Async ReAct execution loop with deny-by-default tool sandboxing, **parallel tool dispatch (SPEC-017)**, **structured `task_complete` signal**, budget caps, JSON Schema parameter validation, structured event bus, and pluggable execution strategies. |
+| [arc-agent](packages/arcagent/) v0.3.0 | [![PyPI](https://img.shields.io/pypi/v/arc-agent)](https://pypi.org/project/arc-agent/) | Full agent lifecycle: Ed25519 cryptographic identity (DIDs), TOML-driven configuration, **5-layer tool policy pipeline (SPEC-017)**, **dynamic tool surface with layered defense**, **unified proactive engine**, **tier-aware self-modification**, context window management, session persistence, skill discovery, extension sandboxing, Prometheus metrics. |
 | [arcteam](packages/arcteam/) | [![PyPI](https://img.shields.io/pypi/v/arcteam)](https://pypi.org/project/arcteam/) | Multi-agent team coordination: team formation and lifecycle, task distribution and delegation, inter-agent messaging, roster management, and consensus protocols. |
-| [arccmd](packages/arccli/) | [![PyPI](https://img.shields.io/pypi/v/arccmd)](https://pypi.org/project/arccmd/) | Operator CLI for the full stack. Agent scaffolding, interactive REPL, session management, provider introspection, and `--json` output on every command for CI/CD integration. |
+| [arccmd](packages/arccli/) v0.3.0 | [![PyPI](https://img.shields.io/pypi/v/arccmd)](https://pypi.org/project/arccmd/) | Operator CLI for the full stack. Agent scaffolding, interactive REPL, **SPEC-017 CLI mirror** (`arc agent policy/completion/schedule`), session management, provider introspection, and `--json` output on every command for CI/CD integration. |
 | [arcmas](packages/arcmas/) | [![PyPI](https://img.shields.io/pypi/v/arcmas)](https://pypi.org/project/arcmas/) | Meta-package that installs the complete Arc stack with a single `pip install arcmas`. |
 
 ### Coming Soon
@@ -145,13 +145,28 @@ Private keys are stored with `0600` permissions. Key loading rejects files with 
 
 ### Deny-by-Default Tool Sandbox
 
-Tools are not callable unless explicitly allowed. The sandbox runs a three-stage check on every invocation:
+Tools are not callable unless explicitly allowed. Since SPEC-017 (2026-04-18), every tool call flows through a **5-layer policy pipeline**:
 
-1. **Allowlist gate** -- tool name must be in the configured list
-2. **Custom checker** -- async callback for parameter-level policy (e.g., reject `rm -rf`)
-3. **JSON Schema validation** -- parameters validated against the tool's schema before execution
+1. **Global layer** — tenant-wide denylist + forbidden capability-composition check
+2. **Provider layer** — LLM provider budget / rate limit gates
+3. **Agent layer** — per-agent allowlist (keyed by DID)
+4. **Team layer** *(Federal tier only)* — team-scoped delegation rules
+5. **Sandbox layer** *(Federal tier only)* — dynamic-tool runtime constraints
 
-Checker errors default to denial. Dynamically registered tools are denied until explicitly allowed.
+Evaluation is **first-DENY-wins** with **fail-closed** exception handling. The pipeline has sub-1ms p95 latency (LRU cache keyed on `(agent_did, tool_name, classification, input_hash)`). A **shadow mode** lets operators stage a new rule set without enforcement; a **restricted mode** kicks in when the policy bundle ages past its freshness window (air-gapped safety).
+
+Per-tier layer composition: **Federal** uses all 5 layers; **Enterprise** drops Team; **Personal** runs Global alone.
+
+### Dynamic Tool Safety (Phase 7 — SPEC-017)
+
+Agents can register new tools at runtime. The loader chain applies **four** defense layers:
+
+1. **Source encoding check** — reject non-UTF-8 coding declarations (codec attacks run BEFORE the AST parser).
+2. **AST validator** — rejects 9 bypass categories: privileged imports (`os`, `ctypes`, `subprocess`, `pickle`, `sys`, ...), frame traversal (`gi_frame`, `f_back`, `__subclasses__`), dynamic exec (`eval`, `exec`, `compile`, `__import__`), `sys.modules` subscription, `__builtins__` assignment, `__init_subclass__` definitions, starred `__builtins__` unpacking. Cites real CVEs (2023-37271, 2025-68668, 2025-22153).
+3. **Restricted builtins** — execute with a scrubbed `__builtins__` dict (36 safe names; `__import__`, `eval`, `exec`, `compile`, `open` NOT present).
+4. **Egress proxy** — network access only via `ToolContext.http`, which enforces a per-tool origin allowlist (scheme + host + port). Deny-by-default. Every request audit-logged.
+
+Tier gates sit on top: Federal refuses dynamic tool / extension creation at the tool level (NIST 800-53 SI-7(15), CM-5, CM-8); Enterprise runs with an approval-event audit; Personal allows.
 
 ### Sandboxed Code Execution
 
@@ -378,7 +393,7 @@ Or install individual layers:
 ```bash
 pip install arcllm       # LLM abstraction only
 pip install arcrun       # Execution engine + arcllm
-pip install arcagent     # Full agent + arcllm + arcrun
+pip install arc-agent    # Full agent + arcllm + arcrun
 pip install arcteam      # Multi-agent coordination
 pip install arccmd       # CLI + everything
 ```

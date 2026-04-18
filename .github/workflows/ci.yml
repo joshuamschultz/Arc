@@ -72,8 +72,55 @@ jobs:
       - name: Run tests (arcagent)
         run: uv run pytest packages/arcagent/tests/ -v --tb=short
 
-      - name: Run tests (arccli)
+      - name: Run tests (arccmd)
         run: uv run pytest packages/arccli/tests/ -v --tb=short
 
       - name: Run tests (arcteam)
         run: uv run pytest packages/arcteam/tests/ -v --tb=short
+
+      - name: Run adversarial security suite (SPEC-017)
+        # This suite MUST pass. A failing test means a known
+        # sandbox-bypass pattern has become reachable; the build
+        # cannot merge until the defense is restored.
+        run: uv run pytest packages/arcagent/tests/security/ -v --tb=short
+
+      - name: Run performance gates (SPEC-017)
+        # Policy pipeline p95 must stay under 1ms — enforced by
+        # ``test_pipeline_p95_under_1ms_with_100_rules``.
+        run: uv run pytest packages/arcagent/tests/performance/ -v --tb=short
+
+  coverage:
+    name: Coverage (SPEC-017 critical modules)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --all-groups
+
+      - name: Enforce coverage thresholds
+        # Critical SPEC-017 modules must maintain ≥ 90% line coverage.
+        # Overall SPEC-017 surface must maintain ≥ 80%.
+        run: |
+          uv run pytest \
+            packages/arcagent/tests/unit/core/test_tool_policy.py \
+            packages/arcagent/tests/unit/modules/proactive/ \
+            packages/arcagent/tests/security/ \
+            packages/arcagent/tests/unit/tools/test_tool_decorator.py \
+            packages/arcagent/tests/unit/tools/test_dynamic_loader.py \
+            packages/arcagent/tests/unit/tools/test_self_mod_tools.py \
+            packages/arcagent/tests/unit/tools/test_extension_tool.py \
+            packages/arcagent/tests/integration/test_tier_enforcement.py \
+            packages/arcagent/tests/unit/core/test_metrics.py \
+            --cov=arcagent.core.tool_policy \
+            --cov=arcagent.core.metrics \
+            --cov=arcagent.modules.proactive \
+            --cov=arcagent.tools._decorator \
+            --cov=arcagent.tools._dynamic_loader \
+            --cov=arcagent.tools._egress \
+            --cov=arcagent.tools.skill_tools \
+            --cov=arcagent.tools.tool_tools \
+            --cov=arcagent.tools.extension_tools \
+            --cov-fail-under=80

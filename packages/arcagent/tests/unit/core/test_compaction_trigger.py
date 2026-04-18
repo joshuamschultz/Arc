@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from arcagent.core.config import ContextConfig, SessionConfig
-from arcagent.core.session_manager import SessionManager
+from arcagent.core.session_internal.manager import SessionManager
 
 
 class TestSessionOwnsContext:

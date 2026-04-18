@@ -104,17 +104,22 @@ class ModuleLoader:
                 details={"module": dir_name},
             )
 
+        # Check enabled BEFORE validating entry_point. Modules that are
+        # not enabled (or absent from config) might be "descriptor-only"
+        # MODULE.yaml files used by subsystems like the vault manager
+        # that do not expose a loadable entry_point. Those should never
+        # cause startup to fail.
+        module_entry = config.modules.get(module_name)
+        if module_entry is None or not module_entry.enabled:
+            _logger.debug("Module '%s' not enabled in config, skipping", module_name)
+            return None
+
         if not raw.get("entry_point"):
             raise ConfigError(
                 code="CONFIG_MODULE_MISSING_ENTRY_POINT",
                 message=f"MODULE.yaml missing 'entry_point' for module '{module_name}'",
                 details={"module": module_name},
             )
-
-        module_entry = config.modules.get(module_name)
-        if module_entry is None or not module_entry.enabled:
-            _logger.debug("Module '%s' not enabled in config, skipping", module_name)
-            return None
 
         try:
             manifest = ModuleManifest(**raw)

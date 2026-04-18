@@ -1,4 +1,20 @@
-"""Slack messaging module — bidirectional human-agent interaction via Slack Socket Mode."""
+"""Slack messaging module — bidirectional human-agent interaction via Slack Socket Mode.
+
+.. deprecated::
+    This module (``arcagent.modules.slack``) is superseded by
+    ``arcgateway.adapters.slack.SlackAdapter`` as part of the SPEC-018
+    Hermes-Parity Roadmap (T1.7.2 / T1.7.8).
+
+    Migration path:
+    - Replace ``arcagent.modules.slack.SlackModule`` with
+      ``arcgateway.adapters.slack.SlackAdapter`` and register it with
+      ``arcgateway.runner.GatewayRunner``.
+    - The new adapter preserves all SPEC-011 design decisions (D-001 … D-025)
+      and adds Hermes-pattern Socket Mode replay deduplication (T1.9).
+
+    This module is NOT deleted — it remains functional for existing deployments
+    until the arcgateway migration is complete (PLAN-018 G1.8 / T1.7.8).
+"""
 
 from __future__ import annotations
 

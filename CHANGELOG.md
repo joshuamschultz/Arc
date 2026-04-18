@@ -7,24 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-ArcUI integration, security hardening, and identity persistence.
+## [2026-04-18] — SPEC-017 Arc Core Hardening
+
+Federal-first hardening pass across the Arc monolith. Production-grade tool policy pipeline, dynamic tool surface with layered defense, unified proactive scheduling engine, Prometheus metrics, and tier-aware self-modification. Ships as:
+
+- `arc-agent` 0.2.0 → 0.3.0
+- `arcrun` 0.3.0 → 0.4.0
+- `arccmd` 0.2.0 → 0.3.0
+
+See each package CHANGELOG for the detailed per-package breakdown. Highlights:
+
+### Added
+
+- **Tool Policy Pipeline** (arcagent) — 5-layer first-DENY-wins, fail-closed evaluator with LRU cache (p95 < 1ms). Tier-aware composition: Federal=5, Enterprise=4, Personal=1. Shadow mode + restricted mode for air-gapped / stale-bundle situations.
+- **Dynamic Tool Surface** (arcagent) — `@tool` decorator, `DynamicToolLoader`, AST validator rejecting 9 CVE-cited bypass categories, scrubbed `RESTRICTED_BUILTINS`, deny-by-default origin-allowlisted egress proxy.
+- **Self-modification tools** (arcagent) — `create_skill`, `improve_skill`, `create_tool`, `create_extension`, `list_artifacts`, `reload_artifacts`. Tier gates: federal denies dynamic code (NIST 800-53 SI-7(15), CM-5, CM-8); enterprise approval; personal allowed.
+- **Unified Proactive Engine** (arcagent) — Replaces `pulse` + `scheduler` modules. Min-heap timer, drift-free reschedule, heartbeat isolation, per-schedule circuit breaker, timezone + DST handling, `LeaderElection` Protocol.
+- **Parallel tool dispatch** (arcrun) — Read-only batches execute concurrently via `asyncio.gather` bounded by semaphore; state-modifying or implicit-dep-colliding batches run sequential. Submission-order results preserved.
+- **`task_complete` builtin** (arcrun) — Structured loop-termination signal. Budget caps (`max_turns`, `max_cost_usd`) enforced with automatic `failed` completion on breach.
+- **Prometheus metrics** (arcagent) — In-process `MetricRegistry` with counters/gauges/histograms + text exposition + audit-sink adapters. Zero external deps.
+- **Capability-composition safety** — `ForbiddenCompositionChecker` rejects batches whose combined capability tags match a forbidden set (e.g. `file_read + network_egress = exfiltration`).
+- **CLI mirror** (arccli) — `arc agent policy`, `arc agent completion`, `arc agent schedule` subcommands for scriptable access.
+- **Adversarial security suite** — 42 tests covering import bypass, frame traversal, dynamic exec, `sys.modules` access, codec attacks, `__builtins__` mutation, starred unpacking, capability composition.
+- **Runbook** — `packages/arcagent/docs/runbooks/spec-017-operations.md`.
+
+### Removed
+
+- **Legacy `modules/pulse/` and `modules/scheduler/` modules** (arcagent) — Functionality migrated to `modules/proactive/`. Per SPEC-017 R-040: no compat shim.
+
+### Fixed
+
+- **ArcLLM `on_event` bridge wiring** — `create_arcllm_bridge()` now actually runs; ArcLLM events (`llm_call`, `config_change`, `circuit_change`) reach the Module Bus.
+- **`ArcAgent.shutdown()`** — Closes the httpx client so connection pools release deterministically.
+- **Module loader** — Checks `enabled` before validating `entry_point` (lets descriptor-only `MODULE.yaml` files coexist without breaking startup).
+- **Messaging `ack` byte_pos** — Stores the real stream end offset in cursor instead of the prior `byte_pos=0` that forced full rescans.
+
+### Security
+
+- **NIST 800-53 AU-2** — Every policy evaluation, self-mod action, schedule tick, and completion event audit-logged with agent DID + rule ID.
+- **NIST 800-53 SI-7(15), CM-5, CM-8** — Federal tier refuses dynamic tool/extension creation at the tool level, BEFORE the loader is consulted.
+- **OWASP LLM02 / ASI02 / ASI05** — Policy pipeline on every tool call, AST validator (CVE-2023-37271 generator-frame bypass, CVE-2025-68668 ctypes FFI bypass, etc.), deny-by-default egress proxy.
+
+---
+
+## [Pre-2026-04-18] — prior Unreleased
+
+Multi-agent observability platform, vault-backed secrets, strategy prompt provider, messaging integrations, and continued security hardening.
+
+---
+
+### ArcAgent
+
+#### Added
+- Vault-backed secret resolution for extension API (`api.get_secret()`).
+- Strategy prompt provider integration — ArcRun guidance merges into agent system prompt.
+- UI reporter module for real-time agent observability via ArcUI WebSocket.
+- Messaging module with unified Slack and Telegram integrations.
+- Slack module with bidirectional bot and setup runbook.
+- Telegram module with bot integration.
+- Skill improver module for autonomous skill evolution.
+- Pulse module with per-check circuit breakers for health monitoring.
+- Bio memory enhancements — daily notes, entity helpers, facts, deep consolidator. All entity mutations now batch-promoted to team shared knowledge.
+
+#### Fixed
+- DID persistence across agent restarts — identity survives stop/start cycles.
+- Azure Key Vault backend accepts `cache_ttl_seconds` in constructor.
+- Pulse engine prompt reworded to avoid Azure content filter jailbreak detection.
+- Slack error handling improvements for 400/content filter/rate limit responses.
+
+#### Security
+- DID files written with `0o600` permissions.
 
 ---
 
 ### ArcLLM
+
+#### Changed
+- OpenAI adapter auto-converts `system` → `developer` role for o-series reasoning models.
+
+#### Fixed
+- Timeout configuration in dependency specification.
 
 #### Security
 - Trace store file permissions hardened to `0o600`/`0o700` (NIST AU-9).
 - Hash chain tamper detection on startup — verifies last 10 records (NIST AU-10).
 - Provider name input validation prevents module injection (ASI-04, NIST SI-10).
 
-### ArcAgent
+---
 
-#### Fixed
-- DID persistence across agent restarts — identity survives stop/start cycles.
+### ArcRun
 
-#### Security
-- DID files written with `0o600` permissions.
+#### Added
+- Strategy prompt provider — strategies expose `prompt_guidance` and `get_strategy_prompts()` public API for model-facing guidance.
+
+---
 
 ### ArcUI
 
@@ -33,12 +109,49 @@ ArcUI integration, security hardening, and identity persistence.
 - Real timeseries chart data via `/api/stats/timeseries`.
 - Tool call display with arguments in trace detail panel.
 - Single trace JSON export.
+- Multi-agent WebSocket transport, agent registry, and subscription manager.
+- Agent routes for listing, detail, and status queries.
+- Event buffer with overflow policy for bursty agent traffic.
+- Authentication middleware for API and WebSocket connections.
+- ArcLLM config routes for runtime inspection and mutation.
+
+#### Changed
+- Server architecture refactored from single-agent trace viewer to multi-agent observability platform.
 
 #### Security
 - API input validation on all endpoints (trace ID, cursor, filters, window, format).
+- Audit logging on all API requests and WebSocket connections.
 
 #### Fixed
 - WebSocket connection status stuck on "Connecting".
+- Pulse transport event type handling.
+
+---
+
+### ArcCLI
+
+#### Added
+- `arc agent ui` command for launching ArcUI dashboard.
+- Telegram setup wizard.
+
+#### Changed
+- PyPI package renamed from `arccli` to `arccmd` (name collision).
+
+---
+
+### ArcTeam
+
+#### Changed
+- File store updates and public API export refinements.
+
+---
+
+### Monorepo
+
+#### Changed
+- Version alignment: pyproject.toml, `__version__`, and changelogs now consistent across all packages.
+- `__version__` added to arcllm and arcrun `__init__.py`.
+- Python minimum version dropped from 3.12 to 3.11 across all packages.
 
 ---
 

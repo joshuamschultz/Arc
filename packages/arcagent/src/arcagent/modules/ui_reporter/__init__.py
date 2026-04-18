@@ -62,6 +62,24 @@ class UIReporterConfig(BaseModel):
     buffer_size: int = Field(default=1000, ge=1)
 
 
+# Well-known shared token file — both `arc ui start` and agents read this
+_TOKEN_FILE = Path.home() / ".arcagent" / "ui-token"
+
+
+def _resolve_token(config_token: str) -> str:
+    """Resolve agent token: config > env > well-known file."""
+    import os
+
+    if config_token:
+        return config_token
+    env_token = os.environ.get("ARCUI_AGENT_TOKEN", "")
+    if env_token:
+        return env_token
+    if _TOKEN_FILE.exists():
+        return _TOKEN_FILE.read_text().strip()
+    return ""
+
+
 class UIReporterModule:
     """UI reporter — Module Bus participant.
 
@@ -99,19 +117,42 @@ class UIReporterModule:
         self._agent_id = getattr(ctx.config.agent, "did", "") or self._agent_name
         self._source_id = getattr(ctx.config.agent, "did", "")
 
-        # Create transport if not injected and config is valid
-        if self._transport is None and self._config.token:
+        # Resolve token from config, env, or well-known file
+        token = _resolve_token(self._config.token)
+
+        # Create transport if not injected and token is available
+        if self._transport is None and token:
             try:
                 from arcui.transport_ws import WebSocketTransport
 
+                # Build registration payload for the UI server
+                registration = {
+                    "agent_name": self._agent_name,
+                    "model": ctx.config.llm.model,
+                    "provider": ctx.config.llm.model.split("/")[0]
+                    if "/" in ctx.config.llm.model
+                    else "unknown",
+                    "workspace": str(self._workspace),
+                    "modules": list(ctx.config.modules.keys()),
+                }
+
                 self._transport = WebSocketTransport(
                     url=self._config.url,
-                    token=self._config.token,
+                    token=token,
                     reconnect_cap=self._config.reconnect_max_interval,
                     buffer_size=self._config.buffer_size,
+                    registration=registration,
                 )
+                # Start the background connect loop
+                self._transport.start()
             except ImportError:
                 _logger.warning("arcui not installed, transport disabled")
+        elif not token:
+            _logger.warning(
+                "No UI token found (config, ARCUI_AGENT_TOKEN env, or %s) "
+                "— UI reporter will buffer but not connect",
+                _TOKEN_FILE,
+            )
 
         # Subscribe to LLM events
         for event in _LLM_EVENTS:
@@ -160,12 +201,8 @@ class UIReporterModule:
     def _wrap_event(
         self, event: str, data: dict[str, Any]
     ) -> dict[str, Any]:
-        """Convert a ModuleBus event into a UIEvent-compatible dict.
-
-        Returns a flat dict matching the UIEvent Pydantic model schema.
-        """
+        """Convert a ModuleBus event into a UIEvent-compatible dict."""
         layer = self._classify_layer(event)
-        # Extract event_type: everything after the first colon
         event_type = event.split(":", 1)[1] if ":" in event else event
 
         seq = self._sequence
@@ -184,13 +221,7 @@ class UIReporterModule:
 
     @staticmethod
     def _classify_layer(event: str) -> str:
-        """Map a ModuleBus event name to a UIEvent layer.
-
-        - ``llm:*`` → ``"llm"``
-        - ``agent:pre_tool``, ``agent:post_tool``, ``agent:pre_plan``,
-          ``agent:post_plan`` → ``"run"`` (arcrun bridge events)
-        - All other ``agent:*`` → ``"agent"``
-        """
+        """Map a ModuleBus event name to a UIEvent layer."""
         if event.startswith("llm:"):
             return "llm"
         if event.startswith("agent:"):
@@ -198,7 +229,6 @@ class UIReporterModule:
             if suffix in _RUN_LAYER_SUFFIXES:
                 return "run"
             return "agent"
-        # Future: team:* → "team"
         return "agent"
 
 

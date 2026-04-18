@@ -1,0 +1,23 @@
+name: proactive
+version: 0.1.0
+description: >
+  Unified proactive-execution engine (SPEC-017 Phase 6). Min-heap timer
+  driven by monotonic clock with drift-free rescheduling, per-schedule
+  circuit breakers, wake-event idempotency, and leader election for
+  multi-instance deployments. Replaces the legacy pulse + scheduler
+  modules.
+author: ArcAgent
+entry_point: arcagent.modules.proactive:ProactiveEngine
+dependencies:
+  - arcagent.core.module_bus
+  - arcagent.core.config
+events:
+  subscribes:
+    - agent:shutdown
+  emits:
+    - proactive:tick
+    - proactive:dispatched
+    - proactive:missed_concurrency
+    - proactive:skipped_circuit_open
+    - proactive:handler_error
+    - proactive:clock_warp

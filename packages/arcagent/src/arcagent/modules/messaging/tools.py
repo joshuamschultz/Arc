@@ -16,6 +16,29 @@ from arcagent.modules.messaging.config import MessagingConfig
 
 _logger = logging.getLogger("arcagent.messaging.tools")
 
+# Messenger uses this collection name for streams — must match
+# arcteam.messenger.STREAMS_COLLECTION. Kept local to avoid a hard
+# import dependency on arcteam from the tools surface.
+_STREAMS_COLLECTION = "streams"
+
+
+async def _stream_end_byte_pos(svc: Any, stream: str) -> int:
+    """Best-effort fetch of the stream end byte offset.
+
+    Falls back to ``0`` if the backend doesn't expose the helper
+    (older backend implementations). Never raises — cursor seek is an
+    optimization, not a correctness guarantee.
+    """
+    backend = getattr(svc, "_backend", None)
+    get_end = getattr(backend, "get_stream_end_byte_pos", None)
+    if get_end is None:
+        return 0
+    try:
+        return int(await get_end(_STREAMS_COLLECTION, stream))
+    except Exception:
+        _logger.debug("stream end byte_pos fetch failed; using 0", exc_info=True)
+        return 0
+
 
 def create_messaging_tools(
     svc: Any,  # MessagingService — late import avoids hard dependency
@@ -120,7 +143,13 @@ def create_messaging_tools(
                 for stream, msgs in inbox.items():
                     if msgs:
                         last = msgs[-1]
-                        await svc.ack(stream, entity_id, seq=last.seq, byte_pos=0)
+                        # SPEC-017 R-005: store the real end-of-stream
+                        # byte offset so the next poll can seek past
+                        # already-consumed bytes.
+                        byte_pos = await _stream_end_byte_pos(svc, stream)
+                        await svc.ack(
+                            stream, entity_id, seq=last.seq, byte_pos=byte_pos
+                        )
 
             return json.dumps(result)
         except (ValueError, TypeError) as exc:

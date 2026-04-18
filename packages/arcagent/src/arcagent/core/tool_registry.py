@@ -13,9 +13,9 @@ import inspect
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from xml.sax.saxutils import escape as xml_escape
 
 from arcrun import Tool as ArcRunTool
@@ -25,6 +25,14 @@ from arcagent.core.config import NativeToolEntry, ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.tool_policy import (
+    PolicyContext,
+    PolicyDenied,
+    ToolCall,
+    ToolPolicyPipeline,
+)
+
+ToolClassification = Literal["read_only", "state_modifying"]
 
 _logger = logging.getLogger("arcagent.tool_registry")
 
@@ -45,7 +53,13 @@ class ToolTransport(Enum):
 
 @dataclass
 class RegisteredTool:
-    """A tool registered in the registry."""
+    """A tool registered in the registry.
+
+    ``classification`` is the SPEC-017 R-020 contract: read-only tools
+    may run in parallel batches; state-modifying tools force sequential
+    execution. Default is ``"state_modifying"`` (fail-closed) so
+    unannotated tools never accidentally race.
+    """
 
     name: str
     description: str
@@ -57,6 +71,11 @@ class RegisteredTool:
     when_to_use: str = ""
     example: str = ""
     category: str = ""
+    classification: ToolClassification = "state_modifying"
+    # Capability tags power non-compositional safety checks (SPEC-017
+    # SDD §5.2). Examples: "file_read", "file_write", "network_egress",
+    # "subprocess", "state_mutation". Empty = no declared capabilities.
+    capability_tags: list[str] = field(default_factory=list)
 
 
 # -- Type map for native_tool decorator schema generation --
@@ -223,20 +242,48 @@ def _validate_tool_args(
 
 
 class ToolRegistry:
-    """Register tools from 4 transports, apply policy, wrap with audit."""
+    """Register tools from 4 transports, apply policy, wrap with audit.
+
+    When constructed with a :class:`ToolPolicyPipeline`, every dispatch
+    runs through it — first-DENY-wins, fail-closed. ``policy_pipeline``
+    defaults to ``None`` for backward compatibility with existing
+    deployments; call sites that rely on enforcement are expected to
+    pass one explicitly (see ``ArcAgent`` wiring).
+    """
 
     def __init__(
         self,
         config: ToolsConfig,
         bus: ModuleBus,
         telemetry: AgentTelemetry | Any,
+        policy_pipeline: ToolPolicyPipeline | None = None,
+        *,
+        agent_did: str = "did:arc:unknown",
+        tier: Literal["federal", "enterprise", "personal"] = "personal",
+        policy_version: str = "v0",
     ) -> None:
         self._config = config
         self._bus = bus
         self._telemetry = telemetry
+        self._policy_pipeline = policy_pipeline
+        self._agent_did = agent_did
+        self._tier = tier
+        self._policy_version = policy_version
         self._tools: dict[str, RegisteredTool] = {}
         self._prompt_cache: str | None = None
         self._preamble: str = config.preamble or _DEFAULT_PREAMBLE
+
+    def get_classification(self, tool_name: str) -> ToolClassification:
+        """Return a tool's classification for dispatch planning.
+
+        Used by arcrun's parallel dispatch to decide whether a batch
+        can run concurrently (all read_only) or must run sequential.
+        Unknown tools are conservatively treated as state_modifying.
+        """
+        tool = self._tools.get(tool_name)
+        if tool is None:
+            return "state_modifying"
+        return tool.classification
 
     @property
     def tools(self) -> dict[str, RegisteredTool]:
@@ -375,9 +422,23 @@ class ToolRegistry:
         return result
 
     def _create_wrapped_execute(self, tool: RegisteredTool) -> Any:
-        """Create a wrapped execute function for a tool."""
+        """Create a wrapped execute function for a tool.
+
+        Dispatch order — each layer is a single, named guard:
+          0. Argument schema validation
+          1. Policy pipeline (SPEC-017 R-010/R-011) — first-DENY-wins,
+             fail-closed. Denied calls never reach ``execute()``.
+          2. Pre-tool event (may veto for e.g. human-in-the-loop)
+          3. Execute with timeout + telemetry span
+          4. Post-tool event
+          5. Audit
+        """
         bus = self._bus
         telemetry = self._telemetry
+        pipeline = self._policy_pipeline
+        agent_did = self._agent_did
+        tier = self._tier
+        policy_version = self._policy_version
 
         async def wrapped_execute(args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
             if args is None:
@@ -387,7 +448,27 @@ class ToolRegistry:
             if tool.input_schema:
                 _validate_tool_args(tool.name, args, tool.input_schema)
 
-            # 1. Pre-tool event (may veto)
+            # 1. Policy pipeline — the single, authoritative deny path.
+            # No sudo mode, no bypass flag. Exceptions in layers are
+            # caught by the pipeline and returned as DENY (fail-closed).
+            if pipeline is not None:
+                call = ToolCall(
+                    tool_name=tool.name,
+                    arguments=args,
+                    agent_did=agent_did,
+                    session_id="",
+                    classification="unclassified",
+                )
+                ctx_pol = PolicyContext(
+                    tier=tier,
+                    policy_version=policy_version,
+                    bundle_age_seconds=0.0,
+                )
+                decision = await pipeline.evaluate(call, ctx_pol)
+                if decision.is_deny():
+                    raise PolicyDenied(decision)
+
+            # 2. Pre-tool event (may veto)
             ctx = await bus.emit(
                 "agent:pre_tool",
                 {"tool": tool.name, "args": args},

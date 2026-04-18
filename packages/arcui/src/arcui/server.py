@@ -98,7 +98,10 @@ def create_app(
     if _STATIC_DIR.exists():
         routes.append(Mount("/assets", app=StaticFiles(directory=str(_STATIC_DIR / "assets"))))
 
-    app = Starlette(routes=routes)
+    async def _on_startup() -> None:
+        app.state.event_buffer.start()
+
+    app = Starlette(routes=routes, on_startup=[_on_startup])
     app.add_middleware(AuthMiddleware, auth_config=auth)
 
     # Shared state accessible from routes via request.app.state
@@ -214,8 +217,5 @@ def serve(
         import asyncio
 
         asyncio.run(app.state.aggregator.warm_start(trace_store))
-
-    # Start the event buffer flush loop
-    app.state.event_buffer.start()
 
     uvicorn.run(app, host=host, port=port, log_level="info")

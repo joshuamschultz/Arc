@@ -5,7 +5,7 @@ Connect your ArcAgent to Slack via Socket Mode for bidirectional DM-based intera
 ## Prerequisites
 
 - A Slack workspace where you have admin access (or permission to create apps)
-- ArcAgent installed with Slack extras: `pip install 'arcagent[slack]'`
+- ArcAgent installed with Slack extras: `pip install 'arc-agent[slack]'`
 - Python 3.11+
 
 ## Step 1: Create a Slack App
@@ -127,7 +127,7 @@ WARNING  arcagent.slack.bot: Bot token not found in env var 'ARCAGENT_SLACK_BOT_
 ### "slack-bolt not installed"
 
 ```bash
-pip install 'arcagent[slack]'
+pip install 'arc-agent[slack]'
 ```
 
 ### Bot stays dormant

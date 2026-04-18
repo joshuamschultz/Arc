@@ -33,17 +33,10 @@ class TestModuleConfigForbidsExtra:
         cfg = PolicyConfig(eval_interval_turns=10)
         assert cfg.eval_interval_turns == 10
 
-    def test_scheduler_rejects_typo(self) -> None:
-        from arcagent.modules.scheduler.config import SchedulerConfig
-
-        with pytest.raises(ValidationError):
-            SchedulerConfig(min_intervall_seconds=30)  # type: ignore[call-arg]
-
-    def test_scheduler_accepts_valid(self) -> None:
-        from arcagent.modules.scheduler.config import SchedulerConfig
-
-        cfg = SchedulerConfig(min_interval_seconds=30)
-        assert cfg.min_interval_seconds == 30
+    # SPEC-017 R-040: ``scheduler`` module deleted; its config moved
+    # to ``arcagent.modules.proactive``. Equivalent validation happens
+    # at the ``Schedule`` dataclass level now — Pydantic-style typo
+    # rejection lives with the new module's tests.
 
     def test_defaults_work(self) -> None:
         """All configs work with zero args (all fields have defaults)."""

@@ -520,3 +520,39 @@ class TestLoadAllSkipsNone:
             with patch.object(loader, "load", side_effect=results):
                 modules = loader.load_all(Path("/fake"), module_ctx)
         assert len(modules) == 1
+
+
+class TestUIReporterDiscoverable:
+    """SPEC-017 R-002: ui_reporter module ships with MODULE.yaml.
+
+    Regression test — the ``modules/ui_reporter/MODULE.yaml`` file must
+    exist and be parseable by the convention-based ModuleLoader so the
+    module is discovered alongside peers like scheduler and pulse.
+    """
+
+    def test_module_yaml_exists_on_disk(self) -> None:
+        import arcagent
+
+        modules_dir = Path(arcagent.__file__).parent / "modules"
+        yaml_path = modules_dir / "ui_reporter" / "MODULE.yaml"
+        assert yaml_path.exists(), (
+            f"ui_reporter/MODULE.yaml missing at {yaml_path}. "
+            "ModuleLoader requires this for convention-based discovery."
+        )
+
+    def test_loader_discovers_ui_reporter_when_enabled(
+        self, module_ctx: ModuleContext, tmp_path: Path
+    ) -> None:
+        """Convention loader picks up ui_reporter when it is enabled in config."""
+        import arcagent
+        from arcagent.core.module_loader import ModuleLoader
+
+        # Enable ui_reporter in config overlay so the loader accepts it
+        module_ctx.config.modules["ui_reporter"] = ModuleEntry(enabled=True, config={})
+
+        modules_dir = Path(arcagent.__file__).parent / "modules"
+        manifests = ModuleLoader().discover(modules_dir, module_ctx.config)
+        names = {m.name for m in manifests}
+        assert "ui_reporter" in names, (
+            f"ui_reporter not discovered. Found: {sorted(names)}"
+        )

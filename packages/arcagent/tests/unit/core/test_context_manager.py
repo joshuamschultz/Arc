@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from arcagent.core.config import ArcAgentConfig, ContextConfig
-from arcagent.core.context_manager import ContextManager
+from arcagent.core.session_internal.context import ContextManager
 from arcagent.core.module_bus import EventContext, ModuleBus
 
 

@@ -104,7 +104,7 @@ class Bucket:
         self.provider_costs[provider] = self.provider_costs.get(provider, 0.0) + cost
 
         # Per-agent (with performance tracking)
-        agent = record_data.get("agent_label")
+        agent = record_data.get("agent_label") or record_data.get("agent_name") or "unknown"
         if agent:
             self.agent_counts[agent] = self.agent_counts.get(agent, 0) + 1
             self.agent_costs[agent] = self.agent_costs.get(agent, 0.0) + cost
@@ -474,9 +474,9 @@ class RollingAggregator:
     async def warm_start(self, store: Any) -> None:
         """Replay recent traces from store into aggregator.
 
-        Converts trace wall-clock timestamps to synthetic monotonic offsets
-        so historical data distributes across correct time buckets instead
-        of all landing in the current bucket.
+        Places each trace into the correct time bucket based on its age
+        relative to now. Uses direct bucket placement instead of sequential
+        replay to handle large time gaps correctly.
         """
         records, _ = await store.query(limit=_WARM_START_LIMIT)
         if not records:
@@ -485,35 +485,48 @@ class RollingAggregator:
         now_mono = time.monotonic()
         now_wall = time.time()
 
-        for rec in reversed(records):  # oldest first
+        # First, advance all windows to current time so bucket indices are set
+        with self._lock:
+            for window in self._windows.values():
+                window._advance_to(now_mono)
+
+        for rec in records:
             data = rec.model_dump() if hasattr(rec, "model_dump") else rec
             ts_str = data.get("timestamp", "")
-            synthetic_mono = self._timestamp_to_monotonic(ts_str, now_mono, now_wall)
-            self._ingest_at(data, synthetic_mono)
+            age_seconds = self._timestamp_age(ts_str, now_wall)
+            self._ingest_historical(data, age_seconds, now_mono)
 
     @staticmethod
-    def _timestamp_to_monotonic(
-        ts_str: str, now_mono: float, now_wall: float,
-    ) -> float:
-        """Convert ISO 8601 timestamp to synthetic monotonic time.
-
-        Computes: now_mono - (now_wall - trace_wall)
-        Falls back to now_mono if timestamp can't be parsed.
-        """
+    def _timestamp_age(ts_str: str, now_wall: float) -> float:
+        """Return age in seconds of an ISO 8601 timestamp. 0 if unparseable."""
         if not ts_str:
-            return now_mono
+            return 0.0
         try:
             dt = datetime.fromisoformat(ts_str)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=UTC)
-            trace_wall = dt.timestamp()
-            age = now_wall - trace_wall
-            return now_mono - max(0.0, age)
+            return max(0.0, now_wall - dt.timestamp())
         except (ValueError, OSError):
-            return now_mono
+            return 0.0
 
-    def _ingest_at(self, record_data: dict[str, Any], mono_time: float) -> None:
-        """Ingest a trace record at a specific monotonic time."""
+    def _ingest_historical(
+        self, record_data: dict[str, Any], age_seconds: float, now_mono: float,
+    ) -> None:
+        """Place a historical record into the correct bucket by age.
+
+        Calculates how many buckets back from current the record belongs
+        and ingests directly into that bucket. Skips records older than
+        the window's total span.
+        """
         with self._lock:
             for window in self._windows.values():
-                window.ingest(record_data, now=mono_time)
+                total_span = window._bucket_count * window._bucket_duration
+                if age_seconds >= total_span:
+                    continue  # Too old for this window
+
+                buckets_back = int(age_seconds / window._bucket_duration)
+                if buckets_back >= window._bucket_count:
+                    continue
+
+                idx = (window._current_index - buckets_back) % window._bucket_count
+                window._buckets[idx].ingest(record_data)

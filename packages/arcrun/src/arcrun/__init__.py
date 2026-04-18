@@ -1,5 +1,7 @@
 """arcrun — async execution engine for autonomous agents."""
 
+__version__ = "0.4.0"
+
 from arcrun.builtins import (
     SandboxError,
     SandboxOOMError,
@@ -17,6 +19,7 @@ from arcrun.strategies import Strategy
 from arcrun.types import LoopResult, SandboxConfig, Tool, ToolContext
 
 __all__ = [
+    "__version__",
     "GENESIS_PREV_HASH",
     "ChainVerificationResult",
     "Event",

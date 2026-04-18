@@ -5,6 +5,14 @@ All notable changes to ArcTeam will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **File store** — Updated file handling internals.
+- **Public API exports** — Updated `__init__` exports.
+- **PyPI packaging** — GitHub Actions publish workflow.
+
 ## [0.2.0] - 2026-02-21
 
 ### Added

@@ -32,7 +32,7 @@ class TestVersion:
         result = runner.invoke(cli, ["llm", "version"])
         assert result.exit_code == 0
         assert "arcllm" in result.output
-        assert "arccli" in result.output
+        assert "arccmd" in result.output
 
     def test_version_shows_python(self):
         result = runner.invoke(cli, ["llm", "version"])
@@ -44,7 +44,7 @@ class TestVersion:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "arcllm" in data
-        assert "arccli" in data
+        assert "arccmd" in data
         assert "python" in data
 
 

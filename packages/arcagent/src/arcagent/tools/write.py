@@ -66,4 +66,6 @@ def create_tool(
         transport=ToolTransport.NATIVE,
         execute=execute,
         source="arcagent.tools.write",
+        classification="state_modifying",
+        capability_tags=["file_write"],
     )

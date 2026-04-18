@@ -233,20 +233,32 @@ class BioMemoryModule:
             ctx.data.setdefault("memory_context", "\n\n".join(parts))
 
     async def _on_post_respond(self, ctx: EventContext) -> None:
-        """Track messages and trigger periodic consolidation every N turns."""
+        """Track messages and trigger periodic consolidation every N turns.
+
+        Only tracks human interactive sessions (those with a session_id).
+        Skips automated runs like pulse checks and scheduler tasks to
+        prevent transient background noise from polluting memory.
+        """
+        session_id = ctx.data.get("session_id", "")
+        if not session_id:
+            return  # Skip automated/background runs (pulse, scheduler, etc.)
+
         messages = ctx.data.get("messages", [])
         if not messages:
             return
 
-        self._messages = messages
+        self._messages.extend(messages)
         self._turn_count += 1
 
         interval = self._config.consolidation_interval_turns
         if interval > 0 and self._turn_count % interval == 0:
             model = self._get_eval_model()
             if model is not None:
+                # Snapshot and reset the accumulated buffer
+                all_messages = list(self._messages)
+                self._messages.clear()
                 spawn_background(
-                    self._consolidator.periodic_consolidate(messages, model),
+                    self._consolidator.periodic_consolidate(all_messages, model),
                     background_tasks=self._background_tasks,
                     semaphore=self._semaphore,
                     eval_config=self._eval_config,

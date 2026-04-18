@@ -5,8 +5,8 @@ Install with: pip install arcmas
 This meta-package installs all Arc components:
   - arcllm:   Provider-agnostic LLM abstraction
   - arcrun:   Async execution engine
-  - arcagent: Agent nucleus with tools, memory, and policy
-  - arccli:   Unified CLI (the ``arc`` command)
+  - arc-agent: Agent nucleus with tools, memory, and policy (import arcagent)
+  - arccmd:    Unified CLI (the ``arc`` command, import arccli)
   - arcteam:  Multi-agent team coordination
 """
 

@@ -14,8 +14,8 @@ Arc is a security-first autonomous agent framework built for environments where 
 |---------|---------|
 | **arcllm** | Provider-agnostic LLM calls (Anthropic, OpenAI, Google, Ollama, and more) |
 | **arcrun** | Async execution engine with tool sandboxing |
-| **arcagent** | Agent nucleus — tools, memory, policy, identity |
-| **arccli** | The `arc` CLI command |
+| **arc-agent** | Agent nucleus — tools, memory, policy, identity |
+| **arccmd** | The `arc` CLI command |
 | **arcteam** | Multi-agent team coordination |
 
 ## Quick Start
@@ -41,8 +41,8 @@ You can also install components separately:
 ```bash
 pip install arcllm     # Just the LLM layer
 pip install arcrun     # LLM + execution engine
-pip install arcagent   # Full agent (includes arcllm + arcrun)
-pip install arccli     # CLI + everything
+pip install arc-agent  # Full agent (includes arcllm + arcrun)
+pip install arccmd     # CLI + everything
 ```
 
 ## Links

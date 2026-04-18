@@ -213,7 +213,7 @@ class SlackBot:
         except ImportError:
             _logger.warning(
                 "slack-bolt not installed; slack module dormant. "
-                "Install with: pip install 'arcagent[slack]'"
+                "Install with: pip install 'arc-agent[slack]'"
             )
             return
 

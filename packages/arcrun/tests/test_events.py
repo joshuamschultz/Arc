@@ -294,7 +294,13 @@ class TestThreadSafeEventBus:
 
         bus = EventBus(run_id="r")
         assert hasattr(bus, "_lock")
-        assert isinstance(bus._lock, threading.Lock)
+        # Python 3.13 made ``threading.Lock`` a factory rather than a
+        # type, so ``isinstance`` no longer works on it. Check the
+        # duck-typed interface instead.
+        lock = bus._lock
+        assert hasattr(lock, "acquire")
+        assert hasattr(lock, "release")
+        assert hasattr(lock, "__enter__") and hasattr(lock, "__exit__")
 
     def test_concurrent_emit_produces_valid_chain(self):
         from arcrun.events import EventBus, verify_chain

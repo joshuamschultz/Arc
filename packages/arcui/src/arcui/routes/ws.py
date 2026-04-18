@@ -28,17 +28,10 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     subscription_manager = getattr(ws.app.state, "subscription_manager", None)
     audit = getattr(ws.app.state, "audit", None)
 
-    # --- Auth phase ---
-    role, _msg = await authenticate_ws(ws, auth_config)
-    if role is None:
-        if audit:
-            audit.audit_event("auth.failure", {"transport": "browser_ws"})
-        return
-
+    # Browser WebSocket is open — no auth required.
+    # Assign viewer role by default.
+    role = "viewer"
     await ws.send_json({"type": "auth_ok", "role": role})
-
-    if audit:
-        audit.audit_event("auth.success", {"transport": "browser_ws", "role": role})
 
     # Register client queue
     queue = connection_manager.create_queue()

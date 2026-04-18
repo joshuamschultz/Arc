@@ -85,6 +85,15 @@ class StorageBackend(Protocol):
         """
         ...
 
+    async def get_stream_end_byte_pos(self, collection: str, key: str) -> int:
+        """Return the current end-of-stream byte offset.
+
+        Callers use this to update cursor ``byte_pos`` after a read so
+        subsequent reads can seek past already-consumed bytes
+        (SPEC-017 R-005).
+        """
+        ...
+
     async def exists(self, collection: str, key: str) -> bool:
         """Check if a record exists."""
         ...
@@ -337,6 +346,19 @@ class FileBackend:
         stream = self._stream_path(collection, key)
         return await asyncio.to_thread(self._sync_read_last, stream)
 
+    async def get_stream_end_byte_pos(self, collection: str, key: str) -> int:
+        """Return the end-of-stream byte offset (SPEC-017 R-005).
+
+        Callers (messaging ack path) store this in the cursor so the
+        next poll can seek past already-consumed bytes rather than
+        replaying the whole stream from offset 0.
+        """
+        stream = self._stream_path(collection, key)
+        return await asyncio.to_thread(self._sync_stream_size, stream)
+
+    def _sync_stream_size(self, stream: Path) -> int:
+        return stream.stat().st_size if stream.exists() else 0
+
     async def query(
         self,
         collection: str,
@@ -437,6 +459,10 @@ class MemoryBackend:
         if not entries:
             return None
         return entries[-1]
+
+    async def get_stream_end_byte_pos(self, collection: str, key: str) -> int:
+        """Return the current end-of-stream byte offset (SPEC-017 R-005)."""
+        return self._stream_bytes.get(collection, {}).get(key, 0)
 
     async def query(
         self,

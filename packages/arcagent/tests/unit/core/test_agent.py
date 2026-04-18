@@ -1320,3 +1320,92 @@ class TestChatAsyncSession:
         handle2 = await agent.chat_async("second", session_id=session_id)
         assert isinstance(handle2, AgentHandle)
         assert agent._session.session_id == session_id
+
+
+class TestLLMBridgeWiring:
+    """SPEC-017 R-001: LLM bridge on_event must reach load_eval_model.
+
+    The arcllm bridge was defined but never wired — ArcLLM events
+    (llm_call, config_change, circuit_change) never reached the
+    ModuleBus and therefore never reached the UI or memory modules.
+    """
+
+    @patch("arcagent.core.agent.load_eval_model")
+    async def test_ensure_model_passes_on_event_to_load_eval_model(
+        self,
+        mock_load_model: MagicMock,
+        agent: ArcAgent,
+    ) -> None:
+        """load_eval_model() receives an on_event callback wired to the bus."""
+        mock_load_model.return_value = MagicMock()
+
+        await agent.startup()
+        # Trigger lazy model load
+        agent._ensure_model()
+
+        mock_load_model.assert_called_once()
+        _args, kwargs = mock_load_model.call_args
+        assert "on_event" in kwargs, "on_event must be passed to load_eval_model"
+        assert callable(kwargs["on_event"]), "on_event must be a callable"
+
+    @patch("arcagent.core.agent.load_eval_model")
+    async def test_llm_events_reach_module_bus(
+        self,
+        mock_load_model: MagicMock,
+        agent: ArcAgent,
+    ) -> None:
+        """TraceRecords routed through on_event land on the ModuleBus."""
+        mock_load_model.return_value = MagicMock()
+
+        events: list[dict[str, Any]] = []
+
+        async def on_llm_call(ctx: Any) -> None:
+            events.append(ctx.data)
+
+        await agent.startup()
+        agent._bus.subscribe("llm:call_complete", on_llm_call)
+
+        agent._ensure_model()
+        _args, kwargs = mock_load_model.call_args
+        on_event = kwargs["on_event"]
+
+        record = MagicMock()
+        record.model_dump.return_value = {
+            "event_type": "llm_call",
+            "provider": "anthropic",
+            "model": "claude-sonnet-4",
+            "duration_ms": 120.0,
+        }
+        on_event(record)
+
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(events) == 1
+        assert events[0]["provider"] == "anthropic"
+
+
+class TestShutdownClosesModel:
+    """SPEC-017 R-004: shutdown must close the httpx client on the model."""
+
+    @patch("arcagent.core.agent.load_eval_model")
+    async def test_shutdown_closes_model(
+        self,
+        mock_load_model: MagicMock,
+        agent: ArcAgent,
+    ) -> None:
+        """shutdown() awaits model.close() to release the httpx connection pool."""
+        mock_model = MagicMock()
+        mock_model.close = AsyncMock()
+        mock_load_model.return_value = mock_model
+
+        await agent.startup()
+        agent._ensure_model()  # materialize the model
+        await agent.shutdown()
+
+        mock_model.close.assert_awaited_once()
+
+    async def test_shutdown_without_model_does_not_raise(self, agent: ArcAgent) -> None:
+        """When no model was loaded, shutdown completes cleanly."""
+        await agent.startup()
+        assert agent._model is None
+        await agent.shutdown()  # no model to close — must not raise

@@ -7,6 +7,7 @@ local buffer for events during disconnects.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import random
@@ -31,13 +32,9 @@ def _decorrelated_jitter(base: float, cap: float, prev_sleep: float) -> float:
 class WebSocketTransport:
     """WebSocket UITransport with reconnect and local buffering.
 
-    This is the **client-side** transport used by agents. It connects to
-    the UI server's ``/api/agent/connect`` endpoint, buffers events locally
-    during disconnects, and flushes on reconnect.
-
-    The actual WebSocket connection lifecycle (connect, reconnect loop,
-    send/receive) is managed externally by UIReporterModule. This class
-    provides the buffer, backoff calculation, and message framing.
+    Connects to the UI server's ``/api/agent/connect`` endpoint,
+    authenticates with a first-message token + registration payload,
+    buffers events locally during disconnects, and flushes on reconnect.
     """
 
     def __init__(
@@ -47,6 +44,7 @@ class WebSocketTransport:
         reconnect_base: float = 1.0,
         reconnect_cap: float = 60.0,
         buffer_size: int = 1000,
+        registration: dict[str, Any] | None = None,
     ) -> None:
         self.url = url
         self.token = token
@@ -59,6 +57,8 @@ class WebSocketTransport:
         self._ws: Any | None = None
         self._closed = False
         self._last_sleep = reconnect_base
+        self._connect_task: asyncio.Task[None] | None = None
+        self._registration = registration or {}
 
     @property
     def buffer_size(self) -> int:
@@ -73,11 +73,7 @@ class WebSocketTransport:
     def buffer_event(
         self, agent_id: str, event: UIEvent | ControlResponse
     ) -> None:
-        """Buffer an event locally. Drops oldest if buffer is full.
-
-        Uses deque(maxlen=N) which automatically drops from the left
-        (oldest) when appending beyond capacity.
-        """
+        """Buffer an event locally. Drops oldest if buffer is full."""
         self._buffer.append((agent_id, event))
 
     def drain_buffer(self) -> list[tuple[str, UIEvent | ControlResponse]]:
@@ -96,6 +92,84 @@ class WebSocketTransport:
     def reset_backoff(self) -> None:
         """Reset backoff after successful connection."""
         self._last_sleep = self.reconnect_base
+
+    def start(self) -> None:
+        """Start the background connect loop."""
+        if self._connect_task is None or self._connect_task.done():
+            self._connect_task = asyncio.get_running_loop().create_task(
+                self._connect_loop()
+            )
+
+    async def _connect_loop(self) -> None:
+        """Connect to UI server with reconnect and backoff."""
+        try:
+            import websockets
+        except ImportError:
+            logger.warning("websockets not installed, transport disabled")
+            return
+
+        while not self._closed:
+            try:
+                async with websockets.connect(self.url) as ws:
+                    self._ws = ws
+                    self.reset_backoff()
+
+                    # First-message auth + registration
+                    auth_msg = {
+                        "token": self.token,
+                        "registration": self._registration,
+                    }
+                    await ws.send(json.dumps(auth_msg))
+
+                    # Wait for auth response
+                    resp_raw = await ws.recv()
+                    resp = json.loads(resp_raw)
+                    if resp.get("type") != "auth_ok":
+                        logger.error(
+                            "UI server auth failed: %s", resp.get("error", resp)
+                        )
+                        self._ws = None
+                        await asyncio.sleep(self.next_backoff())
+                        continue
+
+                    logger.info(
+                        "Connected to UI server (agent_id=%s)",
+                        resp.get("agent_id", "?"),
+                    )
+
+                    # Drain buffered events
+                    buffered = self.drain_buffer()
+                    for agent_id, event in buffered:
+                        try:
+                            payload = {
+                                "agent_id": agent_id,
+                                "type": "event",
+                                "payload": event.model_dump(),
+                            }
+                            await ws.send(json.dumps(payload))
+                        except Exception:
+                            logger.debug("Failed to drain buffered event")
+
+                    # Keep alive — read server messages (pings, controls)
+                    async for raw_msg in ws:
+                        try:
+                            data = json.loads(raw_msg)
+                            if data.get("type") == "ping":
+                                continue
+                        except json.JSONDecodeError:
+                            continue
+
+            except (ConnectionError, OSError, asyncio.TimeoutError) as exc:
+                logger.debug("WebSocket disconnected: %s", exc)
+                self._ws = None
+            except Exception:
+                logger.debug("WebSocket error", exc_info=True)
+                self._ws = None
+
+            if not self._closed:
+                delay = self.next_backoff()
+                logger.debug("Reconnecting in %.1fs", delay)
+                await asyncio.sleep(delay)
 
     async def send_event(
         self, agent_id: str, event: UIEvent | ControlResponse
@@ -118,7 +192,7 @@ class WebSocketTransport:
     async def send_control(
         self, agent_id: str, message: ControlMessage
     ) -> None:
-        """Send control message (used by server side, not typical for client)."""
+        """Send control message."""
         if not self.connected:
             raise RuntimeError("Not connected")
         payload = {
@@ -128,27 +202,15 @@ class WebSocketTransport:
         }
         await self._ws.send(json.dumps(payload))
 
-    async def receive(
-        self,
-    ) -> tuple[str, UIEvent | ControlMessage | ControlResponse]:
-        """Receive next message from WebSocket."""
-        if not self.connected:
-            raise RuntimeError("Not connected")
-        raw = await self._ws.recv()
-        data = json.loads(raw)
-        agent_id = data.get("agent_id", "")
-        msg_type = data.get("type", "")
-        payload = data.get("payload", {})
-
-        if msg_type == "control":
-            return agent_id, ControlMessage(**payload)
-        if msg_type == "control_response":
-            return agent_id, ControlResponse(**payload)
-        return agent_id, UIEvent(**payload)
-
     async def close(self) -> None:
-        """Close the transport and flush remaining buffer."""
+        """Close the transport."""
         self._closed = True
+        if self._connect_task is not None:
+            self._connect_task.cancel()
+            try:
+                await self._connect_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if self._ws is not None:
             try:
                 await self._ws.close()

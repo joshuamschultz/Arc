@@ -193,6 +193,31 @@ class ExtensionConfig(BaseModel):
     workspace_tools_dir: str = "tools"
 
 
+
+
+class SecurityConfig(BaseModel):
+    """Security and tier configuration.
+
+    Tier controls credential resolution policy across the entire agent:
+    - federal:    vault required; hard error if unreachable; no env/file fallback
+    - enterprise: vault preferred; warn + env fallback if unreachable
+    - personal:   vault optional; env or ~/.arc/secrets/{name} fallback
+
+    This is the canonical read location for config.security.tier (SDD §4.1).
+    """
+
+    # Canonical tier name — read by vault resolver, memory ACL, executor
+    # selection, and any other policy-aware component.
+    tier: str = Field(
+        default="personal",
+        description=(
+            "Deployment tier: 'federal', 'enterprise', or 'personal'. "
+            "Controls credential resolution, memory ACL defaults, and "
+            "executor selection."
+        ),
+    )
+
+
 # --- Root config ---
 
 
@@ -217,6 +242,7 @@ class ArcAgentConfig(BaseModel):
     eval: EvalConfig = EvalConfig()
     session: SessionConfig = SessionConfig()
     extensions: ExtensionConfig = ExtensionConfig()
+    security: SecurityConfig = SecurityConfig()
 
 
 _ENV_PREFIX = "ARCAGENT_"

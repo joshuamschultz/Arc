@@ -218,7 +218,7 @@ for result in results:
 - **Standalone CLI** — `arc-memory` entry point for independent team memory management.
 
 ```bash
-# Via ArcCLI
+# Via arccmd (the `arc` CLI)
 arc team memory status              # entity count, index health
 arc team memory search "vendors"    # BM25 search
 arc team memory entities --type entity  # list by type
@@ -296,8 +296,8 @@ All agent-generated content passes through validation before storage:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  ArcCLI                                         │
-│  Human interface to all Arc subsystems          │
+│  arccmd                                          │
+│  Human interface to all Arc subsystems           │
 ├─────────────────────────────────────────────────┤
 │  ArcTeam                           <-- here     │
 │  Messaging · Tasks · KB · Files · Memory        │

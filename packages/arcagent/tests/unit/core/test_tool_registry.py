@@ -549,3 +549,297 @@ class TestWrappedExecuteKwargs:
         wrapped = registry._create_wrapped_execute(tool)
         result = await wrapped(x="hello")
         assert result == "ok"
+
+
+class TestToolClassification:
+    """SPEC-017 R-020: every tool is classified as read_only or state_modifying."""
+
+    def test_classification_defaults_to_state_modifying(self) -> None:
+        """Fail-closed default — tools without explicit classification
+        are treated as state_modifying so they cannot accidentally be
+        dispatched in a parallel read-only batch."""
+        tool = RegisteredTool(
+            name="unannotated",
+            description="test",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+        )
+        assert tool.classification == "state_modifying"
+
+    def test_explicit_read_only(self) -> None:
+        tool = RegisteredTool(
+            name="read_x",
+            description="read file",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+            classification="read_only",
+        )
+        assert tool.classification == "read_only"
+
+
+class TestBuiltinToolClassifications:
+    """SPEC-017 Task 3.2: Every built-in tool has a correct classification.
+
+    Read-only: read, grep, find, ls (observe filesystem, no mutation)
+    State-modifying: bash, edit, write (mutate filesystem or process state)
+    """
+
+    def test_builtin_classifications(self, tmp_path: Any) -> None:
+        from arcagent.tools import create_builtin_tools
+
+        tools = {t.name: t for t in create_builtin_tools(tmp_path)}
+
+        expected_read_only = {"read", "grep", "find", "ls"}
+        expected_state_mod = {"bash", "edit", "write"}
+
+        for name in expected_read_only:
+            assert name in tools, f"missing built-in: {name}"
+            assert tools[name].classification == "read_only", (
+                f"{name} must be read_only but is {tools[name].classification}"
+            )
+
+        for name in expected_state_mod:
+            assert name in tools, f"missing built-in: {name}"
+            assert tools[name].classification == "state_modifying", (
+                f"{name} must be state_modifying but is {tools[name].classification}"
+            )
+
+
+class TestPipelineEnforcement:
+    """SPEC-017 R-010 / R-011: pipeline is consulted on every dispatch.
+
+    Phase 3 integration — when the registry is constructed with a
+    ``ToolPolicyPipeline``, every dispatch goes through it. A deny
+    raises :class:`PolicyDenied` and aborts the call.
+    """
+
+    async def test_registry_consults_pipeline_on_dispatch(
+        self,
+        config: ArcAgentConfig,
+        bus: ModuleBus,
+        mock_telemetry: MagicMock,
+    ) -> None:
+        from arcagent.core.tool_policy import ToolPolicyPipeline
+        from arcagent.core.tool_registry import ToolRegistry
+
+        evaluated: list[str] = []
+
+        class RecordingLayer:
+            name = "recording"
+
+            async def evaluate(self, call: Any, ctx: Any) -> Any:
+                from arcagent.core.tool_policy import Decision
+
+                evaluated.append(call.tool_name)
+                return Decision.allow(input_hash="h", evaluated_at_us=1)
+
+        pipeline = ToolPolicyPipeline(layers=[RecordingLayer()])
+        reg = ToolRegistry(
+            config=config.tools,
+            bus=bus,
+            telemetry=mock_telemetry,
+            policy_pipeline=pipeline,
+        )
+
+        tool = RegisteredTool(
+            name="probe",
+            description="probe",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+            classification="read_only",
+        )
+        reg.register(tool)
+        wrapped = reg._create_wrapped_execute(tool)
+        await wrapped()
+
+        assert evaluated == ["probe"]
+
+    async def test_pipeline_deny_raises_policy_denied(
+        self,
+        config: ArcAgentConfig,
+        bus: ModuleBus,
+        mock_telemetry: MagicMock,
+    ) -> None:
+        from arcagent.core.tool_policy import (
+            Decision,
+            PolicyDenied,
+            ToolPolicyPipeline,
+        )
+        from arcagent.core.tool_registry import ToolRegistry
+
+        class DenyAll:
+            name = "deny_all"
+
+            async def evaluate(self, call: Any, ctx: Any) -> Any:
+                return Decision.deny(
+                    layer="deny_all",
+                    rule_id="test.block",
+                    reason=f"{call.tool_name} blocked",
+                    input_hash="h",
+                    evaluated_at_us=1,
+                )
+
+        pipeline = ToolPolicyPipeline(layers=[DenyAll()])
+        reg = ToolRegistry(
+            config=config.tools,
+            bus=bus,
+            telemetry=mock_telemetry,
+            policy_pipeline=pipeline,
+        )
+
+        tool = RegisteredTool(
+            name="blocked",
+            description="blocked",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+            classification="state_modifying",
+        )
+        reg.register(tool)
+        wrapped = reg._create_wrapped_execute(tool)
+
+        with pytest.raises(PolicyDenied) as exc_info:
+            await wrapped()
+
+        assert exc_info.value.decision.layer == "deny_all"
+        assert "blocked" in exc_info.value.decision.reason
+
+    async def test_pipeline_deny_does_not_invoke_tool(
+        self,
+        config: ArcAgentConfig,
+        bus: ModuleBus,
+        mock_telemetry: MagicMock,
+    ) -> None:
+        """A denied call must never reach ``execute()`` — a single code
+        path through ``_create_wrapped_execute`` guarantees this."""
+        from arcagent.core.tool_policy import (
+            Decision,
+            PolicyDenied,
+            ToolPolicyPipeline,
+        )
+        from arcagent.core.tool_registry import ToolRegistry
+
+        class DenyAll:
+            name = "deny_all"
+
+            async def evaluate(self, call: Any, ctx: Any) -> Any:
+                return Decision.deny(
+                    layer="deny_all",
+                    rule_id="test.block",
+                    reason="blocked",
+                    input_hash="h",
+                    evaluated_at_us=1,
+                )
+
+        called = {"count": 0}
+
+        async def _exec(**kwargs: Any) -> str:
+            called["count"] += 1
+            return "should_not_happen"
+
+        pipeline = ToolPolicyPipeline(layers=[DenyAll()])
+        reg = ToolRegistry(
+            config=config.tools,
+            bus=bus,
+            telemetry=mock_telemetry,
+            policy_pipeline=pipeline,
+        )
+        tool = RegisteredTool(
+            name="blocked",
+            description="blocked",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=_exec,
+            classification="state_modifying",
+        )
+        reg.register(tool)
+        wrapped = reg._create_wrapped_execute(tool)
+
+        with pytest.raises(PolicyDenied):
+            await wrapped()
+
+        assert called["count"] == 0
+
+    async def test_no_pipeline_means_no_enforcement(
+        self,
+        config: ArcAgentConfig,
+        bus: ModuleBus,
+        mock_telemetry: MagicMock,
+    ) -> None:
+        """Backward compat — registry without pipeline behaves as before.
+
+        The pipeline is opt-in to preserve the existing test surface.
+        When the wider codebase wires a pipeline through, enforcement
+        becomes load-bearing. Until then the registry is permissive."""
+        from arcagent.core.tool_registry import ToolRegistry
+
+        reg = ToolRegistry(config=config.tools, bus=bus, telemetry=mock_telemetry)
+        tool = RegisteredTool(
+            name="ok",
+            description="ok",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ran"),
+            classification="read_only",
+        )
+        reg.register(tool)
+        wrapped = reg._create_wrapped_execute(tool)
+        result = await wrapped()
+        assert result == "ran"
+
+    async def test_registry_propagates_tier_to_policy_context(
+        self,
+        config: ArcAgentConfig,
+        bus: ModuleBus,
+        mock_telemetry: MagicMock,
+    ) -> None:
+        """SPEC-017 review finding: tier must flow into PolicyContext.
+
+        A prior version hardcoded ``tier="personal"`` in the dispatch
+        path, which meant federal and enterprise deployments recorded
+        ``tier="personal"`` in their audit trail. Regression test."""
+        from arcagent.core.tool_policy import ToolPolicyPipeline
+        from arcagent.core.tool_registry import ToolRegistry
+
+        contexts: list[Any] = []
+
+        class _CtxRecorder:
+            name = "recorder"
+
+            async def evaluate(self, call: Any, ctx: Any) -> Any:
+                from arcagent.core.tool_policy import Decision
+
+                contexts.append(ctx)
+                return Decision.allow(input_hash="h", evaluated_at_us=1)
+
+        pipeline = ToolPolicyPipeline(layers=[_CtxRecorder()])
+        reg = ToolRegistry(
+            config=config.tools,
+            bus=bus,
+            telemetry=mock_telemetry,
+            policy_pipeline=pipeline,
+            tier="federal",
+            policy_version="v2.7.1",
+        )
+        tool = RegisteredTool(
+            name="probe",
+            description="probe",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+            classification="read_only",
+        )
+        reg.register(tool)
+        wrapped = reg._create_wrapped_execute(tool)
+        await wrapped()
+
+        assert len(contexts) == 1
+        assert contexts[0].tier == "federal"
+        assert contexts[0].policy_version == "v2.7.1"
+
+
+# Ensure asyncio import isn't flagged as unused
+_ = asyncio

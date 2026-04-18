@@ -189,6 +189,46 @@ Every `execute` function receives:
 
 Return a string. Raise an exception for errors (ArcRun catches it, emits `tool.error`, sends the error back to the model).
 
+### Parallel Tool Dispatch (SPEC-017 Phase 4)
+
+Read-only tool batches execute concurrently via
+`asyncio.gather(return_exceptions=True)` bounded by an `asyncio.Semaphore`
+(default 10, FIPS mode 4). Any state-modifying tool — or an implicit
+dependency (shared path arg across calls) — forces the entire batch
+sequential.
+
+```python
+from arcrun.parallel_dispatch import BatchClassifier, dispatch_batch
+
+classifier = BatchClassifier(state.registry)
+results = await dispatch_batch(
+    calls, runner, classifier=classifier, max_parallel=10
+)
+```
+
+Submission order is preserved in the result list regardless of completion
+order. Partial failures (single tool raises) surface as exception objects
+in the result slot; the batch does not abort.
+
+### Structured Task Completion (SPEC-017 Phase 5)
+
+`task_complete` is a built-in loop-termination signal. The agent calls it
+once to indicate the task is done:
+
+```python
+from arcrun.builtins import make_task_complete_tool
+
+state.registry.register(make_task_complete_tool())
+```
+
+When the strategy sees a `task_complete` invocation, it emits
+`loop.completed` with the structured payload (`status`, `summary`,
+`artifacts?`, `next_steps?`, `error?`) and terminates cleanly.
+
+Budget caps (`max_turns`, `max_cost_usd` on `RunState`) synthesize a
+failed `task_complete` payload on breach, so the audit trail always
+shows a structured terminator.
+
 ### Events
 
 Every action emits an event. Always. Non-negotiable. This is the audit trail.

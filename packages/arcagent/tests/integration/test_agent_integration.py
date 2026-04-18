@@ -151,8 +151,12 @@ class TestRunWithMockLLM:
         await agent.startup()
         result = await agent.run("test integration task")
 
-        # Model was loaded
-        mock_load_model.assert_called_once_with("test/model")
+        # Model was loaded (SPEC-017 R-001: on_event now also passed)
+        mock_load_model.assert_called_once()
+        load_args, load_kwargs = mock_load_model.call_args
+        assert load_args == ("test/model",)
+        assert load_kwargs["agent_label"] == "integration-agent"
+        assert callable(load_kwargs["on_event"])
 
         # Run loop was called with correct args
         call_kwargs = mock_arcrun_run.call_args

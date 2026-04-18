@@ -692,15 +692,8 @@
 
     /* --- Connection --- */
     const connUI = new ConnectionUI(document.getElementById('connection-banner'));
-    const token = new URLSearchParams(window.location.search).get('token') || '';
-    // Strip token from URL to prevent leakage via browser history / referrer
-    if (token && window.history.replaceState) {
-      const url = new URL(window.location);
-      url.searchParams.delete('token');
-      window.history.replaceState({}, '', url.pathname + url.search);
-    }
     const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new RobustWebSocket(wsProto + '//' + location.host + '/ws', token);
+    const ws = new RobustWebSocket(wsProto + '//' + location.host + '/ws', '');
 
     ws.addEventListener('statechange', (e) => connUI.update(e.detail));
     ws.addEventListener('message', (e) => {
@@ -711,7 +704,7 @@
       }
     });
 
-    if (token) ws.connect();
+    ws.connect();
 
     /* --- LogTable --- */
     const traceCountEl = document.getElementById('trace-count');
@@ -991,9 +984,7 @@
       document.getElementById('detail-trace-id').textContent = traceId;
 
       // Fetch trace detail
-      fetch('/api/traces/' + traceId, {
-        headers: { 'Authorization': 'Bearer ' + token }
-      })
+      fetch('/api/traces/' + traceId)
       .then(r => r.json())
       .then(data => {
         _currentTraceData = data;
@@ -1098,9 +1089,8 @@
 
     /* --- Polling for REST data --- */
     async function fetchAPI(path) {
-      if (!token) return null;
       try {
-        const r = await fetch(path, { headers: { 'Authorization': 'Bearer ' + token } });
+        const r = await fetch(path);
         if (!r.ok) return null;
         return await r.json();
       } catch { return null; }
@@ -1356,11 +1346,8 @@
 
     /* --- Export Button --- */
     document.getElementById('btn-export').addEventListener('click', async () => {
-      if (!token) return;
       try {
-        const resp = await fetch('/api/export?format=json', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
+        const resp = await fetch('/api/export?format=json');
         if (!resp.ok) return;
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -1646,9 +1633,7 @@
       const statusEl = document.getElementById('config-status');
       statusEl.textContent = 'Loading...';
       try {
-        const headers = {};
-        if (token) headers['Authorization'] = 'Bearer ' + token;
-        const resp = await fetch('/api/arcllm-config', { headers });
+        const resp = await fetch('/api/arcllm-config');
         if (!resp.ok) {
           const body = await resp.text();
           console.warn('arcllm-config load failed:', resp.status, body);
@@ -1670,10 +1655,6 @@
     // --- Save config ---
     document.getElementById('cfg-save')?.addEventListener('click', async () => {
       const statusEl = document.getElementById('cfg-save-status');
-      if (!token) {
-        if (statusEl) { statusEl.textContent = 'Authentication required'; statusEl.style.color = 'var(--status-error)'; }
-        return;
-      }
       statusEl.textContent = 'Saving...';
       statusEl.style.color = 'var(--text-muted)';
 
@@ -1681,7 +1662,7 @@
       try {
         const resp = await fetch('/api/arcllm-config', {
           method: 'PATCH',
-          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updates),
         });
         const data = await resp.json();
