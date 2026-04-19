@@ -1,0 +1,76 @@
+name: voice
+version: "1.0.0"
+description: >
+  STT/TTS provider Protocol with multiple plugin backends.
+  Air-gap path via Whisper.cpp + Piper (no network).
+  Cloud options via ElevenLabs + OpenAI Whisper API.
+  Voice transcripts treated as PII per AUTO-8 (bidirectional redaction
+  at federal/enterprise tiers).
+
+author: arc-core
+spec: SPEC-018
+tasks: T4.7
+
+tools:
+  - name: transcribe
+    description: Transcribe an audio file to text
+    required: false
+  - name: synthesize
+    description: Synthesize text to an audio file
+    required: false
+
+events:
+  subscribes:
+    - voice.transcribe.request
+    - voice.synthesize.request
+  emits:
+    - voice.transcribed
+    - voice.synthesized
+
+config_schema:
+  enabled:
+    type: boolean
+    default: true
+    description: Toggle the voice module on/off
+  tier:
+    type: string
+    enum: [federal, enterprise, personal]
+    default: personal
+    description: >
+      Determines PII redaction and air-gap enforcement defaults.
+      Federal: air_gap=true, redact_pii=true (cannot override).
+      Enterprise: redact_pii=true.
+      Personal: opt-in.
+  stt_provider:
+    type: string
+    enum: [whisper_cpp, whisper_api]
+    default: whisper_cpp
+    description: STT provider (whisper_cpp = air-gap; whisper_api = OpenAI cloud)
+  tts_provider:
+    type: string
+    enum: [piper, elevenlabs]
+    default: piper
+    description: TTS provider (piper = air-gap; elevenlabs = cloud)
+  air_gap:
+    type: boolean
+    default: false
+    description: >
+      When true, only local/subprocess providers are allowed.
+      Federal tier always enforces air_gap=true regardless of this setting.
+  redact_pii:
+    type: boolean
+    default: false
+    description: >
+      Apply bidirectional PII redaction on transcripts.
+      Federal and enterprise tiers always redact regardless of this setting.
+
+security:
+  owasp_mitigations:
+    - LLM02: Raw transcripts never logged; only SHA-256 hash in audit events
+    - LLM06: Federal tier hard-errors on cloud providers at construction time
+    - ASI03: API keys read from env at call time; never cached or logged
+    - ASI10: AirGapProviderRequired raised before any audio data is processed
+
+audit_events:
+  - voice.transcribed
+  - voice.synthesized

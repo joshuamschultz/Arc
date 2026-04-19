@@ -33,37 +33,70 @@ one agent task spawned.
 DM Pairing Interceptor (T1.8):
 ================================
 Before routing any event to the agent executor, SessionRouter checks whether
-the user is in the allowlist. If not, the message is intercepted:
-
-1. If the user has NO pending pairing code: mint a new code, DM it to the user
-   via the adapter, return (do NOT route to agent).
-2. If the user HAS a pending pairing code: re-send the pending code reminder,
-   return (still do NOT route to agent — the user must pair first).
-
-Once a code is approved (via ``arc gateway pair approve <code>``), the operator
-adds the user to the allowlist and subsequent messages route normally.
+the user is in the allowlist (via the composed PairingInterceptor). If not,
+the message is intercepted: a pairing code is minted and DM'd to the user via
+the adapter_map, and the event is dropped (not routed to the agent).
 
 The interceptor is a no-op when ``pairing_store=None`` (default), allowing
 the gateway to run without pairing enforcement during development or testing.
+
+Queue management (T1.8 / SPEC-018):
+=====================================
+Per-session queues are managed by the composed QueueManager, which enforces
+a bounded depth (max 100) and idle TTL eviction (1h) to prevent unbounded
+growth. Test-hook counters (agent_tasks_spawned, queued_events) are retained
+for backward-compatibility with existing tests.
 """
 
 from __future__ import annotations
 
 import asyncio
-import collections
 import hashlib
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, Executor, InboundEvent
+from arcgateway.session_pairing import PairingInterceptor
+from arcgateway.session_queue import QueueManager
+from arcgateway.stream_bridge import StreamBridge
+from arcgateway.telemetry import hash_user_did
 
 if TYPE_CHECKING:
     # IdentityGraph is an optional integration dep; guard prevents circular import.
     from arcagent.modules.session.identity_graph import IdentityGraph
 
+    from arcgateway.adapters.base import BasePlatformAdapter
+
 _logger = logging.getLogger("arcgateway.session")
+
+
+@runtime_checkable
+class _AdapterProtocol(Protocol):
+    """Minimum adapter surface required by SessionRouter / StreamBridge.
+
+    Defined here so ``_adapter`` can be typed precisely without importing
+    ``BasePlatformAdapter`` at module level (which would create a hard dep
+    on arcgateway.adapters at import time).
+
+    ``send_with_id`` is optional — StreamBridge detects its presence via
+    ``hasattr`` and falls back to ``send`` when absent.
+    """
+
+    async def send(self, target: DeliveryTarget, message: str) -> None:
+        """Deliver a complete message to the target."""
+        ...
+
+    async def send_with_id(self, target: DeliveryTarget, message: str) -> str | None:
+        """Deliver a message and return a platform message ID for later edits.
+
+        Optional extension method.  StreamBridge uses ``hasattr`` to probe for
+        this before calling it; adapters that do not support message editing
+        need not implement it.
+        """
+        ...
 
 
 def build_session_key(agent_did: str, user_did: str) -> str:
@@ -88,19 +121,20 @@ def build_session_key(agent_did: str, user_did: str) -> str:
     return digest[:16]
 
 
+
 class SessionRouter:
     """Routes inbound events to per-session agent tasks.
 
     Each unique (agent_did, user_did) pair maps to exactly one active session
     at a time. Concurrent inbound messages for the same session are queued
-    in a per-session FIFO and replayed sequentially after the active turn
-    completes.
+    in a per-session FIFO (via QueueManager) and replayed sequentially after
+    the active turn completes.
 
-    Pairing interceptor: If a PairingStore is provided, messages from users
+    Pairing interceptor: Composed via PairingInterceptor. Messages from users
     NOT in the allowlist are intercepted BEFORE session routing. The user
     receives a one-time pairing code via DM and must await operator approval.
     Intercepted messages are silently dropped (not queued) — the user must
-    re-send after pairing. This mirrors Hermes gateway/pairing.py behaviour.
+    re-send after pairing.
 
     Thread safety: SessionRouter is NOT thread-safe. It is designed for
     single-threaded asyncio use. All state mutations happen in synchronous
@@ -108,17 +142,14 @@ class SessionRouter:
     will not be interrupted.
 
     Attributes:
-        _executor: Executor implementation to run agent tasks.
-        _active_sessions: Maps session_key → asyncio.Event that is set when
-            the active turn completes (allowing the queue-drainer to proceed).
-        _queues: Per-session FIFO of queued InboundEvents.
-        _pending_tasks: Strong references to spawned asyncio.Tasks, preventing
-            premature garbage collection before they complete.
-        _pairing_store: Optional PairingStore for DM pairing enforcement.
-        _user_allowlist: Set of approved user_did values. When None, all users
-            are treated as approved (no pairing enforcement).
-        agent_tasks_spawned: Counter for testing — maps session_key → int.
-        queued_events: Snapshot of per-session queues for testing.
+        _executor:         Executor implementation to run agent tasks.
+        _active_sessions:  Maps session_key → asyncio.Event set when the
+                           active turn completes.
+        _queue_mgr:        QueueManager for per-session bounded FIFO queues.
+        _pending_tasks:    Strong references to spawned asyncio.Tasks.
+        _pairing:          PairingInterceptor for DM pairing enforcement.
+        agent_tasks_spawned: Counter for testing (test-hooks only).
+        queued_events:     Snapshot for testing (test-hooks only).
     """
 
     def __init__(
@@ -129,59 +160,63 @@ class SessionRouter:
         user_allowlist: set[str] | None = None,
         pairing_db_path: Path | None = None,
         identity_graph: IdentityGraph | None = None,
+        adapter: BasePlatformAdapter | None = None,
+        adapter_map: dict[str, BasePlatformAdapter] | None = None,
+        delivery_target_factory: Any | None = None,
+        _test_hooks: bool = True,
     ) -> None:
         """Initialise SessionRouter with the given executor.
 
         Args:
             executor:       Executor implementation (AsyncioExecutor, etc.).
-            pairing_store:  Optional PairingStore instance. When provided,
-                            messages from unknown users are intercepted and a
-                            one-time pairing code is DM'd to them.
+            pairing_store:  Optional PairingStore instance.
             user_allowlist: Set of approved user_did values. None = all approved.
-            pairing_db_path: Convenience arg — if provided and pairing_store is
-                             None, a PairingStore is created at this path. Ignored
-                             if pairing_store is explicitly passed.
-            identity_graph:  Optional IdentityGraph instance.  When provided,
-                             each inbound event's user_did is resolved through
-                             the graph before the session key is computed —
-                             enabling cross-platform identity unification (D-06).
-                             When None, the adapter-supplied user_did is used as-is.
+            pairing_db_path: Convenience arg — auto-creates a PairingStore at path.
+            identity_graph:  Optional IdentityGraph for cross-platform identity
+                             resolution (D-06 / SDD §3.3).
+            adapter:        Optional primary platform adapter for StreamBridge delivery.
+            adapter_map:    Optional platform→adapter map for pairing DM delivery.
+                            When provided, PairingInterceptor uses it to deliver codes.
+            delivery_target_factory: Optional callable
+                            ``(event: InboundEvent) -> DeliveryTarget``.
+            _test_hooks:    When True (default), maintains agent_tasks_spawned and
+                            queued_events dicts for test introspection.
         """
         self._executor = executor
-        # Cross-platform identity resolution (SDD §3.3 / T1.3).
-        # Stored as Any so we don't hard-depend on arcagent at import time;
-        # arcagent is an optional integration dep for arcgateway.
         self._identity_graph: object | None = identity_graph
+        self._test_hooks = _test_hooks
 
         # SYNCHRONOUS GUARD STATE — never modify these inside an await.
         # session_key → asyncio.Event (set when current turn completes)
         self._active_sessions: dict[str, asyncio.Event] = {}
 
-        # session_key → deque of queued events (FIFO)
-        self._queues: dict[str, collections.deque[InboundEvent]] = {}
-
         # Strong references to spawned tasks — prevents GC before completion.
-        # Tasks remove themselves on completion via the done callback.
         self._pending_tasks: set[asyncio.Task[None]] = set()
 
-        # Pairing enforcement (T1.8 — optional; no-op when None)
-        self._pairing_store: object | None
-        if pairing_store is not None:
-            self._pairing_store = pairing_store
-        elif pairing_db_path is not None:
-            # Lazy import to avoid circular dependency at module load time
-            from arcgateway.pairing import PairingStore
+        # StreamBridge adapter wiring (optional — no-op when None).
+        self._adapter: _AdapterProtocol | None = adapter  # type: ignore[assignment]
+        self._delivery_target_factory = delivery_target_factory
+        self._stream_bridge = StreamBridge()
 
-            self._pairing_store = PairingStore(db_path=pairing_db_path)
-        else:
-            self._pairing_store = None
+        # Composed pairing interceptor (T1.8).
+        self._pairing = PairingInterceptor(
+            user_allowlist=user_allowlist,
+            pairing_store=pairing_store,
+            pairing_db_path=pairing_db_path,
+            adapter_map=adapter_map,
+        )
 
-        # When None, all users are approved (pairing enforcement disabled)
-        self._user_allowlist: set[str] | None = user_allowlist
+        # Composed queue manager with bounded depth + idle eviction.
+        self._queue_mgr = QueueManager()
 
-        # Introspection hooks for testing (see test_race_regression.py)
+        # Test-hook counters (preserved for backward-compat with existing tests).
+        # Production code must NOT gate logic on these.
         self.agent_tasks_spawned: dict[str, int] = {}
         self.queued_events: dict[str, list[InboundEvent]] = {}
+
+    # -----------------------------------------------------------------------
+    # Allowlist delegation (public API — callers reference SessionRouter)
+    # -----------------------------------------------------------------------
 
     def add_approved_user(self, user_did: str) -> None:
         """Add a user DID to the allowlist (called after pairing approval).
@@ -189,10 +224,11 @@ class SessionRouter:
         Args:
             user_did: The DID of the newly approved user.
         """
-        if self._user_allowlist is None:
-            self._user_allowlist = set()
-        self._user_allowlist.add(user_did)
-        _logger.info("Pairing: user %r added to allowlist", user_did)
+        self._pairing.add_approved_user(user_did)
+        # Also emit via the session logger for backward-compat with existing tests
+        # that capture arcgateway.session. PairingInterceptor emits the same event
+        # via arcgateway.session_pairing.
+        _logger.info("Pairing: user uid_h=%s added to allowlist", hash_user_did(user_did))
 
     def remove_approved_user(self, user_did: str) -> None:
         """Remove a user DID from the allowlist (e.g. on ban or re-pair).
@@ -200,21 +236,11 @@ class SessionRouter:
         Args:
             user_did: The DID to remove.
         """
-        if self._user_allowlist is not None:
-            self._user_allowlist.discard(user_did)
+        self._pairing.remove_approved_user(user_did)
 
-    def _is_user_approved(self, user_did: str) -> bool:
-        """Return True if the user is approved or pairing enforcement is disabled.
-
-        Args:
-            user_did: The user's DID to check.
-
-        Returns:
-            True if approved or allowlist is None (enforcement disabled).
-        """
-        if self._user_allowlist is None:
-            return True  # No pairing enforcement active
-        return user_did in self._user_allowlist
+    # -----------------------------------------------------------------------
+    # Core routing
+    # -----------------------------------------------------------------------
 
     async def handle(self, event: InboundEvent) -> None:
         """Route an inbound event to its session.
@@ -224,9 +250,7 @@ class SessionRouter:
 
         Pairing intercept runs BEFORE the session-key guard. If the user is
         not in the allowlist, the message is intercepted (code minted and DM'd)
-        and this method returns WITHOUT routing to the agent. Both "no pending
-        code" and "already has pending code" cases are intercepted — in neither
-        case should the unapproved user reach the agent.
+        and this method returns WITHOUT routing to the agent.
 
         RACE-CONDITION GUARD: The check-and-assign of ``_active_sessions``
         is SYNCHRONOUS. No ``await`` occurs between the guard check and the
@@ -236,11 +260,7 @@ class SessionRouter:
             event: Normalised inbound event from a platform adapter.
         """
         # --- Identity graph resolution (T1.3 / SDD §3.3) ---
-        # Resolve the platform-scoped user_did to a stable cross-platform DID
-        # BEFORE the pairing check and race guard.  This call is SYNCHRONOUS
-        # (SQLite read) so it does not introduce an await before the guard.
-        # The resolved DID replaces event.user_did and event.session_key so
-        # subsequent routing uses the canonical cross-platform identity.
+        # Synchronous (SQLite read) — no await before the race guard.
         if self._identity_graph is not None:
             resolved_did = self._resolve_user_did(event.platform, event.user_did)
             if resolved_did != event.user_did:
@@ -250,39 +270,30 @@ class SessionRouter:
                 })
 
         # --- Pairing interceptor (T1.8) ---
-        # Runs before session routing. Approved users pass through immediately.
-        if not self._is_user_approved(event.user_did):
-            await self._handle_unpaired_user(event)
-            return  # Do NOT route to agent — user must pair first
+        if not self._pairing.is_user_approved(event.user_did):
+            await self._pairing.handle_unpaired_user(event)
+            return
 
         session_key = event.session_key
 
-        # CRITICAL: This if-block and the dict assignment below are synchronous.
+        # CRITICAL: if-block and dict assignment below are synchronous.
         # No await may appear between the guard check and the assignment.
         if session_key in self._active_sessions:
-            # A turn is already in flight — queue the new event for sequential replay.
             self._queue_for_session(session_key, event)
             return
 
         # Mark the session as active BEFORE any await.
-        # asyncio guarantees: no other coroutine runs between this statement
-        # and the preceding if-check (both are synchronous, no yield point).
         done_event = asyncio.Event()
         self._active_sessions[session_key] = done_event
 
-        # Initialise per-session bookkeeping if this is the first message.
-        if session_key not in self._queues:
-            self._queues[session_key] = collections.deque()
-            self.queued_events[session_key] = []
-            self.agent_tasks_spawned[session_key] = 0
+        # Initialise per-session bookkeeping.
+        self._queue_mgr.ensure_session(session_key)
+        if self._test_hooks:
+            if session_key not in self.agent_tasks_spawned:
+                self.agent_tasks_spawned[session_key] = 0
+                self.queued_events[session_key] = []
+            self.agent_tasks_spawned[session_key] += 1
 
-        # Increment spawn counter BEFORE create_task so the test assertion
-        # sees the correct count even if the task runs immediately.
-        self.agent_tasks_spawned[session_key] += 1
-
-        # Spawn the agent task. create_task schedules it on the event loop
-        # but does NOT run it immediately — control returns here first.
-        # Store a strong reference to prevent GC before the task completes.
         task = asyncio.create_task(
             self._process_session(session_key, event, done_event),
             name=f"session:{session_key}",
@@ -290,120 +301,22 @@ class SessionRouter:
         self._pending_tasks.add(task)
         task.add_done_callback(self._pending_tasks.discard)
 
-    async def _handle_unpaired_user(self, event: InboundEvent) -> None:
-        """Intercept a message from an unapproved user and issue a pairing code.
-
-        Mints a new pairing code (or reminds the user of their existing pending
-        code) and logs the interception. The actual DM delivery to the user is
-        delegated to the adapter via event metadata — the adapter is responsible
-        for calling ``adapter.send(event.chat_id, message)`` when it receives
-        the pairing DM trigger.
-
-        TODO(M1 T1.7 integration): Wire the DM response back through the adapter.
-        Currently logs the action. Real delivery requires the adapter reference.
-        See SDD §3.1 DM Pairing and runner.py integration.
-
-        Args:
-            event: The intercepted inbound event from an unapproved user.
-        """
-        if self._pairing_store is None:
-            # Pairing store configured but not wired — log and silently drop.
-            _logger.warning(
-                "Pairing: user %r is not in allowlist but no pairing_store configured "
-                "— message dropped (platform=%s)",
-                event.user_did,
-                event.platform,
-            )
-            return
-
-        # Import here to keep top-level import graph clean
-        from arcgateway.pairing import (
-            PairingPlatformFull,
-            PairingPlatformLocked,
-            PairingRateLimited,
-            PairingStore,
-        )
-
-        if not isinstance(self._pairing_store, PairingStore):
-            _logger.error(
-                "Pairing: pairing_store is not a PairingStore instance — skipping"
-            )
-            return
-
-        try:
-            pairing_code = await self._pairing_store.mint_code(
-                platform=event.platform,
-                platform_user_id=event.user_did,
-            )
-            _logger.info(
-                "Pairing: minted code for user %r on platform %r "
-                "(code_id hidden — see audit log)",
-                event.user_did,
-                event.platform,
-            )
-            # TODO(M1 T1.7 integration): Deliver code via adapter.send():
-            #   await adapter.send(
-            #       event.chat_id,
-            #       f"To pair with this agent, share this code with your operator: "
-            #       f"{pairing_code.code}\n\nCode expires in 1 hour.",
-            #   )
-            # The pairing_code object is intentionally not logged here (it's a secret).
-            del pairing_code  # Prevent accidental log inclusion via __repr__
-
-        except PairingRateLimited:
-            _logger.info(
-                "Pairing: user %r already has a pending code on platform %r "
-                "— reminding (rate limited)",
-                event.user_did,
-                event.platform,
-            )
-            # TODO(M1 T1.7 integration): Re-send reminder via adapter.send():
-            #   await adapter.send(
-            #       event.chat_id,
-            #       "You already have a pending pairing code. "
-            #       "Please share it with your operator or wait for it to expire.",
-            #   )
-
-        except PairingPlatformFull:
-            _logger.warning(
-                "Pairing: platform %r has too many pending codes — user %r dropped",
-                event.platform,
-                event.user_did,
-            )
-            # TODO(M1 T1.7 integration): Optionally notify user that pairing is busy.
-
-        except PairingPlatformLocked:
-            _logger.warning(
-                "Pairing: platform %r is locked — user %r dropped",
-                event.platform,
-                event.user_did,
-            )
-            # TODO(M1 T1.7 integration): Optionally notify user that pairing is locked.
+    # -----------------------------------------------------------------------
+    # Private session processing
+    # -----------------------------------------------------------------------
 
     def _queue_for_session(self, session_key: str, event: InboundEvent) -> None:
-        """Append event to the per-session FIFO queue.
+        """Append event to the per-session FIFO queue (via QueueManager).
 
         Called synchronously from handle() when a session is already active.
-        Initialises the queue structures on first use.
 
         Args:
             session_key: Unique session identifier.
             event: Event to enqueue.
         """
-        if session_key not in self._queues:
-            self._queues[session_key] = collections.deque()
-            self.queued_events[session_key] = []
-            self.agent_tasks_spawned[session_key] = 0
-
-        self._queues[session_key].append(event)
-        # Keep testing snapshot in sync
-        self.queued_events[session_key] = list(self._queues[session_key])
-
-        _logger.debug(
-            "Session %s busy — queued event (queue depth=%d)",
-            session_key,
-            len(self._queues[session_key]),
-        )
+        enqueued = self._queue_mgr.enqueue(session_key, event)
+        if enqueued and self._test_hooks:
+            self.queued_events[session_key] = self._queue_mgr.snapshot(session_key)
 
     async def _process_session(
         self,
@@ -417,9 +330,6 @@ class SessionRouter:
         checks whether new messages were queued while the turn was in
         flight. If so, processes them sequentially (one turn at a time).
 
-        Clears the session from ``_active_sessions`` when the queue is
-        empty so the next inbound message starts a fresh task.
-
         Args:
             session_key: Session being processed.
             event: The triggering event for this turn.
@@ -432,70 +342,77 @@ class SessionRouter:
         finally:
             done_event.set()
 
-        # Drain any messages that arrived while we were running.
         await self._drain_queue(session_key)
 
     async def _run_turn(self, session_key: str, event: InboundEvent) -> None:
         """Execute a single agent turn via the executor.
 
-        Collects all deltas from the executor and (in real integration)
-        forwards them via StreamBridge → Adapter.send(). In the skeleton,
-        deltas are logged for observability.
-
-        TODO (M1 final integration): Connect to StreamBridge for real
-        platform delivery. See SDD §3.1 Stream Flood-Control.
+        When an adapter is wired, forwards deltas via StreamBridge.consume()
+        for per-token progressive delivery with 3-strikes flood-control.
+        When no adapter is wired, logs deltas for observability (dev/test mode).
 
         Args:
             session_key: Session being processed.
             event: Inbound event to execute.
         """
         _logger.info(
-            "Session %s: starting turn (platform=%s user=%s)",
-            session_key,
-            event.platform,
-            event.user_did,
+            "Session %s: turn start platform=%s uid_h=%s",
+            session_key, event.platform, hash_user_did(event.user_did),
         )
         try:
             delta_stream: AsyncIterator[Delta] = await self._executor.run(event)
-            async for delta in delta_stream:
-                if delta.is_final:
-                    _logger.debug("Session %s: turn complete", session_key)
-                else:
-                    # TODO: forward delta to StreamBridge → Adapter.send()
-                    _logger.debug(
-                        "Session %s: delta kind=%s content=%r",
-                        session_key,
-                        delta.kind,
-                        delta.content[:80] if delta.content else "",
-                    )
+
+            if self._adapter is not None:
+                target = self._resolve_delivery_target(event)
+                await self._stream_bridge.consume(delta_stream, target, self._adapter)
+            else:
+                async for delta in delta_stream:
+                    if delta.is_final:
+                        _logger.debug("Session %s: turn complete", session_key)
+                    else:
+                        _logger.debug(
+                            "Session %s: delta kind=%s content=%r",
+                            session_key,
+                            delta.kind,
+                            delta.content[:80] if delta.content else "",
+                        )
         except Exception:
             _logger.exception("Executor error in session %s", session_key)
             raise
 
+    def _resolve_delivery_target(self, event: InboundEvent) -> DeliveryTarget:
+        """Build a DeliveryTarget from an InboundEvent.
+
+        Args:
+            event: Inbound event to derive a target from.
+
+        Returns:
+            DeliveryTarget for the event's platform chat.
+        """
+        if self._delivery_target_factory is not None:
+            return cast("DeliveryTarget", self._delivery_target_factory(event))
+        return DeliveryTarget.parse(f"{event.platform}:{event.chat_id}")
+
     async def _drain_queue(self, session_key: str) -> None:
         """Process queued events sequentially after the active turn completes.
-
-        Keeps the session active (in ``_active_sessions``) while there are
-        queued messages. Only removes the session when the queue is empty,
-        allowing the next inbound message to start a fresh task.
 
         Args:
             session_key: Session whose queue to drain.
         """
-        queue = self._queues.get(session_key)
+        queue = self._queue_mgr.peek_queue(session_key)
         if not queue:
-            # No pending messages — release the session slot.
             self._active_sessions.pop(session_key, None)
             return
 
         while queue:
             next_event = queue.popleft()
-            # Update testing snapshot
-            self.queued_events[session_key] = list(queue)
+            if self._test_hooks:
+                self.queued_events[session_key] = list(queue)
 
             done_event = asyncio.Event()
             self._active_sessions[session_key] = done_event
-            self.agent_tasks_spawned[session_key] += 1
+            if self._test_hooks:
+                self.agent_tasks_spawned[session_key] += 1
 
             try:
                 await self._run_turn(session_key, next_event)
@@ -506,23 +423,14 @@ class SessionRouter:
             finally:
                 done_event.set()
 
-        # Queue drained — release the session slot.
         self._active_sessions.pop(session_key, None)
 
     def _resolve_user_did(self, platform: str, raw_user_did: str) -> str:
         """Resolve a platform-scoped user_did to a stable cross-platform DID.
 
-        Delegates to IdentityGraph.resolve_user_identity() when an identity
-        graph is configured.  Returns raw_user_did unchanged when no graph is
-        available — callers may rely on this being a pure function for any
-        given (platform, raw_user_did) input.
-
-        The call is synchronous (SQLite) so it is safe to place before the
-        asyncio race-condition guard in handle().
-
         Args:
             platform: Source platform name (e.g. "telegram", "slack").
-            raw_user_did: Adapter-supplied DID (e.g. "did:arc:telegram:12345").
+            raw_user_did: Adapter-supplied DID.
 
         Returns:
             Stable cross-platform user DID, or raw_user_did if not resolvable.
@@ -530,23 +438,15 @@ class SessionRouter:
         if self._identity_graph is None:
             return raw_user_did
 
-        # identity_graph is stored as object | None to avoid hard import at
-        # module level.  We call the method by name — if the object does not
-        # have resolve_user_identity the AttributeError propagates intentionally.
-        # Extract the raw platform-native user ID from the DID if possible.
-        # Adapters use the convention "did:arc:{platform}:{user_id}".
         prefix = f"did:arc:{platform}:"
         if raw_user_did.startswith(prefix):
             platform_user_id = raw_user_did[len(prefix):]
         elif ":" in raw_user_did:
-            # Slack convention: "slack:{user_id}"
             platform_user_id = raw_user_did.split(":", 1)[-1]
         else:
             platform_user_id = raw_user_did
 
         try:
-            # _identity_graph is stored as object|None to avoid hard import at module level.
-            # cast to Any so we can call resolve_user_identity without an attr-defined error.
             _graph = cast(Any, self._identity_graph)
             resolved: str = _graph.resolve_user_identity(platform, platform_user_id)
             return resolved
@@ -558,11 +458,14 @@ class SessionRouter:
             )
             return raw_user_did
 
+    # -----------------------------------------------------------------------
+    # Observability helpers
+    # -----------------------------------------------------------------------
+
     def active_session_count(self) -> int:
         """Return the number of currently active sessions."""
         return len(self._active_sessions)
 
     def queue_depth(self, session_key: str) -> int:
         """Return the number of queued (pending) events for a session."""
-        q = self._queues.get(session_key)
-        return len(q) if q is not None else 0
+        return self._queue_mgr.depth(session_key)

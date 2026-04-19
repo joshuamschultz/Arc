@@ -1,17 +1,16 @@
-"""SessionIndex — polling FTS5 indexer for JSONL session files.
+"""SessionIndex -- polling FTS5 indexer for JSONL session files.
 
-Architecture (SDD §3.2):
-  sessions/*.jsonl  ← primary store (audit-truth, written by session_manager)
-      ↑ poll every poll_interval seconds
+Architecture (SDD section 3.2):
+  sessions/*.jsonl  -- primary store (audit-truth, written by session_manager)
+      poll every poll_interval seconds
   SessionIndex
-      ↓ INSERT INTO messages + trigger → messages_fts (FTS5 external-content)
-  sessions/index.db ← derived store (search reads here)
+      INSERT INTO messages + trigger -> messages_fts (FTS5 external-content)
+  sessions/index.db -- derived store (search reads here)
 
 Crash-safety:
   The indexer tracks the last byte offset indexed per JSONL file in the
-  sync_state table.  On restart it replays from the last committed offset,
-  so no messages are lost and no messages are double-counted (idempotent
-  replay).  Partial lines at EOF are skipped until the writer finishes them.
+  sync_state table.  On restart it replays from the last committed offset.
+  Partial lines at EOF are skipped until the writer finishes them.
 
 Thread-safety design:
   SQLite connections are NOT shared across threads.  Each call site opens its
@@ -19,12 +18,20 @@ Thread-safety design:
   after.  This avoids the segfault that occurs when stop() closes a connection
   while _scan_once() (running in asyncio.to_thread) still holds it open.
 
-WAL mode is enabled so readers (session_search) never block the indexer writer.
+Performance (SPEC-018 Wave B1):
+  - asyncio.create_task() replaces asyncio.get_event_loop().create_task().
+  - Per-row INSERT loop in _index_file replaced with executemany() in batches
+    of 500.
+  - rebuild() method runs full re-index with PRAGMA synchronous=OFF and
+    PRAGMA journal_mode=MEMORY.
+    DURABILITY TRADEOFF: crash during rebuild may corrupt the index; delete
+    index.db and re-run rebuild() to recover (JSONL files are the truth).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import sqlite3
 from datetime import datetime
@@ -37,7 +44,9 @@ from arcagent.modules.session.store import read_messages_from_offset
 
 _logger = logging.getLogger("arcagent.modules.session.index")
 
-# SQLite schema.  External-content FTS5 keeps snippet() / highlight() working.
+# Batch size for executemany() inserts.
+_INSERT_BATCH_SIZE = 500
+
 _SCHEMA_SQL = """
 PRAGMA journal_mode=WAL;
 
@@ -88,17 +97,21 @@ class SearchHit(BaseModel):
     classification: str
 
 
+_INSERT_SQL = (
+    "INSERT INTO messages("
+    "session_id, user_did, agent_did, classification, "
+    "role, ts, content, jsonl_path, jsonl_offset"
+    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+)
+
 class SessionIndex:
     """Polling indexer: reads JSONL files, writes FTS5 index.
 
     Public API:
-      await index.start()   — initialises schema, starts background poll loop
-      await index.stop()    — cancels poll loop
-      index.search(...)     — synchronous FTS5 query (opens its own connection)
-
-    Thread-safety: every blocking DB operation (scan_once, search) opens a
-    fresh sqlite3 connection and closes it before returning.  No connection is
-    shared across threads or stored as long-lived instance state.
+      await index.start()    -- initialises schema, starts background poll loop
+      await index.stop()     -- cancels poll loop
+      await index.rebuild()  -- full re-index with fast MEMORY journal (see note)
+      index.search(...)      -- synchronous FTS5 query (opens its own connection)
     """
 
     def __init__(
@@ -120,11 +133,12 @@ class SessionIndex:
 
     async def start(self) -> None:
         """Ensure schema exists, start background poll loop."""
-        # Initialise schema once (blocking, but only at startup).
         await asyncio.to_thread(self._init_schema)
         self._stop_event.clear()
         self._started = True
-        self._task = asyncio.get_event_loop().create_task(
+        # Use asyncio.create_task() directly (replaces deprecated
+        # asyncio.get_event_loop() plus .create_task() is the deprecated form.
+        self._task = asyncio.create_task(
             self._poll_loop(), name="session_index_poll"
         )
         _logger.info(
@@ -146,29 +160,28 @@ class SessionIndex:
         self._started = False
         _logger.info("SessionIndex stopped")
 
+    async def rebuild(self) -> None:
+        """Full re-index with fast MEMORY journal mode.
+
+        DURABILITY TRADEOFF: not crash-safe during rebuild.
+        """
+        await asyncio.to_thread(self._rebuild_sync)
+
     # ------------------------------------------------------------------
     # Background loop
     # ------------------------------------------------------------------
 
     async def _poll_loop(self) -> None:
-        """Poll JSONL files every poll_interval seconds until stopped.
-
-        Sleep-first pattern: wait poll_interval before scanning.  This ensures
-        that unit tests that call _scan_once manually (after start()) see no
-        double-counting.  Production use cases with short poll_interval still
-        see near-real-time indexing.  To scan immediately on startup, callers
-        can call _scan_once directly before start() if needed.
-        """
+        """Poll JSONL files every poll_interval seconds until stopped."""
         while not self._stop_event.is_set():
-            # Sleep first, scan after interval (or on stop signal).
             try:
                 await asyncio.wait_for(
                     asyncio.shield(self._stop_event.wait()),
                     timeout=self._poll_interval,
                 )
-                break  # stop_event fired; exit without scanning
+                break
             except TimeoutError:
-                pass  # Normal: interval elapsed; proceed to scan
+                pass
             except asyncio.CancelledError:
                 break
 
@@ -178,11 +191,10 @@ class SessionIndex:
                 _logger.exception("SessionIndex._scan_once raised unexpectedly")
 
     # ------------------------------------------------------------------
-    # Schema initialisation (called once at startup from to_thread)
+    # Schema initialisation
     # ------------------------------------------------------------------
 
     def _init_schema(self) -> None:
-        """Open a fresh connection, apply the schema, then close."""
         conn = self._connect()
         try:
             conn.executescript(_SCHEMA_SQL)
@@ -191,15 +203,11 @@ class SessionIndex:
             conn.close()
 
     # ------------------------------------------------------------------
-    # Scanning (called from asyncio.to_thread — may use blocking sqlite3)
+    # Scanning
     # ------------------------------------------------------------------
 
     def _scan_once(self) -> None:
-        """Index all new lines from every JSONL file in sessions_dir.
-
-        Opens its own connection for the duration of the scan and closes it
-        before returning — no shared connection state with the caller thread.
-        """
+        """Index all new lines from every JSONL file in sessions_dir."""
         conn = self._connect()
         try:
             for path in iter_session_files_from(self._sessions_dir):
@@ -211,12 +219,7 @@ class SessionIndex:
             conn.close()
 
     def _index_file(self, conn: sqlite3.Connection, path: Path) -> None:
-        """Index new lines from a single JSONL file.
-
-        Reads the committed byte offset from sync_state, reads only new
-        complete lines, inserts messages, then commits the new offset.
-        The FTS5 trigger fires automatically on each INSERT.
-        """
+        """Index new lines using executemany batching (_INSERT_BATCH_SIZE)."""
         path_str = str(path)
         cur = conn.execute(
             "SELECT offset FROM sync_state WHERE jsonl_path = ?", (path_str,)
@@ -226,7 +229,6 @@ class SessionIndex:
 
         entries, new_offset = read_messages_from_offset(path, start_offset)
 
-        # Ensure the file is tracked in sync_state even if no new entries.
         if row is None:
             conn.execute(
                 "INSERT OR IGNORE INTO sync_state(jsonl_path, offset) VALUES (?, 0)",
@@ -237,14 +239,20 @@ class SessionIndex:
         if not entries:
             return
 
-        # Derive session_id from filename (UUID4 stem).
         session_id = path.stem
 
-        # A single transaction per file: crash between files is fine; the
-        # last committed file offset is the crash-recovery checkpoint.
+        rows = [
+            r
+            for entry in entries
+            if (r := _entry_to_row(session_id, path_str, start_offset, entry)) is not None
+        ]
+
+        if not rows:
+            return
+
         with conn:
-            for entry in entries:
-                _insert_entry(conn, session_id, path_str, start_offset, entry)
+            for i in range(0, len(rows), _INSERT_BATCH_SIZE):
+                conn.executemany(_INSERT_SQL, rows[i : i + _INSERT_BATCH_SIZE])
 
             conn.execute(
                 """
@@ -256,7 +264,44 @@ class SessionIndex:
             )
 
     # ------------------------------------------------------------------
-    # Search (synchronous, opens own connection)
+    # Rebuild
+    # ------------------------------------------------------------------
+
+    def _rebuild_sync(self) -> None:
+        """Blocking implementation of rebuild(). Called via asyncio.to_thread."""
+        conn = self._connect()
+        try:
+            conn.execute("PRAGMA synchronous=OFF")
+            conn.execute("PRAGMA journal_mode=MEMORY")
+
+            conn.executescript(
+                """
+                DELETE FROM messages;
+                DELETE FROM messages_fts;
+                DELETE FROM sync_state;
+                """
+            )
+            conn.commit()
+
+            for path in iter_session_files_from(self._sessions_dir):
+                try:
+                    self._index_file(conn, path)
+                except Exception:
+                    _logger.exception("rebuild: failed to index %s", path)
+
+        finally:
+            try:
+                conn.execute("PRAGMA synchronous=FULL")
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.commit()
+            except Exception:
+                _logger.exception("rebuild: failed to restore durable pragmas")
+            conn.close()
+
+        _logger.info("SessionIndex.rebuild() complete: db=%s", self._db_path)
+
+    # ------------------------------------------------------------------
+    # Search
     # ------------------------------------------------------------------
 
     def search(
@@ -266,28 +311,7 @@ class SessionIndex:
         since: datetime | None = None,
         classification_max: str | None = None,
     ) -> list[SearchHit]:
-        """Full-text search over the FTS5 index.
-
-        Parameters
-        ----------
-        q:
-            FTS5 query string (supports phrase queries, NOT, AND, OR, NEAR).
-        limit:
-            Maximum number of hits to return.
-        since:
-            If provided, only return messages with ts >= since.timestamp().
-        classification_max:
-            ACL stub — excludes messages whose classification level exceeds
-            this value.  Supported values: 'unclassified', 'cui', 'secret'.
-            Full ACL enforcement is M2 work; this path exercises the query
-            filter so tests can verify it is plumbed correctly.
-            TODO (M2 work): replace stub with full memory_acl module integration.
-
-        Returns
-        -------
-        list[SearchHit]
-            Ranked by FTS5 BM25 score (best match first).
-        """
+        """Full-text search over the FTS5 index."""
         if not self._started:
             return []
 
@@ -305,56 +329,45 @@ class SessionIndex:
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        """Open a new SQLite connection.  Caller is responsible for closing."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         return sqlite3.connect(
             str(self._db_path),
-            check_same_thread=True,  # explicit: each thread opens its own
+            check_same_thread=True,
             timeout=5.0,
         )
 
 
 # ---------------------------------------------------------------------------
-# Module-level helpers (free functions to keep SessionIndex methods focused)
+# Module-level helpers
 # ---------------------------------------------------------------------------
 
 _CLASSIFICATION_ORDER = ["unclassified", "cui", "secret"]
 
 
 def _classifications_up_to(max_level: str) -> list[str]:
-    """Return all classification levels at or below max_level."""
     max_level = max_level.lower()
     try:
         idx = _CLASSIFICATION_ORDER.index(max_level)
     except ValueError:
-        # Unknown level — default to most restrictive (unclassified only).
         idx = 0
     return _CLASSIFICATION_ORDER[: idx + 1]
 
 
-def _insert_entry(
-    conn: sqlite3.Connection,
+def _entry_to_row(
     session_id: str,
     path_str: str,
     file_offset: int,
     entry: dict[str, Any],
-) -> None:
-    """Insert a single JSONL entry into the messages table.
-
-    Only inserts entries that have a 'content' field (i.e., message
-    entries, not compaction_summary or other metadata entries).
-    """
+) -> tuple[str, str, str, str, str, float, str, str, int] | None:
+    """Convert a JSONL entry dict to an INSERT row tuple, or None to skip."""
     content = entry.get("content")
     if not content:
-        return
+        return None
     if not isinstance(content, str):
-        # content may be a list (tool-use blocks); stringify for search.
         try:
-            import json as _json
-
             content = _json.dumps(content)
         except Exception:
-            return
+            return None
 
     ts_raw = entry.get("timestamp", "")
     ts: float = 0.0
@@ -364,6 +377,31 @@ def _insert_entry(
         except ValueError:
             pass
 
+    return (
+        session_id,
+        entry.get("user_did", ""),
+        entry.get("agent_did", ""),
+        entry.get("classification", "unclassified"),
+        entry.get("role", ""),
+        ts,
+        content,
+        path_str,
+        file_offset,
+    )
+
+
+def _insert_entry(
+    conn: sqlite3.Connection,
+    session_id: str,
+    path_str: str,
+    file_offset: int,
+    entry: dict[str, Any],
+) -> None:
+    """Insert a single JSONL entry. Kept for backward compatibility."""
+    row = _entry_to_row(session_id, path_str, file_offset, entry)
+    if row is None:
+        return
+
     conn.execute(
         """
         INSERT INTO messages(
@@ -371,17 +409,7 @@ def _insert_entry(
             role, ts, content, jsonl_path, jsonl_offset
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (
-            session_id,
-            entry.get("user_did", ""),
-            entry.get("agent_did", ""),
-            entry.get("classification", "unclassified"),
-            entry.get("role", ""),
-            ts,
-            content,
-            path_str,
-            file_offset,
-        ),
+        row,
     )
 
 
@@ -392,7 +420,6 @@ def _run_search(
     since: datetime | None,
     classification_max: str | None,
 ) -> list[SearchHit]:
-    """Execute the FTS5 search query and return SearchHit results."""
     filters: list[str] = []
     params: list[Any] = [q]
 
@@ -408,16 +435,12 @@ def _run_search(
 
     params.append(limit)
 
-    # Build SQL from constant parts joined together.
-    # Security note: the WHERE clause additions use only constant string
-    # fragments and IN placeholders ("?"); no user-supplied values appear
-    # directly in the SQL text — all values flow through parameterised bindings.
     _base_sql = (
         "SELECT "
         "    m.session_id, "
         "    m.role, "
         "    m.ts, "
-        "    snippet(messages_fts, 0, '<<', '>>', '…', 20) AS snippet, "
+        "    snippet(messages_fts, 0, '<<', '>>', '...', 20) AS snippet, "
         "    m.jsonl_path, "
         "    m.jsonl_offset, "
         "    COALESCE(m.user_did, '') AS user_did, "
@@ -454,11 +477,7 @@ def _run_search(
 
 
 def iter_session_files_from(sessions_dir: Path) -> list[Path]:
-    """List JSONL session files from an arbitrary sessions dir.
-
-    Thin adapter so _scan_once can pass its own sessions_dir without
-    importing the workspace-aware version from store.py.
-    """
+    """List JSONL session files from an arbitrary sessions dir."""
     if not sessions_dir.exists():
         return []
     return sorted(sessions_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)

@@ -1,0 +1,67 @@
+name: delegate
+version: "1.0.0"
+description: >
+  Agent-facing delegation tool. Wraps arcrun.spawn() to let the agent
+  decompose tasks into focused child runs. Enforces DELEGATE_BLOCKED_TOOLS,
+  parent-tool allowlist intersection, and tier-driven depth caps.
+
+author: arc-core
+spec: SPEC-018
+tasks: T3.6
+
+tools:
+  - name: delegate
+    description: Spawn a child agent to accomplish a sub-task
+    required: false
+
+config_schema:
+  enabled:
+    type: boolean
+    default: true
+    description: Toggle the delegate module on/off
+  tier:
+    type: string
+    enum: [federal, enterprise, personal]
+    default: personal
+    description: >
+      Determines default depth cap and concurrency limits.
+      Federal: max_depth=2, max_concurrent=3.
+      Enterprise: max_depth=3, max_concurrent=5.
+      Personal: max_depth=4, max_concurrent=5.
+  max_depth:
+    type: integer
+    default: 2
+    minimum: 1
+    maximum: 10
+    description: Maximum delegation depth (federal default 2)
+  max_concurrent:
+    type: integer
+    default: 3
+    minimum: 1
+    maximum: 20
+    description: Maximum simultaneously active child agents
+  default_max_turns:
+    type: integer
+    default: 25
+    minimum: 1
+    maximum: 200
+    description: Default max turns for child agents
+  default_timeout_s:
+    type: integer
+    default: 300
+    minimum: 10
+    maximum: 3600
+    description: Default wall-clock timeout for child agents in seconds
+
+security:
+  owasp_mitigations:
+    - ASI-02: DELEGATE_BLOCKED_TOOLS stripped unconditionally; model cannot override
+    - ASI-03: Per-child DID via HKDF; no shared identity between siblings
+    - ASI-08: Depth cap prevents unbounded cascading delegation
+    - LLM06: Child tool list is intersection of parent allowlist; no privilege escalation
+    - LLM10: Token budget drawn from root pool; no implicit over-spend
+
+audit_events:
+  - delegate.spawn_start
+  - delegate.spawn_complete
+  - spawn.budget_exhausted

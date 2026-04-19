@@ -1,0 +1,24 @@
+name: user_profile
+version: 0.1.0
+description: Per-user profile storage with YAML frontmatter ACL, append-only Durable Facts, and GDPR tombstone pattern
+author: ArcAgent
+entry_point: arcagent.modules.user_profile:UserProfileModule
+dependencies:
+  - arcagent.core.module_bus
+  - arcagent.core.config
+  - arcagent.core.telemetry
+events:
+  subscribes:
+    - agent:post_respond   # optional durable-fact extraction hint logging
+    - user.forgotten       # GDPR tombstone trigger
+  emits:
+    - memory.user_profile.read
+    - memory.user_profile.write
+    - memory.user_profile.tombstone
+    - user_profile.overflow    # body cap exceeded; spill to episodic
+    - session.fts5.reindex_needed  # FTS5 indexer must rebuild
+security:
+  classification_aware: true
+  audit_every_operation: true
+  gdpr_compliant: true
+  federal_default: private

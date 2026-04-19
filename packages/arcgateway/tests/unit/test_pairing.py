@@ -418,27 +418,34 @@ async def test_revoke_nonexistent_returns_false(store: PairingStore) -> None:
 
 @pytest.mark.asyncio
 async def test_federal_requires_approver_did(federal_store: PairingStore) -> None:
-    """Federal tier: verify_and_consume without approver_did returns None."""
+    """Federal tier: verify_and_consume without approver_did raises PairingSignatureInvalid.
+
+    M3 compliance (T1.8.3): federal tier now raises PairingSignatureInvalid rather than
+    returning None so callers cannot silently ignore the missing-approver_did case.
+    """
+    from arcgateway.pairing import PairingSignatureInvalid
     code = await federal_store.mint_code(
         platform="telegram", platform_user_id="fed_user"
     )
-    # No approver_did — must return None at federal tier
-    result = await federal_store.verify_and_consume(code.code, approver_did=None)
-    assert result is None, "Federal tier must reject approval without approver_did"
+    with pytest.raises(PairingSignatureInvalid):
+        await federal_store.verify_and_consume(code.code, approver_did=None)
 
 
 @pytest.mark.asyncio
-async def test_federal_with_approver_did_succeeds(federal_store: PairingStore) -> None:
-    """Federal tier: verify_and_consume WITH approver_did returns PairingCode."""
+async def test_federal_with_approver_did_no_sig_raises(federal_store: PairingStore) -> None:
+    """Federal tier: verify_and_consume WITH approver_did but NO signature raises.
+
+    M3 compliance (T1.8.3): federal tier requires a valid Ed25519 signature.
+    Providing only approver_did without a signature raises PairingSignatureInvalid.
+    """
+    from arcgateway.pairing import PairingSignatureInvalid
     code = await federal_store.mint_code(
         platform="telegram", platform_user_id="fed_user_2"
     )
-    # Stub: any non-None approver_did passes (real signing in M2 — see TODO)
-    result = await federal_store.verify_and_consume(
-        code.code, approver_did="did:arc:operator:alice"
-    )
-    assert result is not None
-    assert result.code == code.code
+    with pytest.raises(PairingSignatureInvalid):
+        await federal_store.verify_and_consume(
+            code.code, approver_did="did:arc:operator:alice"
+        )
 
 
 @pytest.mark.asyncio
