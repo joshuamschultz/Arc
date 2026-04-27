@@ -89,10 +89,10 @@ class TestPipelineEmpty:
         from arcagent.core.tool_policy import (
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
-        pipeline = ToolPolicyPipeline(layers=[])
+        pipeline = PolicyPipeline(layers=[])
         call = ToolCall(
             tool_name="read",
             arguments={},
@@ -114,7 +114,7 @@ class TestFirstDenyWins:
             Decision,
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         layer1 = MagicMock()
@@ -135,7 +135,7 @@ class TestFirstDenyWins:
             Decision.allow(input_hash="h", evaluated_at_us=20)
         )
 
-        pipeline = ToolPolicyPipeline(layers=[layer1, layer2])
+        pipeline = PolicyPipeline(layers=[layer1, layer2])
         call = ToolCall(
             tool_name="bash",
             arguments={},
@@ -159,7 +159,7 @@ class TestFailClosed:
         from arcagent.core.tool_policy import (
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         class BrokenLayer:
@@ -168,7 +168,7 @@ class TestFailClosed:
             async def evaluate(self, call: Any, ctx: Any) -> Any:
                 raise RuntimeError("boom")
 
-        pipeline = ToolPolicyPipeline(layers=[BrokenLayer()])
+        pipeline = PolicyPipeline(layers=[BrokenLayer()])
         call = ToolCall(
             tool_name="read",
             arguments={},
@@ -188,7 +188,7 @@ class TestFailClosed:
             Decision,
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         class BrokenLayer:
@@ -203,7 +203,7 @@ class TestFailClosed:
             Decision.allow(input_hash="h", evaluated_at_us=1)
         )
 
-        pipeline = ToolPolicyPipeline(layers=[BrokenLayer(), layer2])
+        pipeline = PolicyPipeline(layers=[BrokenLayer(), layer2])
         call = ToolCall(
             tool_name="read",
             arguments={},
@@ -390,7 +390,7 @@ class TestDecisionCache:
             Decision,
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         layer = MagicMock()
@@ -399,7 +399,7 @@ class TestDecisionCache:
             Decision.allow(input_hash="h", evaluated_at_us=1)
         )
 
-        pipeline = ToolPolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
+        pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
         call = ToolCall(
             tool_name="read",
             arguments={"path": "/tmp/x"},
@@ -419,7 +419,7 @@ class TestDecisionCache:
             Decision,
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         layer = MagicMock()
@@ -433,7 +433,7 @@ class TestDecisionCache:
         def clock() -> float:
             return fake_clock[0]
 
-        pipeline = ToolPolicyPipeline(
+        pipeline = PolicyPipeline(
             layers=[layer], cache_ttl_seconds=10.0, monotonic=clock
         )
         call = ToolCall(
@@ -459,7 +459,7 @@ class TestShadowMode:
             Decision,
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         layer = MagicMock()
@@ -474,7 +474,7 @@ class TestShadowMode:
             )
         )
 
-        pipeline = ToolPolicyPipeline(layers=[layer], shadow=True)
+        pipeline = PolicyPipeline(layers=[layer], shadow=True)
         call = ToolCall(
             tool_name="bash",
             arguments={},
@@ -495,10 +495,10 @@ class TestRestrictedMode:
         from arcagent.core.tool_policy import (
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
-        pipeline = ToolPolicyPipeline(
+        pipeline = PolicyPipeline(
             layers=[],
             max_bundle_age_seconds=60.0,
             safe_set={"read"},
@@ -522,10 +522,10 @@ class TestRestrictedMode:
         from arcagent.core.tool_policy import (
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
-        pipeline = ToolPolicyPipeline(
+        pipeline = PolicyPipeline(
             layers=[],
             max_bundle_age_seconds=60.0,
             safe_set={"read", "grep"},
@@ -553,7 +553,7 @@ class TestTelemetry:
             Decision,
             PolicyContext,
             ToolCall,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
 
         events: list[tuple[str, dict[str, Any]]] = []
@@ -567,7 +567,7 @@ class TestTelemetry:
             Decision.allow(input_hash="h", evaluated_at_us=1)
         )
 
-        pipeline = ToolPolicyPipeline(layers=[layer], audit_sink=emit)
+        pipeline = PolicyPipeline(layers=[layer], audit_sink=emit)
         call = ToolCall(
             tool_name="read",
             arguments={},

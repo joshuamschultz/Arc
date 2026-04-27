@@ -90,7 +90,7 @@ class RedisLockElection:
     ) -> None:
         if renew_interval_s * 1000 >= ttl_ms:
             msg = (
-                f"renew_interval_s ({renew_interval_s}) × 1000 must be "
+                f"renew_interval_s ({renew_interval_s}) x 1000 must be "
                 f"strictly less than ttl_ms ({ttl_ms})"
             )
             raise ValueError(msg)

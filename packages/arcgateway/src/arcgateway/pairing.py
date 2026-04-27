@@ -828,9 +828,9 @@ class PairingStore:
     def _audit(self, event_type: str, details: dict[str, Any]) -> None:
         """Emit a structured audit log entry.
 
-        Routes through the shared ``arcgateway.telemetry.emit_audit`` helper
-        so pairing events share the same schema (``audit_event`` +
-        ``audit_data`` extras) as stream_bridge and adapter audit events.
+        Routes through both the structured stdlib logger (for log-aggregator
+        compatibility) and ``arcgateway.audit.emit_event`` (for the canonical
+        ``arctrust.audit`` sink pipeline — JsonlSink, SignedChainSink, etc.).
 
         When a telemetry instance has been attached via ``attach_telemetry``
         the event is also forwarded to ``telemetry.audit_event`` so that
@@ -839,10 +839,20 @@ class PairingStore:
 
         Security: Never includes raw codes — only code_id (sha256 first 16).
         """
+        from arcgateway.audit import emit_event as _arc_emit
         from arcgateway.telemetry import emit_audit
 
         audit_logger = logging.getLogger("arcgateway.pairing.audit")
         emit_audit(audit_logger, event_type, details)
+
+        # Canonical arctrust.audit sink (configurable; NullSink by default).
+        _arc_emit(
+            action=event_type,
+            target=details.get("code_id") or details.get("platform") or "pairing",
+            outcome=self._audit_outcome(event_type),
+            tier=self._tier,
+            extra=details,
+        )
 
         telemetry = self._telemetry
         if telemetry is not None:
@@ -856,6 +866,17 @@ class PairingStore:
                     event_type,
                     exc_info=True,
                 )
+
+    @staticmethod
+    def _audit_outcome(event_type: str) -> str:
+        """Map pairing event type to a canonical audit outcome string."""
+        if "denied" in event_type or "invalid" in event_type or "locked" in event_type:
+            return "deny"
+        if "expired" in event_type:
+            return "deny"
+        if "missing" in event_type:
+            return "deny"
+        return "allow"
 
 
 # ---------------------------------------------------------------------------

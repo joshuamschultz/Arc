@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -294,7 +294,7 @@ class DeepConsolidator:
         """Check if entity's input hash matches stored hash."""
         state = self._load_rotation_state()
         stored = state.get("entity_hashes", {}).get(entity_id)
-        return stored == input_hash
+        return bool(stored == input_hash)
 
     def _update_hash(self, entity_id: str, input_hash: str) -> None:
         """Update stored hash for entity."""
@@ -819,7 +819,7 @@ class DeepConsolidator:
         if not self._state_path.exists():
             return {}
         try:
-            return json.loads(self._state_path.read_text(encoding="utf-8"))
+            return cast(dict[str, Any], json.loads(self._state_path.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             return {}
 

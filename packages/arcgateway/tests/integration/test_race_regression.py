@@ -39,7 +39,6 @@ import pytest
 from arcgateway.executor import Delta, InboundEvent
 from arcgateway.session import SessionRouter, build_session_key
 
-
 # ---------------------------------------------------------------------------
 # Fake executor for race tests
 # ---------------------------------------------------------------------------

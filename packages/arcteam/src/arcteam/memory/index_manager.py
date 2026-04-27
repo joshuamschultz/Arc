@@ -48,20 +48,21 @@ class IndexManager:
         await asyncio.to_thread(self._sync_touch_dirty)
 
     async def get_index(self) -> dict[str, IndexEntry]:
-        """Get current index. Rebuilds if dirty flag set."""
+        """Get current index. Rebuilds if dirty flag set.
+
+        Raises IndexCorruptionError if the on-disk index fails integrity check.
+        Silently rebuilding over a tampered index is not safe — callers must
+        decide how to recover.
+        """
         if self._cache is not None and not self._is_dirty():
             return self._cache
-        # Try loading from disk first
+        # Try loading from disk first — IndexCorruptionError propagates
         if self._index_path.exists() and not self._is_dirty():
-            try:
-                index = await asyncio.to_thread(self._sync_load_index)
-            except IndexCorruptionError as exc:
-                logger.warning("Index corruption detected, rebuilding: %s", exc)
-                return await self.rebuild()
+            index = await asyncio.to_thread(self._sync_load_index)
             if index is not None:
                 self._cache = index
                 return self._cache
-        # Rebuild
+        # No usable on-disk index — rebuild from entity files
         return await self.rebuild()
 
     async def lookup(self, entity_id: str) -> IndexEntry | None:
@@ -162,16 +163,20 @@ class IndexManager:
         self._checksum_path.write_text(checksum, encoding="utf-8")
 
     def _sync_load_index(self) -> dict[str, IndexEntry] | None:
-        """Load index from _index.json. Verifies checksum on federal tier."""
+        """Load index from _index.json. Verifies SHA-256 checksum at all tiers.
+
+        Tier-stringency on missing checksum file:
+        - personal: missing = warn + continue (developer may have edited manually)
+        - enterprise / federal: missing = hard error (IndexCorruptionError)
+
+        When the checksum file IS present, it MUST validate at every tier.
+        ADR-019 four-pillars-universal: tamper-evident integrity runs at all tiers.
+        """
         if not self._index_path.exists():
             return None
         try:
             content = self._index_path.read_text(encoding="utf-8")
-
-            # Federal tier: verify SHA-256 checksum integrity
-            if self._config.tier == "federal":
-                self._verify_checksum(content)
-
+            self._apply_checksum_policy(content)
             data = json.loads(content)
             return {eid: IndexEntry.model_validate(entry) for eid, entry in data.items()}
         except IndexCorruptionError:
@@ -180,10 +185,27 @@ class IndexManager:
             logger.warning("Failed to load _index.json, will rebuild: %s", exc)
             return None
 
-    def _verify_checksum(self, content: str) -> None:
-        """Verify SHA-256 checksum. Raises IndexCorruptionError on mismatch."""
-        if not self._checksum_path.exists():
-            raise IndexCorruptionError("checksum file missing for federal tier")
+    def _apply_checksum_policy(self, content: str) -> None:
+        """Enforce SHA-256 checksum policy based on tier.
+
+        Called every time the index is loaded from disk.
+        """
+        checksum_present = self._checksum_path.exists()
+
+        if not checksum_present:
+            if self._config.tier == "personal":
+                # Personal tier: missing checksum is a warning, not a hard failure.
+                # A solo developer may have edited the file directly.
+                logger.warning(
+                    "No _index.sha256 found at personal tier — skipping integrity check"
+                )
+                return
+            # enterprise / federal: missing checksum = hard error
+            raise IndexCorruptionError(
+                f"checksum file missing for {self._config.tier} tier"
+            )
+
+        # Checksum file is present — validate at every tier
         stored = self._checksum_path.read_text(encoding="utf-8").strip()
         computed = hashlib.sha256(content.encode("utf-8")).hexdigest()
         if stored != computed:

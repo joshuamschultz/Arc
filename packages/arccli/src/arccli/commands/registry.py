@@ -8,7 +8,6 @@ at dispatch time to avoid circular imports and keep this module fast to import.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -64,93 +63,63 @@ class CommandDef:
 # Handlers are imported lazily inside each handle() wrapper so that the
 # registry module has zero dependency on handler modules at import time.
 # This keeps cold-start fast and avoids circular imports.
-#
-# During the T1.1.5 migration phase, handlers delegate to main_legacy.py
-# via subprocess so that legacy Click-based code is not imported into the
-# new slash-command module namespace.
 # ---------------------------------------------------------------------------
 
 
-def _legacy_dispatch(group: str, args: list[str]) -> None:
-    """Delegate a command to the legacy Click-based arc-legacy entry point.
-
-    Uses subprocess to avoid importing Click-decorated modules into the
-    slash-command namespace. Truthy exit codes are propagated.
-
-    Security note: `sys.executable` is the current interpreter (trusted);
-    `group` is a string literal from this module (not user input); `args`
-    are forwarded as-is to the subprocess which applies its own validation.
-    """
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "arccli.main_legacy", group, *args],
-        check=False,
-    )
-    if result.returncode != 0:
-        sys.exit(result.returncode)
-
-
 def _agent_handler(args: list[str]) -> None:
-    """Dispatch to arc agent subcommands.
+    """Dispatch to arc agent subcommands — T1.1.5 plain handler."""
+    from arccli.commands.agent import agent_handler
 
-    TODO(T1.1.5): Fully migrate agent.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("agent", args)
+    agent_handler(args)
 
 
 def _llm_handler(args: list[str]) -> None:
-    """Dispatch to arc llm subcommands.
+    """Dispatch to arc llm subcommands — T1.1.5 plain handler."""
+    from arccli.commands.llm import llm_handler
 
-    TODO(T1.1.5): Fully migrate llm.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("llm", args)
+    llm_handler(args)
 
 
 def _run_handler(args: list[str]) -> None:
-    """Dispatch to arc run subcommands.
+    """Dispatch to arc run subcommands — T1.1.5 plain handler."""
+    from arccli.commands.run import run_handler
 
-    TODO(T1.1.5): Fully migrate run.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("run", args)
+    run_handler(args)
 
 
 def _skill_handler(args: list[str]) -> None:
-    """Dispatch to arc skill subcommands.
+    """Dispatch to arc skill subcommands — T1.1.5 plain handler."""
+    from arccli.commands.skill import skill_handler
 
-    TODO(T1.1.5): Fully migrate skill.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("skill", args)
+    skill_handler(args)
 
 
 def _team_handler(args: list[str]) -> None:
-    """Dispatch to arc team subcommands.
+    """Dispatch to arc team subcommands — T1.1.5 plain handler."""
+    from arccli.commands.team import team_handler
 
-    TODO(T1.1.5): Fully migrate team.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("team", args)
+    team_handler(args)
 
 
 def _ui_handler(args: list[str]) -> None:
-    """Dispatch to arc ui subcommands.
+    """Dispatch to arc ui subcommands — T1.1.5 plain handler."""
+    from arccli.commands.ui import ui_handler
 
-    TODO(T1.1.5): Fully migrate ui.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("ui", args)
+    ui_handler(args)
 
 
 def _ext_handler(args: list[str]) -> None:
-    """Dispatch to arc ext subcommands.
+    """Dispatch to arc ext subcommands — T1.1.5 plain handler."""
+    from arccli.commands.ext import ext_handler
 
-    TODO(T1.1.5): Fully migrate ext.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("ext", args)
+    ext_handler(args)
 
 
 def _init_handler(args: list[str]) -> None:
-    """Dispatch to arc init wizard.
+    """Dispatch to arc init wizard — T1.1.5 plain handler."""
+    from arccli.commands.init import init_handler
 
-    TODO(T1.1.5): Fully migrate init_wizard.py to plain CommandDef handler.
-    """
-    _legacy_dispatch("init", args)
+    init_handler(args)
 
 
 def _help_handler(args: list[str]) -> None:

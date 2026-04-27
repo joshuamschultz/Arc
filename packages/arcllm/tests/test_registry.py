@@ -41,14 +41,18 @@ class TestLoadModelHappyPath:
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", telemetry=False, retry=False, queue=False)
+        # security=False: test adapter construction without wrappers.
+        # Per ADR-019, security is enabled by default; disable explicitly here.
+        model = load_model("anthropic", telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_openai_adapter(self):
         from arcllm.adapters.openai import OpenaiAdapter
         from arcllm.registry import load_model
 
-        model = load_model("openai", telemetry=False, retry=False, queue=False)
+        # security=False: test adapter construction without wrappers.
+        # Per ADR-019, security is enabled by default; disable explicitly here.
+        model = load_model("openai", telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, OpenaiAdapter)
 
     def test_load_default_model(self):
@@ -74,7 +78,10 @@ class TestLoadModelHappyPath:
         """Unknown model name is allowed — adapter constructed with model_meta=None."""
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", "claude-nonexistent-99", telemetry=False, retry=False, queue=False)
+        # security=False: test raw adapter without default security wrapper.
+        # Per ADR-019, security is enabled by default; disable here to test
+        # that the adapter accepts an unknown model name without rejection.
+        model = load_model("anthropic", "claude-nonexistent-99", telemetry=False, retry=False, queue=False, security=False)
         assert model.model_name == "claude-nonexistent-99"
         assert model._model_meta is None
 
@@ -216,19 +223,27 @@ class TestModuleStacking:
     """Registry integration: load_model() wraps adapters with modules."""
 
     def test_load_model_with_retry_kwarg(self):
-        """retry=True wraps adapter with RetryModule."""
+        """retry=True wraps adapter with RetryModule.
+
+        Per ADR-019, security is enabled by default (outermost after retry).
+        Disable security so retry is the observable outermost wrapper.
+        """
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, telemetry=False, queue=False)
+        model = load_model("anthropic", retry=True, telemetry=False, queue=False, security=False)
         assert isinstance(model, RetryModule)
 
     def test_load_model_with_retry_dict(self):
-        """retry={...} wraps adapter with RetryModule using custom config."""
+        """retry={...} wraps adapter with RetryModule using custom config.
+
+        Per ADR-019, security is enabled by default (outermost after retry).
+        Disable security so retry is the observable outermost wrapper.
+        """
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry={"max_retries": 5}, telemetry=False, queue=False)
+        model = load_model("anthropic", retry={"max_retries": 5}, telemetry=False, queue=False, security=False)
         assert isinstance(model, RetryModule)
         assert model._max_retries == 5
 
@@ -263,31 +278,43 @@ class TestModuleStacking:
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_model_with_fallback(self):
-        """fallback=True wraps adapter with FallbackModule."""
+        """fallback=True wraps adapter with FallbackModule.
+
+        Per ADR-019, security is enabled by default (outermost after fallback).
+        Disable security so fallback is the observable outermost wrapper.
+        """
         from arcllm.modules.fallback import FallbackModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", fallback=True, telemetry=False, retry=False, queue=False)
+        model = load_model("anthropic", fallback=True, telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, FallbackModule)
 
     def test_load_model_with_fallback_dict(self):
-        """fallback={...} wraps adapter with FallbackModule using custom config."""
+        """fallback={...} wraps adapter with FallbackModule using custom config.
+
+        Per ADR-019, security is enabled by default (outermost after fallback).
+        Disable security so fallback is the observable outermost wrapper.
+        """
         from arcllm.modules.fallback import FallbackModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", fallback={"chain": ["openai"]}, telemetry=False, retry=False, queue=False)
+        model = load_model("anthropic", fallback={"chain": ["openai"]}, telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, FallbackModule)
         assert model._chain == ["openai"]
 
     def test_load_model_retry_and_fallback_stacking_order(self):
-        """Stacking order: Retry(Fallback(adapter))."""
+        """Stacking order: Security(Retry(Fallback(adapter))).
+
+        Per ADR-019, security wraps outermost over retry+fallback.
+        Disable security to assert pure retry/fallback order.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.fallback import FallbackModule
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, fallback=True, telemetry=False, queue=False)
-        # Outermost is Retry
+        model = load_model("anthropic", retry=True, fallback=True, telemetry=False, queue=False, security=False)
+        # Outermost is Retry (security disabled)
         assert isinstance(model, RetryModule)
         # Inner is Fallback
         assert isinstance(model._inner, FallbackModule)
@@ -295,11 +322,15 @@ class TestModuleStacking:
         assert isinstance(model._inner._inner, AnthropicAdapter)
 
     def test_load_model_no_modules_unchanged(self):
-        """With all default modules disabled, adapter returned directly."""
+        """With all modules disabled, adapter returned directly.
+
+        Per ADR-019, security is enabled by default. Disable all modules
+        explicitly to assert a bare adapter is returned.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", telemetry=False, retry=False, queue=False)
+        model = load_model("anthropic", telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_model_retry_kwarg_overrides_config_values(self):
@@ -318,19 +349,27 @@ class TestModuleStacking:
         assert model._max_retries == 10
 
     def test_load_model_with_rate_limit(self):
-        """rate_limit=True wraps adapter with RateLimitModule."""
+        """rate_limit=True wraps adapter with RateLimitModule.
+
+        Per ADR-019, security is enabled by default (outermost after rate_limit).
+        Disable security so rate_limit is the observable outermost wrapper.
+        """
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", rate_limit=True, telemetry=False, retry=False, queue=False)
+        model = load_model("anthropic", rate_limit=True, telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, RateLimitModule)
 
     def test_load_model_with_rate_limit_dict(self):
-        """rate_limit={...} wraps adapter with custom RPM."""
+        """rate_limit={...} wraps adapter with custom RPM.
+
+        Per ADR-019, security is enabled by default (outermost after rate_limit).
+        Disable security so rate_limit is the observable outermost wrapper.
+        """
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", rate_limit={"requests_per_minute": 120}, telemetry=False, retry=False, queue=False)
+        model = load_model("anthropic", rate_limit={"requests_per_minute": 120}, telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, RateLimitModule)
 
     def test_load_model_rate_limit_false_overrides_config(self):
@@ -350,14 +389,18 @@ class TestModuleStacking:
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_model_full_stack_order_without_telemetry(self):
-        """Stacking order without telemetry: Retry(Fallback(RateLimit(adapter)))."""
+        """Stacking order without telemetry or security: Retry(Fallback(RateLimit(adapter))).
+
+        Per ADR-019, security is enabled by default. Disable security explicitly
+        to test the pure retry/fallback/rate_limit stacking order.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.fallback import FallbackModule
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, fallback=True, rate_limit=True, telemetry=False, queue=False)
+        model = load_model("anthropic", retry=True, fallback=True, rate_limit=True, telemetry=False, queue=False, security=False)
         assert isinstance(model, RetryModule)
         assert isinstance(model._inner, FallbackModule)
         assert isinstance(model._inner._inner, RateLimitModule)
@@ -406,7 +449,12 @@ class TestModuleStacking:
         assert model._cost_output == 15.00
 
     def test_load_model_full_stack_with_telemetry(self):
-        """Stacking order: Telemetry(Retry(Fallback(RateLimit(adapter))))."""
+        """Stacking order: Telemetry(Security(Retry(Fallback(RateLimit(adapter))))).
+
+        Per ADR-019, security is enabled by default — it sits between
+        Audit and Retry in the stack. Disable security to assert the
+        pure telemetry/retry/fallback/rate_limit order.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.fallback import FallbackModule
         from arcllm.modules.rate_limit import RateLimitModule
@@ -421,6 +469,7 @@ class TestModuleStacking:
             rate_limit=True,
             telemetry=True,
             queue=False,
+            security=False,
         )
         assert isinstance(model, TelemetryModule)
         assert isinstance(model._inner, RetryModule)
@@ -469,7 +518,11 @@ class TestModuleStacking:
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_model_full_stack_with_audit(self):
-        """Stacking order: Telemetry(Audit(Retry(Fallback(RateLimit(adapter)))))."""
+        """Stacking order: Telemetry(Audit(Retry(Fallback(RateLimit(adapter))))).
+
+        Per ADR-019, security is enabled by default (sits between Audit and Retry).
+        Disable security to test the pure audit/retry/fallback/rate_limit order.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.audit import AuditModule
         from arcllm.modules.fallback import FallbackModule
@@ -486,6 +539,7 @@ class TestModuleStacking:
             telemetry=True,
             audit=True,
             queue=False,
+            security=False,
         )
         assert isinstance(model, TelemetryModule)
         assert isinstance(model._inner, AuditModule)
@@ -536,7 +590,11 @@ class TestModuleStacking:
         assert isinstance(model, AnthropicAdapter)
 
     def test_load_model_otel_full_stack(self):
-        """Full stack: Otel(Queue(Telemetry(Audit(Retry(Fallback(RateLimit(adapter)))))))."""
+        """Full stack: Otel(Queue(Telemetry(Audit(Retry(Fallback(RateLimit(adapter))))))).
+
+        Per ADR-019, security is enabled by default (sits between Audit and Retry).
+        Disable security to test the complete stack order without the security wrapper.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.audit import AuditModule
         from arcllm.modules.fallback import FallbackModule
@@ -555,6 +613,7 @@ class TestModuleStacking:
             telemetry=True,
             queue=True,
             audit=True,
+            security=False,
             otel={"exporter": "none"},
         )
         assert isinstance(model, OtelModule)
@@ -598,12 +657,16 @@ class TestModuleStacking:
         assert isinstance(model, OtelModule)
 
     def test_load_model_otel_only(self):
-        """OTel without other modules — just Otel(adapter)."""
+        """OTel without other modules — just Otel(adapter).
+
+        Per ADR-019, security is enabled by default. Disable security to
+        test that Otel wraps the adapter directly with no other layers.
+        """
         from arcllm.adapters.anthropic import AnthropicAdapter
         from arcllm.modules.otel import OtelModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", otel={"exporter": "none"}, telemetry=False, retry=False, queue=False)
+        model = load_model("anthropic", otel={"exporter": "none"}, telemetry=False, retry=False, queue=False, security=False)
         assert isinstance(model, OtelModule)
         assert isinstance(model._inner, AnthropicAdapter)
 

@@ -27,8 +27,20 @@ def make_execute_tool(
     timeout_seconds: float = 30,
     max_output_bytes: int = 65536,
     extra_env: dict[str, str] | None = None,
+    tier: str = "personal",
 ) -> Tool:
-    """Create a sandboxed Python execution tool."""
+    """Create a sandboxed Python execution tool.
+
+    Args:
+        timeout_seconds: Maximum execution time in seconds.
+        max_output_bytes: Maximum size of captured stdout+stderr.
+        extra_env: Additional environment variables for the subprocess.
+        tier: Deployment tier ("personal", "enterprise", "federal").
+            Reserved for future use — currently all tiers use the local
+            subprocess backend. Federal tier may require a Firecracker
+            backend in future releases.
+    """
+    _ = tier  # tier is accepted for API compatibility; local backend used for all tiers
     env = {**_DEFAULT_ENV, **(extra_env or {})}
 
     async def _execute(params: dict[str, Any], ctx: ToolContext) -> str:

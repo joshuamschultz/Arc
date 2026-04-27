@@ -1,7 +1,14 @@
 """Classification access control enforcement.
 
 Checks agent clearance against entity classification on every read/search.
-Tier-gated: federal=hard block, enterprise=warn+block, personal=no enforcement.
+Classification check runs at ALL tiers (ADR-019 four-pillars-universal).
+Tier sets stringency of ancillary behavior (audit verbosity), not whether
+to enforce — authorization is a pillar.
+
+Default classification is UNCLASSIFIED (most permissive), so personal-tier
+developers who do not explicitly classify entities see no change in behavior.
+An operator who explicitly classifies entities at personal tier gets enforcement.
+
 NIST 800-53 AC-3.
 """
 
@@ -25,7 +32,8 @@ T = TypeVar("T", SearchResult, IndexEntry)
 class ClassificationChecker:
     """Classification access control enforcement.
 
-    Tier-gated: federal=hard block, enterprise=warn+block, personal=no enforcement.
+    Universal: classification check runs at all tiers (ADR-019).
+    Tier affects ancillary behavior only (e.g. audit verbosity).
     """
 
     def __init__(
@@ -43,11 +51,11 @@ class ClassificationChecker:
         entity_id: str = "",
         agent_id: str = "",
     ) -> bool:
-        """Check if agent has clearance. Returns True if access allowed."""
-        # Personal tier: no enforcement
-        if self._config.tier == "personal":
-            return True
+        """Check if agent has clearance. Returns True if access allowed.
 
+        Runs at all tiers (ADR-019). Default classification (UNCLASSIFIED) makes
+        personal-tier single-developer workflows permissive by default.
+        """
         entity_level = self.parse_classification(entity_classification)
 
         # Agent clearance must be >= entity classification
@@ -88,11 +96,11 @@ class ClassificationChecker:
         agent_classification: Classification,
         agent_id: str = "",
     ) -> list[T]:
-        """Silently filter results above agent clearance."""
-        # Personal tier: no filtering
-        if self._config.tier == "personal":
-            return results
+        """Silently filter results above agent clearance.
 
+        Runs at all tiers (ADR-019). Default classification (UNCLASSIFIED) makes
+        personal-tier single-developer workflows permissive by default.
+        """
         filtered = []
         for item in results:
             if self.check_access(

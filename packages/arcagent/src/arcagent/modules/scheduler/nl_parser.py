@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -182,12 +182,14 @@ def parse_duration_oneshot(text: str, user_tz: str) -> Schedule:
 # ---------------------------------------------------------------------------
 
 # Rough pre-check: 5-field cron (ignoring L/W/#) — cronsim validates precisely.
+# Month names (JAN-DEC) and day names (MON-SUN) are listed as alternations
+# inside non-capturing groups to avoid invalid character-range errors.
 _CRON_RE = re.compile(
     r"^(\*|[0-9,\-/]+)\s+"  # minute
     r"(\*|[0-9,\-/]+)\s+"  # hour
     r"(\*|[0-9,\-/?L]+)\s+"  # day-of-month
-    r"(\*|[0-9,\-/JAN-DECa-z]+)\s+"  # month
-    r"(\*|[0-9,\-/MON-SUNa-z]+)$",  # day-of-week
+    r"(\*|[0-9,\-/]|JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|[a-z])+\s+"  # month
+    r"(\*|[0-9,\-/]|MON|TUE|WED|THU|FRI|SAT|SUN|[a-z])+$",  # day-of-week
     re.IGNORECASE,
 )
 
@@ -403,13 +405,30 @@ def _reify(raw: dict[str, Any], user_tz: str) -> Schedule:
     )
 
 
-async def _call_llm_fallback(text: str, user_tz: str) -> dict[str, Any]:
+async def _call_llm_fallback(
+    text: str,
+    user_tz: str,
+    model_id: str = "anthropic",
+) -> dict[str, Any]:
     """Invoke arcllm tool-use to normalize a schedule string.
 
     Uses arcllm's load_model (auxiliary client pattern).
     Returns the raw arguments dict from the tool call.
     Raises ParseError on any failure.
+
+    Args:
+        text: Natural-language schedule string to normalize.
+        user_tz: IANA timezone name.
+        model_id: ``provider`` or ``provider/model`` string passed to
+            ``arcllm.load_model()``. Defaults to ``"anthropic"`` but can
+            be overridden via ``ARCAGENT_SCHEDULER_LLM`` env variable or
+            by callers that have the agent config available.
     """
+    import os
+
+    # Allow operator override via environment variable.
+    model_id = os.environ.get("ARCAGENT_SCHEDULER_LLM", model_id)
+
     # Import here to avoid hard dep at module init;
     # federal tier never reaches this path.
     try:
@@ -417,7 +436,8 @@ async def _call_llm_fallback(text: str, user_tz: str) -> dict[str, Any]:
     except ImportError as exc:
         raise ParseError(f"arcllm not available for LLM fallback: {exc}") from exc
 
-    model: LLMProvider = load_model()
+    provider, _, model_name = model_id.partition("/")
+    model: LLMProvider = load_model(provider, model_name or None)
     tool = Tool(
         name=_NORMALIZE_SCHEDULE_TOOL["name"],
         description=_NORMALIZE_SCHEDULE_TOOL["description"],
@@ -453,7 +473,7 @@ async def _call_llm_fallback(text: str, user_tz: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def parse(text: str, user_tz: str, federal: bool) -> Schedule:
+async def parse(text: str, user_tz: str, federal: bool | Any) -> Schedule:
     """Parse a natural-language or cron/ISO schedule string.
 
     Pipeline (deterministic-first per SDD §3.4):
@@ -464,8 +484,18 @@ async def parse(text: str, user_tz: str, federal: bool) -> Schedule:
       LLM fallback (federal=False only)
 
     Federal tier disables LLM fallback: deterministic-only mode.
+
+    Args:
+        text: Schedule string to parse.
+        user_tz: IANA timezone name (e.g., "America/New_York").
+        federal: Either a ``bool`` (legacy API) or a ``PolicyContext`` object
+            with an ``is_federal`` property (new API). Federal mode disables
+            LLM fallback and raises ParseError on unknown input.
     """
-    _logger.debug("Parsing schedule '%s' (tz=%s, federal=%s)", text, user_tz, federal)
+    # Resolve federal flag from either bool or PolicyContext
+    is_fed: bool = federal.is_federal if hasattr(federal, "is_federal") else bool(federal)
+
+    _logger.debug("Parsing schedule '%s' (tz=%s, federal=%s)", text, user_tz, is_fed)
 
     for fn in (
         parse_interval,
@@ -478,7 +508,7 @@ async def parse(text: str, user_tz: str, federal: bool) -> Schedule:
         except ParseError:
             continue
 
-    if federal:
+    if is_fed:
         raise ParseError(
             "deterministic-only mode: unrecognized schedule — "
             "use cron syntax, ISO 8601, or an interval like '30m'"

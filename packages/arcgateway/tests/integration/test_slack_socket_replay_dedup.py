@@ -31,11 +31,8 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from arcgateway.adapters.slack import SlackAdapter, _DedupStore
 from arcgateway.executor import InboundEvent
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,7 +45,6 @@ def _make_adapter(
     """Build a SlackAdapter with in-memory dedup store."""
     received: list[InboundEvent] = []
 
-    from unittest.mock import AsyncMock
 
     async def _on_message(event: InboundEvent) -> None:
         received.append(event)

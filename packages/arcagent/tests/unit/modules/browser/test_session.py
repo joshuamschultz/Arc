@@ -11,9 +11,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from arcagent.modules.browser.errors import (
-    BrowserNotAvailable,
+    BrowserNotAvailableError,
     ElementNotFoundError,
-    NavigationFailed,
+    NavigationFailedError,
 )
 from arcagent.modules.browser.session import BrowserSession, _format_ax_tree
 
@@ -142,7 +142,7 @@ class TestNavigate:
         page = _make_page()
         page.goto.side_effect = Exception("net::ERR_NAME_NOT_RESOLVED")
         s = BrowserSession(page=page)
-        with pytest.raises(NavigationFailed) as exc_info:
+        with pytest.raises(NavigationFailedError) as exc_info:
             await s.navigate("https://bad.invalid")
         assert "bad.invalid" in exc_info.value.details["url"]
 
@@ -150,7 +150,7 @@ class TestNavigate:
         page = _make_page()
         s = BrowserSession(page=page)
         await s.close()
-        with pytest.raises(BrowserNotAvailable):
+        with pytest.raises(BrowserNotAvailableError):
             await s.navigate("https://example.com")
 
 
@@ -313,7 +313,7 @@ class TestClose:
         page = _make_page()
         s = BrowserSession(page=page)
         await s.close()
-        with pytest.raises(BrowserNotAvailable):
+        with pytest.raises(BrowserNotAvailableError):
             await s.click("#btn")
 
 

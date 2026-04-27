@@ -20,12 +20,12 @@ Covers (T1.8.5 security test + full T1.8.1 acceptance):
 
 from __future__ import annotations
 
-import asyncio
 import sqlite3
 import time
 from pathlib import Path
 
 import pytest
+from nacl.signing import SigningKey
 
 from arcgateway.pairing import (
     PAIRING_ALPHABET,
@@ -33,8 +33,8 @@ from arcgateway.pairing import (
     PairingPlatformFull,
     PairingRateLimited,
     PairingStore,
+    build_pairing_challenge,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -43,7 +43,12 @@ from arcgateway.pairing import (
 
 @pytest.fixture
 def store(tmp_path: Path) -> PairingStore:
-    """Fresh PairingStore backed by a temp-dir SQLite DB."""
+    """Fresh PairingStore backed by a temp-dir SQLite DB (no trust dir).
+
+    Tests that call verify_and_consume on valid (unconsumed, unexpired) rows
+    must use ``signed_store`` + ``signed_consume`` instead, since signature
+    is now required at all tiers (four-pillar mandate).
+    """
     return PairingStore(db_path=tmp_path / "pairing.db")
 
 
@@ -58,14 +63,54 @@ def federal_store(tmp_path: Path) -> PairingStore:
 # ---------------------------------------------------------------------------
 
 
+def _make_signed_store(tmp_path: Path, db_name: str) -> tuple[PairingStore, SigningKey, str]:
+    """Build a personal-tier PairingStore wired to a local trust dir.
+
+    Returns (store, signing_key, approver_did) so callers can produce valid
+    signatures for verify_and_consume calls.
+    """
+    import base64
+
+    from arctrust import invalidate_cache
+
+    did = "did:arc:org:operator/test-alphabet"
+    sk = SigningKey.generate()
+    pub_b64 = base64.b64encode(bytes(sk.verify_key)).decode("ascii")
+    trust_dir = tmp_path / "trust"
+    trust_dir.mkdir(exist_ok=True)
+    operators_file = trust_dir / "operators.toml"
+    operators_file.write_text(
+        f'[operators."{did}"]\npublic_key = "{pub_b64}"\n',
+        encoding="utf-8",
+    )
+    operators_file.chmod(0o600)
+    invalidate_cache()
+    store = PairingStore(
+        db_path=tmp_path / db_name,
+        tier="personal",
+        trust_dir=trust_dir,
+    )
+    return store, sk, did
+
+
+async def _signed_consume(
+    store: PairingStore, code_obj: PairingCode, sk: SigningKey, did: str
+) -> PairingCode | None:
+    """Call verify_and_consume with a valid Ed25519 signature."""
+    challenge = build_pairing_challenge(code_obj.code, code_obj.minted_at)
+    sig = bytes(sk.sign(challenge).signature)
+    return await store.verify_and_consume(code_obj.code, approver_did=did, signature=sig)
+
+
 @pytest.mark.asyncio
 async def test_code_generation_alphabet(tmp_path: Path) -> None:
     """All characters in generated codes must come from PAIRING_ALPHABET.
 
     Uses dedicated store per test; consumes each code immediately after
     minting to avoid hitting the 3-pending-per-platform cap.
+    Signature required at all tiers — uses _make_signed_store helper.
     """
-    store = PairingStore(db_path=tmp_path / "alphabet.db")
+    store, sk, did = _make_signed_store(tmp_path, "alphabet.db")
     allowed = set(PAIRING_ALPHABET)
     for i in range(1000):
         # Use a unique platform+user pair so rate-limit and pending cap never
@@ -78,7 +123,7 @@ async def test_code_generation_alphabet(tmp_path: Path) -> None:
         bad_chars = set(code.code) - allowed
         assert not bad_chars, f"Code {code.code!r} contains invalid chars: {bad_chars}"
         # Consume immediately to keep pending count at 0
-        await store.verify_and_consume(code.code)
+        await _signed_consume(store, code, sk, did)
 
 
 @pytest.mark.asyncio
@@ -87,8 +132,9 @@ async def test_code_generation_collision_rate(tmp_path: Path) -> None:
 
     Consume each code immediately so the 3-pending-per-platform cap
     never interferes with this test's intent.
+    Signature required at all tiers — uses _make_signed_store helper.
     """
-    store = PairingStore(db_path=tmp_path / "collision.db")
+    store, sk, did = _make_signed_store(tmp_path, "collision.db")
     codes: set[str] = set()
     for i in range(1000):
         code = await store.mint_code(
@@ -97,7 +143,7 @@ async def test_code_generation_collision_rate(tmp_path: Path) -> None:
         )
         assert code.code not in codes, f"Collision detected: {code.code}"
         codes.add(code.code)
-        await store.verify_and_consume(code.code)
+        await _signed_consume(store, code, sk, did)
     assert len(codes) == 1000
 
 
@@ -133,21 +179,28 @@ async def test_ttl_enforced(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_valid_code_returns_pairing_code(store: PairingStore) -> None:
+async def test_valid_code_returns_pairing_code(
+    signed_store: PairingStore, signing_key: SigningKey
+) -> None:
     """verify_and_consume returns PairingCode for a valid, unexpired code."""
-    code = await store.mint_code(platform="telegram", platform_user_id="bob")
-    result = await store.verify_and_consume(code.code)
+    from tests.unit.conftest import _UNIT_TEST_DID
+    code = await signed_store.mint_code(platform="telegram", platform_user_id="bob")
+    result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
     assert result is not None
     assert result.code == code.code
 
 
 @pytest.mark.asyncio
-async def test_consumed_code_not_reusable(store: PairingStore) -> None:
+async def test_consumed_code_not_reusable(
+    signed_store: PairingStore, signing_key: SigningKey
+) -> None:
     """A code consumed once must return None on second attempt."""
-    code = await store.mint_code(platform="telegram", platform_user_id="carol")
-    first = await store.verify_and_consume(code.code)
+    from tests.unit.conftest import _UNIT_TEST_DID
+    code = await signed_store.mint_code(platform="telegram", platform_user_id="carol")
+    first = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
     assert first is not None
-    second = await store.verify_and_consume(code.code)
+    # Second attempt on consumed code returns None (no sig check on consumed rows).
+    second = await signed_store.verify_and_consume(code.code)
     assert second is None, "Already-consumed code must return None"
 
 
@@ -169,17 +222,20 @@ async def test_max_3_pending_per_platform(store: PairingStore) -> None:
 
 
 @pytest.mark.asyncio
-async def test_max_3_pending_consumed_allows_new(store: PairingStore) -> None:
+async def test_max_3_pending_consumed_allows_new(
+    signed_store: PairingStore, signing_key: SigningKey
+) -> None:
     """After consuming one, a 4th pending code should succeed."""
-    c1 = await store.mint_code(platform="telegram", platform_user_id="u1")
-    await store.mint_code(platform="telegram", platform_user_id="u2")
-    await store.mint_code(platform="telegram", platform_user_id="u3")
+    from tests.unit.conftest import _UNIT_TEST_DID
+    c1 = await signed_store.mint_code(platform="telegram", platform_user_id="u1")
+    await signed_store.mint_code(platform="telegram", platform_user_id="u2")
+    await signed_store.mint_code(platform="telegram", platform_user_id="u3")
 
-    # Consume one
-    await store.verify_and_consume(c1.code)
+    # Consume one with a valid signature
+    await _signed_consume(signed_store, c1, signing_key, _UNIT_TEST_DID)
 
     # Now a new mint should succeed
-    c4 = await store.mint_code(platform="telegram", platform_user_id="u4")
+    c4 = await signed_store.mint_code(platform="telegram", platform_user_id="u4")
     assert c4 is not None
 
 
@@ -379,15 +435,18 @@ async def test_cleanup_expired_sweep(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_pending(store: PairingStore) -> None:
+async def test_list_pending(
+    signed_store: PairingStore, signing_key: SigningKey
+) -> None:
     """list_pending returns only unexpired, unconsumed codes."""
-    c1 = await store.mint_code(platform="telegram", platform_user_id="u1")
-    c2 = await store.mint_code(platform="telegram", platform_user_id="u2")
+    from tests.unit.conftest import _UNIT_TEST_DID
+    c1 = await signed_store.mint_code(platform="telegram", platform_user_id="u1")
+    c2 = await signed_store.mint_code(platform="telegram", platform_user_id="u2")
 
-    # Consume c1
-    await store.verify_and_consume(c1.code)
+    # Consume c1 with a valid signature
+    await _signed_consume(signed_store, c1, signing_key, _UNIT_TEST_DID)
 
-    pending = await store.list_pending()
+    pending = await signed_store.list_pending()
     codes = [p.code for p in pending]
     assert c2.code in codes
     assert c1.code not in codes
@@ -449,11 +508,16 @@ async def test_federal_with_approver_did_no_sig_raises(federal_store: PairingSto
 
 
 @pytest.mark.asyncio
-async def test_non_federal_no_approver_did_succeeds(store: PairingStore) -> None:
-    """Non-federal tier: verify_and_consume without approver_did succeeds."""
+async def test_all_tiers_require_signature(store: PairingStore) -> None:
+    """All tiers require a signature — personal tier is not a bypass (pillar mandate).
+
+    Replaces old test_non_federal_no_approver_did_succeeds which documented the
+    pillar-violating behavior where personal tier accepted unsigned pairing.
+    """
+    from arcgateway.pairing import PairingSignatureInvalid
     code = await store.mint_code(platform="telegram", platform_user_id="regular_user")
-    result = await store.verify_and_consume(code.code, approver_did=None)
-    assert result is not None
+    with pytest.raises(PairingSignatureInvalid):
+        await store.verify_and_consume(code.code, approver_did=None)
 
 
 # ---------------------------------------------------------------------------

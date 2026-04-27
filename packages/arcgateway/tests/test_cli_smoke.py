@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 import io
-import sys
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from arcgateway.cli import _echo, cmd_status, cmd_stop
 

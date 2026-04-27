@@ -35,9 +35,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from arcagent.modules.browser.errors import (
-    BrowserNotAvailable,
+    BrowserNotAvailableError,
     ElementNotFoundError,
-    NavigationFailed,
+    NavigationFailedError,
 )
 
 _logger = logging.getLogger("arcagent.modules.browser.session")
@@ -105,14 +105,14 @@ class BrowserSession:
             url: The full URL to navigate to. Logged verbatim in audit records.
 
         Raises:
-            NavigationFailed: If Playwright raises during navigation.
+            NavigationFailedError: If Playwright raises during navigation.
         """
         self._require_open()
         start = time.monotonic()
         try:
             await self._page.goto(url)
         except Exception as exc:
-            raise NavigationFailed(url=url, reason=str(exc)) from exc
+            raise NavigationFailedError(url=url, reason=str(exc)) from exc
         duration_ms = int((time.monotonic() - start) * 1000)
         await self._audit(
             "browser.navigate",
@@ -258,9 +258,9 @@ class BrowserSession:
         await self._audit_fn(event, payload)
 
     def _require_open(self) -> None:
-        """Raise BrowserNotAvailable if this session has already been closed."""
+        """Raise BrowserNotAvailableError if this session has already been closed."""
         if self._closed:
-            raise BrowserNotAvailable(
+            raise BrowserNotAvailableError(
                 message=f"Session {self._session_id} has been closed",
                 details={"session_id": self._session_id},
             )

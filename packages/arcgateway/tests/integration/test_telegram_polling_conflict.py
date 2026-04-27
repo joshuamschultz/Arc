@@ -30,12 +30,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from arcgateway.adapters.telegram import (
-    TelegramAdapter,
     _CONFLICT_MAX_RETRIES,
     _NETWORK_MAX_RETRIES,
+    TelegramAdapter,
 )
-from arcgateway.executor import InboundEvent
-
 
 # ── Fake exception classes (no library needed) ────────────────────────────────
 

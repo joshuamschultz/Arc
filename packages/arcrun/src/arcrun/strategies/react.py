@@ -61,12 +61,16 @@ async def _execute_tool_calls(
     state: RunState,
     sandbox: Sandbox,
 ) -> list[Any]:
-    """Execute tool calls, running spawn_task calls concurrently.
+    """Execute tool calls. Tools flagged ``parallel_safe`` run concurrently.
 
-    Returns tool result messages in original call order.
+    The loop has no knowledge of specific tool names. Concurrency is a
+    declared property of the tool — any tool that opts in via
+    ``Tool.parallel_safe`` is queued and dispatched in one
+    ``asyncio.gather``. All other calls run sequentially in submission
+    order. Returns tool result messages in original call order.
     """
     tool_results_map: dict[int, Any] = {}
-    spawn_queue: dict[int, Any] = {}
+    parallel_queue: dict[int, Any] = {}
     steered = False
 
     for idx, tc in enumerate(tool_calls):
@@ -74,8 +78,9 @@ async def _execute_tool_calls(
             tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
             continue
 
-        if tc.name == "spawn_task":
-            spawn_queue[idx] = tc
+        tool = state.registry.get(tc.name)
+        if tool is not None and tool.parallel_safe:
+            parallel_queue[idx] = tc
         else:
             result_msg, _ok = await execute_tool_call(tc, state, sandbox)
             tool_results_map[idx] = result_msg
@@ -85,24 +90,24 @@ async def _execute_tool_calls(
                 state.messages.append(user_message(steer_msg))
                 steered = True
 
-    # Execute queued spawn_task calls concurrently
-    if spawn_queue and not steered:
-        indices = list(spawn_queue.keys())
-        coros = [execute_tool_call(spawn_queue[i], state, sandbox) for i in indices]
+    # Execute queued parallel-safe calls concurrently
+    if parallel_queue and not steered:
+        indices = list(parallel_queue.keys())
+        coros = [execute_tool_call(parallel_queue[i], state, sandbox) for i in indices]
         results = await asyncio.gather(*coros, return_exceptions=True)
 
         for idx, result in zip(indices, results, strict=False):
             if isinstance(result, tuple):
                 tool_results_map[idx] = result[0]
             else:
-                tc = spawn_queue[idx]
+                tc = parallel_queue[idx]
                 tool_results_map[idx] = tool_result(tc.id, f"Error: {result}")
 
         if not state.steer_queue.empty():
             steer_msg = state.steer_queue.get_nowait()
             state.messages.append(user_message(steer_msg))
-    elif spawn_queue and steered:
-        for idx, tc in spawn_queue.items():
+    elif parallel_queue and steered:
+        for idx, tc in parallel_queue.items():
             tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
 
     # Return results in original order
@@ -201,15 +206,15 @@ async def react_loop(
             _end_turn(state, bus)
             return _build_result(state, response.content)
 
-        # Process tool calls (spawn_task runs concurrently, others sequentially)
+        # Process tool calls (parallel_safe tools dispatched concurrently)
         result_messages = await _execute_tool_calls(response.tool_calls, state, sandbox)
         state.messages.extend(result_messages)
 
-        # SPEC-017 R-030/R-031 — scan THIS turn's tool calls for a
-        # ``task_complete`` invocation. If present and the dispatch
-        # succeeded (tool result is a success string, not error),
-        # terminate the loop cleanly.
-        completion = _extract_task_complete_payload(response.tool_calls)
+        # SPEC-017 R-030/R-031 — any tool flagged ``signals_completion``
+        # terminates the loop with its arguments as the completion
+        # payload. Generic mechanism — the loop has no knowledge of
+        # specific terminator tool names.
+        completion = _extract_completion_payload(response.tool_calls, state.registry)
         if completion is not None:
             state.completion_payload = completion
             bus.emit("loop.completed", dict(completion))
@@ -239,16 +244,21 @@ async def react_loop(
     return _build_result(state, None)
 
 
-def _extract_task_complete_payload(tool_calls: list[Any]) -> dict[str, Any] | None:
-    """Return the ``task_complete`` arguments if present in this batch.
+def _extract_completion_payload(
+    tool_calls: list[Any],
+    registry: Any,
+) -> dict[str, Any] | None:
+    """Return the arguments of the first ``signals_completion`` tool call.
 
-    Scans the assistant's proposed tool calls for an invocation of
-    ``task_complete`` and returns its argument dict. Multiple
-    invocations are unusual — we take the first, matching
+    Scans the assistant's proposed tool calls for a tool that has
+    declared itself a structured terminator via
+    ``Tool.signals_completion=True`` and returns its argument dict.
+    Multiple invocations are unusual — we take the first, matching
     ``response.stop_reason == "end_turn"`` semantics.
     """
     for tc in tool_calls:
-        if getattr(tc, "name", "") == "task_complete":
+        tool = registry.get(getattr(tc, "name", ""))
+        if tool is not None and tool.signals_completion:
             args = getattr(tc, "arguments", None)
             if isinstance(args, dict):
                 return dict(args)

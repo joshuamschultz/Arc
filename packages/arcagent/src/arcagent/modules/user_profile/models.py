@@ -19,7 +19,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]  # types-PyYAML not a hard dep
+import yaml
 from pydantic import BaseModel, Field, field_validator
 
 # Regex to extract YAML frontmatter between --- fences (non-greedy).

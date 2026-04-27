@@ -209,5 +209,5 @@ def _get_value(node: dict[str, Any], key: str) -> str:
     """Extract a string value from an AX node property."""
     prop = node.get(key)
     if isinstance(prop, dict):
-        return prop.get("value", "")
+        return str(prop.get("value", ""))
     return ""

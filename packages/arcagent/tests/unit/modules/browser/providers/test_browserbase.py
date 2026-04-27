@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from arcagent.modules.browser.errors import BrowserNotAvailable, RemoteProviderError
+from arcagent.modules.browser.errors import BrowserNotAvailableError, RemoteProviderError
 from arcagent.modules.browser.providers.browserbase import BrowserbaseProvider
 
 
@@ -87,7 +87,7 @@ class TestBrowserbaseProviderConnect:
     async def test_raises_browser_not_available_when_playwright_missing(self) -> None:
         provider = BrowserbaseProvider(endpoint=_ENDPOINT)
         with patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}):
-            with pytest.raises(BrowserNotAvailable):
+            with pytest.raises(BrowserNotAvailableError):
                 await provider.connect()
 
     async def test_raises_remote_provider_error_on_connection_failure(self) -> None:

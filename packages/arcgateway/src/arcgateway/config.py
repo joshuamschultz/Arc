@@ -76,7 +76,7 @@ class TelegramPlatformConfig(BaseModel):
     """[platforms.telegram] section."""
 
     enabled: bool = False
-    token_env: str = "TELEGRAM_BOT_TOKEN"  # noqa: S105 — env var name, not a password
+    token_env: str = "TELEGRAM_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
     allowed_user_ids: list[int] = Field(default_factory=list)
     agent_did: str = ""  # Overrides [gateway].agent_did for this platform
 
@@ -94,8 +94,8 @@ class SlackPlatformConfig(BaseModel):
     """[platforms.slack] section."""
 
     enabled: bool = False
-    bot_token_env: str = "SLACK_BOT_TOKEN"  # noqa: S105 — env var name, not a password
-    app_token_env: str = "SLACK_APP_TOKEN"  # noqa: S105 — env var name, not a password
+    bot_token_env: str = "SLACK_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
+    app_token_env: str = "SLACK_APP_TOKEN"  # noqa: S105 — env var name, not a secret
     allowed_user_ids: list[str] = Field(default_factory=list)
     agent_did: str = ""  # Overrides [gateway].agent_did for this platform
 
@@ -148,6 +148,22 @@ class GatewayConfig(BaseModel):
     security: SecuritySection = Field(default_factory=SecuritySection)
     platforms: PlatformsSection = Field(default_factory=PlatformsSection)
     pairing: PairingSection = Field(default_factory=PairingSection)
+
+    @classmethod
+    def load(cls) -> GatewayConfig:
+        """Discover and load gateway config from the standard location.
+
+        Reads ``${ARC_CONFIG_DIR:-~/.arc}/gateway.toml``. If absent, returns
+        an all-defaults GatewayConfig (personal tier, no adapters enabled).
+
+        Returns:
+            Validated GatewayConfig instance.
+        """
+        import os
+
+        base = os.environ.get("ARC_CONFIG_DIR")
+        root = Path(base).expanduser() if base else Path.home() / ".arc"
+        return cls.from_toml(root / "gateway.toml")
 
     @classmethod
     def from_toml(cls, path: Path) -> GatewayConfig:

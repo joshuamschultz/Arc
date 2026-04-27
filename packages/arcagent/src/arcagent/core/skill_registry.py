@@ -35,8 +35,10 @@ class SkillMeta:
 class SkillRegistry:
     """Discover, cache, and format SKILL.md files for prompt injection."""
 
-    def __init__(self) -> None:
+    def __init__(self, ui_reporter: Any | None = None) -> None:
         self._skills: dict[str, SkillMeta] = {}
+        # Duck-typed UIEventReporter; no arcui import. None = disabled.
+        self._ui_reporter: Any | None = ui_reporter
 
     @property
     def skills(self) -> list[SkillMeta]:
@@ -149,6 +151,28 @@ class SkillRegistry:
             file_path=path,
         )
         self._skills[skill.name] = skill
+        self._emit_skill_load(skill)
+
+    def _emit_skill_load(self, skill: SkillMeta) -> None:
+        """Emit skill_load event to ui_reporter if registered.
+
+        Fire-and-forget; reporter failures are logged, never propagated.
+        """
+        if self._ui_reporter is None:
+            return
+        try:
+            self._ui_reporter.emit_agent_event(
+                event_type="skill_load",
+                data={
+                    "skill_name": skill.name,
+                    "version": skill.version,
+                    "category": skill.category,
+                },
+            )
+        except Exception:
+            _logger.debug(
+                "ui_reporter.emit_agent_event failed for skill_load", exc_info=True
+            )
 
     @staticmethod
     def _extract_frontmatter(text: str) -> str | None:

@@ -59,7 +59,7 @@ class KubernetesLeaseElection:
     identity:
         Unique per-replica identifier (typically ``socket.gethostname()``).
     lease_seconds:
-        Lease TTL. Must exceed ``renew_seconds`` by at least 3×.
+        Lease TTL. Must exceed ``renew_seconds`` by at least 3x.
     renew_seconds:
         How often the holder renews. Runs in a background task.
     """
@@ -133,7 +133,7 @@ class KubernetesLeaseElection:
     def _build_client(self) -> Any:
         """Late-import the kubernetes client; raises if unavailable."""
         try:
-            from kubernetes import client, config  # type: ignore[import-untyped]
+            from kubernetes import client, config  # type: ignore[import-not-found]  # optional dep
         except ImportError as err:
             msg = (
                 "KubernetesLeaseElection requires the 'kubernetes' package. "
@@ -159,8 +159,10 @@ class KubernetesLeaseElection:
     def _sync_try_acquire(self) -> bool:
         """Blocking acquire logic — runs in a thread."""
         try:
-            from kubernetes import client  # type: ignore[import-untyped]
-            from kubernetes.client.rest import ApiException  # type: ignore[import-untyped]
+            from kubernetes import client
+            from kubernetes.client.rest import (  # type: ignore[import-not-found]  # optional dep
+                ApiException,
+            )
         except ImportError:
             return False
 
@@ -199,7 +201,7 @@ class KubernetesLeaseElection:
             )
             return True
 
-        return existing.spec.holder_identity == self._identity
+        return bool(existing.spec.holder_identity == self._identity)
 
     @staticmethod
     def _holder_is_stale(lease: Any, now: datetime) -> bool:
@@ -208,7 +210,7 @@ class KubernetesLeaseElection:
         lease_duration = lease.spec.lease_duration_seconds or _DEFAULT_LEASE_SECONDS
         if renew_time is None:
             return True
-        return now > renew_time + timedelta(seconds=lease_duration)
+        return bool(now > renew_time + timedelta(seconds=lease_duration))
 
     async def _renew_loop(self) -> None:
         """Periodically refresh ``renew_time`` until cancelled."""
@@ -226,7 +228,7 @@ class KubernetesLeaseElection:
     def _sync_renew(self) -> None:
         """Blocking renewal — writes ``renew_time = now``."""
         try:
-            from kubernetes import client  # type: ignore[import-untyped]
+            from kubernetes import client
         except ImportError:
             return
         existing = self._coord_v1.read_namespaced_lease(

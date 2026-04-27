@@ -101,3 +101,19 @@ class BrowserConfig(ModuleConfig):
     cookies: BrowserCookieConfig = Field(default_factory=BrowserCookieConfig)
     accessibility_tree_depth: int = 10
     chrome_memory_limit_mb: int = 512
+
+
+class PlaywrightConfig(ModuleConfig):
+    """Playwright browser provider configuration.
+
+    Controls sandbox isolation mode and whether the browser runs locally
+    (headless in the same process) or via a remote provider (e.g., Browserbase).
+
+    Used by ``enforce_sandbox_policy()`` to validate tier-specific rules before
+    any browser session is created.
+    """
+
+    mode: Literal["local", "remote"] = "local"
+    sandbox: Literal["loose", "strict"] = "loose"
+    remote_provider: str = ""
+    remote_endpoint: str = ""

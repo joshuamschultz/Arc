@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 
+from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig
 from arcui.server import create_app
 
 
-def _make_ws_app() -> tuple:
+def _make_ws_app() -> tuple[Starlette, TestClient, AuthConfig]:
     """Build a test app with known auth tokens for WebSocket testing."""
     auth = AuthConfig({"viewer_token": "ws-viewer", "operator_token": "ws-operator"})
     app = create_app(auth_config=auth)
@@ -59,6 +60,27 @@ class TestWebSocketAuth:
             resp = ws.receive_json()
             assert resp["error"] == "Invalid token"
 
+    def test_agent_token_rejected_on_browser_ws(self) -> None:
+        """Agent tokens must not access the browser /ws feed (ASI03).
+
+        The browser WebSocket endpoint is for human operators and viewers.
+        Agent tokens exist only for the /api/agent/connect endpoint.
+        Accepting them here would allow an agent to read all other agents'
+        events — a privilege escalation.
+        """
+        auth = AuthConfig({
+            "viewer_token": "ws-viewer",
+            "operator_token": "ws-operator",
+            "agent_token": "ws-agent",
+        })
+        app = create_app(auth_config=auth)
+        client = TestClient(app)
+        with client.websocket_connect("/ws") as ws:
+            ws.send_text(json.dumps({"token": "ws-agent"}))
+            resp = ws.receive_json()
+            assert "error" in resp
+            assert "Agent" in resp["error"]
+
 
 class TestWebSocketEventStreaming:
     """Event streaming after successful auth."""
@@ -102,3 +124,26 @@ class TestWebSocketSubscribe:
             app.state.connection_manager.broadcast({"type": "test"})
             data = ws.receive_json()
             assert data["type"] == "test"
+
+    def test_oversized_message_is_skipped(self) -> None:
+        """DoS prevention: messages over 1 MB are silently dropped.
+
+        An oversized message must not crash the loop or disconnect the client.
+        Events sent after the oversized message must still be delivered.
+        """
+        from arcui.ws_helpers import MAX_WS_MESSAGE_SIZE
+
+        app, client, _ = _make_ws_app()
+        with client.websocket_connect("/ws") as ws:
+            ws.send_text(json.dumps({"token": "ws-viewer"}))
+            resp = ws.receive_json()
+            assert resp["type"] == "auth_ok"
+
+            # Send a message that exceeds the size limit
+            oversized = "x" * (MAX_WS_MESSAGE_SIZE + 1)
+            ws.send_text(oversized)
+
+            # Connection must still be alive — subsequent broadcast is received
+            app.state.connection_manager.broadcast({"type": "alive_check"})
+            data = ws.receive_json()
+            assert data["type"] == "alive_check"

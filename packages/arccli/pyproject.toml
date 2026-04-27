@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arccmd"
-version = "0.3.0"
+version = "0.3.2"
 description = "Unified CLI for Arc products (arcllm, arcrun, arc-agent)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,7 +32,6 @@ dependencies = [
 
 [project.scripts]
 arc = "arccli.main:main"
-arc-legacy = "arccli.main_legacy:cli"
 arc-agent-worker = "arccli.agent_worker:main"
 
 [project.urls]
@@ -51,7 +50,7 @@ line-length = 99
 select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "S105", "S106", "S108", "E402", "E501", "N806", "E741", "B007"]
+"tests/**/*.py" = ["S101", "S105", "S106", "S108", "S603", "E402", "E501", "N806", "E741", "B007"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

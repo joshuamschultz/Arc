@@ -3,16 +3,19 @@
 Discovery order
 ---------------
 1. Built-ins — "local" and "docker" imported directly from arcrun.backends.
-   Always trusted; never loaded via entry_points.
+   Always trusted; never require a manifest.
 2. Explicit config — dotted import path (e.g. "arc_backends_ssh:SSHBackend").
    Loader imports the path and verifies isinstance(obj, ExecutorBackend).
-3. setuptools entry_points (group "arcrun.executor_backends") — DISABLED at
-   federal tier.  At federal tier an attempt raises FederalBackendPolicyError.
+   A signed manifest is REQUIRED at ALL tiers (Phase C, see policy.py).
 
-Federal signature verification (M3 gap-close)
----------------------------------------------
-At federal tier, explicit-config backends (dotted paths) must appear in a
-signed ``allowed_backends`` manifest TOML file.  The manifest layout is::
+Entry-points are PERMANENTLY DISABLED at all tiers (Phase C supply-chain
+lockdown).  See policy.py for the design rationale.
+
+Signing requirement (Phase C, all tiers)
+-----------------------------------------
+Every non-builtin backend requires a signed ``allowed_backends`` manifest.
+The tier stringency knob determines *which issuers are trusted*, not
+*whether to verify*.  The manifest layout is::
 
     [meta]
     issued_at = "2026-04-18T00:00:00Z"
@@ -37,13 +40,13 @@ The loader:
   5. For each backend, computes ``sha256`` of the imported module's source
      file and compares against ``content_hash`` (algorithm prefix ``sha256:``).
 
-Any step failure → ``BackendSignatureError``.  Federal deployments MUST pass
-a signed manifest path; unsigned ``allowed_backends`` dicts are NOT accepted
-at federal tier (SPEC-018 HIGH-3, fail-closed).
+Any step failure → ``BackendSignatureError``.  All tiers MUST pass
+a signed manifest for non-builtin backends; unsigned ``allowed_backends``
+dicts are NOT accepted (fail-closed per SPEC-018 HIGH-3).
 
 Audit events
 ------------
-Every load attempt emits one of:
+Every load attempt emits one AuditEvent via ``arctrust.audit.emit()``:
 
     executor.backend.loaded           — instance constructed and validated
     executor.backend.denied           — policy gate refused
@@ -51,8 +54,8 @@ Every load attempt emits one of:
     backend.signature_invalid         — manifest signature rejected
     backend.content_hash_mismatch     — backend file did not match manifest
 
-These flow through arcrun's event bus when one is provided, or are logged via
-``logging`` when not (e.g. in tests).
+When ``audit_sink`` is None the events are logged via ``logging`` only
+(backwards-compatible fallback).
 """
 
 from __future__ import annotations
@@ -70,19 +73,23 @@ from arcrun.backends.base import ExecutorBackend
 
 logger = logging.getLogger(__name__)
 
+# Sentinel actor DID used when no per-request identity is available
+_LOADER_ACTOR = "did:arc:system:backend-loader"
+
 
 class FederalBackendPolicyError(RuntimeError):
-    """Raised when entry_points discovery is attempted at federal tier.
+    """Raised when entry_points discovery is attempted at any tier (Phase C).
 
-    Also raised when a short alias (not a dotted import path) is requested
-    at federal tier and cannot be resolved from built-ins, because the only
-    remaining resolution strategy (entry_points) is disabled.
+    Entry-points are permanently disabled.  Also raised when a short alias
+    (not a dotted import path) is requested and cannot be resolved from
+    built-ins.
     """
 
 
 class BackendSignatureError(RuntimeError):
-    """Raised when a backend is not in the federal allowed_backends manifest,
-    or when the manifest signature / content hashes fail verification."""
+    """Raised when a backend is not in the allowed_backends manifest,
+    or when the manifest signature / content hashes fail verification,
+    or when no manifest is provided for a non-builtin backend."""
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +104,7 @@ def load_backend(
     allowed_backends: dict[str, str] | None = None,
     manifest_path: Path | None = None,
     trust_dir: Path | None = None,
+    audit_sink: Any | None = None,
 ) -> ExecutorBackend:
     """Resolve and return an ExecutorBackend by name.
 
@@ -109,16 +117,18 @@ def load_backend(
         Deployment tier from config.security.tier.  One of
         "federal", "enterprise", "personal".
     allowed_backends:
-        Legacy mapping of name → dotted import path.  Accepted at non-federal
-        tiers and for test harnesses.  At federal tier this parameter is
-        IGNORED — the signed ``manifest_path`` is authoritative and an unsigned
-        dict is never accepted (fail-closed per SPEC-018 HIGH-3).
+        Legacy mapping of name → dotted import path.  IGNORED at all tiers
+        (Phase C: signed manifest is always authoritative).
     manifest_path:
-        Path to a signed ``allowed_backends`` TOML manifest.  REQUIRED at
-        federal tier for any non-built-in backend.  The manifest is verified
+        Path to a signed ``allowed_backends`` TOML manifest.  REQUIRED for
+        any non-builtin backend at all tiers.  The manifest is verified
         before any third-party module is imported.
     trust_dir:
         Optional override for the issuer trust store.
+    audit_sink:
+        Optional ``arctrust.AuditSink`` implementation. When provided,
+        AuditEvents are emitted for every load outcome in addition to logger
+        output.  When None, falls back to logger-only (backwards compatible).
 
     Returns
     -------
@@ -128,74 +138,71 @@ def load_backend(
     Raises
     ------
     FederalBackendPolicyError
-        If entry_points discovery is attempted at federal tier, or if a short
-        alias that is not a built-in is requested at federal tier.
+        If a short alias that is not a built-in is requested (entry-points
+        are disabled at all tiers, Phase C).
     BackendSignatureError
-        If federal tier is requested without a signed manifest (manifest_path
-        is None), or if the manifest signature, issuer DID, or a backend
-        content hash does not verify, or if the backend is not in the manifest.
+        If no signed manifest is provided for a non-builtin backend, or if
+        the manifest signature, issuer DID, or a backend content hash does
+        not verify, or if the backend is not in the manifest.
     ValueError
-        If the backend name cannot be resolved or does not implement the Protocol.
+        If the backend name cannot be resolved or does not implement the
+        Protocol.
     """
-    # --- Tier 1: built-ins (always trusted at all tiers) ---
+    # --- Tier 1: built-ins (always trusted at all tiers; no manifest needed) ---
     backend = _try_builtin(name)
     if backend is not None:
-        _audit_loaded(name, tier=tier, path="<builtin>")
+        _emit_loaded(name, tier=tier, path="<builtin>", sink=audit_sink)
         return backend
 
     # At this point the name is NOT a built-in.
     is_dotted_path = ":" in name or "." in name
 
-    if tier == "federal":
-        if not is_dotted_path:
-            # Short alias at federal tier: the only resolution path left is
-            # entry_points, which is disabled.  Raise immediately.
-            _audit_denied(
-                name, tier=tier, reason="entry_points disabled at federal tier"
-            )
-            raise FederalBackendPolicyError(
-                f"Backend '{name}' is not a built-in and entry_points discovery is "
-                "disabled at federal tier.  Supply the full dotted import path "
-                "(e.g. 'mypackage:MyBackend') and add it to the allowed_backends manifest."
-            )
-        # Federal tier: a signed manifest is mandatory.  Unsigned dicts are
-        # rejected (fail-closed).  There is no warning-and-proceed fallback;
-        # the risk of silently trusting an unsigned payload at federal tier is
-        # too high (OWASP LLM03 / ASI04, SPEC-018 HIGH-3).
-        if manifest_path is None:
-            _audit_denied(name, tier="federal", reason="manifest_path required at federal tier")
-            raise BackendSignatureError(
-                "Federal tier requires signed manifest; unsigned dict not accepted.  "
-                f"Supply manifest_path= pointing to a signed allowed_backends TOML.  "
-                f"Backend '{name}' cannot be loaded without one."
-            )
-        verified = _verify_allowed_backends_signature(
-            manifest_path=manifest_path,
-            federal=True,
-            trust_dir=trust_dir,
+    if not is_dotted_path:
+        # Short alias at any tier: entry-points are permanently disabled.
+        # This path previously fell through to _try_entry_point at non-federal
+        # tiers — Phase C closes that bypass.
+        _emit_denied(
+            name,
+            tier=tier,
+            reason="entry_points disabled at all tiers (Phase C supply-chain lockdown)",
+            sink=audit_sink,
         )
-        _enforce_manifest_contains(name, verified)
-        _verify_backend_content_hash(name, verified)
+        raise FederalBackendPolicyError(
+            f"Backend '{name}' is not a built-in and entry_points discovery is "
+            "permanently disabled at all tiers (Phase C).  "
+            "Supply the full dotted import path "
+            "(e.g. 'mypackage:MyBackend') and add it to a signed allowed_backends manifest."
+        )
 
-    # --- Tier 2: explicit dotted import path ---
-    if is_dotted_path:
-        backend = _load_dotted(name)
-        _audit_loaded(name, tier=tier, path=name)
-        return backend
+    # All non-builtin backends require a signed manifest at every tier.
+    # Unsigned dicts are never accepted (fail-closed per SPEC-018 HIGH-3,
+    # extended to all tiers in Phase C).
+    if manifest_path is None:
+        _emit_denied(
+            name,
+            tier=tier,
+            reason="manifest_path required for non-builtin backends at all tiers (Phase C)",
+            sink=audit_sink,
+        )
+        raise BackendSignatureError(
+            "All tiers require a signed manifest for non-builtin backends (Phase C).  "
+            f"Supply manifest_path= pointing to a signed allowed_backends TOML.  "
+            f"Backend '{name}' cannot be loaded without one."
+        )
 
-    # --- Tier 3: entry_points (non-federal tiers only) ---
-    backend = _try_entry_point(name)
-    if backend is not None:
-        _audit_loaded(name, tier=tier, path=f"<entry_points:{name}>")
-        return backend
-
-    _audit_denied(name, tier=tier, reason="not found")
-    raise ValueError(
-        f"Backend '{name}' not found.  Built-ins: local, docker.  "
-        "For third-party backends supply the dotted import path "
-        "(e.g. 'mypackage.backends:MyBackend') or install a package that "
-        "registers an 'arcrun.executor_backends' entry point."
+    verified = _verify_allowed_backends_signature(
+        manifest_path=manifest_path,
+        federal=(tier == "federal"),
+        trust_dir=trust_dir,
+        sink=audit_sink,
     )
+    _enforce_manifest_contains(name, verified, tier=tier, sink=audit_sink)
+    _verify_backend_content_hash(name, verified, sink=audit_sink)
+
+    # --- Load the verified dotted import path ---
+    backend = _load_dotted(name)
+    _emit_loaded(name, tier=tier, path=name, sink=audit_sink)
+    return backend
 
 
 # ---------------------------------------------------------------------------
@@ -251,31 +258,8 @@ def _load_dotted(path: str) -> ExecutorBackend:
     return instance
 
 
-def _try_entry_point(name: str) -> ExecutorBackend | None:
-    """Attempt to load via setuptools entry_points group 'arcrun.executor_backends'."""
-    try:
-        from importlib.metadata import entry_points
-
-        eps = entry_points(group="arcrun.executor_backends")
-        for ep in eps:
-            if ep.name == name:
-                cls = ep.load()
-                instance: Any = cls()
-                if isinstance(instance, ExecutorBackend):
-                    return instance
-                logger.warning(
-                    "Entry point '%s' loaded class '%s' which does not implement "
-                    "ExecutorBackend Protocol; skipping.",
-                    name,
-                    cls,
-                )
-    except Exception as exc:
-        logger.warning("entry_points discovery for '%s' failed: %s", name, exc)
-    return None
-
-
 # ---------------------------------------------------------------------------
-# Federal manifest verification (Ed25519 + content hash)
+# Manifest verification (Ed25519 + content hash)
 # ---------------------------------------------------------------------------
 
 
@@ -284,6 +268,7 @@ def _verify_allowed_backends_signature(
     *,
     federal: bool,
     trust_dir: Path | None = None,
+    sink: Any | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Verify the Ed25519 signature on an ``allowed_backends`` TOML manifest.
 
@@ -294,10 +279,9 @@ def _verify_allowed_backends_signature(
 
     Args:
         manifest_path: Path to the signed ``allowed_backends.toml`` file.
-        federal:       Informational flag.  When False the verification is
-                       still performed (fail-closed on bad signatures at every
-                       tier once a signed manifest is supplied).
+        federal:       True when called for a federal-tier deployment.
         trust_dir:     Optional override for the issuer trust store.
+        sink:          Optional AuditSink for AuditEvent emission.
 
     Raises:
         BackendSignatureError: Any step of verification failed.
@@ -375,10 +359,11 @@ def _verify_allowed_backends_signature(
     try:
         pubkey = load_issuer_pubkey(issuer_did, trust_dir=trust_dir)
     except TrustStoreError as exc:
-        _audit_sig_invalid(
+        _emit_sig_invalid(
             manifest_path=manifest_path,
             reason=f"trust_store:{exc.code}",
             issuer_did=issuer_did,
+            sink=sink,
         )
         raise BackendSignatureError(
             f"Cannot resolve issuer pubkey for {issuer_did!r}: "
@@ -388,16 +373,17 @@ def _verify_allowed_backends_signature(
     try:
         VerifyKey(pubkey).verify(payload, sig_bytes)
     except BadSignatureError as exc:
-        _audit_sig_invalid(
+        _emit_sig_invalid(
             manifest_path=manifest_path,
             reason="bad_signature",
             issuer_did=issuer_did,
+            sink=sink,
         )
         raise BackendSignatureError(
             f"Manifest signature did not verify against issuer {issuer_did!r}"
         ) from exc
 
-    _audit_sig_verified(manifest_path=manifest_path, issuer_did=issuer_did)
+    _emit_sig_verified(manifest_path=manifest_path, issuer_did=issuer_did, sink=sink)
 
     # Build the verified mapping: name → entry dict
     verified: dict[str, dict[str, Any]] = {}
@@ -429,18 +415,27 @@ def _verify_allowed_backends_signature(
     return verified
 
 
-def _enforce_manifest_contains(name: str, verified: dict[str, dict[str, Any]]) -> None:
+def _enforce_manifest_contains(
+    name: str,
+    verified: dict[str, dict[str, Any]],
+    *,
+    tier: str = "unknown",
+    sink: Any | None = None,
+) -> None:
     """Raise BackendSignatureError if ``name`` is not in the verified mapping."""
     if name in verified:
         return
-    _audit_denied(name, tier="federal", reason="not in signed manifest")
+    _emit_denied(name, tier=tier, reason="not in signed manifest", sink=sink)
     raise BackendSignatureError(
         f"Backend '{name}' is not in the signed allowed_backends manifest."
     )
 
 
 def _verify_backend_content_hash(
-    name: str, verified: dict[str, dict[str, Any]]
+    name: str,
+    verified: dict[str, dict[str, Any]],
+    *,
+    sink: Any | None = None,
 ) -> None:
     """Compute sha256 of the backend's module file and compare to manifest.
 
@@ -488,7 +483,7 @@ def _verify_backend_content_hash(
 
     actual_hex = hashlib.sha256(actual_bytes).hexdigest().lower()
     if actual_hex != expected_hex:
-        _audit_content_mismatch(name=name, expected=expected_hex, actual=actual_hex)
+        _emit_content_mismatch(name=name, expected=expected_hex, actual=actual_hex, sink=sink)
         raise BackendSignatureError(
             f"Backend {name!r}: content_hash mismatch.  "
             f"Manifest expected sha256:{expected_hex} but module file "
@@ -526,19 +521,19 @@ def _enforce_federal_manifest(
     """Raise unless ``name`` is in the (unsigned) allowed_backends dict.
 
     Preserved for unit tests that exercise the dict-based gate directly.
-    Note: this helper is no longer called from ``load_backend`` at federal tier —
-    federal tier now hard-fails if no signed manifest is provided (SPEC-018 HIGH-3).
+    Note: this helper is no longer called from ``load_backend`` — all tiers
+    now hard-fail if no signed manifest is provided (Phase C, SPEC-018 HIGH-3).
     Non-federal callers and tests may still invoke this directly.
     """
     if allowed_backends is None:
-        _audit_denied(name, tier="federal", reason="no allowed_backends manifest provided")
+        _emit_denied_log(name, tier="federal", reason="no allowed_backends manifest provided")
         raise BackendSignatureError(
             f"Federal tier requires an allowed_backends manifest.  "
             f"Backend '{name}' cannot be loaded without one."
         )
 
     if name not in allowed_backends:
-        _audit_denied(
+        _emit_denied_log(
             name, tier="federal", reason=f"'{name}' not in allowed_backends manifest"
         )
         raise BackendSignatureError(
@@ -548,27 +543,57 @@ def _enforce_federal_manifest(
 
     logger.debug(
         "Federal manifest (unsigned path): backend '%s' is listed.  "
-        "For production federal use, switch to a signed manifest via "
+        "For production use, switch to a signed manifest via "
         "load_backend(manifest_path=...).",
         name,
     )
 
 
 # ---------------------------------------------------------------------------
-# Audit helpers (emit to logger; wired to OTel in production)
+# Audit helpers — emit AuditEvents via arctrust, fall back to logger
 # ---------------------------------------------------------------------------
 
 
-def _audit_loaded(name: str, *, tier: str, path: str) -> None:
+def _emit_loaded(name: str, *, tier: str, path: str, sink: Any | None) -> None:
+    """Emit executor.backend.loaded AuditEvent."""
     logger.info(
         "executor.backend.loaded name=%s tier=%s path=%s",
         name,
         tier,
         path,
     )
+    if sink is not None:
+        _emit_audit_event(
+            action="executor.backend.loaded",
+            target=name,
+            outcome="allow",
+            tier=tier,
+            extra={"path": path},
+            sink=sink,
+        )
 
 
-def _audit_denied(name: str, *, tier: str, reason: str) -> None:
+def _emit_denied(name: str, *, tier: str, reason: str, sink: Any | None) -> None:
+    """Emit executor.backend.denied AuditEvent."""
+    logger.warning(
+        "executor.backend.denied name=%s tier=%s reason=%s",
+        name,
+        tier,
+        reason,
+    )
+    if sink is not None:
+        _emit_audit_event(
+            action="executor.backend.denied",
+            target=name,
+            outcome="deny",
+            tier=tier,
+            extra={"reason": reason},
+            sink=sink,
+        )
+
+
+def _emit_denied_log(name: str, *, tier: str, reason: str) -> None:
+    """Logger-only denied event used by legacy _enforce_federal_manifest."""
     logger.warning(
         "executor.backend.denied name=%s tier=%s reason=%s",
         name,
@@ -577,29 +602,94 @@ def _audit_denied(name: str, *, tier: str, reason: str) -> None:
     )
 
 
-def _audit_sig_verified(*, manifest_path: Path, issuer_did: str) -> None:
+def _emit_sig_verified(
+    *, manifest_path: Path, issuer_did: str, sink: Any | None
+) -> None:
+    """Emit backend.signature_verified AuditEvent."""
     logger.info(
         "backend.signature_verified manifest=%s issuer_did=%s",
         manifest_path,
         issuer_did,
     )
+    if sink is not None:
+        _emit_audit_event(
+            action="backend.signature_verified",
+            target=str(manifest_path),
+            outcome="allow",
+            extra={"issuer_did": issuer_did},
+            sink=sink,
+        )
 
 
-def _audit_sig_invalid(
-    *, manifest_path: Path, reason: str, issuer_did: str | None = None
+def _emit_sig_invalid(
+    *, manifest_path: Path, reason: str, issuer_did: str | None = None, sink: Any | None
 ) -> None:
+    """Emit backend.signature_invalid AuditEvent."""
     logger.warning(
         "backend.signature_invalid manifest=%s issuer_did=%s reason=%s",
         manifest_path,
         issuer_did,
         reason,
     )
+    if sink is not None:
+        _emit_audit_event(
+            action="backend.signature_invalid",
+            target=str(manifest_path),
+            outcome="deny",
+            extra={"issuer_did": issuer_did, "reason": reason},
+            sink=sink,
+        )
 
 
-def _audit_content_mismatch(*, name: str, expected: str, actual: str) -> None:
+def _emit_content_mismatch(
+    *, name: str, expected: str, actual: str, sink: Any | None
+) -> None:
+    """Emit backend.content_hash_mismatch AuditEvent."""
     logger.warning(
         "backend.content_hash_mismatch name=%s expected=sha256:%s actual=sha256:%s",
         name,
         expected,
         actual,
     )
+    if sink is not None:
+        _emit_audit_event(
+            action="backend.content_hash_mismatch",
+            target=name,
+            outcome="deny",
+            extra={"expected": expected, "actual": actual},
+            sink=sink,
+        )
+
+
+def _emit_audit_event(
+    *,
+    action: str,
+    target: str,
+    outcome: str,
+    tier: str | None = None,
+    extra: dict[str, Any] | None = None,
+    sink: Any,
+) -> None:
+    """Build and emit an AuditEvent to sink via arctrust.audit.emit().
+
+    Swallows import errors gracefully so audit never breaks the load path.
+    """
+    try:
+        from arctrust import AuditEvent, emit
+
+        event = AuditEvent(
+            actor_did=_LOADER_ACTOR,
+            action=action,
+            target=target,
+            outcome=outcome,
+            tier=tier,
+            extra=extra or {},
+        )
+        emit(event, sink)
+    except Exception:
+        logger.warning(
+            "Failed to emit AuditEvent action=%s target=%s — swallowing (AU-5)",
+            action,
+            target,
+            exc_info=True,
+        )

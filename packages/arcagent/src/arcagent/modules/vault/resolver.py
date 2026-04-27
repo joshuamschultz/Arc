@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
+
+from arctrust import AuditEvent, NullSink, emit
 
 from arcagent.modules.vault.backends.file import FileBackend
 from arcagent.modules.vault.protocol import VaultBackend, VaultUnreachable
@@ -37,6 +40,9 @@ _logger = logging.getLogger("arcagent.modules.vault.resolver")
 # silent personal-tier fallback in a federal environment.
 _VALID_TIERS = frozenset({"federal", "enterprise", "personal"})
 
+# Module-level NullSink — default for callers that don't inject an audit sink.
+_NULL_SINK = NullSink()
+
 
 async def resolve_secret(
     name: str,
@@ -44,6 +50,7 @@ async def resolve_secret(
     tier: str,
     backend: VaultBackend | None,
     env_fallback_var: str | None = None,
+    audit_sink: Any | None = None,
 ) -> str:
     """Resolve a named secret according to tier policy.
 
@@ -57,6 +64,8 @@ async def resolve_secret(
         env_fallback_var: Name of an environment variable to use as fallback
             (enterprise and personal tiers only).  If ``None`` no env fallback
             is attempted.
+        audit_sink: An arctrust AuditSink for vault.unreachable events.
+            Defaults to NullSink so existing call sites need no changes.
 
     Returns:
         Secret value as a plain string.
@@ -75,12 +84,18 @@ async def resolve_secret(
             f"Invalid tier {tier!r}. Must be one of: {sorted(_VALID_TIERS)}"
         )
 
+    sink = audit_sink if audit_sink is not None else _NULL_SINK
+
     if tier == "federal":
-        return await _resolve_federal(name, backend=backend)
+        return await _resolve_federal(name, backend=backend, audit_sink=sink)
     if tier == "enterprise":
-        return await _resolve_enterprise(name, backend=backend, env_var=env_fallback_var)
+        return await _resolve_enterprise(
+            name, backend=backend, env_var=env_fallback_var, audit_sink=sink
+        )
     # personal
-    return await _resolve_personal(name, backend=backend, env_var=env_fallback_var)
+    return await _resolve_personal(
+        name, backend=backend, env_var=env_fallback_var, audit_sink=sink
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,22 +103,43 @@ async def resolve_secret(
 # ---------------------------------------------------------------------------
 
 
-async def _resolve_federal(name: str, *, backend: VaultBackend | None) -> str:
+async def _resolve_federal(
+    name: str,
+    *,
+    backend: VaultBackend | None,
+    audit_sink: Any,
+) -> str:
     """Federal: vault is mandatory.  Any failure is a hard error.
 
     No environment-variable or file fallback is attempted, even if the caller
     set env_fallback_var.  This is intentional: federal environments must not
     allow secrets to arrive via environment injection.
+
+    NIST AU-2/AU-9: vault.unreachable is logged before propagating so the
+    audit trail captures the failure even if the caller swallows the exception.
+    AuditEvent is also emitted through the arctrust sink (canonical path).
     """
     if backend is None:
+        # Defense-in-depth: log AND emit canonical AuditEvent before raising.
+        _logger.warning(
+            "vault.unreachable secret=%r tier=federal reason=no_backend_configured",
+            name,
+        )
+        _emit_unreachable_audit(name, "federal", "no_backend_configured", audit_sink)
         raise VaultUnreachable(
             f"[federal] No vault backend configured for secret {name!r}. "
             "A vault backend is required at federal tier."
         )
 
-    # Let VaultUnreachable propagate — caller / startup code converts to hard
-    # error with appropriate audit event.
-    value = await backend.get_secret(name)
+    try:
+        value = await backend.get_secret(name)
+    except VaultUnreachable:
+        _logger.warning(
+            "vault.unreachable secret=%r tier=federal reason=backend_raised",
+            name,
+        )
+        _emit_unreachable_audit(name, "federal", "backend_raised", audit_sink)
+        raise
 
     if value is None:
         raise RuntimeError(
@@ -123,6 +159,7 @@ async def _resolve_enterprise(
     *,
     backend: VaultBackend | None,
     env_var: str | None,
+    audit_sink: Any,
 ) -> str:
     """Enterprise: try vault; on failure warn + audit + try env var."""
     if backend is not None:
@@ -139,11 +176,12 @@ async def _resolve_enterprise(
             _emit_vault_fallback_audit(name, reason="secret_not_found")
         except VaultUnreachable as exc:
             _logger.warning(
-                "[enterprise] Vault unreachable for secret %r: %s — "
-                "falling back to env var",
+                "vault.unreachable secret=%r tier=enterprise reason=%s",
                 name,
                 exc,
             )
+            # Canonical AuditEvent via arctrust (defense-in-depth alongside log).
+            _emit_unreachable_audit(name, "enterprise", str(exc), audit_sink)
             _emit_vault_fallback_audit(name, reason=str(exc))
 
     # Env fallback
@@ -169,6 +207,7 @@ async def _resolve_personal(
     *,
     backend: VaultBackend | None,
     env_var: str | None,
+    audit_sink: Any,
 ) -> str:
     """Personal: vault → env var → ~/.arc/secrets/{name} (0600 enforced)."""
     # 1. Try vault if configured
@@ -177,11 +216,14 @@ async def _resolve_personal(
             value = await backend.get_secret(name)
             if value is not None:
                 return value
-        except VaultUnreachable:
-            _logger.debug(
-                "[personal] Vault unreachable for %r; trying env/file fallback",
+        except VaultUnreachable as exc:
+            _logger.warning(
+                "vault.unreachable secret=%r tier=personal reason=%s",
                 name,
+                exc,
             )
+            # Canonical AuditEvent via arctrust (defense-in-depth alongside log).
+            _emit_unreachable_audit(name, "personal", str(exc), audit_sink)
 
     # 2. Try env var
     if env_var is not None:
@@ -210,15 +252,41 @@ async def _resolve_personal(
 def _emit_vault_fallback_audit(name: str, reason: str) -> None:
     """Emit an audit event for vault fallback.
 
-    Uses structured logging at WARNING level so the event is visible in all
-    log aggregators; full OTel audit event integration is added when the
-    telemetry module is wired to this module.
+    Structured logging at WARNING level keeps the event visible in all log
+    aggregators as defense-in-depth alongside the canonical AuditEvent path.
     """
     _logger.warning(
         "AUDIT vault.fallback secret=%r reason=%r",
         name,
         reason,
     )
+
+
+def _emit_unreachable_audit(
+    name: str,
+    tier: str,
+    reason: str,
+    audit_sink: Any,
+) -> None:
+    """Emit a canonical vault.unreachable AuditEvent through arctrust.
+
+    Called before raising VaultUnreachable so the audit trail captures the
+    failure even when callers catch and suppress the exception (NIST AU-9).
+
+    The logger.warning defense-in-depth line must be emitted by the caller
+    before calling this helper — both channels fire independently.
+    """
+    event = AuditEvent(
+        # vault resolver has no agent DID in scope; use sentinel so
+        # log aggregators can identify orphaned vault calls.
+        actor_did="did:arc:vault-resolver",
+        action="vault.unreachable",
+        target=name,
+        outcome="error",
+        tier=tier,
+        extra={"reason": reason},
+    )
+    emit(event, audit_sink)
 
 
 __all__ = ["resolve_secret"]

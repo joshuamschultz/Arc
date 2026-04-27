@@ -1,4 +1,9 @@
-"""WebSocket route — /ws with first-message auth and subscription support."""
+"""WebSocket route — /ws with first-message auth and subscription support.
+
+Browser clients connect to /ws, send a first-message JSON auth payload,
+and receive a streamed event feed. Auth is enforced before any events
+are delivered (ASI03, ASI09 — no unauthenticated access to agent data).
+"""
 
 from __future__ import annotations
 
@@ -20,7 +25,17 @@ logger = logging.getLogger(__name__)
 
 
 async def websocket_endpoint(ws: WebSocket) -> None:
-    """WebSocket endpoint with first-message auth and event streaming."""
+    """WebSocket endpoint with first-message auth and event streaming.
+
+    Auth flow:
+      1. Accept the connection.
+      2. Wait for a JSON first-message: {"token": "<bearer>"}.
+      3. Validate the token via AuthConfig.
+         - Invalid/missing → send {"error": "Invalid token"}, close 4003.
+         - Agent token → rejected (agent tokens are for /api/agent/connect only).
+         - Valid viewer/operator → send {"type": "auth_ok", "role": "<role>"}.
+      4. Register the client queue and begin event streaming.
+    """
     await ws.accept()
 
     auth_config = ws.app.state.auth_config
@@ -28,10 +43,29 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     subscription_manager = getattr(ws.app.state, "subscription_manager", None)
     audit = getattr(ws.app.state, "audit", None)
 
-    # Browser WebSocket is open — no auth required.
-    # Assign viewer role by default.
-    role = "viewer"
+    # First-message auth — viewer and operator tokens accepted; agent tokens rejected.
+    role, _msg = await authenticate_ws(ws, auth_config)
+    if role is None:
+        # authenticate_ws already sent the error and closed the connection.
+        if audit:
+            audit.audit_event("auth.failure", {"transport": "browser_ws"})
+        return
+
+    # Agent tokens must not access the browser WS feed (ASI03).
+    if role == "agent":
+        await ws.send_json({"error": "Agent tokens cannot access browser WebSocket"})
+        from arcui.ws_helpers import CLOSE_AUTH_INVALID
+        await ws.close(code=CLOSE_AUTH_INVALID)
+        if audit:
+            audit.audit_event(
+                "auth.rejected", {"transport": "browser_ws", "reason": "agent_token"}
+            )
+        return
+
     await ws.send_json({"type": "auth_ok", "role": role})
+
+    if audit:
+        audit.audit_event("auth.success", {"transport": "browser_ws", "role": role})
 
     # Register client queue
     queue = connection_manager.create_queue()

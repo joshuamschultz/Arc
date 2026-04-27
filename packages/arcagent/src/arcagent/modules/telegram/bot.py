@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from arcagent.core.telemetry import AgentTelemetry
+    from arcagent.modules.file_handler import FileHandler
     from arcagent.modules.telegram.config import TelegramConfig
 
 _logger = logging.getLogger("arcagent.telegram.bot")
@@ -39,7 +40,10 @@ def _user_facing_error(exc: Exception) -> str:
         return "Error processing your message. Please try again."
 
     if isinstance(exc, ArcLLMAPIError) and exc.status_code == 429:
-        return "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
+        return (
+            "I'm currently rate limited by the LLM provider. "
+            "Please try again in a minute or two."
+        )
     if isinstance(exc, ArcLLMAPIError) and exc.status_code in {500, 502, 503}:
         return "The LLM provider is temporarily unavailable. Please try again shortly."
     return "Error processing your message. Please try again."
@@ -132,7 +136,7 @@ class TelegramBot:
         self._current_session_id: str | None = None
         self._running = False
         self._bot_id: int | None = None
-        self._file_handler: Any | None = None
+        self._file_handler: FileHandler | None = None
 
         # State persistence path
         self._state_dir = workspace / "telegram"
@@ -176,8 +180,8 @@ class TelegramBot:
             return
 
         try:
-            from telegram import Update  # type: ignore[import-not-found]
-            from telegram.ext import (  # type: ignore[import-not-found]
+            from telegram import Update
+            from telegram.ext import (
                 Application,
                 CommandHandler,
                 MessageHandler,
@@ -205,7 +209,11 @@ class TelegramBot:
         # File/attachment handlers — documents, photos, voice, audio, video
         self._application.add_handler(
             MessageHandler(
-                filters.Document.ALL | filters.PHOTO | filters.VOICE | filters.AUDIO | filters.VIDEO,
+                filters.Document.ALL
+                | filters.PHOTO
+                | filters.VOICE
+                | filters.AUDIO
+                | filters.VIDEO,
                 self._handle_attachment,
             )
         )
@@ -250,6 +258,12 @@ class TelegramBot:
         )
 
         await self._application.start()
+        # updater is None when Application is built without Updater (e.g. webhook mode);
+        # in polling mode it is always set.
+        if self._application.updater is None:
+            raise RuntimeError(
+                "Expected Updater for polling mode — was Application built without one?"
+            )
         await self._application.updater.start_polling(
             poll_interval=self._config.poll_interval,
             allowed_updates=Update.ALL_TYPES,
@@ -386,7 +400,8 @@ class TelegramBot:
         _logger.debug("Received message from chat_id=%d", chat_id)
 
         # Skip own bot messages (prevent self-talk loops)
-        if update.message.from_user and self._bot_id and update.message.from_user.id == self._bot_id:
+        from_user = update.message.from_user
+        if from_user and self._bot_id and from_user.id == self._bot_id:
             return
 
         if not self._is_authorized(chat_id):
@@ -439,7 +454,8 @@ class TelegramBot:
         chat_id = update.effective_chat.id
 
         # Skip own bot messages
-        if update.message.from_user and self._bot_id and update.message.from_user.id == self._bot_id:
+        from_user = update.message.from_user
+        if from_user and self._bot_id and from_user.id == self._bot_id:
             return
 
         if not self._is_authorized(chat_id):

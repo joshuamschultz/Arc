@@ -133,6 +133,28 @@ class BasePlatformAdapter(Protocol):
         """
         ...
 
+    async def send_with_id(
+        self,
+        target: DeliveryTarget,
+        message: str,
+    ) -> str | None:
+        """Send a message and return its platform-assigned message ID.
+
+        Default implementation calls send() and returns None. Adapters that
+        support message IDs (Telegram, Slack) MUST override this method to
+        return the real ID so StreamBridge can use it for edit/delete ops.
+
+        Args:
+            target: Parsed delivery address.
+            message: Text to send.
+
+        Returns:
+            str: Platform message ID if the platform returns one.
+            None: If the platform does not return a message ID.
+        """
+        await self.send(target, message)
+        return None
+
 
 async def reconnect_watcher(
     failed_adapters: dict[str, FailedAdapter],

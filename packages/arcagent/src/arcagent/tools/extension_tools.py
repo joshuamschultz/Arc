@@ -24,7 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml  # type: ignore[import-untyped]  # types-PyYAML not a hard dep
+import yaml
 
 from arcagent.core.errors import ToolError
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport

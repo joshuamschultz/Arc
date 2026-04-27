@@ -99,6 +99,7 @@ def make_task_complete_tool() -> Tool:
         input_schema=_INPUT_SCHEMA,
         execute=_execute,
         timeout_seconds=5.0,
+        signals_completion=True,
     )
 
 

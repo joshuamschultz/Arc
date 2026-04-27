@@ -530,7 +530,9 @@ def _activate(name: str, bundle_path: Path, base: Path) -> Path:
             if member.name.startswith("/") or ".." in member.name:
                 logger.warning("Skipping unsafe tarball member: %r", member.name)
                 continue
-            tf.extract(member, path=install_path)
+            # filter="data" (PEP 706) blocks symlinks, special files, and
+            # path traversal at the tarfile level. Required default in Py3.14+.
+            tf.extract(member, path=install_path, filter="data")
 
     return install_path
 

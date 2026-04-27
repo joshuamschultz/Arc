@@ -1,5 +1,14 @@
-"""ArcLLM config loading — TOML-based, validated on load."""
+"""ArcLLM config loading — TOML-based, validated on load.
 
+Layered precedence (later wins):
+  1. Packaged defaults at <arcllm>/config.toml
+  2. User overrides at ${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml
+
+Dicts deep-merge; lists and scalars are replaced. Missing user file =
+no-op (current behavior preserved).
+"""
+
+import os
 import re
 import tomllib
 from pathlib import Path
@@ -100,8 +109,37 @@ class GlobalConfig(BaseModel):
 
 
 def _get_config_dir() -> Path:
-    """Return the directory containing config files (package-relative)."""
+    """Return the directory containing packaged config files (package-relative)."""
     return Path(__file__).parent
+
+
+def _user_config_path() -> Path | None:
+    """Return the user-override config path, or None if absent.
+
+    Preferred: ``${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml``.
+    Deprecated fallback: the legacy ``config.toml`` from earlier ``arc init``
+    versions is honored if no ``arcllm.toml`` exists.
+    """
+    base = os.environ.get("ARC_CONFIG_DIR")
+    root = Path(base).expanduser() if base else Path.home() / ".arc"
+    preferred = root / "arcllm.toml"
+    if preferred.exists():
+        return preferred
+    legacy = root / "config.toml"
+    if legacy.exists():
+        return legacy
+    return None
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge override into base. Dicts merge; lists & scalars replace."""
+    result = dict(base)
+    for key, val in override.items():
+        if isinstance(val, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
 
 
 def _load_toml_file(path: Path, context: str) -> dict[str, Any]:
@@ -152,11 +190,17 @@ def _validate_provider_name(provider_name: str) -> None:
 def load_global_config() -> GlobalConfig:
     """Load and validate the global config.toml.
 
-    Returns a typed GlobalConfig with defaults and module toggles.
+    Layered: packaged config.toml is the base; ${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml
+    deep-merges over it when present. Returns a typed GlobalConfig.
     Raises ArcLLMConfigError on any failure.
     """
-    config_path = _get_config_dir() / "config.toml"
-    data = _load_toml_file(config_path, "global config")
+    packaged_path = _get_config_dir() / "config.toml"
+    data = _load_toml_file(packaged_path, "global config")
+
+    user_path = _user_config_path()
+    if user_path is not None:
+        user_data = _load_toml_file(user_path, f"user config ({user_path})")
+        data = _deep_merge(data, user_data)
 
     try:
         defaults = DefaultsConfig(**data.get("defaults", {}))

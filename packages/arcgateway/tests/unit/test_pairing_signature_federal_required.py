@@ -43,7 +43,7 @@ def federal_store(tmp_path: Path, trust_dir: Path) -> PairingStore:
     )
     (trust_dir / "operators.toml").chmod(0o600)
 
-    from arcagent.core.trust_store import invalidate_cache
+    from arctrust import invalidate_cache
 
     invalidate_cache()
 

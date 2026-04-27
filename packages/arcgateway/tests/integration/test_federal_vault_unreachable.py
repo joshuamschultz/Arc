@@ -39,11 +39,10 @@ import asyncio
 import logging
 
 import pytest
-
 from arcagent.modules.vault.protocol import VaultBackend, VaultUnreachable
+
 from arcgateway.executor import InboundEvent
 from arcgateway.runner import GatewayRunner
-
 
 # ---------------------------------------------------------------------------
 # Helpers / Fakes
@@ -227,21 +226,6 @@ async def test_gateway_runner_no_adapters_connected_on_vault_failure() -> None:
         await runner._executor.run(event)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "HONEST GAP (M1 audit trail incomplete): "
-        "The vault resolver's _resolve_federal() does not currently emit a "
-        "structured log record when VaultUnreachable is raised at federal tier. "
-        "The resolver docstring states 'caller / startup code converts to hard "
-        "error with appropriate audit event' — meaning the audit is deferred to "
-        "the gateway startup wiring (M1 final integration, not yet built). "
-        "This xfail documents the gap. When the gateway startup sequence logs "
-        "vault.unreachable before propagating, this test should be promoted to "
-        "a passing test by removing the xfail marker. "
-        "NIST AU-2/AU-9 compliance requires this audit event at federal tier."
-    ),
-)
 @pytest.mark.asyncio
 async def test_federal_vault_unreachable_audit_event_emitted(
     caplog: pytest.LogCaptureFixture,
@@ -256,9 +240,8 @@ async def test_federal_vault_unreachable_audit_event_emitted(
     which the telemetry layer picks up and forwards to the audit trail
     (NIST AU-2/AU-9 requirement).
 
-    CURRENT STATUS: xfail — the resolver does not yet log at federal tier.
-    The audit is deferred to the gateway startup wiring (M1 final integration).
-    This test documents the expected behaviour; it must pass once the wiring lands.
+    Previously xfail: the vault resolver now emits vault.unreachable on federal
+    hard-fail, closing the NIST AU-2/AU-9 audit gap.
     """
     from arcagent.modules.vault.resolver import resolve_secret
 
@@ -291,7 +274,7 @@ async def test_federal_vault_unreachable_audit_event_emitted(
         "vault/MODULE.yaml audit_events declaration.\n"
         "To fix: add a _logger.warning() call in _resolve_federal() before "
         "propagating VaultUnreachable.\n"
-        f"All captured log records:\n"
+        "All captured log records:\n"
         + "\n".join(
             f"  [{r.levelname}] {r.name}: {r.message}" for r in caplog.records
         )

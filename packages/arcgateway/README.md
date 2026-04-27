@@ -1,83 +1,50 @@
 # arcgateway
 
-Long-running daemon that makes ArcAgents reachable from any chat platform.
+Long-running daemon that makes ArcAgents reachable from any chat platform (Telegram, Slack, Discord) with multi-agent session routing and operator pairing controls.
 
-## Overview
+## Layer position
 
-arcgateway is a single asyncio process that:
+arcgateway depends on arcagent, arcrun, arcllm, and arctrust. No other Arc package depends on arcgateway. It is a terminal node in the dependency graph.
 
-1. Supervises N platform adapters (Telegram, Slack, Discord, etc.) inside an `asyncio.TaskGroup` so a crash in one adapter never kills siblings.
-2. Routes incoming messages to per-(user, agent) `SessionRouter` instances with a **synchronous pre-await guard** (Hermes PR #4926) that guarantees exactly one agent task per session key regardless of concurrent inbound messages.
-3. Dispatches agent execution via a pluggable `Executor` Protocol: `AsyncioExecutor` for personal/enterprise (in-process) and `SubprocessExecutor` for federal-tier (isolated child process).
-4. Returns streamed `Delta` responses through `StreamBridge` to `Adapter.send()`.
+## What it provides
 
-## Architecture
+- `GatewayRunner` — supervises N platform adapters inside an `asyncio.TaskGroup`; a crash in one adapter never kills siblings; routes inbound messages to `SessionRouter`
+- `SessionRouter`, `build_session_key` — per-(user, agent) session management with a synchronous pre-await guard guaranteeing exactly one agent task per session key regardless of concurrent inbound messages
+- `InboundEvent` — normalized event from any platform adapter; carries platform, user ID hash, chat ID, and message content
+- `Delta` — streamed response chunk forwarded from the executor back to the platform adapter
+- `Executor` (Protocol), `AsyncioExecutor` — pluggable execution; `AsyncioExecutor` runs the agent in-process (personal/enterprise tier)
+- `DeliveryTarget` — parsed `platform:chat_id[:thread_id]` address
 
+All pairing operations emit arctrust audit events. Pairing requires operator approval before a user hash is added to the session allowlist.
+
+## Quick example
+
+```python
+from arcgateway import GatewayRunner, AsyncioExecutor
+
+executor = AsyncioExecutor(agent_config_path="my-agent/arcagent.toml")
+runner = GatewayRunner(executor=executor)
+await runner.run()  # blocks; handle SIGINT/SIGTERM externally
 ```
-                ┌──────────────────────────────┐
-                │        arcgateway daemon       │
-                │                                │
-   Telegram ───┤  Adapter   ┐                    │
-   Slack ──────┤  Adapter   ├──> SessionRouter ──┤──> Executor.run(event)
-   Discord ────┤  Adapter   │                    │
-                │            ┘                    │
-                └──────────────────────────────────┘
-```
 
-## Package Boundaries
+## Pairing controls
 
-- `arcgateway` depends on `arc-agent` (it wraps/runs agents).
-- `arc-agent` has **zero** knowledge of `arcgateway` — this is a one-way dependency.
-- Platform SDK dependencies (slack-sdk, python-telegram-bot, etc.) are optional extras added in T1.7.
-
-## Installation (Development)
-
-**IMPORTANT:** Always install all Arc packages together using editable mode.
-Installing packages piecemeal causes venv-drift — import errors from packages
-that are not linked (issue surfaced during SPEC-018 M1 implementation).
-
-Canonical setup command:
+Operators approve DM pairings via CLI (see `docs/cli.md`):
 
 ```bash
-uv pip install \
-    -e packages/arcgateway \
-    -e packages/arccli \
-    -e packages/arcagent \
-    -e packages/arcllm \
-    -e packages/arcrun
+arc gateway pair list              # show pending codes
+arc gateway pair approve <code>    # approve a code
+arc gateway pair revoke <code>     # revoke a code
 ```
 
-Or using the Makefile shortcut:
+## Architecture references
 
-```bash
-make install
-```
-
-This installs all five packages in editable mode so local source changes are
-reflected immediately without re-installing.
-
-## Getting Started
-
-```toml
-# ~/.arc/gateway.toml (personal tier)
-[gateway]
-tier = "personal"
-
-[[gateway.adapters]]
-platform = "telegram"
-token_env = "TELEGRAM_BOT_TOKEN"
-```
-
-```bash
-arcgateway start
-```
-
-## Security
-
-All adapters run in isolated `asyncio.TaskGroup` tasks. Federal-tier deployments use `SubprocessExecutor` for full process isolation per agent session, with resource limits via `resource.setrlimit`. Platform credentials are never written to disk at federal/enterprise tiers — resolved via Vault Protocol at runtime.
+- SPEC-016: Multi-Agent UI — gateway integrates with arcui via UIBridgeSink
+- SPEC-018: Hermes Parity — session race-condition guard (synchronous pre-await)
+- ADR-019: Four Pillars Universal — pairing always-sign enforced at all tiers
 
 ## Status
 
-T1.4 skeleton: GatewayRunner, BasePlatformAdapter Protocol, SessionRouter (with race-condition fix), Executor Protocol + AsyncioExecutor, DeliveryTarget parser, CLI stub.
-
-Platform adapters (T1.7), SubprocessExecutor (T1.6), and StreamBridge flood-control (T1.6+) are pending.
+- Tests: 494 (run with `uv run --no-sync pytest packages/arcgateway/tests`)
+- Coverage: 94%
+- ruff + mypy --strict: clean

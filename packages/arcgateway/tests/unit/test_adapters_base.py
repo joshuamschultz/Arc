@@ -38,8 +38,9 @@ from arcgateway.delivery import DeliveryTarget
 class _ConcreteAdapter:
     """Full implementation satisfying BasePlatformAdapter Protocol.
 
-    Includes edit_message because the Protocol defines it with a concrete
-    body, making it a required member for runtime_checkable isinstance checks.
+    Includes edit_message and send_with_id because the Protocol defines them
+    with concrete bodies, making them required members for runtime_checkable
+    isinstance checks.
     """
 
     name = "concrete"
@@ -58,6 +59,14 @@ class _ConcreteAdapter:
         reply_to: str | None = None,
     ) -> None:
         pass
+
+    async def send_with_id(
+        self,
+        target: DeliveryTarget,
+        message: str,
+    ) -> str | None:
+        await self.send(target, message)
+        return None
 
     async def edit_message(
         self,

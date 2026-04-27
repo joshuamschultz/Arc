@@ -882,7 +882,9 @@ def _safe_extract(bundle_path: Path, dest: Path) -> None:
             if member.name.startswith("/") or ".." in member.name:
                 logger.warning("Skipping suspicious tarball entry: %r", member.name)
                 continue
-            tf.extract(member, path=dest)
+            # filter="data" (PEP 706) blocks symlinks, special files, and
+            # path traversal at the tarfile level. Required default in Py3.14+.
+            tf.extract(member, path=dest, filter="data")
 
 
 def _iter_text_files(root: Path) -> list[Path]:

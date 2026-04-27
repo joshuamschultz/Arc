@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from arcagent.modules.skill_improver.models import Candidate, MutationEvent
 from arcagent.utils.io import atomic_write_text
@@ -158,7 +158,7 @@ class CandidateStore:
         if not manifest_path.exists():
             return {"skill_name": skill_name, "frontier": [], "candidates": {}}
         try:
-            return json.loads(manifest_path.read_text(encoding="utf-8"))
+            return cast(dict[str, Any], json.loads(manifest_path.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             return {"skill_name": skill_name, "frontier": [], "candidates": {}}
 

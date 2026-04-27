@@ -44,7 +44,7 @@ def setup_telegram(path: str) -> None:
       arc agent setup-telegram my-agent
       arc agent setup-telegram .
     """
-    from arccli.agent import _resolve_agent_dir
+    from arccli.commands.agent import _resolve_agent_dir
 
     agent_dir = _resolve_agent_dir(path)
     config_path = agent_dir / "arcagent.toml"
@@ -123,7 +123,7 @@ def _verify_token(token: str) -> str | None:
         resp = httpx.get(url, timeout=_HTTP_TIMEOUT)
         data = resp.json()
         if data.get("ok"):
-            return data["result"]["username"]
+            return str(data["result"]["username"])
     except (httpx.HTTPError, KeyError, ValueError):
         pass
     return None

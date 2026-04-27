@@ -6,7 +6,7 @@ this before this provider is ever constructed.
 
 Playwright is an optional dependency (``arcagent[browser]``). This
 module performs a lazy import so that the provider can be imported
-without Playwright installed; the ``BrowserNotAvailable`` error is
+without Playwright installed; the ``BrowserNotAvailableError`` error is
 raised at ``connect()`` time rather than at module load.
 """
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from arcagent.modules.browser.errors import BrowserNotAvailable
+from arcagent.modules.browser.errors import BrowserNotAvailableError
 
 _logger = logging.getLogger("arcagent.modules.browser.providers.local")
 
@@ -60,12 +60,14 @@ class LocalPlaywrightProvider:
             The Playwright ``Browser`` instance.
 
         Raises:
-            BrowserNotAvailable: If Playwright is not installed.
+            BrowserNotAvailableError: If Playwright is not installed.
         """
         try:
-            from playwright.async_api import async_playwright
+            from playwright.async_api import (  # type: ignore[import-not-found]  # optional dep
+                async_playwright,
+            )
         except ImportError as exc:
-            raise BrowserNotAvailable(
+            raise BrowserNotAvailableError(
                 message=(
                     "Playwright is not installed. "
                     "Install arcagent[browser] to enable local browser automation."

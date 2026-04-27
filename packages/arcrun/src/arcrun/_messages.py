@@ -1,10 +1,25 @@
-"""Message construction helpers. Uses arcllm types directly."""
+"""Message construction helpers. Uses arcllm types directly.
+
+Re-exports ``TextBlock`` and ``ToolUseBlock`` so callers in arcrun
+(e.g. strategies/react.py) can import block types from a single place.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from arcllm.types import Message, TextBlock, ToolResultBlock, ToolUseBlock
+
+__all__ = [
+    "Message",
+    "TextBlock",
+    "ToolResultBlock",
+    "ToolUseBlock",
+    "assistant_message",
+    "system_message",
+    "tool_result",
+    "user_message",
+]
 
 
 def user_message(text: str) -> Message:

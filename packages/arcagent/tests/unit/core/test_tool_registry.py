@@ -611,7 +611,7 @@ class TestPipelineEnforcement:
     """SPEC-017 R-010 / R-011: pipeline is consulted on every dispatch.
 
     Phase 3 integration — when the registry is constructed with a
-    ``ToolPolicyPipeline``, every dispatch goes through it. A deny
+    ``PolicyPipeline``, every dispatch goes through it. A deny
     raises :class:`PolicyDenied` and aborts the call.
     """
 
@@ -621,7 +621,7 @@ class TestPipelineEnforcement:
         bus: ModuleBus,
         mock_telemetry: MagicMock,
     ) -> None:
-        from arcagent.core.tool_policy import ToolPolicyPipeline
+        from arcagent.core.tool_policy import PolicyPipeline
         from arcagent.core.tool_registry import ToolRegistry
 
         evaluated: list[str] = []
@@ -635,7 +635,7 @@ class TestPipelineEnforcement:
                 evaluated.append(call.tool_name)
                 return Decision.allow(input_hash="h", evaluated_at_us=1)
 
-        pipeline = ToolPolicyPipeline(layers=[RecordingLayer()])
+        pipeline = PolicyPipeline(layers=[RecordingLayer()])
         reg = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -666,7 +666,7 @@ class TestPipelineEnforcement:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyDenied,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
         from arcagent.core.tool_registry import ToolRegistry
 
@@ -682,7 +682,7 @@ class TestPipelineEnforcement:
                     evaluated_at_us=1,
                 )
 
-        pipeline = ToolPolicyPipeline(layers=[DenyAll()])
+        pipeline = PolicyPipeline(layers=[DenyAll()])
         reg = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -718,7 +718,7 @@ class TestPipelineEnforcement:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyDenied,
-            ToolPolicyPipeline,
+            PolicyPipeline,
         )
         from arcagent.core.tool_registry import ToolRegistry
 
@@ -740,7 +740,7 @@ class TestPipelineEnforcement:
             called["count"] += 1
             return "should_not_happen"
 
-        pipeline = ToolPolicyPipeline(layers=[DenyAll()])
+        pipeline = PolicyPipeline(layers=[DenyAll()])
         reg = ToolRegistry(
             config=config.tools,
             bus=bus,
@@ -801,7 +801,7 @@ class TestPipelineEnforcement:
         A prior version hardcoded ``tier="personal"`` in the dispatch
         path, which meant federal and enterprise deployments recorded
         ``tier="personal"`` in their audit trail. Regression test."""
-        from arcagent.core.tool_policy import ToolPolicyPipeline
+        from arcagent.core.tool_policy import PolicyPipeline
         from arcagent.core.tool_registry import ToolRegistry
 
         contexts: list[Any] = []
@@ -815,7 +815,7 @@ class TestPipelineEnforcement:
                 contexts.append(ctx)
                 return Decision.allow(input_hash="h", evaluated_at_us=1)
 
-        pipeline = ToolPolicyPipeline(layers=[_CtxRecorder()])
+        pipeline = PolicyPipeline(layers=[_CtxRecorder()])
         reg = ToolRegistry(
             config=config.tools,
             bus=bus,

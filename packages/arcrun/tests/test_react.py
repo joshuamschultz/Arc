@@ -1,5 +1,8 @@
 """Tests for ReAct strategy loop."""
 
+import asyncio
+import time
+
 import pytest
 from conftest import LLMResponse, Message, MockModel, ToolCall
 
@@ -240,3 +243,169 @@ class TestReactLoop:
 
         await react_loop(model, state, sandbox, max_turns=5)
         assert len(calls) >= 1
+
+
+class TestParallelSafeDispatch:
+    """Tools with parallel_safe=True dispatch concurrently in one turn."""
+
+    @pytest.mark.asyncio
+    async def test_parallel_safe_calls_run_concurrently(self):
+        async def slow(params: dict, ctx: object) -> str:
+            await asyncio.sleep(0.1)
+            return f"ok:{params['n']}"
+
+        tool = Tool(
+            name="slow",
+            description="slow tool",
+            input_schema={
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+            },
+            execute=slow,
+            parallel_safe=True,
+        )
+        bus = EventBus(run_id="test")
+        state = _make_state(bus, tools=[tool])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(id=f"tc{i}", name="slow", arguments={"n": i})
+                        for i in range(3)
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="all done", stop_reason="end_turn"),
+            ]
+        )
+        sandbox = Sandbox(config=None, event_bus=bus)
+
+        start = time.monotonic()
+        result = await react_loop(model, state, sandbox, max_turns=5)
+        elapsed = time.monotonic() - start
+
+        # Sequential would be ~0.3s; parallel should be ~0.1s + overhead.
+        assert elapsed < 0.25, f"expected parallel dispatch, took {elapsed:.3f}s"
+        assert result.content == "all done"
+
+    @pytest.mark.asyncio
+    async def test_non_parallel_safe_calls_run_serially(self):
+        async def slow(params: dict, ctx: object) -> str:
+            await asyncio.sleep(0.05)
+            return f"ok:{params['n']}"
+
+        tool = Tool(
+            name="slow",
+            description="slow tool",
+            input_schema={
+                "type": "object",
+                "properties": {"n": {"type": "integer"}},
+                "required": ["n"],
+            },
+            execute=slow,
+            parallel_safe=False,
+        )
+        bus = EventBus(run_id="test")
+        state = _make_state(bus, tools=[tool])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(id=f"tc{i}", name="slow", arguments={"n": i})
+                        for i in range(3)
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="all done", stop_reason="end_turn"),
+            ]
+        )
+        sandbox = Sandbox(config=None, event_bus=bus)
+
+        start = time.monotonic()
+        await react_loop(model, state, sandbox, max_turns=5)
+        elapsed = time.monotonic() - start
+
+        # Sequential ~0.15s; parallel would be ~0.05s.
+        assert elapsed >= 0.12, f"expected sequential dispatch, took {elapsed:.3f}s"
+
+
+class TestSignalsCompletion:
+    """Tools with signals_completion=True terminate the loop with their args."""
+
+    @pytest.mark.asyncio
+    async def test_signals_completion_terminates_with_payload(self):
+        async def finish(params: dict, ctx: object) -> str:
+            return f"completed:{params.get('summary', '')}"
+
+        terminator = Tool(
+            name="my_finish",
+            description="generic terminator",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["status", "summary"],
+            },
+            execute=finish,
+            signals_completion=True,
+        )
+        bus = EventBus(run_id="test")
+        state = _make_state(bus, tools=[terminator])
+        # Second response would only fire if loop did NOT terminate.
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[
+                        ToolCall(
+                            id="tc1",
+                            name="my_finish",
+                            arguments={"status": "success", "summary": "got it"},
+                        )
+                    ],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="should not be reached", stop_reason="end_turn"),
+            ]
+        )
+        sandbox = Sandbox(config=None, event_bus=bus)
+
+        result = await react_loop(model, state, sandbox, max_turns=5)
+
+        assert state.completion_payload is not None
+        assert state.completion_payload["status"] == "success"
+        assert state.completion_payload["summary"] == "got it"
+        # Loop terminated with the tool's summary, not the would-be next turn.
+        assert result.content == "got it"
+        assert model._call_count == 1, "loop should have terminated after first turn"
+
+    @pytest.mark.asyncio
+    async def test_no_completion_when_flag_unset(self):
+        async def noop(params: dict, ctx: object) -> str:
+            return "ok"
+
+        regular = Tool(
+            name="regular",
+            description="d",
+            input_schema={"type": "object"},
+            execute=noop,
+            signals_completion=False,
+        )
+        bus = EventBus(run_id="test")
+        state = _make_state(bus, tools=[regular])
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="regular", arguments={})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="continued", stop_reason="end_turn"),
+            ]
+        )
+        sandbox = Sandbox(config=None, event_bus=bus)
+
+        result = await react_loop(model, state, sandbox, max_turns=5)
+        assert state.completion_payload is None
+        assert result.content == "continued"

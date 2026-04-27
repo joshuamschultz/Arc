@@ -187,7 +187,23 @@ class DeliverySenderImpl:
             delivery_target.platform,
             delivery_target.chat_id,
         )
-        await adapter.send(delivery_target, message)
+        from arcgateway.audit import emit_event as _arc_emit
+        try:
+            await adapter.send(delivery_target, message)
+            _arc_emit(
+                action="gateway.delivery.sent",
+                target=str(delivery_target),
+                outcome="allow",
+                extra={"platform": delivery_target.platform, "chat_id": delivery_target.chat_id},
+            )
+        except Exception:
+            _arc_emit(
+                action="gateway.delivery.failed",
+                target=str(delivery_target),
+                outcome="error",
+                extra={"platform": delivery_target.platform, "chat_id": delivery_target.chat_id},
+            )
+            raise
 
     @staticmethod
     def _resolve_target(target: Any) -> DeliveryTarget:

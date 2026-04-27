@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from arcrun.builtins.spawn import ChildIdentity, derive_child_identity
+from arctrust import ChildIdentity, derive_child_identity
 
 
 class TestHKDFDIDDerivation:

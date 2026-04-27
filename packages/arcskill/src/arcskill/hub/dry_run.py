@@ -60,12 +60,15 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from arcskill.hub.config import HubConfig
 from arcskill.hub.errors import SandboxRequired
+
+if TYPE_CHECKING:
+    from arctrust import AuditSink
 
 logger = logging.getLogger(__name__)
 
@@ -654,18 +657,28 @@ def run_dry_run(
     config: HubConfig,
     *,
     skip_sandbox: bool = False,
+    audit_sink: Any | None = None,
 ) -> DryRunResult:
     """Execute a sandboxed dry-run of the skill bundle.
+
+    Sandbox runs at ALL tiers.  Tier controls *which* backend is used
+    (Firecracker at federal, Docker/subprocess elsewhere), not *whether*
+    to sandbox.  Passing ``skip_sandbox=True`` now raises ``SandboxRequired``
+    at every tier — the previous non-federal bypass has been removed.
 
     Parameters
     ----------
     bundle_path:
         Path to the ``.tar.gz`` skill bundle.
     config:
-        Hub configuration (tier determines isolation requirement).
+        Hub configuration (tier determines isolation backend).
     skip_sandbox:
-        If True and tier is not federal, skip the sandbox entirely.
-        Used only in tests / CI where a container daemon is unavailable.
+        Deprecated.  Formerly allowed skipping the sandbox at non-federal
+        tiers.  Now raises ``SandboxRequired`` at ALL tiers regardless of
+        tier level.  Callers in CI should mock ``is_firecracker_available``
+        and ``_docker_available`` instead.
+    audit_sink:
+        Optional arctrust AuditSink for emitting structured audit events.
 
     Returns
     -------
@@ -675,13 +688,19 @@ def run_dry_run(
     Raises
     ------
     SandboxRequired
-        If federal tier requires Firecracker and it is unavailable.
+        If ``skip_sandbox=True`` is passed, or if the required sandbox
+        backend is unavailable.
     """
-    if skip_sandbox and not config.is_federal:
-        logger.warning(
-            "Skipping dry-run sandbox (skip_sandbox=True, non-federal tier)"
+    if skip_sandbox:
+        # Bypass 3 removed: skip_sandbox is never allowed at any tier.
+        # Tier controls which backend runs, not whether the sandbox runs.
+        raise SandboxRequired(
+            "skip_sandbox=True is not permitted at any tier. "
+            "Sandbox must run at all tiers; tier determines the backend "
+            "(Firecracker at federal, Docker/subprocess at enterprise/personal). "
+            "In tests, mock is_firecracker_available() and _docker_available() "
+            "instead of using skip_sandbox."
         )
-        return DryRunResult(passed=True, skipped=True, backend_used="skipped")
 
     with tempfile.TemporaryDirectory(prefix="arcskill_dryrun_") as tmpdir:
         extract_dir = Path(tmpdir) / "skill"
@@ -690,7 +709,7 @@ def run_dry_run(
 
         fixture_cmd = _find_fixture_command(extract_dir)
         return asyncio.run(
-            _run_in_sandbox(fixture_cmd, extract_dir, config)
+            _run_in_sandbox(fixture_cmd, extract_dir, config, audit_sink=audit_sink)
         )
 
 
@@ -703,6 +722,8 @@ async def _run_in_sandbox(
     fixture_cmd: str,
     skill_dir: Path,
     config: HubConfig,
+    *,
+    audit_sink: AuditSink | None = None,
 ) -> DryRunResult:
     """Select sandbox backend and run the fixture command.
 
@@ -726,14 +747,53 @@ async def _run_in_sandbox(
     if _docker_available():
         return await _run_docker(fixture_cmd, skill_dir)
 
-    # Final fallback: scan-only verdict with prominent warning.
+    # Final fallback: scan-only verdict with prominent warning and audit event.
     logger.warning(
         "AUDIT WARNING: Neither Firecracker nor Docker available for dry-run sandbox. "
         "Skill will be installed without sandbox execution (non-federal tier). "
         "This reduces supply-chain security guarantees. "
         "Install Docker or Firecracker to restore sandbox isolation."
     )
+    _emit_sandbox_audit(
+        audit_sink=audit_sink,
+        target=str(skill_dir),
+        outcome="warn",
+        tier=config.tier.level,
+        backend="none",
+    )
     return DryRunResult(passed=True, skipped=True, backend_used="skipped")
+
+
+def _emit_sandbox_audit(
+    *,
+    audit_sink: AuditSink | None,
+    target: str,
+    outcome: str,
+    tier: str,
+    backend: str,
+) -> None:
+    """Emit a structured audit event for sandbox execution outcomes.
+
+    Swallows all errors — auditing must never interrupt the sandbox path.
+    """
+    if audit_sink is None:
+        return
+    try:
+        from arctrust import AuditEvent, emit
+
+        emit(
+            AuditEvent(
+                actor_did="arcskill.hub.dry_run",
+                action="skill.sandbox.execute",
+                target=target,
+                outcome=outcome,
+                tier=tier,
+                extra={"backend": backend},
+            ),
+            audit_sink,
+        )
+    except Exception:
+        logger.warning("Failed to emit sandbox audit event for target=%s", target)
 
 
 async def _run_firecracker(fixture_cmd: str, skill_dir: Path) -> DryRunResult:
@@ -856,7 +916,9 @@ def _safe_extract(bundle_path: Path, dest: Path) -> None:
             if member.name.startswith("/") or ".." in member.name:
                 logger.warning("Skipping path-traversal entry: %r", member.name)
                 continue
-            tf.extract(member, path=dest)
+            # filter="data" (PEP 706) blocks symlinks, special files, and
+            # path traversal at the tarfile level. Required default in Py3.14+.
+            tf.extract(member, path=dest, filter="data")
 
 
 def _docker_available() -> bool:

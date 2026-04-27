@@ -78,7 +78,7 @@ def _emit_manifest(
 
 @pytest.fixture(autouse=True)
 def _flush_cache() -> Iterator[None]:
-    from arcagent.core.trust_store import invalidate_cache  # type: ignore[import-not-found]
+    from arctrust import invalidate_cache
 
     invalidate_cache()
     yield

@@ -30,8 +30,7 @@ sigstore = pytest.importorskip(
 
 from arcskill.hub.config import HubConfig, RevocationConfig, SkillSource, TierPolicy
 from arcskill.hub.errors import SignatureInvalid
-from arcskill.hub.verify import VerifyResult, _sigstore_verify
-
+from arcskill.hub.verify import _sigstore_verify
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -152,8 +151,8 @@ class TestProductionVerifyArtifactPath:
             captured_kwargs["bundle"] = bundle
             captured_kwargs["policy"] = policy
 
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
         with (
             unittest.mock.patch.object(Verifier, "verify_artifact", fake_verify_artifact),
@@ -190,13 +189,15 @@ class TestProductionVerifyArtifactPath:
             issuer="https://token.actions.githubusercontent.com",
         )
 
+        from sigstore.models import Bundle
         from sigstore.verify import Verifier
         from sigstore.verify.policy import Identity
-        from sigstore.models import Bundle
 
         captured_policy: list = []
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             captured_policy.append(policy)
 
         with (
@@ -218,8 +219,13 @@ class TestProductionVerifyArtifactPath:
         # Identity stores identity in _identity attribute.
         assert captured_policy[0]._identity == src.signer_identity
 
-    def test_unsafe_noop_policy_when_no_signer_identity(self) -> None:
-        """UnsafeNoOp is used as fallback when source has no signer_identity."""
+    def test_audited_any_issuer_policy_when_no_signer_identity(self) -> None:
+        """_AuditedAnyIssuerPolicy is used when source has no signer_identity.
+
+        UnsafeNoOp is NEVER used. The Fulcio cert chain and Rekor inclusion
+        proof are still fully verified; only the SAN/issuer identity pin is
+        relaxed, with an audit WARNING emitted.
+        """
         artifact = _make_artifact()
         bundle_data = {"verificationMaterial": {"tlogEntries": [{"logIndex": "1"}]}}
         _write_sidecar(artifact, bundle_data)
@@ -228,13 +234,15 @@ class TestProductionVerifyArtifactPath:
         src = SkillSource(name="community-src", type="github", repo="some/repo")
         # No signer_identity or signer_issuer.
 
-        from sigstore.verify import Verifier
-        from sigstore.verify.policy import UnsafeNoOp
+        from arcskill.hub.verify import _AuditedAnyIssuerPolicy
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
         captured_policy: list = []
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             captured_policy.append(policy)
 
         with (
@@ -252,7 +260,9 @@ class TestProductionVerifyArtifactPath:
             _sigstore_verify(artifact, src, config, "hash")
 
         assert len(captured_policy) == 1
-        assert isinstance(captured_policy[0], UnsafeNoOp)
+        assert isinstance(captured_policy[0], _AuditedAnyIssuerPolicy), (
+            f"Expected _AuditedAnyIssuerPolicy, got {type(captured_policy[0]).__name__}"
+        )
 
     def test_verification_error_raises_signature_invalid(self) -> None:
         """sigstore.errors.VerificationError is wrapped in SignatureInvalid."""
@@ -264,15 +274,19 @@ class TestProductionVerifyArtifactPath:
         src = _source()
 
         from sigstore.errors import VerificationError
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             raise VerificationError("Rekor inclusion proof mismatch")
 
         with (
             unittest.mock.patch.object(Verifier, "verify_artifact", fake_verify_artifact),
-            unittest.mock.patch.object(Bundle, "from_json", return_value=unittest.mock.MagicMock()),
+            unittest.mock.patch.object(
+                Bundle, "from_json", return_value=unittest.mock.MagicMock()
+            ),
         ):
             with pytest.raises(SignatureInvalid, match="Rekor inclusion proof mismatch"):
                 _sigstore_verify(artifact, src, config, "hash")
@@ -312,8 +326,8 @@ class TestProductionVerifyDSSEPath:
         config = _personal_config()
         src = _source()
 
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
         dsse_called: list[bool] = []
         artifact_called: list[bool] = []
@@ -322,7 +336,9 @@ class TestProductionVerifyDSSEPath:
             dsse_called.append(True)
             return ("application/vnd.in-toto+json", json.dumps(attestation).encode())
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             artifact_called.append(True)
 
         with (
@@ -366,8 +382,8 @@ class TestProductionVerifyDSSEPath:
             },
         }
 
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
         def fake_verify_dsse(self: object, bundle: object, policy: object) -> tuple[str, bytes]:
             return ("application/vnd.in-toto+json", json.dumps(attestation).encode())

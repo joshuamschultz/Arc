@@ -8,7 +8,7 @@ Tier-driven rules:
 
 The single entry point is ``enforce_sandbox_policy()``. It takes the
 tier name and the ``PlaywrightConfig``, validates the combination, and
-raises ``LocalBrowserNotAllowed`` when the policy is violated.
+raises ``LocalBrowserNotAllowedError`` when the policy is violated.
 
 This module contains NO I/O — it is pure policy logic so it is
 trivially testable without any external dependencies.
@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Literal
 
 from arcagent.modules.browser.config import PlaywrightConfig
-from arcagent.modules.browser.errors import LocalBrowserNotAllowed
+from arcagent.modules.browser.errors import LocalBrowserNotAllowedError
 
 # Tiers that default to strict-sandbox when no explicit sandbox is set.
 _STRICT_BY_DEFAULT_TIERS: frozenset[str] = frozenset({"federal"})
@@ -57,7 +57,7 @@ def enforce_sandbox_policy(
     tier: str,
     config: PlaywrightConfig,
 ) -> None:
-    """Raise ``LocalBrowserNotAllowed`` if the config violates sandbox policy.
+    """Raise ``LocalBrowserNotAllowedError`` if the config violates sandbox policy.
 
     Call this before creating any browser session. The check is
     intentionally fail-loud: an operator that misconfigures a federal
@@ -78,12 +78,12 @@ def enforce_sandbox_policy(
         config: PlaywrightConfig for the current module instance.
 
     Raises:
-        LocalBrowserNotAllowed: When local mode is configured in a
+        LocalBrowserNotAllowedError: When local mode is configured in a
             sandbox that prohibits local headless browsers.
     """
     sandbox = effective_sandbox(tier, config)
     if sandbox == "strict" and config.mode == "local":
-        raise LocalBrowserNotAllowed(
+        raise LocalBrowserNotAllowedError(
             tier=tier,
             details={
                 "sandbox": sandbox,

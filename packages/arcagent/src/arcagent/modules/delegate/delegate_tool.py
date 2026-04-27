@@ -1,7 +1,7 @@
-"""Agent-facing `delegate` tool — thin wrapper over arcrun.spawn().
+"""Agent-facing `delegate` tool — thin wrapper over arcagent.orchestration.spawn.
 
 Implements SDD §3.5 T3.6:
-- Calls arcrun.spawn() with a properly constrained child tool list
+- Calls arcagent.orchestration.spawn() with a properly constrained child tool list
 - Strips DELEGATE_BLOCKED_TOOLS from child tool list
 - Intersects requested tools with parent allowlist (no privilege escalation)
 - Enforces tier-driven depth caps
@@ -28,13 +28,13 @@ import logging
 import uuid
 from typing import Any
 
-from arcrun.builtins.spawn import (
-    ChildIdentity,
+from arcrun.types import Tool, ToolContext
+
+from arcagent.orchestration import (
     SpawnResult,
-    derive_child_identity,
     spawn,
 )
-from arcrun.types import Tool, ToolContext
+from arctrust import ChildIdentity, derive_child_identity
 
 from arcagent.modules.delegate.config import DELEGATE_BLOCKED_TOOLS, DelegateConfig
 

@@ -13,17 +13,13 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta
 from arcgateway.stream_bridge import FLOOD_STRIKE_LIMIT, StreamBridge
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -239,11 +239,24 @@ class TestTransportWiring:
 
     @pytest.mark.asyncio
     async def test_no_transport_startup(self, tmp_path: Path) -> None:
-        """Module with no token should not create transport."""
+        """Module with no token should not create transport.
+
+        Patches the full token-resolution chain (_resolve_token) so that env
+        variables and ~/.arcagent/ui-token on the developer machine do not
+        cause a spurious transport to be created.  The contract under test is:
+        when no token resolves from any source, startup must leave _transport as
+        None.
+        """
+        from unittest.mock import patch
+
         module = UIReporterModule(
             config={"enabled": True, "token": ""},
             workspace=tmp_path,
         )
         ctx = _make_ctx()
-        await module.startup(ctx)
+        # Ensure the full resolution chain (config → env → file) returns empty.
+        with patch(
+            "arcagent.modules.ui_reporter._resolve_token", return_value=""
+        ):
+            await module.startup(ctx)
         assert module._transport is None

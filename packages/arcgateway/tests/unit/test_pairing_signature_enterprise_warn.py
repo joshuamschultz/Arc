@@ -1,8 +1,8 @@
 """Enterprise-tier signature semantics.
 
-Contract:
+Contract (four-pillar mandate):
 
-- Missing signature: WARN audit emitted; approval PROCEEDS (no raise).
+- Missing signature: PairingSignatureInvalid raised (all tiers require sig).
 - Present but invalid signature: PairingSignatureInvalid (fail-closed).
 - Present and valid signature: approval succeeds; signature_verified audit emitted.
 """
@@ -42,7 +42,7 @@ def enterprise_store(tmp_path: Path, trust_dir: Path) -> PairingStore:
     )
     (trust_dir / "operators.toml").chmod(0o600)
 
-    from arcagent.core.trust_store import invalidate_cache
+    from arctrust import invalidate_cache
 
     invalidate_cache()
 
@@ -58,27 +58,27 @@ def enterprise_store(tmp_path: Path, trust_dir: Path) -> PairingStore:
 
 
 @pytest.mark.asyncio
-async def test_enterprise_missing_signature_warns_and_allows(
+async def test_enterprise_missing_signature_raises(
     enterprise_store: PairingStore,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Enterprise tier: missing signature emits warn audit but approval succeeds."""
+    """Enterprise tier: missing signature → PairingSignatureInvalid (all tiers require sig)."""
     code = await enterprise_store.mint_code(
         platform="telegram", platform_user_id="ent_user"
     )
 
     caplog.set_level(logging.INFO, logger="arcgateway.pairing.audit")
-    result = await enterprise_store.verify_and_consume(
-        code.code,
-        approver_did="did:arc:org:operator/entbody",
-        signature=None,
-    )
-    assert result is not None, "Enterprise tier must still approve when sig absent"
+    with pytest.raises(PairingSignatureInvalid):
+        await enterprise_store.verify_and_consume(
+            code.code,
+            approver_did="did:arc:org:operator/entbody",
+            signature=None,
+        )
 
-    # signature_missing audit event emitted
+    # signature_invalid audit event emitted before raising
     msgs = [r.getMessage() for r in caplog.records]
-    assert any("signature_missing" in m for m in msgs), (
-        f"Expected signature_missing audit event, got: {msgs}"
+    assert any("signature_invalid" in m for m in msgs), (
+        f"Expected signature_invalid audit event, got: {msgs}"
     )
 
 
@@ -128,15 +128,29 @@ async def test_enterprise_valid_signature_verifies(
 
 
 @pytest.mark.asyncio
-async def test_personal_tier_ignores_signatures(tmp_path: Path) -> None:
-    """Personal tier: signature is neither required nor validated."""
+async def test_personal_tier_requires_signature(tmp_path: Path) -> None:
+    """Personal tier: signature is required (self-signed key accepted as trust anchor).
+
+    Bogus/missing signatures are rejected — personal tier is not a bypass.
+    """
     store = PairingStore(db_path=tmp_path / "personal.db", tier="personal")
     code = await store.mint_code(platform="telegram", platform_user_id="home_user")
 
-    # Bogus signature and unknown DID — personal tier still accepts
-    result = await store.verify_and_consume(
-        code.code,
-        approver_did="did:arc:whatever/hahaha",
-        signature=b"\x00" * 64,
-    )
-    assert result is not None
+    # No signature → raise
+    with pytest.raises(PairingSignatureInvalid):
+        await store.verify_and_consume(
+            code.code,
+            approver_did="did:arc:whatever/hahaha",
+            signature=None,
+        )
+
+    # Bogus 64-byte signature → raise (nacl verify failure)
+    # Re-mint because the previous failed attempt increments the failure counter.
+    # (Revoked code still returns None, so use a fresh platform user.)
+    code2 = await store.mint_code(platform="slack", platform_user_id="home_user2")
+    with pytest.raises(PairingSignatureInvalid):
+        await store.verify_and_consume(
+            code2.code,
+            approver_did="did:arc:whatever/hahaha",
+            signature=b"\x00" * 64,
+        )

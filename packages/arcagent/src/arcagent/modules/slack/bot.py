@@ -44,11 +44,17 @@ def _user_facing_error(exc: Exception) -> str:
 
     if isinstance(exc, ArcLLMAPIError):
         if exc.status_code == 429:
-            return "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
+            return (
+                "I'm currently rate limited by the LLM provider. "
+                "Please try again in a minute or two."
+            )
         if exc.status_code in {500, 502, 503}:
             return "The LLM provider is temporarily unavailable. Please try again shortly."
         if exc.status_code == 400 and "content_filter" in exc.body.lower():
-            return "Your message was blocked by the content safety filter. Please rephrase and try again."
+            return (
+                "Your message was blocked by the content safety filter. "
+                "Please rephrase and try again."
+            )
 
     if isinstance(exc, TimeoutError):
         return "The request timed out. Please try again with a simpler message."
@@ -220,16 +226,16 @@ class SlackBot:
         self._app = AsyncApp(token=bot_token)
 
         # Register message event handler (catches all DM subtypes)
-        @self._app.event("message")  # type: ignore[misc]
+        @self._app.event("message")  # type: ignore[untyped-decorator]  # slack_bolt has no type stubs
         async def handle_message_event(event: dict[str, Any], say: Any) -> None:
             await self._handle_message(event)
 
         # Register no-op handlers to suppress WARNING logs
-        @self._app.event("message_changed")  # type: ignore[misc]
+        @self._app.event("message_changed")  # type: ignore[untyped-decorator]  # slack_bolt has no type stubs
         async def handle_message_changed(event: dict[str, Any]) -> None:
             pass  # Suppress warning logs for message edits
 
-        @self._app.event("message_deleted")  # type: ignore[misc]
+        @self._app.event("message_deleted")  # type: ignore[untyped-decorator]  # slack_bolt has no type stubs
         async def handle_message_deleted(event: dict[str, Any]) -> None:
             pass  # Suppress warning logs for message deletions
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from arccli.agent import (
+from arccli.commands.spec017 import (
     completion_group,
     policy_group,
     schedule_group,

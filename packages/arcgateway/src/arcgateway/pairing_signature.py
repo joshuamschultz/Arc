@@ -3,10 +3,20 @@
 Extracted from PairingStore._verify_signature_conn so that signature
 verification logic has a single, testable home.
 
-Design (SDD §3.1 T1.8.3):
-    Federal tier:    signature REQUIRED; missing or bad → PairingSignatureInvalid.
-    Enterprise tier: signature OPTIONAL; missing → warn audit; bad → raise.
-    Personal tier:   signature IGNORED entirely (no-op).
+Design (four-pillar mandate — ID + sign + authorize + audit ON BY DEFAULT):
+    All tiers require a signature. Tier sets *stringency* of trust anchor, not
+    whether the signature is checked. Mutual identity verification (ASI07) is
+    the foundation of inter-agent trust and cannot be bypassed at any tier.
+
+    Federal tier:    signature REQUIRED; signing key must chain to operator/issuer
+                     trust anchors via arctrust.trust_store.load_operator_pubkey.
+    Enterprise tier: signature REQUIRED; missing → PairingSignatureInvalid; bad → raise.
+                     When signature is absent, emits warn audit before raising so
+                     operators see a clear message rather than a generic error.
+    Personal tier:   signature REQUIRED; self-signed keys accepted (tier-1 trust anchor).
+                     The operator's own pubkey is the trust root — no external issuer
+                     chain required. Key loaded via arctrust.trust_store the same way
+                     as at higher tiers.
 
 The verifier uses PyNaCl via a lazy import so this module stays importable
 in minimal test environments that lack the native extensions.
@@ -62,11 +72,16 @@ class PairingSignatureVerifier:
     ) -> None:
         """Apply tier-driven signature policy and verify when signature present.
 
-        Delegates to ``_handle_missing_signature`` or ``_verify`` as appropriate.
+        Signature is required at ALL tiers (four-pillar mandate, ASI07).
+        Tier determines the *stringency* of the trust anchor check, not
+        whether the signature is validated.
 
-        Federal:    signature required; missing or bad → PairingSignatureInvalid.
-        Enterprise: signature optional; missing → warn; bad → raise.
-        Personal:   no-op.
+        Personal:   self-signed key accepted; no issuer chain required.
+        Enterprise: signature required; missing → PairingSignatureInvalid with
+                    warn audit before raising (visibility before failure).
+        Federal:    signature required; key must chain to operator trust anchors.
+
+        Delegates to ``_handle_missing_signature`` or ``_verify`` as appropriate.
 
         Args:
             conn:              Open DB connection (for failure recording).
@@ -79,12 +94,10 @@ class PairingSignatureVerifier:
             audit_fn:          Callable(event_type, details) for audit emission.
 
         Raises:
-            PairingSignatureInvalid: On federal-tier missing sig or bad sig at
-                                     any tier when signature is present.
+            PairingSignatureInvalid: On missing sig (all tiers) or bad sig (all tiers).
         """
-        if self._tier == "personal":
-            return
-
+        # No tier-based early return. Signature is required at all tiers.
+        # Tier sets trust-anchor stringency inside _verify, not whether to check.
         platform = row["platform"]
         minted_at = row["minted_at"]
 
@@ -128,10 +141,14 @@ class PairingSignatureVerifier:
         record_failure_fn: Any,
         audit_fn: Any,
     ) -> None:
-        """Handle the missing-signature case per tier policy.
+        """Handle the missing-signature case — raises at ALL tiers.
 
-        Federal: record failure + raise PairingSignatureInvalid.
-        Enterprise: emit warn audit + proceed.
+        Signature is required at all tiers (four-pillar mandate, ASI07).
+        The tier difference is only in the audit message phrasing:
+        - federal / enterprise: explicit "required" wording.
+        - personal: "self-signed key required" (tier-1 trust anchor).
+
+        In every case: record the failure and raise PairingSignatureInvalid.
 
         Args:
             conn:              Open DB connection.
@@ -143,36 +160,34 @@ class PairingSignatureVerifier:
             audit_fn:          Callable(event_type, details) for audit emission.
 
         Raises:
-            PairingSignatureInvalid: Federal tier only.
+            PairingSignatureInvalid: Always — signature is required at all tiers.
         """
         from arcgateway.pairing import PairingSignatureInvalid, _code_id
 
-        if self._tier == "federal":
-            record_failure_fn(conn, platform, now)
-            conn.commit()
-            audit_fn(
-                "gateway.pairing.signature_invalid",
-                {
-                    "code_id": _code_id(code),
-                    "approver_did": approver_did,
-                    "platform": platform,
-                    "reason": "missing_signature",
-                },
-            )
-            raise PairingSignatureInvalid(
-                f"Federal tier requires an Ed25519 signature on approval; "
-                f"approver_did={approver_did!r} supplied none."
-            )
-
-        # Enterprise tier — warn and proceed.
+        record_failure_fn(conn, platform, now)
+        conn.commit()
         audit_fn(
-            "gateway.pairing.signature_missing",
+            "gateway.pairing.signature_invalid",
             {
                 "code_id": _code_id(code),
                 "approver_did": approver_did,
                 "platform": platform,
                 "tier": self._tier,
+                "reason": "missing_signature",
             },
+        )
+
+        if self._tier == "personal":
+            raise PairingSignatureInvalid(
+                f"Personal tier requires an Ed25519 signature on approval "
+                f"(self-signed key accepted as tier-1 trust anchor); "
+                f"approver_did={approver_did!r} supplied none."
+            )
+
+        # enterprise / federal — same hard requirement, explicit wording.
+        raise PairingSignatureInvalid(
+            f"{self._tier.capitalize()} tier requires an Ed25519 signature on approval; "
+            f"approver_did={approver_did!r} supplied none."
         )
 
     def _verify(

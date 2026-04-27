@@ -1,4 +1,9 @@
-"""Tests for strategy prompt provider — get_strategy_prompts()."""
+"""Tests for strategy prompt provider — get_strategy_prompts().
+
+arcrun owns strategy + arcrun-builtin tool guidance only. Tool guidance
+for non-arcrun tools (e.g. spawn_task) lives with the tool's owner —
+see arcagent.orchestration.prompts.SPAWN_GUIDANCE.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +12,12 @@ import pytest
 from arcrun.prompts import (
     CODE_EXEC_GUIDANCE,
     CONTAINED_EXEC_GUIDANCE,
-    SPAWN_GUIDANCE,
     get_strategy_prompts,
 )
 
 
 class TestGetStrategyPromptsDefaults:
-    """Default invocation returns core guidance."""
+    """Default invocation returns core strategy guidance only."""
 
     def test_returns_dict(self) -> None:
         result = get_strategy_prompts()
@@ -24,10 +28,10 @@ class TestGetStrategyPromptsDefaults:
         assert "strategy_react" in result
         assert "Reason-Act-Observe" in result["strategy_react"]
 
-    def test_includes_spawn_guidance_by_default(self) -> None:
+    def test_no_spawn_guidance_in_arcrun(self) -> None:
+        """spawn_task is owned by arcagent — arcrun must not emit its guidance."""
         result = get_strategy_prompts()
-        assert "spawn_guidance" in result
-        assert "spawn_task" in result["spawn_guidance"]
+        assert "spawn_guidance" not in result
 
     def test_no_code_exec_guidance_by_default(self) -> None:
         result = get_strategy_prompts()
@@ -37,30 +41,6 @@ class TestGetStrategyPromptsDefaults:
     def test_no_strategy_selection_with_single_strategy(self) -> None:
         result = get_strategy_prompts()
         assert "strategy_selection" not in result
-
-
-class TestSpawnGuidance:
-    """Spawn guidance is controlled by spawn_enabled flag."""
-
-    def test_spawn_enabled_true(self) -> None:
-        result = get_strategy_prompts(spawn_enabled=True)
-        assert "spawn_guidance" in result
-        assert result["spawn_guidance"] == SPAWN_GUIDANCE
-
-    def test_spawn_enabled_false(self) -> None:
-        result = get_strategy_prompts(spawn_enabled=False)
-        assert "spawn_guidance" not in result
-
-    def test_spawn_guidance_contains_decision_gate(self) -> None:
-        """Spawn guidance includes when-to and when-not-to criteria."""
-        assert "Use spawn_task when:" in SPAWN_GUIDANCE
-        assert "Do NOT use spawn_task when:" in SPAWN_GUIDANCE
-
-    def test_spawn_guidance_contains_example(self) -> None:
-        """Spawn guidance includes a few-shot delegation example."""
-        assert "<example>" in SPAWN_GUIDANCE
-        assert "Good delegation:" in SPAWN_GUIDANCE
-        assert "Bad delegation:" in SPAWN_GUIDANCE
 
 
 class TestCodeExecGuidance:
@@ -87,6 +67,11 @@ class TestCodeExecGuidance:
         result = get_strategy_prompts(tool_names=["read", "write", "bash"])
         assert "code_exec_guidance" not in result
         assert "contained_exec_guidance" not in result
+
+    def test_spawn_task_in_tool_names_does_not_trigger_arcrun_guidance(self) -> None:
+        """arcrun has no spawn knowledge — passing spawn_task is a no-op here."""
+        result = get_strategy_prompts(tool_names=["spawn_task"])
+        assert "spawn_guidance" not in result
 
 
 class TestMultipleStrategies:
@@ -174,16 +159,11 @@ class TestStrategyABCPromptGuidance:
 class TestPromptGuidanceContent:
     """Validate prompt content quality — guidance must be decision-oriented."""
 
-    def test_spawn_guidance_not_mechanical(self) -> None:
-        """Guidance should be decisional, not just parameter docs."""
-        # Should contain reasoning about WHEN, not just HOW
-        assert "evaluate" in SPAWN_GUIDANCE.lower() or "when" in SPAWN_GUIDANCE.lower()
-
     def test_code_exec_guidance_has_prefer_criteria(self) -> None:
         """Code exec guidance should say when to prefer code vs tools."""
         assert "Prefer" in CODE_EXEC_GUIDANCE
 
-    def test_all_guidance_constants_are_nonempty(self) -> None:
-        for guidance in (SPAWN_GUIDANCE, CODE_EXEC_GUIDANCE, CONTAINED_EXEC_GUIDANCE):
+    def test_all_arcrun_guidance_constants_are_nonempty(self) -> None:
+        for guidance in (CODE_EXEC_GUIDANCE, CONTAINED_EXEC_GUIDANCE):
             assert isinstance(guidance, str)
             assert len(guidance) > 100

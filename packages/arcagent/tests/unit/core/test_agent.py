@@ -439,7 +439,7 @@ class TestErrorHandling:
         )
         agent = ArcAgent(config=config)
         # DID is set but key file doesn't exist — hard fail, no silent regen
-        with pytest.raises(IdentityError, match="Key file not found"):
+        with pytest.raises(ValueError, match="Key file not found"):
             await agent.startup()
 
 

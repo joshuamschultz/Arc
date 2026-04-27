@@ -1,7 +1,7 @@
 """Integration tests for PairingStore concurrent access patterns.
 
 Tests:
-- test_concurrent_mint_doesnt_violate_max_pending: asyncio.gather × 5 → at most 3 succeed
+- test_concurrent_mint_doesnt_violate_max_pending: asyncio.gather x 5 -> at most 3 succeed
 - test_concurrent_approval_race: two simultaneous verify_and_consume → exactly one succeeds
 - test_concurrent_different_platforms: concurrent mints on different platforms are independent
 - test_concurrent_cleanup_and_mint: cleanup + mint concurrently without corruption
@@ -11,12 +11,48 @@ Tests:
 from __future__ import annotations
 
 import asyncio
+import base64
 from pathlib import Path
 
 import pytest
+from nacl.signing import SigningKey
 
-from arcgateway.pairing import PairingPlatformFull, PairingRateLimited, PairingStore
+from arcgateway.pairing import (
+    PairingCode,
+    PairingPlatformFull,
+    PairingRateLimited,
+    PairingStore,
+    build_pairing_challenge,
+)
 
+
+def _make_signed_store(tmp_path: Path, db_name: str) -> tuple[PairingStore, SigningKey, str]:
+    """Build a personal-tier PairingStore with a seeded trust dir."""
+    from arctrust import invalidate_cache
+
+    did = "did:arc:org:operator/integration-test"
+    sk = SigningKey.generate()
+    pub_b64 = base64.b64encode(bytes(sk.verify_key)).decode("ascii")
+    trust_dir = tmp_path / "trust"
+    trust_dir.mkdir(exist_ok=True)
+    ops_file = trust_dir / "operators.toml"
+    ops_file.write_text(
+        f'[operators."{did}"]\npublic_key = "{pub_b64}"\n',
+        encoding="utf-8",
+    )
+    ops_file.chmod(0o600)
+    invalidate_cache()
+    store = PairingStore(db_path=tmp_path / db_name, tier="personal", trust_dir=trust_dir)
+    return store, sk, did
+
+
+async def _signed_consume(
+    store: PairingStore, code_obj: PairingCode, sk: SigningKey, did: str
+) -> PairingCode | None:
+    """Consume a pairing code with a valid Ed25519 signature."""
+    challenge = build_pairing_challenge(code_obj.code, code_obj.minted_at)
+    sig = bytes(sk.sign(challenge).signature)
+    return await store.verify_and_consume(code_obj.code, approver_did=did, signature=sig)
 
 # ---------------------------------------------------------------------------
 # Concurrent mint tests
@@ -25,7 +61,7 @@ from arcgateway.pairing import PairingPlatformFull, PairingRateLimited, PairingS
 
 @pytest.mark.asyncio
 async def test_concurrent_mint_doesnt_violate_max_pending(tmp_path: Path) -> None:
-    """asyncio.gather × 5 mint_code calls → at most 3 succeed (max pending enforced).
+    """asyncio.gather x 5 mint_code calls -> at most 3 succeed (max pending enforced).
 
     This is the core race-condition test. Even under concurrent pressure,
     the 3-pending-max invariant must hold.
@@ -61,13 +97,15 @@ async def test_concurrent_approval_race(tmp_path: Path) -> None:
     """Two simultaneous verify_and_consume calls → exactly one returns the code.
 
     Ensures the approval is atomic: the code cannot be double-consumed.
+    Both calls use a valid signature — only the first to acquire the DB lock
+    succeeds; the second returns None (code already consumed).
     """
-    store = PairingStore(db_path=tmp_path / "race.db")
+    store, sk, did = _make_signed_store(tmp_path, "race.db")
     code_obj = await store.mint_code(platform="telegram", platform_user_id="shared_user")
 
     results = await asyncio.gather(
-        store.verify_and_consume(code_obj.code),
-        store.verify_and_consume(code_obj.code),
+        _signed_consume(store, code_obj, sk, did),
+        _signed_consume(store, code_obj, sk, did),
         return_exceptions=True,
     )
 

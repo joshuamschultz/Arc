@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from arcteam.audit import AuditLogger
 from arcteam.storage import StorageBackend
@@ -19,9 +20,16 @@ def _entity_key(entity_id: str) -> str:
 class EntityRegistry:
     """Agent and user registration with role-based queries."""
 
-    def __init__(self, backend: StorageBackend, audit: AuditLogger) -> None:
+    def __init__(
+        self,
+        backend: StorageBackend,
+        audit: AuditLogger,
+        ui_reporter: Any | None = None,
+    ) -> None:
         self._backend = backend
         self._audit = audit
+        # Duck-typed UIReporter hook. No arcui import — caller injects if needed.
+        self._ui_reporter = ui_reporter
 
     async def register(self, entity: Entity) -> None:
         """Register a new entity. Rejects duplicates."""
@@ -41,6 +49,16 @@ class EntityRegistry:
             detail=f"Registered {entity.type.value} '{entity.name}' with roles {entity.roles}",
             target_id=entity.id,
         )
+        # UIReporter hook — fires if a reporter was injected (duck-typed, no arcui dep).
+        if self._ui_reporter is not None:
+            self._ui_reporter.emit_team_event(
+                event_type="entity_register",
+                data={
+                    "entity_id": entity.id,
+                    "entity_name": entity.name,
+                    "entity_type": entity.type.value,
+                },
+            )
 
     async def get(self, entity_id: str) -> Entity | None:
         """Read entity by ID."""

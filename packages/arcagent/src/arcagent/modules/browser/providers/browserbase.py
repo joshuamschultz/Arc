@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from arcagent.modules.browser.errors import BrowserNotAvailable, RemoteProviderError
+from arcagent.modules.browser.errors import BrowserNotAvailableError, RemoteProviderError
 
 _logger = logging.getLogger("arcagent.modules.browser.providers.browserbase")
 
@@ -84,13 +84,15 @@ class BrowserbaseProvider:
             The Playwright ``Browser`` instance.
 
         Raises:
-            BrowserNotAvailable: If Playwright is not installed.
+            BrowserNotAvailableError: If Playwright is not installed.
             RemoteProviderError: If the connection to the remote endpoint fails.
         """
         try:
-            from playwright.async_api import async_playwright
+            from playwright.async_api import (  # type: ignore[import-not-found]  # optional dep
+                async_playwright,
+            )
         except ImportError as exc:
-            raise BrowserNotAvailable(
+            raise BrowserNotAvailableError(
                 message=(
                     "Playwright is not installed. "
                     "Install arcagent[browser] to enable remote browser automation."

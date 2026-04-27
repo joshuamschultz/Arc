@@ -94,7 +94,7 @@ class ExtensionAPI:
                 input_schema=tool.input_schema,
                 transport=ToolTransport.NATIVE,
                 execute=tool.execute,
-                timeout_seconds=getattr(tool, "timeout_seconds", None),
+                timeout_seconds=int(getattr(tool, "timeout_seconds", 30) or 30),
                 source=tagged_source,
             )
         elif not tool.source.startswith(self._source_prefix):
@@ -152,9 +152,9 @@ class ExtensionAPI:
         """
         # 1. Try vault if configured
         if self._vault_resolver is not None:
-            val = self._vault_resolver.get_secret(name)  # type: ignore[union-attr]
-            if val:
-                return val
+            raw_val = self._vault_resolver.get_secret(name)
+            if raw_val:
+                return str(raw_val)
 
         # 2. Fall back to environment variable
         env_name = name.upper().replace("-", "_")
@@ -182,12 +182,15 @@ class ExtensionLoader:
         telemetry: Any,
         config: ExtensionConfig,
         vault_resolver: Any = None,
+        ui_reporter: Any | None = None,
     ) -> None:
         self._vault_resolver = vault_resolver
         self._tool_registry = tool_registry
         self._bus = bus
         self._telemetry = telemetry
         self._config = config
+        # Duck-typed UIEventReporter; no arcui import. None = disabled.
+        self._ui_reporter: Any | None = ui_reporter
         self._manifests: list[ExtensionManifest] = []
 
     @property
@@ -360,6 +363,25 @@ class ExtensionLoader:
                 "load_time_ms": round(elapsed_ms, 2),
             },
         )
+
+        # Bridge to arcui agent layer — duck-typed, no import of arcui.
+        if self._ui_reporter is not None:
+            try:
+                self._ui_reporter.emit_agent_event(
+                    event_type="extension_load",
+                    data={
+                        "extension_name": ext_name,
+                        "source": source,
+                        "sandbox_mode": sandbox_mode,
+                        "tools_registered": list(manifest.tools_registered),
+                        "load_time_ms": round(elapsed_ms, 2),
+                    },
+                )
+            except Exception:
+                _logger.debug(
+                    "ui_reporter.emit_agent_event failed for extension_load", exc_info=True
+                )
+
         _logger.info(
             "Loaded extension %s: %d tools, %d hooks (%.1fms)",
             ext_name,
@@ -585,7 +607,4 @@ def _discover_entry_points() -> list[Any]:
     Isolated as a function to allow test mocking.
     """
     eps = importlib.metadata.entry_points()
-    if hasattr(eps, "select"):
-        return list(eps.select(group="arcagent.extensions"))
-    # Python 3.9-3.11 compat: eps is a dict
-    return list(eps.get("arcagent.extensions", []))  # type: ignore[attr-defined]
+    return list(eps.select(group="arcagent.extensions"))

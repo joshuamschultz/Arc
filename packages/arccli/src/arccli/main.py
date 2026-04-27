@@ -4,24 +4,12 @@ Two modes:
 1. One-shot:  ``arc <command> [args…]`` — dispatches via registry and exits.
 2. REPL:      ``arc`` with no arguments — starts interactive slash-command loop.
 
-The legacy Click-based interface is preserved at ``arccli.main_legacy:cli``
-(entry point ``arc-legacy``). Handler stubs in registry.py delegate to it
-during the T1.1.5 migration phase.
-
-Backward-compat note: ``from arccli.main import cli`` still works and returns
-the legacy Click group so that existing CliRunner-based tests pass untouched.
-
 SDD §3.11 — Centralized slash-command registry.
 """
 
 from __future__ import annotations
 
 import sys
-
-# Re-export the legacy Click group so that ``from arccli.main import cli``
-# continues to work for any existing tests/scripts that use CliRunner.
-# TODO(T1.1.5): remove once all tests are migrated off Click CliRunner.
-from arccli.main_legacy import cli  # noqa: F401
 
 
 def _out(msg: str = "") -> None:

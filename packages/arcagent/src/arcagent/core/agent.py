@@ -10,19 +10,20 @@ from __future__ import annotations
 import asyncio
 import importlib
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
 from arcllm import Message
-from arcrun import Event, RunHandle, get_strategy_prompts
+from arcrun import Event, RunHandle, StreamEvent, TurnEndEvent, get_strategy_prompts
 from arcrun import run as arcrun_run
 from arcrun import run_async as arcrun_run_async
+from arcrun import run_stream as arcrun_run_stream
+from arctrust import AgentIdentity
 
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.errors import ConfigError
 from arcagent.core.extensions import ExtensionLoader
-from arcagent.core.identity import AgentIdentity
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.settings_manager import SettingsManager
@@ -92,10 +93,12 @@ def create_arcrun_bridge(
     def bridge(event: Event) -> None:
         bus_event = _event_map.get(event.type)
         if bus_event is not None:
-            data = event.data
+            # Always copy to a plain dict — Event.data is typed as
+            # MappingProxyType[Any, Any] (read-only) by arcrun; ModuleBus.emit
+            # requires dict[str, Any]. Shallow copy is intentional here.
+            data: dict[str, Any] = dict(event.data)
             # Enrich llm.call events with actual model/provider/agent
             if event.type == "llm.call":
-                data = dict(data)
                 data["model"] = _model_name
                 data["provider"] = _provider
                 if agent_label:
@@ -528,23 +531,46 @@ class ArcAgent:
         """Prepare shared run context for both blocking and async paths.
 
         Returns the common objects needed to invoke arcrun.
-        Fetches ArcRun strategy prompt guidance and merges it into
-        the system prompt so the model knows when/how to use
-        strategies like spawn_task and code execution.
-        Emits agent:pre_respond before returning.
+        Assembles the agent-side toolkit: registry tools + (optionally)
+        spawn_task. Merges strategy and orchestration prompt guidance
+        into the system prompt so the model knows when/how to use
+        each capability. Emits agent:pre_respond before returning.
         """
         telemetry, tool_registry, context, bus = self._ensure_started()
         model = self._ensure_model()
 
         tools = tool_registry.to_arcrun_tools()
-        tool_names = [t.name for t in tools]
 
-        # Strategy prompt guidance: ArcRun tells the model when to
-        # use its capabilities (spawning, code exec, loop behavior).
-        strategy_sections = get_strategy_prompts(
-            spawn_enabled=True,
-            tool_names=tool_names,
-        )
+        # Strategy prompt guidance — arcrun-owned strategies and tools.
+        tool_names = [t.name for t in tools]
+        strategy_sections = get_strategy_prompts(tool_names=tool_names)
+
+        # Orchestration: register spawn_task if config enables it.
+        # Closure mutation lets children inherit spawn_task — the tool's
+        # closure captures ``tools`` by reference, so appending after
+        # construction makes spawn visible to nested children too.
+        if self._config.spawn.enabled:
+            from arcagent.orchestration import SPAWN_GUIDANCE, make_spawn_tool
+
+            # Children get the same orchestration guidance so nested
+            # decomposition behaves consistently.
+            child_system_prompt = await context.assemble_system_prompt(
+                self._workspace,
+                extra_sections={
+                    **strategy_sections,
+                    "spawn_guidance": SPAWN_GUIDANCE,
+                },
+            )
+            tools = list(tools)  # mutable for closure-mutation pattern
+            spawn_tool = make_spawn_tool(
+                model=model,
+                tools=tools,  # closure ref — append below makes children see spawn too
+                system_prompt=child_system_prompt,
+                spawn_timeout_seconds=self._config.spawn.timeout_seconds,
+                max_concurrent_spawns=self._config.spawn.max_concurrent,
+            )
+            tools.append(spawn_tool)
+            strategy_sections = {**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE}
 
         system_prompt = await context.assemble_system_prompt(
             self._workspace, extra_sections=strategy_sections
@@ -695,6 +721,93 @@ class ArcAgent:
             messages=[Message(**m) for m in session.get_messages()],
             session=session,
         )
+
+    async def chat_stream(
+        self,
+        task: str,
+        *,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream a task through the agent loop, yielding incremental events.
+
+        Returns an ``AsyncIterator[StreamEvent]`` that yields:
+        - :class:`~arcrun.streams.TokenEvent` for each response fragment
+        - :class:`~arcrun.streams.TurnEndEvent` as the final event
+
+        Emits ``agent:pre_respond`` before the loop starts and
+        ``agent:post_respond`` after the stream is fully consumed.
+        The caller must iterate the returned iterator to completion for
+        the post-respond event to fire. Use ``chat()`` for blocking callers.
+
+        Args:
+            task: The user task or message.
+            tool_choice: Optional tool-choice override forwarded to arcrun.
+
+        Returns:
+            An async iterator of :class:`~arcrun.streams.StreamEvent` objects.
+        """
+        _telemetry, tool_registry, context, bus = self._ensure_started()
+        model = self._ensure_model()
+
+        tools = tool_registry.to_arcrun_tools()
+        tool_names = [t.name for t in tools]
+
+        strategy_sections = get_strategy_prompts(tool_names=tool_names)
+
+        if self._config.spawn.enabled:
+            from arcagent.orchestration import SPAWN_GUIDANCE, make_spawn_tool
+
+            child_system_prompt = await context.assemble_system_prompt(
+                self._workspace,
+                extra_sections={
+                    **strategy_sections,
+                    "spawn_guidance": SPAWN_GUIDANCE,
+                },
+            )
+            tools = list(tools)
+            spawn_tool = make_spawn_tool(
+                model=model,
+                tools=tools,
+                system_prompt=child_system_prompt,
+                spawn_timeout_seconds=self._config.spawn.timeout_seconds,
+                max_concurrent_spawns=self._config.spawn.max_concurrent,
+            )
+            tools.append(spawn_tool)
+            strategy_sections = {**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE}
+
+        system_prompt = await context.assemble_system_prompt(
+            self._workspace, extra_sections=strategy_sections
+        )
+
+        await bus.emit("agent:pre_respond", {"task": task})
+
+        raw_stream = await arcrun_run_stream(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            task=task,
+        )
+
+        async def _wrapped_stream() -> AsyncIterator[StreamEvent]:
+            """Wrap raw stream to emit post-respond after all events are consumed."""
+            final_text = ""
+            async for event in raw_stream:
+                if isinstance(event, TurnEndEvent):
+                    final_text = event.final_text
+                yield event
+            await bus.emit(
+                "agent:post_respond",
+                {
+                    "result": None,
+                    "messages": [
+                        {"role": "user", "content": task},
+                        {"role": "assistant", "content": final_text},
+                    ],
+                    "session_id": self._session.session_id if self._session else "",
+                },
+            )
+
+        return _wrapped_stream()
 
     async def _maybe_compact(self, session: SessionManager) -> None:
         """Trigger compaction if context ratio exceeds compact_threshold."""

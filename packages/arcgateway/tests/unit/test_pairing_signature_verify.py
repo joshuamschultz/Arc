@@ -67,7 +67,7 @@ def federal_store_with_trust(
     operators_file.chmod(0o600)
 
     # Trust-store cache is module-level; flush to avoid test interference.
-    from arcagent.core.trust_store import invalidate_cache
+    from arctrust import invalidate_cache
 
     invalidate_cache()
 
@@ -272,7 +272,7 @@ async def test_unknown_operator_did_in_trust_store_raises(
     operators_file.write_text('[operators]\n', encoding="utf-8")
     operators_file.chmod(0o600)
 
-    from arcagent.core.trust_store import invalidate_cache
+    from arctrust import invalidate_cache
 
     invalidate_cache()
 

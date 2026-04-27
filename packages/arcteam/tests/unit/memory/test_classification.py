@@ -35,12 +35,55 @@ class TestParseClassification:
 
 
 class TestCheckAccessPersonal:
-    """Personal tier: no enforcement, always allows."""
+    """Personal tier: classification check runs at all tiers (ADR-019 four-pillars-universal).
 
-    def test_personal_allows_all(self) -> None:
+    Previously, personal tier returned True immediately — no enforcement.
+    Per ADR-019, 'authorize' is a pillar; tier sets stringency, not whether to enforce.
+
+    Default behavior (unclassified entities + UNCLASSIFIED agent) is still permissive,
+    so solo developer workflows are unaffected. But an operator who explicitly classifies
+    entities at personal tier gets enforcement.
+
+    Tests that previously asserted "personal tier always returns True regardless of
+    classification" are flipped here to assert the new universal enforcement behavior.
+    """
+
+    def test_personal_tier_default_permissive_allows_all(self) -> None:
+        """Personal tier with default UNCLASSIFIED entity and UNCLASSIFIED agent: allowed.
+
+        ADR-019: default classification is UNCLASSIFIED (most permissive), so by default
+        no access filtering happens at personal tier in practice.
+        """
         config = TeamMemoryConfig(tier="personal")
         checker = ClassificationChecker(config)
-        assert checker.check_access("SECRET", Classification.UNCLASSIFIED) is True
+        # UNCLASSIFIED entity, UNCLASSIFIED agent — allowed at any tier
+        assert checker.check_access("unclassified", Classification.UNCLASSIFIED) is True
+
+    def test_personal_tier_explicit_classification_enforced(self) -> None:
+        """Personal tier: explicit SECRET entity blocks UNCLASSIFIED agent.
+
+        ADR-019: an operator at personal tier who explicitly classifies entities
+        still gets enforcement. Previously this returned True (bypass) — now it enforces.
+
+        This test was formerly 'personal_allows_all' which asserted True for SECRET+UNCLASSIFIED.
+        Flipped: that test verified the personal-tier bypass that ADR-019 removes.
+        """
+        config = TeamMemoryConfig(tier="personal")
+        checker = ClassificationChecker(config)
+        # SECRET entity, UNCLASSIFIED agent — must be denied (clearance < classification)
+        assert checker.check_access("SECRET", Classification.UNCLASSIFIED) is False
+
+    def test_personal_tier_sufficient_clearance_allows(self) -> None:
+        """Personal tier: agent with SECRET clearance can access SECRET entity."""
+        config = TeamMemoryConfig(tier="personal")
+        checker = ClassificationChecker(config)
+        assert checker.check_access("SECRET", Classification.SECRET) is True
+
+    def test_personal_tier_higher_clearance_allows(self) -> None:
+        """Personal tier: agent with TOP_SECRET clearance can access SECRET entity."""
+        config = TeamMemoryConfig(tier="personal")
+        checker = ClassificationChecker(config)
+        assert checker.check_access("SECRET", Classification.TOP_SECRET) is True
 
 
 class TestCheckAccessFederal:
@@ -133,7 +176,13 @@ class TestFilterResults:
         assert "a" in entity_ids
         assert "b" not in entity_ids
 
-    def test_filter_personal_allows_all(self) -> None:
+    def test_filter_personal_enforces_classification(self) -> None:
+        """Personal tier: filter_results enforces classification — same logic as other tiers.
+
+        ADR-019: the personal-tier 'return results' bypass is removed.
+        Previously this test asserted filtered == 1 (bypass). Now it asserts filtered == 0
+        because TOP_SECRET entity is above UNCLASSIFIED agent clearance at any tier.
+        """
         config = TeamMemoryConfig(tier="personal")
         checker = ClassificationChecker(config)
         results = [
@@ -143,6 +192,26 @@ class TestFilterResults:
                 snippet="",
                 score=1.0,
                 classification="TOP_SECRET",
+            ),
+        ]
+        # UNCLASSIFIED agent cannot see TOP_SECRET entity — at any tier
+        filtered = checker.filter_results(results, Classification.UNCLASSIFIED)
+        assert len(filtered) == 0
+
+    def test_filter_personal_allows_unclassified_entities(self) -> None:
+        """Personal tier: UNCLASSIFIED entities pass through for UNCLASSIFIED agent.
+
+        Default personal-tier workflow (no explicit classification) is unaffected.
+        """
+        config = TeamMemoryConfig(tier="personal")
+        checker = ClassificationChecker(config)
+        results = [
+            SearchResult(
+                entity_id="a",
+                path="person/a.md",
+                snippet="",
+                score=1.0,
+                classification="unclassified",
             ),
         ]
         filtered = checker.filter_results(results, Classification.UNCLASSIFIED)

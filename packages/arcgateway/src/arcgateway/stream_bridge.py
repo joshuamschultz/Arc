@@ -126,9 +126,9 @@ class StreamBridge:
         return elapsed_ms >= EDIT_INTERVAL_MS
 
     @staticmethod
-    async def _send_placeholder(adapter: object, target: DeliveryTarget) -> "str | None":
+    async def _send_placeholder(adapter: object, target: DeliveryTarget) -> str | None:
         try:
-            message_id: "str | None" = await adapter.send_with_id(  # type: ignore[attr-defined]
+            message_id: str | None = await adapter.send_with_id(  # type: ignore[attr-defined]
                 target, THINKING_PLACEHOLDER
             )
             _audit(
@@ -180,6 +180,6 @@ class StreamBridge:
             raise
 
 
-def _audit(event_name: str, data: "dict[str, object]") -> None:
+def _audit(event_name: str, data: dict[str, object]) -> None:
     from arcgateway.telemetry import emit_audit
     emit_audit(_logger, event_name, dict(data))

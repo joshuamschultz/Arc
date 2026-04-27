@@ -2,7 +2,7 @@
 
 Critical invariants:
 - Federal tier ALWAYS enforces strict sandbox, even if config says loose
-- strict sandbox + local mode → LocalBrowserNotAllowed
+- strict sandbox + local mode → LocalBrowserNotAllowedError
 - loose sandbox + local mode → allowed
 - strict sandbox + remote mode → allowed
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from arcagent.modules.browser.config import PlaywrightConfig
-from arcagent.modules.browser.errors import LocalBrowserNotAllowed
+from arcagent.modules.browser.errors import LocalBrowserNotAllowedError
 from arcagent.modules.browser.policy import effective_sandbox, enforce_sandbox_policy
 
 
@@ -45,17 +45,17 @@ class TestEffectiveSandbox:
 
 
 class TestEnforceSandboxPolicyFederal:
-    """Federal tier: local mode MUST raise LocalBrowserNotAllowed."""
+    """Federal tier: local mode MUST raise LocalBrowserNotAllowedError."""
 
     def test_federal_local_mode_raises(self) -> None:
         cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        with pytest.raises(LocalBrowserNotAllowed) as exc_info:
+        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
             enforce_sandbox_policy("federal", cfg)
         assert exc_info.value.details["tier"] == "federal"
 
     def test_federal_local_mode_with_strict_config_raises(self) -> None:
         cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        with pytest.raises(LocalBrowserNotAllowed):
+        with pytest.raises(LocalBrowserNotAllowedError):
             enforce_sandbox_policy("federal", cfg)
 
     def test_federal_remote_mode_does_not_raise(self) -> None:
@@ -86,7 +86,7 @@ class TestEnforceSandboxPolicyEnterprise:
 
     def test_enterprise_strict_local_raises(self) -> None:
         cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        with pytest.raises(LocalBrowserNotAllowed) as exc_info:
+        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
             enforce_sandbox_policy("enterprise", cfg)
         assert exc_info.value.details["tier"] == "enterprise"
 
@@ -118,7 +118,7 @@ class TestEnforceSandboxPolicyPersonal:
 
     def test_personal_strict_local_raises(self) -> None:
         cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        with pytest.raises(LocalBrowserNotAllowed) as exc_info:
+        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
             enforce_sandbox_policy("personal", cfg)
         assert exc_info.value.details["tier"] == "personal"
 
@@ -132,12 +132,12 @@ class TestEnforceSandboxPolicyPersonal:
         enforce_sandbox_policy("personal", cfg)
 
 
-class TestLocalBrowserNotAllowedErrorDetails:
-    """LocalBrowserNotAllowed carries useful diagnostic context."""
+class TestLocalBrowserNotAllowedErrorErrorDetails:
+    """LocalBrowserNotAllowedError carries useful diagnostic context."""
 
     def test_error_carries_tier_and_mode(self) -> None:
         cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        with pytest.raises(LocalBrowserNotAllowed) as exc_info:
+        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
             enforce_sandbox_policy("federal", cfg)
         err = exc_info.value
         assert err.details["tier"] == "federal"
@@ -146,6 +146,6 @@ class TestLocalBrowserNotAllowedErrorDetails:
 
     def test_error_code_is_correct(self) -> None:
         cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        with pytest.raises(LocalBrowserNotAllowed) as exc_info:
+        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
             enforce_sandbox_policy("federal", cfg)
         assert exc_info.value.code == "BROWSER_LOCAL_NOT_ALLOWED"

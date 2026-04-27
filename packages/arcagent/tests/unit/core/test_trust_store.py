@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 from nacl.signing import SigningKey
 
-from arcagent.core.trust_store import (
+from arctrust import (
     TrustStoreError,
     invalidate_cache,
     load_issuer_pubkey,

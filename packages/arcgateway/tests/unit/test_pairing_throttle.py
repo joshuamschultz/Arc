@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 from arcgateway.pairing import (
+    _ADD_SIGNED_BY_DID_COLUMN,
+    _SCHEMA_SQL,
     PairingPlatformFull,
     PairingPlatformLocked,
     PairingRateLimited,
-    _SCHEMA_SQL,
-    _ADD_SIGNED_BY_DID_COLUMN,
 )
 from arcgateway.pairing_throttle import PairingThrottle
 

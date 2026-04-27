@@ -24,7 +24,7 @@ async def test_pipeline_p95_under_1ms_with_100_rules() -> None:
         GlobalLayer,
         PolicyContext,
         ToolCall,
-        ToolPolicyPipeline,
+        PolicyPipeline,
     )
 
     # 100 denylist rules — none will match the read/grep tools we evaluate,
@@ -32,7 +32,7 @@ async def test_pipeline_p95_under_1ms_with_100_rules() -> None:
     deny_rules = {f"forbidden_tool_{i}": f"global.denylist: rule {i}" for i in range(100)}
     layer = GlobalLayer(deny_rules=deny_rules, forbidden_compositions=[])
 
-    pipeline = ToolPolicyPipeline(layers=[layer], cache_ttl_seconds=0.0)
+    pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=0.0)
     ctx = PolicyContext(tier="personal", policy_version="v1", bundle_age_seconds=0)
 
     # Spin a range of distinct calls so cache doesn't dominate — even
@@ -79,13 +79,13 @@ async def test_cache_accelerates_repeated_calls() -> None:
         GlobalLayer,
         PolicyContext,
         ToolCall,
-        ToolPolicyPipeline,
+        PolicyPipeline,
     )
 
     deny_rules = {f"forbidden_{i}": f"rule {i}" for i in range(100)}
     layer = GlobalLayer(deny_rules=deny_rules, forbidden_compositions=[])
 
-    pipeline = ToolPolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
+    pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
     ctx = PolicyContext(tier="personal", policy_version="v1", bundle_age_seconds=0)
     call = ToolCall(
         tool_name="read",

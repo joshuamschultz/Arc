@@ -27,6 +27,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import IO
 
 _logger = logging.getLogger("arcgateway.cli")
 
@@ -34,6 +35,17 @@ _logger = logging.getLogger("arcgateway.cli")
 _DEFAULT_CONFIG = Path("~/.arc/gateway.toml")
 _DEFAULT_RUNTIME_DIR = Path("~/.arc/gateway/run")
 _PID_FILE_NAME = "gateway.pid"
+
+
+def _echo(msg: str, *, stream: IO[str] | None = None) -> None:
+    """Write *msg* to *stream* (default: sys.stderr).
+
+    Using stderr for operational messages keeps stdout clean for structured
+    output (JSON, etc.). The stream parameter is injected in tests so they
+    can capture output without patching sys.stderr globally.
+    """
+    out: IO[str] = stream if stream is not None else sys.stderr
+    print(msg, file=out)  # intentional CLI output
 
 
 def cmd_start(
@@ -199,7 +211,7 @@ def cmd_stop(*, runtime_dir: Path | None = None) -> None:
     pid_file = rt / _PID_FILE_NAME
 
     if not pid_file.exists():
-        print(
+        _echo(
             "arcgateway stop: no PID file found at "
             f"{pid_file} — is the gateway running?"
         )
@@ -208,20 +220,20 @@ def cmd_stop(*, runtime_dir: Path | None = None) -> None:
     try:
         pid = int(pid_file.read_text(encoding="utf-8").strip())
     except (ValueError, OSError) as exc:
-        print(f"arcgateway stop: could not read PID from {pid_file}: {exc}")
+        _echo(f"arcgateway stop: could not read PID from {pid_file}: {exc}")
         return
 
     try:
         os.kill(pid, _signal.SIGTERM)
-        print(f"arcgateway stop: sent SIGTERM to PID {pid}")
+        _echo(f"arcgateway stop: sent SIGTERM to PID {pid}")
     except ProcessLookupError:
-        print(
+        _echo(
             f"arcgateway stop: process {pid} not found — may have already exited. "
             f"Removing stale PID file."
         )
         pid_file.unlink(missing_ok=True)
     except PermissionError as exc:
-        print(f"arcgateway stop: permission denied sending SIGTERM to {pid}: {exc}")
+        _echo(f"arcgateway stop: permission denied sending SIGTERM to {pid}: {exc}")
 
 
 def cmd_status(*, runtime_dir: Path | None = None) -> None:
@@ -244,22 +256,22 @@ def cmd_status(*, runtime_dir: Path | None = None) -> None:
     if pid_file.exists():
         try:
             pid = pid_file.read_text(encoding="utf-8").strip()
-            print(f"Gateway: PID file found (pid={pid}) — process likely running.")
+            _echo(f"Gateway: PID file found (pid={pid}) — process likely running.")
         except OSError:
-            print("Gateway: PID file found but unreadable.")
+            _echo("Gateway: PID file found but unreadable.")
     else:
-        print("Gateway: no PID file found.")
+        _echo("Gateway: no PID file found.")
 
     if clean_marker.exists():
         try:
             content = clean_marker.read_text(encoding="utf-8").strip()
-            print(f"Gateway: last clean shutdown at {content}")
+            _echo(f"Gateway: last clean shutdown at {content}")
         except OSError:
-            print("Gateway: clean-shutdown marker found but unreadable.")
+            _echo("Gateway: clean-shutdown marker found but unreadable.")
     else:
-        print("Gateway: no clean-shutdown marker found (either running or crashed).")
+        _echo("Gateway: no clean-shutdown marker found (either running or crashed).")
 
-    print("Note: full adapter health reporting not yet implemented (T1.5 socket IPC).")
+    _echo("Note: full adapter health reporting not yet implemented (T1.5 socket IPC).")
 
 
 def cmd_setup() -> None:
@@ -272,8 +284,8 @@ def cmd_setup() -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     if config_path.exists():
-        print(f"arcgateway setup: config already exists at {config_path}")
-        print("Delete it to regenerate, or edit it directly.")
+        _echo(f"arcgateway setup: config already exists at {config_path}")
+        _echo("Delete it to regenerate, or edit it directly.")
         return
 
     starter_config = """\
@@ -303,8 +315,8 @@ app_token_env = "SLACK_APP_TOKEN"
     config_path.write_text(starter_config, encoding="utf-8")
     # Chmod 0600 — config may contain env var names; keep permissions tight.
     config_path.chmod(0o600)
-    print(f"arcgateway setup: wrote starter config to {config_path}")
-    print("Edit the file and set your platform tokens via environment variables.")
+    _echo(f"arcgateway setup: wrote starter config to {config_path}")
+    _echo("Edit the file and set your platform tokens via environment variables.")
 
 
 def main() -> None:

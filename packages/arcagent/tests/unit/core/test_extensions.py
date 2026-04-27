@@ -2266,18 +2266,22 @@ class TestSandboxRestrictedOperations:
 
 
 class TestDiscoverEntryPointsCompat:
-    """Line 516: Old Python 3.9-3.11 compat path."""
+    """_discover_entry_points uses importlib.metadata.select() (Python 3.12+)."""
 
-    def test_discover_entry_points_dict_fallback(self) -> None:
+    def test_discover_entry_points_uses_select(self) -> None:
+        """On Python 3.12+ entry_points() always returns EntryPoints with .select().
+
+        The old dict-fallback for Python 3.9-3.11 was removed when the
+        minimum runtime was pinned to 3.12.  This test confirms the current
+        (select-only) path works and returns the expected results.
+        """
         from arcagent.core.extensions import _discover_entry_points
 
-        # Mock eps as a dict (old API)
+        mock_entry = MagicMock()
         with patch("arcagent.core.extensions.importlib.metadata.entry_points") as mock_eps:
-            mock_dict = {"arcagent.extensions": [MagicMock(name="test_ep")]}
             mock_result = MagicMock()
-            mock_result.select = None  # Remove select attribute
-            del mock_result.select  # Ensure hasattr returns False
-            mock_result.get = mock_dict.get
+            mock_result.select.return_value = [mock_entry]
             mock_eps.return_value = mock_result
             result = _discover_entry_points()
             assert len(result) == 1
+            mock_result.select.assert_called_once_with(group="arcagent.extensions")

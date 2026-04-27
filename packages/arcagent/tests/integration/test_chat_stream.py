@@ -15,7 +15,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from arcrun import StreamEvent, TokenEvent, TurnEndEvent
 from arcrun.types import LoopResult
 
@@ -28,7 +27,6 @@ from arcagent.core.config import (
     LLMConfig,
     TelemetryConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

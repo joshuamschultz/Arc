@@ -52,6 +52,7 @@ async def execute_tool_call(
         turn_number=state.turn_count + 1,
         event_bus=bus,
         cancelled=state.cancel_event,
+        parent_state=state,  # exposed so tools (e.g., delegate) can read depth/budget
     )
 
     timeout = tool_def.timeout_seconds or state.tool_timeout

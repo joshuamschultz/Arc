@@ -179,7 +179,7 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
     full YAML parsing at cold-start for the hot path.
     """
     try:
-        import yaml  # type: ignore[import-untyped]  # pyyaml has no bundled stubs
+        import yaml
 
         return yaml.safe_load(text) or {}
     except Exception:

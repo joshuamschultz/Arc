@@ -2,17 +2,20 @@
 
 Implements glob-pattern matching for outbound URL control.
 
-Tier behaviour:
-    Federal  — deny by default; every URL must match at least one pattern.
-               Empty allowlist = deny all (module startup should reject this
-               configuration, but this function is the enforcement point).
-    Enterprise — allow all when allowlist is empty; when non-empty, check.
-                 Logs a WARNING for cross-org URLs (heuristic: different
-                 registered domain than any pattern's domain fragment).
-    Personal — no restriction regardless of allowlist contents.
+Tier behaviour (deny-by-default at all tiers per ASI04 + LLM10):
+    Federal    — deny by default; every URL must match at least one pattern.
+                 Empty allowlist = deny all. Module startup rejects empty list.
+    Enterprise — deny by default; empty allowlist = deny all. When non-empty,
+                 check against patterns. Logs WARNING for cross-org URLs.
+    Personal   — deny by default; empty allowlist = deny all. Explicit
+                 wildcard (``*``) opens all traffic if operator chooses.
 
-``check_url`` returns ``True`` when the URL is permitted, ``False`` when
-denied.  Callers raise ``URLNotAllowed`` on ``False``.
+Rationale: ASI04 (Agentic Supply Chain) and LLM10 (Unbounded Consumption)
+prohibit implicit open-internet access at any tier. The operator must
+explicitly configure which destinations are allowed.
+
+``is_url_allowed`` returns ``True`` when the URL is permitted, ``False``
+when denied. Callers raise ``URLNotAllowed`` on ``False``.
 
 Spec: SPEC-018 T4.8.5
 """
@@ -46,18 +49,19 @@ def is_url_allowed(
     """
     tier = tier.lower()
 
+    # Deny-by-default at every tier: empty allowlist = deny all (ASI04 + LLM10).
+    # The operator must explicitly configure allowed destinations.
+    if not allowlist:
+        return False
+
     if tier == "personal":
-        # Personal tier: no URL restrictions
-        return True
+        return _check_allowlist(url, allowlist)
 
     if tier == "federal":
         return _check_allowlist(url, allowlist)
 
-    # Enterprise tier
-    if not allowlist:
-        # Empty allowlist = allow all at enterprise
-        _warn_cross_org_if_needed(url, allowlist)
-        return True
+    # Enterprise tier: non-empty allowlist, check and optionally warn
+    _warn_cross_org_if_needed(url, allowlist)
     return _check_allowlist(url, allowlist)
 
 

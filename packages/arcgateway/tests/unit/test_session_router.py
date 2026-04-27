@@ -14,9 +14,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from arcgateway.executor import Delta, Executor, InboundEvent
+from arcgateway.executor import Delta, InboundEvent
 from arcgateway.session import SessionRouter, build_session_key
-
 
 # ---------------------------------------------------------------------------
 # Helpers

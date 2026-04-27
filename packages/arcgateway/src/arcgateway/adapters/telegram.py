@@ -342,6 +342,43 @@ class TelegramAdapter:
             chat_id,
         )
 
+    async def send_with_id(
+        self,
+        target: DeliveryTarget,
+        message: str,
+    ) -> str | None:
+        """Send a single message and return the Telegram message_id as a string.
+
+        Overrides the Protocol default to return a real message ID so
+        StreamBridge can use it for edit/delete operations.
+
+        Args:
+            target: DeliveryTarget with chat_id.
+            message: Text to send (single message, no chunk-splitting).
+
+        Returns:
+            str: Telegram message_id cast to str.
+            None: On unexpected send failure (should not normally occur).
+
+        Raises:
+            RuntimeError: If not connected.
+        """
+        if self._application is None:
+            msg = "TelegramAdapter.send_with_id: not connected"
+            raise RuntimeError(msg)
+
+        chat_id_str = target.chat_id
+        try:
+            chat_id: int | str = int(chat_id_str)
+        except ValueError:
+            chat_id = chat_id_str
+
+        sent = await self._application.bot.send_message(
+            chat_id=chat_id,
+            text=message,
+        )
+        return str(sent.message_id)
+
     # ── Internal: Bot Setup ───────────────────────────────────────────────────
 
     def _register_handlers(self) -> None:
@@ -665,15 +702,24 @@ class TelegramAdapter:
     def _audit(self, event_name: str, data: dict[str, Any]) -> None:
         """Emit a structured audit log entry.
 
-        Uses structured logging so audit entries flow into whatever log
-        aggregator the operator has configured (JSON-lines, OTel, etc.).
-        Full OTel span emission is wired in M1 integration pass (SDD §4.3).
+        Routes through both structured stdlib logging (log-aggregator
+        compatibility) and ``arcgateway.audit.emit_event`` (canonical
+        arctrust.audit sink pipeline for tamper-evidence).
         """
         _logger.info(
             "AUDIT event=%s data=%s",
             event_name,
             data,
             extra={"audit_event": event_name, "audit_data": data},
+        )
+        # Canonical arctrust.audit sink — swallows errors per AU-5.
+        from arcgateway.audit import emit_event as _arc_emit
+        _outcome = "deny" if "rejected" in event_name or "fail" in event_name else "allow"
+        _arc_emit(
+            action=event_name,
+            target=data.get("chat_id") or data.get("agent_did") or "telegram",
+            outcome=_outcome,
+            extra=data,
         )
 
 

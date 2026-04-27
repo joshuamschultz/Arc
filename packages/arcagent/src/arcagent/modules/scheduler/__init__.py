@@ -50,6 +50,11 @@ class SchedulerModule:
         from arcagent.modules.scheduler.tools import create_scheduler_tools
 
         # Create and register tools.
+        if self._telemetry is None:
+            raise RuntimeError(
+                "SchedulerModule requires AgentTelemetry; "
+                "pass telemetry= when constructing the module."
+            )
         tools = create_scheduler_tools(
             store=self._store,
             config=self._config,

@@ -151,8 +151,8 @@ class BioMemoryModule:
         if self._team_config is None:
             return None
         try:
-            from arcteam.memory.config import TeamMemoryConfig  # type: ignore[import-untyped]
-            from arcteam.memory.service import TeamMemoryService  # type: ignore[import-untyped]
+            from arcteam.memory.config import TeamMemoryConfig
+            from arcteam.memory.service import TeamMemoryService
 
             # Resolve team root to absolute path before passing to TeamMemoryConfig.
             # Relative paths (e.g. "../shared") resolve against workspace parent

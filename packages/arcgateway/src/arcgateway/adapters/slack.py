@@ -80,16 +80,12 @@ def split_message(text: str, max_length: int = _MAX_MESSAGE_LENGTH) -> list[str]
 class _DedupStore:
     """SQLite-backed event deduplication with 24h TTL sweep.
 
-    Async API (for event-loop callers):
-        await store.record_or_skip(platform, event_id)
-        await store.sweep_expired()
-
-    Sync API (for tests):
-        store._sync_record_or_skip(platform, event_id)
-        store._sync_sweep_expired()
+    Sync API (synchronous SQLite calls):
+        store.record_or_skip(platform, event_id)
+        store.sweep_expired()
     """
 
-    def __init__(self, db_path: "Path | None" = None) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         connect_str = str(db_path) if db_path is not None else ":memory:"
         self._conn = sqlite3.connect(connect_str, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -130,13 +126,24 @@ class _DedupStore:
         self._conn.commit()
         return cur.rowcount
 
-    async def record_or_skip(self, platform: str, event_id: str) -> bool:
-        """Async wrapper: offloads _sync_record_or_skip to thread pool."""
-        return await asyncio.to_thread(self._sync_record_or_skip, platform, event_id)
+    def record_or_skip(self, platform: str, event_id: str) -> bool:
+        """Check and record an event for deduplication.
 
-    async def sweep_expired(self) -> int:
-        """Async wrapper: offloads _sync_sweep_expired to thread pool."""
-        return await asyncio.to_thread(self._sync_sweep_expired)
+        Returns False on first sight (not a duplicate). Returns True if this
+        platform+event_id combination was already seen (duplicate → skip it).
+
+        Synchronous because SQLite operations are CPU-bound and short. Callers
+        in async contexts may use ``asyncio.to_thread(store.record_or_skip, ...)``
+        if they need to avoid blocking the event loop.
+        """
+        return self._sync_record_or_skip(platform, event_id)
+
+    def sweep_expired(self) -> int:
+        """Remove expired dedup entries and return count of rows deleted.
+
+        Synchronous wrapper around the SQLite sweep operation.
+        """
+        return self._sync_sweep_expired()
 
     def close(self) -> None:
         self._conn.close()
@@ -164,8 +171,8 @@ class SlackAdapter:
         bot_token: str,
         app_token: str,
         allowed_user_ids: list[str],
-        on_message: "Callable[[InboundEvent], Awaitable[None]]",
-        dedup_db_path: "Path | None" = None,
+        on_message: Callable[[InboundEvent], Awaitable[None]],
+        dedup_db_path: Path | None = None,
     ) -> None:
         if not bot_token.startswith("xoxb-"):
             msg = (
@@ -191,7 +198,7 @@ class SlackAdapter:
         self._on_message = on_message
 
         self._dedup = _DedupStore(db_path=dedup_db_path)
-        self._dedup_sweep_task: "asyncio.Task[None] | None" = None
+        self._dedup_sweep_task: asyncio.Task[None] | None = None
 
         self._app: Any = None
         self._handler: Any = None
@@ -213,15 +220,15 @@ class SlackAdapter:
         self._app = AsyncApp(token=self._bot_token)
 
         @self._app.event("message")  # type: ignore[untyped-decorator]
-        async def _handle_message(event: "dict[str, Any]") -> None:
+        async def _handle_message(event: dict[str, Any]) -> None:
             await self._handle_inbound(event)
 
         @self._app.event("message_changed")  # type: ignore[untyped-decorator]
-        async def _handle_changed(event: "dict[str, Any]") -> None:
+        async def _handle_changed(event: dict[str, Any]) -> None:
             pass
 
         @self._app.event("message_deleted")  # type: ignore[untyped-decorator]
-        async def _handle_deleted(event: "dict[str, Any]") -> None:
+        async def _handle_deleted(event: dict[str, Any]) -> None:
             pass
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
@@ -264,7 +271,7 @@ class SlackAdapter:
         target: DeliveryTarget,
         message: str,
         *,
-        reply_to: "str | None" = None,
+        reply_to: str | None = None,
     ) -> None:
         if self._app is None:
             msg = "SlackAdapter.send() called before connect()"
@@ -277,7 +284,7 @@ class SlackAdapter:
                 text=chunk,
             )
 
-    async def send_with_id(self, target: DeliveryTarget, message: str) -> "str | None":
+    async def send_with_id(self, target: DeliveryTarget, message: str) -> str | None:
         if self._app is None:
             msg = "SlackAdapter.send_with_id() called before connect()"
             raise RuntimeError(msg)
@@ -290,7 +297,7 @@ class SlackAdapter:
             text=text,
         )
 
-        ts: "str | None" = None
+        ts: str | None = None
         if response and isinstance(response, dict):
             ts = response.get("ts")
         elif response is not None and hasattr(response, "get"):
@@ -336,7 +343,7 @@ class SlackAdapter:
             target.chat_id,
         )
 
-    async def _handle_inbound(self, event: "dict[str, Any]") -> None:
+    async def _handle_inbound(self, event: dict[str, Any]) -> None:
         """Route an inbound Slack message event."""
         if event.get("bot_id"):
             return
@@ -350,7 +357,7 @@ class SlackAdapter:
 
         event_id = event.get("client_msg_id") or event.get("event_id") or ""
         if event_id:
-            is_replay = await self._dedup.record_or_skip("slack", event_id)
+            is_replay = self._dedup.record_or_skip("slack", event_id)
             if is_replay:
                 _logger.debug(
                     "SlackAdapter: dropping replay event_id=%r user=%r",
@@ -361,6 +368,14 @@ class SlackAdapter:
                     "gateway.message.deduped platform=slack event_id=%r user=%r",
                     event_id,
                     user_id,
+                )
+                # Canonical arctrust.audit emit for replay deduplication.
+                from arcgateway.audit import emit_event as _arc_emit
+                _arc_emit(
+                    action="gateway.message.deduped",
+                    target=f"slack:{channel}",
+                    outcome="deny",
+                    extra={"platform": "slack", "event_id": event_id},
                 )
                 return
 
@@ -398,7 +413,7 @@ class SlackAdapter:
         while True:
             await asyncio.sleep(_DEDUP_SWEEP_INTERVAL_SECONDS)
             try:
-                deleted = await self._dedup.sweep_expired()
+                deleted = self._dedup.sweep_expired()
                 if deleted:
                     _logger.debug("SlackAdapter: dedup sweep removed %d expired rows", deleted)
             except Exception:

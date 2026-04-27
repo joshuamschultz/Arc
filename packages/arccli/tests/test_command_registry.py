@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # CommandDef shape tests
 # ---------------------------------------------------------------------------
@@ -43,8 +42,9 @@ class TestCommandDef:
         assert cmd.handler is None
 
     def test_commanddef_is_frozen(self) -> None:
-        from arccli.commands.registry import CommandDef
         from dataclasses import FrozenInstanceError
+
+        from arccli.commands.registry import CommandDef
 
         cmd = CommandDef(name="x", description="x", category="Info")
         with pytest.raises(FrozenInstanceError):

@@ -201,6 +201,18 @@ class SubprocessExecutor:
             event.agent_did,
             self._resource_limits.model_dump(),
         )
+        # Canonical arctrust.audit emit — executor choice is a security decision.
+        from arcgateway.audit import emit_event as _arc_emit
+        _arc_emit(
+            action="gateway.session.executor_choice",
+            target=event.session_key,
+            outcome="allow",
+            extra={
+                "executor_type": "SubprocessExecutor",
+                "agent_did": event.agent_did,
+                "resource_limits": self._resource_limits.model_dump(),
+            },
+        )
         return self._stream(event)
 
     async def _stream(self, event: InboundEvent) -> AsyncIterator[Delta]:
@@ -238,12 +250,12 @@ class SubprocessExecutor:
         )
 
         event_line = event.model_dump_json() + "\n"
-        assert proc.stdin is not None  # noqa: S101 — stdin=PIPE guarantees this
+        assert proc.stdin is not None  # noqa: S101 — asyncio.create_subprocess_exec with PIPE guarantees stdin
         proc.stdin.write(event_line.encode("utf-8"))
         await proc.stdin.drain()
         proc.stdin.close()
 
-        assert proc.stdout is not None  # noqa: S101 — stdout=PIPE guarantees this
+        assert proc.stdout is not None  # noqa: S101 — asyncio.create_subprocess_exec with PIPE guarantees stdout
         async for delta in self._read_deltas(proc.stdout, event.session_key, proc.pid):
             yield delta
 

@@ -86,7 +86,7 @@ _PID_FILE_NAME = "gateway.pid"
 _PAIRING_CLEANUP_INTERVAL = 600
 
 
-class GatewayAlreadyRunning(RuntimeError):  # noqa: N818
+class GatewayAlreadyRunning(RuntimeError):  # noqa: N818 — name predates ruff enforcement
     """Raised when a live gateway process is already using the runtime_dir.
 
     Attributes:
@@ -219,6 +219,15 @@ class GatewayRunner:
         from arcgateway.config import GatewayConfig  # noqa: F401 (type-only use above)
 
         tier = config.gateway.tier
+        # Executor selection is a STRINGENCY KNOB, not a pillar bypass.
+        # The four pillars (ID, sign, authorize, audit) apply at all tiers.
+        # Federal tier adds OS-level process isolation (SubprocessExecutor) for
+        # CMMC/FedRAMP compliance: each agent session runs in its own subprocess
+        # with its own DID, connection pool, and resource limits, preventing
+        # cross-session data leakage (ASI05 — no shared address space).
+        # Personal/enterprise use in-process AsyncioExecutor because the
+        # compliance posture does not require OS-level isolation; they still
+        # enforce all four pillars through the same policy stack.
         if tier == "federal":
             import sys
             executor: Executor = SubprocessExecutor(
@@ -281,6 +290,14 @@ class GatewayRunner:
             len(self._adapters),
         )
 
+        from arcgateway.audit import emit_event as _arc_emit
+        _arc_emit(
+            action="gateway.runner.start",
+            target="gateway",
+            outcome="allow",
+            extra={"adapter_count": len(self._adapters)},
+        )
+
         self._install_signal_handlers()
 
         try:
@@ -320,6 +337,12 @@ class GatewayRunner:
             await self._shutdown_adapters()
             self._remove_pid_file()
             self._write_clean_shutdown_marker()
+            from arcgateway.audit import emit_event as _arc_emit
+            _arc_emit(
+                action="gateway.runner.stop",
+                target="gateway",
+                outcome="allow",
+            )
 
     async def _run_pairing_cleanup(self) -> None:
         """Periodically invoke pairing_store.cleanup_expired() every 600 seconds.

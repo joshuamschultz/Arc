@@ -152,6 +152,48 @@ class TestProactiveMetricsSink:
         assert counters[key] == 2
 
 
+class TestMetricRegistryEdgeCases:
+    def test_histogram_stats_empty_returns_zeroes(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        stats = registry.histogram_stats("nonexistent_metric")
+        assert stats == {"count": 0, "sum": 0.0, "p50": 0.0, "p95": 0.0, "p99": 0.0}
+
+    def test_increment_without_labels_uses_empty_key(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.increment("arc_heartbeat_ticks_total")
+        counters = registry.counters()
+        assert counters[("arc_heartbeat_ticks_total", ())] == 1
+
+    def test_increment_value_parameter(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.increment("arc_heartbeat_ticks_total", value=5.0)
+        counters = registry.counters()
+        assert counters[("arc_heartbeat_ticks_total", ())] == 5.0
+
+    def test_observe_without_labels(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.observe("arc_tool_dispatch_parallelism", 3.0)
+        stats = registry.histogram_stats("arc_tool_dispatch_parallelism")
+        assert stats["count"] == 1
+        assert stats["sum"] == 3.0
+
+    def test_set_gauge_without_labels(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.set_gauge("arc_schedule_circuit_breaker_state", value=0)
+        gauges = registry.gauges()
+        assert gauges[("arc_schedule_circuit_breaker_state", ())] == 0
+
+
 class TestPrometheusExposition:
     """Prometheus text format — enough for a /metrics endpoint scrape."""
 
@@ -176,3 +218,90 @@ class TestPrometheusExposition:
         text = registry.render_prometheus()
         assert "# TYPE arc_policy_decisions_total counter" in text
         assert "# HELP arc_policy_decisions_total" in text
+
+    def test_exposition_contains_gauges(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.set_gauge(
+            "arc_schedule_circuit_breaker_state",
+            value=1,
+            labels={"schedule_id": "s1", "state": "OPEN"},
+        )
+        text = registry.render_prometheus()
+        assert "arc_schedule_circuit_breaker_state" in text
+        assert "# TYPE arc_schedule_circuit_breaker_state gauge" in text
+        assert 'schedule_id="s1"' in text
+
+    def test_exposition_contains_histograms(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.observe(
+            "arc_policy_evaluation_duration_us",
+            100.0,
+            labels={"layer": "global"},
+        )
+        text = registry.render_prometheus()
+        assert "arc_policy_evaluation_duration_us_count" in text
+        assert "arc_policy_evaluation_duration_us_sum" in text
+        assert "# TYPE arc_policy_evaluation_duration_us histogram" in text
+
+    def test_exposition_unknown_metric_uses_fallback_help(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.increment("arc_custom_unknown_metric")
+        text = registry.render_prometheus()
+        # Fallback help text: "{name} metric."
+        assert "# HELP arc_custom_unknown_metric arc_custom_unknown_metric metric." in text
+
+    def test_exposition_type_header_emitted_once_per_metric(self) -> None:
+        from arcagent.core.metrics import MetricRegistry
+
+        registry = MetricRegistry()
+        registry.increment(
+            "arc_policy_decisions_total", labels={"layer": "l1", "outcome": "allow"}
+        )
+        registry.increment(
+            "arc_policy_decisions_total", labels={"layer": "l2", "outcome": "deny"}
+        )
+        text = registry.render_prometheus()
+        # TYPE line must appear exactly once
+        assert text.count("# TYPE arc_policy_decisions_total counter") == 1
+
+
+class TestSinkIgnoresUnrelatedEvents:
+    def test_policy_sink_ignores_non_policy_events(self) -> None:
+        from arcagent.core.metrics import MetricRegistry, policy_audit_to_metrics
+
+        registry = MetricRegistry()
+        sink = policy_audit_to_metrics(registry)
+        # Emit an event that's NOT "policy.evaluate"
+        sink("tool.executed", {"layer": "global", "decision": "allow"})
+        # Nothing should be incremented
+        assert registry.counters() == {}
+
+    def test_policy_sink_no_duration_skips_histogram(self) -> None:
+        from arcagent.core.metrics import MetricRegistry, policy_audit_to_metrics
+
+        registry = MetricRegistry()
+        sink = policy_audit_to_metrics(registry)
+        # Valid policy event but no evaluation_time_us
+        sink("policy.evaluate", {"layer": "global", "decision": "allow"})
+        # Counter incremented, but no histogram observation
+        counters = registry.counters()
+        assert counters[("arc_policy_decisions_total", (("layer", "global"), ("outcome", "allow")))] == 1
+        stats = registry.histogram_stats(
+            "arc_policy_evaluation_duration_us", labels={"layer": "global"}
+        )
+        assert stats["count"] == 0
+
+    def test_proactive_sink_ignores_unknown_events(self) -> None:
+        from arcagent.core.metrics import MetricRegistry, proactive_audit_to_metrics
+
+        registry = MetricRegistry()
+        sink = proactive_audit_to_metrics(registry)
+        sink("some_other_event", {"schedule_id": "heartbeat"})
+        assert registry.counters() == {}
+        assert registry.gauges() == {}

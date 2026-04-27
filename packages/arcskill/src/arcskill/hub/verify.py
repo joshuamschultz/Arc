@@ -21,10 +21,29 @@ Sigstore Python API usage (v3+)
   (used for SLSA in-toto attestations) and returns ``(payload_type, payload)``.
 - ``Identity(identity=..., issuer=...)`` -- policy that checks the Fulcio
   certificate's Subject Alternative Name (SAN) and OIDC issuer.
-- ``UnsafeNoOp()`` -- policy that skips SAN/issuer checks.  Used when no
-  ``signer_identity`` is configured (non-federal sources).  Federal installs
-  MUST provide ``signer_identity`` + ``signer_issuer``.
+- ``UnsafeNoOp()`` -- NEVER used.  See _AuditedAnyIssuerPolicy below.
 - ``Bundle.from_json(raw)`` -- deserialises a Sigstore bundle JSON file.
+
+Identity policy tiers
+----------------------
+Tier controls *which* issuers are trusted, not *whether* to verify.
+
+- Federal: ``Identity`` with both ``signer_identity`` and ``signer_issuer``
+  required in source config.
+- Enterprise/personal with configured identity: ``Identity`` with the
+  configured values.
+- Enterprise/personal without configured identity: ``_AuditedAnyIssuerPolicy``
+  — Fulcio cert chain and Rekor inclusion proof are still fully verified; only
+  the SAN/issuer check is relaxed.  An audit WARNING is emitted so the operator
+  can track unconfigured sources.  UnsafeNoOp is NEVER used.
+
+SLSA predicate validation
+--------------------------
+``_assert_slsa_predicate_type`` runs at ALL tiers.  At non-federal tiers an
+unknown/foreign payload_type emits a WARNING rather than raising, because
+non-federal signers may use custom attestation types.  However, payloads that
+*claim* the in-toto content type but contain invalid JSON are rejected at all
+tiers — a well-formed claim must have a well-formed payload.
 
 Bundle sidecar convention
 --------------------------
@@ -57,12 +76,15 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
 from arcskill.hub.config import HubConfig, SkillSource
 from arcskill.hub.errors import CRLUnreachable, SignatureInvalid, SigstoreUnavailable
+
+if TYPE_CHECKING:
+    from arctrust import AuditSink
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +136,44 @@ class VerifyResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# _AuditedAnyIssuerPolicy — permissive identity policy with audit trail
+# ---------------------------------------------------------------------------
+
+
+class _AuditedAnyIssuerPolicy:
+    """Sigstore verification policy that accepts any valid certificate chain.
+
+    This is the policy used when a source has no ``signer_identity``
+    configured at non-federal tiers.  It satisfies the sigstore
+    ``VerificationPolicy`` protocol (duck-typed: has a ``verify`` method)
+    while ensuring Rekor inclusion proof and Fulcio cert chain validation
+    still execute — only the SAN/issuer identity check is skipped.
+
+    UnsafeNoOp is NEVER used in Arc.  The distinction matters: UnsafeNoOp
+    skips all cert-chain checks; this class only skips the *identity pin*
+    check while the verifier itself still enforces chain validity and Rekor.
+
+    An audit WARNING is emitted on every call so operators can identify
+    sources running without identity pinning.
+    """
+
+    def __init__(self, source_name: str) -> None:
+        self._source_name = source_name
+
+    def verify(self, cert: Any) -> None:
+        """Accept any valid Fulcio certificate.
+
+        Called by the sigstore Verifier after cert chain + Rekor proof pass.
+        We accept the cert but log so operators see the unpinned call.
+        """
+        logger.warning(
+            "AUDIT: Identity unpinned for source=%r — certificate accepted "
+            "without SAN/issuer check.  Configure signer_identity to pin.",
+            self._source_name,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -123,6 +183,8 @@ def verify_bundle(
     source: SkillSource,
     config: HubConfig,
     content_hash: str,
+    *,
+    audit_sink: AuditSink | None = None,
 ) -> VerifyResult:
     """Verify the Sigstore bundle at *bundle_path*.
 
@@ -137,6 +199,9 @@ def verify_bundle(
         Hub configuration for tier and policy settings.
     content_hash:
         Pre-computed SHA-256 of the bundle (from fetch stage).
+    audit_sink:
+        Optional arctrust AuditSink for emitting structured audit events.
+        When None, audit events are dropped.
 
     Returns
     -------
@@ -152,19 +217,88 @@ def verify_bundle(
     CRLUnreachable
         If CRL is unreachable and ``fail_closed_if_unreachable=True``.
     """
-    result = _run_sigstore(bundle_path, source, config, content_hash)
+    try:
+        result = _run_sigstore(bundle_path, source, config, content_hash)
+    except SignatureInvalid:
+        _emit_audit(
+            audit_sink=audit_sink,
+            action="skill.signature.verify",
+            target=bundle_path.name,
+            outcome="deny",
+            tier=config.tier.level,
+            source_name=source.name,
+        )
+        raise
+    except Exception:
+        _emit_audit(
+            audit_sink=audit_sink,
+            action="skill.signature.verify",
+            target=bundle_path.name,
+            outcome="error",
+            tier=config.tier.level,
+            source_name=source.name,
+        )
+        raise
 
     # Enforce SLSA level requirement BEFORE CRL check so failures are
     # deterministic regardless of CRL availability.
     required_level = config.policy.require_slsa_level
     if not result.skipped and result.slsa_level < required_level:
+        _emit_audit(
+            audit_sink=audit_sink,
+            action="skill.slsa.check",
+            target=bundle_path.name,
+            outcome="deny",
+            tier=config.tier.level,
+            source_name=source.name,
+        )
         raise SignatureInvalid(
             f"SLSA level {result.slsa_level} is below required level "
             f"{required_level} (tier={config.tier.level!r})"
         )
 
+    _emit_audit(
+        audit_sink=audit_sink,
+        action="skill.signature.verify",
+        target=bundle_path.name,
+        outcome="allow",
+        tier=config.tier.level,
+        source_name=source.name,
+    )
     result = _check_crl(result, config)
     return result
+
+
+def _emit_audit(
+    *,
+    audit_sink: AuditSink | None,
+    action: str,
+    target: str,
+    outcome: str,
+    tier: str,
+    source_name: str,
+) -> None:
+    """Emit a structured audit event if a sink is provided.
+
+    Swallows all errors — auditing must never interrupt the calling path.
+    """
+    if audit_sink is None:
+        return
+    try:
+        from arctrust import AuditEvent, emit
+
+        emit(
+            AuditEvent(
+                actor_did=f"arcskill.hub.verify:{source_name}",
+                action=action,
+                target=target,
+                outcome=outcome,
+                tier=tier,
+            ),
+            audit_sink,
+        )
+    except Exception:
+        logger.warning("Failed to emit audit event for %s %s", action, target)
 
 
 # ---------------------------------------------------------------------------
@@ -269,10 +403,7 @@ def _sigstore_verify(
     from sigstore.errors import VerificationError
     from sigstore.models import Bundle
     from sigstore.verify import Verifier
-    from sigstore.verify.policy import (
-        Identity,
-        UnsafeNoOp,
-    )
+    from sigstore.verify.policy import Identity
 
     # -- Step 1: locate sidecar -----------------------------------------------
     bundle_file = _locate_bundle_sidecar(bundle_path)
@@ -313,19 +444,24 @@ def _sigstore_verify(
 
     if source.signer_identity:
         # Build OIDC identity policy: checks Fulcio cert SAN + issuer.
-        policy: Identity | UnsafeNoOp = Identity(
+        policy: Any = Identity(
             identity=source.signer_identity,
             issuer=source.signer_issuer if source.signer_issuer else None,
         )
     else:
-        # Non-federal, unconfigured source: skip identity check but still
-        # verify Rekor inclusion proof and cert chain.
+        # Non-federal unconfigured source: Rekor inclusion proof and Fulcio
+        # cert chain are still fully verified.  Only the SAN/issuer check is
+        # relaxed via _AuditedAnyIssuerPolicy, which logs an audit WARNING so
+        # operators know this source is running without identity pinning.
+        #
+        # UnsafeNoOp is NEVER used — it would skip the cert chain check.
         logger.warning(
-            "No signer_identity configured for source=%r; "
-            "using UnsafeNoOp policy (Rekor + cert chain still verified).",
+            "AUDIT WARNING: No signer_identity configured for source=%r; "
+            "Rekor + Fulcio cert chain verified but OIDC identity unpinned. "
+            "Configure signer_identity to pin the expected signer.",
             source.name,
         )
-        policy = UnsafeNoOp()
+        policy = _AuditedAnyIssuerPolicy(source_name=source.name)
 
     # -- Step 4: run Sigstore verifier ----------------------------------------
     try:
@@ -405,35 +541,71 @@ def _assert_slsa_predicate_type(
     payload_bytes: bytes,
     config: HubConfig,
 ) -> None:
-    """Validate DSSE payload type and SLSA predicate for federal compliance.
+    """Validate DSSE payload type and SLSA predicate at ALL tiers.
 
-    At federal tier:
-    - ``payload_type`` MUST equal ``https://slsa.dev/provenance/v1``
-    - ``predicate.predicateType`` MUST equal ``https://slsa.dev/provenance/v1``
+    Tier controls *stringency*, not *whether* to validate:
+
+    - Federal tier: both ``payload_type`` and ``predicateType`` MUST be
+      valid SLSA values; any deviation raises SignatureInvalid.
+
+    - Non-federal tier: payloads claiming the in-toto content type
+      (``application/vnd.in-toto+json``) must contain valid JSON; a
+      malformed JSON payload raises SignatureInvalid regardless of tier
+      because a well-formed claim must have a well-formed payload.
+      An unrecognised/foreign payload_type is warned and accepted.
+
+    The previous early-return at non-federal (``if not config.is_federal:
+    return``) has been removed — it was a tier-bypass that allowed
+    tampered DSSE payloads to pass without validation.
 
     Raises
     ------
     SignatureInvalid
-        If the attestation type does not meet tier requirements.
+        Federal: payload type not SLSA, predicateType not SLSA, or invalid JSON.
+        All tiers: payload_type is in-toto but payload_bytes is not valid JSON.
     """
-    if not config.is_federal:
-        return  # Non-federal: accept any predicate type.
+    _is_intoto = payload_type in (
+        "application/vnd.in-toto+json",
+        SLSA_PREDICATE_TYPE,
+    )
 
-    if payload_type != "application/vnd.in-toto+json":
-        # Accept both the standard and direct SLSA envelope types.
-        if payload_type != SLSA_PREDICATE_TYPE:
+    if config.is_federal:
+        if not _is_intoto:
             raise SignatureInvalid(
                 f"Federal tier requires SLSA in-toto attestation; "
                 f"got payload_type={payload_type!r}"
             )
+    else:
+        # Non-federal: warn on unrecognised types but don't reject them.
+        # Custom signers may use non-SLSA attestation formats.
+        if not _is_intoto:
+            logger.warning(
+                "AUDIT WARNING: Unrecognised DSSE payload_type=%r for non-federal "
+                "tier — accepted but not validated.  "
+                "Configure a signer_identity to enforce payload type.",
+                payload_type,
+            )
+            return
 
+    # Reached here when payload_type is in-toto (all tiers) or federal-only path.
+    # Parse the JSON payload — malformed payload is rejected at all tiers.
     try:
         attestation: dict[str, Any] = json.loads(payload_bytes)
         predicate_type: str = attestation.get("predicateType", "")
-        if not predicate_type.startswith("https://slsa.dev/provenance/"):
+        if config.is_federal and not predicate_type.startswith(
+            "https://slsa.dev/provenance/"
+        ):
             raise SignatureInvalid(
                 f"Federal tier requires predicateType starting with "
                 f"'https://slsa.dev/provenance/'; got {predicate_type!r}"
+            )
+        if not config.is_federal and predicate_type and not predicate_type.startswith(
+            "https://slsa.dev/provenance/"
+        ):
+            logger.warning(
+                "AUDIT: non-SLSA predicateType=%r in in-toto payload "
+                "for non-federal tier — accepted with warning.",
+                predicate_type,
             )
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise SignatureInvalid(

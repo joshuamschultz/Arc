@@ -133,7 +133,7 @@ async def evaluate_heartbeat(
     content = str(getattr(response, "content", "") or "").strip()
     # Normalize — accept uppercase / title / with trailing chars.
     token = content.split()[0].upper() if content else "IDLE"
-    return token == "NOT_IDLE"
+    return token == "NOT_IDLE"  # noqa: S105 — NOT_IDLE is a sentinel string, not a credential
 
 
 class ProactiveEngine:

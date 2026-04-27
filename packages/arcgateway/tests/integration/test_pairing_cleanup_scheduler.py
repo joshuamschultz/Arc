@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from arcgateway.runner import GatewayRunner, _PAIRING_CLEANUP_INTERVAL
+from arcgateway.runner import _PAIRING_CLEANUP_INTERVAL, GatewayRunner
 
 
 class TestPairingCleanupScheduler:

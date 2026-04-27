@@ -117,7 +117,8 @@ class IdentityGraph:
         try:
             self._conn.close()
         except Exception:
-            pass
+            # Best-effort close on shutdown — connection may already be gone
+            _logger.debug("Error closing identity_graph connection", exc_info=True)
 
     def resolve_user_identity(self, platform: str, platform_user_id: str) -> str:
         """Resolve (platform, platform_user_id) to a stable user_did.

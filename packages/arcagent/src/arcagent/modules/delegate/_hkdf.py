@@ -1,16 +1,16 @@
 """HKDF child DID derivation helper for the delegate module.
 
-Thin wrapper around arcrun.builtins.spawn.derive_child_identity so arcagent
-does not need to reimplement HKDF logic. This module is the ONLY place in
-arcagent that touches the derivation — arcagent.core.identity is NOT modified
-(constraint from SPEC-018 implementation brief).
+Thin wrapper around arctrust.derive_child_identity so arcagent does not need
+to reimplement HKDF logic. This module is the ONLY place in arcagent that
+touches the derivation — arcagent.core.identity is NOT modified (constraint
+from SPEC-018 implementation brief).
 
 Security: parent_sk_bytes must never be logged or returned to LLM output (LLM02).
 """
 
 from __future__ import annotations
 
-from arcrun.builtins.spawn import ChildIdentity, derive_child_identity
+from arctrust import ChildIdentity, derive_child_identity
 
 
 def derive_delegate_child_identity(

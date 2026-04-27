@@ -132,7 +132,12 @@ class TestExtractedContentPiiRedaction:
         assert "See our FAQ" in result.content
 
     async def test_ssn_in_content_redacted(self) -> None:
-        module = WebModule(config={"tier": "enterprise", "pii_redaction_enabled": True})
+        # Enterprise with explicit allowlist (deny-by-default requires explicit allow)
+        module = WebModule(config={
+            "tier": "enterprise",
+            "pii_redaction_enabled": True,
+            "url_allowlist": ["https://records.example.com/*"],
+        })
         raw_content = "Record found: SSN 987-65-4321 belongs to subject."
         mock_extract = AsyncMock()
         mock_extract.extract = AsyncMock(

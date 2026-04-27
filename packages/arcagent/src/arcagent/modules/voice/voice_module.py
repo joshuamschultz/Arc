@@ -81,6 +81,9 @@ class VoiceModule:
         self._stt: STTProvider | None = None
         self._tts: TTSProvider | None = None
 
+        # Emit provider selection audit at every tier (privacy/security event)
+        self._emit_provider_selected_audit()
+
         _logger.info(
             "voice: module initialised tier=%s stt=%s tts=%s air_gap=%s redact_pii=%s",
             self._config.tier,
@@ -342,6 +345,51 @@ class VoiceModule:
 
         from arcagent.modules.voice.errors import UnsupportedProvider
         raise UnsupportedProvider(name)
+
+    # ------------------------------------------------------------------
+    # Internal: audit emission
+    # ------------------------------------------------------------------
+
+    def _emit_provider_selected_audit(self) -> None:
+        """Emit voice.provider_selected audit event at every tier.
+
+        Cloud provider at non-federal tier emits an additional warning.
+        This is a privacy/security event — the choice of voice provider
+        determines whether audio data leaves the local environment.
+        """
+        if self._telemetry is None:
+            return
+
+        stt = self._config.stt_provider.lower()
+        tts = self._config.tts_provider.lower()
+        tier = self._config.tier
+
+        self._telemetry.audit_event(
+            "voice.provider_selected",
+            {
+                "tier": tier,
+                "stt_provider": stt,
+                "tts_provider": tts,
+                "air_gap": self._config.effective_air_gap,
+            },
+        )
+
+        # At non-federal tiers, warn when cloud providers are selected so
+        # operators can review whether audio data egress is intentional.
+        if tier != "federal":
+            if is_cloud_stt(stt) or is_cloud_tts(tts):
+                self._telemetry.audit_event(
+                    "voice.cloud_provider_warning",
+                    {
+                        "tier": tier,
+                        "stt_provider": stt,
+                        "tts_provider": tts,
+                        "warning": (
+                            "Cloud voice provider selected — audio data may leave "
+                            "the local environment. Review for privacy compliance."
+                        ),
+                    },
+                )
 
     # ------------------------------------------------------------------
     # Internal: tier enforcement

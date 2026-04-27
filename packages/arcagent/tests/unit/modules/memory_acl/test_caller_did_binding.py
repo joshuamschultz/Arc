@@ -7,10 +7,7 @@ Covers test contract items:
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from arcagent.core.tool_registry import (
     _IDENTITY_ARG_NAMES,
@@ -18,6 +15,25 @@ from arcagent.core.tool_registry import (
     _bind_caller_did,
     _is_memory_tool,
 )
+
+# ---------------------------------------------------------------------------
+# Constants — verify the exported API surface
+# ---------------------------------------------------------------------------
+
+
+class TestConstants:
+    def test_identity_arg_names_contains_expected_fields(self) -> None:
+        # These are the field names the transport layer strips from memory calls.
+        # If someone removes a field the security contract breaks — catch it here.
+        assert "caller_did" in _IDENTITY_ARG_NAMES
+        assert "user_did" in _IDENTITY_ARG_NAMES
+        assert "owner_did" in _IDENTITY_ARG_NAMES
+
+    def test_memory_tool_prefixes_covers_memory_and_session(self) -> None:
+        # Prefixes must include at minimum memory, session, user_profile.
+        assert any(p.startswith("memory") for p in _MEMORY_TOOL_PREFIXES)
+        assert any(p.startswith("session") for p in _MEMORY_TOOL_PREFIXES)
+        assert any(p.startswith("user_profile") for p in _MEMORY_TOOL_PREFIXES)
 
 
 # ---------------------------------------------------------------------------

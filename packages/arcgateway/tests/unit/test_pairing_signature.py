@@ -1,19 +1,20 @@
-"""Unit tests for PairingSignatureVerifier — Ed25519 signature policy."""
+"""Unit tests for PairingSignatureVerifier — Ed25519 signature policy.
+
+Policy (four-pillar mandate): signature required at all tiers.
+Tier sets trust-anchor stringency, not whether to check.
+"""
 
 from __future__ import annotations
 
 import sqlite3
-import tempfile
 import time
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 from arcgateway.pairing import (
-    PairingSignatureInvalid,
-    _SCHEMA_SQL,
     _ADD_SIGNED_BY_DID_COLUMN,
+    _SCHEMA_SQL,
+    PairingSignatureInvalid,
 )
 from arcgateway.pairing_signature import PairingSignatureVerifier
 
@@ -58,87 +59,93 @@ def _noop_audit(event: str, details: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Personal tier — no-op
+# Personal tier — signature required (self-signed key accepted as trust anchor)
 # ---------------------------------------------------------------------------
 
 
 class TestPersonalTier:
-    def test_personal_tier_ignores_missing_signature(self) -> None:
+    def test_personal_tier_missing_signature_raises(self) -> None:
+        """Personal tier + missing signature → PairingSignatureInvalid (pillar: all tiers)."""
         verifier = PairingSignatureVerifier(tier="personal")
         conn = _make_db()
         row = _make_row(conn)
-        # Should not raise regardless of signature
-        verifier.enforce_policy(
-            conn=conn,
-            row=row,
-            code="TESTCODE",
-            approver_did="did:arc:operator:alice",
-            signature=None,
-            now=time.time(),
-            record_failure_fn=_noop_failure,
-            audit_fn=_noop_audit,
-        )
+        with pytest.raises(PairingSignatureInvalid):
+            verifier.enforce_policy(
+                conn=conn,
+                row=row,
+                code="TESTCODE",
+                approver_did="did:arc:operator:alice",
+                signature=None,
+                now=time.time(),
+                record_failure_fn=_noop_failure,
+                audit_fn=_noop_audit,
+            )
 
-    def test_personal_tier_does_not_verify_present_signature(self) -> None:
-        """Personal tier is truly a no-op — even a garbage signature passes."""
+    def test_personal_tier_bad_signature_raises(self) -> None:
+        """Personal tier: present-but-invalid signature → PairingSignatureInvalid (fail-closed)."""
         verifier = PairingSignatureVerifier(tier="personal")
         conn = _make_db()
         row = _make_row(conn)
-        # No-op: personal tier must not attempt verification
-        verifier.enforce_policy(
-            conn=conn,
-            row=row,
-            code="TESTCODE",
-            approver_did="did:arc:operator:alice",
-            signature=b"garbage",
-            now=time.time(),
-            record_failure_fn=_noop_failure,
-            audit_fn=_noop_audit,
-        )
+        # b"garbage" will fail nacl verification → PairingSignatureInvalid
+        with pytest.raises(PairingSignatureInvalid):
+            verifier.enforce_policy(
+                conn=conn,
+                row=row,
+                code="TESTCODE",
+                approver_did="did:arc:operator:alice",
+                signature=b"garbage",
+                now=time.time(),
+                record_failure_fn=_noop_failure,
+                audit_fn=_noop_audit,
+            )
 
 
 # ---------------------------------------------------------------------------
-# Enterprise tier — missing sig warns, bad sig raises
+# Enterprise tier — signature required; all missing-sig cases raise
 # ---------------------------------------------------------------------------
 
 
 class TestEnterpriseTier:
-    def test_enterprise_missing_signature_emits_warn_audit(self) -> None:
+    def test_enterprise_missing_signature_raises(self) -> None:
+        """Enterprise tier: missing signature → PairingSignatureInvalid (pillar: all tiers)."""
+        verifier = PairingSignatureVerifier(tier="enterprise")
+        conn = _make_db()
+        row = _make_row(conn)
+
+        with pytest.raises(PairingSignatureInvalid):
+            verifier.enforce_policy(
+                conn=conn,
+                row=row,
+                code="TESTCODE",
+                approver_did="did:arc:operator:alice",
+                signature=None,
+                now=time.time(),
+                record_failure_fn=_noop_failure,
+                audit_fn=_noop_audit,
+            )
+
+    def test_enterprise_missing_signature_emits_audit_event(self) -> None:
+        """Enterprise tier: missing signature emits signature_invalid audit event."""
         verifier = PairingSignatureVerifier(tier="enterprise")
         conn = _make_db()
         row = _make_row(conn)
         audit_calls: list[str] = []
 
-        def capture_audit(event: str, details: dict) -> None:
+        def capture_audit(event: str, details: dict) -> None:  # type: ignore[type-arg]
             audit_calls.append(event)
 
-        verifier.enforce_policy(
-            conn=conn,
-            row=row,
-            code="TESTCODE",
-            approver_did="did:arc:operator:alice",
-            signature=None,
-            now=time.time(),
-            record_failure_fn=_noop_failure,
-            audit_fn=capture_audit,
-        )
-        assert "gateway.pairing.signature_missing" in audit_calls
-
-    def test_enterprise_missing_signature_does_not_raise(self) -> None:
-        verifier = PairingSignatureVerifier(tier="enterprise")
-        conn = _make_db()
-        row = _make_row(conn)
-        # Should not raise — enterprise tier only warns on missing sig
-        verifier.enforce_policy(
-            conn=conn,
-            row=row,
-            code="TESTCODE",
-            approver_did=None,
-            signature=None,
-            now=time.time(),
-            record_failure_fn=_noop_failure,
-            audit_fn=_noop_audit,
-        )
+        with pytest.raises(PairingSignatureInvalid):
+            verifier.enforce_policy(
+                conn=conn,
+                row=row,
+                code="TESTCODE",
+                approver_did=None,
+                signature=None,
+                now=time.time(),
+                record_failure_fn=_noop_failure,
+                audit_fn=capture_audit,
+            )
+        assert "gateway.pairing.signature_invalid" in audit_calls
 
 
 # ---------------------------------------------------------------------------

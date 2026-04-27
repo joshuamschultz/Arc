@@ -34,7 +34,6 @@ from arcgateway.executor import (
 )
 from arcgateway.runner import GatewayRunner
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -99,7 +98,7 @@ class TestTierExecutorSelection:
         """tier=federal → GatewayRunner uses SubprocessExecutor."""
         config = _federal_config(tmp_path)
         runner = GatewayRunner.from_config(config)
-        assert isinstance(runner._executor, SubprocessExecutor), (  # noqa: SLF001
+        assert isinstance(runner._executor, SubprocessExecutor), (
             f"Federal tier must use SubprocessExecutor; got {type(runner._executor).__name__}"
         )
 
@@ -107,7 +106,7 @@ class TestTierExecutorSelection:
         """tier=personal → GatewayRunner uses AsyncioExecutor."""
         config = _personal_config(tmp_path)
         runner = GatewayRunner.from_config(config)
-        assert isinstance(runner._executor, AsyncioExecutor), (  # noqa: SLF001
+        assert isinstance(runner._executor, AsyncioExecutor), (
             f"Personal tier must use AsyncioExecutor; got {type(runner._executor).__name__}"
         )
 
@@ -119,7 +118,7 @@ tier = "enterprise"
 runtime_dir = "{tmp_path / 'run'}"
 """)
         runner = GatewayRunner.from_config(config)
-        assert isinstance(runner._executor, AsyncioExecutor), (  # noqa: SLF001
+        assert isinstance(runner._executor, AsyncioExecutor), (
             f"Enterprise tier must use AsyncioExecutor; got {type(runner._executor).__name__}"
         )
 
@@ -127,7 +126,7 @@ runtime_dir = "{tmp_path / 'run'}"
         """GatewayRunner.from_config uses config.gateway.runtime_dir."""
         config = _personal_config(tmp_path)
         runner = GatewayRunner.from_config(config)
-        assert runner._runtime_dir == config.gateway.runtime_dir, (  # noqa: SLF001
+        assert runner._runtime_dir == config.gateway.runtime_dir, (
             "runtime_dir must come from config"
         )
 
@@ -183,7 +182,7 @@ class TestFederalTierSubprocessRoundTrip:
         """GatewayRunner.from_config federal tier uses SubprocessExecutor."""
         config = _federal_config(tmp_path)
         runner = GatewayRunner.from_config(config)
-        executor = runner._executor  # noqa: SLF001
+        executor = runner._executor
 
         assert isinstance(executor, SubprocessExecutor), (
             "Federal tier runner must use SubprocessExecutor"

@@ -123,6 +123,4 @@ def _discover_entry_points() -> list[Any]:
     Isolated as a function to allow test mocking.
     """
     eps = importlib.metadata.entry_points()
-    if hasattr(eps, "select"):
-        return list(eps.select(group="arcagent.extensions"))
-    return list(eps.get("arcagent.extensions", []))  # type: ignore[attr-defined]
+    return list(eps.select(group="arcagent.extensions"))

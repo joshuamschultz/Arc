@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from arcagent.core.identity import AgentIdentity
+from arctrust import AgentIdentity
 from arcagent.modules.memory_acl.capabilities import Capability, CapabilityStore
 from arcagent.modules.memory_acl.errors import CapabilityExpired, CapabilityInvalid
 

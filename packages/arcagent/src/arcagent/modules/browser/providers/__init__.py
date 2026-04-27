@@ -9,7 +9,7 @@ Both providers expose the same async interface:
     ``disconnect() -> None``
 
 Playwright is an optional dependency (``arcagent[browser]``). Importing
-this package when Playwright is not installed will raise ``BrowserNotAvailable``
+this package when Playwright is not installed will raise ``BrowserNotAvailableError``
 at runtime rather than at import time, so the module can still be loaded
 in environments where browser automation is not needed.
 """

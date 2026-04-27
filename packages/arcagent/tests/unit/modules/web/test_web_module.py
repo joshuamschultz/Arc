@@ -218,7 +218,8 @@ class TestWebSearch:
 
 class TestWebExtract:
     async def test_extract_allowed_url(self) -> None:
-        module = WebModule(config={"tier": "personal"})
+        # Personal tier with explicit allowlist — deny-by-default requires allowlist
+        module = WebModule(config={"tier": "personal", "url_allowlist": ["https://a.com"]})
         ts = time.time()
         result = ExtractResult(url="https://a.com", title="A", content="content", fetched_at=ts)
         mock_provider = AsyncMock()
@@ -275,7 +276,8 @@ class TestWebExtract:
         assert event_name == "web.url_denied"
 
     async def test_extract_emits_audit_event_on_success(self) -> None:
-        module = WebModule(config={"tier": "personal"})
+        # Personal tier requires explicit allowlist — deny-by-default
+        module = WebModule(config={"tier": "personal", "url_allowlist": ["https://ok.com"]})
         ts = time.time()
         result = ExtractResult(url="https://ok.com", title="OK", content="body", fetched_at=ts)
         mock_provider = AsyncMock()

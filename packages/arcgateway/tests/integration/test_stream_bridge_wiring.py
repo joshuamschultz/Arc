@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -18,7 +18,6 @@ from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import AsyncioExecutor, Delta, InboundEvent
 from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
-
 
 # ---------------------------------------------------------------------------
 # Helpers

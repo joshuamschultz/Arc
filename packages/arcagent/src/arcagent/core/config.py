@@ -4,7 +4,14 @@ Two-phase error handling:
 1. TOML syntax errors (with line/column from tomllib)
 2. Pydantic validation errors (with field paths)
 
-Environment variable overrides use ARCAGENT_ prefix with __ for nesting:
+Layered precedence (later wins):
+  1. User-wide defaults  (${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml)
+  2. Per-agent file      (the path argument — REQUIRED, supplies identity)
+  3. Env var overrides   (ARCAGENT_ prefix with __ for nesting)
+
+Dicts deep-merge across layers; lists and scalars are replaced. Missing
+user-wide file = no-op (current behavior preserved).
+
   ARCAGENT_LLM__MODEL=openai/gpt-4o overrides [llm] model
 """
 
@@ -195,6 +202,43 @@ class ExtensionConfig(BaseModel):
 
 
 
+class SpawnConfig(BaseModel):
+    """Spawn / orchestration configuration.
+
+    Controls whether the agent registers ``spawn_task`` as a tool the
+    LLM can call. Spawn is the LLM-driven decomposition mechanism —
+    the model decides at runtime to fan out into child agents.
+
+    Code-level fan-out (agent code calling ``arcrun.run`` multiple
+    times via ``asyncio.gather``) is always available regardless of
+    this setting; it does not require a tool.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Register spawn_task as an LLM-callable tool. When False, "
+            "the model cannot drive decomposition itself — the agent "
+            "must orchestrate fan-out in code."
+        ),
+    )
+    max_depth: int = Field(
+        default=3,
+        ge=0,
+        description="Maximum nesting depth for spawned children.",
+    )
+    max_concurrent: int = Field(
+        default=5,
+        ge=1,
+        description="Maximum concurrent child runs.",
+    )
+    timeout_seconds: int = Field(
+        default=300,
+        ge=1,
+        description="Wall-clock timeout per child run.",
+    )
+
+
 class SecurityConfig(BaseModel):
     """Security and tier configuration.
 
@@ -243,6 +287,7 @@ class ArcAgentConfig(BaseModel):
     session: SessionConfig = SessionConfig()
     extensions: ExtensionConfig = ExtensionConfig()
     security: SecurityConfig = SecurityConfig()
+    spawn: SpawnConfig = SpawnConfig()
 
 
 _ENV_PREFIX = "ARCAGENT_"
@@ -292,14 +337,43 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _user_config_path() -> Path:
+    """Return the user-wide override path: ${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml."""
+    base = os.environ.get("ARC_CONFIG_DIR")
+    root = Path(base).expanduser() if base else Path.home() / ".arc"
+    return root / "arcagent.toml"
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge override into base. Dicts merge; lists & scalars replace."""
+    result = dict(base)
+    for key, val in override.items():
+        if isinstance(val, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], val)
+        else:
+            result[key] = val
+    return result
+
+
+def _parse_toml(path: Path) -> dict[str, Any]:
+    """Parse a TOML file, raising a ConfigError with consistent details on syntax errors."""
+    raw_text = path.read_text(encoding="utf-8")
+    try:
+        return tomllib.loads(raw_text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(
+            code="CONFIG_SYNTAX",
+            message=f"TOML syntax error: {exc}",
+            details={"path": str(path), "error": str(exc)},
+        ) from exc
+
+
 def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
     """Load and validate ArcAgent configuration.
 
-    Two-phase error handling:
-    1. TOML parse (syntax errors with line/column)
-    2. Pydantic validation (semantic errors with field paths)
-
-    Environment variables override TOML values (ARCAGENT_ prefix).
+    Layered: ${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml is the user-wide base
+    (when present); ``path`` is the per-agent file and supplies identity.
+    Env vars (ARCAGENT_ prefix) override both.
     """
     if not path.exists():
         raise ConfigError(
@@ -308,22 +382,16 @@ def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
             details={"path": str(path)},
         )
 
-    raw_text = path.read_text(encoding="utf-8")
+    raw_data: dict[str, Any] = {}
 
-    # Phase 1: TOML syntax
-    try:
-        raw_data = tomllib.loads(raw_text)
-    except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(
-            code="CONFIG_SYNTAX",
-            message=f"TOML syntax error: {exc}",
-            details={"path": str(path), "error": str(exc)},
-        ) from exc
+    user_path = _user_config_path()
+    if user_path.exists():
+        raw_data = _parse_toml(user_path)
 
-    # Apply env var overrides (higher priority than TOML)
+    raw_data = _deep_merge(raw_data, _parse_toml(path))
+
     _apply_env_overrides(raw_data)
 
-    # Phase 2: Pydantic validation
     try:
         return ArcAgentConfig(**raw_data)
     except Exception as exc:

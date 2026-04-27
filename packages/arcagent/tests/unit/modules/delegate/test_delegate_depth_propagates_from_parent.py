@@ -105,7 +105,7 @@ class TestDepthCapRejection:
             "arcagent.modules.delegate.delegate_tool.spawn",
             new_callable=AsyncMock,
         ) as mock_spawn:
-            from arcrun.builtins.spawn import SpawnResult, TokenUsage
+            from arcagent.orchestration import SpawnResult, TokenUsage
 
             mock_spawn.return_value = SpawnResult(
                 child_run_id="child-1",
@@ -139,7 +139,7 @@ class TestDepthCapRejection:
             "arcagent.modules.delegate.delegate_tool.spawn",
             new_callable=AsyncMock,
         ) as mock_spawn:
-            from arcrun.builtins.spawn import SpawnResult, TokenUsage
+            from arcagent.orchestration import SpawnResult, TokenUsage
 
             mock_spawn.return_value = SpawnResult(
                 child_run_id="child-2",

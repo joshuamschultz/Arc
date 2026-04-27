@@ -18,10 +18,9 @@ from __future__ import annotations
 
 import os
 import sys
-import unittest.mock as mock
 import warnings
 from typing import Any
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -30,7 +29,6 @@ from arcgateway.executor import (
     SubprocessExecutor,
     _make_preexec_fn,
 )
-
 
 # ---------------------------------------------------------------------------
 # ResourceLimits model tests

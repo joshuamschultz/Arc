@@ -249,7 +249,12 @@ class SchedulerEngine:
     # --- Private ---
 
     def _emit_bus_event(self, event: str, data: dict[str, Any]) -> None:
-        """Fire-and-forget bus event emission with proper task reference tracking."""
+        """Fire-and-forget bus event emission with proper task reference tracking.
+
+        Must only be called after a ``self._bus is not None`` guard.
+        """
+        if self._bus is None:
+            raise RuntimeError("_emit_bus_event called without bus")
         task = asyncio.ensure_future(self._bus.emit(event, data))
         self._fire_and_forget.add(task)
         task.add_done_callback(self._fire_and_forget.discard)
@@ -300,7 +305,7 @@ class SchedulerEngine:
         if next_fire.tzinfo is None:
             next_fire = next_fire.replace(tzinfo=UTC)
 
-        return next_fire <= now
+        return bool(next_fire <= now)
 
     def _should_fire_once(self, entry: ScheduleEntry, now: datetime) -> bool:
         if entry.metadata.run_count > 0:

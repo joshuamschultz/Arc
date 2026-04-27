@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from arcagent.modules.browser.errors import BrowserNotAvailable
+from arcagent.modules.browser.errors import BrowserNotAvailableError
 from arcagent.modules.browser.providers.local_playwright import LocalPlaywrightProvider
 
 
@@ -83,12 +83,12 @@ class TestLocalPlaywrightProviderConnect:
         assert provider.browser is browser
 
     async def test_raises_browser_not_available_when_playwright_missing(self) -> None:
-        """ImportError from missing playwright → BrowserNotAvailable."""
+        """ImportError from missing playwright → BrowserNotAvailableError."""
         provider = LocalPlaywrightProvider()
 
         # Remove playwright from sys.modules to simulate missing install
         with patch.dict(sys.modules, {"playwright": None, "playwright.async_api": None}):
-            with pytest.raises(BrowserNotAvailable) as exc_info:
+            with pytest.raises(BrowserNotAvailableError) as exc_info:
                 await provider.connect()
 
         assert "playwright" in exc_info.value.message.lower()

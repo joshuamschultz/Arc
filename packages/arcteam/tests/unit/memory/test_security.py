@@ -211,6 +211,14 @@ class TestIndexChecksum:
 
     @pytest.mark.asyncio
     async def test_federal_detects_corrupted_index(self, tmp_path: Path) -> None:
+        """Federal tier: corrupted index raises IndexCorruptionError — does NOT silently rebuild.
+
+        ADR-019 four-pillars-universal: silently rebuilding over a tampered index is not
+        safe. The previous behavior (rebuild on corruption) masked tamper events.
+        Now get_index() propagates IndexCorruptionError so callers can act.
+        """
+        from arcteam.memory.errors import IndexCorruptionError
+
         config = TeamMemoryConfig(root=tmp_path, tier="federal")
         storage = MemoryStorage(config.entities_dir)
         mgr = IndexManager(config.entities_dir, storage, config)
@@ -223,14 +231,24 @@ class TestIndexChecksum:
         content = index_path.read_text()
         index_path.write_text(content.replace("alice", "mallory"))
 
-        # Loading should detect corruption and rebuild
+        # Loading must raise — not silently rebuild over tampered data
         mgr2 = IndexManager(config.entities_dir, storage, config)
-        index = await mgr2.get_index()
-        # After rebuild, alice should be in the index (rebuilt from entity files)
-        assert "alice" in index
+        with pytest.raises(IndexCorruptionError):
+            await mgr2.get_index()
 
     @pytest.mark.asyncio
-    async def test_personal_skips_checksum(self, tmp_path: Path) -> None:
+    async def test_personal_checksum_present_and_invalid_raises(self, tmp_path: Path) -> None:
+        """Personal tier: if _index.sha256 is present but invalid, raises IndexCorruptionError.
+
+        ADR-019 four-pillars-universal: when a checksum file IS present at any tier,
+        it MUST validate. Personal-tier missing checksum = warning (developer may edit manually),
+        but a present-but-garbage checksum = clear tamper signal → hard error at every tier.
+
+        Previously named 'test_personal_skips_checksum' and asserted no error was raised.
+        Flipped: personal tier no longer bypasses checksum validation when the file exists.
+        """
+        from arcteam.memory.errors import IndexCorruptionError
+
         config = TeamMemoryConfig(root=tmp_path, tier="personal")
         storage = MemoryStorage(config.entities_dir)
         mgr = IndexManager(config.entities_dir, storage, config)
@@ -238,15 +256,14 @@ class TestIndexChecksum:
         await storage.write_entity("alice", meta, "# Alice")
         await mgr.rebuild()
 
-        # Tamper with the index — personal tier should not care
+        # Replace valid checksum with garbage — tamper signal
         checksum_path = config.entities_dir / "_index.sha256"
-        if checksum_path.exists():
-            checksum_path.write_text("garbage")
+        assert checksum_path.exists(), "rebuild() must write checksum"
+        checksum_path.write_text("garbage")
 
         mgr2 = IndexManager(config.entities_dir, storage, config)
-        index = await mgr2.get_index()
-        # Should load without issue (no checksum verification on personal tier)
-        assert index is not None
+        with pytest.raises(IndexCorruptionError):
+            await mgr2.get_index()
 
 
 class TestDecisionsStorage:

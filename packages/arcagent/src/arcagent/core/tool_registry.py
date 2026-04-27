@@ -28,13 +28,118 @@ from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import (
     PolicyContext,
     PolicyDenied,
+    PolicyPipeline,
     ToolCall,
-    ToolPolicyPipeline,
 )
 
 ToolClassification = Literal["read_only", "state_modifying"]
 
 _logger = logging.getLogger("arcagent.tool_registry")
+
+# ---------------------------------------------------------------------------
+# Caller-DID binding — ASI03 / LLM01 defence
+# ---------------------------------------------------------------------------
+
+# Tool name prefixes that gate access to identity-scoped memory stores.
+# Any tool whose name starts with one of these prefixes is subject to
+# caller-DID binding: the transport layer strips any identity field the
+# LLM may have supplied and injects the real agent DID from RunState.
+_MEMORY_TOOL_PREFIXES: tuple[str, ...] = (
+    "memory",
+    "session",
+    "user_profile",
+)
+
+# Argument names that an LLM could inject to impersonate another identity.
+# These are stripped from memory tool arguments before execution and
+# replaced with a single ``caller_did`` field set to the real agent DID.
+_IDENTITY_ARG_NAMES: frozenset[str] = frozenset(
+    {
+        "caller_did",
+        "user_did",
+        "owner_did",
+    }
+)
+
+
+def _is_memory_tool(tool_name: str) -> bool:
+    """Return True if *tool_name* is an identity-scoped memory tool.
+
+    Matches by prefix (``memory``, ``session``, ``user_profile``) using
+    both dot-separated and underscore-separated conventions so callers
+    don't need to normalise the name first.
+
+    Examples::
+
+        _is_memory_tool("memory.read")    → True
+        _is_memory_tool("memory_search")  → True
+        _is_memory_tool("session_search") → True
+        _is_memory_tool("bash")           → False
+    """
+    for prefix in _MEMORY_TOOL_PREFIXES:
+        # Accept both "prefix." and "prefix_" separators
+        if tool_name == prefix or tool_name.startswith(prefix + ".") or tool_name.startswith(
+            prefix + "_"
+        ):
+            return True
+    return False
+
+
+def _bind_caller_did(
+    tool_name: str,
+    args: dict[str, Any],
+    real_did: str,
+    *,
+    telemetry: Any,
+) -> dict[str, Any]:
+    """Strip LLM-supplied identity fields and inject the real agent DID.
+
+    This is the transport-layer defence against ASI03 (Identity & Privilege
+    Abuse) and LLM01 (Prompt Injection via identity fields).
+
+    For memory tools only:
+    - Any field in ``_IDENTITY_ARG_NAMES`` is removed from the args copy.
+    - ``caller_did`` is set to *real_did*.
+    - If any identity field was stripped, a ``security.caller_did_override_attempt``
+      audit event is emitted so operators can detect injection probes.
+
+    For non-memory tools the args dict is returned unchanged (no ``caller_did``
+    injection) because most tools don't have an identity contract.
+
+    Args:
+        tool_name: Name of the tool being called.
+        args: Original arguments dict (NOT mutated).
+        real_did: The agent's authoritative DID from RunState/identity.
+        telemetry: AgentTelemetry instance for audit events, or None.
+
+    Returns:
+        A new dict safe to pass to the tool executor.
+    """
+    if not _is_memory_tool(tool_name):
+        # Non-memory tools: return a copy but do not inject caller_did —
+        # most tools don't have an identity contract.
+        return dict(args)
+
+    # Work on a copy so the original caller's dict is never mutated.
+    cleaned = {k: v for k, v in args.items() if k not in _IDENTITY_ARG_NAMES}
+
+    # Detect injection attempt: did the LLM supply any identity field?
+    stripped = [k for k in _IDENTITY_ARG_NAMES if k in args]
+    if stripped and telemetry is not None:
+        telemetry.audit_event(
+            "security.caller_did_override_attempt",
+            {
+                "tool": tool_name,
+                "stripped_fields": stripped,
+                "injected_did": args.get("caller_did") or args.get("user_did") or args.get(
+                    "owner_did"
+                ),
+            },
+        )
+
+    # Always inject the real DID — even when the LLM didn't try to override.
+    cleaned["caller_did"] = real_did
+    return cleaned
 
 _DEFAULT_PREAMBLE = (
     "You have the following tools available. "
@@ -244,7 +349,7 @@ def _validate_tool_args(
 class ToolRegistry:
     """Register tools from 4 transports, apply policy, wrap with audit.
 
-    When constructed with a :class:`ToolPolicyPipeline`, every dispatch
+    When constructed with a :class:`PolicyPipeline`, every dispatch
     runs through it — first-DENY-wins, fail-closed. ``policy_pipeline``
     defaults to ``None`` for backward compatibility with existing
     deployments; call sites that rely on enforcement are expected to
@@ -256,11 +361,12 @@ class ToolRegistry:
         config: ToolsConfig,
         bus: ModuleBus,
         telemetry: AgentTelemetry | Any,
-        policy_pipeline: ToolPolicyPipeline | None = None,
+        policy_pipeline: PolicyPipeline | None = None,
         *,
         agent_did: str = "did:arc:unknown",
         tier: Literal["federal", "enterprise", "personal"] = "personal",
         policy_version: str = "v0",
+        ui_reporter: Any | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -269,6 +375,8 @@ class ToolRegistry:
         self._agent_did = agent_did
         self._tier = tier
         self._policy_version = policy_version
+        # Duck-typed UIEventReporter — no import of arcui; None = disabled.
+        self._ui_reporter: Any | None = ui_reporter
         self._tools: dict[str, RegisteredTool] = {}
         self._prompt_cache: str | None = None
         self._preamble: str = config.preamble or _DEFAULT_PREAMBLE
@@ -439,6 +547,7 @@ class ToolRegistry:
         agent_did = self._agent_did
         tier = self._tier
         policy_version = self._policy_version
+        ui_reporter = self._ui_reporter
 
         async def wrapped_execute(args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
             if args is None:
@@ -501,15 +610,47 @@ class ToolRegistry:
                 {"tool": tool.name, "result": result, "duration": elapsed},
             )
 
-            # 4. Audit
+            # 4. Audit — actor_did and tier are mandatory for every tool
+            # dispatch so the audit trail answers ASI03: who called what.
+            # Unknown DID ("did:arc:unknown") is flagged as a security event.
+            if agent_did == "did:arc:unknown":
+                telemetry.audit_event(
+                    "security.unidentified_tool_call",
+                    {
+                        "tool": tool.name,
+                        "actor_did": agent_did,
+                        "tier": tier,
+                        "warning": "Tool called without a real agent DID — configure identity.",
+                    },
+                )
             telemetry.audit_event(
                 "tool.executed",
                 {
                     "tool": tool.name,
                     "transport": tool.transport.value,
                     "duration_ms": round(elapsed * 1000),
+                    "actor_did": agent_did,
+                    "tier": tier,
                 },
             )
+
+            # Bridge to arcui agent layer — duck-typed, no import of arcui.
+            if ui_reporter is not None:
+                try:
+                    ui_reporter.emit_agent_event(
+                        event_type="tool_call",
+                        data={
+                            "tool_name": tool.name,
+                            "actor_did": agent_did,
+                            "outcome": "allow",
+                            "duration_ms": round(elapsed * 1000),
+                            "tier": tier,
+                        },
+                    )
+                except Exception:
+                    _logger.debug(
+                        "ui_reporter.emit_agent_event failed for tool_call", exc_info=True
+                    )
 
             return result
 

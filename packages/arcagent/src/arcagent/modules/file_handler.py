@@ -12,9 +12,8 @@ from __future__ import annotations
 import logging
 import mimetypes
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 _logger = logging.getLogger("arcagent.file_handler")
 
@@ -45,7 +44,7 @@ def _sanitize_filename(name: str) -> str:
     # Collapse multiple underscores
     name = re.sub(r"_+", "_", name)
     # Prepend date prefix
-    date_prefix = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
+    date_prefix = datetime.now(tz=UTC).strftime("%Y-%m-%d")
     return f"{date_prefix}_{name}"
 
 
@@ -183,7 +182,7 @@ class FileHandler:
         """Format file info + extracted text as a prompt context block."""
         size_kb = path.stat().st_size / 1024
         lines = [
-            f"---",
+            "---",
             f"**Attached file:** `{path.name}` ({size_kb:.1f} KB)",
             f"**Stored at:** `{path}`",
         ]
@@ -230,7 +229,7 @@ class FileHandler:
         """Extract text from PDF using pdfplumber or PyPDF2."""
         # Try pdfplumber first (better extraction quality)
         try:
-            import pdfplumber
+            import pdfplumber  # type: ignore[import-not-found]  # optional dep: arcagent[files]
             with pdfplumber.open(path) as pdf:
                 pages = []
                 for page in pdf.pages:
@@ -245,7 +244,9 @@ class FileHandler:
 
         # Fallback to PyPDF2
         try:
-            from PyPDF2 import PdfReader
+            from PyPDF2 import (  # type: ignore[import-not-found]  # optional dep: arcagent[files]
+                PdfReader,
+            )
             reader = PdfReader(str(path))
             pages = []
             for page in reader.pages:
@@ -263,7 +264,9 @@ class FileHandler:
     def _extract_docx(self, path: Path) -> str | None:
         """Extract text from Word documents."""
         try:
-            from docx import Document
+            from docx import (  # type: ignore[import-not-found]  # optional dep: arcagent[files]
+                Document,
+            )
             doc = Document(str(path))
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
             return "\n\n".join(paragraphs) if paragraphs else None
@@ -277,7 +280,9 @@ class FileHandler:
     def _extract_xlsx(self, path: Path) -> str | None:
         """Extract text from Excel spreadsheets."""
         try:
-            from openpyxl import load_workbook
+            from openpyxl import (  # type: ignore[import-untyped]  # no type stubs available for openpyxl
+                load_workbook,
+            )
             wb = load_workbook(str(path), read_only=True, data_only=True)
             sheets = []
             for ws in wb.worksheets:

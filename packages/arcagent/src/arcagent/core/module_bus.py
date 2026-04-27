@@ -103,9 +103,11 @@ class Module(Protocol):
 class ModuleBus:
     """Async event bus with priority dispatch, veto, and module lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, ui_reporter: Any | None = None) -> None:
         self._handlers: dict[str, list[_HandlerRegistration]] = defaultdict(list)
         self._modules: list[Module] = []
+        # Duck-typed UIEventReporter; no arcui import. None = disabled.
+        self._ui_reporter: Any | None = ui_reporter
 
     def subscribe(
         self,
@@ -215,8 +217,10 @@ class ModuleBus:
             try:
                 await module.startup(ctx)
                 _logger.info("Module %s started", module.name)
+                self._emit_lifecycle(module.name, "start", "allow")
             except Exception:
                 _logger.exception("Module %s failed to start", module.name)
+                self._emit_lifecycle(module.name, "start", "error")
 
     async def shutdown(self) -> None:
         """Call module.shutdown() for all modules in reverse order."""
@@ -224,5 +228,28 @@ class ModuleBus:
             try:
                 await module.shutdown()
                 _logger.info("Module %s shut down", module.name)
+                self._emit_lifecycle(module.name, "stop", "allow")
             except Exception:
                 _logger.exception("Module %s failed to shut down", module.name)
+                self._emit_lifecycle(module.name, "stop", "error")
+
+    def _emit_lifecycle(self, module_name: str, phase: str, outcome: str) -> None:
+        """Emit a module_lifecycle event to the ui_reporter if registered.
+
+        Fire-and-forget; any reporter failure is logged but never propagated.
+        """
+        if self._ui_reporter is None:
+            return
+        try:
+            self._ui_reporter.emit_agent_event(
+                event_type="module_lifecycle",
+                data={
+                    "module_name": module_name,
+                    "phase": phase,
+                    "outcome": outcome,
+                },
+            )
+        except Exception:
+            _logger.debug(
+                "ui_reporter.emit_agent_event failed for module_lifecycle", exc_info=True
+            )

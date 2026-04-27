@@ -10,7 +10,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from arcagent.core.tool_registry import RegisteredTool, native_tool
 
@@ -22,7 +22,7 @@ def _load_tasks(tasks_path: Path) -> list[dict[str, Any]]:
     if not tasks_path.exists():
         return []
     try:
-        return json.loads(tasks_path.read_text(encoding="utf-8"))
+        return cast(list[dict[str, Any]], json.loads(tasks_path.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, OSError):
         return []
 

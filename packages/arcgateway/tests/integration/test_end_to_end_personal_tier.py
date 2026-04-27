@@ -31,14 +31,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from arcgateway.delivery import DeliveryTarget
-from arcgateway.executor import AsyncioExecutor, Delta, InboundEvent
+from arcgateway.executor import AsyncioExecutor, InboundEvent
 from arcgateway.session import SessionRouter, build_session_key
-
 
 # ---------------------------------------------------------------------------
 # Minimal agent stub — simulates ArcAgent.run() return value

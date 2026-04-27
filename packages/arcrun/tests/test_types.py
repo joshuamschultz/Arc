@@ -38,6 +38,42 @@ class TestTool:
         result = await tool.execute({}, None)
         assert isinstance(result, str)
 
+    def test_parallel_safe_defaults_false(self):
+        from arcrun.types import Tool
+
+        tool = Tool(name="t", description="d", input_schema={}, execute=_noop_execute)
+        assert tool.parallel_safe is False
+
+    def test_parallel_safe_opt_in(self):
+        from arcrun.types import Tool
+
+        tool = Tool(
+            name="t",
+            description="d",
+            input_schema={},
+            execute=_noop_execute,
+            parallel_safe=True,
+        )
+        assert tool.parallel_safe is True
+
+    def test_signals_completion_defaults_false(self):
+        from arcrun.types import Tool
+
+        tool = Tool(name="t", description="d", input_schema={}, execute=_noop_execute)
+        assert tool.signals_completion is False
+
+    def test_signals_completion_opt_in(self):
+        from arcrun.types import Tool
+
+        tool = Tool(
+            name="t",
+            description="d",
+            input_schema={},
+            execute=_noop_execute,
+            signals_completion=True,
+        )
+        assert tool.signals_completion is True
+
 
 class TestToolContext:
     def test_construction_with_all_fields(self):

@@ -27,9 +27,15 @@ def test_load_global_config():
 
 
 def test_global_config_modules_default_state():
-    """Telemetry, retry, and queue are enabled by default; others disabled."""
+    """Packaged defaults: telemetry, retry, queue, and security are enabled.
+
+    Per ADR-019 (Four Pillars Universal), security is enabled in packaged
+    defaults — PII detection and request signing are baseline protections.
+    audit, otel, routing, fallback, rate_limit, and circuit_breaker default
+    to disabled; they are opt-in per deployment tier.
+    """
     config = load_global_config()
-    enabled_by_default = {"telemetry", "retry", "queue"}
+    enabled_by_default = {"telemetry", "retry", "queue", "security"}
     for name, module in config.modules.items():
         if name in enabled_by_default:
             assert module.enabled is True, f"{name} should be enabled by default"

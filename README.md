@@ -8,7 +8,7 @@
 │   for Environments Where Trust Is Non-Negotiable     │
 │                                                      │
 ├───────────────────────────────────────────────────────┤
-│  11 Packages · 11 Providers · Zero SDKs · SCIF-Ready │
+│  13 Packages · 14 Providers · Zero SDKs · SCIF-Ready │
 ╰───────────────────────────────────────────────────────╯
 ```
 
@@ -68,52 +68,67 @@ See [Compliance Mapping](#compliance-mapping) for the full control-by-control br
 
 ---
 
+## Four Pillars (ADR-019)
+
+Every Arc agent operates under four universal guarantees — at all tiers, from Personal to Federal:
+
+1. **Identity** — each agent carries a unique Ed25519 DID (`did:arc:{org}:{type}/{hash}`)
+2. **Sign** — every pairing and delegation is cryptographically signed
+3. **Authorize** — all tool calls pass through a deny-by-default policy pipeline
+4. **Audit** — every operation emits a tamper-evident, hash-chained audit event
+
+See [ADR-019](docs/architecture/decisions/ADR-019-four-pillars-universal.md) for the full decision record.
+
 ## Architecture
 
 ```
 arcmas          Meta-package -- pip install arcmas gets the full stack
   |
-arccmd          Operator CLI -- 32 commands, 22 REPL commands
+arccli          Operator CLI -- argparse-based, no legacy Click
   |
-arcteam         Team coordination -- formation, task distribution, consensus
+arcgateway      Multi-agent gateway -- platform adapters, session routing, pairing
   |
-arcagent        Agent nucleus -- identity, sessions, extensions, memory
+arcteam         Team messaging -- entity registry, channels, HMAC audit trail
   |
-arcrun          Execution engine -- ReAct loop, sandbox, event bus
+arcagent        Agent nucleus -- DID-required, sessions, extensions, module bus
   |
-arcllm          LLM abstraction -- 11 providers, zero SDKs, direct HTTP
+arcskill        Skill management -- Sigstore-verified install, scan, lock, CRL
+  |
+arcrun          Execution engine -- ReAct loop, stream, spawn_many, event chain
+  |
+arcllm          LLM abstraction -- 14 providers, zero SDKs, direct HTTP
+  |
+arctrust        Leaf library -- DID identity, Ed25519, audit, policy pipeline
 
-arcprompt       Prompt management (coming soon)
-arcmodel        Model management (coming soon)
-arcskill        Skill system (coming soon)
-arctui          Terminal UI (coming soon)
-arcui           Web UI (coming soon)
+arcui           Multi-agent dashboard (live; arc ui start/tail)
+arcprompt       Strategy prompt provider
+arcmodel        Model management (scaffolding)
+arctui          Terminal UI (scaffolding)
 ```
+
+Each layer is independently installable. See [packages/arcmas/README.md](packages/arcmas/README.md) for the canonical install guide.
 
 Each layer is independently usable. You can call `arcllm` directly for a single LLM request, use `arcrun` for a sandboxed tool loop without agent state, run the full `arcagent` stack with cryptographic identity and persistent sessions, or coordinate multiple agents through `arcteam`.
 
 ## Packages
 
-### Core Stack
+| Package | What It Does |
+|---------|-------------|
+| [arctrust](packages/arctrust/) | Leaf library — Ed25519 DID identity, keypairs, audit emission, policy pipeline, trust store |
+| [arcllm](packages/arcllm/) | 14 LLM providers via direct HTTP — no SDKs, PII redaction, request signing, OTel, audit |
+| [arcrun](packages/arcrun/) | Async ReAct loop — tool sandbox, streaming, spawn_many, hash-chained event bus |
+| [arcagent](packages/arcagent/) | Agent nucleus — DID required at construction, skills, extensions, session persistence, module bus |
+| [arcgateway](packages/arcgateway/) | Multi-agent gateway — platform adapters (Telegram/Slack/Discord), session routing, pairing |
+| [arcskill](packages/arcskill/) | Skill hub — Sigstore + Rekor verified install, static scan, Firecracker dry-run, CRL lifecycle |
+| [arcteam](packages/arcteam/) | Team messaging — entity registry, channels, DMs, HMAC-signed audit trail |
+| [arcui](packages/arcui/) | Multi-agent dashboard — live WebSocket telemetry; `arc ui start` + `arc ui tail` |
+| [arccli](packages/arccli/) | Unified `arc` CLI — all commands argparse-based; `--json` on every data command |
+| [arcmas](packages/arcmas/) | Meta-package — `pip install arcmas` installs the full stack |
+| [arcprompt](packages/arcprompt/) | Strategy prompt provider for arcrun |
+| [arcmodel](packages/arcmodel/) | Model management (scaffolding) |
+| [arctui](packages/arctui/) | Terminal UI client (scaffolding) |
 
-| Package | PyPI | What It Does |
-|---------|------|-------------|
-| [arcllm](packages/arcllm/) | [![PyPI](https://img.shields.io/pypi/v/arcllm)](https://pypi.org/project/arcllm/) | Unified interface to 11 LLM providers via direct HTTP. No provider SDKs. Opt-in modules for retry, fallback, rate limiting, PII redaction, request signing, audit logging, and OpenTelemetry. |
-| [arcrun](packages/arcrun/) v0.4.0 | [![PyPI](https://img.shields.io/pypi/v/arcrun)](https://pypi.org/project/arcrun/) | Async ReAct execution loop with deny-by-default tool sandboxing, **parallel tool dispatch (SPEC-017)**, **structured `task_complete` signal**, budget caps, JSON Schema parameter validation, structured event bus, and pluggable execution strategies. |
-| [arc-agent](packages/arcagent/) v0.3.0 | [![PyPI](https://img.shields.io/pypi/v/arc-agent)](https://pypi.org/project/arc-agent/) | Full agent lifecycle: Ed25519 cryptographic identity (DIDs), TOML-driven configuration, **5-layer tool policy pipeline (SPEC-017)**, **dynamic tool surface with layered defense**, **unified proactive engine**, **tier-aware self-modification**, context window management, session persistence, skill discovery, extension sandboxing, Prometheus metrics. |
-| [arcteam](packages/arcteam/) | [![PyPI](https://img.shields.io/pypi/v/arcteam)](https://pypi.org/project/arcteam/) | Multi-agent team coordination: team formation and lifecycle, task distribution and delegation, inter-agent messaging, roster management, and consensus protocols. |
-| [arccmd](packages/arccli/) v0.3.0 | [![PyPI](https://img.shields.io/pypi/v/arccmd)](https://pypi.org/project/arccmd/) | Operator CLI for the full stack. Agent scaffolding, interactive REPL, **SPEC-017 CLI mirror** (`arc agent policy/completion/schedule`), session management, provider introspection, and `--json` output on every command for CI/CD integration. |
-| [arcmas](packages/arcmas/) | [![PyPI](https://img.shields.io/pypi/v/arcmas)](https://pypi.org/project/arcmas/) | Meta-package that installs the complete Arc stack with a single `pip install arcmas`. |
-
-### Coming Soon
-
-| Package | PyPI | What It Will Do |
-|---------|------|----------------|
-| [arcprompt](packages/arcprompt/) | [![PyPI](https://img.shields.io/pypi/v/arcprompt)](https://pypi.org/project/arcprompt/) | Prompt management, templating, and versioning. |
-| [arcmodel](packages/arcmodel/) | [![PyPI](https://img.shields.io/pypi/v/arcmodel)](https://pypi.org/project/arcmodel/) | Model management, selection, and routing. |
-| [arcskill](packages/arcskill/) | [![PyPI](https://img.shields.io/pypi/v/arcskill)](https://pypi.org/project/arcskill/) | Skill system for reusable agent capabilities. |
-| [arctui](packages/arctui/) | [![PyPI](https://img.shields.io/pypi/v/arctui)](https://pypi.org/project/arctui/) | Terminal UI for agent interaction. |
-| [arcui](packages/arcui/) | [![PyPI](https://img.shields.io/pypi/v/arcui)](https://pypi.org/project/arcui/) | Web UI for agent management and monitoring. |
+See [docs/cli.md](docs/cli.md) for the complete `arc <command>` reference.
 
 ---
 
@@ -218,6 +233,22 @@ vault__backend, tools__native, tools__process, identity__key_dir
 ```
 
 These can only be set in the TOML config file, preventing runtime injection.
+
+---
+
+## Architecture Decisions
+
+Architectural decisions for this project are recorded in [docs/architecture/decisions/](docs/architecture/decisions/):
+
+- [ADR-018](docs/architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md) — No MCP, No Migration, No ACP: why Arc uses direct HTTP over provider SDKs
+- [ADR-019](docs/architecture/decisions/ADR-019-four-pillars-universal.md) — Four Pillars Universal: Identity, Sign, Authorize, Audit at every tier
+
+Key specs governing the current state of the codebase:
+
+- SPEC-007: DID Identity Unification — `did:arc:{org}:{type}/{hash}` scheme
+- SPEC-016: Multi-Agent UI — arcui dashboard + UIBridgeSink design
+- SPEC-017: Arc Core Hardening — policy pipeline, argparse migration, parallel tool dispatch
+- SPEC-018: Hermes Parity — operational reach driver; gateway session guard, Sigstore skill verification, `UnsafeNoOp` bypass elimination
 
 ---
 
@@ -347,36 +378,60 @@ cd Arc
 uv sync --all-packages
 ```
 
+Or install from PyPI:
+
+```bash
+pip install arcmas
+```
+
+### First-time setup
+
+```bash
+arc init   # interactive tier wizard (open / enterprise / federal)
+```
+
 ### Create an Agent
 
 ```bash
-arc agent create my-agent --name "My Agent" --model anthropic/claude-sonnet-4-20250514
+arc agent create my-agent --model anthropic/claude-sonnet-4-5-20250929
 ```
 
-### Interactive Chat
+### Validate and Chat
 
 ```bash
-cd my-agent
-arc agent chat
+arc agent build my-agent --check   # validate config + workspace
+arc agent chat my-agent             # interactive REPL
 ```
 
 ### One-Shot Task
 
 ```bash
-arc agent run --task "Analyze the CSV in data/ and summarize the key trends"
+arc agent run my-agent "Analyze the CSV in workspace/data/ and summarize the key trends"
 ```
 
-### Direct LLM Call (No Agent)
+### Direct LLM Introspection
 
 ```bash
-arc llm call anthropic "What is the capital of France?" --security --audit
+arc llm providers
+arc llm provider anthropic
+arc llm validate
 ```
 
 ### Direct Run (No Agent State)
 
 ```bash
-arc run task anthropic/claude-sonnet-4-20250514 "Calculate 2^32" --with-calc
+arc run task "Calculate 2^32" --with-calc --model anthropic/claude-haiku-4-5-20251001
 ```
+
+### Multi-Agent Dashboard
+
+```bash
+arc ui start --show-tokens          # start dashboard, print tokens
+arc ui tail --viewer-token <token> --layer llm   # stream LLM events
+arc agent serve my-agent --ui       # agent daemon with UI reporter
+```
+
+See [docs/cli.md](docs/cli.md) for the complete command reference.
 
 ---
 
@@ -385,16 +440,18 @@ arc run task anthropic/claude-sonnet-4-20250514 "Calculate 2^32" --with-calc
 Install the full stack:
 
 ```bash
-pip install arcmas       # Everything -- CLI, agents, teams, LLM, runtime
+pip install arcmas       # Everything -- CLI, agents, teams, LLM, runtime, skill hub, UI
 ```
 
 Or install individual layers:
 
 ```bash
+pip install arctrust     # Identity + keypair + audit + policy (leaf; no other Arc deps)
 pip install arcllm       # LLM abstraction only
-pip install arcrun       # Execution engine + arcllm
-pip install arc-agent    # Full agent + arcllm + arcrun
-pip install arcteam      # Multi-agent coordination
+pip install arcrun       # Execution engine + arcllm + arctrust
+pip install arc-agent    # Full agent + arcllm + arcrun + arctrust
+pip install arcteam      # Team messaging + arctrust
+pip install arcskill     # Skill hub + arctrust
 pip install arccmd       # CLI + everything
 ```
 

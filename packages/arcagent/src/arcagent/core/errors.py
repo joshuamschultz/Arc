@@ -50,6 +50,22 @@ class IdentityError(ArcAgentError):
     _component = "identity"
 
 
+class IdentityRequired(IdentityError):  # noqa: N818 — domain convention; peers use non-Error suffix
+    """Raised when ArcAgent is started without a DID configured.
+
+    Run ``arc agent init`` to generate a DID and keypair, then set the
+    resulting DID in ``arcagent.toml`` under ``[identity] did``.
+    """
+
+    def __init__(self, details: dict[str, Any] | None = None) -> None:
+        hint = "Run 'arc agent init' to generate a DID and keypair."
+        super().__init__(
+            code="IDENTITY_REQUIRED",
+            message="Agent DID is required. " + hint,
+            details={**(details or {}), "hint": "arc agent init"},
+        )
+
+
 class ToolError(ArcAgentError):
     """Tool execution failure, timeout, or transport error."""
 

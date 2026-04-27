@@ -11,7 +11,6 @@ from arcrun.builtins.contained_execute import (
     SandboxUnavailableError,
 )
 from arcrun.builtins.execute import make_execute_tool
-from arcrun.builtins.spawn import make_spawn_tool
 from arcrun.builtins.task_complete import (
     TaskCompleteArgs,
     TaskStatus,
@@ -29,6 +28,5 @@ __all__ = [
     "TaskStatus",
     "make_budget_breach_args",
     "make_execute_tool",
-    "make_spawn_tool",
     "make_task_complete_tool",
 ]

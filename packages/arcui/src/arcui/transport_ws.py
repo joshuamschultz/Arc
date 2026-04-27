@@ -159,7 +159,7 @@ class WebSocketTransport:
                         except json.JSONDecodeError:
                             continue
 
-            except (ConnectionError, OSError, asyncio.TimeoutError) as exc:
+            except (ConnectionError, OSError, TimeoutError) as exc:
                 logger.debug("WebSocket disconnected: %s", exc)
                 self._ws = None
             except Exception:
@@ -178,13 +178,18 @@ class WebSocketTransport:
         if not self.connected:
             self.buffer_event(agent_id, event)
             return
+        # _ws is non-None when connected — extract to narrow type for mypy.
+        ws = self._ws
+        if ws is None:
+            self.buffer_event(agent_id, event)
+            return
         try:
             payload = {
                 "agent_id": agent_id,
                 "type": "event",
                 "payload": event.model_dump(),
             }
-            await self._ws.send(json.dumps(payload))
+            await ws.send(json.dumps(payload))
         except (ConnectionError, OSError, RuntimeError):
             logger.warning("Send failed, buffering event", exc_info=True)
             self.buffer_event(agent_id, event)
@@ -195,12 +200,49 @@ class WebSocketTransport:
         """Send control message."""
         if not self.connected:
             raise RuntimeError("Not connected")
+        # _ws is non-None when connected — extract to narrow type for mypy.
+        ws = self._ws
+        if ws is None:
+            raise RuntimeError("Not connected")
         payload = {
             "agent_id": agent_id,
             "type": "control",
             "payload": message.model_dump(),
         }
-        await self._ws.send(json.dumps(payload))
+        await ws.send(json.dumps(payload))
+
+    async def receive(self) -> tuple[str, ControlMessage]:
+        """Receive a control message from the UI server.
+
+        Reads one frame from the WebSocket, parses it as a ControlMessage,
+        and returns ``(agent_id, control_message)``.
+
+        Raises:
+            RuntimeError: If not connected.
+            ValueError: If the message is not a valid control frame.
+        """
+        if not self.connected:
+            raise RuntimeError("Not connected")
+        # _ws is non-None when connected — extract to narrow type for mypy.
+        ws = self._ws
+        if ws is None:
+            raise RuntimeError("Not connected")
+        raw = await ws.recv()
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Malformed control frame: {raw!r}") from exc
+
+        if data.get("type") != "control":
+            raise ValueError(f"Expected type='control', got {data.get('type')!r}")
+
+        agent_id: str = data.get("agent_id", "")
+        payload = data.get("payload", {})
+        try:
+            msg = ControlMessage(**payload)
+        except Exception as exc:
+            raise ValueError(f"Invalid ControlMessage payload: {payload}") from exc
+        return agent_id, msg
 
     async def close(self) -> None:
         """Close the transport."""
@@ -209,7 +251,7 @@ class WebSocketTransport:
             self._connect_task.cancel()
             try:
                 await self._connect_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, Exception):  # noqa: S110 — cancel cleanup, not user data
                 pass
         if self._ws is not None:
             try:

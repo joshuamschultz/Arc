@@ -1,4 +1,9 @@
-"""Tests for identity — DID, Ed25519 keypair, sign/verify, file storage."""
+"""Tests for identity — DID, Ed25519 keypair, sign/verify, file storage.
+
+AgentIdentity now lives in arctrust. These tests confirm the arcagent-level
+integration: IdentityConfig from arcagent.core.config feeds into the shared
+arctrust.AgentIdentity via from_config().
+"""
 
 from __future__ import annotations
 
@@ -10,8 +15,7 @@ import pytest
 from nacl.signing import SigningKey
 
 from arcagent.core.config import IdentityConfig
-from arcagent.core.errors import IdentityError
-from arcagent.core.identity import AgentIdentity
+from arctrust import AgentIdentity
 
 
 class TestGenerate:
@@ -37,9 +41,10 @@ class TestGenerate:
 
     def test_deterministic_did_from_same_key(self) -> None:
         """Same keypair always produces the same DID."""
+        from arctrust.identity import generate_did
         key = SigningKey.generate()
-        id1 = AgentIdentity._did_from_key(key.verify_key, "org", "type")
-        id2 = AgentIdentity._did_from_key(key.verify_key, "org", "type")
+        id1 = generate_did(key.verify_key, org="org", agent_type="type")
+        id2 = generate_did(key.verify_key, org="org", agent_type="type")
         assert id1 == id2
 
 
@@ -69,9 +74,8 @@ class TestSignVerify:
             public_key=identity.public_key,
             _signing_key=None,
         )
-        with pytest.raises(IdentityError) as exc_info:
+        with pytest.raises(ValueError, match="no private key"):
             verify_only.sign(b"hello")
-        assert exc_info.value.code == "IDENTITY_NO_SIGNING_KEY"
 
 
 class TestFileStorage:
@@ -96,9 +100,8 @@ class TestFileStorage:
             public_key=identity.public_key,
             _signing_key=None,
         )
-        with pytest.raises(IdentityError) as exc_info:
+        with pytest.raises(ValueError, match="no private key"):
             verify_only.save_keys(tmp_path)
-        assert exc_info.value.code == "IDENTITY_NO_SIGNING_KEY"
 
     def test_key_file_permissions(self, tmp_path: Path) -> None:
         identity = AgentIdentity.generate(org="test", agent_type="executor")
@@ -118,9 +121,8 @@ class TestFileStorage:
         assert mode == 0o700
 
     def test_load_nonexistent_raises(self, tmp_path: Path) -> None:
-        with pytest.raises(IdentityError) as exc_info:
+        with pytest.raises(ValueError, match="Key file not found"):
             AgentIdentity.load_keys("did:arc:test:executor/nonexist", tmp_path)
-        assert exc_info.value.code == "IDENTITY_KEY_NOT_FOUND"
 
 
 class TestKeyFileIntegrity:
@@ -134,9 +136,8 @@ class TestKeyFileIntegrity:
         # Make group-readable (insecure)
         key_file.chmod(0o640)
 
-        with pytest.raises(IdentityError) as exc_info:
+        with pytest.raises(ValueError, match="insecure permissions"):
             AgentIdentity.load_keys(identity.did, tmp_path)
-        assert exc_info.value.code == "IDENTITY_KEY_INSECURE"
 
     def test_world_readable_key_rejected(self, tmp_path: Path) -> None:
         """Key files readable by others are rejected."""
@@ -147,9 +148,8 @@ class TestKeyFileIntegrity:
         key_file = tmp_path / f"{safe_name}.key"
         key_file.chmod(0o644)
 
-        with pytest.raises(IdentityError) as exc_info:
+        with pytest.raises(ValueError, match="insecure permissions"):
             AgentIdentity.load_keys(identity.did, tmp_path)
-        assert exc_info.value.code == "IDENTITY_KEY_INSECURE"
 
     def test_secure_permissions_accepted(self, tmp_path: Path) -> None:
         """Key files with 0o600 are accepted."""
@@ -194,7 +194,7 @@ class TestFromConfig:
             did="did:arc:test:executor/deadbeef",
             key_dir=str(tmp_path / "empty_keys"),
         )
-        with pytest.raises(IdentityError, match="Key file not found"):
+        with pytest.raises(ValueError, match="Key file not found"):
             AgentIdentity.from_config(config, org="test", agent_type="executor")
 
     def test_from_config_with_org_and_type(self, tmp_path: Path) -> None:
@@ -315,23 +315,28 @@ class TestValidateDid:
     """DID validation must be strict — no partial hashes, no guessing."""
 
     def test_empty_returns_empty(self) -> None:
-        assert AgentIdentity._validate_did("") == ""
+        from arctrust.identity import validate_did
+        assert validate_did("") == ""
 
     def test_full_did_accepted(self) -> None:
+        from arctrust.identity import validate_did
         full = "did:arc:local:executor/9b43ee77"
-        assert AgentIdentity._validate_did(full) == full
+        assert validate_did(full) == full
 
     def test_short_hash_rejected(self) -> None:
-        with pytest.raises(IdentityError, match="Invalid DID format"):
-            AgentIdentity._validate_did("9b43ee77")
+        from arctrust.identity import validate_did
+        with pytest.raises(ValueError, match="Invalid DID format"):
+            validate_did("9b43ee77")
 
     def test_partial_prefix_rejected(self) -> None:
-        with pytest.raises(IdentityError, match="Invalid DID format"):
-            AgentIdentity._validate_did("did:other:something")
+        from arctrust.identity import validate_did
+        with pytest.raises(ValueError, match="Invalid DID format"):
+            validate_did("did:other:something")
 
     def test_missing_hash_rejected(self) -> None:
-        with pytest.raises(IdentityError, match="Malformed DID structure"):
-            AgentIdentity._validate_did("did:arc:local:executor")
+        from arctrust.identity import validate_did
+        with pytest.raises(ValueError, match="Malformed DID structure"):
+            validate_did("did:arc:local:executor")
 
     def test_from_config_rejects_short_did(self, tmp_path: Path) -> None:
         """Short DID in config must hard-fail, not silently generate new."""
@@ -339,5 +344,5 @@ class TestValidateDid:
             did="9b43ee77",
             key_dir=str(tmp_path / "keys"),
         )
-        with pytest.raises(IdentityError, match="Invalid DID format"):
+        with pytest.raises(ValueError, match="Invalid DID format"):
             AgentIdentity.from_config(config, org="test", agent_type="executor")

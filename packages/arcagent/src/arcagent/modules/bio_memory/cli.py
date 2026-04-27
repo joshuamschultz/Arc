@@ -16,7 +16,7 @@ from arcagent.utils.sanitizer import read_frontmatter
 class _NoOpTelemetry:
     """Minimal telemetry stub for CLI commands that don't need real telemetry."""
 
-    def audit_event(self, event_type: str, details: dict | None = None) -> None:
+    def audit_event(self, event_type: str, details: dict[str, object] | None = None) -> None:
         """No-op audit event."""
         _ = event_type, details
 

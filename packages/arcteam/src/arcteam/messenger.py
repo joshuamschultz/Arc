@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any  # used for ui_reporter duck-type and dlq entries
 
 from arcteam.audit import AuditLogger
 from arcteam.registry import EntityRegistry
@@ -56,10 +56,13 @@ class MessagingService:
         backend: StorageBackend,
         registry: EntityRegistry,
         audit: AuditLogger,
+        ui_reporter: Any | None = None,
     ) -> None:
         self._backend = backend
         self._registry = registry
         self._audit = audit
+        # Duck-typed UIReporter hook. No arcui import — caller injects if needed.
+        self._ui_reporter = ui_reporter
         self._dlq_seq: int | None = None
         self._known_streams: set[str] = set()
         self._cursor_cache: dict[str, Cursor] = {}
@@ -159,6 +162,18 @@ class MessagingService:
                 stream=stream,
                 msg_seq=seq,
             )
+            # UIReporter hook — fires per routed URI if a reporter was injected.
+            if self._ui_reporter is not None:
+                self._ui_reporter.emit_team_event(
+                    event_type="message_route",
+                    data={
+                        "to": list(message.to),
+                        "message_id": message.id,
+                        "channel": stream,
+                        "sender": message.sender,
+                        "seq": seq,
+                    },
+                )
 
         message.seq = last_seq
         message.status = "sent"
