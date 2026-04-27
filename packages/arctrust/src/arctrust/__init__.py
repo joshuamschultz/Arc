@@ -44,6 +44,8 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
+__version__ = "0.2.0"
+
 from arctrust.audit import AuditEvent, AuditSink, JsonlSink, NullSink, SignedChainSink, emit
 from arctrust.identity import (
     AgentIdentity,
@@ -71,6 +73,7 @@ from arctrust.trust_store import (
 )
 
 __all__ = [
+    "__version__",
     "AgentIdentity",
     "AuditEvent",
     "AuditSink",

@@ -1,6 +1,6 @@
 """ArcTeam: Multi-agent team coordination and lifecycle management."""
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 from arcteam.audit import AuditLogger
 from arcteam.config import TeamConfig

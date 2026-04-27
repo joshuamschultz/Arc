@@ -7,10 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-26
+
+Audit migration to arctrust, UI reporter wiring, and README refresh.
+
+### Added
+
+- **UI reporter wiring test** — `tests/unit/test_uireporter_wiring.py` regression-tests team event delivery to the live ArcUI dashboard.
+
 ### Changed
 
-- **File store** — Updated file handling internals.
-- **Public API exports** — Updated `__init__` exports.
+- **Audit emission migrated to arctrust** — `AuditLogger` now wraps `arctrust.audit.emit(AuditEvent, sink)`. Single canonical schema across all team operations (entity registration, channel creation, message send, memory mutation). HMAC-signed local stream still available; signed-chain and UI-bridge sinks now plug in without code changes.
+- **Public API exports** — Updated `__init__` exports for the new audit interface.
+- **README rewritten** — Marketing prose replaced with a focused layer-position + public-surface reference.
 - **PyPI packaging** — GitHub Actions publish workflow.
 
 ## [0.2.0] - 2026-02-21

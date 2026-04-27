@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026-04-26] — Major monorepo refactor
+
+Cross-cutting refactor that promotes `arctrust` to the canonical leaf for the four pillars (Identity, Sign, Authorize, Audit), splits orchestration cleanly between `arcrun` (loop) and `arcagent` (spawn primitives), removes legacy duplicates, hardens audit emission to a single point, and lifts `arcskill` to a real public release. Implements ADR-019 four-pillar universality.
+
+Ships as:
+
+- `arc-agent` 0.3.0 → 0.4.0
+- `arccmd` (arccli) 0.3.2 → 0.4.0
+- `arcllm` 0.3.0 → 0.4.0
+- `arcrun` 0.4.0 → 0.5.0
+- `arcteam` 0.2.0 → 0.3.0
+- `arcui` 0.1.0 → 0.2.0
+- `arcgateway` 0.1.0 → 0.2.0
+- `arctrust` 0.1.0 → 0.2.0
+- `arcskill` 0.0.1 → 0.1.0
+- `arcmas` 0.2.0 → 0.3.0
+- `arcmodel` / `arcprompt` / `arctui` 0.0.1 → 0.0.2 (scaffolding refresh)
+- root `arc` 0.1.0 → 0.2.0
+
+See each package CHANGELOG for the per-package detail. Highlights:
+
+### Added
+
+- **arctrust grows into the leaf shared library** — `AgentIdentity`, `ChildIdentity`, `KeyPair`, `AuditEvent`, `JsonlSink`, `SignedChainSink`, `PolicyPipeline`, `build_pipeline`. arcagent / arcrun / arcgateway / arcllm / arcteam / arcskill / arcui all depend on arctrust; arctrust never imports from them. 176 tests, 99% coverage.
+- **`arcagent.orchestration` package** — Owns `spawn`, `spawn_many`, `RootTokenBudget`, `SpawnResult`, `SpawnSpec`, `make_spawn_tool`, `SPAWN_GUIDANCE`. Sits between arcrun (pure loop) and `modules/delegate` (LLM-facing tool with policy + identity + audit).
+- **arcrun streaming runtime** — `streams.run_stream()` yields `TokenEvent`, `ToolStartEvent`, `ToolEndEvent`, `TurnEndEvent`. Pure arcrun — no LLM-level streaming required.
+- **arcskill signed install pipeline** — Public release: fetch → Sigstore + Rekor verify → CRL check → AST/regex/semgrep/bandit scan → sandbox dry-run → atomic activation → lock-file entry. 342 tests, 86% coverage.
+- **arcgateway audit module** — Canonical `arctrust`-backed emission for every pairing, runner, adapter, delivery, and execution event.
+- **arcui `UIBridgeSink` + `reporter.py`** — Connects an arctrust audit stream from a running agent to the live dashboard. `arc agent serve --ui` now works as a one-liner.
+- **arcllm layered config** — Packaged defaults overlaid by user `${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml`; deep-merge dicts, replace lists/scalars.
+- **arccli `commands/` package** — Each top-level group in its own module; full smoke-test coverage for every subcommand.
+- **`docs/cli.md`** — Top-level CLI reference shipping with the repo.
+
+### Changed
+
+- **All security-relevant audit events route through `arctrust.audit.emit`** — Single canonical schema; sinks fan out (`JsonlSink`, `SignedChainSink`, `UIBridgeSink`). No package constructs raw audit dicts anymore.
+- **Identity moved out of arcagent into arctrust** — `core/identity.py` and `core/trust_store.py` removed; arcagent imports from arctrust. Eliminates the SPEC-018 §HIGH-1 latent circular dependency.
+- **Tool policy pipeline migrated to arctrust** — `arcagent/core/tool_policy.py` shrunk from 614 LOC to a thin shim around `arctrust.policy`.
+- **`ArcAgent.__init__` now requires DID at every tier** — ADR-019 four-pillar universality. Personal/enterprise/federal differ only in stringency.
+- **Spawn primitives moved from arcrun to arcagent** — `arcrun.builtins.spawn` removed; lives at `arcagent.orchestration.spawn`. arcrun stays a pure loop.
+- **arccli legacy Click removed** — All commands use argparse plain handlers; `main_legacy.py` and the `arc-legacy` console script are gone.
+- **All package READMEs rewritten** — ASCII-banner marketing prose replaced with focused layer-position + public-surface references.
+
+### Removed
+
+- **Hundreds of `* 2.py` / `* 2.yaml` macOS Finder duplicate files** — Cleaned up across arcagent (`delegate/`, `memory_acl/`, `user_profile/`, `voice/`, `web/`, `skill_improver/nudge/`, `tool_policy_layers 2.py`, `browser/`), arcskill, arctui, arcgateway, and others. No functional change.
+- **arcagent legacy identity / trust_store modules** — Migrated to arctrust.
+- **arcrun spawn builtin** — Migrated to `arcagent.orchestration`.
+- **arccli legacy Click implementation** — `main_legacy.py`, `arc-legacy` entry point.
+- **Stale duplicate docs** — `docs/voice-air-gap-setup 2.md`, `docs/arcgateway/* 2.md` cleanup.
+
+### Security
+
+- **ADR-019 Four Pillars Universal** — Identity, Sign, Authorize, Audit enforced at every tier (personal / enterprise / federal). Tier is stringency metadata, not a gate. `UnsafeNoOp` skill verification bypass eliminated. Pairing signature required at every tier.
+- **Audit single-point-of-emission** — All packages route through `arctrust.audit.emit`; schema cannot drift.
+- **arcui bearer-token enforcement on every API route** — Federal-first zero-trust posture; `/api/*` requires a valid token (401 on missing/invalid). Agent tokens scoped — rejected on non-agent REST paths (403, ASI03). `/api/health` exempt for liveness probes.
+- **arcskill: no tier bypass** — Verification cannot be skipped at any tier. Test enforced (`test_no_tier_bypass.py`).
+
+---
+
 ## [2026-04-18] — SPEC-017 Arc Core Hardening
 
 Federal-first hardening pass across the Arc monolith. Production-grade tool policy pipeline, dynamic tool surface with layered defense, unified proactive scheduling engine, Prometheus metrics, and tier-aware self-modification. Ships as:

@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcskill"
-version = "0.0.1"
-description = "Arc skill system — coming soon"
+version = "0.1.0"
+description = "Skill management hub for Arc — signed install, scan, lock, CRL lifecycle"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 classifiers = [

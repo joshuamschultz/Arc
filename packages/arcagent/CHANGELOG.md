@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-26
+
+Major refactor: identity primitives moved to arctrust, dedicated orchestration layer for spawn/sub-runs, four-pillar audit migration to arctrust sinks, and removal of legacy duplicate-named files cluttering the tree.
+
+### Added
+
+- **`arcagent.orchestration` package** — New layer between arcrun (pure loop) and the LLM-facing `delegate` tool. Owns `spawn`, `spawn_many`, `make_spawn_tool`, `RootTokenBudget`, `SpawnResult`, `SpawnSpec`, `TokenUsage`, and `SPAWN_GUIDANCE`. Spawn primitives no longer live in arcrun (`arcrun/builtins/spawn.py` removed). Concern split: arcrun runs one loop, `arcagent.orchestration` spawns sub-loops, `modules/delegate` wraps with policy + identity.
+- **Voice / web modules consolidated** — Single `voice_module.py` and `web/url_policy.py` (cleanup of duplicated `*_module 2.py` siblings).
+- **Vault audit-gap tests** — `tests/unit/modules/vault/test_resolver_audit_gap.py` and `test_vault_unreachable_audit_event.py` cover the four-pillar audit guarantees.
+- **Identity-required tests** — `tests/unit/core/test_identity_required.py` enforces that `ArcAgent.__init__` requires a DID at every tier (ADR-019).
+- **Personal-tier global-layer test** — `test_personal_tier_global_layer.py` verifies the policy pipeline still evaluates the global layer at personal tier.
+- **Tier metadata test** — `test_tier.py` validates tier-stringency-not-gate semantics (ADR-019).
+- **Tool registry DID enforcement test** — `test_tool_registry_did.py` confirms every dispatch carries `caller_did`.
+- **UI reporter wiring test** — `test_ui_reporter_wiring.py` regression-tests the dashboard event hook.
+- **Voice all-tiers audit test** — `test_voice_audit_all_tiers.py` verifies voice module audits at personal/enterprise/federal.
+- **Web deny-by-default test** — `test_web_deny_by_default.py` confirms web module fails closed without explicit allowlist.
+
+### Changed
+
+- **Identity primitives moved to arctrust** — `core/identity.py` removed; `AgentIdentity`, `ChildIdentity`, `derive_child_identity`, `generate_did`, `parse_did`, `validate_did` now live in `arctrust.identity`. arcagent imports from arctrust. Eliminates the latent circular dependency documented in SPEC-018 §HIGH-1.
+- **Trust store moved to arctrust** — `core/trust_store.py` and `utils/trust_store.py` removed; `load_operator_pubkey`, `load_issuer_pubkey`, `TrustStoreError`, `invalidate_cache` now in `arctrust.trust_store`.
+- **Audit emission migrated to arctrust** — All security-relevant audit events now route through `arctrust.audit.emit(AuditEvent, sink)`. `JsonlSink` for compliance, `SignedChainSink` for tamper-evident chain, `arcui.bridge.UIBridgeSink` for live observability. Single emission point, sinks fan out per ADR-019.
+- **Tool policy pipeline migrated to arctrust** — `core/tool_policy.py` shrunk from 614 LOC to a thin shim around `arctrust.policy.PolicyPipeline`. `Decision`, `PolicyLayer`, `ToolCall`, `PolicyContext`, `TierConfig`, `build_pipeline` all sourced from arctrust.
+- **`ArcAgent.__init__` requires DID** — Identity is now mandatory at every tier, not just federal. Implements ADR-019 four-pillar universality.
+- **`ToolRegistry` carries `caller_did`** — Every dispatch records the calling DID for the policy pipeline and audit trail.
+- **Module-bus / extension API hardening** — Tighter typing across `module_bus.py`, `extensions.py`, `skill_registry.py`, `tool_registry.py`.
+- **Browser, delegate, scheduler, planning, vault, voice, web modules** — Cleanup pass; legacy duplicate-named files removed; tighter audit emission paths.
+- **README rewritten** — 385-line marketing prose replaced with focused layer-position + public-surface reference (under 100 lines).
+
+### Removed
+
+- **`core/identity.py`** — Migrated to arctrust. Re-export shim removed; callers must import from `arctrust`.
+- **`core/trust_store.py`, `utils/trust_store.py`** — Migrated to arctrust.
+- **Duplicate `* 2.py`, `* 2.yaml` files** — Cleanup of accidentally-checked-in macOS Finder duplicates across `delegate/`, `memory_acl/`, `user_profile/`, `voice/`, `web/`, `skill_improver/nudge/`, `tool_policy_layers 2.py`, `browser/`. No functional change.
+- **`docs/voice-air-gap-setup 2.md`** — Stray duplicate doc.
+
+### Security
+
+- **ADR-019 Four Pillars Universal** — Identity, Sign, Authorize, Audit now enforced at every tier. Personal/enterprise/federal differ only in stringency (FIPS crypto, signed allowlists, layer count) — never in whether the pillar applies.
+- **Audit single-point-of-emission** — All security events flow through `arctrust.audit.emit`; no module emits directly. Removes risk of schema drift across callers.
+
 ## [0.3.0] - 2026-04-18
 
 Federal-first hardening: tool policy pipeline, dynamic tool surface with layered defense, unified proactive engine, Prometheus metrics, tier-aware self-modification. Implements SPEC-017.

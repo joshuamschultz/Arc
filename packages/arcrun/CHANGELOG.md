@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-26
+
+Major refactor: streaming runtime API, audit emission migrated to arctrust, spawn primitive moved up to arcagent (separation of concerns), and stricter manifest enforcement at all tiers.
+
+### Added
+
+- **Streaming runtime API** (`streams.py`) — `run_stream()` wraps `run()` and yields typed `StreamEvent` subclasses (`TokenEvent`, `ToolStartEvent`, `ToolEndEvent`, `TurnEndEvent`) for real-time output. Pure arcrun — no LLM-level streaming required; token text is derived from the final response and emitted progressively. `TurnEndEvent` always closes the stream.
+- **Audit-event tests** — `tests/unit/backends/test_audit_events.py` and `tests/unit/test_streams_audit_events.py` lock down the events emitted by the new audit path.
+- **Manifest-always-required test** — `tests/unit/backends/test_manifest_always_required.py` verifies signed-manifest enforcement across personal/enterprise/federal tiers (ADR-019).
+
+### Changed
+
+- **Audit emission migrated to arctrust** — All loop, tool, and backend audit events now emit through `arctrust.audit.emit(AuditEvent, sink)`. Single canonical schema; sinks fan out to JSONL, signed chain, and UI bridge. arcrun no longer constructs raw audit dicts.
+- **Pairing/manifest signature required at every tier** — `UnsafeNoOp` skill verification bypass eliminated. Personal tier still verifies; only the keyset and stringency differ from federal.
+- **Public API surface** — `streams` module added to the package export surface; legacy spawn entry points removed.
+- **README rewritten** — Marketing prose replaced with a focused layer-position + public-surface reference.
+
+### Removed
+
+- **`arcrun.builtins.spawn`** — Spawn primitives moved to `arcagent.orchestration.spawn`. arcrun stays a pure loop; arcagent owns sub-run orchestration. Implements the concern split documented in `arcagent/orchestration/__init__.py` and the project CLAUDE.md.
+
+### Security
+
+- **Audit single-point-of-emission** — Aligned with ADR-019; arcrun no longer can drift from the canonical schema.
+- **No-bypass verification** — Manifest signature is checked at every tier; `UnsafeNoOp` removed from the verification path.
+
 ## [0.4.0] - 2026-04-18
 
 SPEC-017 loop hardening: parallel tool dispatch, structured task completion, budget caps.

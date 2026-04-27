@@ -1,6 +1,6 @@
 """arcrun — async execution engine for autonomous agents."""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 from arcrun.builtins import (
     SandboxError,

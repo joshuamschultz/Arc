@@ -1,6 +1,6 @@
 """ArcLLM — Unified LLM abstraction layer for autonomous agents."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 import importlib
 from pathlib import Path

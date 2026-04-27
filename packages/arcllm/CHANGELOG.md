@@ -7,17 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-26
+
+User-config layering, audit hardening, and audit-emission migration to arctrust.
+
+### Added
+
+- **Layered config precedence** — Packaged defaults at `<arcllm>/config.toml` are now overlaid by user overrides at `${ARC_CONFIG_DIR:-~/.arc}/arcllm.toml` (legacy `config.toml` honored as fallback). Dicts deep-merge; lists and scalars replace. Missing user file is a no-op — current behavior preserved.
+- **Coverage-gap test suites** — `tests/test_coverage_gaps.py` and `tests/test_coverage_gaps2.py` lock down previously-untested error paths.
+- **Conftest** — `tests/conftest.py` centralizes shared fixtures.
+
 ### Changed
 
 - **OpenAI adapter — o-series role mapping** — Auto-converts `role="system"` to `role="developer"` for o-series reasoning models (o1, o3, o4-mini) that reject the system role. Keyed on `supports_thinking=true` in model metadata.
+- **OpenAI adapter error handling** — Simplified error handling and test fixtures per code review.
+- **README rewritten** — Marketing prose replaced with a focused layer-position + public-surface reference.
+- **Audit emission migrated to arctrust** — `TraceStore` and audit module integrations now route through `arctrust.audit.emit` for canonical schema and pluggable sinks (JSONL, signed chain, UI bridge).
 
 ### Fixed
 
 - **Timeout configuration** — Fixed timeout handling in pyproject.toml dependency specification.
-
-### Refactored
-
-- **OpenAI adapter error handling** — Simplified error handling and test fixtures per code review.
 
 ### Security
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arctui"
-version = "0.0.1"
+version = "0.0.2"
 description = "Arc terminal UI — coming soon"
 requires-python = ">=3.11"
 license = "Apache-2.0"

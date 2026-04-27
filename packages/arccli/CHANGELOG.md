@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-26
+
+Major refactor: legacy Click groups removed, command tree reorganized into a single `commands/` package, and full smoke-test coverage of every subcommand.
+
+### Added
+
+- **`commands/` package** — Every top-level group lives in its own module: `agent.py`, `ext.py`, `init.py`, `llm.py`, `run.py`, `spec017.py`, `team.py`, `ui.py`. Replaces the prior flat-file layout (`agent.py`, `ext.py`, `llm.py`, `run.py`, `team.py`, `ui.py`, `init_wizard.py`) at the package root.
+- **Smoke tests for every subcommand** — `test_cli_agent_smoke.py`, `test_cli_ext_smoke.py`, `test_cli_init_smoke.py`, `test_cli_llm_smoke.py`, `test_cli_run_smoke.py`, `test_cli_skill_smoke.py`, `test_cli_team_smoke.py`, `test_cli_ui_smoke.py`, plus a deeper `test_agent_run_serve_chat.py` for the agent run/serve/chat flow. Catches argparse regressions and command-tree drift.
+- **`docs/cli.md`** — Top-level CLI reference shipping with the repo (replaces stale per-package CLI docs).
+
+### Changed
+
+- **All commands now use argparse plain handlers** — No more Click. Every entry point migrated to argparse subparsers with explicit type hints. Backward-compatible `cli` Click re-export removed.
+- **README rewritten** — Replaced ASCII-banner marketing prose with a focused layer-position + command-tree reference.
+
+### Removed
+
+- **Legacy Click implementation** — `main_legacy.py`, the Click-based `cli` group, and the `arc-legacy` console script entry point. The migration window opened during SPEC-017 T1.1.5 closed; legacy callers must update to argparse-shaped handlers.
+- **Top-level `agent.py`, `ext.py`, `init_wizard.py`, `llm.py`, `run.py`, `team.py`, `ui.py`** — Migrated under `commands/`. Imports must update accordingly.
+
+## [0.3.2] - prior release line
+
+(Patch releases on the 0.3.x line; superseded by 0.4.0 reorganization.)
+
 ## [0.3.0] - 2026-04-18
 
 SPEC-017 CLI mirror + REPL state mutations.
