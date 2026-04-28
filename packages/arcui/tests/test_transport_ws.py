@@ -238,3 +238,44 @@ class TestWebSocketTransportClose:
         await transport.close()
         assert transport._closed is True
         assert transport._ws is None
+
+
+class TestTokenProviderRefresh:
+    """token_provider re-reads the token before each (re)connect attempt.
+
+    Without this, an arcui restart (which rotates auth tokens) permanently
+    breaks every connected agent until the agent itself is restarted.
+    """
+
+    def test_no_provider_uses_static_token(self):
+        t = WebSocketTransport(url="ws://x", token="static")
+        assert t._current_token() == "static"
+
+    def test_provider_returning_new_token_replaces_cached(self):
+        tokens = iter(["initial", "rotated"])
+        t = WebSocketTransport(
+            url="ws://x", token="initial",
+            token_provider=lambda: next(tokens),
+        )
+        # First call exhausts "initial" — same as cached, no swap
+        assert t._current_token() == "initial"
+        # Second call returns "rotated" — should swap and return new
+        assert t._current_token() == "rotated"
+        assert t.token == "rotated"
+
+    def test_provider_returning_empty_falls_back_to_cached(self):
+        t = WebSocketTransport(
+            url="ws://x", token="cached",
+            token_provider=lambda: "",
+        )
+        assert t._current_token() == "cached"
+
+    def test_provider_raising_exception_falls_back_silently(self):
+        def boom() -> str:
+            raise OSError("file gone")
+        t = WebSocketTransport(
+            url="ws://x", token="cached",
+            token_provider=boom,
+        )
+        # Should not raise; falls back to cached.
+        assert t._current_token() == "cached"
