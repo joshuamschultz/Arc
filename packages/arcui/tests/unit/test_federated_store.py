@@ -30,8 +30,11 @@ def _record(agent: str, *, ts: datetime | None = None, provider: str = "anthropi
     )
 
 
-async def _seed_store(workspace: Path, records: list[TraceRecord]) -> JSONLTraceStore:
-    store = JSONLTraceStore(workspace)
+async def _seed_store(agent_root: Path, records: list[TraceRecord]) -> JSONLTraceStore:
+    # Real layout: each agent has agent_root/workspace + agent_root/traces.
+    ws = agent_root / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    store = JSONLTraceStore(ws)
     for rec in records:
         await store.append(rec)
     return store
@@ -53,10 +56,8 @@ class TestFederatedSingleStore:
     """A federation of one store passes through results identically."""
 
     async def test_single_store_passthrough(self, tmp_path: Path) -> None:
-        ws = tmp_path / "ws_a"
-        ws.mkdir()
         rec = _record("a")
-        s = await _seed_store(ws, [rec])
+        s = await _seed_store(tmp_path / "agent_a", [rec])
 
         federated = FederatedTraceStore([s])
         recs, _ = await federated.query(limit=10)

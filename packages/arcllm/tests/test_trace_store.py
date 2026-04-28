@@ -139,7 +139,11 @@ class TestTraceRecord:
 class TestJSONLTraceStore:
     @pytest.fixture
     def workspace(self, tmp_path: Path) -> Path:
-        return tmp_path / "test_workspace"
+        # Mimic real layout: tmp_path/<agent>/workspace, traces land at
+        # tmp_path/<agent>/traces (workspace.parent / "traces").
+        ws = tmp_path / "myagent" / "workspace"
+        ws.mkdir(parents=True)
+        return ws
 
     @pytest.fixture
     def store(self, workspace: Path) -> JSONLTraceStore:
@@ -163,7 +167,7 @@ class TestJSONLTraceStore:
         await store.append(rec)
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = workspace / "traces" / f"traces-{today}.jsonl"
+        file_path = workspace.parent / "traces" / f"traces-{today}.jsonl"
         assert file_path.exists()
 
         lines = file_path.read_text().strip().split("\n")
@@ -184,7 +188,7 @@ class TestJSONLTraceStore:
         await store.append(r3)
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = workspace / "traces" / f"traces-{today}.jsonl"
+        file_path = workspace.parent / "traces" / f"traces-{today}.jsonl"
         lines = file_path.read_text().strip().split("\n")
         assert len(lines) == 3
 
@@ -210,7 +214,7 @@ class TestJSONLTraceStore:
 
         # Tamper with second record
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = workspace / "traces" / f"traces-{today}.jsonl"
+        file_path = workspace.parent / "traces" / f"traces-{today}.jsonl"
         lines = file_path.read_text().strip().split("\n")
         data = json.loads(lines[1])
         data["cost_usd"] = 999.99  # Tamper!
@@ -332,71 +336,13 @@ class TestJSONLTraceStore:
 
 
 # ---------------------------------------------------------------------------
-# Misregistered-workspace defensive warning (FIX-3)
+# Trace location (NIST AU-9 — sibling to workspace, not inside it)
 # ---------------------------------------------------------------------------
 
 
-class TestMisregisteredWorkspaceWarning:
-    """JSONLTraceStore should warn when the workspace path looks misregistered.
-
-    Symptom: a caller registers `team/<agent>/` as the workspace, but the agent's
-    real workspace (and traces dir) is at `team/<agent>/workspace/`. JSONLTraceStore
-    points at the wrong dir and silently shows no traces. Defensive warning surfaces
-    the bug at construction time.
-    """
-
-    def test_warns_when_traces_empty_but_nested_workspace_has_traces(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        # Simulate the misregistration: caller passes the agent root, but real
-        # traces live one level deeper at <root>/workspace/traces/
-        nested_traces = tmp_path / "workspace" / "traces"
-        nested_traces.mkdir(parents=True)
-        (nested_traces / "traces-2026-04-28.jsonl").write_text('{"trace_id": "x"}\n')
-
-        with caplog.at_level("WARNING"):
-            JSONLTraceStore(tmp_path)
-
-        assert any(
-            "misregistered" in rec.message.lower()
-            or "workspace subdirectory" in rec.message.lower()
-            for rec in caplog.records
-        ), f"expected misregistration warning; got: {[r.message for r in caplog.records]}"
-
-    def test_no_warning_when_workspace_correct(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        # Correct registration: traces dir is at <workspace>/traces/, not deeper.
-        # No nested workspace/ exists. Should NOT warn.
-        with caplog.at_level("WARNING"):
-            JSONLTraceStore(tmp_path)
-
-        misregistration_warnings = [
-            r for r in caplog.records
-            if "misregistered" in r.message.lower()
-            or "workspace subdirectory" in r.message.lower()
-        ]
-        assert misregistration_warnings == [], (
-            f"unexpected misregistration warning on correct workspace: "
-            f"{[r.message for r in misregistration_warnings]}"
-        )
-
-    def test_no_warning_when_nested_workspace_exists_but_has_no_traces(
-        self, tmp_path: Path, caplog
-    ) -> None:
-        # Edge case: there's a nested workspace/ dir (maybe a project subdir),
-        # but no traces in it. Don't false-positive warn.
-        nested = tmp_path / "workspace"
-        nested.mkdir()
-
-        with caplog.at_level("WARNING"):
-            JSONLTraceStore(tmp_path)
-
-        misregistration_warnings = [
-            r for r in caplog.records
-            if "misregistered" in r.message.lower()
-        ]
-        assert misregistration_warnings == [], (
-            f"false positive on nested workspace without traces: "
-            f"{[r.message for r in misregistration_warnings]}"
-        )
+class TestTraceLocation:
+    def test_traces_at_workspace_parent(self, tmp_path: Path) -> None:
+        ws = tmp_path / "myagent" / "workspace"
+        ws.mkdir(parents=True)
+        store = JSONLTraceStore(ws)
+        assert store._traces_dir == tmp_path / "myagent" / "traces"

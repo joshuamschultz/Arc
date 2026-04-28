@@ -244,7 +244,10 @@ class JSONLTraceStore:
     """Append-only JSONL store with SHA-256 hash chain and daily rotation.
 
     File layout:
-        {workspace}/traces/traces-{YYYY-MM-DD}.jsonl
+        {agent_root}/traces/traces-{YYYY-MM-DD}.jsonl
+        (where agent_root = workspace.parent if workspace name is "workspace",
+         else workspace itself — traces live OUTSIDE the agent's workspace
+         sandbox per NIST AU-9)
 
     Hash chain:
         Each record's record_hash = SHA-256(JCS(record_without_hash) + prev_hash).
@@ -257,10 +260,9 @@ class JSONLTraceStore:
     """
 
     def __init__(self, workspace: Path) -> None:
-        self._workspace = workspace
-        self._traces_dir = workspace / "traces"
+        # NIST AU-9: traces sit at <agent>/traces, sibling to workspace.
+        self._traces_dir = workspace.parent / "traces"
         self._traces_dir.mkdir(parents=True, exist_ok=True)
-        # NIST AU-9: Protect audit information — owner-only access on traces dir
         self._traces_dir.chmod(0o700)
         self._lock = asyncio.Lock()
         self._last_hash: str = "0" * 64
@@ -268,30 +270,6 @@ class JSONLTraceStore:
         self._current_file: Path | None = None
         self._line_count: int = 0
         self._warm_started = False
-
-        # Defense in depth: detect a likely misregistration where the caller passed
-        # the agent root instead of the workspace subdirectory. Symptom: our traces
-        # dir is empty but a nested workspace/traces/ has files. Surface the bug
-        # at construction time instead of silently rendering an empty trace view.
-        self._warn_if_misregistered()
-
-    def _warn_if_misregistered(self) -> None:
-        own_has_traces = any(self._traces_dir.glob("traces-*.jsonl"))
-        if own_has_traces:
-            return
-        nested_traces = self._workspace / "workspace" / "traces"
-        if not nested_traces.is_dir():
-            return
-        if any(nested_traces.glob("traces-*.jsonl")):
-            logger.warning(
-                "JSONLTraceStore appears misregistered: workspace=%s has no traces, "
-                "but a nested workspace subdirectory at %s has trace files. "
-                "Likely cause: agent registered with --workspace pointing at the "
-                "agent root rather than the workspace subdirectory. "
-                "Run `arc team backfill-workspaces --apply` and restart the UI.",
-                self._workspace,
-                nested_traces,
-            )
 
     def _file_for_date(self, date_str: str) -> Path:
         """Return the JSONL file path for a given date."""

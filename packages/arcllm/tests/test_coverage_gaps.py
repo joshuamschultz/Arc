@@ -743,7 +743,9 @@ class TestVaultEdges:
 class TestTraceStoreEdgePaths:
     @pytest.fixture
     def workspace(self, tmp_path: Path) -> Path:
-        return tmp_path / "workspace"
+        ws = tmp_path / "myagent" / "workspace"
+        ws.mkdir(parents=True)
+        return ws
 
     @staticmethod
     def _make_record(**kwargs: Any) -> TraceRecord:
@@ -787,7 +789,7 @@ class TestTraceStoreEdgePaths:
 
 
         store = JSONLTraceStore(workspace)
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
 
@@ -820,7 +822,7 @@ class TestTraceStoreEdgePaths:
         await store.append(r2)
 
         # Tamper with the second record's prev_hash
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
@@ -846,7 +848,7 @@ class TestTraceStoreEdgePaths:
         r = self._make_record(trace_id="t-hash")
         await store.append(r)
 
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
@@ -872,7 +874,7 @@ class TestTraceStoreEdgePaths:
         r = self._make_record(trace_id="old-record")
         hashed = r.with_hash("0" * 64)
         store._current_date = fake_yesterday
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
         old_file = traces_dir / f"traces-{fake_yesterday}.jsonl"
@@ -968,7 +970,7 @@ class TestTraceStoreEdgePaths:
         await store.append(r2)
 
         # Tamper with second record's record_hash
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
@@ -986,7 +988,7 @@ class TestTraceStoreEdgePaths:
     ) -> None:
         """Line 386: JSONDecodeError during verify_chain returns False."""
         store = JSONLTraceStore(workspace)
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
 

@@ -45,9 +45,14 @@ class WebSocketTransport:
         reconnect_cap: float = 60.0,
         buffer_size: int = 1000,
         registration: dict[str, Any] | None = None,
+        token_provider: Any | None = None,
     ) -> None:
         self.url = url
         self.token = token
+        # Optional callable that returns the current token. Called before each
+        # (re)connect attempt so a token rotated by an arcui restart is picked
+        # up without restarting the agent. Falls back to the static token.
+        self._token_provider = token_provider
         self.reconnect_base = reconnect_base
         self.reconnect_cap = reconnect_cap
         self._max_buffer = buffer_size
@@ -59,6 +64,19 @@ class WebSocketTransport:
         self._last_sleep = reconnect_base
         self._connect_task: asyncio.Task[None] | None = None
         self._registration = registration or {}
+
+    def _current_token(self) -> str:
+        """Resolve the token to send for the next auth handshake."""
+        if self._token_provider is not None:
+            try:
+                fresh = self._token_provider()
+                if fresh:
+                    if fresh != self.token:
+                        logger.info("Token refreshed from provider before reconnect")
+                        self.token = fresh
+            except Exception:
+                logger.debug("token_provider raised; using cached token", exc_info=True)
+        return self.token
 
     @property
     def buffer_size(self) -> int:
@@ -114,9 +132,11 @@ class WebSocketTransport:
                     self._ws = ws
                     self.reset_backoff()
 
-                    # First-message auth + registration
+                    # First-message auth + registration. Refresh the token
+                    # from the provider (e.g., re-read ~/.arcagent/ui-token)
+                    # so a rotation since last connect is picked up.
                     auth_msg = {
-                        "token": self.token,
+                        "token": self._current_token(),
                         "registration": self._registration,
                     }
                     await ws.send(json.dumps(auth_msg))

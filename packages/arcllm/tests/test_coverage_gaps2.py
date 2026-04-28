@@ -421,7 +421,9 @@ class TestRegistryRemainingPaths:
 class TestTraceStoreRemainingBranches:
     @pytest.fixture
     def workspace(self, tmp_path: Path) -> Path:
-        return tmp_path / "ws"
+        ws = tmp_path / "myagent" / "workspace"
+        ws.mkdir(parents=True)
+        return ws
 
     @staticmethod
     def _make_record(**kwargs: Any) -> TraceRecord:
@@ -447,7 +449,7 @@ class TestTraceStoreRemainingBranches:
         The future-dated file should be skipped (file_date > cursor_date).
         """
         store = JSONLTraceStore(workspace)
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
 
@@ -481,7 +483,7 @@ class TestTraceStoreRemainingBranches:
         await store.append(r2)
 
         # Inject an empty line IN THE MIDDLE of the file (between records)
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().rstrip("\n").split("\n")
@@ -506,7 +508,7 @@ class TestTraceStoreRemainingBranches:
         await store.append(r)
 
         # Prepend a broken JSON line to the file
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         original = f.read_text()
@@ -541,7 +543,7 @@ class TestTraceStoreRemainingBranches:
         await store.append(r)
 
         # Prepend a broken JSON line
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         original = f.read_text()
@@ -561,7 +563,7 @@ class TestTraceStoreRemainingBranches:
         await store.append(r2)
 
         # Insert an empty line in the middle
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().rstrip("\n").split("\n")
@@ -581,7 +583,7 @@ class TestTraceStoreRemainingBranches:
         await store.append(r2)
 
         # Insert an empty line in the middle of the file
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().rstrip("\n").split("\n")
@@ -603,7 +605,7 @@ class TestTraceStoreRemainingBranches:
         await store.append(r1)
         await store.append(r2)
 
-        traces_dir = workspace / "traces"
+        traces_dir = workspace.parent / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")

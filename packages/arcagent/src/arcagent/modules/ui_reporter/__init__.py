@@ -252,12 +252,30 @@ class UIReporterModule:
                     "modules": list(ctx.config.modules.keys()),
                 }
 
+                # Token provider re-reads the file on every reconnect so an
+                # arcui restart (which rotates the agent_token) doesn't
+                # permanently break this agent's UI connection. Falls back
+                # to the static token captured at startup.
+                config_token = self._config.token
+
+                def _refresh_token() -> str:
+                    if config_token:
+                        return config_token
+                    env_token = os.environ.get("ARCUI_AGENT_TOKEN", "")
+                    if env_token:
+                        return env_token
+                    try:
+                        return _TOKEN_FILE.read_text().strip()
+                    except OSError:
+                        return token
+
                 self._transport = WebSocketTransport(
                     url=self._config.url,
                     token=token,
                     reconnect_cap=self._config.reconnect_max_interval,
                     buffer_size=self._config.buffer_size,
                     registration=registration,
+                    token_provider=_refresh_token,
                 )
                 # Start the background connect loop
                 self._transport.start()
