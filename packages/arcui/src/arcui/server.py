@@ -29,6 +29,7 @@ from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
 from arcui.routes import stats as stats_routes
+from arcui.routes import schedules as schedules_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import ws as ws_routes
 from arcui.subscription import SubscriptionManager
@@ -104,6 +105,7 @@ def create_app(
         Route("/api/health", _health),
         Route("/api/info", _agent_info),
         *traces_routes.routes,
+        *schedules_routes.routes,
         *config_routes.routes,
         *arcllm_config_routes.routes,
         *stats_routes.routes,
@@ -181,6 +183,10 @@ def create_app(
     app.state.circuit_breakers = []
     app.state.telemetry_modules = []
     app.state.queue_modules = []
+    # Bounded ring buffer of recent scheduler-layer UIEvents for warm-start
+    # of the Schedule History card. Append-on-receive in agent_ws._receive.
+    from collections import deque as _deque
+    app.state.schedule_history = _deque(maxlen=50)
     app.state.on_event_callbacks = []
     app.state.agent_info = agent_info or {}
 

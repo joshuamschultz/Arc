@@ -124,6 +124,17 @@ async def agent_ws_endpoint(ws: WebSocket) -> None:
 
                     event_buffer.push(event)
 
+                    # Mirror scheduler-layer events into a server-side history
+                    # buffer so /api/schedule-history can warm-start the card
+                    # on page load (event_buffer flushes + clears every 100ms,
+                    # so it doesn't retain past events).
+                    if event.layer == "scheduler":
+                        sched_history = getattr(
+                            ws.app.state, "schedule_history", None
+                        )
+                        if sched_history is not None:
+                            sched_history.append(event.model_dump())
+
                     if entry.aggregator is not None:
                         entry.aggregator.ingest(payload)
                     if aggregator is not None:

@@ -837,8 +837,21 @@
       }
     }
     ArcStore.addEventListener('schedule-event', renderScheduleHistory);
-    // Render once at load (no events yet, shows the empty-state).
-    renderScheduleHistory();
+
+    /* Warm-start + periodic re-poll. Server keeps a 50-deep ring buffer of
+       schedule:* events; without this the card only shows fires that happen
+       while the tab is open. */
+    async function refreshScheduleHistory() {
+      try {
+        const data = await fetchAPI('/api/schedule-history?limit=5');
+        if (!data) return;
+        const events = data.events || [];
+        // Replace store contents (newest-first from server).
+        ArcStore._scheduleEvents = events.slice();
+        renderScheduleHistory();
+      } catch { /* network blip — leave existing render */ }
+    }
+    refreshScheduleHistory();
 
     /* --- Trace Detail --- */
     let _currentTraceData = null;
@@ -1493,6 +1506,8 @@
     setInterval(refreshCostEfficiency, 15000);
     setInterval(refreshBudgets, 15000);
     setInterval(refreshPerformance, 10000);
+    setInterval(refreshQueueStats, 10000);  // queue stats were only fetched once at boot
+    setInterval(refreshScheduleHistory, 15000);  // warm-start + periodic re-poll for cron fires
     setInterval(refreshQueueStats, 5000);
 
     /* --- Settings Page: Full ArcLLM Config --- */
