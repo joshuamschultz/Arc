@@ -6,17 +6,77 @@ Uses simple sorted-sample percentiles (no ddsketch dependency).
 
 from __future__ import annotations
 
+import heapq
+import itertools
 import math
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+
+
+async def merge_by_timestamp(
+    stores: list[Any],
+) -> AsyncIterator[dict[str, Any]]:
+    """Async heap-merge of `iter_records()` from each store, ordered by timestamp.
+
+    Public: also imported by `arcui.federated_store` for `iter_records()`
+    fan-out. Pillar 2 — federated_store and aggregator share the same merge
+    semantics; centralizing it here avoids drift between writer and reader.
+
+    Returns an async iterator that yields records in non-decreasing
+    `timestamp` order. Ties are broken by store index, then by per-store
+    arrival order — a stable, deterministic interleaving (Pillar 1).
+
+    Memory: one buffered record per active store. With K stores and N total
+    records, the heap holds at most K entries, so peak overhead is O(K).
+    """
+    iterators = [s.iter_records().__aiter__() for s in stores]
+    counter = itertools.count()
+    heap: list[tuple[str, int, int, dict[str, Any]]] = []
+
+    async def _push_next(idx: int) -> None:
+        try:
+            record = await iterators[idx].__anext__()
+        except StopAsyncIteration:
+            return
+        heapq.heappush(
+            heap,
+            (record.get("timestamp", ""), idx, next(counter), record),
+        )
+
+    for i in range(len(iterators)):
+        await _push_next(i)
+
+    while heap:
+        _ts, idx, _seq, record = heapq.heappop(heap)
+        yield record
+        await _push_next(idx)
+
 
 # Memory cap: max latency samples stored per time bucket.
 # 1000 float64s ≈ 8KB per bucket — keeps memory bounded while providing
 # accurate percentile estimates for typical request volumes.
 _MAX_LATENCY_SAMPLES_PER_BUCKET = 1000
+
+
+def _percentile(samples: list[float], p: float) -> float:
+    """Nearest-rank percentile from a sorted-ascending sample list.
+
+    Module-level (Wave 2 simplification): two callers — `RollingAggregator.stats`
+    and `RollingAggregator.performance` — used to define their own
+    closure variants, the latter using a default-arg trick to capture
+    loop-state. Sharing one helper keeps the math in one place and lets
+    a future percentile fix (e.g. ddsketch) replace one function instead
+    of two near-identical closures.
+    """
+    n = len(samples)
+    if n == 0:
+        return 0.0
+    idx = min(math.ceil(p / 100 * n) - 1, n - 1)
+    return samples[max(0, idx)]
 
 # Max records to replay from TraceStore during warm_start().
 # Limits startup time while recovering recent history.
@@ -273,12 +333,6 @@ class BucketedWindow:
         all_latencies.sort()
         n = len(all_latencies)
 
-        def _percentile(p: float) -> float:
-            if n == 0:
-                return 0.0
-            idx = min(math.ceil(p / 100 * n) - 1, n - 1)
-            return all_latencies[max(0, idx)]
-
         return {
             "request_count": total_requests,
             "total_tokens": total_tokens,
@@ -290,9 +344,9 @@ class BucketedWindow:
             "latency_avg": (
                 round(sum(all_latencies) / n, 1) if n > 0 else 0.0
             ),
-            "latency_p50": round(_percentile(50), 1),
-            "latency_p95": round(_percentile(95), 1),
-            "latency_p99": round(_percentile(99), 1),
+            "latency_p50": round(_percentile(all_latencies, 50), 1),
+            "latency_p95": round(_percentile(all_latencies, 95), 1),
+            "latency_p99": round(_percentile(all_latencies, 99), 1),
             "model_stats": {
                 k: {kk: vv for kk, vv in v.items() if kk != "latency_samples"}
                 for k, v in model_stats.items()
@@ -444,12 +498,6 @@ class RollingAggregator:
                 err = data["error_count"]
                 success_rate = round((req - err) / req * 100, 1) if req > 0 else 0.0
 
-                def _pct(p: float, *, _n: int = n, _samples: list[float] = samples) -> float:
-                    if _n == 0:
-                        return 0.0
-                    idx = min(math.ceil(p / 100 * _n) - 1, _n - 1)
-                    return round(_samples[max(0, idx)], 1)
-
                 rows.append({
                     "name": name,
                     "request_count": req,
@@ -459,8 +507,8 @@ class RollingAggregator:
                     "total_cost": round(data["total_cost"], 6),
                     "total_tokens": int(data["total_tokens"]),
                     "latency_avg": round(sum(samples) / n, 1) if n > 0 else 0.0,
-                    "latency_p50": _pct(50),
-                    "latency_p95": _pct(95),
+                    "latency_p50": round(_percentile(samples, 50), 1),
+                    "latency_p95": round(_percentile(samples, 95), 1),
                 })
             rows.sort(key=lambda r: r["request_count"], reverse=True)
             return rows
@@ -470,6 +518,51 @@ class RollingAggregator:
             "models": _build_rows(model_agg),
             "agents": _build_rows(agent_agg),
         }
+
+    async def warm_start_multi(self, stores: list[Any]) -> None:
+        """Replay all records from N TraceStores in chronological order.
+
+        SPEC-019 T2.3, FR-5. Heap-merges by `timestamp` across stores so the
+        earliest record from any store is ingested first. Uses each store's
+        `iter_records()` so memory stays bounded (one buffered record per
+        store, not full files).
+
+        Wave 2 perf fix: skips records older than the largest window
+        (7 days) BEFORE acquiring the aggregator lock. Records past that
+        horizon contribute to nothing and were previously being walked
+        through every window's per-bucket math (3 lock takes per record)
+        only to be filtered out individually. At 100 agents × 10K records
+        with most records older than 7d, this prefilter eliminates ~99%
+        of the lock contention during cold start.
+
+        For an empty list, returns without touching the aggregator.
+        """
+        if not stores:
+            return
+
+        now_mono = time.monotonic()
+        now_wall = time.time()
+
+        # Pre-advance every window so historical bucket math is correct
+        # before any ingest call.
+        with self._lock:
+            for window in self._windows.values():
+                window._advance_to(now_mono)
+
+        max_window_seconds = max(
+            w._bucket_count * w._bucket_duration
+            for w in self._windows.values()
+        )
+
+        async for record in merge_by_timestamp(stores):
+            ts_str = record.get("timestamp", "")
+            age_seconds = self._timestamp_age(ts_str, now_wall)
+            if age_seconds >= max_window_seconds:
+                # Older than every window; nothing to ingest. Cheaper
+                # to short-circuit here than to walk three windows under
+                # the lock per record.
+                continue
+            self._ingest_historical(record, age_seconds, now_mono)
 
     async def warm_start(self, store: Any) -> None:
         """Replay recent traces from store into aggregator.

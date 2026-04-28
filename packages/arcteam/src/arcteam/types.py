@@ -106,7 +106,13 @@ def generate_message_id() -> str:
 
 
 class Entity(BaseModel):
-    """Registered agent or user."""
+    """Registered agent or user.
+
+    workspace_path (SPEC-019 FR-2): absolute filesystem path to the agent's
+    workspace directory. None for legacy records or non-agent entities;
+    populated by `arc team register --workspace` or
+    `arc team backfill-workspaces`.
+    """
 
     id: str
     name: str
@@ -115,6 +121,7 @@ class Entity(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     created: str = ""
     status: str = "active"
+    workspace_path: str | None = None
 
 
 class Channel(BaseModel):

@@ -112,3 +112,33 @@ class TestUpdateStatus:
     async def test_update_status_not_found(self, registry: EntityRegistry) -> None:
         with pytest.raises(ValueError, match="not found"):
             await registry.update_status("agent://missing", "inactive")
+
+
+class TestUpdateEntity:
+    """SPEC-019 T1.2: write-through entity updates with audit emission."""
+
+    async def test_update_writes_through(self, registry: EntityRegistry) -> None:
+        await registry.register(_agent("a1", roles=["ops"]))
+        entity = await registry.get("agent://a1")
+        assert entity is not None
+        entity.workspace_path = "/abs/path/agent_a1"
+        await registry.update(entity)
+        readback = await registry.get("agent://a1")
+        assert readback is not None
+        assert readback.workspace_path == "/abs/path/agent_a1"
+        # Other fields preserved
+        assert readback.roles == ["ops"]
+
+    async def test_update_emits_audit(self, registry: EntityRegistry) -> None:
+        await registry.register(_agent("a1"))
+        entity = await registry.get("agent://a1")
+        assert entity is not None
+        entity.workspace_path = "/abs/x"
+        await registry.update(entity)
+        records = await registry._backend.read_stream("audit", "audit", after_seq=0)
+        assert any(r["event_type"] == "entity.updated" for r in records)
+
+    async def test_update_unknown_entity_raises(self, registry: EntityRegistry) -> None:
+        ghost = _agent("ghost")
+        with pytest.raises(ValueError, match="not found"):
+            await registry.update(ghost)

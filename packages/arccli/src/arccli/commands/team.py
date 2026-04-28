@@ -238,6 +238,111 @@ def _init_cmd(args: argparse.Namespace) -> None:
         _write(f"  {d.relative_to(root)}/")
 
 
+def _backfill_workspaces(args: argparse.Namespace) -> None:
+    """Scan team/*/arcagent.toml and update entities with `workspace_path`.
+
+    SPEC-019 T1.4 / FR-3. Idempotent. Dry-run is the default; `--apply`
+    persists changes. Composes two single-purpose helpers: TOML
+    discovery (pure I/O, no registry contact) and registry application
+    (the async update loop). Wave 2 simplification — the previous
+    monolith mixed both jobs in one ~55-line function.
+    """
+    root = _get_root(args)
+    apply = bool(getattr(args, "apply", False))
+    team_dir = Path(getattr(args, "team_dir", "team")).resolve()
+
+    matches = _discover_agent_tomls(team_dir)
+    if not matches:
+        return
+
+    asyncio.run(_apply_workspace_updates(root, matches, apply))
+
+
+def _discover_agent_tomls(team_dir: Path) -> list[tuple[str, Path]]:
+    """Read every team/*/arcagent.toml; return (agent_name, abs_workspace).
+
+    Skips missing or malformed TOML and missing `[agent].name` — emits
+    one warning line per skip. An empty result writes a "no toml found"
+    notice and returns []. No registry contact happens here.
+    """
+    import tomllib
+
+    if not team_dir.exists() or not team_dir.is_dir():
+        _write(f"  team-dir not found: {team_dir}")
+        return []
+
+    matches: list[tuple[str, Path]] = []
+    for toml_path in team_dir.glob("*/arcagent.toml"):
+        try:
+            cfg = tomllib.loads(toml_path.read_text())
+        except (tomllib.TOMLDecodeError, OSError) as exc:
+            _write(f"  skip {toml_path}: {exc}")
+            continue
+        agent_section = cfg.get("agent", {})
+        agent_name = agent_section.get("name")
+        if not agent_name:
+            _write(f"  skip {toml_path}: no [agent].name")
+            continue
+        workspace_raw = agent_section.get("workspace", "./workspace")
+        matches.append(
+            (agent_name, (toml_path.parent / workspace_raw).resolve())
+        )
+
+    if not matches:
+        _write("  no arcagent.toml files found in team-dir")
+    return matches
+
+
+async def _apply_workspace_updates(
+    root: Path, matches: list[tuple[str, Path]], apply: bool
+) -> None:
+    """Update each entity's `workspace_path` field; idempotent."""
+    _, registry, _, _ = await _build_service(root)
+    for entity_id, workspace in matches:
+        entity = await registry.get(entity_id)
+        if entity is None:
+            _write(f"  skip {entity_id}: not in registry")
+            continue
+        if entity.workspace_path == str(workspace):
+            _write(f"  unchanged {entity_id}")
+            continue
+        if apply:
+            entity.workspace_path = str(workspace)
+            await registry.update(entity)
+            _write(f"  updated {entity_id} -> {workspace}")
+        else:
+            _write(f"  would update {entity_id} -> {workspace}")
+
+
+def _resolve_workspace(raw: str | None) -> str | None:
+    """Resolve `--workspace` value to an absolute path.
+
+    SPEC-019 SR-6: reject `~` and env-var shorthand in stored form to prevent
+    late-binding ambiguity. Resolves explicit paths against `Path.cwd()` and
+    requires the path to exist as a directory.
+
+    Returns None when raw is None AND the entity is not an agent (caller decides).
+    Otherwise returns absolute path string. Raises ValueError on validation
+    failure.
+    """
+    candidate = raw if raw is not None else str(Path.cwd())
+
+    # SR-6: no late-binding shorthand persisted
+    if "~" in candidate or "$" in candidate:
+        msg = (
+            f"workspace must be an absolute or relative path, "
+            f"not shorthand like ~ or $VAR: {candidate!r}"
+        )
+        raise ValueError(msg)
+
+    resolved = Path(candidate).resolve()
+    if not resolved.exists():
+        raise ValueError(f"workspace does not exist: {resolved}")
+    if not resolved.is_dir():
+        raise ValueError(f"workspace is not a directory: {resolved}")
+    return str(resolved)
+
+
 def _register(args: argparse.Namespace) -> None:
     """Register an agent or user entity."""
     from arcteam.types import Entity, EntityType
@@ -248,7 +353,24 @@ def _register(args: argparse.Namespace) -> None:
     entity_type: str = args.entity_type
     roles_str: str = getattr(args, "roles", "")
     role_list = [r.strip() for r in roles_str.split(",") if r.strip()]
-    entity = Entity(id=entity_id, name=name, type=EntityType(entity_type), roles=role_list)
+
+    # Workspace path applies to agents only; users have no workspace concept.
+    workspace_path: str | None = None
+    if entity_type == "agent":
+        raw_workspace: str | None = getattr(args, "workspace", None)
+        try:
+            workspace_path = _resolve_workspace(raw_workspace)
+        except ValueError as exc:
+            sys.stderr.write(f"arc team register: {exc}\n")
+            sys.exit(2)
+
+    entity = Entity(
+        id=entity_id,
+        name=name,
+        type=EntityType(entity_type),
+        roles=role_list,
+        workspace_path=workspace_path,
+    )
 
     async def _run() -> None:
         _, registry, _, _ = await _build_service(root)
@@ -256,6 +378,8 @@ def _register(args: argparse.Namespace) -> None:
 
     asyncio.run(_run())
     _write(f"Registered {entity_type}: {entity_id}")
+    if workspace_path:
+        _write(f"  Workspace: {workspace_path}")
 
 
 def _entities(args: argparse.Namespace) -> None:
@@ -389,6 +513,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Entity type."
     )
     p.add_argument("--roles", default="", help="Comma-separated roles.")
+    p.add_argument(
+        "--workspace",
+        default=None,
+        help="Agent workspace path (default: cwd). Resolved to absolute. "
+             "Must exist as a directory; ~ and $VAR forms rejected (SR-6).",
+    )
 
     # entities
     p = subs.add_parser("entities", help="List registered entities.")
@@ -399,6 +529,24 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # memory status
     subs.add_parser("memory-status", help="Show team memory status.")
+
+    # backfill-workspaces (SPEC-019 T1.4)
+    p = subs.add_parser(
+        "backfill-workspaces",
+        help="Backfill workspace_path on registered agents from team/*/arcagent.toml.",
+    )
+    p.add_argument(
+        "--team-dir",
+        dest="team_dir",
+        default="team",
+        help="Directory containing per-agent subdirectories (default: ./team).",
+    )
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        default=False,
+        help="Persist changes. Without this flag, the command is dry-run.",
+    )
 
     return parser
 
@@ -411,6 +559,7 @@ _SUBCOMMAND_MAP = {
     "entities": _entities,
     "channels": _channels,
     "memory-status": _memory_status,
+    "backfill-workspaces": _backfill_workspaces,
 }
 
 

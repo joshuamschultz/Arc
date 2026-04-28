@@ -4,11 +4,25 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from arcagent.modules.ui_reporter import UIReporterConfig, UIReporterModule
+
+
+@pytest.fixture
+def probe_ok() -> Any:
+    """Force `_should_auto_enable` to succeed so startup() reaches transport setup.
+
+    Transport-wiring tests don't care about the probe — they care about what
+    happens *after* it passes. This fixture removes the probe as a variable.
+    """
+    with patch(
+        "arcagent.modules.ui_reporter._should_auto_enable",
+        return_value=(True, "probe_ok", "test-token"),
+    ) as m:
+        yield m
 
 # --- Helpers ---
 
@@ -42,7 +56,8 @@ def _make_ctx(bus: Any | None = None) -> MagicMock:
 class TestUIReporterConfig:
     def test_default_config(self) -> None:
         cfg = UIReporterConfig()
-        assert cfg.enabled is False
+        # SPEC-019 FR-9: default is enabled=True (probe at startup).
+        assert cfg.enabled is True
         assert cfg.url == "ws://localhost:8420/api/agent/connect"
         assert cfg.token == ""
         assert cfg.reconnect_max_interval == 60.0
@@ -199,7 +214,9 @@ class TestLayerClassification:
 
 class TestTransportWiring:
     @pytest.mark.asyncio
-    async def test_startup_sets_agent_id_from_config(self, tmp_path: Path) -> None:
+    async def test_startup_sets_agent_id_from_config(
+        self, tmp_path: Path, probe_ok: Any
+    ) -> None:
         module = _make_module(tmp_path)
         ctx = _make_ctx()
         await module.startup(ctx)
@@ -207,7 +224,9 @@ class TestTransportWiring:
         assert module._agent_name == "test-agent"
 
     @pytest.mark.asyncio
-    async def test_startup_creates_transport_when_enabled(self, tmp_path: Path) -> None:
+    async def test_startup_creates_transport_when_enabled(
+        self, tmp_path: Path, probe_ok: Any
+    ) -> None:
         module = _make_module(tmp_path)
         ctx = _make_ctx()
         await module.startup(ctx)
@@ -241,22 +260,20 @@ class TestTransportWiring:
     async def test_no_transport_startup(self, tmp_path: Path) -> None:
         """Module with no token should not create transport.
 
-        Patches the full token-resolution chain (_resolve_token) so that env
-        variables and ~/.arcagent/ui-token on the developer machine do not
-        cause a spurious transport to be created.  The contract under test is:
-        when no token resolves from any source, startup must leave _transport as
-        None.
+        Probe returns success but with `file_token=None`; config token is
+        empty; ARCUI_AGENT_TOKEN env is cleared. The resolved token is
+        therefore "" → no transport. Exercises the "post-probe, but no
+        token from any source" branch directly without patching the
+        (now-inlined) token resolver.
         """
-        from unittest.mock import patch
-
         module = UIReporterModule(
             config={"enabled": True, "token": ""},
             workspace=tmp_path,
         )
         ctx = _make_ctx()
-        # Ensure the full resolution chain (config → env → file) returns empty.
         with patch(
-            "arcagent.modules.ui_reporter._resolve_token", return_value=""
-        ):
+            "arcagent.modules.ui_reporter._should_auto_enable",
+            return_value=(True, "probe_ok", None),
+        ), patch.dict("os.environ", {"ARCUI_AGENT_TOKEN": ""}, clear=False):
             await module.startup(ctx)
         assert module._transport is None

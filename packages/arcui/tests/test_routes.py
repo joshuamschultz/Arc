@@ -378,6 +378,121 @@ class TestDashboardRoute:
         assert "RobustWebSocket" in resp.text
 
 
+class TestStaticAssetsRegression:
+    """Pin the every-link-from-index-loads contract.
+
+    Regression guard: any future change that breaks the static mount, drops
+    the CSS link, blocks `/assets/*` behind auth, or returns the wrong
+    content type will fail these tests before reaching a browser.
+    """
+
+    # Every asset referenced from index.html. If you add a <link> or <script>
+    # to index.html, add it here too — the test will catch missing files
+    # before the browser does.
+    _LINKED_ASSETS: tuple[tuple[str, str, str], ...] = (
+        # path, content-type prefix, fingerprint string that must appear in body
+        ("/assets/arc-platform.css", "text/css", "ARC Platform UI"),
+        ("/assets/arc-shell.js", "text/javascript", ""),
+        ("/assets/formatters.js", "text/javascript", ""),
+        ("/assets/dom-batcher.js", "text/javascript", ""),
+        ("/assets/store.js", "text/javascript", ""),
+        ("/assets/ws-client.js", "text/javascript", "RobustWebSocket"),
+        ("/assets/connection-ui.js", "text/javascript", ""),
+        ("/assets/log-table.js", "text/javascript", ""),
+    )
+
+    def test_index_links_every_referenced_asset(self):
+        """Each asset in _LINKED_ASSETS must appear by name in the served HTML.
+
+        Catches accidental rename of a CSS or JS file without updating
+        index.html.
+        """
+        _, client, _ = _make_app()
+        html = client.get("/").text
+        for path, _, _ in self._LINKED_ASSETS:
+            asset_name = path.rsplit("/", 1)[-1]
+            assert asset_name in html, f"index.html does not reference {asset_name}"
+
+    def test_every_linked_asset_serves_200(self):
+        """Every asset referenced from index.html resolves with 200.
+
+        Catches a deleted/renamed file on disk that index.html still links.
+        """
+        _, client, _ = _make_app()
+        for path, _, _ in self._LINKED_ASSETS:
+            resp = client.get(path)
+            assert resp.status_code == 200, (
+                f"{path} returned {resp.status_code} — the static mount, "
+                "the file on disk, or auth middleware is broken"
+            )
+
+    def test_every_linked_asset_has_correct_content_type(self):
+        """Wrong Content-Type breaks browser parsing even if status=200.
+
+        Browsers refuse to apply text/css when the Content-Type is text/plain,
+        and execute text/javascript only when the type is right. This is the
+        single most likely cause of a "stylesheet downloaded but not applied"
+        bug.
+        """
+        _, client, _ = _make_app()
+        for path, expected_prefix, _ in self._LINKED_ASSETS:
+            resp = client.get(path)
+            ctype = resp.headers.get("content-type", "")
+            assert ctype.startswith(expected_prefix), (
+                f"{path} served as {ctype!r}; browsers need {expected_prefix}"
+            )
+
+    def test_every_linked_asset_has_expected_fingerprint(self):
+        """Each asset's body contains a known fingerprint — no empty file.
+
+        Catches a partial-write or truncation bug where the file exists,
+        serves 200, but is empty or wrong content.
+        """
+        _, client, _ = _make_app()
+        for path, _, fingerprint in self._LINKED_ASSETS:
+            if not fingerprint:
+                continue
+            resp = client.get(path)
+            assert fingerprint in resp.text, (
+                f"{path} did not contain expected fingerprint {fingerprint!r}"
+            )
+
+    def test_assets_are_unauthenticated(self):
+        """`/assets/*` MUST pass through AuthMiddleware unchallenged.
+
+        The browser fetches CSS/JS BEFORE any JS runs to set the Authorization
+        header. If the middleware ever requires a bearer token on /assets/*,
+        the CSS will silently fail to apply and the page will look unstyled.
+        """
+        _, client, _ = _make_app()
+        # No Authorization header at all.
+        for path, _, _ in self._LINKED_ASSETS:
+            resp = client.get(path)
+            assert resp.status_code == 200, (
+                f"{path} returned {resp.status_code} without auth — "
+                "AuthMiddleware should let static assets through"
+            )
+
+    def test_auth_bootstrap_script_runs_before_css_link(self):
+        """SR-2: auth-token bootstrap script MUST be in <head> before any
+        analytics or telemetry that could leak the URL hash.
+
+        The CSS link comes after the bootstrap script — if their order is
+        ever reversed (e.g. someone inlines a stylesheet that runs JS via
+        @import url() side-effects), the token-strip race opens up.
+        """
+        _, client, _ = _make_app()
+        html = client.get("/").text
+        boot_idx = html.find("bootstrapAuth")
+        css_idx = html.find("arc-platform.css")
+        assert boot_idx > 0, "bootstrap script missing from index.html"
+        assert css_idx > 0, "arc-platform.css link missing from index.html"
+        assert boot_idx < css_idx, (
+            "bootstrap script must appear before any <link> or external "
+            "resource so it strips the URL hash first"
+        )
+
+
 class TestArcllmConfigRoute:
     """Tests for /api/arcllm-config (GET/PATCH) — config.toml management."""
 

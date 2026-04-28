@@ -17,6 +17,26 @@ def _entity_key(entity_id: str) -> str:
     return entity_id.replace("://", "_")
 
 
+async def list_entities_readonly(
+    backend: StorageBackend, role: str | None = None
+) -> list[Entity]:
+    """Read-only enumeration of every Entity, no audit logger required.
+
+    Wave 2 review: arccli was rebuilding `AuditLogger` + `FileBackend`
+    +  HMAC key load just to enumerate registered agents. Pure-read
+    callers (CLI status, dashboards) shouldn't need to bootstrap the
+    audit chain — this helper exposes the read path without it.
+
+    Use this from arccli/scripts; use `EntityRegistry.list_entities`
+    inside the team service where audit-emitting writes also happen.
+    """
+    records = await backend.query(REGISTRY_COLLECTION)
+    entities = [Entity.model_validate(r) for r in records]
+    if role:
+        entities = [e for e in entities if role in e.roles]
+    return entities
+
+
 class EntityRegistry:
     """Agent and user registration with role-based queries."""
 
@@ -96,4 +116,25 @@ class EntityRegistry:
             actor_id=entity_id,
             detail=f"Status changed from '{old_status}' to '{status}'",
             target_id=entity_id,
+        )
+
+    async def update(self, entity: Entity) -> None:
+        """Replace an existing entity record. Emits `entity.updated` audit event.
+
+        SPEC-019 T1.2: write-through update used by `arc team backfill-workspaces`
+        to persist `workspace_path`. Identity (id) is the lookup key; rejecting
+        unknown ids prevents the caller from silently registering via update().
+        """
+        key = _entity_key(entity.id)
+        existing = await self._backend.read(REGISTRY_COLLECTION, key)
+        if existing is None:
+            raise ValueError(f"Entity not found: {entity.id}")
+
+        await self._backend.write(REGISTRY_COLLECTION, key, entity.model_dump())
+        await self._audit.log(
+            event_type="entity.updated",
+            subject=f"registry.{entity.type.value}",
+            actor_id=entity.id,
+            detail=f"Updated {entity.type.value} '{entity.name}'",
+            target_id=entity.id,
         )

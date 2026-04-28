@@ -1,15 +1,11 @@
 """Plain CommandDef handlers for the `arc ui` subcommand group.
 
-T1.1.5 migration: replaces the legacy Click-based dispatch in registry.py.
-Each function is a direct translation of the corresponding Click command body
-in arccli.ui, with Click-specific calls replaced with stdlib equivalents.
-
-Layer contract: this module may import from arcui.
-It MUST NOT import click or arccli.main_legacy.
-
 Subcommands
 -----------
-arc ui start      — Launch the ArcUI dashboard server (standalone, no agent needed).
+arc ui start      — Launch the ArcUI dashboard server.
+                    Discovers all registered agents via the arcteam registry,
+                    warm-starts the aggregator from each agent's workspace, and
+                    on loopback bind opens the browser pre-authenticated.
 arc ui tail       — Connect to a running dashboard and stream events to stdout as JSONL.
                     Supports --layer, --agent, --group, and --viewer-token filters.
 """
@@ -18,9 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
 
 _TOKEN_FILE = Path.home() / ".arcagent" / "ui-token"
 
@@ -46,10 +45,16 @@ def _mask_token(token: str) -> str:
 
 
 def _persist_agent_token(token: str) -> None:
-    """Write agent token to well-known file for auto-discovery by agents."""
-    _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _TOKEN_FILE.write_text(token)
-    _TOKEN_FILE.chmod(0o600)
+    """Atomically write the agent token with 0600 from creation.
+
+    Delegates to `arcagent.utils.secure_file.write_secret` (Wave 2
+    TD-MED). Future credential writers (vault cache, federated peer
+    keys) inherit the same SR-1 posture — atomic 0600, parent 0700,
+    no umask race — instead of reinventing it inline.
+    """
+    from arcagent.utils.secure_file import write_secret
+
+    write_secret(_TOKEN_FILE, token)
 
 
 def _read_token_file() -> str | None:
@@ -61,14 +66,166 @@ def _read_token_file() -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Zero-config helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_trace_stores(args: argparse.Namespace) -> list[Any]:
+    """Build the list of TraceStores from the arcteam registry.
+
+    Composes `_load_entities` (registry I/O) and `_entities_to_stores`
+    (path validation + JSONLTraceStore construction). Wave 2 split:
+    each helper has one job and is independently testable.
+    """
+    entities = _load_entities(args)
+    return _entities_to_stores(entities)
+
+
+def _load_entities(args: argparse.Namespace) -> list[Any]:
+    """Read every Entity from the arcteam registry (read-only).
+
+    Wave 2 simplification: uses `arcteam.registry.list_entities_readonly`
+    so the CLI doesn't bootstrap an `AuditLogger` (HMAC key load,
+    initialize, etc.) just to enumerate agents. The audit chain is for
+    *write* paths; a read-only launcher doesn't belong on it.
+
+    Returns [] on registry I/O failure (with a warning) so the caller
+    can launch in zero-store mode rather than abort.
+    """
+    import asyncio
+
+    from arcteam.config import TeamConfig
+    from arcteam.registry import list_entities_readonly
+    from arcteam.storage import FileBackend
+
+    root_arg: str | None = getattr(args, "root", None)
+    root = Path(root_arg) if root_arg else TeamConfig().root
+    backend = FileBackend(root)
+
+    try:
+        return asyncio.run(list_entities_readonly(backend))
+    except (FileNotFoundError, OSError) as exc:
+        _write(f"  registry unavailable: {exc}")
+        return []
+
+
+def _entities_to_stores(entities: list[Any]) -> list[Any]:
+    """Build one JSONLTraceStore per agent with a valid workspace_path.
+
+    Entities without `workspace_path` or whose stored path no longer
+    exists are skipped with a warning. Pure transform; no I/O outside
+    the path-existence check.
+    """
+    from arcllm.trace_store import JSONLTraceStore
+
+    stores: list[Any] = []
+    for entity in entities:
+        if entity.workspace_path is None:
+            _write(
+                f"  skip {entity.id}: no workspace_path "
+                f"(run `arc team backfill-workspaces`)"
+            )
+            continue
+        wp = Path(entity.workspace_path)
+        if not wp.is_dir():
+            _write(f"  skip {entity.id}: workspace_path {wp} not found")
+            continue
+        stores.append(JSONLTraceStore(wp))
+    return stores
+
+
+class BrowserLauncher(Protocol):
+    """How `arc ui start` opens the dashboard.
+
+    Default implementation calls `webbrowser.open` against a loopback
+    URL with the viewer token in the hash. Stub/kiosk/Electron variants
+    can replace this without touching `_start`. Wave 2 TD-MED:
+    decouples the launcher from the only-mechanism webbrowser
+    dependency and gives federal kiosk deployments a plug-in seam.
+    """
+
+    def open_dashboard(
+        self, host: str, port: int, viewer_token: str
+    ) -> bool:
+        """Open the dashboard pre-authenticated; return True iff opened."""
+        ...
+
+
+class DefaultBrowserLauncher:
+    """Production launcher: webbrowser.open with loopback gating + SR-4.
+
+    Only fires on loopback bind addresses; non-loopback binds are
+    intentionally silent so the URL containing the viewer token never
+    reaches a remote machine or log shipper. On failure, the caller
+    falls back via `_print_browser_open_fallback` — review finding C-2:
+    this method MUST NOT print the URL+token combination to stdout.
+    """
+
+    def open_dashboard(
+        self, host: str, port: int, viewer_token: str
+    ) -> bool:
+        if host not in LOOPBACK_HOSTS:
+            return False
+        import webbrowser
+
+        url = f"http://{host}:{port}/#{BOOTSTRAP_HASH_KEY}={viewer_token}"
+        try:
+            return webbrowser.open(url)
+        except (webbrowser.Error, OSError):
+            return False
+
+
+def _maybe_open_browser(host: str, port: int, viewer_token: str) -> bool:
+    """Backward-compatible function form of `DefaultBrowserLauncher`.
+
+    Tests still patch this symbol; keeping it as a thin wrapper lets us
+    introduce the Protocol without breaking the existing test surface.
+    The launcher used by `_start` is the Protocol-typed instance, not
+    this function — so a stub launcher in tests fully bypasses
+    `webbrowser.open` without needing to patch this symbol.
+    """
+    return DefaultBrowserLauncher().open_dashboard(host, port, viewer_token)
+
+
+def _print_browser_open_fallback(
+    host: str,
+    port: int,
+    viewer_token: str,
+    *,
+    show_tokens: bool,
+) -> None:
+    """Print bootstrap instructions when `webbrowser.open` could not run.
+
+    Splits the URL and the token across two lines so neither carries the
+    other; the URL is safe to log, the token follows the same
+    masked-unless-`--show-tokens` rule as the rest of the startup banner.
+    No `#auth=...` fragment is ever emitted from this path (review C-2).
+    """
+    fmt = str if show_tokens else _mask_token
+    _write(
+        "  Browser did not auto-open. Visit the URL below and paste the "
+        "viewer token into the auth field:"
+    )
+    _write(f"    URL:          http://{host}:{port}/")
+    _write(f"    Viewer token: {fmt(viewer_token)}")
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: start
 # ---------------------------------------------------------------------------
 
 
 def _start(args: argparse.Namespace) -> None:
-    """Start the ArcUI dashboard server."""
+    """Start the ArcUI dashboard server.
+
+    Discovers all registered agents via the arcteam registry, warm-starts
+    the aggregator from each agent's workspace, and on loopback bind opens
+    the browser pre-authenticated. Non-loopback prints tokens for manual
+    paste with a security warning.
+    """
     from arcui import create_app
     from arcui.auth import AuthConfig
+    from arcui.federated_store import FederatedTraceStore
 
     port: int = getattr(args, "port", 8420)
     host: str = getattr(args, "host", "127.0.0.1")
@@ -77,7 +234,6 @@ def _start(args: argparse.Namespace) -> None:
     agent_token: str | None = getattr(args, "agent_token", None)
     max_agents: int = getattr(args, "max_agents", 100)
     show_tokens: bool = getattr(args, "show_tokens", False)
-    traces_dir: str | None = getattr(args, "traces_dir", None)
 
     config_dict: dict[str, str] = {}
     if viewer_token:
@@ -91,19 +247,12 @@ def _start(args: argparse.Namespace) -> None:
 
     _persist_agent_token(auth.agent_token)
 
-    trace_store = None
-    if traces_dir:
-        traces_path = Path(traces_dir).resolve()
-        if traces_path.exists():
-            try:
-                from arcllm.trace_store import JSONLTraceStore
-
-                trace_store = JSONLTraceStore(traces_path)
-                _write(f"  Trace store: {traces_path / 'traces'}")
-            except ImportError:
-                _write("  Warning: arcllm not installed, trace store disabled")
-        else:
-            _write(f"  Warning: traces-dir not found: {traces_path}")
+    stores = _resolve_trace_stores(args)
+    # Wrap discovered stores in a federation. Zero stores → no trace
+    # backing for `/api/traces`; ≥1 stores → FederatedTraceStore so the
+    # routes see a uniform read surface regardless of how many workspaces
+    # are mounted (Wave 2 simplification: was a one-line helper).
+    trace_store = FederatedTraceStore(stores) if stores else None
 
     app = create_app(
         auth_config=auth,
@@ -111,6 +260,9 @@ def _start(args: argparse.Namespace) -> None:
         trace_store=trace_store,
     )
 
+    is_loopback = host in LOOPBACK_HOSTS
+    # SR-4: tokens are masked unless --show-tokens; loopback never needs them
+    # (browser auto-bootstraps), so do not auto-flip show.
     fmt = str if show_tokens else _mask_token
     _write(f"ArcUI dashboard: http://{host}:{port}")
     _write(f"  Viewer token:   {fmt(app.state.auth_config.viewer_token)}")
@@ -118,15 +270,47 @@ def _start(args: argparse.Namespace) -> None:
     _write(f"  Agent token:    {fmt(app.state.auth_config.agent_token)}")
     _write(f"  Token file:     {_TOKEN_FILE}")
     _write(f"  Max agents:     {max_agents}")
+    _write(f"  Trace stores:   {len(stores)}")
+
+    if not is_loopback:
+        _write(
+            "  WARNING: bound to a non-loopback address. "
+            "Tokens above are required for browser access; copy the viewer "
+            "token and paste it into the dashboard's auth field."
+        )
+
+    import asyncio
 
     import uvicorn
 
-    if trace_store is not None:
-        import asyncio
+    if trace_store is not None and stores:
+        asyncio.run(app.state.aggregator.warm_start_multi(stores))
 
-        asyncio.run(app.state.aggregator.warm_start(trace_store))
+    if is_loopback:
+        viewer_token_value = app.state.auth_config.viewer_token
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+        # SPEC-019 T5.3: mark the bootstrapped token so AuthMiddleware emits
+        # `ui.session_start` with auth_method="browser_bootstrap" on first
+        # request from this token.
+        tracker = getattr(app.state, "session_tracker", None)
+        if tracker is not None:
+            tracker.mark_bootstrap_issued(viewer_token_value)
+
+        # Hook into Starlette's lifespan via the extra-startup-hooks
+        # list set up by `create_app` (Wave 2 TD-04). Avoids the
+        # deprecated `on_startup=` parameter while keeping the same
+        # "browser opens after server reports ready" guarantee.
+        async def _open_browser_on_ready() -> None:
+            opened = _maybe_open_browser(host, port, viewer_token_value)
+            if not opened:
+                _print_browser_open_fallback(
+                    host, port, viewer_token_value, show_tokens=show_tokens
+                )
+
+        app.state._extra_startup_hooks.append(_open_browser_on_ready)
+
+    config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    uvicorn.Server(config).run()
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +471,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.add_argument(
         "--show-tokens", dest="show_tokens", action="store_true", default=False
     )
-    p_start.add_argument("--traces-dir", dest="traces_dir", default=None)
 
     # ── tail ───────────────────────────────────────────────────────────
     p_tail = subs.add_parser(

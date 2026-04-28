@@ -18,7 +18,7 @@ from starlette.staticfiles import StaticFiles
 
 from arcui.aggregator import RollingAggregator
 from arcui.audit import UIAuditLogger
-from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.connection import ConnectionManager
 from arcui.event_buffer import EventBuffer
 from arcui.registry import AgentRegistry
@@ -49,12 +49,32 @@ async def _agent_info(request: Request) -> JSONResponse:
     return JSONResponse(info)
 
 
+# Cache-Control header value used on every dashboard render. Wave 2
+# review C-2 fix: a stale tab across `arc ui start` restart can resurrect
+# dead viewer tokens and stale asset references; no-store prevents that.
+_DASHBOARD_CACHE_CONTROL = "no-store, no-cache, must-revalidate"
+
+
 async def _index(request: Request) -> HTMLResponse:
-    """Serve the dashboard HTML."""
-    index_path = _STATIC_DIR / "index.html"
-    if index_path.exists():
-        return HTMLResponse(index_path.read_text())
-    return HTMLResponse("<h1>ArcUI</h1><p>Dashboard not found.</p>", status_code=404)
+    """Serve the dashboard HTML from in-memory cache.
+
+    The HTML is read once at app startup into `app.state.index_html`
+    (Wave 2 perf fix). At one tab refresh per second across 5 tabs,
+    serving from disk would be 5 × 77KB read+decode per second — the
+    cache is a one-line change for a meaningful saving.
+
+    `Cache-Control: no-store` still applies to the *browser* — the
+    server cache is internal-only and invalidated by process restart.
+    """
+    headers = {"Cache-Control": _DASHBOARD_CACHE_CONTROL}
+    cached = getattr(request.app.state, "index_html", None)
+    if cached is not None:
+        return HTMLResponse(cached, headers=headers)
+    return HTMLResponse(
+        "<h1>ArcUI</h1><p>Dashboard not found.</p>",
+        status_code=404,
+        headers=headers,
+    )
 
 
 def create_app(
@@ -96,12 +116,42 @@ def create_app(
 
     # Mount static files if the directory exists
     if _STATIC_DIR.exists():
-        routes.append(Mount("/assets", app=StaticFiles(directory=str(_STATIC_DIR / "assets"))))
+        routes.append(
+            Mount(
+                "/assets",
+                app=StaticFiles(directory=str(_STATIC_DIR / "assets")),
+            )
+        )
 
-    async def _on_startup() -> None:
-        app.state.event_buffer.start()
+    # Read index.html once at module-import time; serving from memory
+    # avoids a 77KB disk read on every dashboard GET.
+    index_path = _STATIC_DIR / "index.html"
+    cached_index_html = (
+        index_path.read_text() if index_path.exists() else None
+    )
 
-    app = Starlette(routes=routes, on_startup=[_on_startup])
+    # Starlette lifespan replaces the deprecated `on_startup=` parameter.
+    # The async context manager runs the startup half before the server
+    # accepts requests and the shutdown half during graceful shutdown.
+    # Wave 2 review fix TD-04 — `on_startup=` produces deprecation
+    # warnings in test runs and is a hard break on Starlette major bumps.
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(starlette_app: Starlette) -> Any:
+        starlette_app.state.event_buffer.start()
+        # Browser-open callback (registered by `arc ui start` on
+        # loopback) hooks the same lifespan via app.router.lifespan
+        # extension below.
+        for hook in getattr(starlette_app.state, "_extra_startup_hooks", []):
+            await hook()
+        try:
+            yield
+        finally:
+            # No shutdown work today; reserved for future cleanup.
+            pass
+
+    app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(AuthMiddleware, auth_config=auth)
 
     # Shared state accessible from routes via request.app.state
@@ -113,7 +163,12 @@ def create_app(
         connection_manager, subscription_manager=subscription_manager
     )
 
+    app.state.index_html = cached_index_html
+    app.state._extra_startup_hooks = []
     app.state.audit = UIAuditLogger()
+    # SPEC-019 T5.3: tracker is consulted by AuthMiddleware to emit
+    # `ui.session_start` exactly once per (token, remote_addr).
+    app.state.session_tracker = SessionTracker()
     app.state.auth_config = auth
     app.state.trace_store = trace_store
     app.state.config_controller = config_controller

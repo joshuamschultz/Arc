@@ -73,3 +73,6 @@ PLAN-*.md
 prompt-injection-*.md
 packages/*/ENTITY*.md
 packages/*/PROMPT_INJECTION*.md
+# Added by code-review-graph
+.code-review-graph/
+.mcp.json

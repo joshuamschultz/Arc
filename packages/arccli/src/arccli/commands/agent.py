@@ -1064,8 +1064,6 @@ async def _serve_daemon(
     agent_dir: Path,
     shutdown_event: asyncio.Event,
     verbose: bool,
-    *,
-    ui: bool = False,
 ) -> None:
     """Async serve coroutine — startup, wait for shutdown, cleanup."""
     import logging
@@ -1087,9 +1085,6 @@ async def _serve_daemon(
         logging.getLogger("arcagent.tool_registry").setLevel(logging.INFO)
         logging.getLogger("httpx").setLevel(logging.INFO)
 
-    if ui:
-        _enable_ui_reporter(config)
-
     await arc_agent.startup()
     agent_name = config.agent.name
     sys.stdout.write(f"Serving agent: {agent_name}\n")
@@ -1107,14 +1102,6 @@ async def _serve_daemon(
         sys.stdout.flush()
 
 
-def _enable_ui_reporter(config: Any) -> None:
-    """Enable the UI reporter module in agent config."""
-    from arcagent.core.config import ModuleEntry
-
-    entry = ModuleEntry(enabled=True, config={"enabled": True})
-    config.modules["ui_reporter"] = entry
-
-
 def _serve(args: argparse.Namespace) -> None:
     """Start a long-running agent daemon."""
     import signal
@@ -1122,7 +1109,6 @@ def _serve(args: argparse.Namespace) -> None:
     agent_dir = _resolve_agent_dir(args.path)
     _load_env(agent_dir)
     verbose = getattr(args, "verbose", False)
-    ui = getattr(args, "ui", False)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -1133,7 +1119,7 @@ def _serve(args: argparse.Namespace) -> None:
 
     try:
         loop.run_until_complete(
-            _serve_daemon(agent_dir, shutdown_event, verbose, ui=ui)
+            _serve_daemon(agent_dir, shutdown_event, verbose)
         )
     finally:
         loop.close()
@@ -1452,11 +1438,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("serve", help="Start agent daemon.")
     p.add_argument("path", nargs="?", default=".", help="Agent directory (default: .)")
     p.add_argument("--verbose", "-v", action="store_true")
-    p.add_argument(
-        "--ui",
-        action="store_true",
-        help="Enable UI reporter module (streams events to ArcUI).",
-    )
 
     # chat
     p = subs.add_parser("chat", help="Interactive chat session.")
