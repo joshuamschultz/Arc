@@ -1,50 +1,234 @@
-# arcgateway
+<div align="center">
 
-Long-running daemon that makes ArcAgents reachable from any chat platform (Telegram, Slack, Discord) with multi-agent session routing and operator pairing controls.
+# 📡 arcgateway
 
-## Layer position
+### **Make Your Agents Reachable from Telegram, Slack, Discord — Safely**
+*Long-running daemon. Multi-platform adapters. Operator-approved pairing. TaskGroup isolation per platform.*
 
-arcgateway depends on arcagent, arcrun, arcllm, and arctrust. No other Arc package depends on arcgateway. It is a terminal node in the dependency graph.
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-494-success.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
+[![Pairing Required](https://img.shields.io/badge/pairing-operator_approved-DC2626.svg)](#-operator-approved-pairing)
 
-## What it provides
+</div>
 
-- `GatewayRunner` — supervises N platform adapters inside an `asyncio.TaskGroup`; a crash in one adapter never kills siblings; routes inbound messages to `SessionRouter`
-- `SessionRouter`, `build_session_key` — per-(user, agent) session management with a synchronous pre-await guard guaranteeing exactly one agent task per session key regardless of concurrent inbound messages
-- `InboundEvent` — normalized event from any platform adapter; carries platform, user ID hash, chat ID, and message content
-- `Delta` — streamed response chunk forwarded from the executor back to the platform adapter
-- `Executor` (Protocol), `AsyncioExecutor` — pluggable execution; `AsyncioExecutor` runs the agent in-process (personal/enterprise tier)
-- `DeliveryTarget` — parsed `platform:chat_id[:thread_id]` address
+---
 
-All pairing operations emit arctrust audit events. Pairing requires operator approval before a user hash is added to the session allowlist.
+## ✨ What is arcgateway?
 
-## Quick example
+`arcgateway` is the long-running daemon that lets users talk to your agents through chat platforms — Telegram, Slack, Discord — **without** giving anyone implicit access to anything.
+
+Every DM gets a per-(user, agent) session. Every session must be **explicitly paired** by an operator before the agent will respond. One platform crashing never takes down the others. Every action emits an audit event.
+
+> 🛡️ **No pairing → no response. Operator-approved allowlist. TaskGroup isolation. Replay-protected.**
+
+---
+
+## 🏗️ Where It Fits
+
+```mermaid
+flowchart LR
+    classDef gw fill:#FB923C,stroke:#9A3412,color:#431407
+    classDef ag fill:#A78BFA,stroke:#5B21B6,color:#2E1065
+    classDef ext fill:#E5E7EB,stroke:#6B7280,color:#111827
+
+    Telegram[Telegram]:::ext --> arcgateway
+    Slack[Slack]:::ext --> arcgateway
+    Discord[Discord]:::ext --> arcgateway
+    arcgateway[arcgateway<br/>session router · pairing<br/>TaskGroup isolation]:::gw --> arcagent[arcagent]:::ag
+```
+
+Depends on `arcagent`, `arcrun`, `arcllm`, `arctrust`. **No other Arc package depends on arcgateway** — it's a terminal node.
+
+---
+
+## 🚀 Install
+
+```bash
+pip install arcmas              # arcgateway is included in the meta package
+```
+
+---
+
+## 🧪 Quick Example
 
 ```python
 from arcgateway import GatewayRunner, AsyncioExecutor
 
+# In-process executor (Personal / Enterprise tier)
 executor = AsyncioExecutor(agent_config_path="my-agent/arcagent.toml")
 runner = GatewayRunner(executor=executor)
-await runner.run()  # blocks; handle SIGINT/SIGTERM externally
+
+await runner.run()              # blocks; SIGINT/SIGTERM handled gracefully
 ```
 
-## Pairing controls
+Configure platform adapters in `arcagent.toml`:
 
-Operators approve DM pairings via CLI (see `docs/cli.md`):
+```toml
+[gateway]
+enabled = true
+
+[gateway.pairing]
+enabled = true
+code_ttl_minutes = 15
+allowlist_path = "~/.arcagent/gateway/allowlist.jsonl"
+
+[gateway.platforms.telegram]
+enabled = true
+bot_token_env = "TELEGRAM_BOT_TOKEN"
+
+[gateway.platforms.slack]
+enabled = true
+bot_token_env = "SLACK_BOT_TOKEN"
+
+[gateway.platforms.discord]
+enabled = false
+```
+
+---
+
+## 🤝 Operator-Approved Pairing
+
+Anyone can DM the bot. **Nothing happens** until an operator approves the pairing.
+
+### The pairing flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant G as arcgateway
+    participant O as Operator (CLI)
+    participant A as arcagent
+
+    U->>G: DM "/pair"
+    G-->>U: 8-character code (TTL: 15 min)
+    U->>O: shares code (out of band)
+    O->>G: arc gateway pair approve ABCD1234
+    G->>G: append user hash to allowlist
+    G-->>U: "Paired. You can talk to the agent now."
+    U->>G: any message
+    G->>A: routed via SessionRouter
+    A->>G: response
+    G->>U: delivered
+```
+
+### CLI commands
 
 ```bash
-arc gateway pair list              # show pending codes
-arc gateway pair approve <code>    # approve a code
-arc gateway pair revoke <code>     # revoke a code
+arc gateway pair list                    # show pending (unexpired, unconsumed) codes
+arc gateway pair approve ABCD1234        # approve a code; adds user hash to allowlist
+arc gateway pair revoke ABCD1234         # revoke a pending code
 ```
 
-## Architecture references
+**Codes are exactly 8 characters, uppercase, with TTL.** They auto-expire. `pair list` shows the remaining minutes.
 
-- SPEC-016: Multi-Agent UI — gateway integrates with arcui via UIBridgeSink
-- SPEC-018: Hermes Parity — session race-condition guard (synchronous pre-await)
-- ADR-019: Four Pillars Universal — pairing always-sign enforced at all tiers
+User identifiers are stored as **hashes**, not raw IDs. The allowlist contains nothing personally identifying.
 
-## Status
+Every approve / revoke / pair-attempt emits an arctrust audit event with the operator's identity, the code, and the outcome.
 
-- Tests: 494 (run with `uv run --no-sync pytest packages/arcgateway/tests`)
-- Coverage: 94%
-- ruff + mypy --strict: clean
+---
+
+## 🧱 Public API
+
+```python
+from arcgateway import (
+    GatewayRunner,           # supervises all platform adapters
+    SessionRouter,           # per-(user, agent) session routing
+    build_session_key,       # canonical (user_hash, agent_did) tuple
+
+    InboundEvent,            # normalized event from any platform
+    Delta,                   # streamed response chunk
+
+    Executor,                # protocol
+    AsyncioExecutor,         # in-process implementation
+
+    DeliveryTarget,          # parsed "platform:chat_id[:thread_id]" address
+)
+```
+
+### How the runner stays resilient
+
+`GatewayRunner` supervises N platform adapters inside an `asyncio.TaskGroup`. **A crash in one adapter never kills its siblings.** Telegram disconnects → Slack and Discord keep serving. The crashed adapter is logged, audited, and restarted with backoff.
+
+### How the session router prevents races
+
+`SessionRouter` uses a **synchronous pre-await guard** to guarantee exactly **one agent task per session key**, regardless of how many concurrent inbound messages arrive at the same instant. This closes a race condition where two messages arriving on the same TCP connection could both spawn a fresh agent task.
+
+---
+
+## 🔌 Platform Adapters
+
+Each adapter is independently togglable. They follow a common Protocol and can be replaced if you want to write your own.
+
+| Platform | Adapter | Bot Token Source |
+|---|---|---|
+| **Telegram** | `TelegramAdapter` | `TELEGRAM_BOT_TOKEN` env or vault |
+| **Slack** | `SlackAdapter` | `SLACK_BOT_TOKEN` env or vault |
+| **Discord** | `DiscordAdapter` | `DISCORD_BOT_TOKEN` env or vault |
+
+Adding a new platform is one Python class implementing the adapter Protocol — `inbound`, `outbound`, `lifecycle`. No core changes needed.
+
+---
+
+## 🛡️ Security Architecture
+
+### Pairing-Gate
+
+| Layer | Defense |
+|---|---|
+| **Allowlist** | Stored as user hashes, not raw IDs. Operator-approved. Persisted to JSONL |
+| **Code TTL** | Codes expire (default 15 min). `pair list` shows time remaining |
+| **Code throttling** | `pairing_throttle.py` rate-limits pairing-code generation per user |
+| **Pairing signature** | Every pairing record is signed (Ed25519 via arctrust) — tampering with the allowlist file is detectable |
+| **Replay protection** | Codes are single-use. `approve` consumes the code immediately |
+
+### Per-Platform Isolation
+
+| Property | How |
+|---|---|
+| **Crash containment** | TaskGroup isolation — one platform's `RuntimeError` never kills siblings |
+| **Backoff on restart** | Exponential backoff with jitter on adapter restart |
+| **Per-platform queues** | Inbound events queue per-platform — slow Slack doesn't backpressure Telegram |
+
+### Audit on Everything
+
+Every pair attempt, every approve, every revoke, every inbound event, every outbound delta emits an arctrust audit event. The dashboard (`arcui`) surfaces these in real time.
+
+---
+
+## 📋 Compliance Mapping
+
+| NIST 800-53 | What `arcgateway` Provides |
+|---|---|
+| AC-3 | Allowlist-gated session routing — no pair → no response |
+| AC-6 | Per-session DID-bound agent task; no shared session state |
+| AU-2, AU-12 | Every pair, approve, revoke, inbound, outbound is audited |
+| IA-3 | Each session keyed on (user_hash, agent_DID) |
+| SC-13 | Pairing records signed with Ed25519 |
+
+| OWASP Agentic | Mitigation |
+|---|---|
+| ASI03 (Identity Abuse) | Per-(user, agent) session keys; user IDs hashed; no shared credentials |
+| ASI07 (Insecure Inter-Agent Comms) | Pairing signed; allowlist tamper-evident |
+| ASI08 (Cascading Failures) | TaskGroup isolation; backoff restart; per-platform queue |
+| ASI09 (Trust Exploitation) | Operator approval required; nothing happens implicitly |
+
+---
+
+## 🧪 Status
+
+```bash
+uv run --no-sync pytest packages/arcgateway/tests
+```
+
+- **Tests:** 494
+- **Coverage:** 94%
+- **Type check:** `mypy --strict` clean
+- **Lint:** `ruff check` clean
+
+---
+
+## 📄 License
+
+Apache 2.0 · Copyright © 2025-2026 BlackArc Systems.

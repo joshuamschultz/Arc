@@ -1,23 +1,63 @@
-# arcteam
+<div align="center">
 
-Multi-agent team messaging and coordination layer. Entity registry, channels, direct messages, and team memory with HMAC-signed audit trail.
+# 🤝 arcteam
 
-## Layer position
+### **Multi-Agent Coordination for Arc**
+*Entity registry. Channels and DMs. HMAC-signed audit trail. Pluggable storage backends.*
 
-arcteam depends on arctrust (for audit) and Pydantic. arcagent depends on arcteam for team messaging capabilities. arccli depends on arcteam for the `arc team` commands. arcteam never imports from arcagent or arccli.
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-307-success.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
+[![HMAC Audit](https://img.shields.io/badge/audit-HMAC_signed-DC2626.svg)](#%EF%B8%8F-security-architecture)
 
-## What it provides
+</div>
 
-- `EntityRegistry` — registers and lists agents and users; entities typed as `agent` or `user` with roles
-- `MessagingService` — send and receive structured messages across channels and DMs; message types: `info`, `task`, `result`, `alert`, `ack`, `broadcast`; priorities: `low`, `normal`, `high`, `critical`
-- `AuditLogger` — HMAC-signed append-only audit stream for all team operations
-- `TeamConfig` — Pydantic config for team data root directory
-- `TeamFileStore` — file-backed team workspace
-- `TeamMemoryService`, `TeamMemoryConfig` — entity memory index with dirty tracking
-- `StorageBackend`, `FileBackend`, `MemoryBackend` — pluggable storage adapters
-- `Entity`, `EntityType`, `Channel`, `Message`, `MsgType`, `Priority`, `Cursor`, `AuditRecord` — core types
+---
 
-## Quick example
+## ✨ What is arcteam?
+
+`arcteam` is how multiple Arc agents talk to each other — and to humans — without re-inventing message routing, identity tracking, or audit logging for every project.
+
+Think of it as a tiny Slack-for-agents:
+
+- 👥 **Entity registry** — every agent and human gets registered with a type, role, and ID
+- 📬 **Channels and DMs** — broadcast or direct messages, with priorities and message types
+- 🪵 **HMAC-signed audit trail** — every operation tamper-evident
+- 💾 **Pluggable storage** — file-backed for production, in-memory for tests
+- 🧠 **Team memory** — per-entity memory index with dirty tracking
+
+> 🛡️ **Every message audited. HMAC-chained. Per-entity DIDs. No shared credentials.**
+
+---
+
+## 🏗️ Where It Fits
+
+```mermaid
+flowchart TB
+    classDef tm fill:#F87171,stroke:#991B1B,color:#450A0A
+    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
+    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+
+    arccli[arccli]:::other --> arcteam
+    arcagent[arcagent]:::other --> arcteam
+    arcteam[arcteam<br/>entity registry · messaging · audit]:::tm --> arctrust[arctrust]:::tr
+```
+
+Depends on `arctrust` (audit) and Pydantic.
+
+---
+
+## 🚀 Install
+
+```bash
+pip install arcteam            # standalone
+# or
+pip install arcmas             # full Arc stack
+```
+
+---
+
+## 🧪 Quick Example
 
 ```python
 from arcteam import MessagingService, EntityRegistry
@@ -25,21 +65,173 @@ from arcteam.storage import FileBackend
 from arcteam.audit import AuditLogger
 from arcteam.types import Entity, EntityType
 
+# Set up
 backend = FileBackend("/var/arc/team")
 audit = AuditLogger(backend, hmac_key=AuditLogger.load_hmac_key())
 await audit.initialize()
 registry = EntityRegistry(backend, audit)
 svc = MessagingService(backend, registry, audit)
 
-await registry.register(Entity(id="agent-1", name="Analyst", type=EntityType("agent")))
-await svc.send(sender="agent-1", to=["agent-2"], body="Report ready in workspace/reports/")
+# Register two agents
+await registry.register(Entity(
+    id="analyst-1",
+    name="Senior Analyst",
+    type=EntityType("agent"),
+    roles=["lead", "reviewer"],
+))
+await registry.register(Entity(
+    id="executor-1",
+    name="Task Executor",
+    type=EntityType("agent"),
+    roles=["worker"],
+))
+
+# Send a structured message
+await svc.send(
+    sender="analyst-1",
+    to=["executor-1"],
+    body="Analyze the CSVs in workspace/data/ and report trends.",
+    msg_type="task",
+    priority="high",
+)
 ```
 
-## Architecture references
+---
 
-- ADR-019: Four Pillars Universal — all team operations audited via arctrust.audit
+## 🎬 Set It Up From the CLI
 
-## Status
+```bash
+# Initialize team data dir + generate HMAC key
+arc team init
+arc team init --root /var/arc/team        # specify path
 
-- Tests: 307 (run with `uv run --no-sync pytest packages/arcteam/tests`)
-- ruff + mypy --strict: clean
+# Register an entity
+arc team register agent-1 --name "Analyst" --type agent
+arc team register lead-1  --name "Lead"    --type agent --roles lead,reviewer
+arc team register alice   --name "Alice"   --type user
+
+# Inspect
+arc team status                           # entity count, channels, messages, audit entries
+arc team config --json
+arc team entities                         # list all entities
+arc team entities --role lead             # filter by role
+arc team channels                         # list channels
+arc team memory-status                    # team memory index status
+```
+
+---
+
+## 🧱 Public API
+
+```python
+from arcteam import (
+    EntityRegistry,            # register, lookup, list entities
+    MessagingService,          # send, receive, ack messages
+    TeamConfig,                # Pydantic config
+
+    TeamFileStore,             # file-backed workspace
+
+    TeamMemoryService,         # entity memory index
+    TeamMemoryConfig,
+)
+
+from arcteam.audit import AuditLogger
+from arcteam.storage import StorageBackend, FileBackend, MemoryBackend
+from arcteam.types import (
+    Entity, EntityType,
+    Channel,
+    Message, MsgType, Priority,
+    Cursor,
+    AuditRecord,
+)
+```
+
+### Message Types and Priorities
+
+| `MsgType` | Use For |
+|---|---|
+| `info` | General information |
+| `task` | Work assignment |
+| `result` | Result from an executed task |
+| `alert` | Time-sensitive notification |
+| `ack` | Acknowledgement |
+| `broadcast` | One-to-many message |
+
+| `Priority` | Use For |
+|---|---|
+| `low` | Background, can wait |
+| `normal` | Default |
+| `high` | Time-sensitive |
+| `critical` | Stop-the-world |
+
+---
+
+## 🛡️ Security Architecture
+
+### HMAC-Signed Audit Trail
+
+Every team operation appends to an HMAC-signed audit stream. Each record contains the previous record's HMAC, chaining them together — flipping a single byte in the middle invalidates everything downstream.
+
+The HMAC key is generated by `arc team init` and stored with `0600` permissions:
+
+```
+~/.arcagent/team/hmac.key             # 0600
+~/.arcagent/team/audit.jsonl          # append-only, HMAC-chained
+```
+
+### Per-Entity Identity
+
+Entities (agents and humans) each have:
+
+- **Unique ID** — used in all messages
+- **Type** — `agent` or `user`
+- **Roles** — comma-separated, used for routing and policy
+- **DID** — for agents, ties back to the agent's cryptographic identity
+
+**No shared credentials. No privilege inheritance.** A new role isn't automatic — it's an audited registration change.
+
+### Pluggable Storage
+
+| Backend | Use For |
+|---|---|
+| `FileBackend` | Production. Append-only logs, atomic writes |
+| `MemoryBackend` | Tests, ephemeral coordination |
+
+The `StorageBackend` Protocol is small enough to roll your own — point at SQLite, Redis, NATS JetStream, or whatever else fits your environment.
+
+---
+
+## 📋 Compliance Mapping
+
+| NIST 800-53 | What `arcteam` Provides |
+|---|---|
+| AC-3 | Role-based message routing |
+| AC-6 | Roles are explicit, audited registrations |
+| AU-2, AU-12 | Every operation audited |
+| AU-9 | HMAC-chained audit trail; tampering detectable |
+| IA-3 | Per-entity ID + DID for agents |
+
+| OWASP Agentic | Mitigation |
+|---|---|
+| ASI03 (Identity Abuse) | Per-entity ID; agent entities tied to DIDs; role changes audited |
+| ASI07 (Insecure Inter-Agent Comms) | HMAC-chained audit; agents can sign messages with arctrust before sending |
+| ASI08 (Cascading Failures) | Pluggable storage backends decouple message bus from delivery |
+| ASI10 (Rogue Agents) | Audit trail surfaces unusual sender/receiver patterns; entity revocation supported |
+
+---
+
+## 🧪 Status
+
+```bash
+uv run --no-sync pytest packages/arcteam/tests
+```
+
+- **Tests:** 307
+- **Type check:** `mypy --strict` clean
+- **Lint:** `ruff check` clean
+
+---
+
+## 📄 License
+
+Apache 2.0 · Copyright © 2025-2026 BlackArc Systems.
