@@ -455,8 +455,10 @@ class ToolRegistry:
         """
         if not self._policy_allows(tool.name):
             policy = self._config.policy
-            _logger.warning(
-                "Tool %r registration skipped by policy (allow=%s, deny=%s)",
+            # DEBUG, not WARNING: deny/allow filtering is intentional config-driven
+            # behavior, not an error. The audit event below preserves the trail.
+            _logger.debug(
+                "policy filter: excluded tool %r from registry (allow=%s, deny=%s)",
                 tool.name,
                 list(policy.allow),
                 list(policy.deny),

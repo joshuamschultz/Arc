@@ -157,7 +157,26 @@ class TestPolicyEnforcement:
         assert len(calls) == 1, f"expected one tool.policy_denied audit event; got {telemetry.audit_event.call_args_list}"
         assert calls[0].args[1]["tool"] == "shell_exec"
 
-    def test_skip_logs_warning(self, caplog) -> None:
+    def test_skip_logs_at_debug_level(self, caplog) -> None:
+        # Policy filtering is intentional config — log at DEBUG so it doesn't
+        # surface in normal stdout, but is observable when -v is set. The
+        # tool.policy_denied audit event is the persistent trail.
+        config = ArcAgentConfig(
+            agent=AgentConfig(name="test"),
+            llm=LLMConfig(model="test/model"),
+            tools=ToolsConfig(policy=ToolConfig(deny=["shell_exec"])),
+        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
+        with caplog.at_level("DEBUG", logger="arcagent.tool_registry"):
+            registry.register(_make_tool("shell_exec"))
+        assert any(
+            "shell_exec" in rec.message and "polic" in rec.message.lower()
+            for rec in caplog.records
+        ), f"expected policy-skip debug log; got {[r.message for r in caplog.records]}"
+
+    def test_skip_does_not_log_at_info_or_above(self, caplog) -> None:
+        # Belt-and-suspenders: policy skips MUST NOT appear at WARNING level —
+        # they're noise at chat startup if they do.
         config = ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
@@ -166,10 +185,11 @@ class TestPolicyEnforcement:
         registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         with caplog.at_level("WARNING"):
             registry.register(_make_tool("shell_exec"))
-        assert any(
-            "shell_exec" in rec.message and "polic" in rec.message.lower()
-            for rec in caplog.records
-        ), f"expected policy-skip warning; got {[r.message for r in caplog.records]}"
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings == [], (
+            f"policy-skip should not log at WARNING (would surface in normal stdout); "
+            f"got: {[r.message for r in warnings]}"
+        )
 
 
 class TestToolWrapping:
