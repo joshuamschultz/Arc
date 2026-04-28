@@ -742,10 +742,8 @@ class TestVaultEdges:
 
 class TestTraceStoreEdgePaths:
     @pytest.fixture
-    def workspace(self, tmp_path: Path) -> Path:
-        ws = tmp_path / "myagent" / "workspace"
-        ws.mkdir(parents=True)
-        return ws
+    def agent_root(self, tmp_path: Path) -> Path:
+        return tmp_path / "agent_a"
 
     @staticmethod
     def _make_record(**kwargs: Any) -> TraceRecord:
@@ -763,17 +761,17 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_warm_start_reads_last_hash_from_existing_file(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 188-205: warm-start path reads last hash from pre-existing JSONL file."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         # Write one record to disk via the store
         r1 = self._make_record(trace_id="warm-001")
         await store.append(r1)
 
         # Create a fresh store pointing at same workspace — should warm-start
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         r2 = self._make_record(trace_id="warm-002")
         await store2.append(r2)
 
@@ -782,14 +780,14 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_warm_start_with_bad_last_line_logs_warning(
-        self, workspace: Path, caplog: pytest.LogCaptureFixture
+        self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Lines 199-200: bad JSON on last line handled gracefully."""
         import logging
 
 
-        store = JSONLTraceStore(workspace)
-        traces_dir = workspace.parent / "traces"
+        store = JSONLTraceStore(agent_root)
+        traces_dir = agent_root / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
 
@@ -800,7 +798,7 @@ class TestTraceStoreEdgePaths:
         bad_file.chmod(0o600)
 
         # Fresh store — should survive warm-start without exception
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         with caplog.at_level(logging.WARNING, logger="arcllm.trace_store"):
             r = self._make_record(trace_id="after-bad-line")
             await store2.append(r)
@@ -809,12 +807,12 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_verify_tail_tamper_detected_prev_hash_mismatch(
-        self, workspace: Path, caplog: pytest.LogCaptureFixture
+        self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Lines 225-230: hash chain break detected during tail verification."""
         import logging
 
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r1 = self._make_record(trace_id="t1")
         r2 = self._make_record(trace_id="t2")
@@ -822,7 +820,7 @@ class TestTraceStoreEdgePaths:
         await store.append(r2)
 
         # Tamper with the second record's prev_hash
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
@@ -832,23 +830,23 @@ class TestTraceStoreEdgePaths:
         f.write_text("\n".join(lines) + "\n")
 
         # New store should detect tamper during warm-start tail verification
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         with caplog.at_level(logging.ERROR, logger="arcllm.trace_store"):
             await store2._warm_start()
         assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_verify_tail_tamper_detected_record_hash_mismatch(
-        self, workspace: Path, caplog: pytest.LogCaptureFixture
+        self, agent_root: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Lines 234-238: record_hash mismatch detected during tail verification."""
         import logging
 
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="t-hash")
         await store.append(r)
 
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
@@ -857,24 +855,24 @@ class TestTraceStoreEdgePaths:
         lines[0] = json.dumps(data)
         f.write_text("\n".join(lines) + "\n")
 
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         with caplog.at_level(logging.ERROR, logger="arcllm.trace_store"):
             await store2._warm_start()
         assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
     async def test_rotation_tombstone_written_on_date_change(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 250-258: rotation tombstone written when date changes."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         # Prime the store with a record for "yesterday"
         fake_yesterday = "2020-01-01"
         r = self._make_record(trace_id="old-record")
         hashed = r.with_hash("0" * 64)
         store._current_date = fake_yesterday
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
         old_file = traces_dir / f"traces-{fake_yesterday}.jsonl"
@@ -894,9 +892,9 @@ class TestTraceStoreEdgePaths:
         assert "rotation" in content
 
     @pytest.mark.asyncio
-    async def test_get_returns_record_by_trace_id(self, workspace: Path) -> None:
+    async def test_get_returns_record_by_trace_id(self, agent_root: Path) -> None:
         """Lines 358-371: get() locates a specific record by trace_id."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="find-me-xyz")
         await store.append(r)
 
@@ -906,10 +904,10 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_get_returns_none_for_missing_trace_id(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """get() returns None when trace_id not found."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="present")
         await store.append(r)
 
@@ -917,9 +915,9 @@ class TestTraceStoreEdgePaths:
         assert not_found is None
 
     @pytest.mark.asyncio
-    async def test_query_with_provider_filter(self, workspace: Path) -> None:
+    async def test_query_with_provider_filter(self, agent_root: Path) -> None:
         """Lines 339-340: provider filter applied during query."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r1 = self._make_record(trace_id="q1", provider="anthropic")
         r2 = self._make_record(trace_id="q2", provider="openai")
@@ -930,9 +928,9 @@ class TestTraceStoreEdgePaths:
         assert all(r.provider == "openai" for r in results)
 
     @pytest.mark.asyncio
-    async def test_query_with_status_filter(self, workspace: Path) -> None:
+    async def test_query_with_status_filter(self, agent_root: Path) -> None:
         """Line 342: status filter applied during query."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r1 = self._make_record(trace_id="s1", status="success")
         r2 = self._make_record(trace_id="s2", status="error")
@@ -944,10 +942,10 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_verify_chain_with_start_seq_skips_early_records(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 385-391: start_seq causes early records to be skipped."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         for i in range(5):
             r = self._make_record(trace_id=f"chain-{i}")
@@ -959,10 +957,10 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_verify_chain_detects_tampered_record(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 397-401: verify_chain returns False on hash mismatch."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r1 = self._make_record(trace_id="vc1")
         r2 = self._make_record(trace_id="vc2")
@@ -970,7 +968,7 @@ class TestTraceStoreEdgePaths:
         await store.append(r2)
 
         # Tamper with second record's record_hash
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
@@ -984,11 +982,11 @@ class TestTraceStoreEdgePaths:
 
     @pytest.mark.asyncio
     async def test_verify_chain_bad_json_returns_false(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Line 386: JSONDecodeError during verify_chain returns False."""
-        store = JSONLTraceStore(workspace)
-        traces_dir = workspace.parent / "traces"
+        store = JSONLTraceStore(agent_root)
+        traces_dir = agent_root / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
 
@@ -1000,9 +998,9 @@ class TestTraceStoreEdgePaths:
         assert valid is False
 
     @pytest.mark.asyncio
-    async def test_query_with_agent_filter(self, workspace: Path) -> None:
+    async def test_query_with_agent_filter(self, agent_root: Path) -> None:
         """Line 341: agent_label filter applied during query."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r1 = self._make_record(trace_id="a1", agent_label="agent-alpha")
         r2 = self._make_record(trace_id="a2", agent_label="agent-beta")
@@ -1013,9 +1011,9 @@ class TestTraceStoreEdgePaths:
         assert all(r.agent_label == "agent-alpha" for r in results)
 
     @pytest.mark.asyncio
-    async def test_query_cursor_pagination(self, workspace: Path) -> None:
+    async def test_query_cursor_pagination(self, agent_root: Path) -> None:
         """Lines 314-315, 353-354: cursor-based pagination returns next_cursor."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         for i in range(5):
             r = self._make_record(trace_id=f"page-{i}")
@@ -1031,9 +1029,9 @@ class TestTraceStoreEdgePaths:
         assert len(page2) >= 0  # may be 0 if all remaining were in prev page
 
     @pytest.mark.asyncio
-    async def test_query_start_end_date_filters(self, workspace: Path) -> None:
+    async def test_query_start_end_date_filters(self, agent_root: Path) -> None:
         """Lines 344-347: start/end timestamp filters."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r = self._make_record(trace_id="ts-filter")
         await store.append(r)

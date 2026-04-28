@@ -31,10 +31,7 @@ def _record(agent: str, *, ts: datetime | None = None, provider: str = "anthropi
 
 
 async def _seed_store(agent_root: Path, records: list[TraceRecord]) -> JSONLTraceStore:
-    # Real layout: each agent has agent_root/workspace + agent_root/traces.
-    ws = agent_root / "workspace"
-    ws.mkdir(parents=True, exist_ok=True)
-    store = JSONLTraceStore(ws)
+    store = JSONLTraceStore(agent_root)
     for rec in records:
         await store.append(rec)
     return store

@@ -26,7 +26,7 @@ from arcui.server import create_app
 
 def _record(
     *,
-    agent: str = "my_agent",
+    agent: str = "agent_a",
     model: str = "claude-opus-4-6",
     provider: str = "anthropic",
     cost: float = 0.015,
@@ -53,7 +53,7 @@ def _record(
 @pytest.fixture
 def seeded_store(tmp_path: Path) -> JSONLTraceStore:
     """A single-workspace trace store with three realistic LLM calls."""
-    store = JSONLTraceStore(tmp_path / "ws")
+    store = JSONLTraceStore(tmp_path / "agent_a")
     return store
 
 
@@ -66,7 +66,7 @@ class TestSingleCallFlow:
         This is the smallest possible end-to-end test — if it fails, the
         store/API/serialization chain is broken.
         """
-        store = JSONLTraceStore(tmp_path / "ws")
+        store = JSONLTraceStore(tmp_path / "agent_a")
         rec = _record(model="claude-opus-4-6", cost=0.0153, in_tokens=1234)
         await store.append(rec)
 
@@ -85,7 +85,7 @@ class TestSingleCallFlow:
         # Every UI-visible field must round-trip.
         assert t["model"] == "claude-opus-4-6"
         assert t["provider"] == "anthropic"
-        assert t["agent_label"] == "my_agent"
+        assert t["agent_label"] == "agent_a"
         assert t["cost_usd"] == 0.0153
         assert t["input_tokens"] == 1234
         assert t["output_tokens"] == 340
@@ -94,7 +94,7 @@ class TestSingleCallFlow:
 
     async def test_trace_id_is_unique_uuid(self, tmp_path: Path) -> None:
         """Each appended trace gets a unique 32-hex-char trace_id."""
-        store = JSONLTraceStore(tmp_path / "ws")
+        store = JSONLTraceStore(tmp_path / "agent_a")
         await store.append(_record())
         await store.append(_record())
         await store.append(_record())
@@ -119,7 +119,7 @@ class TestStatsAggregation:
 
     async def test_stats_sums_cost_and_tokens(self, tmp_path: Path) -> None:
         """Five calls; /api/stats reports the right totals — what the user sees."""
-        store = JSONLTraceStore(tmp_path / "ws")
+        store = JSONLTraceStore(tmp_path / "agent_a")
         for cost, in_t, out_t in [
             (0.01, 1000, 200),
             (0.02, 1500, 300),
@@ -153,7 +153,7 @@ class TestStatsAggregation:
     async def test_stats_per_model_breakdown(self, tmp_path: Path) -> None:
         """Different models get separate rows in model_stats — what the
         Model Performance table shows."""
-        store = JSONLTraceStore(tmp_path / "ws")
+        store = JSONLTraceStore(tmp_path / "agent_a")
         for _ in range(3):
             await store.append(_record(model="claude-opus-4-6", cost=0.05))
         for _ in range(7):
@@ -183,12 +183,10 @@ class TestFederatedQueryFlow:
 
     async def test_three_agents_all_appear_in_traces(self, tmp_path: Path) -> None:
         """Three agents each with one call. /api/traces returns all three."""
-        agents = ["my_agent", "brad_agent", "josh_agent"]
+        agents = ["agent_a", "agent_b", "agent_c"]
         stores = []
         for agent in agents:
-            ws = tmp_path / agent
-            ws.mkdir()
-            store = JSONLTraceStore(ws)
+            store = JSONLTraceStore(tmp_path / agent)
             await store.append(_record(agent=agent))
             stores.append(store)
 
@@ -208,23 +206,17 @@ class TestFederatedQueryFlow:
         labels = {t["agent_label"] for t in traces}
         assert labels == set(agents)
 
-    async def test_agent_filter_isolates_one_workspace(
-        self, tmp_path: Path
-    ) -> None:
-        """`?agent=brad_agent` returns only brad's records, even when other
-        workspaces are mounted. Critical: agent filter must apply across
-        the federation, not leak."""
-        for agent in ["my_agent", "brad_agent"]:
-            ws = tmp_path / agent
-            ws.mkdir()
-            store = JSONLTraceStore(ws)
+    async def test_agent_filter_isolates_one_agent(self, tmp_path: Path) -> None:
+        """`?agent=agent_b` returns only agent_b's records — filter must apply
+        across the federation, not leak."""
+        for agent in ["agent_a", "agent_b"]:
+            store = JSONLTraceStore(tmp_path / agent)
             await store.append(_record(agent=agent))
             await store.append(_record(agent=agent))
 
-        # Build the federation in registry order.
         stores = [
-            JSONLTraceStore(tmp_path / "my_agent"),
-            JSONLTraceStore(tmp_path / "brad_agent"),
+            JSONLTraceStore(tmp_path / "agent_a"),
+            JSONLTraceStore(tmp_path / "agent_b"),
         ]
         federated = FederatedTraceStore(stores)
 
@@ -233,15 +225,15 @@ class TestFederatedQueryFlow:
         client = TestClient(app)
 
         resp = client.get(
-            "/api/traces?limit=10&agent=brad_agent",
+            "/api/traces?limit=10&agent=agent_b",
             headers={"Authorization": "Bearer v"},
         )
         assert resp.status_code == 200
         traces = resp.json()["traces"]
         assert len(traces) == 2
         for t in traces:
-            assert t["agent_label"] == "brad_agent", (
-                "agent filter leaked another workspace's records"
+            assert t["agent_label"] == "agent_b", (
+                "agent filter leaked another agent's records"
             )
 
 

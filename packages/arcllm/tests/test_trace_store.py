@@ -138,16 +138,12 @@ class TestTraceRecord:
 
 class TestJSONLTraceStore:
     @pytest.fixture
-    def workspace(self, tmp_path: Path) -> Path:
-        # Mimic real layout: tmp_path/<agent>/workspace, traces land at
-        # tmp_path/<agent>/traces (workspace.parent / "traces").
-        ws = tmp_path / "myagent" / "workspace"
-        ws.mkdir(parents=True)
-        return ws
+    def agent_root(self, tmp_path: Path) -> Path:
+        return tmp_path / "agent_a"
 
     @pytest.fixture
-    def store(self, workspace: Path) -> JSONLTraceStore:
-        return JSONLTraceStore(workspace)
+    def store(self, agent_root: Path) -> JSONLTraceStore:
+        return JSONLTraceStore(agent_root)
 
     def _make_record(self, **kwargs: object) -> TraceRecord:
         defaults: dict[str, object] = {
@@ -162,12 +158,12 @@ class TestJSONLTraceStore:
         defaults.update(kwargs)
         return TraceRecord(**defaults)  # type: ignore[arg-type]
 
-    async def test_append_creates_file(self, store: JSONLTraceStore, workspace: Path):
+    async def test_append_creates_file(self, store: JSONLTraceStore, agent_root: Path):
         rec = self._make_record()
         await store.append(rec)
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = workspace.parent / "traces" / f"traces-{today}.jsonl"
+        file_path = agent_root / "traces" / f"traces-{today}.jsonl"
         assert file_path.exists()
 
         lines = file_path.read_text().strip().split("\n")
@@ -178,7 +174,7 @@ class TestJSONLTraceStore:
         assert data["record_hash"] != ""
         assert data["prev_hash"] == "0" * 64
 
-    async def test_append_chains_hashes(self, store: JSONLTraceStore, workspace: Path):
+    async def test_append_chains_hashes(self, store: JSONLTraceStore, agent_root: Path):
         r1 = self._make_record(trace_id="001")
         r2 = self._make_record(trace_id="002")
         r3 = self._make_record(trace_id="003")
@@ -188,7 +184,7 @@ class TestJSONLTraceStore:
         await store.append(r3)
 
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = workspace.parent / "traces" / f"traces-{today}.jsonl"
+        file_path = agent_root / "traces" / f"traces-{today}.jsonl"
         lines = file_path.read_text().strip().split("\n")
         assert len(lines) == 3
 
@@ -207,14 +203,14 @@ class TestJSONLTraceStore:
         assert await store.verify_chain() is True
 
     async def test_verify_chain_detects_tampering(
-        self, store: JSONLTraceStore, workspace: Path
+        self, store: JSONLTraceStore, agent_root: Path
     ):
         for i in range(3):
             await store.append(self._make_record(trace_id=f"rec-{i}"))
 
         # Tamper with second record
         today = datetime.now(UTC).strftime("%Y-%m-%d")
-        file_path = workspace.parent / "traces" / f"traces-{today}.jsonl"
+        file_path = agent_root / "traces" / f"traces-{today}.jsonl"
         lines = file_path.read_text().strip().split("\n")
         data = json.loads(lines[1])
         data["cost_usd"] = 999.99  # Tamper!
@@ -298,14 +294,14 @@ class TestJSONLTraceStore:
         result = await store.get("does-not-exist")
         assert result is None
 
-    async def test_warm_start_from_existing_file(self, workspace: Path):
+    async def test_warm_start_from_existing_file(self, agent_root: Path):
         # Write some records manually
-        store1 = JSONLTraceStore(workspace)
+        store1 = JSONLTraceStore(agent_root)
         for i in range(3):
             await store1.append(self._make_record(trace_id=f"old-{i}"))
 
         # Create a new store instance (simulates restart)
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         await store2.append(self._make_record(trace_id="new-0"))
 
         # Chain should still be valid across both stores
@@ -341,8 +337,7 @@ class TestJSONLTraceStore:
 
 
 class TestTraceLocation:
-    def test_traces_at_workspace_parent(self, tmp_path: Path) -> None:
-        ws = tmp_path / "myagent" / "workspace"
-        ws.mkdir(parents=True)
-        store = JSONLTraceStore(ws)
-        assert store._traces_dir == tmp_path / "myagent" / "traces"
+    def test_traces_at_agent_root(self, tmp_path: Path) -> None:
+        agent = tmp_path / "agent_a"
+        store = JSONLTraceStore(agent)
+        assert store._traces_dir == agent / "traces"

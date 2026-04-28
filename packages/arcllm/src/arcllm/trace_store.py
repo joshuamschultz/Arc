@@ -259,9 +259,10 @@ class JSONLTraceStore:
         pointing to the next file, carrying the chain hash forward.
     """
 
-    def __init__(self, workspace: Path) -> None:
-        # NIST AU-9: traces sit at <agent>/traces, sibling to workspace.
-        self._traces_dir = workspace.parent / "traces"
+    def __init__(self, agent_root: Path) -> None:
+        # NIST AU-9: traces live at <agent_root>/traces, outside the agent's
+        # workspace tool sandbox.
+        self._traces_dir = agent_root / "traces"
         self._traces_dir.mkdir(parents=True, exist_ok=True)
         self._traces_dir.chmod(0o700)
         self._lock = asyncio.Lock()

@@ -130,7 +130,9 @@ def _entities_to_stores(entities: list[Any]) -> list[Any]:
         if not wp.is_dir():
             _write(f"  skip {entity.id}: workspace_path {wp} not found")
             continue
-        stores.append(JSONLTraceStore(wp))
+        # JSONLTraceStore takes the agent root; workspace_path points at the
+        # agent's workspace subdir (per `arc agent create` convention).
+        stores.append(JSONLTraceStore(wp.parent))
     return stores
 
 

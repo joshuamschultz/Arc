@@ -420,10 +420,8 @@ class TestRegistryRemainingPaths:
 
 class TestTraceStoreRemainingBranches:
     @pytest.fixture
-    def workspace(self, tmp_path: Path) -> Path:
-        ws = tmp_path / "myagent" / "workspace"
-        ws.mkdir(parents=True)
-        return ws
+    def agent_root(self, tmp_path: Path) -> Path:
+        return tmp_path / "agent_a"
 
     @staticmethod
     def _make_record(**kwargs: Any) -> TraceRecord:
@@ -441,15 +439,15 @@ class TestTraceStoreRemainingBranches:
 
     @pytest.mark.asyncio
     async def test_query_skips_file_newer_than_cursor_date(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Line 315: file dated AFTER cursor_date is skipped in query iteration.
 
         We create a file with a future date, then use a cursor from an older date.
         The future-dated file should be skipped (file_date > cursor_date).
         """
-        store = JSONLTraceStore(workspace)
-        traces_dir = workspace.parent / "traces"
+        store = JSONLTraceStore(agent_root)
+        traces_dir = agent_root / "traces"
         traces_dir.mkdir(parents=True, exist_ok=True)
         traces_dir.chmod(0o700)
 
@@ -466,7 +464,7 @@ class TestTraceStoreRemainingBranches:
 
         # Query with cursor pointing to today's date at line 0 (start of today's file)
         today = store._today()
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         results, _ = await store2.query(cursor=f"{today}:1")
 
         # The future file (9999-12-31 > today) should have been skipped
@@ -474,16 +472,16 @@ class TestTraceStoreRemainingBranches:
         assert len(future_found) == 0
 
     @pytest.mark.asyncio
-    async def test_query_handles_empty_lines_in_file(self, workspace: Path) -> None:
+    async def test_query_handles_empty_lines_in_file(self, agent_root: Path) -> None:
         """Line 326: empty lines in JSONL file are skipped during query."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r1 = self._make_record(trace_id="empty-line-first")
         r2 = self._make_record(trace_id="empty-line-second")
         await store.append(r1)
         await store.append(r2)
 
         # Inject an empty line IN THE MIDDLE of the file (between records)
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().rstrip("\n").split("\n")
@@ -491,7 +489,7 @@ class TestTraceStoreRemainingBranches:
         lines.insert(1, "")
         f.write_text("\n".join(lines) + "\n")
 
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         results, _ = await store2.query()
         # Should still find both records even with middle empty lines
         found_ids = {r.trace_id for r in results}
@@ -500,21 +498,21 @@ class TestTraceStoreRemainingBranches:
 
     @pytest.mark.asyncio
     async def test_query_handles_bad_json_lines_gracefully(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 329-330: JSONDecodeError in query iteration is skipped."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="good-record")
         await store.append(r)
 
         # Prepend a broken JSON line to the file
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         original = f.read_text()
         f.write_text("NOTJSON{{{garbage\n" + original)
 
-        store2 = JSONLTraceStore(workspace)
+        store2 = JSONLTraceStore(agent_root)
         results, _ = await store2.query()
         # Broken line skipped; good record still returned
         found = [r for r in results if r.trace_id == "good-record"]
@@ -522,10 +520,10 @@ class TestTraceStoreRemainingBranches:
 
     @pytest.mark.asyncio
     async def test_query_end_date_filter_excludes_future(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Line 348: end timestamp filter excludes records after the cutoff."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="end-filter-test")
         await store.append(r)
 
@@ -535,15 +533,15 @@ class TestTraceStoreRemainingBranches:
 
     @pytest.mark.asyncio
     async def test_get_handles_bad_json_lines_gracefully(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 364, 367-368: JSONDecodeError in get() iteration is skipped."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="get-good")
         await store.append(r)
 
         # Prepend a broken JSON line
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         original = f.read_text()
@@ -554,16 +552,16 @@ class TestTraceStoreRemainingBranches:
         assert result.trace_id == "get-good"
 
     @pytest.mark.asyncio
-    async def test_get_handles_empty_lines_in_file(self, workspace: Path) -> None:
+    async def test_get_handles_empty_lines_in_file(self, agent_root: Path) -> None:
         """Line 364 (empty line continue): empty lines in get() loop are skipped."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r1 = self._make_record(trace_id="get-empty-before")
         r2 = self._make_record(trace_id="get-empty-line")
         await store.append(r1)
         await store.append(r2)
 
         # Insert an empty line in the middle
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().rstrip("\n").split("\n")
@@ -574,16 +572,16 @@ class TestTraceStoreRemainingBranches:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_verify_chain_skips_empty_lines(self, workspace: Path) -> None:
+    async def test_verify_chain_skips_empty_lines(self, agent_root: Path) -> None:
         """Line 382: empty lines in verify_chain are skipped."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
         r1 = self._make_record(trace_id="vc-empty-1")
         r2 = self._make_record(trace_id="vc-empty-2")
         await store.append(r1)
         await store.append(r2)
 
         # Insert an empty line in the middle of the file
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().rstrip("\n").split("\n")
@@ -595,17 +593,17 @@ class TestTraceStoreRemainingBranches:
 
     @pytest.mark.asyncio
     async def test_verify_chain_prev_hash_mismatch_returns_false(
-        self, workspace: Path
+        self, agent_root: Path
     ) -> None:
         """Lines 397-401: verify_chain returns False on prev_hash chain break."""
-        store = JSONLTraceStore(workspace)
+        store = JSONLTraceStore(agent_root)
 
         r1 = self._make_record(trace_id="prevhash-1")
         r2 = self._make_record(trace_id="prevhash-2")
         await store.append(r1)
         await store.append(r2)
 
-        traces_dir = workspace.parent / "traces"
+        traces_dir = agent_root / "traces"
         today = store._today()
         f = traces_dir / f"traces-{today}.jsonl"
         lines = f.read_text().strip().split("\n")
