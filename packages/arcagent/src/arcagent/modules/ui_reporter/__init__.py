@@ -42,6 +42,11 @@ _LLM_EVENTS = (
     "llm:circuit_change",
 )
 
+_SCHEDULER_EVENTS = (
+    "schedule:completed",
+    "schedule:failed",
+)
+
 _AGENT_EVENTS = (
     "agent:init",
     "agent:ready",
@@ -283,6 +288,18 @@ class UIReporterModule:
                 module_name="ui_reporter",
             )
 
+        # Subscribe to scheduler events — schedule:completed and schedule:failed
+        # are emitted by the scheduler module on every fire. Without these,
+        # arcui has no signal for "the cron just ran" — breaking the schedule
+        # history view for any agent that runs scheduled work.
+        for event in _SCHEDULER_EVENTS:
+            ctx.bus.subscribe(
+                event,
+                self._on_event,
+                priority=200,
+                module_name="ui_reporter",
+            )
+
         _logger.info("UI reporter started, target=%s", self._config.url)
 
     async def shutdown(self) -> None:
@@ -375,6 +392,8 @@ class UIReporterModule:
         """Map a ModuleBus event name to a UIEvent layer."""
         if event.startswith("llm:"):
             return "llm"
+        if event.startswith("schedule:"):
+            return "scheduler"
         if event.startswith("agent:"):
             suffix = event.split(":", 1)[1]
             if suffix in _RUN_LAYER_SUFFIXES:

@@ -191,6 +191,23 @@
             </table>
           </div>
         </div>
+
+        <!-- Schedule History (last 5 fires) — populated from scheduler-layer events -->
+        <div class="card mb-20">
+          <div class="card-header">
+            <span class="card-title">Schedule History <span id="schedule-summary" class="text-dimmed text-xs mono"></span></span>
+          </div>
+          <div class="card-body" style="padding:0;">
+            <table>
+              <thead>
+                <tr><th>When</th><th>Schedule</th><th>Result</th><th>Elapsed</th><th>Agent</th></tr>
+              </thead>
+              <tbody id="schedule-tbody">
+                <tr><td colspan="5" class="text-muted" style="text-align:center;">No scheduled fires yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- ==================== TRACES TAB ==================== -->
@@ -724,6 +741,11 @@
       const data = e.detail;
       if (data.type === 'event_batch') {
         ArcStore.handleEventBatch(data);
+      } else if (data && data.layer && data.event_type) {
+        // Single UIEvent (sent by SubscriptionManager.broadcast_filtered) —
+        // wrap as a one-element batch so the rest of the pipeline doesn't
+        // need to know about the difference.
+        ArcStore.handleEventBatch({ events: [data] });
       }
     });
 
@@ -773,6 +795,50 @@
     ArcStore.addEventListener('trace-event', (e) => {
       logTable.addRow(e.detail);
     });
+
+    /* --- Schedule History (renders last 5 scheduler-layer events) --- */
+    function _fmtTime(iso) {
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      } catch (_) { return iso || '-'; }
+    }
+    function _fmtElapsed(s) {
+      if (typeof s !== 'number') return '-';
+      return s < 1 ? `${(s * 1000).toFixed(0)}ms` : `${s.toFixed(2)}s`;
+    }
+    function renderScheduleHistory() {
+      const tbody = document.getElementById('schedule-tbody');
+      const summary = document.getElementById('schedule-summary');
+      if (!tbody) return;
+      const events = ArcStore.scheduleEvents;
+      if (!events || events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="text-align:center;">No scheduled fires yet</td></tr>';
+        if (summary) summary.textContent = '';
+        return;
+      }
+      const okCount = events.filter(e => e.event_type === 'completed').length;
+      const failCount = events.filter(e => e.event_type === 'failed').length;
+      if (summary) summary.textContent = `(last ${events.length}: ${okCount} ok, ${failCount} failed)`;
+      tbody.innerHTML = '';
+      for (const e of events) {
+        const data = e.data || {};
+        const isOk = e.event_type === 'completed';
+        const tr = document.createElement('tr');
+        const resultColor = isOk ? 'var(--success, #22c55e)' : 'var(--danger, #ef4444)';
+        const resultLabel = isOk ? '✓ ok' : '✗ failed';
+        tr.innerHTML = `
+          <td class="mono text-xs">${_fmtTime(e.timestamp)}</td>
+          <td class="mono text-xs">${data.schedule_name || data.schedule_id || '-'}</td>
+          <td class="mono text-xs" style="color:${resultColor};">${resultLabel}</td>
+          <td class="mono text-xs">${_fmtElapsed(data.elapsed)}</td>
+          <td class="mono text-xs text-dimmed">${e.agent_name || '-'}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+    ArcStore.addEventListener('schedule-event', renderScheduleHistory);
+    // Render once at load (no events yet, shows the empty-state).
+    renderScheduleHistory();
 
     /* --- Trace Detail --- */
     let _currentTraceData = null;

@@ -95,7 +95,16 @@ class TestRegister:
 
 
 class TestPolicyEnforcement:
-    def test_allowlist_blocks_unlisted(self) -> None:
+    """Tool policy filters registration silently — does NOT raise.
+
+    Behavior change (was: raise ToolError on every denied registration):
+    Denied tools are skipped, logged, and audited. The agent starts cleanly
+    with the remaining tools, and the LLM never sees the denied tool in its
+    catalog. This lets a least-privilege deploy (deny=[`write`,`bash`]) work
+    without crashing the agent at startup when built-in tools register.
+    """
+
+    def test_allowlist_skips_unlisted_tool(self) -> None:
         config = ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
@@ -103,25 +112,64 @@ class TestPolicyEnforcement:
         )
         registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
         registry.register(_make_tool("read_file"))
-        with pytest.raises(ToolError) as exc_info:
-            registry.register(_make_tool("shell_exec"))
-        assert exc_info.value.code == "TOOL_POLICY_DENIED"
+        registry.register(_make_tool("shell_exec"))  # silently skipped
+        assert "read_file" in registry.tools
+        assert "shell_exec" not in registry.tools
 
-    def test_denylist_blocks_listed(self) -> None:
+    def test_denylist_skips_listed_tool(self) -> None:
         config = ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
             tools=ToolsConfig(policy=ToolConfig(deny=["shell_exec"])),
         )
         registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
-        registry.register(_make_tool("read_file"))  # Allowed
-        with pytest.raises(ToolError) as exc_info:
-            registry.register(_make_tool("shell_exec"))
-        assert exc_info.value.code == "TOOL_POLICY_DENIED"
+        registry.register(_make_tool("read_file"))
+        registry.register(_make_tool("shell_exec"))  # silently skipped
+        assert "read_file" in registry.tools
+        assert "shell_exec" not in registry.tools
 
-    def test_empty_allowlist_allows_all(self, registry: ToolRegistry) -> None:
+    def test_empty_allow_and_deny_allows_all(self, registry: ToolRegistry) -> None:
         registry.register(_make_tool("anything"))
         assert "anything" in registry.tools
+
+    def test_deny_takes_precedence_over_allow(self) -> None:
+        config = ArcAgentConfig(
+            agent=AgentConfig(name="test"),
+            llm=LLMConfig(model="test/model"),
+            tools=ToolsConfig(policy=ToolConfig(allow=["x"], deny=["x"])),
+        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
+        registry.register(_make_tool("x"))
+        assert "x" not in registry.tools
+
+    def test_skip_emits_audit_event(self) -> None:
+        telemetry = MagicMock()
+        config = ArcAgentConfig(
+            agent=AgentConfig(name="test"),
+            llm=LLMConfig(model="test/model"),
+            tools=ToolsConfig(policy=ToolConfig(deny=["shell_exec"])),
+        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=telemetry)
+        registry.register(_make_tool("shell_exec"))
+        # Audit event fired for the policy-denied registration
+        calls = [c for c in telemetry.audit_event.call_args_list
+                 if c.args and c.args[0] == "tool.policy_denied"]
+        assert len(calls) == 1, f"expected one tool.policy_denied audit event; got {telemetry.audit_event.call_args_list}"
+        assert calls[0].args[1]["tool"] == "shell_exec"
+
+    def test_skip_logs_warning(self, caplog) -> None:
+        config = ArcAgentConfig(
+            agent=AgentConfig(name="test"),
+            llm=LLMConfig(model="test/model"),
+            tools=ToolsConfig(policy=ToolConfig(deny=["shell_exec"])),
+        )
+        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
+        with caplog.at_level("WARNING"):
+            registry.register(_make_tool("shell_exec"))
+        assert any(
+            "shell_exec" in rec.message and "polic" in rec.message.lower()
+            for rec in caplog.records
+        ), f"expected policy-skip warning; got {[r.message for r in caplog.records]}"
 
 
 class TestToolWrapping:

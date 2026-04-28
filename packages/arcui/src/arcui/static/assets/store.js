@@ -14,6 +14,9 @@ class Store extends EventTarget {
     this._costEfficiency = null;
     this._config = null;
     this._lastUpdate = 0;
+    // Scheduler events (layer === "scheduler"). Bounded ring buffer of last 5.
+    // Populated by handleEventBatch routing schedule:* events from the bus.
+    this._scheduleEvents = [];
   }
 
   get stats() { return this._stats; }
@@ -23,6 +26,7 @@ class Store extends EventTarget {
   get costEfficiency() { return this._costEfficiency; }
   get config() { return this._config; }
   get lastUpdate() { return this._lastUpdate; }
+  get scheduleEvents() { return this._scheduleEvents; }
 
   updateStats(data) {
     Object.assign(this._stats, data);
@@ -65,8 +69,38 @@ class Store extends EventTarget {
   handleEventBatch(batch) {
     const events = batch.events || [];
     for (const evt of events) {
-      this.addTraceEvent(evt);
+      if (!evt) continue;
+      // Scheduler-layer events go to their own ring buffer.
+      if (evt.layer === 'scheduler') {
+        this.addScheduleEvent(evt);
+        continue;
+      }
+      // LLM-layer events carry trace fields (model, tokens, cost) and feed
+      // the Recent LLM Calls table. Other layers (agent, run) are lifecycle
+      // events without trace fields — they'd render as empty rows, so drop
+      // them from the trace stream. (Future: route them to a dedicated
+      // activity feed if/when that view exists.)
+      if (evt.layer === 'llm') {
+        // Unpack event.data into the flat shape LogTable expects when the
+        // event is a call_complete (the only LLM event that carries the
+        // full trace payload).
+        const data = evt.data || {};
+        const traceRow = {
+          ...data,
+          agent_label: data.agent_label || evt.agent_name || data.agent || '',
+          timestamp: data.timestamp || evt.timestamp,
+        };
+        this.addTraceEvent(traceRow);
+      }
+      // Other layers intentionally dropped from the trace table.
     }
+  }
+
+  addScheduleEvent(event) {
+    this._scheduleEvents.unshift(event);
+    if (this._scheduleEvents.length > 5) this._scheduleEvents.length = 5;
+    this._lastUpdate = Date.now();
+    this.dispatchEvent(new CustomEvent('schedule-event', { detail: event }));
   }
 }
 

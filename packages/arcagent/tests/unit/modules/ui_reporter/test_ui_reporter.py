@@ -277,3 +277,72 @@ class TestTransportWiring:
         ), patch.dict("os.environ", {"ARCUI_AGENT_TOKEN": ""}, clear=False):
             await module.startup(ctx)
         assert module._transport is None
+
+
+# --- Scheduler Event Forwarding (FIX-5: ui_reporter must forward schedule:*) ---
+
+
+class TestSchedulerEventSubscription:
+    """ui_reporter must subscribe to schedule:completed + schedule:failed.
+
+    Without these subscriptions, the scheduler module emits events on the bus
+    but they never reach arcui — breaking the "look at the cron history" demo
+    affordance for any agent that runs scheduled work (CORA, etc.).
+    """
+
+    @pytest.mark.asyncio
+    async def test_subscribes_to_schedule_completed(
+        self, tmp_path: Path, probe_ok: Any
+    ) -> None:
+        module = _make_module(tmp_path)
+        ctx = _make_ctx()
+        await module.startup(ctx)
+
+        subscribed_events = [
+            call.args[0] for call in ctx.bus.subscribe.call_args_list
+        ]
+        assert "schedule:completed" in subscribed_events, (
+            f"ui_reporter did not subscribe to schedule:completed; "
+            f"got: {subscribed_events}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_subscribes_to_schedule_failed(
+        self, tmp_path: Path, probe_ok: Any
+    ) -> None:
+        module = _make_module(tmp_path)
+        ctx = _make_ctx()
+        await module.startup(ctx)
+
+        subscribed_events = [
+            call.args[0] for call in ctx.bus.subscribe.call_args_list
+        ]
+        assert "schedule:failed" in subscribed_events, (
+            f"ui_reporter did not subscribe to schedule:failed; "
+            f"got: {subscribed_events}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_schedule_completed_event_forwarded_to_transport(
+        self, tmp_path: Path
+    ) -> None:
+        mock_transport = AsyncMock()
+        mock_transport.send_event = AsyncMock()
+        module = _make_module(tmp_path, transport=mock_transport)
+        module._agent_id = "cora-agent"
+
+        ctx = MagicMock()
+        ctx.event = "schedule:completed"
+        ctx.data = {
+            "schedule_id": "sched-1",
+            "schedule_name": "cora_pipeline",
+            "result": "ok",
+            "elapsed": 4.7,
+        }
+        await module._on_event(ctx)
+
+        mock_transport.send_event.assert_called_once()
+        sent_event = mock_transport.send_event.call_args[0][1]
+        # ui_reporter strips the prefix and routes to the "scheduler" layer.
+        assert sent_event.event_type == "completed"
+        assert sent_event.layer == "scheduler"

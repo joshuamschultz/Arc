@@ -25,7 +25,7 @@ class UIEvent(BaseModel):
     gap detection on reconnect.
     """
 
-    layer: Literal["llm", "run", "agent", "team"]
+    layer: Literal["llm", "run", "agent", "team", "scheduler"]
     event_type: str = Field(max_length=64, pattern=r"^[a-z_]+$")
     agent_id: str
     agent_name: str

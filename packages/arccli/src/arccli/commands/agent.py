@@ -944,6 +944,7 @@ def _create(args: argparse.Namespace) -> None:
     name: str = args.name
     parent_dir: str = getattr(args, "parent_dir", ".")
     model: str = getattr(args, "model", "anthropic/claude-sonnet-4-5-20250929")
+    no_register: bool = getattr(args, "no_register", False)
 
     parent = Path(parent_dir).expanduser().resolve()
     agent_dir = parent / name
@@ -969,6 +970,53 @@ def _create(args: argparse.Namespace) -> None:
 
     sys.stdout.write(f"Created agent: {agent_dir}\n")
     _print_scaffold_summary(name, agent_dir)
+
+    # FIX-1: Auto-register with arcteam. Without this, the agent serves and
+    # emits traces to disk correctly but stays invisible to arcui's trace
+    # dashboard. Workspace_path = agent_dir/workspace (the SUBDIRECTORY where
+    # JSONLTraceStore expects to find traces/). Best-effort: a registration
+    # failure logs a warning but does not fail the create.
+    if not no_register:
+        _try_auto_register(name, agent_dir)
+
+
+def _try_auto_register(name: str, agent_dir: Path) -> None:
+    """Best-effort arcteam registration after scaffold. Idempotent."""
+    try:
+        from arcteam.config import TeamConfig
+        from arcteam.types import Entity, EntityType
+
+        from arccli.commands.team import _build_service
+
+        async def _do() -> None:
+            root = TeamConfig().root
+            _, registry, _, _ = await _build_service(root)
+            entity = Entity(
+                id=name,
+                name=name,
+                type=EntityType("agent"),
+                roles=["executor"],
+                workspace_path=str(agent_dir / "workspace"),
+            )
+            try:
+                await registry.register(entity)
+            except ValueError as exc:
+                if "already registered" not in str(exc).lower():
+                    raise
+                sys.stdout.write(f"  arcteam: {name} already registered (ok)\n")
+                return
+            sys.stdout.write(
+                f"Registered with arcteam: {name}\n"
+                f"  Workspace: {agent_dir / 'workspace'}\n"
+            )
+
+        asyncio.run(_do())
+    except Exception as exc:  # noqa: BLE001 — best-effort, never block create
+        sys.stdout.write(
+            f"Warning: arcteam auto-register failed: {exc}\n"
+            f"  Run manually: arc team register {name} --type agent "
+            f"--roles executor --workspace {agent_dir}/workspace\n"
+        )
 
 
 def _load_arcagent(agent_dir: Path) -> tuple[Any, Any, Path]:
@@ -1384,6 +1432,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="LLM model.",
     )
     p.add_argument("--with-code-exec", dest="with_code_exec", action="store_true")
+    p.add_argument(
+        "--no-register",
+        dest="no_register",
+        action="store_true",
+        help="Skip auto-registration with arcteam (agent will not appear in arcui).",
+    )
 
     # status
     p = subs.add_parser("status", help="Show agent status summary.")

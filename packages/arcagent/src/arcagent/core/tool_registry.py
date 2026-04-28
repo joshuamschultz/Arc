@@ -439,32 +439,52 @@ class ToolRegistry:
         return self._prompt_cache
 
     def register(self, tool: RegisteredTool) -> None:
-        """Register a tool after policy check."""
-        self._check_policy(tool.name)
+        """Register a tool, filtered by allow/deny policy.
+
+        Policy semantics:
+          - empty allow + empty deny  → all tools register (default)
+          - non-empty allow            → only listed tools register
+          - non-empty deny             → listed tools are skipped
+          - deny takes precedence over allow when both name the same tool
+
+        Denied tools are skipped silently: they do not enter the registry,
+        a warning is logged, and a `tool.policy_denied` audit event fires.
+        Registration never raises on policy denial — letting an agent start
+        cleanly with a least-privilege deny=[`write`,`bash`] config without
+        crashing when built-in tools attempt to register.
+        """
+        if not self._policy_allows(tool.name):
+            policy = self._config.policy
+            _logger.warning(
+                "Tool %r registration skipped by policy (allow=%s, deny=%s)",
+                tool.name,
+                list(policy.allow),
+                list(policy.deny),
+            )
+            self._telemetry.audit_event(
+                "tool.policy_denied",
+                {
+                    "tool": tool.name,
+                    "allowlist": list(policy.allow),
+                    "denylist": list(policy.deny),
+                },
+            )
+            return
         self._tools[tool.name] = tool
         self._prompt_cache = None  # Invalidate cached catalog
         _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
 
-    def _check_policy(self, tool_name: str) -> None:
-        """Check tool against allow/deny policy.
+    def _policy_allows(self, tool_name: str) -> bool:
+        """Return True iff the tool is permitted by current policy.
 
         Deny takes precedence when a tool appears in both lists.
         """
         policy = self._config.policy
-
         if tool_name in policy.deny:
-            raise ToolError(
-                code="TOOL_POLICY_DENIED",
-                message=f"Tool '{tool_name}' is in denylist",
-                details={"tool": tool_name, "denylist": policy.deny},
-            )
-
+            return False
         if policy.allow and tool_name not in policy.allow:
-            raise ToolError(
-                code="TOOL_POLICY_DENIED",
-                message=f"Tool '{tool_name}' not in allowlist",
-                details={"tool": tool_name, "allowlist": policy.allow},
-            )
+            return False
+        return True
 
     def register_native_tools(self, tools: dict[str, NativeToolEntry]) -> None:
         """Import and register Python function tools.

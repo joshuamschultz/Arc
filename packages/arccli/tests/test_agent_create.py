@@ -2,20 +2,47 @@
 
 from __future__ import annotations
 
+import json
+import os
 import subprocess
 import tomllib
 from pathlib import Path
 
+import pytest
+
 _ARC = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
 
 
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path_factory, monkeypatch):
+    """Isolate ~/.arc from these tests.
+
+    `arc agent create` auto-registers with arcteam (FIX-1), which writes to
+    `~/.arc/team/messages/registry/`. Without isolation every test run would
+    pollute the user's real arcteam registry. This fixture redirects HOME to
+    a per-test tmp dir; subprocesses inherit it.
+    """
+    fake_home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(fake_home))
+    yield fake_home
+
+
 def _arc(*args: str) -> subprocess.CompletedProcess[str]:
-    """Run `arc <args>` and return the CompletedProcess."""
+    """Run `arc <args>` and return the CompletedProcess.
+
+    Inherits HOME from the test environment (isolated by the autouse fixture).
+    """
     return subprocess.run(
         [str(_ARC), *args],
         capture_output=True,
         text=True,
+        env=os.environ.copy(),
     )
+
+
+def _registry_dir(home: Path) -> Path:
+    """Return the path arcteam writes registry entries to."""
+    return home / ".arc" / "team" / "messages" / "registry"
 
 
 class TestCreate:
@@ -136,3 +163,77 @@ class TestCreate:
         assert result.returncode == 0, f"stderr: {result.stderr}"
         assert "my-agent/" in result.stdout or "my-agent" in result.stdout
         assert "arcagent.toml" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Auto-registration with arcteam (FIX-1)
+# ---------------------------------------------------------------------------
+
+
+class TestAutoRegister:
+    """`arc agent create` auto-registers the new agent with arcteam.
+
+    Without this, agents serve and emit traces correctly but stay invisible to
+    arcui's trace dashboard until the user manually runs `arc team register`
+    + `arc team backfill-workspaces --apply`. FIX-1 makes the common path
+    (just create the agent) work end-to-end.
+
+    Workspace path must be the workspace SUBDIRECTORY (`<agent>/workspace`),
+    not the agent root — JSONLTraceStore appends `/traces` to it and the
+    real traces live in `<agent>/workspace/traces/`.
+    """
+
+    def test_create_writes_registry_entry(self, tmp_path, isolated_home):
+        result = _arc("agent", "create", "auto-reg-test", "--dir", str(tmp_path))
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        registry_file = _registry_dir(isolated_home) / "auto-reg-test.json"
+        assert registry_file.exists(), (
+            f"expected registry entry at {registry_file}; "
+            f"created files in registry dir: "
+            f"{list(_registry_dir(isolated_home).iterdir()) if _registry_dir(isolated_home).is_dir() else 'dir missing'}"
+        )
+
+    def test_registered_workspace_path_ends_in_workspace_subdir(
+        self, tmp_path, isolated_home
+    ):
+        _arc("agent", "create", "wp-test", "--dir", str(tmp_path))
+
+        registry_file = _registry_dir(isolated_home) / "wp-test.json"
+        data = json.loads(registry_file.read_text())
+        wp = data.get("workspace_path", "")
+
+        # Critical: must end in /workspace, NOT at the agent root.
+        # JSONLTraceStore appends /traces to this path, and the real traces
+        # live in <agent>/workspace/traces/.
+        assert wp.endswith("/workspace"), (
+            f"workspace_path must point at the 'workspace' subdirectory "
+            f"(JSONLTraceStore appends '/traces' to it); got {wp!r}"
+        )
+        # Sanity: it should also include the agent name
+        assert "wp-test" in wp
+
+    def test_no_register_flag_skips_registration(self, tmp_path, isolated_home):
+        result = _arc(
+            "agent", "create", "skip-reg-test",
+            "--dir", str(tmp_path), "--no-register",
+        )
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+
+        registry_file = _registry_dir(isolated_home) / "skip-reg-test.json"
+        assert not registry_file.exists(), (
+            f"--no-register should not write a registry entry, but found {registry_file}"
+        )
+
+    def test_create_succeeds_even_if_already_registered(
+        self, tmp_path, isolated_home
+    ):
+        # First create + register
+        _arc("agent", "create", "dup-test", "--dir", str(tmp_path))
+        # Delete the agent dir and recreate with the same name — registry entry
+        # already exists; second create should not crash on the registration.
+        import shutil
+        shutil.rmtree(tmp_path / "dup-test")
+        result = _arc("agent", "create", "dup-test", "--dir", str(tmp_path))
+        # Create itself succeeds (filesystem); registration is best-effort idempotent
+        assert result.returncode == 0, f"stderr: {result.stderr}"
