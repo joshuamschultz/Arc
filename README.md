@@ -79,7 +79,7 @@ flowchart TB
     arccli[arccli<br/>The 'arc' command-line tool]:::cli
     arcgateway[arcgateway<br/>Telegram · Slack · Discord daemon]:::gw
     arcteam[arcteam<br/>Multi-agent messaging + signed audit]:::tm
-    arcagent[arcagent<br/>The agent · DID · sessions · skills · extensions]:::ag
+    arcagent[arcagent<br/>The agent · DID · sessions · capabilities]:::ag
     arcskill[arcskill<br/>Verified skill install · scan · lock]:::sk
     arcrun[arcrun<br/>The think → act → observe loop]:::rn
     arcllm[arcllm<br/>16 LLM providers · zero SDKs]:::llm
@@ -105,7 +105,7 @@ flowchart TB
 | 🟫 [**arctrust**](packages/arctrust/) | The cryptographic foundation — Ed25519 keypairs, DID identity, audit emission, the deny-by-default policy pipeline |
 | 🟦 [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII redaction, request signing, OpenTelemetry, audit |
 | 🟩 [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
-| 🟪 [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, manages skills, extensions, sessions, module bus |
+| 🟪 [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
 | 🟦 [**arcskill**](packages/arcskill/) | Skill hub — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list |
 | 🟧 [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
 | 🟥 [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, HMAC-signed audit trail |
@@ -173,13 +173,13 @@ This scaffolds:
 my-agent/
 ├── arcagent.toml          # config
 ├── identity.md            # the agent's identity card (immutable to the agent)
+├── capabilities/          # per-agent capabilities — trusted, operator-curated
 └── workspace/
-    ├── extensions/        # Python extensions that register tools
-    ├── skills/            # markdown skills with YAML frontmatter
+    ├── .capabilities/     # agent-authored capabilities — UNTRUSTED, AST-validated
     └── sessions/          # JSONL transcripts of past conversations
 ```
 
-It also generates a fresh Ed25519 keypair and writes the public DID into `arcagent.toml`.
+It also generates a fresh Ed25519 keypair and writes the public DID into `arcagent.toml`. See [Capability Loading](#-capability-loading) below for how the four scan roots compose.
 
 ### 4. Validate It
 
@@ -327,8 +327,11 @@ max_tokens = 128000
 retention_count = 50
 retention_days = 30
 
-[extensions]
-global_dir = "~/.arcagent/extensions"
+[security]
+tier = "personal"                         # "personal" | "enterprise" | "federal"
+
+[security.validators]
+auto_run_agent_code = false               # personal-only escape hatch; federal/enterprise require TOFU
 
 [modules.memory]
 enabled = true
@@ -344,43 +347,75 @@ enabled = true
 
 ---
 
-## 🧩 Adding Extensions and Skills
+## 🧩 Capability Loading
 
-### Extensions (Python tools)
+Tools, skills, hooks, and background tasks are all **capabilities** — picked up by a single loader (`SPEC-021`) from four scan roots, in order:
 
-An extension is a Python file exporting an `extension()` factory. Drop it in `workspace/extensions/` (per-agent) or `~/.arcagent/extensions/` (shared).
+| # | Root | Trust | Source | Purpose |
+|---|------|-------|--------|---------|
+| 1 | `arcagent/builtins/capabilities/` | trusted | ships with the package | `bash`, `read`, `write`, `edit`, `find`, `grep`, `ls`, `reload` + the self-mod tools and skill folders |
+| 2 | `~/.arc/capabilities/` | trusted | the human operator | global, opt-in capabilities shared across every agent |
+| 3 | `<agent>/capabilities/` | trusted | the human operator | per-agent capabilities |
+| 4 | `<agent>/workspace/.capabilities/` | **untrusted** | the agent itself, at runtime | passes through AST validator + (future) TOFU + OS sandbox before import |
 
-```bash
-arc ext create web-search --dir my-agent/workspace/extensions
-arc ext validate my-agent/workspace/extensions/web-search.py
-arc ext install ./my_extension.py        # copies to ~/.arcagent/extensions/
+Plus: any module under `arcagent/modules/<mod>/` with `[modules.<mod>].enabled = true` and a `capabilities.py` is added as an extra root (`module:<mod>`). Disabled modules are silently skipped.
+
+### How overrides work
+
+| Kind | Conflict policy |
+|------|-----------------|
+| `@tool`, `@capability` class, skill folder | **last-wins** — same name at a later root replaces the earlier one. The reload diff names it: `~1 replaced (web_search 1.0.0→1.1.0)`. |
+| `@hook` | **fan-out** — every handler keeps firing, ordered by `priority` (lower = first). |
+| `@background_task` | **drain-then-replace** — old task is cancelled and awaited before the replacement starts. |
+
+So to override a built-in `web_search` tool with a stricter version, write a `web_search.py` at root 2 or 3 with the same `name=` in its `@tool(...)` decorator. To extend behavior without replacing it, register a `@hook` instead.
+
+### What lives in a capability file
+
+```python
+# my-agent/capabilities/web_search.py
+from arcagent.tools._decorator import tool, hook, background_task, capability
+
+@tool(name="web_search", description="...", classification="read_only", version="1.0.0")
+async def web_search(query: str) -> str:
+    ...
+
+@hook(name="log_tool_calls", event="tool:invoked", priority=200)
+async def log_tool_calls(ctx) -> None:
+    ...
+
+@background_task(name="poll_inbox", interval=60.0)
+async def poll_inbox() -> None:
+    ...
+
+@capability(name="browser", depends_on=())
+class BrowserCapability:
+    async def setup(self, ctx) -> None: ...
+    async def teardown(self) -> None: ...
 ```
 
-Extensions run in a sandbox. Pick the mode in `arcagent.toml`:
+Skills are folders containing a `SKILL.md` with frontmatter (`name`, `version`, `description`, `triggers`, `required_tools`) plus optional `references/`, `scripts/`, and `templates/`. The frontmatter is injected into the system prompt; the body is read lazily via the built-in `read` tool when the model decides to use it.
 
-| Mode | Filesystem | Subprocess | Network |
-|------|-----------|------------|---------|
-| `workspace` | unrestricted | ✅ | ✅ |
-| `paths` | workspace + explicitly allowed paths | ✅ | ✅ |
-| `strict` | workspace only | 🚫 | 🚫 |
+### Reload
 
-`strict` mode patches `subprocess.run`, `os.system`, and `urllib.request.urlopen` while loading, then restores them in a `finally` block.
+`/reload` (REPL) and `arc agent reload` re-walk all four roots and emit one diff line:
 
-### Skills (markdown instructions)
-
-A skill is a markdown file with YAML frontmatter describing how to do a specific task. The agent discovers skills automatically and adds them to context.
-
-```bash
-arc skill create data-analysis --dir my-agent/workspace/skills
-arc skill search "data analysis" --agent my-agent
+```
+reload: +2 added (web_search, log_tool_calls), ~1 replaced (data-analysis 1.0.0→1.1.0), -1 removed (legacy_scraper), 0 errors
 ```
 
-Verified skill install through the **arcskill hub** adds Sigstore + Rekor signature verification, a Certificate Revocation List check, static analysis (regex + AST + optional semgrep + bandit), and a sandboxed dry-run before activation:
+Failures append one indented line per error and emit `capability:registration_failed` on the bus + an audit event.
+
+### Verified install (optional)
+
+For supply-chain-secure third-party skills (Sigstore + Rekor + static scan + sandboxed dry-run + CRL check + atomic activation), enable the **arcskill hub**:
 
 ```toml
 [skills.hub]
 enabled = true
 ```
+
+Verified skills land under `~/.arc/capabilities/` (root 2) — same precedence rules apply.
 
 ---
 
@@ -404,7 +439,7 @@ arc agent config my-agent --json                          # full parsed config
 arc agent tools my-agent                                  # what tools it can call
 arc agent skills my-agent                                 # discovered skills
 arc agent sessions my-agent                               # past conversation transcripts
-arc agent reload my-agent                                 # hot-reload skills + extensions
+arc agent reload my-agent                                 # re-walk all four capability scan roots
 
 # LLM introspection
 arc llm providers                                         # configured providers
@@ -497,14 +532,14 @@ Per-tier composition: **Federal** uses all 5. **Enterprise** drops Team. **Perso
 
 ### Dynamic Tool Safety (Four Defense Layers)
 
-Agents can register new tools at runtime. The loader applies four defenses, in order:
+The four defenses gate the **untrusted scan root only** — `<workspace>/.capabilities/`, where the agent itself can write Python. Builtins, `~/.arc/capabilities/`, and `<agent>/capabilities/` are operator-curated and skip the AST gate.
 
 1. **Source encoding check** — reject non-UTF-8 coding declarations. Codec attacks have to lose **before** the AST parser sees the source.
 2. **AST validator** — rejects 9 categories of bypass: privileged imports (`os`, `ctypes`, `subprocess`, `pickle`, `sys`, ...), frame traversal (`gi_frame`, `f_back`, `__subclasses__`), dynamic execution (`eval`, `exec`, `compile`, `__import__`), `sys.modules` subscription, `__builtins__` assignment, `__init_subclass__` definitions, starred `__builtins__` unpacking. Cites real CVEs (2023-37271, 2025-68668, 2025-22153).
 3. **Restricted builtins** — execute with a scrubbed `__builtins__` dict (36 safe names). `__import__`, `eval`, `exec`, `compile`, `open` are deliberately **not** present.
 4. **Egress proxy** — network only via `ToolContext.http`, which enforces a per-tool origin allowlist (scheme + host + port). Deny-by-default. Every request audit-logged.
 
-Tier gates sit on top: Federal refuses dynamic tool creation entirely. Enterprise allows it but emits a high-priority approval audit. Personal allows it freely.
+Tier gates sit on top: **Federal** refuses agent-authored capabilities entirely. **Enterprise** allows them only after a human records approval via `arc trust approve` (persisted under `[security.validators.approved]`). **Personal** allows them with `[security.validators] auto_run_agent_code = true`.
 
 ### Sandboxed Code Execution
 

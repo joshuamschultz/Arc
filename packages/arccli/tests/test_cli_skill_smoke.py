@@ -65,27 +65,87 @@ class TestSkillList:
 # ---------------------------------------------------------------------------
 
 
+_VALID_SKILL_MD = """\
+---
+name: my-skill
+version: 1.0.0
+description: A test skill that does a thing.
+triggers: [test, demo]
+tools: [bash]
+---
+
+## Resources
+
+(auto)
+
+## Contract
+
+Inputs you must have:
+- something
+
+Outputs the agent must produce:
+- something
+
+## Knowledge
+
+Background.
+
+## Steps
+
+1. Do thing.
+
+## Anti Patterns
+
+- **Don't** skip steps.
+
+## Examples
+
+```python
+example()
+```
+
+## Validation
+
+- It worked.
+"""
+
+
 class TestSkillCreate:
     def test_create_exits_zero(self, tmp_path: Path) -> None:
         """arc skill create <name> --dir <tmp> exits 0."""
         result = _arc("skill", "create", "test-skill", "--dir", str(tmp_path))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
 
-    def test_create_writes_file(self, tmp_path: Path) -> None:
-        """arc skill create writes a .md file."""
+    def test_create_writes_skill_folder(self, tmp_path: Path) -> None:
+        """arc skill create writes a folder containing SKILL.md (SPEC-021)."""
         _arc("skill", "create", "test-skill", "--dir", str(tmp_path))
-        assert (tmp_path / "test-skill.md").exists()
+        skill_dir = tmp_path / "test-skill"
+        assert skill_dir.is_dir(), "skill should be a folder, not a flat .md file"
+        assert (skill_dir / "SKILL.md").exists()
+        # Sub-folders the loader walks for the auto-generated ## Resources section.
+        assert (skill_dir / "references").is_dir()
+        assert (skill_dir / "scripts").is_dir()
+        assert (skill_dir / "templates").is_dir()
 
-    def test_create_file_has_frontmatter(self, tmp_path: Path) -> None:
-        """arc skill create produces valid YAML frontmatter."""
+    def test_create_skill_md_has_required_frontmatter(self, tmp_path: Path) -> None:
+        """SKILL.md template carries every SPEC-021 required frontmatter field."""
         _arc("skill", "create", "my-skill", "--dir", str(tmp_path))
-        content = (tmp_path / "my-skill.md").read_text()
-        assert "---" in content
-        assert "name:" in content
-        assert "description:" in content
+        content = (tmp_path / "my-skill" / "SKILL.md").read_text()
+        for field in ("name:", "version:", "description:", "triggers:", "tools:"):
+            assert field in content, f"missing required frontmatter field: {field}"
+        for section in (
+            "## Resources",
+            "## Contract",
+            "## Knowledge",
+            "## Steps",
+            "## Anti Patterns",
+            "## Examples",
+            "## Validation",
+        ):
+            assert section in content, f"missing required section: {section}"
 
     def test_create_fails_if_exists(self, tmp_path: Path) -> None:
-        """arc skill create fails if file already exists."""
+        """arc skill create fails if folder already exists."""
         _arc("skill", "create", "dup-skill", "--dir", str(tmp_path))
         result = _arc("skill", "create", "dup-skill", "--dir", str(tmp_path))
         assert result.returncode != 0
@@ -97,26 +157,37 @@ class TestSkillCreate:
 
 
 class TestSkillValidate:
-    def test_validate_valid_skill(self, tmp_path: Path) -> None:
-        """arc skill validate passes on a valid skill file."""
-        skill_file = tmp_path / "my-skill.md"
-        skill_file.write_text(
-            '---\nname: my-skill\ndescription: "A test skill"\n---\n\n# my-skill\n'
-        )
-        result = _arc("skill", "validate", str(skill_file))
+    def test_validate_valid_skill_folder(self, tmp_path: Path) -> None:
+        """arc skill validate passes on a fully-populated SPEC-021 skill folder."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(_VALID_SKILL_MD)
+        result = _arc("skill", "validate", str(skill_dir))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
         assert "OK" in result.stdout or "ok" in result.stdout.lower()
 
-    def test_validate_missing_name_fails(self, tmp_path: Path) -> None:
-        """arc skill validate fails when name is missing."""
-        skill_file = tmp_path / "bad.md"
-        skill_file.write_text('---\ndescription: "No name field"\n---\n\n# bad\n')
-        result = _arc("skill", "validate", str(skill_file))
+    def test_validate_accepts_skill_md_path(self, tmp_path: Path) -> None:
+        """arc skill validate also accepts the SKILL.md path directly."""
+        skill_dir = tmp_path / "my-skill"
+        skill_dir.mkdir()
+        skill_md = skill_dir / "SKILL.md"
+        skill_md.write_text(_VALID_SKILL_MD)
+        result = _arc("skill", "validate", str(skill_md))
+        assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
+
+    def test_validate_missing_required_fields_fails(self, tmp_path: Path) -> None:
+        """arc skill validate fails when required frontmatter fields are missing."""
+        skill_dir = tmp_path / "bad-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            '---\nname: bad\ndescription: "incomplete"\n---\n\n# bad\n'
+        )
+        result = _arc("skill", "validate", str(skill_dir))
         assert result.returncode != 0
 
     def test_validate_nonexistent_fails(self) -> None:
-        """arc skill validate fails on a nonexistent file."""
-        result = _arc("skill", "validate", "/tmp/__no_such_skill__.md")
+        """arc skill validate fails on a nonexistent path."""
+        result = _arc("skill", "validate", "/tmp/__no_such_skill_dir__")
         assert result.returncode != 0
 
 

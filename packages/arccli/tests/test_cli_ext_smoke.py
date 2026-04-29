@@ -76,11 +76,14 @@ class TestExtCreate:
         _arc("ext", "create", "test-ext", "--dir", str(tmp_path))
         assert (tmp_path / "test-ext.py").exists()
 
-    def test_create_file_has_factory(self, tmp_path: Path) -> None:
-        """arc ext create produces a file with an extension() factory."""
+    def test_create_file_has_decorator(self, tmp_path: Path) -> None:
+        """arc ext create produces a file stamped with the @tool decorator (SPEC-021)."""
         _arc("ext", "create", "my-ext", "--dir", str(tmp_path))
         content = (tmp_path / "my-ext.py").read_text()
-        assert "def extension(" in content
+        assert "@tool(" in content
+        assert "from arcagent.tools._decorator import tool" in content
+        # Legacy factory pattern must not reappear.
+        assert "def extension(" not in content
 
     def test_create_fails_if_exists(self, tmp_path: Path) -> None:
         """arc ext create fails if file already exists."""
@@ -94,20 +97,36 @@ class TestExtCreate:
 # ---------------------------------------------------------------------------
 
 
+_GOOD_CAPABILITY = '''\
+"""Good capability."""
+
+from arcagent.tools._decorator import tool
+
+
+@tool(
+    description="Echo the input string.",
+    classification="read_only",
+    version="1.0.0",
+)
+async def echo(value: str) -> str:
+    return value
+'''
+
+
 class TestExtValidate:
-    def test_validate_valid_extension(self, tmp_path: Path) -> None:
-        """arc ext validate passes on a valid extension file."""
-        ext_file = tmp_path / "good_ext.py"
-        ext_file.write_text('"""Good extension."""\n\ndef extension(api):\n    pass\n')
-        result = _arc("ext", "validate", str(ext_file))
+    def test_validate_valid_capability(self, tmp_path: Path) -> None:
+        """arc ext validate passes on a properly-decorated capability file."""
+        cap_file = tmp_path / "good_cap.py"
+        cap_file.write_text(_GOOD_CAPABILITY)
+        result = _arc("ext", "validate", str(cap_file))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
         assert "OK" in result.stdout or "ok" in result.stdout.lower()
 
-    def test_validate_no_factory_fails(self, tmp_path: Path) -> None:
-        """arc ext validate fails when extension() function is missing."""
-        ext_file = tmp_path / "bad_ext.py"
-        ext_file.write_text('"""No factory."""\n\ndef something_else():\n    pass\n')
-        result = _arc("ext", "validate", str(ext_file))
+    def test_validate_no_decorator_fails(self, tmp_path: Path) -> None:
+        """arc ext validate fails when no @tool/@hook/@background_task/@capability stamp."""
+        cap_file = tmp_path / "bad_cap.py"
+        cap_file.write_text('"""No decorators here."""\n\ndef something_else():\n    pass\n')
+        result = _arc("ext", "validate", str(cap_file))
         assert result.returncode != 0
 
     def test_validate_nonexistent_fails(self) -> None:
@@ -130,21 +149,21 @@ class TestExtValidate:
 
 class TestExtInstall:
     def test_install_single_file(self, tmp_path: Path) -> None:
-        """arc ext install copies a .py file to global extensions dir.
+        """arc ext install copies a .py file to ~/.arc/capabilities/.
 
-        Note: this test creates a real file in ~/.arcagent/extensions/.
-        Cleanup is not guaranteed — acceptable for smoke tests.
+        Note: this test creates a real file in ~/.arc/capabilities/.
+        Cleanup is best-effort — acceptable for smoke tests.
         """
-        ext_file = tmp_path / "smoke_install_test.py"
-        ext_file.write_text('"""Smoke test extension."""\n\ndef extension(api):\n    pass\n')
-        global_dir = Path.home() / ".arcagent" / "extensions"
+        cap_file = tmp_path / "smoke_install_test.py"
+        cap_file.write_text(_GOOD_CAPABILITY)
+        global_dir = Path.home() / ".arc" / "capabilities"
         dest = global_dir / "smoke_install_test.py"
 
         # Clean up leftover from prior run
         if dest.exists():
             dest.unlink()
 
-        result = _arc("ext", "install", str(ext_file))
+        result = _arc("ext", "install", str(cap_file))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
         assert dest.exists()
 

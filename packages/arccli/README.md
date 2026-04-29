@@ -142,23 +142,24 @@ arc run version
 arc run task "Calculate 2^32" --with-calc --model anthropic/claude-haiku-4-5-20251001
 arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 
-# === Skills ===
+# === Skills (SPEC-021 folder format) ===
 arc skill list
 arc skill list --agent my-agent
-arc skill create data-analysis
-arc skill create data-analysis --dir my-agent/workspace/skills
-arc skill create shared --global
-arc skill validate ./my-skill.md
+arc skill create data-analysis                                  # creates ./data-analysis/SKILL.md
+arc skill create data-analysis --dir my-agent/capabilities      # per-agent (trusted)
+arc skill create shared --global                                # ~/.arc/capabilities/shared/
+arc skill validate ./data-analysis                              # folder OR ./data-analysis/SKILL.md
 arc skill search "data"
 arc skill search "report" --agent my-agent
 
-# === Extensions ===
+# === Capability files (Python @tool / @hook / @background_task / @capability) ===
 arc ext list
 arc ext list --agent my-agent
-arc ext create web-search
-arc ext create scraper --dir my-agent/workspace/extensions
-arc ext install ./my_extension.py
-arc ext validate ./my_extension.py
+arc ext create web-search                                       # ./web-search.py with @tool template
+arc ext create scraper --dir my-agent/capabilities              # per-agent (trusted)
+arc ext create scraper --dir my-agent/workspace/.capabilities   # agent-authored (UNTRUSTED, AST-validated)
+arc ext install ./my_capability.py                              # copies to ~/.arc/capabilities/
+arc ext validate ./my_capability.py
 
 # === Team messaging ===
 arc team init

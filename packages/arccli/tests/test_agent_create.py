@@ -73,10 +73,12 @@ class TestCreate:
             "eval",
             "modules",
             "session",
-            "extensions",
+            "security",
         ]
         for section in expected_sections:
             assert section in config, f"Missing config section: {section}"
+        # Old SPEC-021-deprecated section must not reappear.
+        assert "extensions" not in config, "[extensions] block should be gone (SPEC-021)"
 
     def test_create_config_uses_agent_name(self, tmp_path):
         _arc("agent", "create", "test-bot", "--dir", str(tmp_path))
@@ -87,13 +89,12 @@ class TestCreate:
 
     def test_create_workspace_structure(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
-        ws = tmp_path / "my-agent" / "workspace"
-        expected_dirs = [
+        agent_root = tmp_path / "my-agent"
+        ws = agent_root / "workspace"
+        expected_workspace_dirs = [
             "notes",
             "entities",
-            "skills",
-            "skills/_agent-created",
-            "extensions",
+            ".capabilities",
             "sessions",
             "archive",
             "library",
@@ -103,8 +104,13 @@ class TestCreate:
             "library/data",
             "library/snippets",
         ]
-        for subdir in expected_dirs:
+        for subdir in expected_workspace_dirs:
             assert (ws / subdir).is_dir(), f"Missing workspace dir: {subdir}"
+        # SPEC-021: per-agent capabilities live at the AGENT root, not in workspace
+        assert (agent_root / "capabilities").is_dir(), "Missing per-agent capabilities/ dir"
+        # Old SPEC-021-deprecated layout must not reappear.
+        assert not (ws / "extensions").exists(), "workspace/extensions/ should be gone"
+        assert not (ws / "skills").exists(), "workspace/skills/ should be gone"
 
     def test_create_identity_file(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
@@ -124,13 +130,15 @@ class TestCreate:
         assert context.exists()
         assert len(context.read_text().strip()) > 0
 
-    def test_create_extension_calculator(self, tmp_path):
+    def test_create_calculator_capability(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
-        calc = tmp_path / "my-agent" / "workspace" / "extensions" / "calculator.py"
-        assert calc.exists()
+        calc = tmp_path / "my-agent" / "capabilities" / "calculator.py"
+        assert calc.exists(), "calculator should be scaffolded into <agent>/capabilities/"
         content = calc.read_text()
-        assert "def extension(api)" in content
-        assert "calculate" in content
+        # SPEC-021 calls for a @tool decorator, not the legacy extension(api) factory.
+        assert "@tool(" in content
+        assert "async def calculate" in content
+        assert "def extension(api)" not in content
 
     def test_create_tools_init(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))

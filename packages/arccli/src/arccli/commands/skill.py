@@ -1,11 +1,12 @@
-"""Plain CommandDef handlers for the `arc skill` subcommand group.
+"""`arc skill` — manage SKILL.md folders (SPEC-021).
 
-T1.1.5 migration: replaces the legacy Click-based dispatch in registry.py.
-Each function is a direct translation of the corresponding Click command body
-in arccli.skill, with Click-specific calls replaced with stdlib equivalents.
+A skill is a folder containing `SKILL.md` (frontmatter + 7 required
+sections) plus optional `references/`, `scripts/`, `templates/`, and
+`assets/` sub-folders. The unified `CapabilityLoader` discovers them
+from the same four scan roots used for capability `.py` files.
 
-Layer contract: this module may import from arcagent.
-It MUST NOT import click or arccli.main_legacy.
+Layer contract: this module may import from arcagent. It MUST NOT
+import click or arccli.main_legacy.
 """
 
 from __future__ import annotations
@@ -16,47 +17,67 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_GLOBAL_SKILL_DIR = Path.home() / ".arcagent" / "skills"
+_GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
 _SKILL_TEMPLATE = """\
 ---
 name: {name}
-description: "{name} skill — edit this description"
-version: "0.1.0"
-author: ""
-category: ""
-tags: []
-requires: []
+version: 1.0.0
+description: <one sentence — what this skill teaches>
+triggers: [<trigger phrase 1>, <trigger phrase 2>, <trigger phrase 3>]
+tools: [<tool 1>, <tool 2>]
 ---
 
-# {name}
+## Resources
 
-## Purpose
+(auto-filled by the loader)
 
-Describe what this skill does and when to use it.
+## Contract
 
-## Instructions
+Inputs you must have:
+- <input>
 
-Step-by-step instructions for the agent.
+Outputs the agent must produce:
+- <output>
+
+## Knowledge
+
+<background and rationale — why this approach, what constraints>
+
+## Steps
+
+1. <first action>
+2. <second action>
+3. <third action>
+
+## Anti Patterns
+
+- **Don't** <specific failure mode>.
+- **Don't** <another specific failure mode>.
 
 ## Examples
 
-Provide examples of input/output or usage patterns.
+```python
+<concrete tool invocation example>
+```
+
+## Validation
+
+- <observable check 1>
+- <observable check 2>
 """
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers (no click dependency)
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 
 def _write(msg: str = "") -> None:
-    """Write a line to stdout."""
     sys.stdout.write(msg + "\n")
 
 
 def _print_table(headers: list[str], rows: list[list[str]]) -> None:
-    """Print a table with headers."""
     try:
         from arccli.formatting import print_table
 
@@ -67,74 +88,104 @@ def _print_table(headers: list[str], rows: list[list[str]]) -> None:
             sys.stdout.write("  " + "  ".join(row) + "\n")
 
 
+def _scan_roots(agent_dir: str | None) -> list[tuple[str, Path]]:
+    """Return user-visible scan roots in precedence order."""
+    roots: list[tuple[str, Path]] = []
+    if _GLOBAL_CAP_DIR.is_dir():
+        roots.append(("global", _GLOBAL_CAP_DIR))
+    if agent_dir:
+        agent_root = Path(agent_dir).expanduser().resolve()
+        agent_caps = agent_root / "capabilities"
+        ws_caps = agent_root / "workspace" / ".capabilities"
+        if agent_caps.is_dir():
+            roots.append(("agent", agent_caps))
+        if ws_caps.is_dir():
+            roots.append(("workspace", ws_caps))
+    return roots
+
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
+
+
 def _extract_frontmatter(text: str) -> str | None:
-    """Extract YAML frontmatter between --- delimiters."""
-    match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    match = _FRONTMATTER_RE.match(text)
     return match.group(1) if match else None
 
 
 def _parse_yaml_simple(text: str) -> dict[str, str]:
-    """Minimal YAML parser for flat key: value frontmatter."""
+    """Minimal YAML parser for flat key: value frontmatter (fallback only)."""
     result: dict[str, str] = {}
-    for line in text.strip().splitlines():
-        line = line.strip()
+    for raw_line in text.strip().splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
-        if ":" in line:
-            key, _, value = line.partition(":")
-            key = key.strip()
-            value = value.strip().strip('"').strip("'")
-            if value in ("[]", ""):
-                continue
-            result[key] = value
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if value in ("[]", ""):
+            continue
+        result[key] = value
     return result
 
 
 def _discover_skills_fallback(agent_dir: str | None) -> list[dict[str, str]]:
-    """Fallback skill discovery when arcagent is not importable."""
+    """Discover skill folders without importing arcagent. Reads SKILL.md only."""
     skills: list[dict[str, str]] = []
-    dirs_to_scan: list[Path] = []
-
-    if _GLOBAL_SKILL_DIR.is_dir():
-        dirs_to_scan.append(_GLOBAL_SKILL_DIR)
-
-    if agent_dir:
-        ws_skills = Path(agent_dir).expanduser().resolve() / "workspace" / "skills"
-        if ws_skills.is_dir():
-            dirs_to_scan.append(ws_skills)
-            agent_created = ws_skills / "_agent-created"
-            if agent_created.is_dir():
-                dirs_to_scan.append(agent_created)
-
-    for directory in dirs_to_scan:
-        for md_file in sorted(directory.glob("*.md")):
-            content = md_file.read_text(encoding="utf-8")
-            fm = _extract_frontmatter(content)
-            if fm:
-                parsed = _parse_yaml_simple(fm)
-                if parsed.get("name"):
-                    skills.append(
-                        {
-                            "name": parsed.get("name", md_file.stem),
-                            "description": parsed.get("description", ""),
-                            "category": parsed.get("category", ""),
-                            "file_path": str(md_file),
-                        }
-                    )
-
+    for source, root in _scan_roots(agent_dir):
+        for entry in sorted(root.iterdir()):
+            skill_md = entry / "SKILL.md"
+            if not entry.is_dir() or not skill_md.exists():
+                continue
+            try:
+                content = skill_md.read_text(encoding="utf-8")
+            except OSError:
+                # Unreadable SKILL.md — skip silently in fallback discovery.
+                continue
+            fm_text = _extract_frontmatter(content)
+            if not fm_text:
+                continue
+            parsed = _parse_yaml_simple(fm_text)
+            if not parsed.get("name"):
+                continue
+            skills.append(
+                {
+                    "name": parsed.get("name", entry.name),
+                    "version": parsed.get("version", ""),
+                    "description": parsed.get("description", ""),
+                    "source": source,
+                    "file_path": str(skill_md),
+                }
+            )
     return skills
 
 
 def _get_skills(agent_dir: str | None) -> list[Any]:
-    """Discover skills from arcagent or fallback."""
+    """Discover skills via arcagent's validator when available."""
     try:
-        from arcagent.core.skill_registry import SkillRegistry
-
-        registry = SkillRegistry()
-        workspace = Path(agent_dir).expanduser().resolve() if agent_dir else Path("/nonexistent")
-        return registry.discover(workspace, _GLOBAL_SKILL_DIR)
+        from arcagent.core.skill_validator import validate_skill_folder
     except ImportError:
         return _discover_skills_fallback(agent_dir)
+
+    out: list[dict[str, str]] = []
+    for source, root in _scan_roots(agent_dir):
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir() or not (entry / "SKILL.md").exists():
+                continue
+            result = validate_skill_folder(entry, source)
+            if result.entry is None:
+                continue
+            out.append(
+                {
+                    "name": result.entry.name,
+                    "version": result.entry.version,
+                    "description": result.entry.description,
+                    "source": source,
+                    "file_path": str(result.entry.location),
+                }
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -143,93 +194,114 @@ def _get_skills(agent_dir: str | None) -> list[Any]:
 
 
 def _list(args: argparse.Namespace) -> None:
-    """List discovered skills."""
+    """List discovered skill folders."""
     agent_dir: str | None = getattr(args, "agent", None)
     skills = _get_skills(agent_dir)
 
     if not skills:
         _write("No skills found.")
-        _write(f"  Global dir: {_GLOBAL_SKILL_DIR}")
-        if agent_dir:
-            agent_skills = Path(agent_dir).expanduser().resolve() / "workspace" / "skills"
-            _write(f"  Agent dir:  {agent_skills}")
+        for source, root in _scan_roots(agent_dir):
+            _write(f"  {source}: {root}")
         return
 
     rows = []
     for s in skills:
-        name = s.name if hasattr(s, "name") else s.get("name", "?")
-        desc = s.description if hasattr(s, "description") else s.get("description", "")
-        cat = s.category if hasattr(s, "category") else s.get("category", "")
-        fpath = str(s.file_path) if hasattr(s, "file_path") else s.get("file_path", "")
-        if len(desc) > 60:
-            desc = desc[:57] + "..."
-        rows.append([name, desc, cat, fpath])
+        name = s["name"] if isinstance(s, dict) else getattr(s, "name", "?")
+        version = s["version"] if isinstance(s, dict) else getattr(s, "version", "")
+        desc = (
+            s["description"] if isinstance(s, dict) else getattr(s, "description", "")
+        )
+        source = s["source"] if isinstance(s, dict) else getattr(s, "scan_root", "")
+        fpath = s["file_path"] if isinstance(s, dict) else str(getattr(s, "location", ""))
+        if len(desc) > 50:
+            desc = desc[:47] + "..."
+        rows.append([name, version, source, desc, fpath])
 
-    _print_table(["Name", "Description", "Category", "Path"], rows)
+    _print_table(["Name", "Version", "Source", "Description", "Path"], rows)
 
 
 def _create(args: argparse.Namespace) -> None:
-    """Scaffold a new SKILL.md with YAML frontmatter."""
+    """Scaffold a new SPEC-021 skill folder with SKILL.md + sub-folders."""
     name: str = args.name
     target_dir: str | None = getattr(args, "dir", None)
     use_global: bool = getattr(args, "use_global", False)
 
     if use_global:
-        out_dir = _GLOBAL_SKILL_DIR
-        out_dir.mkdir(parents=True, exist_ok=True)
+        out_root = _GLOBAL_CAP_DIR
+        out_root.mkdir(parents=True, exist_ok=True)
     elif target_dir:
-        out_dir = Path(target_dir).expanduser().resolve()
+        out_root = Path(target_dir).expanduser().resolve()
     else:
-        out_dir = Path.cwd()
+        out_root = Path.cwd()
 
-    out_file = out_dir / f"{name}.md"
-    if out_file.exists():
-        sys.stderr.write(f"Error: File already exists: {out_file}\n")
+    skill_folder = out_root / name
+    if skill_folder.exists():
+        sys.stderr.write(f"Error: Folder already exists: {skill_folder}\n")
         sys.exit(1)
 
-    out_file.write_text(_SKILL_TEMPLATE.format(name=name))
-    _write(f"Created skill: {out_file}")
+    skill_folder.mkdir(parents=True)
+    (skill_folder / "references").mkdir()
+    (skill_folder / "scripts").mkdir()
+    (skill_folder / "templates").mkdir()
+
+    skill_md = skill_folder / "SKILL.md"
+    skill_md.write_text(_SKILL_TEMPLATE.format(name=name))
+
+    _write(f"Created skill: {skill_folder}/")
+    _write("  SKILL.md, references/, scripts/, templates/")
     _write()
     _write("Next steps:")
-    _write(f"  1. Edit {out_file} to add skill content")
-    _write(f"  2. arc skill validate {out_file}")
+    _write(f"  1. Edit {skill_md} (fill description, triggers, tools, all 7 sections)")
+    _write(f"  2. arc skill validate {skill_folder}")
 
 
 def _validate(args: argparse.Namespace) -> None:
-    """Validate a skill file."""
+    """Validate a skill folder via arcagent's SPEC-021 validator."""
     path: str = args.path
-    skill_path = Path(path).expanduser().resolve()
-    if not skill_path.exists():
-        sys.stderr.write(f"Error: File not found: {skill_path}\n")
+    target = Path(path).expanduser().resolve()
+
+    # Accept either the folder or the SKILL.md inside it.
+    if target.is_file() and target.name == "SKILL.md":
+        folder = target.parent
+    else:
+        folder = target
+
+    if not folder.is_dir():
+        sys.stderr.write(f"Error: Not a folder: {folder}\n")
         sys.exit(1)
 
-    content = skill_path.read_text(encoding="utf-8")
-    frontmatter = _extract_frontmatter(content)
-
-    if frontmatter is None:
-        _write("  [FAIL] No YAML frontmatter found (expected --- delimiters)")
+    skill_md = folder / "SKILL.md"
+    if not skill_md.exists():
+        sys.stderr.write(f"Error: No SKILL.md inside {folder}\n")
         sys.exit(1)
 
-    parsed = _parse_yaml_simple(frontmatter)
-
-    errors = []
-    if "name" not in parsed or not parsed["name"]:
-        errors.append("Missing required field: name")
-    if "description" not in parsed or not parsed["description"]:
-        errors.append("Missing required field: description")
-
-    if errors:
-        for e in errors:
-            _write(f"  [FAIL] {e}")
+    try:
+        from arcagent.core.skill_validator import validate_skill_folder
+    except ImportError:
+        sys.stderr.write(
+            "Error: arcagent is not installed; install it to validate skill folders.\n"
+        )
         sys.exit(1)
 
-    _write(f"  [OK] {skill_path.name}")
-    _write(f"       Name:        {parsed['name']}")
-    _write(f"       Description: {parsed['description']}")
-    if parsed.get("category"):
-        _write(f"       Category:    {parsed['category']}")
-    if parsed.get("version"):
-        _write(f"       Version:     {parsed['version']}")
+    result = validate_skill_folder(folder, "agent")
+
+    for err in result.errors:
+        _write(f"  [FAIL] {err.code}: {err.detail}")
+    for warn in result.warnings:
+        _write(f"  [WARN] {warn.code}: {warn.detail}")
+
+    if not result.ok or result.entry is None:
+        sys.exit(1)
+
+    entry = result.entry
+    _write(f"  [OK] {folder.name}/")
+    _write(f"       Name:        {entry.name}")
+    _write(f"       Version:     {entry.version}")
+    _write(f"       Description: {entry.description}")
+    if entry.triggers:
+        _write(f"       Triggers:    {', '.join(entry.triggers)}")
+    if entry.tools:
+        _write(f"       Tools:       {', '.join(entry.tools)}")
 
 
 def _search(args: argparse.Namespace) -> None:
@@ -241,17 +313,19 @@ def _search(args: argparse.Namespace) -> None:
     query_lower = query.lower()
     matches = []
     for s in skills:
-        name = s.name if hasattr(s, "name") else s.get("name", "")
-        desc = s.description if hasattr(s, "description") else s.get("description", "")
-        if query_lower in name.lower() or query_lower in desc.lower():
-            cat = s.category if hasattr(s, "category") else s.get("category", "")
-            fpath = str(s.file_path) if hasattr(s, "file_path") else s.get("file_path", "")
-            if len(desc) > 60:
-                desc = desc[:57] + "..."
-            matches.append([name, desc, cat, fpath])
+        name = s["name"] if isinstance(s, dict) else getattr(s, "name", "")
+        desc = s["description"] if isinstance(s, dict) else getattr(s, "description", "")
+        if query_lower not in name.lower() and query_lower not in desc.lower():
+            continue
+        version = s["version"] if isinstance(s, dict) else getattr(s, "version", "")
+        source = s["source"] if isinstance(s, dict) else getattr(s, "scan_root", "")
+        fpath = s["file_path"] if isinstance(s, dict) else str(getattr(s, "location", ""))
+        if len(desc) > 50:
+            desc = desc[:47] + "..."
+        matches.append([name, version, source, desc, fpath])
 
     if matches:
-        _print_table(["Name", "Description", "Category", "Path"], matches)
+        _print_table(["Name", "Version", "Source", "Description", "Path"], matches)
     else:
         _write(f"No skills matching '{query}'.")
 
@@ -262,37 +336,35 @@ def _search(args: argparse.Namespace) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the argparse parser for `arc skill <sub> [args]`."""
     parser = argparse.ArgumentParser(
         prog="arc skill",
-        description="Skill management — list, create, validate, search.",
+        description="Skill folder management — list, create, validate, search.",
         add_help=True,
     )
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
 
-    # list
-    p = subs.add_parser("list", help="List discovered skills.")
+    p = subs.add_parser("list", help="List discovered skill folders.")
     p.add_argument(
-        "--agent", dest="agent", default=None, help="Agent directory to include workspace skills."
+        "--agent", dest="agent", default=None, help="Agent directory to include per-agent roots."
     )
 
-    # create
-    p = subs.add_parser("create", help="Scaffold a new SKILL.md with YAML frontmatter.")
-    p.add_argument("name", help="Skill name.")
-    p.add_argument("--dir", dest="dir", default=None, help="Output directory (default: cwd).")
+    p = subs.add_parser("create", help="Scaffold a new skill folder with SKILL.md.")
+    p.add_argument("name", help="Skill name (used as the folder name).")
+    p.add_argument("--dir", dest="dir", default=None, help="Parent directory (default: cwd).")
     p.add_argument(
-        "--global", dest="use_global", action="store_true", help="Write to ~/.arcagent/skills/."
+        "--global",
+        dest="use_global",
+        action="store_true",
+        help="Write under ~/.arc/capabilities/.",
     )
 
-    # validate
-    p = subs.add_parser("validate", help="Validate a skill file.")
-    p.add_argument("path", help="Path to the skill .md file.")
+    p = subs.add_parser("validate", help="Validate a skill folder (or its SKILL.md).")
+    p.add_argument("path", help="Path to the skill folder or its SKILL.md.")
 
-    # search
     p = subs.add_parser("search", help="Search skills by name or description.")
     p.add_argument("query", help="Search query.")
     p.add_argument(
-        "--agent", dest="agent", default=None, help="Agent directory to include workspace skills."
+        "--agent", dest="agent", default=None, help="Agent directory to include per-agent roots."
     )
 
     return parser
@@ -307,10 +379,7 @@ _SUBCOMMAND_MAP = {
 
 
 def skill_handler(args: list[str]) -> None:
-    """Top-level handler for `arc skill <sub> [args]`.
-
-    Called by arccli.commands.registry when the user runs `arc skill ...`.
-    """
+    """Top-level handler for `arc skill <sub> [args]`."""
     parser = _build_parser()
 
     if not args:

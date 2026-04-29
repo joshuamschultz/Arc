@@ -64,7 +64,7 @@ class TestAgentStatus:
     def test_status_shows_agent_name(self) -> None:
         """arc agent status prints the agent name."""
         result = _arc("agent", "status", str(_JOSH_AGENT))
-        assert "josh-agent" in result.stdout, f"stdout: {result.stdout!r}"
+        assert "josh_agent" in result.stdout, f"stdout: {result.stdout!r}"
 
     def test_status_shows_model(self) -> None:
         """arc agent status prints the model field."""

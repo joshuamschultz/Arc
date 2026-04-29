@@ -107,8 +107,8 @@ def _make_minimal_agent(tmp_path: Path, model: str = "anthropic/claude-test") ->
         retention_count = 10
         retention_days = 7
 
-        [extensions]
-        global_dir = "~/.arcagent/extensions"
+        [security.validators]
+        auto_run_agent_code = false
     """)
     (agent_dir / "arcagent.toml").write_text(toml_content)
     return agent_dir

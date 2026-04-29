@@ -200,9 +200,8 @@ def _generate_arcagent_toml(tier: str) -> str:
         "retention_count = 50",
         "retention_days = 30",
         "",
-        "[extensions]",
-        'global_dir = "~/.arcagent/extensions"',
-        'workspace_tools_dir = "tools"',
+        "[security.validators]",
+        "auto_run_agent_code = false",
         "",
     ]
     return "\n".join(lines) + "\n"

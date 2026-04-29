@@ -28,8 +28,7 @@ from typing import Any
 # Click decorators into this module's namespace)
 # ---------------------------------------------------------------------------
 
-_GLOBAL_SKILL_DIR = Path.home() / ".arcagent" / "skills"
-_GLOBAL_EXT_DIR = Path.home() / ".arcagent" / "extensions"
+_GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
 # ---------------------------------------------------------------------------
 # Agent scaffolding templates (kept here so this module is self-contained)
@@ -117,8 +116,11 @@ fallback_behavior = "skip"
 retention_count = 50
 retention_days = 30
 
-[extensions]
-global_dir = "~/.arcagent/extensions"
+[security]
+tier = "personal"
+
+[security.validators]
+auto_run_agent_code = false
 
 [modules.memory]
 enabled = true
@@ -140,78 +142,60 @@ enabled = true
 check_interval_seconds = 30
 """
 
-_CALCULATOR_EXTENSION = '''\
-"""Extension: calculator
-
-Registers a safe math calculator tool with ArcAgent.
-"""
+_CALCULATOR_TOOL = '''\
+"""Capability: calculate — safe arithmetic via AST parsing."""
 
 from __future__ import annotations
 
 import ast
 import operator
 
+from arcagent.tools._decorator import tool
 
-def extension(api):
-    """Factory function called by ExtensionLoader."""
-    from arcrun import Tool, ToolContext
+_OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
 
-    _OPS = {
-        ast.Add: operator.add,
-        ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
-        ast.Div: operator.truediv,
-        ast.Mod: operator.mod,
-        ast.Pow: operator.pow,
-        ast.USub: operator.neg,
-        ast.UAdd: operator.pos,
-    }
 
-    def _safe_eval(node: ast.AST) -> float:
-        """Recursively evaluate an AST math expression."""
-        if isinstance(node, ast.Expression):
-            return _safe_eval(node.body)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-            return node.value
-        if isinstance(node, ast.BinOp):
-            op_fn = _OPS.get(type(node.op))
-            if op_fn is None:
-                raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-            return op_fn(_safe_eval(node.left), _safe_eval(node.right))
-        if isinstance(node, ast.UnaryOp):
-            op_fn = _OPS.get(type(node.op))
-            if op_fn is None:
-                raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
-            return op_fn(_safe_eval(node.operand))
-        raise ValueError(f"Unsupported expression: {ast.dump(node)}")
+def _safe_eval(node: ast.AST) -> float:
+    if isinstance(node, ast.Expression):
+        return _safe_eval(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp):
+        op_fn = _OPS.get(type(node.op))
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        return op_fn(_safe_eval(node.left), _safe_eval(node.right))
+    if isinstance(node, ast.UnaryOp):
+        op_fn = _OPS.get(type(node.op))
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        return op_fn(_safe_eval(node.operand))
+    raise ValueError(f"Unsupported expression: {ast.dump(node)}")
 
-    async def calculate(params: dict, ctx: ToolContext) -> str:
-        """Evaluate a math expression safely using AST parsing."""
-        expr = params["expression"]
-        try:
-            tree = ast.parse(expr, mode="eval")
-            result = _safe_eval(tree)
-            return str(result)
-        except Exception as e:
-            return f"Error: {e}"
 
-    api.register_tool(
-        Tool(
-            name="calculate",
-            description="Evaluate a math expression. Supports +, -, *, /, %, **.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "expression": {
-                        "type": "string",
-                        "description": "Math expression to evaluate",
-                    },
-                },
-                "required": ["expression"],
-            },
-            execute=calculate,
-        )
-    )
+@tool(
+    description="Evaluate a math expression. Supports +, -, *, /, %, **.",
+    classification="read_only",
+    capability_tags=["computation"],
+    when_to_use="When you need to evaluate an arithmetic expression deterministically.",
+    version="1.0.0",
+)
+async def calculate(expression: str) -> str:
+    """Evaluate ``expression`` safely via AST parsing."""
+    try:
+        tree = ast.parse(expression, mode="eval")
+        return str(_safe_eval(tree))
+    except Exception as exc:
+        return f"Error: {exc}"
 '''
 
 _ENV_PATHS = [
@@ -276,7 +260,7 @@ def _discover_tools(agent_dir: Path) -> list[Any]:
 
 
 def _scaffold_workspace(agent_dir: Path, name: str) -> None:
-    """Create the full workspace directory structure."""
+    """Create the agent + workspace directory structure (SPEC-021 layout)."""
     workspace = agent_dir / "workspace"
     workspace.mkdir(exist_ok=True)
 
@@ -292,12 +276,14 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     if not context_path.exists():
         context_path.write_text(_DEFAULT_CONTEXT)
 
+    # Per-agent capabilities live at the AGENT root (trusted scan root).
+    # Agent-authored capabilities go under workspace/.capabilities (untrusted).
+    (agent_dir / "capabilities").mkdir(exist_ok=True)
+    (workspace / ".capabilities").mkdir(exist_ok=True)
+
     for subdir in [
         "notes",
         "entities",
-        "skills",
-        "skills/_agent-created",
-        "extensions",
         "sessions",
         "archive",
         "library",
@@ -317,17 +303,17 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
 
 
 def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
-    """Print workspace structure and next-steps after scaffold."""
+    """Print directory structure and next-steps after scaffold."""
     sys.stdout.write("\n")
     sys.stdout.write("Structure:\n")
     sys.stdout.write(f"  {display_name}/\n")
     sys.stdout.write("    arcagent.toml\n")
+    sys.stdout.write("    capabilities/             # per-agent capabilities (trusted)\n")
+    sys.stdout.write("      calculator.py\n")
     sys.stdout.write("    workspace/\n")
     sys.stdout.write("      identity.md, policy.md, context.md\n")
+    sys.stdout.write("      .capabilities/          # agent-authored (UNTRUSTED, AST-validated)\n")
     sys.stdout.write("      notes/, entities/\n")
-    sys.stdout.write("      skills/, skills/_agent-created/\n")
-    sys.stdout.write("      extensions/\n")
-    sys.stdout.write("        calculator.py\n")
     sys.stdout.write("      sessions/, archive/\n")
     sys.stdout.write("      library/scripts/, templates/, prompts/, data/, snippets/\n")
     sys.stdout.write("    tools/\n")
@@ -366,8 +352,47 @@ def _print_table(headers: list[str], rows: list[list[str]]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _capability_scan_roots(agent_dir: Path) -> list[tuple[str, Path]]:
+    """Return the four user-visible capability scan roots in precedence order.
+
+    Mirrors `arcagent.core.agent._setup_capabilities` (SPEC-021 R-001) but
+    skips the package-internal builtins root, which the user never edits.
+    """
+    workspace = agent_dir / "workspace"
+    return [
+        ("global", _GLOBAL_CAP_DIR),
+        ("agent", agent_dir / "capabilities"),
+        ("workspace", workspace / ".capabilities"),
+    ]
+
+
+def _iter_capability_files(agent_dir: Path) -> list[tuple[str, Path]]:
+    """Yield (root_name, .py path) for every capability file across roots."""
+    out: list[tuple[str, Path]] = []
+    for root_name, root in _capability_scan_roots(agent_dir):
+        if not root.is_dir():
+            continue
+        for py_file in sorted(root.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
+            out.append((root_name, py_file))
+    return out
+
+
+def _iter_skill_folders(agent_dir: Path) -> list[tuple[str, Path]]:
+    """Yield (root_name, folder) for every <root>/<name>/SKILL.md skill folder."""
+    out: list[tuple[str, Path]] = []
+    for root_name, root in _capability_scan_roots(agent_dir):
+        if not root.is_dir():
+            continue
+        for entry in sorted(root.iterdir()):
+            if entry.is_dir() and (entry / "SKILL.md").exists():
+                out.append((root_name, entry))
+    return out
+
+
 def _status(args: argparse.Namespace) -> None:
-    """Show agent status: config, workspace, tools, skills, extensions, sessions."""
+    """Show agent status: config, workspace, tools, capabilities, sessions."""
     agent_dir = _resolve_agent_dir(args.path)
     config = _load_agent_config(agent_dir)
     workspace = agent_dir / "workspace"
@@ -377,16 +402,8 @@ def _status(args: argparse.Namespace) -> None:
     did = config.get("identity", {}).get("did", "(not set)")
 
     tool_count = len(_discover_tools(agent_dir))
-
-    skill_count = 0
-    for skill_dir in [workspace / "skills", _GLOBAL_SKILL_DIR]:
-        if skill_dir.is_dir():
-            skill_count += len(list(skill_dir.glob("*.md")))
-
-    ext_count = 0
-    for ext_dir in [workspace / "extensions", _GLOBAL_EXT_DIR]:
-        if ext_dir.is_dir():
-            ext_count += len([f for f in ext_dir.glob("*.py") if not f.name.startswith("_")])
+    skill_count = len(_iter_skill_folders(agent_dir))
+    cap_file_count = len(_iter_capability_files(agent_dir))
 
     sessions_dir = workspace / "sessions"
     session_count = 0
@@ -408,9 +425,9 @@ def _status(args: argparse.Namespace) -> None:
             ("Name", agent_name),
             ("DID", did or "(not set)"),
             ("Model", model_id),
-            ("Tools", str(tool_count)),
+            ("Tools (./tools/)", str(tool_count)),
+            ("Capability files", str(cap_file_count)),
             ("Skills", str(skill_count)),
-            ("Extensions", str(ext_count)),
             ("Sessions", str(session_count)),
             ("Latest session", latest_session),
             ("Path", str(agent_dir)),
@@ -419,62 +436,57 @@ def _status(args: argparse.Namespace) -> None:
 
 
 def _skills(args: argparse.Namespace) -> None:
-    """List discovered skills for an agent."""
+    """List discovered skill folders across all four scan roots."""
     agent_dir = _resolve_agent_dir(args.path)
+    folders = _iter_skill_folders(agent_dir)
 
-    skills: list[Any] = []
-    try:
-        from arcagent.core.skill_registry import SkillRegistry
-
-        registry = SkillRegistry()
-        workspace = agent_dir / "workspace"
-        skills = registry.discover(workspace, _GLOBAL_SKILL_DIR)
-    except ImportError:
-        try:
-            from arccli.commands.skill import _discover_skills_fallback
-
-            skills = _discover_skills_fallback(str(agent_dir))
-        except (ImportError, AttributeError):
-            skills = []
-
-    if not skills:
+    if not folders:
         sys.stdout.write("No skills found.\n")
+        for root_name, root in _capability_scan_roots(agent_dir):
+            sys.stdout.write(f"  {root_name}: {root}\n")
         return
 
-    rows = []
-    for s in skills:
-        name = s.name if hasattr(s, "name") else s.get("name", "?")
-        desc = s.description if hasattr(s, "description") else s.get("description", "")
-        cat = s.category if hasattr(s, "category") else s.get("category", "")
-        if len(desc) > 50:
-            desc = desc[:47] + "..."
-        rows.append([name, desc, cat])
+    try:
+        from arcagent.core.skill_validator import validate_skill_folder
+    except ImportError:
+        validate_skill_folder = None  # type: ignore[assignment]
 
-    _print_table(["Name", "Description", "Category"], rows)
+    rows: list[list[str]] = []
+    for root_name, folder in folders:
+        name = folder.name
+        version = ""
+        description = ""
+        if validate_skill_folder is not None:
+            result = validate_skill_folder(folder, root_name)
+            if result.entry is not None:
+                name = result.entry.name
+                version = result.entry.version
+                description = result.entry.description
+        if len(description) > 50:
+            description = description[:47] + "..."
+        rows.append([name, version, root_name, description])
+
+    _print_table(["Name", "Version", "Source", "Description"], rows)
 
 
 def _extensions(args: argparse.Namespace) -> None:
-    """List loaded extensions for an agent."""
+    """List Python capability files across all four scan roots.
+
+    `extensions` is preserved as an alias for backwards-compatible muscle
+    memory; SPEC-021 calls these "capability files."
+    """
     agent_dir = _resolve_agent_dir(args.path)
-    workspace = agent_dir / "workspace"
 
     rows: list[list[str]] = []
-    ext_dirs = [
-        ("workspace", workspace / "extensions"),
-        ("global", _GLOBAL_EXT_DIR),
-    ]
-    for source, directory in ext_dirs:
-        if not directory.is_dir():
-            continue
-        for py_file in sorted(directory.glob("*.py")):
-            if py_file.name.startswith("_"):
-                continue
-            rows.append([py_file.stem, source, str(py_file)])
+    for root_name, py_file in _iter_capability_files(agent_dir):
+        rows.append([py_file.stem, root_name, str(py_file)])
 
     if rows:
         _print_table(["Name", "Source", "Path"], rows)
     else:
-        sys.stdout.write("No extensions found.\n")
+        sys.stdout.write("No capability files found.\n")
+        for root_name, root in _capability_scan_roots(agent_dir):
+            sys.stdout.write(f"  {root_name}: {root}\n")
 
 
 def _sessions(args: argparse.Namespace) -> None:
@@ -769,8 +781,11 @@ fallback_behavior = "skip"
 retention_count = 50
 retention_days = 30
 
-[extensions]
-global_dir = "~/.arcagent/extensions"
+[security]
+tier = "personal"
+
+[security.validators]
+auto_run_agent_code = false
 
 [modules.memory]
 enabled = true
@@ -961,8 +976,8 @@ def _create(args: argparse.Namespace) -> None:
 
     _scaffold_workspace(agent_dir, name)
 
-    ext_path = agent_dir / "workspace" / "extensions" / "calculator.py"
-    ext_path.write_text(_CALCULATOR_EXTENSION)
+    calc_path = agent_dir / "capabilities" / "calculator.py"
+    calc_path.write_text(_CALCULATOR_TOOL)
 
     sys.stdout.write(f"Created agent: {agent_dir}\n")
     _print_scaffold_summary(name, agent_dir)
@@ -1259,21 +1274,12 @@ async def _chat_interactive(
                 continue
 
             if user_input == "/extensions":
-                workspace = agent_dir / "workspace"
-                found = False
-                for source, directory in [
-                    ("workspace", workspace / "extensions"),
-                    ("global", _GLOBAL_EXT_DIR),
-                ]:
-                    if not directory.is_dir():
-                        continue
-                    for py_file in sorted(directory.glob("*.py")):
-                        if py_file.name.startswith("_"):
-                            continue
+                files = _iter_capability_files(agent_dir)
+                if not files:
+                    sys.stdout.write("  No capability files found.\n")
+                else:
+                    for source, py_file in files:
                         sys.stdout.write(f"  {py_file.stem} ({source})\n")
-                        found = True
-                if not found:
-                    sys.stdout.write("  No extensions found.\n")
                 continue
 
             if user_input == "/session":
