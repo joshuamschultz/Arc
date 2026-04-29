@@ -127,9 +127,7 @@ class TestConcurrencyPolicy:
             monotonic=clock,
             event_sink=lambda event, data: events.append((event, data)),
         )
-        engine.add(
-            Schedule(id="s", interval_seconds=1, next_run_monotonic=1, kind="cron")
-        )
+        engine.add(Schedule(id="s", interval_seconds=1, next_run_monotonic=1, kind="cron"))
 
         # First tick starts the handler
         clock.advance(2)
@@ -297,9 +295,7 @@ class TestEvaluateHeartbeat:
         )
 
         model = MagicMock()
-        model.invoke = AsyncMock(
-            return_value=MagicMock(content="I think the user is probably...")
-        )
+        model.invoke = AsyncMock(return_value=MagicMock(content="I think the user is probably..."))
         ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=10)
 
         assert await evaluate_heartbeat(model, ctx) is False

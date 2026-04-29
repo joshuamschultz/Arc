@@ -104,7 +104,6 @@ async def test_add_message_appended() -> None:
     """add_message records the message in internal state."""
     from textual.app import App, ComposeResult
 
-
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
             yield TranscriptView(id="tv")
@@ -121,7 +120,6 @@ async def test_add_message_appended() -> None:
 async def test_streaming_delta_accumulation() -> None:
     """Delta tokens accumulate correctly under interleaved calls."""
     from textual.app import App, ComposeResult
-
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -148,7 +146,6 @@ async def test_streaming_delta_accumulation() -> None:
 async def test_streaming_with_interleaved_messages() -> None:
     """Interleaved non-streaming messages don't corrupt streaming state."""
     from textual.app import App, ComposeResult
-
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -178,7 +175,6 @@ async def test_clear_removes_all_messages() -> None:
     """clear() removes all messages and resets state."""
     from textual.app import App, ComposeResult
 
-
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
             yield TranscriptView(id="tv")
@@ -200,7 +196,6 @@ async def test_string_role_normalised() -> None:
     """String role values are normalised to MessageRole enum."""
     from textual.app import App, ComposeResult
 
-
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
             yield TranscriptView(id="tv")
@@ -215,7 +210,6 @@ async def test_string_role_normalised() -> None:
 async def test_append_delta_no_op_when_not_streaming() -> None:
     """append_delta is a no-op when no streaming is active."""
     from textual.app import App, ComposeResult
-
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:

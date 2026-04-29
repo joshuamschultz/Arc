@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,12 +20,10 @@ import pytest
 from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.store import ProfileStore
 from arcagent.modules.user_profile.tombstone import (
-    TombstoneEvent,
     _hash_did,
     _redact_value,
     apply_tombstone,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -199,11 +195,7 @@ class TestSessionFieldRedaction:
 
     def test_redact_value_nested(self) -> None:
         """_redact_value handles arbitrarily nested dicts and lists."""
-        obj = {
-            "level1": {
-                "level2": [USER_DID, "safe", {"level3": USER_DID}]
-            }
-        }
+        obj = {"level1": {"level2": [USER_DID, "safe", {"level3": USER_DID}]}}
         result = _redact_value(obj, USER_DID)
         assert result["level1"]["level2"][0] == "[redacted]"
         assert result["level1"]["level2"][1] == "safe"
@@ -290,9 +282,7 @@ class TestDerivedSectionRegeneratable:
         # The hook must be callable without error
         _mark_derived_regeneratable(USER_DID, tmp_path)
 
-    def test_profile_derived_empty_after_tombstone_and_recreate(
-        self, tmp_path: Path
-    ) -> None:
+    def test_profile_derived_empty_after_tombstone_and_recreate(self, tmp_path: Path) -> None:
         """A recreated profile starts with an empty Derived section."""
         # Pre-tombstone: create a profile with derived content
         store = ProfileStore(tmp_path, UserProfileConfig())

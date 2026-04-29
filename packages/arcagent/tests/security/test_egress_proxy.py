@@ -82,12 +82,8 @@ class TestOriginMatching:
             allowlist={"https://api.example.com"},
             send_fn=send_fn,
         )
-        response = await proxy.request(
-            "https://api.example.com/v1/foo", method="GET"
-        )
-        response_2 = await proxy.request(
-            "https://api.example.com/v2/bar?x=1", method="POST"
-        )
+        response = await proxy.request("https://api.example.com/v1/foo", method="GET")
+        response_2 = await proxy.request("https://api.example.com/v2/bar?x=1", method="POST")
         assert response.status_code == 200
         assert response_2.status_code == 200
 
@@ -102,9 +98,7 @@ class TestOriginMatching:
             send_fn=send_fn,
         )
         with pytest.raises(EgressDenied):
-            await proxy.request(
-                "https://api.example.com:8443/v1/foo", method="GET"
-            )
+            await proxy.request("https://api.example.com:8443/v1/foo", method="GET")
 
 
 class TestAuditEmission:

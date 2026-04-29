@@ -73,7 +73,6 @@ from arctrust.trust_store import (
 )
 
 __all__ = [
-    "__version__",
     "AgentIdentity",
     "AuditEvent",
     "AuditSink",
@@ -89,6 +88,7 @@ __all__ = [
     "TierConfig",
     "ToolCall",
     "TrustStoreError",
+    "__version__",
     "build_pipeline",
     "derive_child_identity",
     "emit",

@@ -214,9 +214,7 @@ class TestResolveCommand:
         from arccli.commands.registry import COMMAND_REGISTRY, resolve_command
 
         # Find a command with aliases
-        cmd_with_alias = next(
-            (cmd for cmd in COMMAND_REGISTRY if cmd.aliases), None
-        )
+        cmd_with_alias = next((cmd for cmd in COMMAND_REGISTRY if cmd.aliases), None)
         if cmd_with_alias is None:
             pytest.skip("No commands with aliases defined yet")
 

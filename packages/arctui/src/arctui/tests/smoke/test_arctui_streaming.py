@@ -15,7 +15,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Fake streaming agent
 # ---------------------------------------------------------------------------
@@ -63,7 +62,7 @@ async def test_stream_turn_appends_deltas_incrementally() -> None:
         # Trigger a message send — _send_to_agent dispatches to _stream_turn.
         from arctui.input_composer import InputComposer
 
-        ic = pilot.app.query_one("#composer", InputComposer)
+        pilot.app.query_one("#composer", InputComposer)
         # Post a SubmitMessage directly to simulate a user input.
         pilot.app.post_message(InputComposer.SubmitMessage("say hello"))
 
@@ -74,9 +73,9 @@ async def test_stream_turn_appends_deltas_incrementally() -> None:
         # and the assistant streamed response.
         messages = tv._messages
         roles = [m.role for m in messages]
-        assert MessageRole.USER in roles or any(
-            "say hello" in m.content for m in messages
-        ), f"User message not found in transcript. Messages: {messages}"
+        assert MessageRole.USER in roles or any("say hello" in m.content for m in messages), (
+            f"User message not found in transcript. Messages: {messages}"
+        )
 
 
 @pytest.mark.asyncio
@@ -97,7 +96,7 @@ async def test_stream_turn_finish_streaming_called() -> None:
 
         from arctui.input_composer import InputComposer
 
-        ic = pilot.app.query_one("#composer", InputComposer)
+        pilot.app.query_one("#composer", InputComposer)
         pilot.app.post_message(InputComposer.SubmitMessage("done"))
 
         await asyncio.sleep(0.5)
@@ -112,7 +111,7 @@ async def test_stream_turn_finish_streaming_called() -> None:
 async def test_blocking_fallback_for_agent_without_chat_stream() -> None:
     """ArcTUI falls back to blocking run() for agents without chat_stream()."""
     from arctui.app import ArcTUI
-    from arctui.transcript import MessageRole, TranscriptView
+    from arctui.transcript import TranscriptView
 
     # Agent without chat_stream — has only run().
     fake_agent = MagicMock()
@@ -128,11 +127,11 @@ async def test_blocking_fallback_for_agent_without_chat_stream() -> None:
 
     app = ArcTUI(agent=fake_agent)
     async with app.run_test() as pilot:
-        tv: TranscriptView = pilot.app.query_one("#transcript", TranscriptView)
+        pilot.app.query_one("#transcript", TranscriptView)
 
         from arctui.input_composer import InputComposer
 
-        ic = pilot.app.query_one("#composer", InputComposer)
+        pilot.app.query_one("#composer", InputComposer)
         pilot.app.post_message(InputComposer.SubmitMessage("blocking call"))
 
         await asyncio.sleep(0.5)
@@ -146,7 +145,7 @@ async def test_blocking_fallback_for_agent_without_chat_stream() -> None:
 async def test_streaming_error_shows_error_message() -> None:
     """When chat_stream() raises, an error message appears in the transcript."""
     from arctui.app import ArcTUI
-    from arctui.transcript import MessageRole, TranscriptView
+    from arctui.transcript import TranscriptView
 
     class _ErrorAgent:
         _bus = None
@@ -164,7 +163,7 @@ async def test_streaming_error_shows_error_message() -> None:
 
         from arctui.input_composer import InputComposer
 
-        ic = pilot.app.query_one("#composer", InputComposer)
+        pilot.app.query_one("#composer", InputComposer)
         pilot.app.post_message(InputComposer.SubmitMessage("trigger error"))
 
         await asyncio.sleep(0.5)

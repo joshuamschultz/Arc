@@ -113,9 +113,7 @@ class TestGitHubSourceFetch:
         assert result.content_hash == _sha256_bytes(bundle)
         assert result.source_name == "arc-official"
 
-    def test_fetch_constructs_fallback_url_when_no_matching_asset(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fetch_constructs_fallback_url_when_no_matching_asset(self, tmp_path: Path) -> None:
         """When asset list has no match, URL is constructed from version + name."""
         bundle = _make_bundle_bytes("fallback-bundle")
         release_json = {"tag_name": "v2.0.0", "assets": []}
@@ -160,11 +158,7 @@ class TestRegistrySourceFetch:
         """RegistrySource GETs index.json then downloads the skill bundle."""
         bundle = _make_bundle_bytes("registry-bundle")
         bundle_url = "https://cdn.example.com/bundles/summarise.tar.gz"
-        index = {
-            "skills": {
-                "summarise": {"version": "0.9.1", "url": bundle_url}
-            }
-        }
+        index = {"skills": {"summarise": {"version": "0.9.1", "url": bundle_url}}}
 
         def _handler(request: httpx.Request) -> httpx.Response:
             if "index.json" in str(request.url):
@@ -179,9 +173,7 @@ class TestRegistrySourceFetch:
         assert result.bundle_url == bundle_url
         assert result.content_hash == _sha256_bytes(bundle)
 
-    def test_fetch_skill_not_in_index_raises_runtime_error(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fetch_skill_not_in_index_raises_runtime_error(self, tmp_path: Path) -> None:
         index = {"skills": {}}  # empty — skill not listed
 
         def _handler(request: httpx.Request) -> httpx.Response:
@@ -209,11 +201,7 @@ class TestWellKnownSourceFetch:
         """WellKnownSource fetches /.well-known/skills/index.json then downloads."""
         bundle = _make_bundle_bytes("wellknown-bundle")
         bundle_url = "https://example.com/skills/summarise.tar.gz"
-        index = {
-            "skills": {
-                "summarise": {"version": "1.0.0", "url": bundle_url}
-            }
-        }
+        index = {"skills": {"summarise": {"version": "1.0.0", "url": bundle_url}}}
 
         def _handler(request: httpx.Request) -> httpx.Response:
             if ".well-known/skills/index.json" in str(request.url):
@@ -228,9 +216,7 @@ class TestWellKnownSourceFetch:
         assert result.bundle_url == bundle_url
         assert result.content_hash == _sha256_bytes(bundle)
 
-    def test_fetch_skill_not_in_index_raises_runtime_error(
-        self, tmp_path: Path
-    ) -> None:
+    def test_fetch_skill_not_in_index_raises_runtime_error(self, tmp_path: Path) -> None:
         index = {"skills": {}}
 
         def _handler(request: httpx.Request) -> httpx.Response:

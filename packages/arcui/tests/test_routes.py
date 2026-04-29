@@ -31,9 +31,7 @@ class TestHealthRoute:
 
     def test_health_works_with_auth_too(self):
         _, client, _ = _make_app()
-        resp = client.get(
-            "/api/health", headers={"Authorization": "Bearer viewer-tok"}
-        )
+        resp = client.get("/api/health", headers={"Authorization": "Bearer viewer-tok"})
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
@@ -41,7 +39,11 @@ class TestHealthRoute:
 class TestInfoRoute:
     def test_info_returns_agent_metadata(self):
         auth = AuthConfig({"viewer_token": "viewer-tok", "operator_token": "operator-tok"})
-        info = {"name": "my-agent", "did": "did:arc:local:executor/abc123", "model": "anthropic/claude-sonnet-4-6"}
+        info = {
+            "name": "my-agent",
+            "did": "did:arc:local:executor/abc123",
+            "model": "anthropic/claude-sonnet-4-6",
+        }
         app = create_app(auth_config=auth, agent_info=info)
         client = TestClient(app)
         resp = client.get("/api/info", headers={"Authorization": "Bearer viewer-tok"})
@@ -61,9 +63,7 @@ class TestInfoRoute:
 class TestTracesRoute:
     def test_list_traces_empty(self):
         _, client, _ = _make_app()
-        resp = client.get(
-            "/api/traces", headers={"Authorization": "Bearer viewer-tok"}
-        )
+        resp = client.get("/api/traces", headers={"Authorization": "Bearer viewer-tok"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["traces"] == []
@@ -95,9 +95,7 @@ class TestTracesRoute:
         app = create_app(auth_config=auth, trace_store=store)
         client = TestClient(app)
 
-        resp = client.get(
-            f"/api/traces/{rec.trace_id}", headers={"Authorization": "Bearer v"}
-        )
+        resp = client.get(f"/api/traces/{rec.trace_id}", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert resp.json()["trace_id"] == rec.trace_id
 
@@ -121,9 +119,7 @@ class TestTracesRoute:
 class TestConfigRoute:
     def test_get_config_no_controller(self):
         _, client, _ = _make_app()
-        resp = client.get(
-            "/api/config", headers={"Authorization": "Bearer viewer-tok"}
-        )
+        resp = client.get("/api/config", headers={"Authorization": "Bearer viewer-tok"})
         assert resp.status_code == 404
 
     def test_get_config_with_controller(self):
@@ -132,9 +128,7 @@ class TestConfigRoute:
         ctrl = ConfigController({"model": "claude-sonnet-4", "temperature": 0.7})
         _, client, _ = _make_app(config_controller=ctrl)
 
-        resp = client.get(
-            "/api/config", headers={"Authorization": "Bearer viewer-tok"}
-        )
+        resp = client.get("/api/config", headers={"Authorization": "Bearer viewer-tok"})
         assert resp.status_code == 200
         data = resp.json()
         assert data["model"] == "claude-sonnet-4"
@@ -171,9 +165,7 @@ class TestConfigRoute:
 class TestStatsRoute:
     def test_get_stats(self):
         _, client, _ = _make_app()
-        resp = client.get(
-            "/api/stats", headers={"Authorization": "Bearer viewer-tok"}
-        )
+        resp = client.get("/api/stats", headers={"Authorization": "Bearer viewer-tok"})
         assert resp.status_code == 200
         data = resp.json()
         assert "request_count" in data
@@ -227,9 +219,7 @@ class TestStatsRoute:
 
     def test_get_budget_empty(self):
         _, client, _ = _make_app()
-        resp = client.get(
-            "/api/budget", headers={"Authorization": "Bearer viewer-tok"}
-        )
+        resp = client.get("/api/budget", headers={"Authorization": "Bearer viewer-tok"})
         assert resp.status_code == 200
         assert resp.json()["budgets"] == []
 
@@ -239,17 +229,13 @@ class TestExportRoute:
         from arcllm.trace_store import JSONLTraceStore, TraceRecord
 
         store = JSONLTraceStore(tmp_path / "ws")
-        await store.append(
-            TraceRecord(provider="anthropic", model="claude-sonnet-4")
-        )
+        await store.append(TraceRecord(provider="anthropic", model="claude-sonnet-4"))
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
         app = create_app(auth_config=auth, trace_store=store)
         client = TestClient(app)
 
-        resp = client.get(
-            "/api/export?format=json", headers={"Authorization": "Bearer v"}
-        )
+        resp = client.get("/api/export?format=json", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
 
@@ -257,17 +243,13 @@ class TestExportRoute:
         from arcllm.trace_store import JSONLTraceStore, TraceRecord
 
         store = JSONLTraceStore(tmp_path / "ws")
-        await store.append(
-            TraceRecord(provider="anthropic", model="claude-sonnet-4")
-        )
+        await store.append(TraceRecord(provider="anthropic", model="claude-sonnet-4"))
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
         app = create_app(auth_config=auth, trace_store=store)
         client = TestClient(app)
 
-        resp = client.get(
-            "/api/export?format=csv", headers={"Authorization": "Bearer v"}
-        )
+        resp = client.get("/api/export?format=csv", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert "trace_id" in resp.text  # CSV header
 
@@ -502,7 +484,7 @@ class TestArcllmConfigRoute:
         config.write_text(
             '[defaults]\nprovider = "anthropic"\ntemperature = 0.7\n'
             "max_tokens = 4096\n\n"
-            "[vault]\nbackend = \"\"\ncache_ttl_seconds = 300\n"
+            '[vault]\nbackend = ""\ncache_ttl_seconds = 300\n'
             'url = ""\nregion = ""\n\n'
             "[modules.telemetry]\nenabled = true\n"
             'log_level = "INFO"\n\n'
@@ -692,9 +674,7 @@ class TestArcllmConfigRoute:
             # Update nested module config
             resp = client.patch(
                 "/api/arcllm-config",
-                content=json.dumps(
-                    {"modules": {"telemetry": {"log_level": "DEBUG"}}}
-                ),
+                content=json.dumps({"modules": {"telemetry": {"log_level": "DEBUG"}}}),
                 headers={"Authorization": "Bearer operator-tok"},
             )
         assert resp.status_code == 200
@@ -740,8 +720,7 @@ class TestArcllmConfigUnit:
         from arcui.routes.arcllm_config import _tomlkit_to_plain
 
         doc = tomlkit.parse(
-            '[defaults]\nprovider = "test"\ntemperature = 0.5\n'
-            "max_tokens = 100\nenabled = true\n"
+            '[defaults]\nprovider = "test"\ntemperature = 0.5\nmax_tokens = 100\nenabled = true\n'
         )
         plain = _tomlkit_to_plain(dict(doc))
         assert isinstance(plain["defaults"]["provider"], str)
@@ -766,17 +745,11 @@ class TestArcllmConfigUnit:
         from arcui.routes.arcllm_config import _validate_updates
 
         assert _validate_updates({"defaults": {"temperature": 0.5}}) is None
-        assert _validate_updates(
-            {"modules": {"retry": {"max_retries": 5}}}
-        ) is None
+        assert _validate_updates({"modules": {"retry": {"max_retries": 5}}}) is None
 
     def test_validate_updates_rejects_unknown(self):
         from arcui.routes.arcllm_config import _validate_updates
 
         assert "Unknown config section" in _validate_updates({"bad": {}})
-        assert "Unknown key" in _validate_updates(
-            {"defaults": {"bad_key": 1}}
-        )
-        assert "Unknown module" in _validate_updates(
-            {"modules": {"bad_mod": {}}}
-        )
+        assert "Unknown key" in _validate_updates({"defaults": {"bad_key": 1}})
+        assert "Unknown module" in _validate_updates({"modules": {"bad_mod": {}}})

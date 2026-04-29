@@ -40,9 +40,7 @@ from arcgateway.executor import InboundEvent
 # the canonical module paths that Python's import machinery resolves.
 # ---------------------------------------------------------------------------
 _ASYNC_APP_PATH = "slack_bolt.async_app.AsyncApp"
-_HANDLER_PATH = (
-    "slack_bolt.adapter.socket_mode.async_handler.AsyncSocketModeHandler"
-)
+_HANDLER_PATH = "slack_bolt.adapter.socket_mode.async_handler.AsyncSocketModeHandler"
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +249,7 @@ class TestBotLoopPrevention:
 
 
 class TestSend:
-    async def test_send_calls_chat_postMessage(self) -> None:
+    async def test_send_calls_chat_postmessage(self) -> None:
         """send() must use Slack web API chat_postMessage."""
         _, mock_app_cls, mock_handler, mock_handler_cls = _build_mock_bolt()
         modules = _make_bolt_modules(mock_app_cls, mock_handler_cls)
@@ -322,9 +320,7 @@ class TestConnectDisconnect:
         adapter, _ = _make_adapter()
 
         # Remove slack_bolt from sys.modules to simulate missing install
-        mods_to_remove = {
-            k: v for k, v in sys.modules.items() if "slack_bolt" in k
-        }
+        mods_to_remove = {k: v for k, v in sys.modules.items() if "slack_bolt" in k}
         with patch.dict(sys.modules, {k: None for k in mods_to_remove}):  # type: ignore[misc]
             # If it's already absent, just verify the adapter handles it
             with pytest.raises((ImportError, Exception)):

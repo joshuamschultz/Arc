@@ -24,7 +24,6 @@ from arcagent.modules.web.errors import URLNotAllowed
 from arcagent.modules.web.protocols import ExtractResult, SearchHit
 from arcagent.modules.web.web_module import WebModule, _truncate_content
 
-
 # ---------------------------------------------------------------------------
 # WebConfig tests
 # ---------------------------------------------------------------------------
@@ -231,9 +230,7 @@ class TestWebExtract:
         assert out.url == "https://a.com"
 
     async def test_extract_federal_allowed_url(self) -> None:
-        module = WebModule(
-            config={"tier": "federal", "url_allowlist": ["https://api.gov/*"]}
-        )
+        module = WebModule(config={"tier": "federal", "url_allowlist": ["https://api.gov/*"]})
         ts = time.time()
         result = ExtractResult(url="https://api.gov/data", title="T", content="c", fetched_at=ts)
         mock_provider = AsyncMock()
@@ -245,9 +242,7 @@ class TestWebExtract:
         assert out.url == "https://api.gov/data"
 
     async def test_extract_federal_denied_url_raises(self) -> None:
-        module = WebModule(
-            config={"tier": "federal", "url_allowlist": ["https://api.gov/*"]}
-        )
+        module = WebModule(config={"tier": "federal", "url_allowlist": ["https://api.gov/*"]})
         mock_provider = AsyncMock()
         module.set_extract_provider(mock_provider)
         mock_bus = AsyncMock()
@@ -260,9 +255,7 @@ class TestWebExtract:
         mock_provider.extract.assert_not_awaited()
 
     async def test_extract_url_denied_emits_audit_event(self) -> None:
-        module = WebModule(
-            config={"tier": "federal", "url_allowlist": ["https://trusted.gov/*"]}
-        )
+        module = WebModule(config={"tier": "federal", "url_allowlist": ["https://trusted.gov/*"]})
         mock_provider = AsyncMock()
         module.set_extract_provider(mock_provider)
         mock_bus = AsyncMock()

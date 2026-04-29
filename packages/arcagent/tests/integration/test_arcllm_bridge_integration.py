@@ -142,15 +142,17 @@ class TestArcLLMBridgeIntegration:
         bridge = create_arcllm_bridge(agent._bus)
 
         # Simulate LLM call event
-        bridge({
-            "event_type": "llm_call",
-            "trace_id": "test-trace-001",
-            "provider": "anthropic",
-            "model": "claude-sonnet-4",
-            "duration_ms": 250.0,
-            "cost_usd": 0.005,
-            "total_tokens": 1200,
-        })
+        bridge(
+            {
+                "event_type": "llm_call",
+                "trace_id": "test-trace-001",
+                "provider": "anthropic",
+                "model": "claude-sonnet-4",
+                "duration_ms": 250.0,
+                "cost_usd": 0.005,
+                "total_tokens": 1200,
+            }
+        )
 
         for _ in range(10):
             await asyncio.sleep(0)

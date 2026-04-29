@@ -13,11 +13,8 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from arcagent.core.module_bus import EventContext, ModuleBus, ModuleContext
-from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule, _ACL_PRIORITY
-
+from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule
 
 # ---------------------------------------------------------------------------
 # Helpers

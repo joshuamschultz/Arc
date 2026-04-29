@@ -96,8 +96,8 @@ class TestRestrictedImportAtRuntime:
         """Regression guard: construct a namespace directly (bypass AST)
         and verify the wrapped ``__import__`` refuses."""
         from arcagent.tools._dynamic_loader import (
-            ASTValidationError,
             RESTRICTED_BUILTINS,
+            ASTValidationError,
             _make_restricted_import,
         )
 
@@ -113,8 +113,8 @@ class TestRestrictedImportAtRuntime:
 
     def test_runtime_subprocess_import_blocked(self) -> None:
         from arcagent.tools._dynamic_loader import (
-            ASTValidationError,
             RESTRICTED_BUILTINS,
+            ASTValidationError,
             _make_restricted_import,
         )
 

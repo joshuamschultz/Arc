@@ -5,22 +5,20 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
 from arcagent.core.module_bus import EventContext, ModuleBus
 from arcagent.modules.skill_improver.config import SkillImproverConfig
 from arcagent.modules.skill_improver.nudge.dedup import compute_tool_sequence_hash
 from arcagent.modules.skill_improver.nudge.nudge_emitter import (
+    _MAX_NUDGES_PER_SESSION,
     EFFECTIVE_PRIORITY,
     SDD_STATED_PRIORITY,
-    _MAX_NUDGES_PER_SESSION,
     NudgeEmitter,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_config(**kwargs: Any) -> SkillImproverConfig:
     return SkillImproverConfig(**kwargs)

@@ -53,8 +53,7 @@ from arcskill.hub.config import (
     SkillSource,
     TierPolicy,
 )
-from arcskill.hub.verify import VerifyResult, verify_bundle
-
+from arcskill.hub.verify import verify_bundle
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -186,8 +185,8 @@ class TestHubInstallRealSigstore:
         log_index: str = "12345678",
     ) -> tuple[unittest.mock.MagicMock, list]:
         """Return a mock Bundle and a context manager that patches both verifier methods."""
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
         mock_bundle = _make_mock_bundle(log_index)
         # DSSE path: verify_dsse is called for dsseEnvelope bundles.
@@ -204,9 +203,7 @@ class TestHubInstallRealSigstore:
             },
         }
 
-        def fake_verify_dsse(
-            self_v: object, bundle: object, policy: object
-        ) -> tuple[str, bytes]:
+        def fake_verify_dsse(self_v: object, bundle: object, policy: object) -> tuple[str, bytes]:
             return ("application/vnd.in-toto+json", json.dumps(attestation).encode())
 
         def fake_verify_artifact(
@@ -235,9 +232,11 @@ class TestHubInstallRealSigstore:
         content_hash = sha256_path(bundle)
         _mock_bundle, patches = self._patch_verifier("12345678")
 
-        with unittest.mock.patch.multiple(
-            **{}
-        ) if False else __import__("contextlib").ExitStack() as stack:
+        with (
+            unittest.mock.patch.multiple(**{})
+            if False
+            else __import__("contextlib").ExitStack() as stack
+        ):
             for p in patches:
                 stack.enter_context(p)
             result = verify_bundle(
@@ -317,8 +316,9 @@ class TestHubInstallRealSigstore:
         bundle = _make_safe_skill_bundle(tmpdir)
         _write_sigstore_sidecar(bundle, slsa_level=3)
 
-        from arcskill.hub.verify import sha256_path
         import hashlib
+
+        from arcskill.hub.verify import sha256_path
 
         content_hash = sha256_path(bundle)
         # Verify our helper is correct.

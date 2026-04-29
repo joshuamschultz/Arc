@@ -83,6 +83,7 @@ def signed_store(tmp_path: Path, signing_key: SigningKey) -> PairingStore:
     operators_file.chmod(0o600)
 
     from arctrust import invalidate_cache
+
     invalidate_cache()
 
     return PairingStore(

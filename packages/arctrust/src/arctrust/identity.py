@@ -72,14 +72,11 @@ def parse_did(did: str) -> dict[str, str]:
         ValueError: DID is not a valid ``did:arc:`` identifier.
     """
     if not did.startswith("did:arc:"):
-        raise ValueError(
-            f"Invalid DID: expected 'did:arc:...' prefix, got {did!r}"
-        )
+        raise ValueError(f"Invalid DID: expected 'did:arc:...' prefix, got {did!r}")
     parts = did.split(":")
     if len(parts) != 4 or "/" not in parts[3]:
         raise ValueError(
-            f"Malformed DID structure: {did!r}. "
-            "Expected 'did:arc:{org}:{type}/{hash}'."
+            f"Malformed DID structure: {did!r}. Expected 'did:arc:{{org}}:{{type}}/{{hash}}'."
         )
     type_hash = parts[3].split("/", 1)
     return {
@@ -114,8 +111,7 @@ def validate_did(did: str) -> str:
     parts = did.split(":")
     if len(parts) != 4 or "/" not in parts[3]:
         raise ValueError(
-            f"Malformed DID structure: {did!r}. "
-            "Expected 'did:arc:{org}:{type}/{hash}'."
+            f"Malformed DID structure: {did!r}. Expected 'did:arc:{{org}}:{{type}}/{{hash}}'."
         )
     return did
 
@@ -162,9 +158,7 @@ class AgentIdentity:
             ValueError: Identity has no private key (verify-only).
         """
         if self._signing_key is None:
-            raise ValueError(
-                "Cannot sign: no private key available (verify-only identity)"
-            )
+            raise ValueError("Cannot sign: no private key available (verify-only identity)")
         signed = self._signing_key.sign(message)
         return signed.signature
 
@@ -188,9 +182,7 @@ class AgentIdentity:
             ValueError: Identity has no private key to save.
         """
         if self._signing_key is None:
-            raise ValueError(
-                "Cannot save keys: no private key available"
-            )
+            raise ValueError("Cannot save keys: no private key available")
         key_dir = Path(key_dir)
         key_dir.mkdir(parents=True, exist_ok=True)
         key_dir.chmod(0o700)
@@ -223,9 +215,7 @@ class AgentIdentity:
         key_file = key_dir / f"{_did_to_filename(did)}.key"
 
         if not key_file.exists():
-            raise ValueError(
-                f"Key file not found: {key_file}"
-            )
+            raise ValueError(f"Key file not found: {key_file}")
 
         file_mode = stat.S_IMODE(key_file.stat().st_mode)
         if file_mode & (stat.S_IRWXG | stat.S_IRWXO):
@@ -296,9 +286,7 @@ class AgentIdentity:
         if did_to_load:
             if vault_resolver is not None and config.vault_path:
                 try:
-                    return cls._load_from_vault(
-                        did_to_load, vault_resolver, config.vault_path
-                    )
+                    return cls._load_from_vault(did_to_load, vault_resolver, config.vault_path)
                 except Exception:
                     _logger.warning(
                         "Vault lookup failed for %s, falling back to file",
@@ -317,9 +305,7 @@ class AgentIdentity:
         return identity
 
     @classmethod
-    def _load_from_vault(
-        cls, did: str, vault_resolver: Any, vault_path: str
-    ) -> AgentIdentity:
+    def _load_from_vault(cls, did: str, vault_resolver: Any, vault_path: str) -> AgentIdentity:
         """Load signing key from vault backend."""
         key_hex = vault_resolver.resolve_secret(vault_path, did)
         signing_key = SigningKey(bytes.fromhex(key_hex))
@@ -348,8 +334,7 @@ class AgentIdentity:
 
         if updated == content:
             _logger.warning(
-                "Could not find empty did field in %s to update. "
-                'Manually set: did = "%s"',
+                'Could not find empty did field in %s to update. Manually set: did = "%s"',
                 config_path,
                 did,
             )
@@ -421,9 +406,7 @@ def derive_child_identity(
     # Keyword forms win when both provided (backward compat with arcrun API)
     effective_sk = parent_sk_bytes if parent_sk_bytes is not None else parent_sk
     effective_nonce = spawn_id if spawn_id is not None else nonce
-    effective_ttl = (
-        int(wallclock_timeout_s) if wallclock_timeout_s is not None else ttl_s
-    )
+    effective_ttl = int(wallclock_timeout_s) if wallclock_timeout_s is not None else ttl_s
 
     # HKDF-SHA256 expand step
     # PRK = HMAC-SHA256(salt="arc.spawn", IKM=parent_sk)

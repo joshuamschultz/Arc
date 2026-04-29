@@ -126,9 +126,7 @@ def _r(
     message: str,
 ) -> None:
     """Register one regex rule into the bank."""
-    _REGEX_BANK.append(
-        (rule_id, category, severity, re.compile(pattern, re.IGNORECASE), message)
-    )
+    _REGEX_BANK.append((rule_id, category, severity, re.compile(pattern, re.IGNORECASE), message))
 
 
 # --- Category 1: Exfiltration -----------------------------------------------
@@ -907,11 +905,7 @@ def _iter_text_files(root: Path) -> list[Path]:
         ".html",
         ".rst",
     }
-    return [
-        p
-        for p in root.rglob("*")
-        if p.is_file() and p.suffix.lower() in text_suffixes
-    ]
+    return [p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in text_suffixes]
 
 
 def _is_available(tool: str) -> bool:

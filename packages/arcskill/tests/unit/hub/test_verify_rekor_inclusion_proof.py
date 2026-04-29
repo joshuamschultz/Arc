@@ -22,8 +22,7 @@ sigstore = pytest.importorskip(
 
 from arcskill.hub.config import HubConfig, RevocationConfig, SkillSource, TierPolicy
 from arcskill.hub.errors import SignatureInvalid
-from arcskill.hub.verify import VerifyResult, _extract_rekor_uuid, _sigstore_verify
-
+from arcskill.hub.verify import _extract_rekor_uuid, _sigstore_verify
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -106,17 +105,19 @@ class TestRekorInclusionProof:
         _write_sidecar(artifact, _bundle_data_with_log_index("999"))
 
         from sigstore.errors import VerificationError
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
-            raise VerificationError(
-                "Inclusion proof is invalid: Merkle path verification failed"
-            )
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
+            raise VerificationError("Inclusion proof is invalid: Merkle path verification failed")
 
         with (
             unittest.mock.patch.object(Verifier, "verify_artifact", fake_verify_artifact),
-            unittest.mock.patch.object(Bundle, "from_json", return_value=unittest.mock.MagicMock()),
+            unittest.mock.patch.object(
+                Bundle, "from_json", return_value=unittest.mock.MagicMock()
+            ),
         ):
             with pytest.raises(
                 SignatureInvalid,
@@ -143,6 +144,7 @@ class TestRekorInclusionProof:
         # Simulate InvalidBundle (which is a subclass of Exception, not VerificationError).
         def fake_from_json(raw: bytes | str) -> object:
             from sigstore.models import InvalidBundle
+
             raise InvalidBundle("expected exactly one log entry in bundle")
 
         with unittest.mock.patch.object(Bundle, "from_json", side_effect=fake_from_json):
@@ -155,10 +157,12 @@ class TestRekorInclusionProof:
         bundle_data = _bundle_data_with_log_index("54321")
         _write_sidecar(artifact, bundle_data)
 
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             pass  # success
 
         mock_bundle = unittest.mock.MagicMock()
@@ -179,10 +183,12 @@ class TestRekorInclusionProof:
         bundle_data = _bundle_data_with_log_index("11111")
         _write_sidecar(artifact, bundle_data)
 
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             pass
 
         # Mock bundle where accessing _inner.log_index raises AttributeError.
@@ -214,11 +220,7 @@ class TestRekorInclusionProof:
 
     def test_rekor_uuid_extracted_from_json_tlog_entries(self) -> None:
         """_extract_rekor_uuid correctly parses the Sigstore bundle format."""
-        bundle_data = {
-            "verificationMaterial": {
-                "tlogEntries": [{"logIndex": "98765"}]
-            }
-        }
+        bundle_data = {"verificationMaterial": {"tlogEntries": [{"logIndex": "98765"}]}}
         assert _extract_rekor_uuid(bundle_data) == "98765"
 
     def test_tampered_rekor_at_federal_is_fail_closed(self) -> None:
@@ -228,15 +230,19 @@ class TestRekorInclusionProof:
         config = _federal_config()
 
         from sigstore.errors import VerificationError
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             raise VerificationError("Merkle proof verification failed")
 
         with (
             unittest.mock.patch.object(Verifier, "verify_artifact", fake_verify_artifact),
-            unittest.mock.patch.object(Bundle, "from_json", return_value=unittest.mock.MagicMock()),
+            unittest.mock.patch.object(
+                Bundle, "from_json", return_value=unittest.mock.MagicMock()
+            ),
         ):
             with pytest.raises(SignatureInvalid):
                 _sigstore_verify(artifact, _source(), config, "hash")

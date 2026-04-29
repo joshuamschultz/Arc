@@ -101,11 +101,11 @@ class TestStartup:
         mock_index = AsyncMock()
         mock_index.start = AsyncMock()
 
-        with patch(
-            "arcagent.modules.session.SessionIndex", return_value=mock_index
-        ) as mock_cls:
+        with patch("arcagent.modules.session.SessionIndex", return_value=mock_index) as mock_cls:
             with patch("arcagent.modules.session.set_index"):
-                with patch("arcagent.modules.session.build_session_search_tool", return_value=MagicMock()):
+                with patch(
+                    "arcagent.modules.session.build_session_search_tool", return_value=MagicMock()
+                ):
                     await m.startup(module_ctx)
 
         mock_cls.assert_called_once()
@@ -127,7 +127,9 @@ class TestStartup:
 
         with patch("arcagent.modules.session.SessionIndex", return_value=mock_index):
             with patch("arcagent.modules.session.set_index"):
-                with patch("arcagent.modules.session.build_session_search_tool", return_value=MagicMock()):
+                with patch(
+                    "arcagent.modules.session.build_session_search_tool", return_value=MagicMock()
+                ):
                     await m.startup(module_ctx)
 
         mock_index.start.assert_called_once()

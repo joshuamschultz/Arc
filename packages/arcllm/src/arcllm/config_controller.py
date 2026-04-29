@@ -58,9 +58,7 @@ class ConfigController:
         with self._lock:
             return self._snapshot
 
-    def patch(
-        self, updates: dict[str, Any], *, actor: str
-    ) -> ConfigSnapshot:
+    def patch(self, updates: dict[str, Any], *, actor: str) -> ConfigSnapshot:
         """Apply updates atomically. Returns new snapshot.
 
         Args:
@@ -76,8 +74,7 @@ class ConfigController:
         invalid_keys = set(updates.keys()) - _PATCHABLE_KEYS
         if invalid_keys:
             raise ArcLLMConfigError(
-                f"Cannot patch keys: {sorted(invalid_keys)}. "
-                f"Patchable: {sorted(_PATCHABLE_KEYS)}"
+                f"Cannot patch keys: {sorted(invalid_keys)}. Patchable: {sorted(_PATCHABLE_KEYS)}"
             )
         if not updates:
             raise ArcLLMConfigError("patch() requires at least one update")

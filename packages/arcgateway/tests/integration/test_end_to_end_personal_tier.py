@@ -163,9 +163,12 @@ class TestPersonalTierEndToEnd:
         # Wait for the session task to complete
         for _ in range(50):
             await asyncio.sleep(0.05)
-            if session_router.agent_tasks_spawned.get(
-                build_session_key("did:arc:agent:test", "did:arc:telegram:12345"), 0
-            ) > 0:
+            if (
+                session_router.agent_tasks_spawned.get(
+                    build_session_key("did:arc:agent:test", "did:arc:telegram:12345"), 0
+                )
+                > 0
+            ):
                 break
 
         # Give the task time to complete
@@ -176,8 +179,7 @@ class TestPersonalTierEndToEnd:
             "SessionRouter should have spawned exactly one agent task"
         )
         assert session_router.agent_tasks_spawned[session_key] == 1, (
-            f"Expected 1 agent task spawned, got "
-            f"{session_router.agent_tasks_spawned[session_key]}"
+            f"Expected 1 agent task spawned, got {session_router.agent_tasks_spawned[session_key]}"
         )
 
     @pytest.mark.asyncio
@@ -238,10 +240,9 @@ class TestPersonalTierEndToEnd:
     ) -> None:
         """Concurrent messages from the same user spawn exactly one agent task."""
         # Fire 10 concurrent messages from the same user
-        await asyncio.gather(*[
-            adapter.simulate_inbound(user_id=77777, text=f"msg {i}")
-            for i in range(10)
-        ])
+        await asyncio.gather(
+            *[adapter.simulate_inbound(user_id=77777, text=f"msg {i}") for i in range(10)]
+        )
 
         # Allow all tasks to complete
         await asyncio.sleep(0.5)
@@ -344,6 +345,8 @@ class TestPersonalTierStubFallback:
         assert len(deltas) >= 2, "Must have at least a token + done"
         assert deltas[-1].is_final, "Last delta must be done sentinel"
         combined = "".join(d.content for d in deltas if d.kind == "token")
-        assert "stub" in combined.lower() or "echo" in combined.lower() or "received" in combined.lower(), (
-            f"Stub should echo the message; got: {combined!r}"
-        )
+        assert (
+            "stub" in combined.lower()
+            or "echo" in combined.lower()
+            or "received" in combined.lower()
+        ), f"Stub should echo the message; got: {combined!r}"

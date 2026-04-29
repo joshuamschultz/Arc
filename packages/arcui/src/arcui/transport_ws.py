@@ -56,9 +56,7 @@ class WebSocketTransport:
         self.reconnect_base = reconnect_base
         self.reconnect_cap = reconnect_cap
         self._max_buffer = buffer_size
-        self._buffer: deque[tuple[str, UIEvent | ControlResponse]] = deque(
-            maxlen=buffer_size
-        )
+        self._buffer: deque[tuple[str, UIEvent | ControlResponse]] = deque(maxlen=buffer_size)
         self._ws: Any | None = None
         self._closed = False
         self._last_sleep = reconnect_base
@@ -88,9 +86,7 @@ class WebSocketTransport:
         """Whether a WebSocket connection is active."""
         return self._ws is not None and not self._closed
 
-    def buffer_event(
-        self, agent_id: str, event: UIEvent | ControlResponse
-    ) -> None:
+    def buffer_event(self, agent_id: str, event: UIEvent | ControlResponse) -> None:
         """Buffer an event locally. Drops oldest if buffer is full."""
         self._buffer.append((agent_id, event))
 
@@ -114,9 +110,7 @@ class WebSocketTransport:
     def start(self) -> None:
         """Start the background connect loop."""
         if self._connect_task is None or self._connect_task.done():
-            self._connect_task = asyncio.get_running_loop().create_task(
-                self._connect_loop()
-            )
+            self._connect_task = asyncio.get_running_loop().create_task(self._connect_loop())
 
     async def _connect_loop(self) -> None:
         """Connect to UI server with reconnect and backoff."""
@@ -145,9 +139,7 @@ class WebSocketTransport:
                     resp_raw = await ws.recv()
                     resp = json.loads(resp_raw)
                     if resp.get("type") != "auth_ok":
-                        logger.error(
-                            "UI server auth failed: %s", resp.get("error", resp)
-                        )
+                        logger.error("UI server auth failed: %s", resp.get("error", resp))
                         self._ws = None
                         await asyncio.sleep(self.next_backoff())
                         continue
@@ -191,9 +183,7 @@ class WebSocketTransport:
                 logger.debug("Reconnecting in %.1fs", delay)
                 await asyncio.sleep(delay)
 
-    async def send_event(
-        self, agent_id: str, event: UIEvent | ControlResponse
-    ) -> None:
+    async def send_event(self, agent_id: str, event: UIEvent | ControlResponse) -> None:
         """Send event over WebSocket, or buffer if disconnected."""
         if not self.connected:
             self.buffer_event(agent_id, event)
@@ -214,9 +204,7 @@ class WebSocketTransport:
             logger.warning("Send failed, buffering event", exc_info=True)
             self.buffer_event(agent_id, event)
 
-    async def send_control(
-        self, agent_id: str, message: ControlMessage
-    ) -> None:
+    async def send_control(self, agent_id: str, message: ControlMessage) -> None:
         """Send control message."""
         if not self.connected:
             raise RuntimeError("Not connected")

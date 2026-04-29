@@ -106,9 +106,13 @@ class TestStandaloneLaunch:
         port = _free_port()
         proc = subprocess.Popen(
             [
-                str(_arc_bin()), "ui", "start",
-                "--port", str(port),
-                "--viewer-token", "test-viewer-tok",
+                str(_arc_bin()),
+                "ui",
+                "start",
+                "--port",
+                str(port),
+                "--viewer-token",
+                "test-viewer-tok",
                 "--show-tokens",
             ],
             stdout=subprocess.PIPE,
@@ -119,9 +123,7 @@ class TestStandaloneLaunch:
             assert opened, "Server did not open port"
 
             # Connect as a browser viewer
-            with websockets.sync.client.connect(
-                f"ws://127.0.0.1:{port}/ws", open_timeout=5
-            ) as ws:
+            with websockets.sync.client.connect(f"ws://127.0.0.1:{port}/ws", open_timeout=5) as ws:
                 ws.send(json.dumps({"token": "test-viewer-tok"}))
                 resp = json.loads(ws.recv(timeout=5))
                 assert resp.get("type") == "auth_ok", f"Expected auth_ok, got {resp}"

@@ -13,19 +13,20 @@ import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 import pytest
-from ._mock_llm import LLMResponse, MockModel
+from arcrun.events import EventBus
+from arcrun.registry import ToolRegistry
+from arcrun.state import RunState
+from arcrun.types import Tool
+from arctrust import derive_child_identity
 
-from arctrust import ChildIdentity, derive_child_identity
 from arcagent.orchestration.spawn import (
     _end_child_span,
     _get_otel_context,
     _start_child_span,
     spawn,
 )
-from arcrun.events import EventBus
-from arcrun.registry import ToolRegistry
-from arcrun.state import RunState
-from arcrun.types import Tool
+
+from ._mock_llm import LLMResponse, MockModel
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -95,7 +96,7 @@ class TestOTelContextPropagation:
         parent_tip = state.event_bus.events[-1].event_hash
 
         identity = derive_child_identity(b"\x42" * 32, "otel-spawn-1", 30)
-        result = await spawn(
+        await spawn(
             parent_state=state,
             task="do task",
             tools=[ECHO_TOOL],

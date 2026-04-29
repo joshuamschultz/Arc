@@ -67,7 +67,7 @@ class TestPairingDmDelivery:
             mock_adapter = MagicMock()
             mock_adapter.send = AsyncMock()
 
-            interceptor = PairingInterceptor(
+            PairingInterceptor(
                 user_allowlist=set(),  # no users approved
                 pairing_store=store,
                 adapter_map={"telegram": mock_adapter},
@@ -148,10 +148,7 @@ class TestPairingDmDelivery:
             msg: str = mock_adapter.send.call_args[0][1]
             assert "arc gateway pair approve" in msg
             # The code itself should be 8 chars from PAIRING_ALPHABET
-            assert any(
-                word.isalnum() and len(word) == 8
-                for word in msg.split()
-            )
+            assert any(word.isalnum() and len(word) == 8 for word in msg.split())
 
     @pytest.mark.asyncio
     async def test_rate_limited_user_receives_reminder(self) -> None:

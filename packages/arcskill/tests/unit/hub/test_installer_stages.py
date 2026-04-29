@@ -13,7 +13,6 @@ import unittest.mock
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import (
     FindingsAllowed,
     HubConfig,
@@ -116,9 +115,7 @@ class TestStageFetch:
                 bundle_url="",
                 version="1.0.0",
             )
-            with unittest.mock.patch(
-                "arcskill.hub.installer.make_adapter"
-            ) as mock_adapter:
+            with unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter:
                 mock_adapter.return_value.fetch.return_value = mock_result
                 _stage_fetch(ctx)
 
@@ -294,9 +291,7 @@ class TestStageDryRun:
                 version="1.0.0",
             )
             good_dry = DryRunResult(passed=True, exit_code=0, backend_used="docker")
-            with unittest.mock.patch(
-                "arcskill.hub.installer.run_dry_run", return_value=good_dry
-            ):
+            with unittest.mock.patch("arcskill.hub.installer.run_dry_run", return_value=good_dry):
                 _stage_dry_run(ctx)
             assert ctx.dry_run is not None
             assert ctx.dry_run.passed is True
@@ -314,9 +309,7 @@ class TestStageDryRun:
                 version="1.0.0",
             )
             bad_dry = DryRunResult(passed=False, exit_code=1, backend_used="docker", stdout="err")
-            with unittest.mock.patch(
-                "arcskill.hub.installer.run_dry_run", return_value=bad_dry
-            ):
+            with unittest.mock.patch("arcskill.hub.installer.run_dry_run", return_value=bad_dry):
                 with pytest.raises(RuntimeError, match="Dry-run failed"):
                     _stage_dry_run(ctx)
 
@@ -380,9 +373,7 @@ class TestStageLock:
                 signature_valid=True,
                 crl_checked=True,
             )
-            ctx.scan = ScanResult(
-                verdict="safe", findings=[], counts={}, scanner_passes=["regex"]
-            )
+            ctx.scan = ScanResult(verdict="safe", findings=[], counts={}, scanner_passes=["regex"])
             ctx.install_path = install_path
 
             _stage_lock(ctx)
@@ -424,9 +415,7 @@ class TestStageAudit:
                 signature_valid=True,
                 crl_checked=True,
             )
-            ctx.scan = ScanResult(
-                verdict="safe", findings=[], counts={}, scanner_passes=["regex"]
-            )
+            ctx.scan = ScanResult(verdict="safe", findings=[], counts={}, scanner_passes=["regex"])
             ctx.dry_run = DryRunResult(passed=True, exit_code=0, backend_used="docker")
             ctx.install_path = install_path
 

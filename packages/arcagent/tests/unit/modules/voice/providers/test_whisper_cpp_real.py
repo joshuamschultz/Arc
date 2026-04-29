@@ -19,13 +19,10 @@ Skip message install hint:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import shutil
-import struct
-import wave
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -37,20 +34,12 @@ from arcagent.modules.voice.providers.whisper_cpp import WhisperCppProvider
 # Availability sentinel
 # ---------------------------------------------------------------------------
 
-_FIXTURE_WAV = (
-    Path(__file__).parent.parent.parent.parent
-    / "fixtures"
-    / "audio"
-    / "hello.wav"
-)
+_FIXTURE_WAV = Path(__file__).parent.parent.parent.parent / "fixtures" / "audio" / "hello.wav"
 
 
 def _whisper_available() -> bool:
     """Return True when the whisper-cpp binary is discoverable on PATH."""
-    return (
-        shutil.which("whisper-cpp") is not None
-        or shutil.which("whisper") is not None
-    )
+    return shutil.which("whisper-cpp") is not None or shutil.which("whisper") is not None
 
 
 _SKIP_BINARY = pytest.mark.skipif(
@@ -148,9 +137,7 @@ class TestWhisperCppModelResolution:
         resolved = provider._locate_model()
         assert resolved == model_file
 
-    def test_locate_model_call_time_arg_overrides_constructor(
-        self, tmp_path: Path
-    ) -> None:
+    def test_locate_model_call_time_arg_overrides_constructor(self, tmp_path: Path) -> None:
         """Call-time model_path takes precedence over constructor override."""
         constructor_model = tmp_path / "constructor.bin"
         constructor_model.write_bytes(b"fake")
@@ -161,9 +148,7 @@ class TestWhisperCppModelResolution:
         resolved = provider._locate_model(model_path=str(call_time_model))
         assert resolved == call_time_model
 
-    def test_locate_model_error_message_includes_searched_paths(
-        self, tmp_path: Path
-    ) -> None:
+    def test_locate_model_error_message_includes_searched_paths(self, tmp_path: Path) -> None:
         """The STTFailed message lists every path that was searched."""
         missing = str(tmp_path / "missing.bin")
         provider = _make_provider(model_path=missing)
@@ -219,9 +204,7 @@ class TestWhisperCppCommandBuilding:
         assert "-of" in cmd
         assert "-" in cmd  # stdout sentinel
 
-    def test_command_includes_language_flag_when_provided(
-        self, tmp_path: Path
-    ) -> None:
+    def test_command_includes_language_flag_when_provided(self, tmp_path: Path) -> None:
         """The -l flag is added only when language is specified."""
         model = tmp_path / "model.bin"
         model.write_bytes(b"fake")
@@ -283,14 +266,10 @@ class TestWhisperCppOutputParsing:
         """Top-level 'language' key used when 'result.language' absent."""
         provider = _make_provider()
         data = {
-            "transcription": [
-                {"text": "Bonjour.", "offsets": {"from": 0, "to": 800}}
-            ],
+            "transcription": [{"text": "Bonjour.", "offsets": {"from": 0, "to": 800}}],
             "language": "fr",  # old format: language at top level
         }
-        result = provider._parse_output(
-            (json.dumps(data), "", 0), Path("/tmp/audio.wav")
-        )
+        result = provider._parse_output((json.dumps(data), "", 0), Path("/tmp/audio.wav"))
         assert result.language == "fr"
 
     def test_parse_multiple_segments_joined(self) -> None:
@@ -303,9 +282,7 @@ class TestWhisperCppOutputParsing:
                 {"text": " world.", "offsets": {"from": 500, "to": 1200}},
             ],
         }
-        result = provider._parse_output(
-            (json.dumps(data), "", 0), Path("/tmp/audio.wav")
-        )
+        result = provider._parse_output((json.dumps(data), "", 0), Path("/tmp/audio.wav"))
         assert "Hello" in result.text
         assert "world." in result.text
 
@@ -319,9 +296,7 @@ class TestWhisperCppOutputParsing:
                 {"text": "Second.", "offsets": {"from": 1000, "to": 3500}},
             ],
         }
-        result = provider._parse_output(
-            (json.dumps(data), "", 0), Path("/tmp/audio.wav")
-        )
+        result = provider._parse_output((json.dumps(data), "", 0), Path("/tmp/audio.wav"))
         assert result.duration_s == pytest.approx(3.5)
 
     def test_parse_confidence_averaged_from_tokens(self) -> None:
@@ -340,9 +315,7 @@ class TestWhisperCppOutputParsing:
                 }
             ],
         }
-        result = provider._parse_output(
-            (json.dumps(data), "", 0), Path("/tmp/audio.wav")
-        )
+        result = provider._parse_output((json.dumps(data), "", 0), Path("/tmp/audio.wav"))
         assert result.confidence is not None
         assert result.confidence == pytest.approx(0.7)
 
@@ -355,9 +328,7 @@ class TestWhisperCppOutputParsing:
                 {"text": " Test.", "offsets": {"from": 0, "to": 1000}, "tokens": []}
             ],
         }
-        result = provider._parse_output(
-            (json.dumps(data), "", 0), Path("/tmp/audio.wav")
-        )
+        result = provider._parse_output((json.dumps(data), "", 0), Path("/tmp/audio.wav"))
         assert result.confidence is None
 
     def test_parse_plaintext_fallback_on_bad_json(self) -> None:
@@ -380,9 +351,7 @@ class TestWhisperCppOutputParsing:
         """Non-zero returncode raises STTFailed and includes stderr."""
         provider = _make_provider()
         with pytest.raises(STTFailed) as exc_info:
-            provider._parse_output(
-                ("", "model file not found", 1), Path("/tmp/audio.wav")
-            )
+            provider._parse_output(("", "model file not found", 1), Path("/tmp/audio.wav"))
         msg = str(exc_info.value)
         assert "1" in msg  # exit code
         assert "model file not found" in msg  # stderr content
@@ -419,9 +388,7 @@ class TestWhisperCppSubprocess:
             captured_cmd.append(list(cmd))
             return _json_stdout("hi"), "", 0
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_fake_run_subprocess
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_fake_run_subprocess):
             await provider.transcribe(audio)
 
         assert captured_cmd, "subprocess must be called"
@@ -457,18 +424,14 @@ class TestWhisperCppSubprocess:
             captured_cmd.append(list(cmd))
             return _json_stdout("Bonjour"), "", 0
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_fake_run_subprocess
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_fake_run_subprocess):
             await provider.transcribe(audio, language="fr")
 
         assert "-l" in captured_cmd[0]
         assert "fr" in captured_cmd[0]
 
     @pytest.mark.asyncio
-    async def test_transcribe_timeout_raises_stt_failed(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_transcribe_timeout_raises_stt_failed(self, tmp_path: Path) -> None:
         """A slow subprocess triggers STTFailed after the timeout."""
         audio = tmp_path / "audio.wav"
         audio.write_bytes(b"fake")
@@ -484,11 +447,9 @@ class TestWhisperCppSubprocess:
         provider._resolved_binary = "/usr/bin/whisper-cpp"
 
         async def _slow_run_subprocess(cmd: list[str]) -> tuple[str, str, int]:
-            raise asyncio.TimeoutError
+            raise TimeoutError
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_slow_run_subprocess
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_slow_run_subprocess):
             with pytest.raises(STTFailed) as exc_info:
                 await provider.transcribe(audio)
 
@@ -496,9 +457,7 @@ class TestWhisperCppSubprocess:
         assert "timeout" in msg or "timed out" in msg
 
     @pytest.mark.asyncio
-    async def test_transcribe_nonzero_exit_captures_stderr(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_transcribe_nonzero_exit_captures_stderr(self, tmp_path: Path) -> None:
         """Non-zero subprocess exit raises STTFailed with stderr content."""
         audio = tmp_path / "audio.wav"
         audio.write_bytes(b"fake")
@@ -518,18 +477,14 @@ class TestWhisperCppSubprocess:
         ) -> tuple[str, str, int]:
             return "", "ggml_init_cublas: no CUDA device found", 1
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_failing_run_subprocess
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_failing_run_subprocess):
             with pytest.raises(STTFailed) as exc_info:
                 await provider.transcribe(audio)
 
         assert "ggml_init_cublas" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_transcribe_raises_when_binary_absent(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_transcribe_raises_when_binary_absent(self, tmp_path: Path) -> None:
         """STTFailed is raised immediately when _available is False."""
         audio = tmp_path / "audio.wav"
         audio.write_bytes(b"fake")

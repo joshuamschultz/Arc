@@ -1,0 +1,22 @@
+"""<one-sentence description of what this tool does>."""
+
+from __future__ import annotations
+
+from arcagent.builtins.capabilities import _runtime
+from arcagent.tools._decorator import tool
+
+
+@tool(
+    description="<imperative one-liner>",
+    classification="state_modifying",       # change to "read_only" if no side effect
+    capability_tags=["<tag>"],              # e.g., "file_read", "network_egress"
+    when_to_use="<lead with 'When you need to ...'>",
+    version="1.0.0",
+)
+async def <tool_name>(<arg>: str) -> str:
+    """<short docstring — same content as description if helpful>."""
+    # Workspace access:
+    #   ws = _runtime.workspace()
+    # Allowed extra paths:
+    #   _runtime.allowed_paths()
+    return "ok"

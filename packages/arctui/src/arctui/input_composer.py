@@ -108,8 +108,8 @@ class InputComposer(Static):
         super().__init__(**kwargs)
         self._completer = SlashCommandCompleter()
         self._history: deque[str] = deque(maxlen=MAX_HISTORY)
-        self._history_pos: int = -1          # -1 means "not browsing history"
-        self._history_draft: str = ""         # save draft while browsing
+        self._history_pos: int = -1  # -1 means "not browsing history"
+        self._history_draft: str = ""  # save draft while browsing
         self._completions_visible: bool = False
         self._current_completions: list[Completion] = []
 

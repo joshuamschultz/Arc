@@ -763,7 +763,13 @@ class TestBatchTeamPromote:
         mock_svc = AsyncMock()
         mock_svc.promote = AsyncMock()
         c = _team_consolidator(
-            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+            memory_dir,
+            config,
+            working,
+            daily_notes,
+            telemetry,
+            workspace,
+            mock_svc,
         )
 
         _write_entity(
@@ -832,7 +838,13 @@ class TestBatchTeamPromote:
         mock_svc = AsyncMock()
         mock_svc.promote = AsyncMock()
         c = _team_consolidator(
-            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+            memory_dir,
+            config,
+            working,
+            daily_notes,
+            telemetry,
+            workspace,
+            mock_svc,
         )
 
         promoted = await c._batch_team_promote({"does-not-exist"})
@@ -856,7 +868,13 @@ class TestBatchTeamPromote:
         mock_svc = AsyncMock()
         mock_svc.promote = AsyncMock()
         c = _team_consolidator(
-            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+            memory_dir,
+            config,
+            working,
+            daily_notes,
+            telemetry,
+            workspace,
+            mock_svc,
         )
 
         # Write entity without frontmatter
@@ -885,7 +903,13 @@ class TestBatchTeamPromote:
         # First call raises, second succeeds
         mock_svc.promote = AsyncMock(side_effect=[RuntimeError("network"), None])
         c = _team_consolidator(
-            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+            memory_dir,
+            config,
+            working,
+            daily_notes,
+            telemetry,
+            workspace,
+            mock_svc,
         )
 
         _write_entity(entities_dir, "aaa-fail", {"entity_type": "concept"}, "# Fail\n")
@@ -917,7 +941,13 @@ class TestBatchTeamPromote:
 
         mock_svc.promote = _track_promote
         c = _team_consolidator(
-            memory_dir, config, working, daily_notes, telemetry, workspace, mock_svc,
+            memory_dir,
+            config,
+            working,
+            daily_notes,
+            telemetry,
+            workspace,
+            mock_svc,
         )
 
         _write_entity(entities_dir, "charlie", {"entity_type": "concept"}, "# C\n")

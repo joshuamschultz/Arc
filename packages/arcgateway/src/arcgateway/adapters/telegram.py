@@ -398,9 +398,7 @@ class TelegramAdapter:
         )
 
         # All text (including commands) routes to one handler.
-        self._application.add_handler(
-            MessageHandler(filters.TEXT, self._handle_update)
-        )
+        self._application.add_handler(MessageHandler(filters.TEXT, self._handle_update))
         # Error handler so update errors are logged rather than silently swallowed.
         self._application.add_error_handler(self._on_error)
 
@@ -556,9 +554,7 @@ class TelegramAdapter:
                     return
 
             else:
-                _logger.exception(
-                    "TelegramAdapter: unhandled error in polling loop: %s", exc
-                )
+                _logger.exception("TelegramAdapter: unhandled error in polling loop: %s", exc)
                 self._set_fatal_error(exc, retryable=False)
                 raise
 
@@ -589,8 +585,7 @@ class TelegramAdapter:
         # Auth check — empty allowlist = deny all (fail-closed).
         if not self._is_authorized(user_id):
             _logger.warning(
-                "TelegramAdapter: auth rejected for user_id=%d "
-                "(allowed_user_ids count=%d)",
+                "TelegramAdapter: auth rejected for user_id=%d (allowed_user_ids count=%d)",
                 user_id,
                 len(self._allowed_user_ids),
             )
@@ -714,6 +709,7 @@ class TelegramAdapter:
         )
         # Canonical arctrust.audit sink — swallows errors per AU-5.
         from arcgateway.audit import emit_event as _arc_emit
+
         _outcome = "deny" if "rejected" in event_name or "fail" in event_name else "allow"
         _arc_emit(
             action=event_name,

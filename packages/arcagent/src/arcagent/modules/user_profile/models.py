@@ -31,9 +31,7 @@ _FRONTMATTER_RE = re.compile(
 
 # Regex to match a single durable-fact line including provenance comment.
 # Format:  - Fact text  <!-- session_id=xxx ts=ISO -->
-_DURABLE_FACT_RE = re.compile(
-    r"^- (.+?)\s*<!--\s*session_id=(\S+)\s+ts=(\S+)\s*-->$"
-)
+_DURABLE_FACT_RE = re.compile(r"^- (.+?)\s*<!--\s*session_id=(\S+)\s+ts=(\S+)\s*-->$")
 
 
 class ACL(BaseModel):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
@@ -17,7 +16,6 @@ from arctrust.policy import (
     ToolCall,
     build_pipeline,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -54,9 +52,7 @@ class AllowLayer:
     name = "allow_all"
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(
-            input_hash="abc", evaluated_at_us=int(time.monotonic() * 1_000_000)
-        )
+        return Decision.allow(input_hash="abc", evaluated_at_us=int(time.monotonic() * 1_000_000))
 
 
 class DenyLayer:
@@ -106,7 +102,7 @@ class TestDecision:
 
     def test_frozen(self) -> None:
         d = Decision.allow(input_hash="h", evaluated_at_us=0)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 — testing that any exception fires on frozen-model mutation
             d.outcome = "deny"  # type: ignore[misc]
 
 
@@ -133,9 +129,7 @@ class TestPipelineFirstDenyWins:
         class TrackingAllow:
             name = "tracking_allow"
 
-            async def evaluate(
-                self, call: ToolCall, ctx: PolicyContext
-            ) -> Decision:
+            async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
                 call_order.append(self.name)
                 return Decision.allow(
                     input_hash="h",
@@ -145,9 +139,7 @@ class TestPipelineFirstDenyWins:
         class TrackingDeny:
             name = "tracking_deny"
 
-            async def evaluate(
-                self, call: ToolCall, ctx: PolicyContext
-            ) -> Decision:
+            async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
                 call_order.append(self.name)
                 return Decision.deny(
                     layer=self.name,
@@ -160,9 +152,7 @@ class TestPipelineFirstDenyWins:
         layer_after = TrackingAllow()
         layer_after.name = "after_deny"
 
-        pipeline = PolicyPipeline(
-            layers=[TrackingAllow(), TrackingDeny(), layer_after]
-        )
+        pipeline = PolicyPipeline(layers=[TrackingAllow(), TrackingDeny(), layer_after])
         result = await pipeline.evaluate(make_call(), make_ctx())
         assert result.outcome == "deny"
         assert "after_deny" not in call_order
@@ -249,9 +239,7 @@ class TestPipelineCache:
         class CountingAllow:
             name = "counting"
 
-            async def evaluate(
-                self, call: ToolCall, ctx: PolicyContext
-            ) -> Decision:
+            async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
                 nonlocal call_count
                 call_count += 1
                 return Decision.allow(
@@ -273,9 +261,7 @@ class TestPipelineCache:
         class CountingAllow:
             name = "counting"
 
-            async def evaluate(
-                self, call: ToolCall, ctx: PolicyContext
-            ) -> Decision:
+            async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
                 nonlocal call_count
                 call_count += 1
                 return Decision.allow(
@@ -382,9 +368,7 @@ class TestBuildPipeline:
             tier="personal",
             global_deny_rules={"read_file": "file access denied"},
         )
-        result = await pipeline.evaluate(
-            make_call(tool_name="read_file"), make_ctx("personal")
-        )
+        result = await pipeline.evaluate(make_call(tool_name="read_file"), make_ctx("personal"))
         assert result.outcome == "deny"
         assert "global" in (result.layer or "")
 

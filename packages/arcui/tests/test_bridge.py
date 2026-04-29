@@ -86,6 +86,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         assert data["agent_id"] == "did:arc:local:executor/myagent"
 
@@ -107,6 +108,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         # Dots replaced with underscores to satisfy UIEvent pattern constraint
         assert data["event_type"] == "policy_evaluate"
@@ -130,6 +132,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         assert data["data"]["tier"] == "federal"
 
@@ -150,6 +153,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         assert data["data"]["outcome"] == "deny"
 
@@ -170,6 +174,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         assert data["data"]["target"] == "write_file"
 
@@ -191,6 +196,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         assert data["data"]["request_id"] == "trace-xyz-999"
 
@@ -212,6 +218,7 @@ class TestUIBridgeSinkMapping:
 
         raw = await queue.get()
         import json
+
         data = json.loads(raw)
         assert data["layer"] == "agent"
 
@@ -328,15 +335,18 @@ class TestUIBridgeSinkSequencing:
 
         sink = UIBridgeSink(event_buffer=buffer)
         for i in range(3):
-            sink.write(AuditEvent(
-                actor_did="did:arc:local:executor/a1",
-                action=f"event_{i}",
-                target="t",
-                outcome="allow",
-            ))
+            sink.write(
+                AuditEvent(
+                    actor_did="did:arc:local:executor/a1",
+                    action=f"event_{i}",
+                    target="t",
+                    outcome="allow",
+                )
+            )
         buffer.flush_once()
 
         import json
+
         seqs = []
         while not queue.empty():
             raw = await queue.get()

@@ -25,9 +25,7 @@ async def get_config(request: Request) -> JSONResponse:
 async def patch_config(request: Request) -> JSONResponse:
     """PATCH /api/config — update config (operator only)."""
     if request.state.role != "operator":
-        return JSONResponse(
-            {"error": "Operator role required"}, status_code=403
-        )
+        return JSONResponse({"error": "Operator role required"}, status_code=403)
 
     ctrl = request.app.state.config_controller
     if ctrl is None:
@@ -45,9 +43,7 @@ async def patch_config(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception:
         logger.exception("Unexpected error during config patch")
-        return JSONResponse(
-            {"error": "Internal error processing config update"}, status_code=500
-        )
+        return JSONResponse({"error": "Internal error processing config update"}, status_code=500)
 
     return JSONResponse(new_snapshot.model_dump())
 

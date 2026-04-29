@@ -238,9 +238,7 @@ def _emit_fts5_reindex(telemetry: Any | None, user_did_hash: str) -> None:
             "session.fts5.reindex_needed",
             {"user_did_hash": user_did_hash, "reason": "gdpr_tombstone"},
         )
-        _logger.info(
-            "tombstone.fts5_reindex_requested user_did_hash=%s", user_did_hash
-        )
+        _logger.info("tombstone.fts5_reindex_requested user_did_hash=%s", user_did_hash)
     except Exception:
         _logger.exception("Failed to emit fts5 reindex event")
 

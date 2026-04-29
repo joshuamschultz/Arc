@@ -104,6 +104,7 @@ _INSERT_SQL = (
     ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
+
 class SessionIndex:
     """Polling indexer: reads JSONL files, writes FTS5 index.
 
@@ -138,9 +139,7 @@ class SessionIndex:
         self._started = True
         # Use asyncio.create_task() directly (replaces deprecated
         # asyncio.get_event_loop() plus .create_task() is the deprecated form.
-        self._task = asyncio.create_task(
-            self._poll_loop(), name="session_index_poll"
-        )
+        self._task = asyncio.create_task(self._poll_loop(), name="session_index_poll")
         _logger.info(
             "SessionIndex started: db=%s sessions=%s interval=%.1fs",
             self._db_path,
@@ -221,9 +220,7 @@ class SessionIndex:
     def _index_file(self, conn: sqlite3.Connection, path: Path) -> None:
         """Index new lines using executemany batching (_INSERT_BATCH_SIZE)."""
         path_str = str(path)
-        cur = conn.execute(
-            "SELECT offset FROM sync_state WHERE jsonl_path = ?", (path_str,)
-        )
+        cur = conn.execute("SELECT offset FROM sync_state WHERE jsonl_path = ?", (path_str,))
         row = cur.fetchone()
         start_offset: int = row[0] if row else 0
 

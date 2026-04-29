@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,7 +10,6 @@ import pytest
 
 from arcagent.modules.voice.errors import STTFailed
 from arcagent.modules.voice.providers.whisper_api import WhisperApiProvider
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,6 +42,7 @@ def _fake_response(
     }
     if status_code != 200:
         import httpx
+
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             f"HTTP {status_code}",
             request=MagicMock(),
@@ -121,7 +120,6 @@ class TestWhisperApiProvider:
     async def test_http_error_raises_stt_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import httpx
 
         audio = tmp_path / "audio.mp3"
         audio.write_bytes(b"data")
@@ -164,9 +162,7 @@ class TestWhisperApiProvider:
         assert "timed out" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
-    async def test_non_absolute_path_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_non_absolute_path_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_OPENAI_KEY", "sk-test")
         provider = _make_provider()
         with pytest.raises(STTFailed) as exc_info:

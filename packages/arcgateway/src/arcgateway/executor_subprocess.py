@@ -121,9 +121,7 @@ def _make_preexec_fn(limits: ResourceLimits) -> Any:
                 # Write to stderr (stdout is the IPC channel). RLIMIT_AS raises
                 # ValueError on macOS where the kernel hard limit is RLIM_INFINITY.
                 # On Linux (federal) all three limits succeed.
-                _sys.stderr.write(
-                    f"arc-agent-worker: could not set {name}={limit_pair}: {_exc}\n"
-                )
+                _sys.stderr.write(f"arc-agent-worker: could not set {name}={limit_pair}: {_exc}\n")
 
     return _apply_limits
 
@@ -203,6 +201,7 @@ class SubprocessExecutor:
         )
         # Canonical arctrust.audit emit — executor choice is a security decision.
         from arcgateway.audit import emit_event as _arc_emit
+
         _arc_emit(
             action="gateway.session.executor_choice",
             target=event.session_key,

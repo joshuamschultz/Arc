@@ -76,8 +76,7 @@ class FileBackend:
 
         if actual_mode != _REQUIRED_MODE:
             _logger.warning(
-                "File backend: REFUSING to read %s — mode is %o, expected %o. "
-                "Run: chmod 600 %s",
+                "File backend: REFUSING to read %s — mode is %o, expected %o. Run: chmod 600 %s",
                 secret_path,
                 actual_mode,
                 _REQUIRED_MODE,

@@ -9,7 +9,7 @@ Usage:
     from arcagent.modules.memory_acl import MemoryACLModule, Capability, CapabilityStore
 """
 
-from arcagent.modules.memory_acl.capabilities import Capability, CapabilityStore
+from arcagent.modules.memory_acl.capability_tokens import Capability, CapabilityStore
 from arcagent.modules.memory_acl.errors import ACLViolation, CapabilityExpired, CapabilityInvalid
 from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule
 

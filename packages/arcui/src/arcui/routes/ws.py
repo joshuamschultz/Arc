@@ -55,6 +55,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     if role == "agent":
         await ws.send_json({"error": "Agent tokens cannot access browser WebSocket"})
         from arcui.ws_helpers import CLOSE_AUTH_INVALID
+
         await ws.close(code=CLOSE_AUTH_INVALID)
         if audit:
             audit.audit_event(

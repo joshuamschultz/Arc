@@ -17,7 +17,6 @@ from arcagent.modules.session.search import (
     set_index,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -129,9 +128,7 @@ async def _make_live_index(db_path: Path, sessions_dir: Path) -> SessionIndex:
 
 class TestSessionSearchWithIndex:
     @pytest.mark.asyncio
-    async def test_returns_list_of_dicts(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_returns_list_of_dicts(self, db_path: Path, tmp_sessions: Path) -> None:
         index = await _make_live_index(db_path, tmp_sessions)
         try:
             entries = [_make_entry(content="needle in haystack")]
@@ -147,9 +144,7 @@ class TestSessionSearchWithIndex:
             set_index(None)
 
     @pytest.mark.asyncio
-    async def test_result_has_required_keys(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_result_has_required_keys(self, db_path: Path, tmp_sessions: Path) -> None:
         index = await _make_live_index(db_path, tmp_sessions)
         try:
             entries = [_make_entry(content="test result keys")]
@@ -166,9 +161,7 @@ class TestSessionSearchWithIndex:
             set_index(None)
 
     @pytest.mark.asyncio
-    async def test_since_filter_as_string(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_since_filter_as_string(self, db_path: Path, tmp_sessions: Path) -> None:
         index = await _make_live_index(db_path, tmp_sessions)
         try:
             entries = [
@@ -196,9 +189,7 @@ class TestSessionSearchWithIndex:
             set_index(None)
 
     @pytest.mark.asyncio
-    async def test_invalid_since_does_not_crash(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_invalid_since_does_not_crash(self, db_path: Path, tmp_sessions: Path) -> None:
         """An invalid 'since' value should log a warning but still return results."""
         index = await _make_live_index(db_path, tmp_sessions)
         try:
@@ -214,9 +205,7 @@ class TestSessionSearchWithIndex:
             set_index(None)
 
     @pytest.mark.asyncio
-    async def test_classification_max_filter(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_classification_max_filter(self, db_path: Path, tmp_sessions: Path) -> None:
         index = await _make_live_index(db_path, tmp_sessions)
         try:
             entries = [

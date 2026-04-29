@@ -339,8 +339,7 @@ def validate(schedule: Schedule) -> Schedule:
         )
         if max_gap_seconds > _MAX_GAP_DAYS * 86400:
             raise ParseError(
-                f"Maximum gap {max_gap_seconds / 86400:.1f} days exceeds "
-                f"{_MAX_GAP_DAYS} day limit"
+                f"Maximum gap {max_gap_seconds / 86400:.1f} days exceeds {_MAX_GAP_DAYS} day limit"
             )
 
     return schedule.model_copy(update={"next_fires": fires})
@@ -447,7 +446,7 @@ async def _call_llm_fallback(
         Message(
             role="user",
             content=(
-                f"Convert this to a schedule: \"{text}\"\n"
+                f'Convert this to a schedule: "{text}"\n'
                 f"User timezone: {user_tz}\n"
                 "Use the normalize_schedule tool to return the result."
             ),

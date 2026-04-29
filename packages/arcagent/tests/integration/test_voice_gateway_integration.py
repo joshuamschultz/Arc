@@ -15,18 +15,14 @@ No real network calls, no real binaries required.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from arcagent.modules.voice.config import VoiceConfig
 from arcagent.modules.voice.errors import AirGapProviderRequired
 from arcagent.modules.voice.protocols import TranscriptionResult
 from arcagent.modules.voice.voice_module import VoiceModule
-
 
 # ---------------------------------------------------------------------------
 # Fake adapter — simulates a platform adapter (Telegram-like) that receives
@@ -161,9 +157,7 @@ class TestVoiceMemoToAgentIntegration:
         mock_stt = AsyncMock()
         mock_stt.transcribe = AsyncMock(return_value=mock_result)
 
-        voice_module = VoiceModule(
-            config={"tier": "enterprise", "stt_provider": "whisper_cpp"}
-        )
+        voice_module = VoiceModule(config={"tier": "enterprise", "stt_provider": "whisper_cpp"})
         voice_module._stt = mock_stt
 
         transcript = await handle_voice_memo(
@@ -179,9 +173,7 @@ class TestVoiceMemoToAgentIntegration:
         assert agent.received_inputs[0] == transcript
 
     @pytest.mark.asyncio
-    async def test_voice_memo_audit_event_emitted(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_voice_memo_audit_event_emitted(self, tmp_path: Path) -> None:
         """Transcription must emit voice.transcribed audit event."""
         adapter = FakePlatformAdapter(audio_bytes=b"voice data")
         agent = FakeAgent()
@@ -242,14 +234,10 @@ class TestVoiceMemoToAgentIntegration:
         mock_http_client.__aexit__ = AsyncMock(return_value=False)
         mock_http_client.post = AsyncMock(return_value=fake_api_response)
 
-        with patch(
-            "arcagent.modules.voice.providers.whisper_api.httpx.AsyncClient"
-        ) as mock_cls:
+        with patch("arcagent.modules.voice.providers.whisper_api.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = mock_http_client
 
-            voice_module = VoiceModule(
-                config={"tier": "personal", "stt_provider": "whisper_api"}
-            )
+            voice_module = VoiceModule(config={"tier": "personal", "stt_provider": "whisper_api"})
             transcript = await handle_voice_memo(
                 adapter=adapter,
                 voice_module=voice_module,
@@ -274,9 +262,7 @@ class TestVoiceMemoToAgentIntegration:
         assert exc_info.value.code == "VOICE_AIRGAP_REQUIRED"
 
     @pytest.mark.asyncio
-    async def test_federal_airgap_module_accepts_voice_memo(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_federal_airgap_module_accepts_voice_memo(self, tmp_path: Path) -> None:
         """Federal tier with air-gap providers processes voice memo correctly."""
         adapter = FakePlatformAdapter(audio_bytes=b"voice data")
         agent = FakeAgent()
@@ -310,9 +296,7 @@ class TestVoiceMemoToAgentIntegration:
         assert agent.received_inputs[0] == transcript
 
     @pytest.mark.asyncio
-    async def test_voice_memo_multiple_pii_types_redacted(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_voice_memo_multiple_pii_types_redacted(self, tmp_path: Path) -> None:
         """Multiple PII types in a single voice memo are all redacted."""
         adapter = FakePlatformAdapter(audio_bytes=b"voice data")
         agent = FakeAgent()
@@ -325,9 +309,7 @@ class TestVoiceMemoToAgentIntegration:
         mock_stt = AsyncMock()
         mock_stt.transcribe = AsyncMock(return_value=mock_result)
 
-        voice_module = VoiceModule(
-            config={"tier": "enterprise", "stt_provider": "whisper_cpp"}
-        )
+        voice_module = VoiceModule(config={"tier": "enterprise", "stt_provider": "whisper_cpp"})
         voice_module._stt = mock_stt
 
         transcript = await handle_voice_memo(
@@ -345,13 +327,8 @@ class TestVoiceMemoToAgentIntegration:
         assert "[SSN]" in transcript
 
     @pytest.mark.asyncio
-    async def test_voice_memo_language_detection_propagated(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_voice_memo_language_detection_propagated(self, tmp_path: Path) -> None:
         """Detected language from STT is propagated to the result."""
-        adapter = FakePlatformAdapter(audio_bytes=b"voice data")
-        agent = FakeAgent()
-
         mock_result = TranscriptionResult(
             text="Bonjour le monde",
             language="fr",
@@ -369,9 +346,7 @@ class TestVoiceMemoToAgentIntegration:
         assert result["language"] == "fr"
 
     @pytest.mark.asyncio
-    async def test_adapter_download_creates_file(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_adapter_download_creates_file(self, tmp_path: Path) -> None:
         """FakePlatformAdapter correctly writes audio bytes to destination."""
         audio_bytes = b"test audio content bytes"
         adapter = FakePlatformAdapter(audio_bytes=audio_bytes)

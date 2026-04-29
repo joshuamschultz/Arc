@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from arcagent.modules.skill_improver.config import SkillImproverConfig
 from arcagent.modules.skill_improver.nudge.dedup import compute_tool_sequence_hash
 from arcagent.modules.skill_improver.nudge.nudge_emitter import (

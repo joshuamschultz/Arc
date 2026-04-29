@@ -184,6 +184,7 @@ async def test_valid_code_returns_pairing_code(
 ) -> None:
     """verify_and_consume returns PairingCode for a valid, unexpired code."""
     from tests.unit.conftest import _UNIT_TEST_DID
+
     code = await signed_store.mint_code(platform="telegram", platform_user_id="bob")
     result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
     assert result is not None
@@ -196,6 +197,7 @@ async def test_consumed_code_not_reusable(
 ) -> None:
     """A code consumed once must return None on second attempt."""
     from tests.unit.conftest import _UNIT_TEST_DID
+
     code = await signed_store.mint_code(platform="telegram", platform_user_id="carol")
     first = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
     assert first is not None
@@ -227,6 +229,7 @@ async def test_max_3_pending_consumed_allows_new(
 ) -> None:
     """After consuming one, a 4th pending code should succeed."""
     from tests.unit.conftest import _UNIT_TEST_DID
+
     c1 = await signed_store.mint_code(platform="telegram", platform_user_id="u1")
     await signed_store.mint_code(platform="telegram", platform_user_id="u2")
     await signed_store.mint_code(platform="telegram", platform_user_id="u3")
@@ -352,9 +355,7 @@ async def test_no_raw_user_id_in_storage(tmp_path: Path) -> None:
 
     for row in rows:
         row_str = str(row)
-        assert raw_user_id not in row_str, (
-            f"Raw user ID found in DB row: {row_str}"
-        )
+        assert raw_user_id not in row_str, f"Raw user ID found in DB row: {row_str}"
 
 
 @pytest.mark.asyncio
@@ -435,11 +436,10 @@ async def test_cleanup_expired_sweep(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_pending(
-    signed_store: PairingStore, signing_key: SigningKey
-) -> None:
+async def test_list_pending(signed_store: PairingStore, signing_key: SigningKey) -> None:
     """list_pending returns only unexpired, unconsumed codes."""
     from tests.unit.conftest import _UNIT_TEST_DID
+
     c1 = await signed_store.mint_code(platform="telegram", platform_user_id="u1")
     c2 = await signed_store.mint_code(platform="telegram", platform_user_id="u2")
 
@@ -483,9 +483,8 @@ async def test_federal_requires_approver_did(federal_store: PairingStore) -> Non
     returning None so callers cannot silently ignore the missing-approver_did case.
     """
     from arcgateway.pairing import PairingSignatureInvalid
-    code = await federal_store.mint_code(
-        platform="telegram", platform_user_id="fed_user"
-    )
+
+    code = await federal_store.mint_code(platform="telegram", platform_user_id="fed_user")
     with pytest.raises(PairingSignatureInvalid):
         await federal_store.verify_and_consume(code.code, approver_did=None)
 
@@ -498,13 +497,10 @@ async def test_federal_with_approver_did_no_sig_raises(federal_store: PairingSto
     Providing only approver_did without a signature raises PairingSignatureInvalid.
     """
     from arcgateway.pairing import PairingSignatureInvalid
-    code = await federal_store.mint_code(
-        platform="telegram", platform_user_id="fed_user_2"
-    )
+
+    code = await federal_store.mint_code(platform="telegram", platform_user_id="fed_user_2")
     with pytest.raises(PairingSignatureInvalid):
-        await federal_store.verify_and_consume(
-            code.code, approver_did="did:arc:operator:alice"
-        )
+        await federal_store.verify_and_consume(code.code, approver_did="did:arc:operator:alice")
 
 
 @pytest.mark.asyncio
@@ -515,6 +511,7 @@ async def test_all_tiers_require_signature(store: PairingStore) -> None:
     pillar-violating behavior where personal tier accepted unsigned pairing.
     """
     from arcgateway.pairing import PairingSignatureInvalid
+
     code = await store.mint_code(platform="telegram", platform_user_id="regular_user")
     with pytest.raises(PairingSignatureInvalid):
         await store.verify_and_consume(code.code, approver_did=None)

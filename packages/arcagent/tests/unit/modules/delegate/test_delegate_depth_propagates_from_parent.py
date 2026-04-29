@@ -14,17 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
-from arcagent.modules.delegate.config import DelegateConfig
-from arcagent.modules.delegate.delegate_tool import _build_child_tool_list, make_delegate_tool
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.types import Tool, ToolContext
 
+from arcagent.modules.delegate.config import DelegateConfig
+from arcagent.modules.delegate.delegate_tool import _build_child_tool_list, make_delegate_tool
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -242,7 +241,7 @@ class TestBlockedToolsThroughParentChain:
         parent_tools = [
             _make_tool("search"),
             _make_tool("delegate"),  # blocked
-            _make_tool("memory"),    # blocked
+            _make_tool("memory"),  # blocked
         ]
         allowed, stripped = _build_child_tool_list(parent_tools, None)
         allowed_names = {t.name for t in allowed}
@@ -254,8 +253,8 @@ class TestBlockedToolsThroughParentChain:
         """Same behaviour at a deeper depth level."""
         parent_tools = [
             _make_tool("read_file"),
-            _make_tool("send_message"),   # blocked
-            _make_tool("execute_code"),   # blocked
+            _make_tool("send_message"),  # blocked
+            _make_tool("execute_code"),  # blocked
         ]
         allowed, stripped = _build_child_tool_list(parent_tools, None)
         allowed_names = {t.name for t in allowed}

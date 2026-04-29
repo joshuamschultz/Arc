@@ -8,7 +8,6 @@ import unittest.mock
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import (
     FindingsAllowed,
     HubConfig,
@@ -18,8 +17,8 @@ from arcskill.hub.config import (
     TierPolicy,
 )
 from arcskill.hub.dry_run import DryRunResult
-from arcskill.hub.errors import HubDisabled, ScanVerdictFailed, SignatureInvalid, SourceNotAllowed
-from arcskill.hub.installer import InstallResult, install, uninstall, update
+from arcskill.hub.errors import HubDisabled, SourceNotAllowed
+from arcskill.hub.installer import install, uninstall, update
 from arcskill.hub.scanner import ScanResult
 from arcskill.hub.sources import FetchResult
 from arcskill.hub.verify import VerifyResult
@@ -112,9 +111,7 @@ def test_full_pipeline_success() -> None:
         )
 
         with (
-            unittest.mock.patch(
-                "arcskill.hub.installer.make_adapter"
-            ) as mock_adapter,
+            unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter,
             unittest.mock.patch(
                 "arcskill.hub.installer.verify_bundle",
                 return_value=VerifyResult(
@@ -189,9 +186,7 @@ def test_pipeline_fails_on_scan_verdict_dangerous() -> None:
         )
 
         with (
-            unittest.mock.patch(
-                "arcskill.hub.installer.make_adapter"
-            ) as mock_adapter,
+            unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter,
             unittest.mock.patch(
                 "arcskill.hub.installer.verify_bundle",
                 return_value=VerifyResult(
@@ -259,9 +254,7 @@ def test_pipeline_fails_on_revoked_bundle() -> None:
         )
 
         with (
-            unittest.mock.patch(
-                "arcskill.hub.installer.make_adapter"
-            ) as mock_adapter,
+            unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter,
             unittest.mock.patch(
                 "arcskill.hub.installer.verify_bundle",
                 return_value=VerifyResult(
@@ -306,6 +299,7 @@ def test_uninstall_removes_skill_and_lock_entry() -> None:
         # Pre-populate lock file.
         lock = HubLockFile()
         from arcskill.lock import SkillLockEntry
+
         lock.add_or_update(
             "test/skill",
             SkillLockEntry(
@@ -316,9 +310,7 @@ def test_uninstall_removes_skill_and_lock_entry() -> None:
         lock.save(lock_path)
 
         config = _personal_config()
-        removed = uninstall(
-            "test/skill", config, install_base=install_base, lock_path=lock_path
-        )
+        removed = uninstall("test/skill", config, install_base=install_base, lock_path=lock_path)
 
         assert removed is True
         assert not skill_dir.exists()
@@ -353,6 +345,7 @@ def test_update_marks_already_up_to_date() -> None:
 
         # Pre-seed lock with the same hash.
         from arcskill.lock import SkillLockEntry
+
         lock = HubLockFile()
         lock.add_or_update(
             "test/skill",
@@ -361,9 +354,7 @@ def test_update_marks_already_up_to_date() -> None:
         lock.save(lock_path)
 
         with (
-            unittest.mock.patch(
-                "arcskill.hub.installer.make_adapter"
-            ) as mock_adapter,
+            unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter,
             unittest.mock.patch(
                 "arcskill.hub.installer.verify_bundle",
                 return_value=VerifyResult(

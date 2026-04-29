@@ -44,10 +44,7 @@ class TestAllowedSource:
     """Simple declarative tools pass validation."""
 
     def test_plain_function_allowed(self) -> None:
-        _validate(
-            "def add(a: int, b: int) -> int:\n"
-            "    return a + b\n"
-        )
+        _validate("def add(a: int, b: int) -> int:\n    return a + b\n")
 
     def test_stdlib_safe_imports_allowed(self) -> None:
         _validate("import json\nimport math\n")
@@ -80,29 +77,25 @@ class TestRejectFrameTraversal:
 
     def test_gi_frame_rejected(self) -> None:
         _raises_validation(
-            "def bad():\n"
-            "    (yield).gi_frame\n",
+            "def bad():\n    (yield).gi_frame\n",
             "attribute:gi_frame",
         )
 
     def test_f_back_rejected(self) -> None:
         _raises_validation(
-            "def bad(x):\n"
-            "    return x.f_back\n",
+            "def bad(x):\n    return x.f_back\n",
             "attribute:f_back",
         )
 
     def test_f_globals_rejected(self) -> None:
         _raises_validation(
-            "def bad(x):\n"
-            "    return x.f_globals['__builtins__']\n",
+            "def bad(x):\n    return x.f_globals['__builtins__']\n",
             "attribute:f_globals",
         )
 
     def test_subclasses_rejected(self) -> None:
         _raises_validation(
-            "def bad():\n"
-            "    return ().__class__.__base__.__subclasses__()\n",
+            "def bad():\n    return ().__class__.__base__.__subclasses__()\n",
             "attribute:__subclasses__",
         )
 
@@ -117,14 +110,10 @@ class TestRejectDynamicExec:
         _raises_validation("exec('x=1')\n", "call:exec")
 
     def test_compile_rejected(self) -> None:
-        _raises_validation(
-            "compile('1+1', '<s>', 'eval')\n", "call:compile"
-        )
+        _raises_validation("compile('1+1', '<s>', 'eval')\n", "call:compile")
 
     def test_import_function_rejected(self) -> None:
-        _raises_validation(
-            "__import__('os')\n", "call:__import__"
-        )
+        _raises_validation("__import__('os')\n", "call:__import__")
 
 
 class TestRejectSysModulesAccess:
@@ -132,15 +121,12 @@ class TestRejectSysModulesAccess:
 
     def test_sys_modules_subscript_rejected(self) -> None:
         # Fails first at ``import sys`` — validates the outer layer
-        _raises_validation(
-            "import sys\nsys.modules['os']\n", "import:sys"
-        )
+        _raises_validation("import sys\nsys.modules['os']\n", "import:sys")
 
     def test_sys_modules_via_getattr_rejected(self) -> None:
         """Even without direct import, accessing sys.modules is rejected."""
         _raises_validation(
-            "def bad(m):\n"
-            "    return m.modules['os']\n",
+            "def bad(m):\n    return m.modules['os']\n",
             "attribute:modules",
         )
 
@@ -154,15 +140,13 @@ class TestRejectEncodingAttack:
 
     def test_utf7_coding_declaration_rejected(self) -> None:
         _raises_validation(
-            "# -*- coding: utf-7 -*-\n"
-            "x = 1\n",
+            "# -*- coding: utf-7 -*-\nx = 1\n",
             "encoding:non_utf8",
         )
 
     def test_latin1_coding_declaration_rejected(self) -> None:
         _raises_validation(
-            "# coding: latin-1\n"
-            "x = 1\n",
+            "# coding: latin-1\nx = 1\n",
             "encoding:non_utf8",
         )
 
@@ -171,14 +155,10 @@ class TestRejectBuiltinsMutation:
     """Category 7 — assignment to ``__builtins__`` / ``__loader__``."""
 
     def test_assign_builtins_rejected(self) -> None:
-        _raises_validation(
-            "__builtins__ = None\n", "assign:__builtins__"
-        )
+        _raises_validation("__builtins__ = None\n", "assign:__builtins__")
 
     def test_assign_loader_rejected(self) -> None:
-        _raises_validation(
-            "__loader__ = None\n", "assign:__loader__"
-        )
+        _raises_validation("__loader__ = None\n", "assign:__loader__")
 
 
 class TestRejectInitSubclassMutation:
@@ -186,9 +166,7 @@ class TestRejectInitSubclassMutation:
 
     def test_init_subclass_rejected(self) -> None:
         _raises_validation(
-            "class Evil:\n"
-            "    def __init_subclass__(cls, **kw):\n"
-            "        pass\n",
+            "class Evil:\n    def __init_subclass__(cls, **kw):\n        pass\n",
             "method:__init_subclass__",
         )
 
@@ -197,6 +175,4 @@ class TestRejectStarredBuiltins:
     """Category 9 — ``*__builtins__`` unpacking."""
 
     def test_starred_builtins_rejected(self) -> None:
-        _raises_validation(
-            "f(*__builtins__)\n", "starred:__builtins__"
-        )
+        _raises_validation("f(*__builtins__)\n", "starred:__builtins__")

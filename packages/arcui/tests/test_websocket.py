@@ -68,11 +68,13 @@ class TestWebSocketAuth:
         Accepting them here would allow an agent to read all other agents'
         events — a privilege escalation.
         """
-        auth = AuthConfig({
-            "viewer_token": "ws-viewer",
-            "operator_token": "ws-operator",
-            "agent_token": "ws-agent",
-        })
+        auth = AuthConfig(
+            {
+                "viewer_token": "ws-viewer",
+                "operator_token": "ws-operator",
+                "agent_token": "ws-agent",
+            }
+        )
         app = create_app(auth_config=auth)
         client = TestClient(app)
         with client.websocket_connect("/ws") as ws:
@@ -114,11 +116,15 @@ class TestWebSocketSubscribe:
             assert resp["type"] == "auth_ok"
 
             # Send subscribe message
-            ws.send_text(json.dumps({
-                "type": "subscribe",
-                "agents": ["a1"],
-                "layers": ["llm"],
-            }))
+            ws.send_text(
+                json.dumps(
+                    {
+                        "type": "subscribe",
+                        "agents": ["a1"],
+                        "layers": ["llm"],
+                    }
+                )
+            )
 
             # Should still receive broadcasts (subscribe is a filter, not ack)
             app.state.connection_manager.broadcast({"type": "test"})

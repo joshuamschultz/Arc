@@ -123,8 +123,7 @@ class TestMakePreexecFnPosix:
 
         # Find the RLIMIT_AS call
         rlimit_as_calls = [
-            (rid, lim) for rid, lim in captured
-            if rid == _resource_module.RLIMIT_AS
+            (rid, lim) for rid, lim in captured if rid == _resource_module.RLIMIT_AS
         ]
         assert rlimit_as_calls, "Must call setrlimit for RLIMIT_AS"
         _, (soft, hard) = rlimit_as_calls[0]
@@ -200,9 +199,10 @@ class TestMakePreexecFnNonPosix:
 
         assert len(caught) >= 1, "Must emit at least one warning on non-POSIX"
         warning_messages = [str(w.message) for w in caught]
-        assert any("resource limits" in msg.lower() or "non-posix" in msg.lower() for msg in warning_messages), (
-            f"Warning must mention resource limits or non-POSIX. Got: {warning_messages}"
-        )
+        assert any(
+            "resource limits" in msg.lower() or "non-posix" in msg.lower()
+            for msg in warning_messages
+        ), f"Warning must mention resource limits or non-POSIX. Got: {warning_messages}"
 
 
 # ---------------------------------------------------------------------------
@@ -286,15 +286,16 @@ class TestExecutorChoiceAuditEvent:
             try:
                 async for _ in stream:
                     pass
-            except Exception:
-                pass  # subprocess may produce no output; that's fine for this test
+            except Exception:  # noqa: S110 — subprocess may produce no output; intentional
+                pass
         finally:
             logger.removeHandler(handler)
             logger.setLevel(original_level)
 
         # Verify at least one record mentions executor_choice or SubprocessExecutor
         relevant = [
-            r for r in log_records
+            r
+            for r in log_records
             if "executor_choice" in r.getMessage() or "SubprocessExecutor" in r.getMessage()
         ]
         assert relevant, (

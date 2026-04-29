@@ -21,16 +21,18 @@ from arcrun.types import ToolContext
 
 def _docker_daemon_running() -> bool:
     """Return True only if both the docker CLI is on PATH and the daemon is reachable."""
-    if shutil.which("docker") is None:
+    docker_path = shutil.which("docker")
+    if docker_path is None:
         return False
     try:
-        result = subprocess.run(
-            ["docker", "info"],
+        result = subprocess.run(  # noqa: S603 — docker_path resolved via shutil.which (validated)
+            [docker_path, "info"],
             capture_output=True,
             timeout=5,
+            check=False,
         )
         return result.returncode == 0
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 

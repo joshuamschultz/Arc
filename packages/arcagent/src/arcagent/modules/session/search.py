@@ -102,8 +102,7 @@ def build_session_search_tool() -> RegisteredTool:
     return RegisteredTool(
         name="session_search",
         description=(
-            "Search the agent's past sessions by full-text query. "
-            "Returns ranked snippets."
+            "Search the agent's past sessions by full-text query. Returns ranked snippets."
         ),
         input_schema={
             "type": "object",

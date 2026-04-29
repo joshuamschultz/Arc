@@ -194,9 +194,7 @@ class ProviderLayer:
     name = "provider"
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(
-            input_hash=_hash_call(call), evaluated_at_us=_now_us()
-        )
+        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
 
 
 class AgentLayer:
@@ -234,9 +232,7 @@ class TeamLayer:
     name = "team"
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(
-            input_hash=_hash_call(call), evaluated_at_us=_now_us()
-        )
+        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
 
 
 class SandboxLayer:
@@ -245,9 +241,7 @@ class SandboxLayer:
     name = "sandbox"
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(
-            input_hash=_hash_call(call), evaluated_at_us=_now_us()
-        )
+        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
 
 
 # ---------------------------------------------------------------------------
@@ -297,9 +291,7 @@ class TierConfig(BaseModel):
             ),
         }
         if tier not in configs:
-            raise ValueError(
-                f"Unknown tier {tier!r}. Must be one of: {list(configs.keys())}"
-            )
+            raise ValueError(f"Unknown tier {tier!r}. Must be one of: {list(configs.keys())}")
         return configs[tier]
 
 
@@ -382,9 +374,7 @@ class PolicyPipeline:
             try:
                 decision = await layer.evaluate(call, ctx)
             except Exception as exc:
-                _logger.exception(
-                    "Policy layer %r raised — failing closed (R-012)", layer.name
-                )
+                _logger.exception("Policy layer %r raised — failing closed (R-012)", layer.name)
                 decision = Decision.deny(
                     layer=layer.name,
                     rule_id="layer_error",
@@ -397,9 +387,7 @@ class PolicyPipeline:
                 break
 
         if decision is None:
-            decision = Decision.allow(
-                input_hash=_hash_call(call), evaluated_at_us=_now_us()
-            )
+            decision = Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
 
         self._cache_put(cache_key, decision)
         self._emit_audit(call, ctx, decision, started_at)
@@ -407,18 +395,14 @@ class PolicyPipeline:
 
     # --- Internals ---
 
-    def _check_restricted(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision | None:
+    def _check_restricted(self, call: ToolCall, ctx: PolicyContext) -> Decision | None:
         """Return a DENY/ALLOW if restricted mode applies, else None."""
         if self._max_bundle_age is None:
             return None
         if ctx.bundle_age_seconds <= self._max_bundle_age:
             return None
         if call.tool_name in self._safe_set:
-            return Decision.allow(
-                input_hash=_hash_call(call), evaluated_at_us=_now_us()
-            )
+            return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
         return Decision.deny(
             layer="pipeline",
             rule_id="restricted_mode",
@@ -441,9 +425,7 @@ class PolicyPipeline:
         )
 
     def _cache_key(self, call: ToolCall) -> str:
-        return (
-            f"{call.agent_did}|{call.tool_name}|{call.classification}|{_hash_call(call)}"
-        )
+        return f"{call.agent_did}|{call.tool_name}|{call.classification}|{_hash_call(call)}"
 
     def _cache_get(self, key: str) -> Decision | None:
         if self._cache_ttl <= 0:
@@ -489,9 +471,7 @@ class PolicyPipeline:
             "layer": decision.layer,
             "reason": decision.reason,
             "input_hash": decision.input_hash,
-            "evaluation_time_us": max(
-                1, int((self._monotonic() - started_at) * 1_000_000)
-            ),
+            "evaluation_time_us": max(1, int((self._monotonic() - started_at) * 1_000_000)),
             "cache_hit": cache_hit,
             "shadow": self._shadow,
         }

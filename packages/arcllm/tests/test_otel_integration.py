@@ -132,7 +132,9 @@ class TestRetrySpans:
 
         error = ArcLLMAPIError(429, "rate limited", "test")
         inner = _make_inner(side_effect=[error, error])
-        module = RetryModule({"max_retries": 1, "rate_limit_max_retries": 1, "backoff_base_seconds": 0.001}, inner)
+        module = RetryModule(
+            {"max_retries": 1, "rate_limit_max_retries": 1, "backoff_base_seconds": 0.001}, inner
+        )
         mock_tracer, spans = _make_mock_tracer()
         with patch("arcllm.modules.base.trace.get_tracer", return_value=mock_tracer):
             messages = [Message(role="user", content="hi")]

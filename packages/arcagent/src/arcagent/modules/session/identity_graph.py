@@ -235,21 +235,13 @@ class IdentityGraph:
     # Async variants (Wave B2 callers await these)
     # ------------------------------------------------------------------
 
-    async def resolve_user_identity_async(
-        self, platform: str, platform_user_id: str
-    ) -> str:
+    async def resolve_user_identity_async(self, platform: str, platform_user_id: str) -> str:
         """Async variant of resolve_user_identity."""
-        return await asyncio.to_thread(
-            self.resolve_user_identity, platform, platform_user_id
-        )
+        return await asyncio.to_thread(self.resolve_user_identity, platform, platform_user_id)
 
-    async def lookup_user_did_async(
-        self, platform: str, platform_user_id: str
-    ) -> str | None:
+    async def lookup_user_did_async(self, platform: str, platform_user_id: str) -> str | None:
         """Async variant of lookup_user_did."""
-        return await asyncio.to_thread(
-            self.lookup_user_did, platform, platform_user_id
-        )
+        return await asyncio.to_thread(self.lookup_user_did, platform, platform_user_id)
 
     async def link_identities_async(
         self,
@@ -274,9 +266,7 @@ class IdentityGraph:
         platform_user_id: str,
     ) -> None:
         """Async variant of unlink_identity."""
-        await asyncio.to_thread(
-            self.unlink_identity, user_did, platform, platform_user_id
-        )
+        await asyncio.to_thread(self.unlink_identity, user_did, platform, platform_user_id)
 
     async def list_links_async(self, user_did: str) -> list[Link]:
         """Async variant of list_links."""

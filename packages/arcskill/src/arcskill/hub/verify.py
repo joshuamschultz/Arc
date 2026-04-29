@@ -433,9 +433,7 @@ def _sigstore_verify(
 
     # -- Step 3: build policy -------------------------------------------------
     # Federal tier MUST have signer_identity + signer_issuer in source config.
-    if config.is_federal and (
-        not source.signer_identity or not source.signer_issuer
-    ):
+    if config.is_federal and (not source.signer_identity or not source.signer_issuer):
         raise SignatureInvalid(
             "Federal tier requires signer_identity and signer_issuer in "
             "source config but one or both are missing for "
@@ -490,19 +488,13 @@ def _sigstore_verify(
             )
 
     except VerificationError as exc:
-        raise SignatureInvalid(
-            f"Sigstore verification failed: {exc}"
-        ) from exc
+        raise SignatureInvalid(f"Sigstore verification failed: {exc}") from exc
     except Exception as exc:
         # Catch-all: InvalidBundle, TUF errors, network errors, etc.
-        raise SignatureInvalid(
-            f"Sigstore verification failed (unexpected error): {exc}"
-        ) from exc
+        raise SignatureInvalid(f"Sigstore verification failed (unexpected error): {exc}") from exc
 
     # -- Step 5: extract metadata from verified bundle ------------------------
-    rekor_uuid = _extract_rekor_uuid_from_bundle(bundle) or _extract_rekor_uuid(
-        bundle_data
-    )
+    rekor_uuid = _extract_rekor_uuid_from_bundle(bundle) or _extract_rekor_uuid(bundle_data)
     slsa_level = _extract_slsa_level(bundle_data)
 
     return VerifyResult(
@@ -517,9 +509,7 @@ def _sigstore_verify(
 def _detect_bundle_kind(bundle_data: dict[str, Any]) -> str:
     """Return ``"dsse"`` if the bundle wraps a DSSE envelope, else ``"hashedrekord"``."""
     try:
-        tlog_entries = (
-            bundle_data.get("verificationMaterial", {}).get("tlogEntries", [])
-        )
+        tlog_entries = bundle_data.get("verificationMaterial", {}).get("tlogEntries", [])
         if tlog_entries:
             # The kind is encoded in the tlog entry body.
             body_b64 = tlog_entries[0].get("canonicalizedBody", "")
@@ -592,15 +582,15 @@ def _assert_slsa_predicate_type(
     try:
         attestation: dict[str, Any] = json.loads(payload_bytes)
         predicate_type: str = attestation.get("predicateType", "")
-        if config.is_federal and not predicate_type.startswith(
-            "https://slsa.dev/provenance/"
-        ):
+        if config.is_federal and not predicate_type.startswith("https://slsa.dev/provenance/"):
             raise SignatureInvalid(
                 f"Federal tier requires predicateType starting with "
                 f"'https://slsa.dev/provenance/'; got {predicate_type!r}"
             )
-        if not config.is_federal and predicate_type and not predicate_type.startswith(
-            "https://slsa.dev/provenance/"
+        if (
+            not config.is_federal
+            and predicate_type
+            and not predicate_type.startswith("https://slsa.dev/provenance/")
         ):
             logger.warning(
                 "AUDIT: non-SLSA predicateType=%r in in-toto payload "
@@ -608,9 +598,7 @@ def _assert_slsa_predicate_type(
                 predicate_type,
             )
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise SignatureInvalid(
-            f"Cannot parse SLSA attestation payload: {exc}"
-        ) from exc
+        raise SignatureInvalid(f"Cannot parse SLSA attestation payload: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -639,9 +627,7 @@ def _extract_rekor_uuid(bundle_data: dict[str, Any]) -> str:
     absent.
     """
     try:
-        tlog_entries = (
-            bundle_data.get("verificationMaterial", {}).get("tlogEntries", [])
-        )
+        tlog_entries = bundle_data.get("verificationMaterial", {}).get("tlogEntries", [])
         if tlog_entries:
             return str(tlog_entries[0].get("logIndex", ""))
     except (KeyError, IndexError, TypeError):
@@ -662,9 +648,7 @@ def _extract_slsa_level(bundle_data: dict[str, Any]) -> int:
         SLSA Build Level (1, 2, or 3) if detectable; 0 if absent.
     """
     try:
-        dsse_envelope = (
-            bundle_data.get("verificationMaterial", {}).get("dsseEnvelope", {})
-        )
+        dsse_envelope = bundle_data.get("verificationMaterial", {}).get("dsseEnvelope", {})
         if not dsse_envelope:
             return 0
         payload_b64 = dsse_envelope.get("payload", "")
@@ -751,9 +735,7 @@ def _check_crl(result: VerifyResult, config: HubConfig) -> VerifyResult:
             result.content_hash[:12],
         )
 
-    return result.model_copy(
-        update={"crl_checked": True, "revoked": is_revoked}
-    )
+    return result.model_copy(update={"crl_checked": True, "revoked": is_revoked})
 
 
 def _fetch_crl(url: str) -> frozenset[str]:

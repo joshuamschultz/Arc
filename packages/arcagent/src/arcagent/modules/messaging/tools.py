@@ -147,9 +147,7 @@ def create_messaging_tools(
                         # byte offset so the next poll can seek past
                         # already-consumed bytes.
                         byte_pos = await _stream_end_byte_pos(svc, stream)
-                        await svc.ack(
-                            stream, entity_id, seq=last.seq, byte_pos=byte_pos
-                        )
+                        await svc.ack(stream, entity_id, seq=last.seq, byte_pos=byte_pos)
 
             return json.dumps(result)
         except (ValueError, TypeError) as exc:
@@ -389,54 +387,56 @@ def create_messaging_tools(
 
     # Only register file tools when team_root is available
     if team_root is not None:
-        tools.extend([
-            RegisteredTool(
-                name="store_team_file",
-                description=(
-                    "Store a file in the team's shared directory so other agents "
-                    "can access it. Use the file path from a received attachment."
+        tools.extend(
+            [
+                RegisteredTool(
+                    name="store_team_file",
+                    description=(
+                        "Store a file in the team's shared directory so other agents "
+                        "can access it. Use the file path from a received attachment."
+                    ),
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": (
+                                    "Path to the file to share (e.g. from a downloaded "
+                                    "Slack/Telegram attachment in the inbox)."
+                                ),
+                            },
+                        },
+                        "required": ["file_path"],
+                    },
+                    transport=ToolTransport.NATIVE,
+                    execute=_handle_store_team_file,
+                    timeout_seconds=30,
+                    source="messaging",
                 ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "file_path": {
-                            "type": "string",
-                            "description": (
-                                "Path to the file to share (e.g. from a downloaded "
-                                "Slack/Telegram attachment in the inbox)."
-                            ),
+                RegisteredTool(
+                    name="list_team_files",
+                    description=(
+                        "List files in the team's shared directory. "
+                        "Optionally filter by agent name."
+                    ),
+                    input_schema={
+                        "type": "object",
+                        "properties": {
+                            "agent_name": {
+                                "type": "string",
+                                "description": (
+                                    "Filter to a specific agent's files. "
+                                    "Leave empty to list all shared files."
+                                ),
+                            },
                         },
                     },
-                    "required": ["file_path"],
-                },
-                transport=ToolTransport.NATIVE,
-                execute=_handle_store_team_file,
-                timeout_seconds=30,
-                source="messaging",
-            ),
-            RegisteredTool(
-                name="list_team_files",
-                description=(
-                    "List files in the team's shared directory. "
-                    "Optionally filter by agent name."
+                    transport=ToolTransport.NATIVE,
+                    execute=_handle_list_team_files,
+                    timeout_seconds=30,
+                    source="messaging",
                 ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "agent_name": {
-                            "type": "string",
-                            "description": (
-                                "Filter to a specific agent's files. "
-                                "Leave empty to list all shared files."
-                            ),
-                        },
-                    },
-                },
-                transport=ToolTransport.NATIVE,
-                execute=_handle_list_team_files,
-                timeout_seconds=30,
-                source="messaging",
-            ),
-        ])
+            ]
+        )
 
     return tools

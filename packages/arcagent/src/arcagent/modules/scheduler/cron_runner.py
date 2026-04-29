@@ -141,7 +141,7 @@ class CronRunner:
         stripped = job.prompt.lstrip()
         if stripped.startswith(SILENT_MARKER):
             # Remove the marker and any immediately-following whitespace.
-            clean = stripped[len(SILENT_MARKER):].lstrip()
+            clean = stripped[len(SILENT_MARKER) :].lstrip()
             return clean, True
 
         return job.prompt, job.silent_on_success

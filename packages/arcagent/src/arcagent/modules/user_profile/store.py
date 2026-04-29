@@ -305,10 +305,7 @@ class ProfileStore:
 
         annotation_text = annotation_path.read_text(encoding="utf-8")
         merged = (
-            base_text.rstrip()
-            + "\n\n## Agent Annotations\n\n"
-            + annotation_text.strip()
-            + "\n"
+            base_text.rstrip() + "\n\n## Agent Annotations\n\n" + annotation_text.strip() + "\n"
         )
         _logger.debug(
             "user_profile.merged_annotation user_did=%s agent_did=%s",

@@ -403,11 +403,9 @@ def _stage_scan(ctx: InstallContext) -> None:
     if ctx.scan.verdict == "dangerous" and ctx.config.policy.require_scan_pass:
         raise ScanVerdictFailed(
             verdict=ctx.scan.verdict,
-            findings=[
-                f.message
-                for f in ctx.scan.findings
-                if f.severity in ("critical", "high")
-            ][:10],
+            findings=[f.message for f in ctx.scan.findings if f.severity in ("critical", "high")][
+                :10
+            ],
         )
 
 
@@ -484,8 +482,11 @@ def _stage_audit(ctx: InstallContext) -> None:
         ctx: Mutable install context (all stage results must be set).
     """
     if (
-        ctx.fetch is None or ctx.verify is None or ctx.scan is None
-        or ctx.dry_run is None or ctx.install_path is None
+        ctx.fetch is None
+        or ctx.verify is None
+        or ctx.scan is None
+        or ctx.dry_run is None
+        or ctx.install_path is None
     ):
         raise RuntimeError("_stage_audit called before pipeline stages completed")
     _emit_audit(
@@ -506,9 +507,7 @@ def _stage_audit(ctx: InstallContext) -> None:
 def _assert_hub_enabled(config: HubConfig) -> None:
     """Raise HubDisabled if hub is not enabled."""
     if not config.enabled:
-        raise HubDisabled(
-            "Skills Hub is disabled. Set [skills.hub] enabled = true in config."
-        )
+        raise HubDisabled("Skills Hub is disabled. Set [skills.hub] enabled = true in config.")
 
 
 def _activate(name: str, bundle_path: Path, base: Path) -> Path:
@@ -540,9 +539,7 @@ def _activate(name: str, bundle_path: Path, base: Path) -> Path:
 def _list_installed_files(install_path: Path) -> list[str]:
     """Return relative file paths under install_path."""
     return [
-        str(p.relative_to(install_path))
-        for p in sorted(install_path.rglob("*"))
-        if p.is_file()
+        str(p.relative_to(install_path)) for p in sorted(install_path.rglob("*")) if p.is_file()
     ]
 
 

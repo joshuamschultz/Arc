@@ -123,9 +123,7 @@ class LocalBackend:
 
         stdin_data = stdin.encode() if stdin is not None else None
         stdin_pipe = (
-            asyncio.subprocess.PIPE
-            if stdin_data is not None
-            else asyncio.subprocess.DEVNULL
+            asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL
         )
 
         proc = await asyncio.create_subprocess_exec(
@@ -183,9 +181,7 @@ class LocalBackend:
 
         stdin_data = stdin.encode() if stdin is not None else None
         stdin_pipe = (
-            asyncio.subprocess.PIPE
-            if stdin_data is not None
-            else asyncio.subprocess.DEVNULL
+            asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL
         )
 
         proc = await asyncio.create_subprocess_exec(
@@ -206,9 +202,7 @@ class LocalBackend:
 
         timed_out = False
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
             timed_out = True
             await _kill_process_group(proc)

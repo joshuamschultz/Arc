@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.module_bus import EventContext
-from arcagent.core.skill_registry import SkillRegistry
 from arcagent.modules.skill_improver.config import SkillImproverConfig
 from arcagent.modules.skill_improver.models import SkillTrace, ToolCallRecord
 from arcagent.utils.sanitizer import sanitize_text
@@ -61,7 +60,7 @@ class TraceCollector:
 
     def __init__(
         self,
-        skill_registry: SkillRegistry,
+        skill_registry: Any,
         workspace: Path,
         config: SkillImproverConfig,
         session_id: str = "",
@@ -92,7 +91,7 @@ class TraceCollector:
         """Currently active trace span, if any."""
         return self._active_span
 
-    def index_skills(self, skill_registry: SkillRegistry) -> None:
+    def index_skills(self, skill_registry: Any) -> None:
         """Build path -> name lookup from SkillRegistry."""
         self._skill_paths.clear()
         for skill in skill_registry.skills:

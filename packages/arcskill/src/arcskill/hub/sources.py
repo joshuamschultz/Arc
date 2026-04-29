@@ -126,16 +126,14 @@ class GitHubSource(SkillSourceAdapter):
         """Download the named skill bundle from GitHub."""
         if not self._config.repo:
             raise ValueError(
-                f"SkillSource {self._config.name!r} is type 'github' "
-                "but has no 'repo' configured"
+                f"SkillSource {self._config.name!r} is type 'github' but has no 'repo' configured"
             )
 
         try:
             import httpx
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "httpx is required for GitHub skill downloads. "
-                "Install arcskill[hub] to add it."
+                "httpx is required for GitHub skill downloads. Install arcskill[hub] to add it."
             ) from exc
 
         # Normalise the skill name to a filesystem-safe filename.
@@ -144,10 +142,7 @@ class GitHubSource(SkillSourceAdapter):
         dest = quarantine_dir / bundle_filename
 
         # Resolve latest release version via GitHub API.
-        api_url = (
-            f"https://api.github.com/repos/{self._config.repo}"
-            f"/releases/latest"
-        )
+        api_url = f"https://api.github.com/repos/{self._config.repo}/releases/latest"
         logger.debug("Fetching latest release for %r from %s", name, api_url)
 
         with httpx.Client(follow_redirects=True, max_redirects=3) as client:
@@ -211,16 +206,14 @@ class RegistrySource(SkillSourceAdapter):
         """Download the named skill bundle from the HTTP registry."""
         if not self._config.url:
             raise ValueError(
-                f"SkillSource {self._config.name!r} is type 'registry' "
-                "but has no 'url' configured"
+                f"SkillSource {self._config.name!r} is type 'registry' but has no 'url' configured"
             )
 
         try:
             import httpx
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(
-                "httpx is required for registry skill downloads. "
-                "Install arcskill[hub] to add it."
+                "httpx is required for registry skill downloads. Install arcskill[hub] to add it."
             ) from exc
 
         index_url = self._config.url.rstrip("/") + "/index.json"
@@ -231,9 +224,7 @@ class RegistrySource(SkillSourceAdapter):
 
         skills = index.get("skills", {})
         if name not in skills:
-            raise RuntimeError(
-                f"Skill {name!r} not found in registry {self._config.name!r}"
-            )
+            raise RuntimeError(f"Skill {name!r} not found in registry {self._config.name!r}")
 
         entry = skills[name]
         bundle_url: str = entry["url"]
@@ -372,8 +363,7 @@ class _LocalSource(SkillSourceAdapter):
         """Copy the local bundle into quarantine_dir."""
         if not self._config.path:
             raise ValueError(
-                f"SkillSource {self._config.name!r} is type 'local' "
-                "but has no 'path' configured"
+                f"SkillSource {self._config.name!r} is type 'local' but has no 'path' configured"
             )
 
         import shutil
@@ -388,9 +378,7 @@ class _LocalSource(SkillSourceAdapter):
             # Assume directory -- look for matching tarball.
             candidates = list(src.glob(f"{safe_name}*.tar.gz"))
             if not candidates:
-                raise RuntimeError(
-                    f"No bundle matching {safe_name!r} found in {src}"
-                )
+                raise RuntimeError(f"No bundle matching {safe_name!r} found in {src}")
             dest = quarantine_dir / candidates[0].name
             shutil.copy2(candidates[0], dest)
 

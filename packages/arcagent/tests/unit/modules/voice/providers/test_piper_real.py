@@ -18,7 +18,6 @@ Skip message install hint:
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -100,9 +99,7 @@ class TestPiperVoiceResolution:
         msg = str(exc_info.value).lower()
         assert "not found" in msg or "voice" in msg
 
-    def test_locate_voice_succeeds_when_onnx_exists(
-        self, tmp_path: Path
-    ) -> None:
+    def test_locate_voice_succeeds_when_onnx_exists(self, tmp_path: Path) -> None:
         """_locate_voice returns the Path when the ONNX file exists."""
         onnx = tmp_path / "en_US-lessac-medium.onnx"
         onnx.write_bytes(b"fake-onnx")
@@ -110,9 +107,7 @@ class TestPiperVoiceResolution:
         resolved = provider._locate_voice()
         assert resolved == onnx
 
-    def test_locate_voice_call_time_voice_id_overrides_constructor(
-        self, tmp_path: Path
-    ) -> None:
+    def test_locate_voice_call_time_voice_id_overrides_constructor(self, tmp_path: Path) -> None:
         """A voice_id argument to _locate_voice overrides the constructor path."""
         constructor_onnx = tmp_path / "default.onnx"
         constructor_onnx.write_bytes(b"fake")
@@ -130,9 +125,7 @@ class TestPiperVoiceResolution:
             resolved = provider._locate_voice(voice_id="call_time")
         assert resolved == call_time_onnx
 
-    def test_locate_voice_absolute_path_voice_id(
-        self, tmp_path: Path
-    ) -> None:
+    def test_locate_voice_absolute_path_voice_id(self, tmp_path: Path) -> None:
         """An absolute voice_id is used directly as a path."""
         onnx = tmp_path / "custom.onnx"
         onnx.write_bytes(b"fake")
@@ -140,9 +133,7 @@ class TestPiperVoiceResolution:
         resolved = provider._locate_voice(voice_id=str(onnx))
         assert resolved == onnx
 
-    def test_locate_voice_error_lists_searched_paths(
-        self, tmp_path: Path
-    ) -> None:
+    def test_locate_voice_error_lists_searched_paths(self, tmp_path: Path) -> None:
         """TTSFailed message includes the paths that were searched."""
         missing = str(tmp_path / "missing.onnx")
         provider = _make_provider(voice_path=missing)
@@ -243,9 +234,7 @@ class TestPiperCommandBuilding:
 
 class TestPiperSubprocess:
     @pytest.mark.asyncio
-    async def test_synthesize_builds_correct_command(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_builds_correct_command(self, tmp_path: Path) -> None:
         """The subprocess is invoked with the expected exec-style command."""
         voice = tmp_path / "voice.onnx"
         voice.write_bytes(b"fake-onnx")
@@ -261,16 +250,12 @@ class TestPiperSubprocess:
 
         captured: list[list[str]] = []
 
-        async def _fake_run_subprocess(
-            cmd: list[str], text: str
-        ) -> tuple[str, int]:
+        async def _fake_run_subprocess(cmd: list[str], text: str) -> tuple[str, int]:
             captured.append(list(cmd))
             output.write_bytes(b"WAV audio data")
             return "", 0
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_fake_run_subprocess
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_fake_run_subprocess):
             result = await provider.synthesize("Hello world.", output_path=output)
 
         assert captured, "_run_subprocess must be called"
@@ -283,9 +268,7 @@ class TestPiperSubprocess:
         assert result == output
 
     @pytest.mark.asyncio
-    async def test_synthesize_pipes_text_via_stdin(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_pipes_text_via_stdin(self, tmp_path: Path) -> None:
         """The text argument is passed via stdin, not baked into the command."""
         voice = tmp_path / "voice.onnx"
         voice.write_bytes(b"fake-onnx")
@@ -301,16 +284,12 @@ class TestPiperSubprocess:
 
         received_texts: list[str] = []
 
-        async def _capture_stdin(
-            cmd: list[str], text: str
-        ) -> tuple[str, int]:
+        async def _capture_stdin(cmd: list[str], text: str) -> tuple[str, int]:
             received_texts.append(text)
             output.write_bytes(b"WAV")
             return "", 0
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_capture_stdin
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_capture_stdin):
             await provider.synthesize("Top secret briefing.", output_path=output)
 
         assert received_texts == ["Top secret briefing."]
@@ -319,9 +298,7 @@ class TestPiperSubprocess:
         assert not any(captured_text in c for c in [])  # just verifying pattern
 
     @pytest.mark.asyncio
-    async def test_synthesize_timeout_raises_tts_failed(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_timeout_raises_tts_failed(self, tmp_path: Path) -> None:
         """A slow subprocess triggers TTSFailed after the timeout."""
         voice = tmp_path / "voice.onnx"
         voice.write_bytes(b"fake-onnx")
@@ -336,7 +313,7 @@ class TestPiperSubprocess:
         provider._resolved_binary = "/usr/bin/piper"
 
         async def _slow(cmd: list[str], text: str) -> tuple[str, int]:
-            raise asyncio.TimeoutError
+            raise TimeoutError
 
         with patch.object(provider, "_run_subprocess", side_effect=_slow):
             with pytest.raises(TTSFailed) as exc_info:
@@ -346,9 +323,7 @@ class TestPiperSubprocess:
         assert "timeout" in msg or "timed out" in msg
 
     @pytest.mark.asyncio
-    async def test_synthesize_nonzero_exit_raises_with_stderr(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_nonzero_exit_raises_with_stderr(self, tmp_path: Path) -> None:
         """Non-zero piper exit raises TTSFailed with stderr content."""
         voice = tmp_path / "voice.onnx"
         voice.write_bytes(b"fake-onnx")
@@ -375,9 +350,7 @@ class TestPiperSubprocess:
         assert "model.onnx" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_synthesize_empty_output_raises(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_empty_output_raises(self, tmp_path: Path) -> None:
         """TTSFailed is raised when piper exits 0 but the output is empty."""
         voice = tmp_path / "voice.onnx"
         voice.write_bytes(b"fake-onnx")
@@ -395,9 +368,7 @@ class TestPiperSubprocess:
             # Do NOT write to output_path — simulates empty output
             return "", 0
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_empty_output
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_empty_output):
             with pytest.raises(TTSFailed) as exc_info:
                 await provider.synthesize("hello", output_path=output)
 
@@ -405,9 +376,7 @@ class TestPiperSubprocess:
         assert "empty" in msg or "output" in msg
 
     @pytest.mark.asyncio
-    async def test_synthesize_raises_when_binary_absent(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_raises_when_binary_absent(self, tmp_path: Path) -> None:
         """STTFailed raised immediately when _available is False."""
         output = tmp_path / "out.wav"
         provider = PiperProvider(binary="no-such-piper-arc-test")
@@ -421,9 +390,7 @@ class TestPiperSubprocess:
         assert "piper" in msg
 
     @pytest.mark.asyncio
-    async def test_synthesize_raises_on_relative_output_path(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_raises_on_relative_output_path(self, tmp_path: Path) -> None:
         """TTSFailed raised before subprocess call for relative output_path."""
         provider = PiperProvider(binary="no-such-piper-arc-test")
         with pytest.raises(TTSFailed) as exc_info:
@@ -431,9 +398,7 @@ class TestPiperSubprocess:
         assert "absolute" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
-    async def test_synthesize_creates_parent_directory(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_creates_parent_directory(self, tmp_path: Path) -> None:
         """Parent directory is created if it does not exist yet."""
         voice = tmp_path / "voice.onnx"
         voice.write_bytes(b"fake-onnx")
@@ -451,18 +416,14 @@ class TestPiperSubprocess:
             nested_output.write_bytes(b"WAV data")
             return "", 0
 
-        with patch.object(
-            provider, "_run_subprocess", side_effect=_write_file
-        ):
+        with patch.object(provider, "_run_subprocess", side_effect=_write_file):
             result = await provider.synthesize("hi", output_path=nested_output)
 
         assert result == nested_output
         assert nested_output.exists()
 
     @pytest.mark.asyncio
-    async def test_synthesize_voice_id_overrides_constructor_voice(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_voice_id_overrides_constructor_voice(self, tmp_path: Path) -> None:
         """voice_id at call time overrides the constructor voice_path."""
         default_voice = tmp_path / "default.onnx"
         default_voice.write_bytes(b"fake")
@@ -485,15 +446,9 @@ class TestPiperSubprocess:
             output.write_bytes(b"WAV")
             return "", 0
 
-        with patch.object(
-            provider, "_locate_voice", return_value=custom_voice
-        ):
-            with patch.object(
-                provider, "_run_subprocess", side_effect=_capture
-            ):
-                await provider.synthesize(
-                    "hello", voice_id="custom", output_path=output
-                )
+        with patch.object(provider, "_locate_voice", return_value=custom_voice):
+            with patch.object(provider, "_run_subprocess", side_effect=_capture):
+                await provider.synthesize("hello", voice_id="custom", output_path=output)
 
         assert captured_cmd, "_run_subprocess must be called"
         assert str(custom_voice) in captured_cmd[0]
@@ -508,9 +463,7 @@ class TestPiperSubprocess:
 class TestPiperRealBinary:
     @_SKIP_BINARY
     @pytest.mark.asyncio
-    async def test_synthesize_produces_non_empty_wav(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_produces_non_empty_wav(self, tmp_path: Path) -> None:
         """Real binary: synthesizing a short phrase produces a non-empty WAV."""
         output = tmp_path / "real_output.wav"
         provider = PiperProvider(timeout_s=30)
@@ -522,9 +475,7 @@ class TestPiperRealBinary:
 
     @_SKIP_BINARY
     @pytest.mark.asyncio
-    async def test_synthesize_returns_output_path(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_returns_output_path(self, tmp_path: Path) -> None:
         """Real binary: the return value is the exact output_path provided."""
         output = tmp_path / "arc_test_audio.wav"
         provider = PiperProvider(timeout_s=30)
@@ -533,9 +484,7 @@ class TestPiperRealBinary:
 
     @_SKIP_BINARY
     @pytest.mark.asyncio
-    async def test_synthesize_no_voice_model_raises_clearly(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_synthesize_no_voice_model_raises_clearly(self, tmp_path: Path) -> None:
         """Real binary: missing ONNX voice model produces a clear TTSFailed."""
         output = tmp_path / "out.wav"
         provider = PiperProvider(

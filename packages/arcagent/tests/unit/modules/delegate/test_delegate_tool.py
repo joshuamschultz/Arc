@@ -11,12 +11,11 @@ Tests:
 from __future__ import annotations
 
 import pytest
-
-from arcagent.modules.delegate import DELEGATE_BLOCKED_TOOLS, DelegateConfig, make_delegate_tool
-from arcagent.modules.delegate.config import _DEPTH_CAPS, _CONCURRENCY_CAPS
-from arcagent.modules.delegate.delegate_tool import _build_child_tool_list
 from arcrun.types import Tool
 
+from arcagent.modules.delegate import DELEGATE_BLOCKED_TOOLS, DelegateConfig, make_delegate_tool
+from arcagent.modules.delegate.config import _DEPTH_CAPS
+from arcagent.modules.delegate.delegate_tool import _build_child_tool_list
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -40,11 +39,11 @@ PARENT_TOOLS = [
     _make_tool("search"),
     _make_tool("read_file"),
     _make_tool("write_file"),
-    _make_tool("delegate"),     # blocked
-    _make_tool("memory"),       # blocked
-    _make_tool("send_message"), # blocked
-    _make_tool("execute_code"), # blocked
-    _make_tool("clarify"),      # blocked
+    _make_tool("delegate"),  # blocked
+    _make_tool("memory"),  # blocked
+    _make_tool("send_message"),  # blocked
+    _make_tool("execute_code"),  # blocked
+    _make_tool("clarify"),  # blocked
 ]
 
 

@@ -22,14 +22,16 @@ def _bootstrap_team(tmp_path: Path) -> Path:
     _init_cmd(argparse.Namespace(root_path=str(tmp_path)))
     workspace = tmp_path / "ws_a1"
     workspace.mkdir()
-    _register(argparse.Namespace(
-        root=str(tmp_path),
-        entity_id="agent://a1",
-        name="A1",
-        entity_type="agent",
-        roles="",
-        workspace=str(workspace),
-    ))
+    _register(
+        argparse.Namespace(
+            root=str(tmp_path),
+            entity_id="agent://a1",
+            name="A1",
+            entity_type="agent",
+            roles="",
+            workspace=str(workspace),
+        )
+    )
     return tmp_path
 
 
@@ -44,14 +46,16 @@ class TestResolveTraceStoresFromRegistry:
     def test_skips_entities_without_workspace(self, tmp_path: Path) -> None:
         _bootstrap_team(tmp_path)
         # Register a second agent WITHOUT a workspace path (user type skips it)
-        _register(argparse.Namespace(
-            root=str(tmp_path),
-            entity_id="user://u1",
-            name="U1",
-            entity_type="user",
-            roles="",
-            workspace=None,
-        ))
+        _register(
+            argparse.Namespace(
+                root=str(tmp_path),
+                entity_id="user://u1",
+                name="U1",
+                entity_type="user",
+                roles="",
+                workspace=None,
+            )
+        )
         args = argparse.Namespace(root=str(tmp_path))
         stores = _resolve_trace_stores(args)
         # Only the agent with workspace_path becomes a store
@@ -64,14 +68,16 @@ class TestResolveTraceStoresFromRegistry:
         # Register an agent then delete its workspace dir
         ws = tmp_path / "deleted_workspace"
         ws.mkdir()
-        _register(argparse.Namespace(
-            root=str(tmp_path),
-            entity_id="agent://gone",
-            name="Gone",
-            entity_type="agent",
-            roles="",
-            workspace=str(ws),
-        ))
+        _register(
+            argparse.Namespace(
+                root=str(tmp_path),
+                entity_id="agent://gone",
+                name="Gone",
+                entity_type="agent",
+                roles="",
+                workspace=str(ws),
+            )
+        )
         ws.rmdir()
 
         args = argparse.Namespace(root=str(tmp_path))
@@ -108,7 +114,7 @@ class TestMaybeOpenBrowserNonLoopback:
 
     def test_zero_zero_zero_zero_skips(self) -> None:
         with patch("webbrowser.open") as mock_open:
-            _maybe_open_browser("0.0.0.0", 8420, "tok")
+            _maybe_open_browser("0.0.0.0", 8420, "tok")  # noqa: S104 — testing non-loopback path
         mock_open.assert_not_called()
 
     def test_external_ip_skips(self) -> None:

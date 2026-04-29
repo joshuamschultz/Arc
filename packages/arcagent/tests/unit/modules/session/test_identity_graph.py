@@ -21,7 +21,6 @@ import pytest
 
 from arcagent.modules.session.identity_graph import IdentityGraph, Link
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -247,9 +246,7 @@ def test_unlink_emits_audit_event(db_path: Path, mock_telemetry: MagicMock) -> N
     assert "gateway.identity.unlink" in event_types
 
 
-def test_audit_event_hashes_platform_user_id(
-    db_path: Path, mock_telemetry: MagicMock
-) -> None:
+def test_audit_event_hashes_platform_user_id(db_path: Path, mock_telemetry: MagicMock) -> None:
     """Audit events must NOT log raw platform_user_id — only its SHA-256 prefix."""
     graph = IdentityGraph(db_path=db_path, telemetry=mock_telemetry)
     graph.resolve_user_identity("telegram", "sensitive_user_id_12345")

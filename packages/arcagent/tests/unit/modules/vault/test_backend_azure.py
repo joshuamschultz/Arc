@@ -5,7 +5,7 @@ These tests mock the Azure SDK so no real vault is required.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

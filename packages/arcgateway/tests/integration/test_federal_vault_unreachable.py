@@ -173,8 +173,7 @@ async def test_enterprise_tier_vault_unreachable_falls_back_to_env(
     )
 
     assert result == "enterprise-fallback-value", (
-        f"Enterprise tier should fall back to env var on VaultUnreachable, "
-        f"but got: {result!r}"
+        f"Enterprise tier should fall back to env var on VaultUnreachable, but got: {result!r}"
     )
 
 
@@ -275,9 +274,7 @@ async def test_federal_vault_unreachable_audit_event_emitted(
         "To fix: add a _logger.warning() call in _resolve_federal() before "
         "propagating VaultUnreachable.\n"
         "All captured log records:\n"
-        + "\n".join(
-            f"  [{r.levelname}] {r.name}: {r.message}" for r in caplog.records
-        )
+        + "\n".join(f"  [{r.levelname}] {r.name}: {r.message}" for r in caplog.records)
     )
 
 

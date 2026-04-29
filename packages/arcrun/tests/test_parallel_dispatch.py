@@ -227,9 +227,7 @@ class TestDispatchAll:
     async def test_read_only_batch_runs_parallel(self) -> None:
         from arcrun.parallel_dispatch import BatchClassifier, dispatch_batch
 
-        registry = _FakeRegistry(
-            [_FakeTool("read", "read_only"), _FakeTool("grep", "read_only")]
-        )
+        registry = _FakeRegistry([_FakeTool("read", "read_only"), _FakeTool("grep", "read_only")])
 
         async def run(call: _ToolCall) -> tuple[_ToolCall, Any]:
             await asyncio.sleep(0.02)

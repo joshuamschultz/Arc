@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from arcagent.modules.web import WebModule
 from arcagent.modules.web.protocols import ExtractResult, SearchHit
@@ -38,7 +36,9 @@ class TestSearchQueryPiiRedaction:
     """PII in search queries must be redacted before reaching the provider."""
 
     async def test_ssn_in_query_redacted(self) -> None:
-        module = WebModule(config={"tier": "federal", "url_allowlist": ["*"], "pii_redaction_enabled": True})
+        module = WebModule(
+            config={"tier": "federal", "url_allowlist": ["*"], "pii_redaction_enabled": True}
+        )
         captured_queries: list[str] = []
 
         async def _capture_search(query: str, *, limit: int = 10) -> list[SearchHit]:
@@ -82,7 +82,9 @@ class TestSearchQueryPiiRedaction:
         assert "[PII:EMAIL]" in sent_query
 
     async def test_clean_query_passes_through_unchanged(self) -> None:
-        module = WebModule(config={"tier": "federal", "url_allowlist": ["*"], "pii_redaction_enabled": True})
+        module = WebModule(
+            config={"tier": "federal", "url_allowlist": ["*"], "pii_redaction_enabled": True}
+        )
         captured_queries: list[str] = []
 
         async def _capture_search(query: str, *, limit: int = 10) -> list[SearchHit]:
@@ -133,11 +135,13 @@ class TestExtractedContentPiiRedaction:
 
     async def test_ssn_in_content_redacted(self) -> None:
         # Enterprise with explicit allowlist (deny-by-default requires explicit allow)
-        module = WebModule(config={
-            "tier": "enterprise",
-            "pii_redaction_enabled": True,
-            "url_allowlist": ["https://records.example.com/*"],
-        })
+        module = WebModule(
+            config={
+                "tier": "enterprise",
+                "pii_redaction_enabled": True,
+                "url_allowlist": ["https://records.example.com/*"],
+            }
+        )
         raw_content = "Record found: SSN 987-65-4321 belongs to subject."
         mock_extract = AsyncMock()
         mock_extract.extract = AsyncMock(
@@ -163,7 +167,9 @@ class TestPiiRedactionAuditPrivacy:
     """PII must not appear in audit events — only query hash."""
 
     async def test_audit_event_contains_hash_not_plaintext(self) -> None:
-        module = WebModule(config={"tier": "federal", "url_allowlist": ["*"], "pii_redaction_enabled": True})
+        module = WebModule(
+            config={"tier": "federal", "url_allowlist": ["*"], "pii_redaction_enabled": True}
+        )
         mock_search = AsyncMock()
         mock_search.search = AsyncMock(return_value=[])
         module.set_search_provider(mock_search)
@@ -177,9 +183,7 @@ class TestPiiRedactionAuditPrivacy:
         await module.web_search(sensitive_query)
 
         # Find the web.search audit event
-        search_calls = [
-            c for c in mock_bus.emit.call_args_list if c[0][0] == "web.search"
-        ]
+        search_calls = [c for c in mock_bus.emit.call_args_list if c[0][0] == "web.search"]
         assert len(search_calls) == 1
         event_data = search_calls[0][0][1]
 

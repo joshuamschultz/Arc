@@ -14,7 +14,6 @@ import unittest.mock
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import (
     HubConfig,
     HubPolicy,
@@ -24,7 +23,6 @@ from arcskill.hub.config import (
 )
 from arcskill.hub.errors import SignatureInvalid
 from arcskill.hub.verify import VerifyResult, _extract_slsa_level, verify_bundle
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -90,7 +88,9 @@ def _mock_sigstore_result(slsa_level: int) -> VerifyResult:
 class TestSLSALevelExtraction:
     """Unit tests for ``_extract_slsa_level``."""
 
-    def _make_bundle_data(self, builder_id: str, build_type: str = "https://slsa.dev/provenance/v1") -> dict:
+    def _make_bundle_data(
+        self, builder_id: str, build_type: str = "https://slsa.dev/provenance/v1"
+    ) -> dict:
         attestation = {
             "predicate": {
                 "buildType": build_type,
@@ -143,9 +143,7 @@ class TestSLSALevelExtraction:
     def test_slsa_l0_on_malformed_payload(self) -> None:
         """Malformed base64/JSON payload → L0 (no exception)."""
         bundle_data = {
-            "verificationMaterial": {
-                "dsseEnvelope": {"payload": "!!!invalid base64!!!"}
-            }
+            "verificationMaterial": {"dsseEnvelope": {"payload": "!!!invalid base64!!!"}}
         }
         # Must not raise; returns 0.
         assert _extract_slsa_level(bundle_data) == 0
@@ -167,7 +165,9 @@ class TestFederalSLSAEnforcement:
         with unittest.mock.patch("arcskill.hub.verify._run_sigstore") as mock_run:
             mock_run.return_value = _mock_sigstore_result(slsa_level=1)
             with unittest.mock.patch("arcskill.hub.verify._check_crl", side_effect=lambda r, _: r):
-                with pytest.raises(SignatureInvalid, match="SLSA level 1 is below required level 3"):
+                with pytest.raises(
+                    SignatureInvalid, match="SLSA level 1 is below required level 3"
+                ):
                     verify_bundle(
                         bundle_path=bundle,
                         source=_source(),
@@ -183,7 +183,9 @@ class TestFederalSLSAEnforcement:
         with unittest.mock.patch("arcskill.hub.verify._run_sigstore") as mock_run:
             mock_run.return_value = _mock_sigstore_result(slsa_level=2)
             with unittest.mock.patch("arcskill.hub.verify._check_crl", side_effect=lambda r, _: r):
-                with pytest.raises(SignatureInvalid, match="SLSA level 2 is below required level 3"):
+                with pytest.raises(
+                    SignatureInvalid, match="SLSA level 2 is below required level 3"
+                ):
                     verify_bundle(
                         bundle_path=bundle,
                         source=_source(),
@@ -198,9 +200,7 @@ class TestFederalSLSAEnforcement:
 
         with unittest.mock.patch("arcskill.hub.verify._run_sigstore") as mock_run:
             mock_run.return_value = _mock_sigstore_result(slsa_level=3)
-            with unittest.mock.patch(
-                "arcskill.hub.verify._fetch_crl", return_value=frozenset()
-            ):
+            with unittest.mock.patch("arcskill.hub.verify._fetch_crl", return_value=frozenset()):
                 result = verify_bundle(
                     bundle_path=bundle,
                     source=_source(),
@@ -219,7 +219,9 @@ class TestFederalSLSAEnforcement:
         with unittest.mock.patch("arcskill.hub.verify._run_sigstore") as mock_run:
             mock_run.return_value = _mock_sigstore_result(slsa_level=0)
             with unittest.mock.patch("arcskill.hub.verify._check_crl", side_effect=lambda r, _: r):
-                with pytest.raises(SignatureInvalid, match="SLSA level 0 is below required level 3"):
+                with pytest.raises(
+                    SignatureInvalid, match="SLSA level 0 is below required level 3"
+                ):
                     verify_bundle(
                         bundle_path=bundle,
                         source=_source(),
@@ -234,9 +236,7 @@ class TestFederalSLSAEnforcement:
 
         with unittest.mock.patch("arcskill.hub.verify._run_sigstore") as mock_run:
             mock_run.return_value = _mock_sigstore_result(slsa_level=1)
-            with unittest.mock.patch(
-                "arcskill.hub.verify._fetch_crl", return_value=frozenset()
-            ):
+            with unittest.mock.patch("arcskill.hub.verify._fetch_crl", return_value=frozenset()):
                 result = verify_bundle(
                     bundle_path=bundle,
                     source=_source(),

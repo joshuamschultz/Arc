@@ -237,8 +237,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # list
     p = subs.add_parser("list", help="List discovered extensions.")
     p.add_argument(
-        "--agent", dest="agent", default=None,
-        help="Agent directory to include workspace extensions."
+        "--agent",
+        dest="agent",
+        default=None,
+        help="Agent directory to include workspace extensions.",
     )
 
     # create
@@ -246,8 +248,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("name", help="Extension name.")
     p.add_argument("--dir", dest="dir", default=None, help="Output directory (default: cwd).")
     p.add_argument(
-        "--global", dest="use_global", action="store_true",
-        help="Write to ~/.arcagent/extensions/."
+        "--global",
+        dest="use_global",
+        action="store_true",
+        help="Write to ~/.arcagent/extensions/.",
     )
 
     # install

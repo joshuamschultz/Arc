@@ -14,8 +14,6 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from arcagent.modules.browser.session import BrowserSession
 
 
@@ -191,7 +189,7 @@ class TestExtractAuditEvent:
         payload = extract_events[0][1]
         assert payload["selector"] == ".main-content"
         assert payload["session_id"] == "ext-1"
-        assert payload["content_size_bytes"] == len("hello world".encode("utf-8"))
+        assert payload["content_size_bytes"] == len(b"hello world")
         # Extracted content itself must NOT be in the audit payload
         assert "content" not in payload
         assert "text" not in payload

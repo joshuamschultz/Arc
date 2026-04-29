@@ -24,9 +24,7 @@ class TestRedisLockElection:
         redis.set = AsyncMock(return_value=True)
         redis.eval = AsyncMock(return_value=1)
 
-        election = RedisLockElection(
-            redis=redis, key="arc:test", identity="host-a"
-        )
+        election = RedisLockElection(redis=redis, key="arc:test", identity="host-a")
         assert await election.acquire_or_wait(timeout=0.1) is True
         assert election.is_leader() is True
         await election.release()
@@ -37,9 +35,7 @@ class TestRedisLockElection:
         redis = MagicMock()
         redis.set = AsyncMock(return_value=False)  # held by someone else
 
-        election = RedisLockElection(
-            redis=redis, key="arc:test", identity="host-a"
-        )
+        election = RedisLockElection(redis=redis, key="arc:test", identity="host-a")
         assert await election.acquire_or_wait(timeout=0.5) is False
         assert election.is_leader() is False
 
@@ -49,9 +45,7 @@ class TestRedisLockElection:
         redis = MagicMock()
         redis.set = AsyncMock(side_effect=RuntimeError("redis down"))
 
-        election = RedisLockElection(
-            redis=redis, key="arc:test", identity="host-a"
-        )
+        election = RedisLockElection(redis=redis, key="arc:test", identity="host-a")
         assert await election.acquire_or_wait(timeout=0.1) is False
         assert election.is_leader() is False
 
@@ -62,9 +56,7 @@ class TestRedisLockElection:
         redis.set = AsyncMock(return_value=True)
         redis.eval = AsyncMock(return_value=1)
 
-        election = RedisLockElection(
-            redis=redis, key="arc:test", identity="host-a"
-        )
+        election = RedisLockElection(redis=redis, key="arc:test", identity="host-a")
         await election.acquire_or_wait(timeout=0.1)
         await election.release()
 
@@ -158,18 +150,14 @@ class TestLeaderElectionProtocolConformance:
         from arcagent.modules.proactive.leader import LeaderElection
         from arcagent.modules.proactive.leader_redis import RedisLockElection
 
-        election = RedisLockElection(
-            redis=MagicMock(), key="k", identity="h"
-        )
+        election = RedisLockElection(redis=MagicMock(), key="k", identity="h")
         assert isinstance(election, LeaderElection)
 
     def test_k8s_conforms(self) -> None:
         from arcagent.modules.proactive.leader import LeaderElection
         from arcagent.modules.proactive.leader_k8s import KubernetesLeaseElection
 
-        election = KubernetesLeaseElection(
-            namespace="n", lease_name="l", identity="h"
-        )
+        election = KubernetesLeaseElection(namespace="n", lease_name="l", identity="h")
         assert isinstance(election, LeaderElection)
 
 

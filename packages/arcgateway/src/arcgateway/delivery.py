@@ -188,6 +188,7 @@ class DeliverySenderImpl:
             delivery_target.chat_id,
         )
         from arcgateway.audit import emit_event as _arc_emit
+
         try:
             await adapter.send(delivery_target, message)
             _arc_emit(

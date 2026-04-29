@@ -16,9 +16,12 @@ import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 
 import pytest
-from ._mock_llm import LLMResponse, MockModel
-
+from arcrun.events import EventBus
+from arcrun.registry import ToolRegistry
+from arcrun.state import RunState
+from arcrun.types import Tool
 from arctrust import ChildIdentity, derive_child_identity
+
 from arcagent.orchestration.spawn import (
     RootTokenBudget,
     SpawnSpec,
@@ -26,10 +29,8 @@ from arcagent.orchestration.spawn import (
     spawn,
     spawn_many,
 )
-from arcrun.events import EventBus
-from arcrun.registry import ToolRegistry
-from arcrun.state import RunState
-from arcrun.types import Tool
+
+from ._mock_llm import LLMResponse, MockModel
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,7 +64,7 @@ def _make_state(*, depth: int = 0, max_depth: int = 3) -> RunState:
 
 def _identity(n: int = 0) -> ChildIdentity:
     return derive_child_identity(
-        parent_sk_bytes=b"\xAB" * 32,
+        parent_sk_bytes=b"\xab" * 32,
         spawn_id=f"cov-spawn-{n}",
         wallclock_timeout_s=30,
     )

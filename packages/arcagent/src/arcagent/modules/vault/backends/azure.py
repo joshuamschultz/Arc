@@ -67,8 +67,7 @@ class AzureKeyVaultBackend:
 
         if not self._vault_url:
             msg = (
-                "Azure Key Vault URL not configured. "
-                "Set AZURE_KEYVAULT_URL environment variable."
+                "Azure Key Vault URL not configured. Set AZURE_KEYVAULT_URL environment variable."
             )
             raise ValueError(msg)
 

@@ -45,9 +45,7 @@ async def authenticate_ws(
         (None, {}) on failure (error already sent, WS already closed).
     """
     try:
-        raw = await asyncio.wait_for(
-            ws.receive_text(), timeout=AUTH_TIMEOUT_SECONDS
-        )
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=AUTH_TIMEOUT_SECONDS)
         msg = json.loads(raw)
         token = msg.get("token", "")
     except (TimeoutError, json.JSONDecodeError, KeyError):

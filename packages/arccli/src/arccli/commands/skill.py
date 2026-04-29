@@ -131,9 +131,7 @@ def _get_skills(agent_dir: str | None) -> list[Any]:
         from arcagent.core.skill_registry import SkillRegistry
 
         registry = SkillRegistry()
-        workspace = (
-            Path(agent_dir).expanduser().resolve() if agent_dir else Path("/nonexistent")
-        )
+        workspace = Path(agent_dir).expanduser().resolve() if agent_dir else Path("/nonexistent")
         return registry.discover(workspace, _GLOBAL_SKILL_DIR)
     except ImportError:
         return _discover_skills_fallback(agent_dir)
@@ -275,8 +273,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # list
     p = subs.add_parser("list", help="List discovered skills.")
     p.add_argument(
-        "--agent", dest="agent", default=None,
-        help="Agent directory to include workspace skills."
+        "--agent", dest="agent", default=None, help="Agent directory to include workspace skills."
     )
 
     # create
@@ -284,8 +281,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("name", help="Skill name.")
     p.add_argument("--dir", dest="dir", default=None, help="Output directory (default: cwd).")
     p.add_argument(
-        "--global", dest="use_global", action="store_true",
-        help="Write to ~/.arcagent/skills/."
+        "--global", dest="use_global", action="store_true", help="Write to ~/.arcagent/skills/."
     )
 
     # validate
@@ -296,8 +292,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("search", help="Search skills by name or description.")
     p.add_argument("query", help="Search query.")
     p.add_argument(
-        "--agent", dest="agent", default=None,
-        help="Agent directory to include workspace skills."
+        "--agent", dest="agent", default=None, help="Agent directory to include workspace skills."
     )
 
     return parser

@@ -82,9 +82,7 @@ class TestPhase2Integration:
         assert records[0].agent_label == "integration-agent"
 
         # Now cause failures to trip circuit breaker
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "server error", "anthropic")
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "server error", "anthropic"))
 
         for _ in range(2):
             with pytest.raises(ArcLLMAPIError):
@@ -180,9 +178,7 @@ class TestPhase2Integration:
         ctrl.patch({"temperature": 0.5}, actor="admin")
 
         # 3. Trigger circuit break
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "fail", "anthropic")
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "fail", "anthropic"))
         for _ in range(2):
             with pytest.raises(ArcLLMAPIError):
                 await telemetry.invoke(messages)

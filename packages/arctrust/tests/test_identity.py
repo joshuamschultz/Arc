@@ -17,7 +17,6 @@ from arctrust.identity import (
     validate_did,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -298,9 +297,7 @@ class TestFromConfig:
         original = AgentIdentity.generate(org="test", agent_type="executor")
         mock_resolver = MagicMock()
         assert original._signing_key is not None
-        mock_resolver.resolve_secret.return_value = (
-            original._signing_key.encode().hex()
-        )
+        mock_resolver.resolve_secret.return_value = original._signing_key.encode().hex()
         config = FakeIdentityConfig(
             did=original.did,
             key_dir=str(tmp_path / "keys"),

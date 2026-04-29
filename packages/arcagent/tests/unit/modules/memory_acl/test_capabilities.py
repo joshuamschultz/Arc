@@ -10,9 +10,9 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from arctrust import AgentIdentity
-from arcagent.modules.memory_acl.capabilities import Capability, CapabilityStore
+
+from arcagent.modules.memory_acl.capability_tokens import Capability, CapabilityStore
 from arcagent.modules.memory_acl.errors import CapabilityExpired, CapabilityInvalid
 
 # Fixed capability_id used when testing canonical_bytes to avoid UUID randomness

@@ -17,13 +17,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from arctrust import AuditEvent, NullSink
-
-from arcagent.orchestration.spawn import SpawnResult, spawn
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.types import LoopResult
+from arctrust import AuditEvent, NullSink
+
+from arcagent.orchestration.spawn import SpawnResult, spawn
 
 # ---------------------------------------------------------------------------
 # Capture sink

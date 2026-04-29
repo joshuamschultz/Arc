@@ -63,9 +63,7 @@ async def test_enterprise_missing_signature_raises(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Enterprise tier: missing signature → PairingSignatureInvalid (all tiers require sig)."""
-    code = await enterprise_store.mint_code(
-        platform="telegram", platform_user_id="ent_user"
-    )
+    code = await enterprise_store.mint_code(platform="telegram", platform_user_id="ent_user")
 
     caplog.set_level(logging.INFO, logger="arcgateway.pairing.audit")
     with pytest.raises(PairingSignatureInvalid):
@@ -87,9 +85,7 @@ async def test_enterprise_invalid_signature_rejects(
     enterprise_store: PairingStore,
 ) -> None:
     """Enterprise tier: present-but-bad signature → PairingSignatureInvalid (fail-closed)."""
-    code = await enterprise_store.mint_code(
-        platform="slack", platform_user_id="ent_user_2"
-    )
+    code = await enterprise_store.mint_code(platform="slack", platform_user_id="ent_user_2")
 
     with pytest.raises(PairingSignatureInvalid):
         await enterprise_store.verify_and_consume(
@@ -105,9 +101,7 @@ async def test_enterprise_valid_signature_verifies(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Enterprise tier: valid signature → signature_verified audit emitted."""
-    code = await enterprise_store.mint_code(
-        platform="discord", platform_user_id="ent_user_3"
-    )
+    code = await enterprise_store.mint_code(platform="discord", platform_user_id="ent_user_3")
 
     sk = enterprise_store._test_sk  # type: ignore[attr-defined]
     did = enterprise_store._test_did  # type: ignore[attr-defined]

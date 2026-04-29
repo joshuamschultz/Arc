@@ -427,9 +427,7 @@ class PairingStore:
         user_hash = _hash_user_id(platform, platform_user_id)
 
         async with self._lock:
-            result = await asyncio.to_thread(
-                self._mint_code_sync, platform, user_hash
-            )
+            result = await asyncio.to_thread(self._mint_code_sync, platform, user_hash)
 
         code_str, minted_at, expires_at = result
         self._audit(
@@ -493,9 +491,7 @@ class PairingStore:
         if self._federal_tier and approver_did is None:
             fail_platform = platform_hint if platform_hint else "unknown"
             async with self._lock:
-                await asyncio.to_thread(
-                    self._record_failure_threaded, fail_platform
-                )
+                await asyncio.to_thread(self._record_failure_threaded, fail_platform)
             self._audit(
                 "gateway.pairing.signature_invalid",
                 {
@@ -505,14 +501,15 @@ class PairingStore:
                     "reason": "missing_approver_did",
                 },
             )
-            raise PairingSignatureInvalid(
-                "federal tier requires approver_did + signature"
-            )
+            raise PairingSignatureInvalid("federal tier requires approver_did + signature")
 
         async with self._lock:
             result = await asyncio.to_thread(
                 self._verify_and_consume_sync,
-                code, approver_did, signature, platform_hint,
+                code,
+                approver_did,
+                signature,
+                platform_hint,
             )
 
         if result is None:
@@ -821,8 +818,7 @@ class PairingStore:
             if exists is None:
                 return candidate
         raise PairingError(
-            f"Failed to generate a unique pairing code after "
-            f"{_MAX_CODE_GEN_ATTEMPTS} attempts"
+            f"Failed to generate a unique pairing code after {_MAX_CODE_GEN_ATTEMPTS} attempts"
         )
 
     def _audit(self, event_type: str, details: dict[str, Any]) -> None:

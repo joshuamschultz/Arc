@@ -8,7 +8,6 @@ timeout enforcement, and audit logging.
 from __future__ import annotations
 
 import asyncio
-import importlib
 import inspect
 import logging
 import time
@@ -21,7 +20,7 @@ from xml.sax.saxutils import escape as xml_escape
 from arcrun import Tool as ArcRunTool
 from arcrun import ToolContext
 
-from arcagent.core.config import NativeToolEntry, ToolsConfig
+from arcagent.core.config import ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.telemetry import AgentTelemetry
@@ -78,8 +77,10 @@ def _is_memory_tool(tool_name: str) -> bool:
     """
     for prefix in _MEMORY_TOOL_PREFIXES:
         # Accept both "prefix." and "prefix_" separators
-        if tool_name == prefix or tool_name.startswith(prefix + ".") or tool_name.startswith(
-            prefix + "_"
+        if (
+            tool_name == prefix
+            or tool_name.startswith(prefix + ".")
+            or tool_name.startswith(prefix + "_")
         ):
             return True
     return False
@@ -131,9 +132,9 @@ def _bind_caller_did(
             {
                 "tool": tool_name,
                 "stripped_fields": stripped,
-                "injected_did": args.get("caller_did") or args.get("user_did") or args.get(
-                    "owner_did"
-                ),
+                "injected_did": args.get("caller_did")
+                or args.get("user_did")
+                or args.get("owner_did"),
             },
         )
 
@@ -141,9 +142,9 @@ def _bind_caller_did(
     cleaned["caller_did"] = real_did
     return cleaned
 
+
 _DEFAULT_PREAMBLE = (
-    "You have the following tools available. "
-    "Use them as needed to accomplish your tasks."
+    "You have the following tools available. Use them as needed to accomplish your tasks."
 )
 
 
@@ -286,31 +287,6 @@ def native_tool(
 def _echo_tool(text: str = "") -> str:
     """Built-in echo tool for testing native tool registration."""
     return f"echo: {text}"
-
-
-def _validate_module_path(module_ref: str, allowed_prefixes: list[str]) -> None:
-    """Validate module path format and check against allowlist.
-
-    Module references must be ``module.path:callable_name``.
-    If ``allowed_prefixes`` is non-empty, the module path must
-    start with one of the allowed prefixes.
-    """
-    if ":" not in module_ref:
-        raise ToolError(
-            code="TOOL_INVALID_MODULE",
-            message=f"Invalid module reference (missing ':'): {module_ref}",
-            details={"module": module_ref},
-        )
-    module_path = module_ref.rsplit(":", 1)[0]
-    if allowed_prefixes and not any(module_path.startswith(prefix) for prefix in allowed_prefixes):
-        raise ToolError(
-            code="TOOL_MODULE_NOT_ALLOWED",
-            message=(f"Module '{module_path}' not in allowed prefixes: {allowed_prefixes}"),
-            details={
-                "module": module_path,
-                "allowed_prefixes": allowed_prefixes,
-            },
-        )
 
 
 def _validate_tool_args(
@@ -476,6 +452,20 @@ class ToolRegistry:
         self._prompt_cache = None  # Invalidate cached catalog
         _logger.info("Registered tool: %s (%s)", tool.name, tool.transport.value)
 
+    def unregister(self, tool_name: str) -> bool:
+        """Remove a tool from the registry. Returns True if removed.
+
+        Used by reload paths to drop stale capability-loaded tools
+        before re-registering the latest set. Cache is invalidated on
+        any removal.
+        """
+        if tool_name not in self._tools:
+            return False
+        del self._tools[tool_name]
+        self._prompt_cache = None
+        _logger.info("Unregistered tool: %s", tool_name)
+        return True
+
     def _policy_allows(self, tool_name: str) -> bool:
         """Return True iff the tool is permitted by current policy.
 
@@ -487,32 +477,6 @@ class ToolRegistry:
         if policy.allow and tool_name not in policy.allow:
             return False
         return True
-
-    def register_native_tools(self, tools: dict[str, NativeToolEntry]) -> None:
-        """Import and register Python function tools.
-
-        Module paths are validated against the configured allowlist
-        before import to prevent arbitrary code execution.
-        """
-        allowed = self._config.allowed_module_prefixes
-        for name, entry in tools.items():
-            _validate_module_path(entry.module, allowed)
-            module_path, func_name = entry.module.rsplit(":", 1)
-            module = importlib.import_module(module_path)
-            func = getattr(module, func_name)
-
-            async def _async_wrapper(_fn: Any = func, **kwargs: Any) -> Any:
-                return _fn(**kwargs)
-
-            tool = RegisteredTool(
-                name=name,
-                description=entry.description,
-                input_schema={"type": "object", "properties": {}},
-                transport=ToolTransport.NATIVE,
-                execute=_async_wrapper,
-                source=entry.module,
-            )
-            self.register(tool)
 
     def to_arcrun_tools(self) -> list[ArcRunTool]:
         """Convert all registered tools to ``arcrun.Tool`` instances.

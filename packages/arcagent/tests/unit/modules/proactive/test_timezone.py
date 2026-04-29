@@ -62,9 +62,7 @@ class TestCrossTimezone:
         """09:00 in America/Chicago is 14:00 UTC in daylight time (CDT)."""
         from arcagent.modules.proactive.timezone import ActiveHours
 
-        hours = ActiveHours(
-            tz="America/Chicago", start=time(9, 0), end=time(17, 0)
-        )
+        hours = ActiveHours(tz="America/Chicago", start=time(9, 0), end=time(17, 0))
         # July — Chicago on CDT (UTC-5). 10:00 CDT = 15:00 UTC
         now = datetime(2026, 7, 15, 15, 0, tzinfo=ZoneInfo("UTC"))
         assert hours.is_active(now) is True
@@ -76,16 +74,14 @@ class TestCrossTimezone:
 
 class TestDSTSafety:
     def test_spring_forward_does_not_double_fire(self) -> None:
-        """In spring-forward the local clock skips 02:00–03:00. A
+        """In spring-forward the local clock skips 02:00-03:00. A
         schedule set for 02:30 does not exist that day; the next
         occurrence is the following day."""
         from arcagent.modules.proactive.timezone import next_occurrence
 
         # 2026-03-08 spring forward in America/Chicago (02:00 → 03:00)
         after = datetime(2026, 3, 8, 1, 0, tzinfo=ZoneInfo("UTC"))
-        target = next_occurrence(
-            time(2, 30), tz="America/Chicago", after_utc=after
-        )
+        target = next_occurrence(time(2, 30), tz="America/Chicago", after_utc=after)
         # Should not be the 2026-03-08 02:30 (which doesn't exist).
         # zoneinfo normalizes to the post-transition instant — pragmatic
         # handling: the schedule fires once at 02:30 localized, which

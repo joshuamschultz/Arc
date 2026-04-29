@@ -63,9 +63,9 @@ class TranscriptMessage:
 # Strips ``**bold**``, ``*italic*``, and ``\`code\``` to plain text.
 # We keep this list explicit so it's easy to audit for injection (LLM07).
 _MD_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), r"\1"),    # **bold** -> text
-    (re.compile(r"\*(.+?)\*", re.DOTALL), r"\1"),          # *italic* -> text
-    (re.compile(r"`(.+?)`", re.DOTALL), r"\1"),            # `code` -> text
+    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), r"\1"),  # **bold** -> text
+    (re.compile(r"\*(.+?)\*", re.DOTALL), r"\1"),  # *italic* -> text
+    (re.compile(r"`(.+?)`", re.DOTALL), r"\1"),  # `code` -> text
 ]
 
 

@@ -16,14 +16,13 @@ Coverage targets
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from arcagent.modules.scheduler.cron_runner import CRON_AGENT_KWARGS, CronRunner
 from arcagent.modules.scheduler.delivery import DeliverySender
-from arcagent.modules.scheduler.models import CronJob, SILENT_MARKER
-
+from arcagent.modules.scheduler.models import SILENT_MARKER, CronJob
 
 # ---------------------------------------------------------------------------
 # Helpers

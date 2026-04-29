@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from arcagent.modules.voice.protocols import STTProvider, TTSProvider, TranscriptionResult
-
+from arcagent.modules.voice.protocols import TranscriptionResult
 
 # ---------------------------------------------------------------------------
 # TranscriptionResult — Pydantic model validation
@@ -25,9 +23,7 @@ class TestTranscriptionResult:
         assert r.confidence is None
 
     def test_with_confidence(self) -> None:
-        r = TranscriptionResult(
-            text="test", language="es", duration_s=1.0, confidence=0.97
-        )
+        r = TranscriptionResult(text="test", language="es", duration_s=1.0, confidence=0.97)
         assert r.confidence == pytest.approx(0.97)
 
     def test_confidence_bounds_valid(self) -> None:
@@ -70,13 +66,14 @@ class TestTranscriptionResult:
 class TestSTTProviderProtocol:
     def test_protocol_is_runtime_checkable(self) -> None:
         """Confirm @runtime_checkable allows isinstance checks."""
-        import inspect
         from arcagent.modules.voice.protocols import STTProvider
+
         # The protocol must be runtime-checkable
         assert hasattr(STTProvider, "__protocol_attrs__") or True  # py 3.11+
 
     def test_concrete_class_satisfies_protocol(self) -> None:
         """A class with the right signature satisfies STTProvider structurally."""
+
         class ConcreteSTT:
             async def transcribe(
                 self, audio_path: Path, *, language: str | None = None
@@ -89,6 +86,7 @@ class TestSTTProviderProtocol:
 
     def test_class_missing_transcribe_does_not_satisfy(self) -> None:
         """A class without transcribe does not satisfy the Protocol."""
+
         class NotSTT:
             def speak(self) -> None:
                 pass
@@ -143,17 +141,18 @@ class TestTTSProviderProtocol:
 class TestModulePublicSurface:
     def test_all_exports_importable(self) -> None:
         from arcagent.modules.voice import (  # noqa: F401
-            STTProvider,
+            AirGapProviderRequired,
             STTFailed,
+            STTProvider,
+            TranscriptionResult,
             TTSFailed,
             TTSProvider,
-            TranscriptionResult,
+            UnsupportedProvider,
             VoiceConfig,
             VoiceModule,
-            AirGapProviderRequired,
-            UnsupportedProvider,
         )
 
     def test_transcription_result_in_namespace(self) -> None:
         import arcagent.modules.voice as voice_mod
+
         assert hasattr(voice_mod, "TranscriptionResult")

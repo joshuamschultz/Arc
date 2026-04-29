@@ -173,11 +173,7 @@ class QueueManager:
         """
         current = now if now is not None else time.time()
         cutoff = current - self._idle_ttl
-        to_remove = [
-            key
-            for key, last in self._last_active.items()
-            if last < cutoff
-        ]
+        to_remove = [key for key, last in self._last_active.items() if last < cutoff]
         for key in to_remove:
             self._queues.pop(key, None)
             self._last_active.pop(key, None)

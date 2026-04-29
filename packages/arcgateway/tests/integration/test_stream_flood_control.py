@@ -137,8 +137,7 @@ async def test_flood_control_activates_after_3_consecutive_failures() -> None:
 
     # The final message must always be sent.
     assert len(adapter.send_calls) >= 2, (
-        "Expected at least placeholder + final send; "
-        f"got {len(adapter.send_calls)} sends."
+        f"Expected at least placeholder + final send; got {len(adapter.send_calls)} sends."
     )
 
 

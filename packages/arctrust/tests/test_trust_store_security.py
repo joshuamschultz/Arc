@@ -79,29 +79,21 @@ def signing_key() -> SigningKey:
     return SigningKey.generate()
 
 
-def _write_operators(
-    trust_dir: Path, did: str, pubkey: bytes, *, mode: int = 0o600
-) -> None:
+def _write_operators(trust_dir: Path, did: str, pubkey: bytes, *, mode: int = 0o600) -> None:
     file = trust_dir / "operators.toml"
     pub_b64 = base64.b64encode(pubkey).decode("ascii")
     file.write_text(
-        f'[operators."{did}"]\n'
-        f'public_key = "{pub_b64}"\n'
-        f'added_at = "2026-04-18T00:00:00Z"\n',
+        f'[operators."{did}"]\npublic_key = "{pub_b64}"\nadded_at = "2026-04-18T00:00:00Z"\n',
         encoding="utf-8",
     )
     os.chmod(file, mode)
 
 
-def _write_issuers(
-    trust_dir: Path, did: str, pubkey: bytes, *, mode: int = 0o600
-) -> None:
+def _write_issuers(trust_dir: Path, did: str, pubkey: bytes, *, mode: int = 0o600) -> None:
     file = trust_dir / "issuers.toml"
     pub_b64 = base64.b64encode(pubkey).decode("ascii")
     file.write_text(
-        f'[issuers."{did}"]\n'
-        f'public_key = "{pub_b64}"\n'
-        f'added_at = "2026-04-18T00:00:00Z"\n',
+        f'[issuers."{did}"]\npublic_key = "{pub_b64}"\nadded_at = "2026-04-18T00:00:00Z"\n',
         encoding="utf-8",
     )
     os.chmod(file, mode)
@@ -290,9 +282,7 @@ class TestEd25519SignVerifyTamper:
 
 
 class TestIdentityPrivilegeAbuse:
-    def test_did_isolation_different_keys_different_identity(
-        self, trust_dir: Path
-    ) -> None:
+    def test_did_isolation_different_keys_different_identity(self, trust_dir: Path) -> None:
         """Each DID has its own key. Loading one does not expose the other."""
         sk1 = SigningKey.generate()
         sk2 = SigningKey.generate()
@@ -351,9 +341,7 @@ class TestIdentityPrivilegeAbuse:
         assert exc_info.value.code == "TRUST_STORE_DID_UNKNOWN"
 
         # Remaining DID still works
-        assert load_operator_pubkey(other_did, trust_dir=trust_dir) == bytes(
-            other_sk.verify_key
-        )
+        assert load_operator_pubkey(other_did, trust_dir=trust_dir) == bytes(other_sk.verify_key)
 
     def test_key_rotation_new_key_accepted_old_is_gone(self, trust_dir: Path) -> None:
         """Key rotation: after cache invalidation the new key loads, not the old one."""
@@ -393,14 +381,10 @@ class TestAgenticSupplyChain:
     def test_unregistered_issuer_rejected(self, trust_dir: Path) -> None:
         """Manifest issuer DID not in trust store is rejected — supply chain protection."""
         sk = SigningKey.generate()
-        _write_issuers(
-            trust_dir, "did:arc:org:trust-authority/real", bytes(sk.verify_key)
-        )
+        _write_issuers(trust_dir, "did:arc:org:trust-authority/real", bytes(sk.verify_key))
 
         with pytest.raises(TrustStoreError) as exc_info:
-            load_issuer_pubkey(
-                "did:arc:org:trust-authority/attacker", trust_dir=trust_dir
-            )
+            load_issuer_pubkey("did:arc:org:trust-authority/attacker", trust_dir=trust_dir)
         assert exc_info.value.code == "TRUST_STORE_DID_UNKNOWN"
 
     def test_issuer_file_with_insecure_perms_rejected(self, trust_dir: Path) -> None:
@@ -441,9 +425,7 @@ class TestIssuerErrorPaths:
         _write_issuers(trust_dir, "did:arc:org:trust-authority/known", bytes(sk.verify_key))
 
         with pytest.raises(TrustStoreError) as exc_info:
-            load_issuer_pubkey(
-                "did:arc:org:trust-authority/unknown", trust_dir=trust_dir
-            )
+            load_issuer_pubkey("did:arc:org:trust-authority/unknown", trust_dir=trust_dir)
         err = exc_info.value
         assert err.code == "TRUST_STORE_DID_UNKNOWN"
         # details must include the DID and file for structured audit events
@@ -480,40 +462,32 @@ class TestIssuerErrorPaths:
         os.chmod(file, 0o600)
 
         with pytest.raises(TrustStoreError) as exc_info:
-            load_issuer_pubkey(
-                "did:arc:org:trust-authority/nokey", trust_dir=trust_dir
-            )
+            load_issuer_pubkey("did:arc:org:trust-authority/nokey", trust_dir=trust_dir)
         assert exc_info.value.code == "TRUST_STORE_BAD_SCHEMA"
 
     def test_issuer_malformed_base64_key(self, trust_dir: Path) -> None:
         file = trust_dir / "issuers.toml"
         file.write_text(
-            '[issuers."did:arc:org:trust-authority/badkey"]\n'
-            'public_key = "!!!not-base64!!!"\n',
+            '[issuers."did:arc:org:trust-authority/badkey"]\npublic_key = "!!!not-base64!!!"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)
 
         with pytest.raises(TrustStoreError) as exc_info:
-            load_issuer_pubkey(
-                "did:arc:org:trust-authority/badkey", trust_dir=trust_dir
-            )
+            load_issuer_pubkey("did:arc:org:trust-authority/badkey", trust_dir=trust_dir)
         assert exc_info.value.code == "TRUST_STORE_BAD_KEY"
 
     def test_issuer_wrong_length_key(self, trust_dir: Path) -> None:
         short = base64.b64encode(b"\x00" * 8).decode("ascii")
         file = trust_dir / "issuers.toml"
         file.write_text(
-            '[issuers."did:arc:org:trust-authority/shortkey"]\n'
-            f'public_key = "{short}"\n',
+            f'[issuers."did:arc:org:trust-authority/shortkey"]\npublic_key = "{short}"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)
 
         with pytest.raises(TrustStoreError) as exc_info:
-            load_issuer_pubkey(
-                "did:arc:org:trust-authority/shortkey", trust_dir=trust_dir
-            )
+            load_issuer_pubkey("did:arc:org:trust-authority/shortkey", trust_dir=trust_dir)
         assert exc_info.value.code == "TRUST_STORE_BAD_KEY"
         assert exc_info.value.details["actual_length"] == 8
 
@@ -544,9 +518,7 @@ class TestPermissionEnforcementExtended:
             load_operator_pubkey(did, trust_dir=trust_dir)
         assert exc_info.value.code == "TRUST_STORE_INSECURE_PERMS"
 
-    def test_permission_error_details_contain_path_and_mode(
-        self, trust_dir: Path
-    ) -> None:
+    def test_permission_error_details_contain_path_and_mode(self, trust_dir: Path) -> None:
         sk = SigningKey.generate()
         did = "did:arc:org:operator/details-check"
         _write_operators(trust_dir, did, bytes(sk.verify_key), mode=0o644)
@@ -720,9 +692,7 @@ class TestCacheSemanticsExtended:
         assert len(_operator_cache) == 0
         assert len(_issuer_cache) == 0
 
-    def test_multiple_distinct_trust_dirs_cached_independently(
-        self, tmp_path: Path
-    ) -> None:
+    def test_multiple_distinct_trust_dirs_cached_independently(self, tmp_path: Path) -> None:
         """Cache key is the resolved path; two dirs stay separate."""
         dir_a = tmp_path / "trust_a"
         dir_a.mkdir()
@@ -755,8 +725,7 @@ class TestOperatorKeyEdgeCases:
         short = base64.b64encode(b"\xab" * 31).decode("ascii")
         file = trust_dir / "operators.toml"
         file.write_text(
-            '[operators."did:arc:org:operator/31byte"]\n'
-            f'public_key = "{short}"\n',
+            f'[operators."did:arc:org:operator/31byte"]\npublic_key = "{short}"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)
@@ -772,8 +741,7 @@ class TestOperatorKeyEdgeCases:
         long = base64.b64encode(b"\xcd" * 33).decode("ascii")
         file = trust_dir / "operators.toml"
         file.write_text(
-            '[operators."did:arc:org:operator/33byte"]\n'
-            f'public_key = "{long}"\n',
+            f'[operators."did:arc:org:operator/33byte"]\npublic_key = "{long}"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)
@@ -789,8 +757,7 @@ class TestOperatorKeyEdgeCases:
         full = base64.b64encode(b"\xef" * 64).decode("ascii")
         file = trust_dir / "operators.toml"
         file.write_text(
-            '[operators."did:arc:org:operator/64byte"]\n'
-            f'public_key = "{full}"\n',
+            f'[operators."did:arc:org:operator/64byte"]\npublic_key = "{full}"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)
@@ -814,8 +781,7 @@ class TestOperatorKeyEdgeCases:
         """public_key field is an integer instead of string — TRUST_STORE_BAD_SCHEMA."""
         file = trust_dir / "operators.toml"
         file.write_text(
-            '[operators."did:arc:org:operator/intkey"]\n'
-            "public_key = 12345\n",
+            '[operators."did:arc:org:operator/intkey"]\npublic_key = 12345\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)

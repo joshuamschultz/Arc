@@ -26,7 +26,6 @@ from arcskill.hub.config import HubConfig, RevocationConfig, SkillSource, TierPo
 from arcskill.hub.errors import SignatureInvalid
 from arcskill.hub.verify import _sigstore_verify
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -67,7 +66,9 @@ def _federal_config() -> HubConfig:
     )
 
 
-def _source(identity: str, issuer: str = "https://token.actions.githubusercontent.com") -> SkillSource:
+def _source(
+    identity: str, issuer: str = "https://token.actions.githubusercontent.com"
+) -> SkillSource:
     return SkillSource(
         name="arc-official",
         type="github",
@@ -103,15 +104,19 @@ class TestOIDCIdentityMismatch:
     ) -> None:
         """Run _sigstore_verify and assert SignatureInvalid is raised."""
         from sigstore.errors import VerificationError
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             raise VerificationError(error_msg)
 
         with (
             unittest.mock.patch.object(Verifier, "verify_artifact", fake_verify_artifact),
-            unittest.mock.patch.object(Bundle, "from_json", return_value=unittest.mock.MagicMock()),
+            unittest.mock.patch.object(
+                Bundle, "from_json", return_value=unittest.mock.MagicMock()
+            ),
         ):
             with pytest.raises(SignatureInvalid, match=error_msg):
                 _sigstore_verify(artifact, source, config, "deadbeef")
@@ -185,18 +190,22 @@ class TestOIDCIdentityMismatch:
         )
         config = _federal_config()
 
-        from sigstore.verify import Verifier
         from sigstore.models import Bundle
+        from sigstore.verify import Verifier
 
         # The guard should fire BEFORE verify_artifact is called.
         verify_artifact_called: list[bool] = []
 
-        def fake_verify_artifact(self: object, input_: bytes, bundle: object, policy: object) -> None:
+        def fake_verify_artifact(
+            self: object, input_: bytes, bundle: object, policy: object
+        ) -> None:
             verify_artifact_called.append(True)
 
         with (
             unittest.mock.patch.object(Verifier, "verify_artifact", fake_verify_artifact),
-            unittest.mock.patch.object(Bundle, "from_json", return_value=unittest.mock.MagicMock()),
+            unittest.mock.patch.object(
+                Bundle, "from_json", return_value=unittest.mock.MagicMock()
+            ),
         ):
             with pytest.raises(SignatureInvalid, match="signer_identity"):
                 _sigstore_verify(artifact, src, config, "hash")

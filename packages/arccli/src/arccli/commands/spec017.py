@@ -59,9 +59,7 @@ def policy_layers(tier: str) -> None:
     default="unclassified",
     show_default=True,
 )
-def policy_evaluate(
-    tier: str, tool_name: str, agent_did: str, classification: str
-) -> None:
+def policy_evaluate(tier: str, tool_name: str, agent_did: str, classification: str) -> None:
     """Dry-run evaluate a tool call; print the decision as JSON."""
     import asyncio as _asyncio
 
@@ -95,9 +93,7 @@ def completion_group() -> None:
 
 
 @completion_group.command("history")
-@click.option(
-    "--path", default=".", help="Agent workspace path.", show_default=True
-)
+@click.option("--path", default=".", help="Agent workspace path.", show_default=True)
 @click.option("--limit", type=int, default=20, show_default=True)
 def completion_history(path: str, limit: int) -> None:
     """Print the most recent ``task_complete`` events from the audit log.
@@ -141,9 +137,7 @@ def schedule_group() -> None:
 
 
 @schedule_group.command("list")
-@click.option(
-    "--path", default=".", help="Agent workspace path.", show_default=True
-)
+@click.option("--path", default=".", help="Agent workspace path.", show_default=True)
 def schedule_list(path: str) -> None:
     """List persisted schedules from the workspace state file.
 
@@ -162,12 +156,8 @@ def schedule_list(path: str) -> None:
 
 
 @schedule_group.command("migrate")
-@click.option(
-    "--path", default=".", help="Agent workspace path.", show_default=True
-)
-@click.option(
-    "--dry-run", is_flag=True, help="Print migration plan without writing."
-)
+@click.option("--path", default=".", help="Agent workspace path.", show_default=True)
+@click.option("--dry-run", is_flag=True, help="Print migration plan without writing.")
 def schedule_migrate(path: str, dry_run: bool) -> None:
     """One-time migration from legacy scheduler state to the proactive engine.
 
@@ -230,9 +220,7 @@ def schedule_migrate(path: str, dry_run: bool) -> None:
 
     if not dry_run:
         target_dir.mkdir(parents=True, exist_ok=True)
-        target_file.write_text(
-            json.dumps({"schedules": migrated}, indent=2), encoding="utf-8"
-        )
+        target_file.write_text(json.dumps({"schedules": migrated}, indent=2), encoding="utf-8")
 
     click_echo(json.dumps(plan, indent=2))
 

@@ -100,11 +100,13 @@ def _make_bundle_with_sidecar(
     if sidecar_content is None:
         # Minimal structurally valid bundle JSON (will fail real Sigstore verify
         # but lets us test the policy selection path).
-        sidecar_content = json.dumps({
-            "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.3",
-            "verificationMaterial": {"tlogEntries": []},
-            "dsseEnvelope": {},
-        })
+        sidecar_content = json.dumps(
+            {
+                "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.3",
+                "verificationMaterial": {"tlogEntries": []},
+                "dsseEnvelope": {},
+            }
+        )
 
     sidecar_path = tmpdir / "skill.tar.gz.sigstore"
     sidecar_path.write_text(sidecar_content, encoding="utf-8")
@@ -234,9 +236,7 @@ def test_bypass1_tampered_signature_rejected_at_personal() -> None:
     mock_bundle_class = unittest.mock.MagicMock()
     mock_bundle_class.from_json.return_value = unittest.mock.MagicMock()
     mock_verifier = unittest.mock.MagicMock()
-    mock_verifier.verify_artifact.side_effect = _FakeVerificationError(
-        "certificate has expired"
-    )
+    mock_verifier.verify_artifact.side_effect = _FakeVerificationError("certificate has expired")
     mock_verifier_class = unittest.mock.MagicMock()
     mock_verifier_class.production.return_value = mock_verifier
     mock_identity = unittest.mock.MagicMock()
@@ -360,10 +360,12 @@ def test_bypass2_valid_slsa_predicate_accepted_at_personal() -> None:
 
     config = _personal_config()
 
-    payload = json.dumps({
-        "predicateType": "https://slsa.dev/provenance/v1",
-        "predicate": {},
-    }).encode()
+    payload = json.dumps(
+        {
+            "predicateType": "https://slsa.dev/provenance/v1",
+            "predicate": {},
+        }
+    ).encode()
 
     # Must not raise.
     _assert_slsa_predicate_type(
@@ -387,12 +389,8 @@ def test_bypass3_skip_sandbox_raises_at_personal() -> None:
     bundle = _make_tarball({"skill.py": "# skill\n"})
     config = _personal_config()
 
-    with unittest.mock.patch(
-        "arcskill.hub.dry_run.is_firecracker_available", return_value=False
-    ):
-        with unittest.mock.patch(
-            "arcskill.hub.dry_run._docker_available", return_value=False
-        ):
+    with unittest.mock.patch("arcskill.hub.dry_run.is_firecracker_available", return_value=False):
+        with unittest.mock.patch("arcskill.hub.dry_run._docker_available", return_value=False):
             # Post-fix: skip_sandbox=True should raise SandboxRequired, not return
             # a passed result with skipped=True.
             with pytest.raises(SandboxRequired):
@@ -404,12 +402,8 @@ def test_bypass3_skip_sandbox_raises_at_enterprise() -> None:
     bundle = _make_tarball({"skill.py": "# skill\n"})
     config = _enterprise_config()
 
-    with unittest.mock.patch(
-        "arcskill.hub.dry_run.is_firecracker_available", return_value=False
-    ):
-        with unittest.mock.patch(
-            "arcskill.hub.dry_run._docker_available", return_value=False
-        ):
+    with unittest.mock.patch("arcskill.hub.dry_run.is_firecracker_available", return_value=False):
+        with unittest.mock.patch("arcskill.hub.dry_run._docker_available", return_value=False):
             with pytest.raises(SandboxRequired):
                 run_dry_run(bundle, config, skip_sandbox=True)
 
@@ -430,12 +424,8 @@ def test_bypass3_sandbox_runs_when_docker_available_at_personal() -> None:
         skipped=False,
     )
 
-    with unittest.mock.patch(
-        "arcskill.hub.dry_run.is_firecracker_available", return_value=False
-    ):
-        with unittest.mock.patch(
-            "arcskill.hub.dry_run._docker_available", return_value=True
-        ):
+    with unittest.mock.patch("arcskill.hub.dry_run.is_firecracker_available", return_value=False):
+        with unittest.mock.patch("arcskill.hub.dry_run._docker_available", return_value=True):
             with unittest.mock.patch("arcskill.hub.dry_run._run_docker", return_value=mock_result):
                 # Patch _run_in_sandbox to avoid async complexity.
                 with unittest.mock.patch(
@@ -482,9 +472,7 @@ def test_audit_event_emitted_on_signature_verify_success() -> None:
             slsa_level=3,
             signature_valid=True,
         )
-        with unittest.mock.patch(
-            "arcskill.hub.verify._fetch_crl", return_value=frozenset()
-        ):
+        with unittest.mock.patch("arcskill.hub.verify._fetch_crl", return_value=frozenset()):
             result = verify_bundle(
                 bundle_path=bundle_path,
                 source=source,
@@ -568,12 +556,8 @@ def test_audit_event_emitted_on_sandbox_unavailable_warning() -> None:
 
     sink = CaptureSink()
 
-    with unittest.mock.patch(
-        "arcskill.hub.dry_run.is_firecracker_available", return_value=False
-    ):
-        with unittest.mock.patch(
-            "arcskill.hub.dry_run._docker_available", return_value=False
-        ):
+    with unittest.mock.patch("arcskill.hub.dry_run.is_firecracker_available", return_value=False):
+        with unittest.mock.patch("arcskill.hub.dry_run._docker_available", return_value=False):
             # Post-fix: sandbox-unavailable is a SandboxRequired at personal too,
             # OR the fallback path emits an audit warning. Test whichever path lands.
             try:

@@ -256,8 +256,10 @@ class PiperProvider:
         """
         cmd = [
             binary_path,
-            "--model", str(voice),
-            "--output_file", str(output_path),
+            "--model",
+            str(voice),
+            "--output_file",
+            str(output_path),
         ]
         if self._data_dir:
             cmd += ["--data-dir", self._data_dir]

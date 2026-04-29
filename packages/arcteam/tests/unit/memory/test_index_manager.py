@@ -242,9 +242,7 @@ class TestChecksumEnterpriseTierTamper:
         storage = MemoryStorage(config.entities_dir)
         mgr = IndexManager(config.entities_dir, storage, config)
 
-        await storage.write_entity(
-            "bob", _make_metadata(entity_id="bob", name="Bob"), "# Bob"
-        )
+        await storage.write_entity("bob", _make_metadata(entity_id="bob", name="Bob"), "# Bob")
         await mgr.rebuild()
 
         checksum_path = config.entities_dir / "_index.sha256"
@@ -265,9 +263,7 @@ class TestChecksumEnterpriseTierTamper:
         storage = MemoryStorage(config.entities_dir)
         mgr = IndexManager(config.entities_dir, storage, config)
 
-        await storage.write_entity(
-            "bob", _make_metadata(entity_id="bob", name="Bob"), "# Bob"
-        )
+        await storage.write_entity("bob", _make_metadata(entity_id="bob", name="Bob"), "# Bob")
         await mgr.rebuild()
 
         checksum_path = config.entities_dir / "_index.sha256"

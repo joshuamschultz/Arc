@@ -52,15 +52,23 @@ class TestTailParserArgs:
 
     def test_all_flags_composable(self) -> None:
         parser = _build_parser()
-        parsed = parser.parse_args([
-            "tail",
-            "--host", "10.0.0.1",
-            "--port", "9000",
-            "--layer", "llm",
-            "--agent", "agent1",
-            "--group", "team-alpha",
-            "--viewer-token", "tok",
-        ])
+        parsed = parser.parse_args(
+            [
+                "tail",
+                "--host",
+                "10.0.0.1",
+                "--port",
+                "9000",
+                "--layer",
+                "llm",
+                "--agent",
+                "agent1",
+                "--group",
+                "team-alpha",
+                "--viewer-token",
+                "tok",
+            ]
+        )
         assert parsed.host == "10.0.0.1"
         assert parsed.port == 9000
         assert parsed.layer == "llm"
@@ -137,7 +145,8 @@ class TestTailHelpText:
 
         result = subprocess.run(
             [str(arc), "ui", "tail", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         assert "--layer" in result.stdout
@@ -152,7 +161,8 @@ class TestTailHelpText:
 
         result = subprocess.run(
             [str(arc), "ui", "tail", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "--agent" in result.stdout
 
@@ -166,7 +176,8 @@ class TestTailHelpText:
 
         result = subprocess.run(
             [str(arc), "ui", "tail", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "--group" in result.stdout
 
@@ -180,6 +191,7 @@ class TestTailHelpText:
 
         result = subprocess.run(
             [str(arc), "ui", "--help"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         assert "tail" in result.stdout

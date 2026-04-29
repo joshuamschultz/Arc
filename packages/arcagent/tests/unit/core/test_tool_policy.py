@@ -88,8 +88,8 @@ class TestPipelineEmpty:
     async def test_empty_pipeline_allows(self) -> None:
         from arcagent.core.tool_policy import (
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         pipeline = PolicyPipeline(layers=[])
@@ -113,8 +113,8 @@ class TestFirstDenyWins:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         layer1 = MagicMock()
@@ -131,9 +131,7 @@ class TestFirstDenyWins:
 
         layer2 = MagicMock()
         layer2.name = "agent"
-        layer2.evaluate = _async_return(
-            Decision.allow(input_hash="h", evaluated_at_us=20)
-        )
+        layer2.evaluate = _async_return(Decision.allow(input_hash="h", evaluated_at_us=20))
 
         pipeline = PolicyPipeline(layers=[layer1, layer2])
         call = ToolCall(
@@ -158,8 +156,8 @@ class TestFailClosed:
     async def test_exception_in_layer_is_deny(self) -> None:
         from arcagent.core.tool_policy import (
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         class BrokenLayer:
@@ -187,8 +185,8 @@ class TestFailClosed:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         class BrokenLayer:
@@ -199,9 +197,7 @@ class TestFailClosed:
 
         layer2 = MagicMock()
         layer2.name = "downstream"
-        layer2.evaluate = _async_return(
-            Decision.allow(input_hash="h", evaluated_at_us=1)
-        )
+        layer2.evaluate = _async_return(Decision.allow(input_hash="h", evaluated_at_us=1))
 
         pipeline = PolicyPipeline(layers=[BrokenLayer(), layer2])
         call = ToolCall(
@@ -389,15 +385,13 @@ class TestDecisionCache:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         layer = MagicMock()
         layer.name = "counted"
-        layer.evaluate = _counting_evaluate(
-            Decision.allow(input_hash="h", evaluated_at_us=1)
-        )
+        layer.evaluate = _counting_evaluate(Decision.allow(input_hash="h", evaluated_at_us=1))
 
         pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
         call = ToolCall(
@@ -418,24 +412,20 @@ class TestDecisionCache:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         layer = MagicMock()
         layer.name = "counted"
-        layer.evaluate = _counting_evaluate(
-            Decision.allow(input_hash="h", evaluated_at_us=1)
-        )
+        layer.evaluate = _counting_evaluate(Decision.allow(input_hash="h", evaluated_at_us=1))
 
         fake_clock = [0.0]
 
         def clock() -> float:
             return fake_clock[0]
 
-        pipeline = PolicyPipeline(
-            layers=[layer], cache_ttl_seconds=10.0, monotonic=clock
-        )
+        pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=10.0, monotonic=clock)
         call = ToolCall(
             tool_name="read",
             arguments={},
@@ -458,8 +448,8 @@ class TestShadowMode:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         layer = MagicMock()
@@ -494,8 +484,8 @@ class TestRestrictedMode:
     async def test_stale_bundle_denies_unsafe_tools(self) -> None:
         from arcagent.core.tool_policy import (
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         pipeline = PolicyPipeline(
@@ -510,9 +500,7 @@ class TestRestrictedMode:
             session_id="s",
             classification="unclassified",
         )
-        stale_ctx = PolicyContext(
-            tier="federal", policy_version="v1", bundle_age_seconds=300.0
-        )
+        stale_ctx = PolicyContext(tier="federal", policy_version="v1", bundle_age_seconds=300.0)
 
         decision = await pipeline.evaluate(call, stale_ctx)
         assert decision.outcome == "deny"
@@ -521,8 +509,8 @@ class TestRestrictedMode:
     async def test_stale_bundle_allows_safe_set_tool(self) -> None:
         from arcagent.core.tool_policy import (
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         pipeline = PolicyPipeline(
@@ -537,9 +525,7 @@ class TestRestrictedMode:
             session_id="s",
             classification="unclassified",
         )
-        stale_ctx = PolicyContext(
-            tier="federal", policy_version="v1", bundle_age_seconds=300.0
-        )
+        stale_ctx = PolicyContext(tier="federal", policy_version="v1", bundle_age_seconds=300.0)
 
         decision = await pipeline.evaluate(call, stale_ctx)
         assert decision.outcome == "allow"
@@ -552,8 +538,8 @@ class TestTelemetry:
         from arcagent.core.tool_policy import (
             Decision,
             PolicyContext,
-            ToolCall,
             PolicyPipeline,
+            ToolCall,
         )
 
         events: list[tuple[str, dict[str, Any]]] = []
@@ -563,9 +549,7 @@ class TestTelemetry:
 
         layer = MagicMock()
         layer.name = "global"
-        layer.evaluate = _async_return(
-            Decision.allow(input_hash="h", evaluated_at_us=1)
-        )
+        layer.evaluate = _async_return(Decision.allow(input_hash="h", evaluated_at_us=1))
 
         pipeline = PolicyPipeline(layers=[layer], audit_sink=emit)
         call = ToolCall(

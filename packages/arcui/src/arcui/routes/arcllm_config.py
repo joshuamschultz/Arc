@@ -30,8 +30,13 @@ _ALLOWED_SECTIONS: dict[str, set[str] | None] = {
 }
 _ALLOWED_MODULE_KEYS: dict[str, set[str]] = {
     "telemetry": {
-        "enabled", "log_level", "monthly_limit_usd", "daily_limit_usd",
-        "per_call_max_usd", "alert_threshold_pct", "enforcement",
+        "enabled",
+        "log_level",
+        "monthly_limit_usd",
+        "daily_limit_usd",
+        "per_call_max_usd",
+        "alert_threshold_pct",
+        "enforcement",
     },
     "retry": {"enabled", "max_retries", "backoff_base_seconds"},
     "fallback": {"enabled", "chain"},
@@ -97,8 +102,7 @@ def _redact_for_viewer(data: dict[str, Any]) -> dict[str, Any]:
         for mod_name, mod_data in mods.items():
             if isinstance(mod_data, dict):
                 mods[mod_name] = {
-                    k: ("***" if k in _SENSITIVE_KEYS else v)
-                    for k, v in mod_data.items()
+                    k: ("***" if k in _SENSITIVE_KEYS else v) for k, v in mod_data.items()
                 }
         result["modules"] = mods
     return result
@@ -155,13 +159,9 @@ async def get_arcllm_config(request: Request) -> JSONResponse:
     """
     config_path = _get_config_path()
     if config_path is None:
-        return JSONResponse(
-            {"error": "arcllm not installed"}, status_code=503
-        )
+        return JSONResponse({"error": "arcllm not installed"}, status_code=503)
     if not config_path.exists():
-        return JSONResponse(
-            {"error": "arcllm config.toml not found"}, status_code=404
-        )
+        return JSONResponse({"error": "arcllm config.toml not found"}, status_code=404)
 
     try:
         data = _read_config(config_path)
@@ -172,9 +172,7 @@ async def get_arcllm_config(request: Request) -> JSONResponse:
         return JSONResponse(plain)
     except (OSError, tomlkit.exceptions.ParseError):
         logger.exception("Failed to read arcllm config")
-        return JSONResponse(
-            {"error": "Failed to read config"}, status_code=500
-        )
+        return JSONResponse({"error": "Failed to read config"}, status_code=500)
 
 
 async def patch_arcllm_config(request: Request) -> JSONResponse:
@@ -187,25 +185,17 @@ async def patch_arcllm_config(request: Request) -> JSONResponse:
     Uses atomic write (temp file + rename) to prevent corruption.
     """
     if request.state.role != "operator":
-        return JSONResponse(
-            {"error": "Operator role required"}, status_code=403
-        )
+        return JSONResponse({"error": "Operator role required"}, status_code=403)
 
     config_path = _get_config_path()
     if config_path is None:
-        return JSONResponse(
-            {"error": "arcllm not installed"}, status_code=503
-        )
+        return JSONResponse({"error": "arcllm not installed"}, status_code=503)
     if not config_path.exists():
-        return JSONResponse(
-            {"error": "arcllm config.toml not found"}, status_code=404
-        )
+        return JSONResponse({"error": "arcllm config.toml not found"}, status_code=404)
 
     body = await request.body()
     if len(body) > 65_536:  # 64KB max
-        return JSONResponse(
-            {"error": "Request body too large"}, status_code=413
-        )
+        return JSONResponse({"error": "Request body too large"}, status_code=413)
 
     try:
         updates = json.loads(body)
@@ -213,9 +203,7 @@ async def patch_arcllm_config(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
     if not isinstance(updates, dict):
-        return JSONResponse(
-            {"error": "Body must be a JSON object"}, status_code=400
-        )
+        return JSONResponse({"error": "Body must be a JSON object"}, status_code=400)
 
     # Validate keys against allowlist (NIST SI-10)
     error = _validate_updates(updates)

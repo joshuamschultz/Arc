@@ -24,13 +24,43 @@ _UNSAFE_CHARS = re.compile(r"[^\w\-.]")
 _DEFAULT_MAX_FILE_SIZE = 20 * 1024 * 1024
 
 # Text-like MIME type prefixes and extensions
-_TEXT_EXTENSIONS = frozenset({
-    ".txt", ".md", ".csv", ".json", ".yaml", ".yml", ".xml",
-    ".py", ".js", ".ts", ".html", ".css", ".sh", ".bash",
-    ".toml", ".ini", ".cfg", ".conf", ".log", ".sql",
-    ".rs", ".go", ".java", ".c", ".cpp", ".h", ".hpp",
-    ".rb", ".php", ".swift", ".kt", ".r", ".m",
-})
+_TEXT_EXTENSIONS = frozenset(
+    {
+        ".txt",
+        ".md",
+        ".csv",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".xml",
+        ".py",
+        ".js",
+        ".ts",
+        ".html",
+        ".css",
+        ".sh",
+        ".bash",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".log",
+        ".sql",
+        ".rs",
+        ".go",
+        ".java",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".rb",
+        ".php",
+        ".swift",
+        ".kt",
+        ".r",
+        ".m",
+    }
+)
 
 _MAX_TEXT_EXTRACT_BYTES = 50_000  # Cap extracted text at ~50KB
 
@@ -208,6 +238,7 @@ class FileHandler:
         dest = dest_dir / path.name
 
         import shutil
+
         shutil.copy2(path, dest)
         _logger.info("Stored team file: %s → %s", path.name, dest)
         return dest
@@ -230,6 +261,7 @@ class FileHandler:
         # Try pdfplumber first (better extraction quality)
         try:
             import pdfplumber  # type: ignore[import-not-found]  # optional dep: arcagent[files]
+
             with pdfplumber.open(path) as pdf:
                 pages = []
                 for page in pdf.pages:
@@ -247,6 +279,7 @@ class FileHandler:
             from PyPDF2 import (  # type: ignore[import-not-found]  # optional dep: arcagent[files]
                 PdfReader,
             )
+
             reader = PdfReader(str(path))
             pages = []
             for page in reader.pages:
@@ -267,6 +300,7 @@ class FileHandler:
             from docx import (  # type: ignore[import-not-found]  # optional dep: arcagent[files]
                 Document,
             )
+
             doc = Document(str(path))
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
             return "\n\n".join(paragraphs) if paragraphs else None
@@ -283,6 +317,7 @@ class FileHandler:
             from openpyxl import (  # type: ignore[import-untyped]  # no type stubs available for openpyxl
                 load_workbook,
             )
+
             wb = load_workbook(str(path), read_only=True, data_only=True)
             sheets = []
             for ws in wb.worksheets:

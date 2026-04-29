@@ -282,7 +282,9 @@ class TelemetryModule(BaseModule):
 
         # Trace recording config (explicit config > global defaults)
         self._on_event: Any | None = config.get("on_event") or _global_defaults.get("on_event")
-        self._trace_store: Any | None = config.get("trace_store") or _global_defaults.get("trace_store")
+        self._trace_store: Any | None = config.get("trace_store") or _global_defaults.get(
+            "trace_store"
+        )
         self._agent_label: str | None = config.get("agent_label")
         self._agent_did: str | None = config.get("agent_did") or _global_defaults.get("agent_did")
         self._store_raw_bodies: bool = config.get("store_raw_bodies", True)
@@ -483,8 +485,11 @@ class TelemetryModule(BaseModule):
             request_body = {
                 "messages": [m.model_dump() for m in messages],
                 "tools": [t.model_dump() for t in tools] if tools else None,
-                **{k: v for k, v in kwargs.items()
-                   if k != "max_tokens" and k not in _internal_keys},
+                **{
+                    k: v
+                    for k, v in kwargs.items()
+                    if k != "max_tokens" and k not in _internal_keys
+                },
             }
             if kwargs.get("max_tokens") is not None:
                 request_body["max_tokens"] = kwargs["max_tokens"]
@@ -543,10 +548,7 @@ class TelemetryModule(BaseModule):
             budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
 
             # Strip internal metadata keys before forwarding to inner provider
-            inner_kwargs = {
-                k: v for k, v in kwargs.items()
-                if not k.startswith("_")
-            }
+            inner_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
 
             t_pre = time.monotonic()
             response = await self._inner.invoke(messages, tools, **inner_kwargs)
@@ -606,7 +608,12 @@ class TelemetryModule(BaseModule):
             # Build and emit trace record (fire-and-forget for trace_store)
             if self._trace_store is not None or self._on_event is not None:
                 record = self._build_trace_record(
-                    response, cost, phase_timings, messages, tools, kwargs,
+                    response,
+                    cost,
+                    phase_timings,
+                    messages,
+                    tools,
+                    kwargs,
                 )
                 await self._emit_trace(record)
 

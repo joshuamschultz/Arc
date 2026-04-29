@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.errors import HubLockFileCorrupted
 from arcskill.lock import HubLockFile, SkillLockEntry
-
 
 # ---------------------------------------------------------------------------
 # SkillLockEntry
@@ -75,7 +73,7 @@ def test_save_load_roundtrip() -> None:
                 rekor_uuid="rekor-999",
                 slsa_level=3,
                 scan_verdict="safe",
-                install_path="/tmp/summarise",
+                install_path="/tmp/summarise",  # noqa: S108 — test fixture
                 files=["skill.py", "MODULE.yaml"],
             ),
         )
@@ -109,9 +107,7 @@ def test_save_sets_restrictive_permissions() -> None:
         lock.save(path)
         mode = stat.filemode(path.stat().st_mode)
         # Should be -rw------- or similar (no group/world read)
-        assert path.stat().st_mode & 0o077 == 0, (
-            f"Lock file has insecure permissions: {mode}"
-        )
+        assert path.stat().st_mode & 0o077 == 0, f"Lock file has insecure permissions: {mode}"
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +128,6 @@ def test_atomic_write_no_partial_on_exception(monkeypatch: pytest.MonkeyPatch) -
 
         # Simulate a write failure by making os.replace raise.
         import os
-        original_replace = os.replace
 
         def _failing_replace(src: str, dst: str) -> None:
             # Clean up temp file, then raise.

@@ -57,9 +57,7 @@ class TestCodeExecGuidance:
         assert result["contained_exec_guidance"] == CONTAINED_EXEC_GUIDANCE
 
     def test_both_exec_tools_present(self) -> None:
-        result = get_strategy_prompts(
-            tool_names=["execute_python", "contained_execute_python"]
-        )
+        result = get_strategy_prompts(tool_names=["execute_python", "contained_execute_python"])
         assert "code_exec_guidance" in result
         assert "contained_exec_guidance" in result
 

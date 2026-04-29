@@ -11,7 +11,6 @@ import pytest
 from arctrust.audit import AuditEvent, JsonlSink, NullSink, SignedChainSink, emit
 from arctrust.keypair import generate_keypair
 
-
 # ---------------------------------------------------------------------------
 # AuditEvent schema
 # ---------------------------------------------------------------------------
@@ -60,7 +59,7 @@ class TestAuditEvent:
             target="target",
             outcome="allow",
         )
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017 — testing that any exception fires on frozen-model mutation
             evt.action = "modified"  # type: ignore[misc]
 
     def test_model_dump_returns_dict(self) -> None:

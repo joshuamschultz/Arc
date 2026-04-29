@@ -47,9 +47,7 @@ def _capture_events(caplog: pytest.LogCaptureFixture) -> list[dict[str, Any]]:
 class TestSessionStartEmittedOncePerSession:
     """First authenticated request emits, second from same session does not."""
 
-    def test_first_request_emits_session_start(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_first_request_emits_session_start(self, caplog: pytest.LogCaptureFixture) -> None:
         auth = AuthConfig()
         audit = UIAuditLogger(enabled=False)
         tracker = SessionTracker()
@@ -66,9 +64,7 @@ class TestSessionStartEmittedOncePerSession:
         starts = [e for e in events if e["event_type"] == "ui.session_start"]
         assert len(starts) == 1
 
-    def test_second_request_does_not_re_emit(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_second_request_does_not_re_emit(self, caplog: pytest.LogCaptureFixture) -> None:
         auth = AuthConfig()
         audit = UIAuditLogger(enabled=False)
         tracker = SessionTracker()
@@ -96,9 +92,7 @@ class TestSessionStartAuthMethodLabel:
     `_maybe_open_browser` at startup.
     """
 
-    def test_unmarked_token_is_manual(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_unmarked_token_is_manual(self, caplog: pytest.LogCaptureFixture) -> None:
         auth = AuthConfig()
         audit = UIAuditLogger(enabled=False)
         tracker = SessionTracker()
@@ -186,13 +180,9 @@ class TestSessionStartHasRequiredFields:
 
         # auth_method: one of three labels per SR-3.
         assert "auth_method" in details
-        assert details["auth_method"] in {
-            "browser_bootstrap", "manual_token", "agent_token"
-        }
+        assert details["auth_method"] in {"browser_bootstrap", "manual_token", "agent_token"}
 
-    def test_session_id_unique_per_session(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_session_id_unique_per_session(self, caplog: pytest.LogCaptureFixture) -> None:
         """Two different (token, addr) pairs MUST get different session_ids.
 
         Two callers sharing one session_id would let an auditor mistakenly

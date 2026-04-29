@@ -88,13 +88,11 @@ class TestMultiAgentSubscription:
         buffer = EventBuffer(conn_mgr, subscription_manager=sub_mgr)
 
         queue = conn_mgr.create_queue()
-        sub_mgr.set_subscription(
-            queue, Subscription(agents=["agent-1"], layers=["llm"])
-        )
+        sub_mgr.set_subscription(queue, Subscription(agents=["agent-1"], layers=["llm"]))
 
-        buffer.push(_make_event("agent-1", "llm", sequence=1))   # match
+        buffer.push(_make_event("agent-1", "llm", sequence=1))  # match
         buffer.push(_make_event("agent-1", "agent", sequence=2))  # wrong layer
-        buffer.push(_make_event("agent-2", "llm", sequence=3))    # wrong agent
+        buffer.push(_make_event("agent-2", "llm", sequence=3))  # wrong agent
         buffer.push(_make_event("agent-2", "agent", sequence=4))  # wrong both
         buffer.flush_once()
 

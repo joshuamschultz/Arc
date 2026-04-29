@@ -240,9 +240,7 @@ class BrowserSession:
         try:
             await self._page.close()
         except Exception:
-            _logger.debug(
-                "Error closing page for session %s", self._session_id, exc_info=True
-            )
+            _logger.debug("Error closing page for session %s", self._session_id, exc_info=True)
         await self._audit(
             "browser.session.closed",
             {"session_id": self._session_id, "mode": self._mode, "provider": self._provider},

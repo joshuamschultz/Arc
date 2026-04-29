@@ -137,10 +137,7 @@ async def react_loop(
 
         # SPEC-017 R-032 — cost cap. Enforced at the top of each turn
         # so we never start a turn knowing we're already over budget.
-        if (
-            state.max_cost_usd is not None
-            and state.cost_usd >= state.max_cost_usd
-        ):
+        if state.max_cost_usd is not None and state.cost_usd >= state.max_cost_usd:
             state.completion_payload = {
                 "status": "failed",
                 "summary": "Cost limit reached before task completed.",

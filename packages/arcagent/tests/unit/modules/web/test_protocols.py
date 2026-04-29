@@ -21,7 +21,6 @@ from arcagent.modules.web.protocols import (
     WebSearchProvider,
 )
 
-
 # ---------------------------------------------------------------------------
 # SearchHit model
 # ---------------------------------------------------------------------------
@@ -116,9 +115,7 @@ class _MockExtract:
     """Duck-typed extract provider — no inheritance."""
 
     async def extract(self, url: str) -> ExtractResult:
-        return ExtractResult(
-            url=url, title="T", content="", fetched_at=time.time()
-        )
+        return ExtractResult(url=url, title="T", content="", fetched_at=time.time())
 
 
 class _MissingSearch:
@@ -141,7 +138,7 @@ class TestWebSearchProviderProtocol:
         # Confirm the Protocol is decorated with @runtime_checkable
         assert hasattr(WebSearchProvider, "__protocol_attrs__") or True
         # isinstance check does not raise TypeError
-        isinstance(_MockSearch(), WebSearchProvider)  # noqa: B015
+        isinstance(_MockSearch(), WebSearchProvider)
 
 
 class TestWebExtractProviderProtocol:

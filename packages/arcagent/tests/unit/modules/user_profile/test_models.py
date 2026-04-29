@@ -15,7 +15,6 @@ import pytest
 
 from arcagent.modules.user_profile.models import ACL, DurableFact, UserProfile
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

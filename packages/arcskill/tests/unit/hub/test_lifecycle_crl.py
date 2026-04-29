@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import tempfile
 import unittest.mock
 import urllib.error
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import HubConfig, RevocationConfig, TierPolicy
 from arcskill.hub.errors import CRLUnreachable
 from arcskill.hub.lifecycle import (
     _crl_state,
-    _fetch_crl_remote,
     _quarantine_matching,
     check_revocation_on_boot,
     quarantine_skill,
     should_unload,
-    start_crl_refresh_task,
 )
 from arcskill.lock import HubLockFile, SkillLockEntry
 
@@ -244,9 +240,7 @@ def test_crl_refresh_task_quarantines_on_hit() -> None:
         quarantined_names: list[str] = []
 
         async def _run_one_iteration() -> None:
-            with unittest.mock.patch(
-                "arcskill.hub.lifecycle._fetch_crl_remote"
-            ) as mock_fetch:
+            with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
                 mock_fetch.return_value = frozenset([revoked_hash])
                 names = _quarantine_matching(
                     frozenset([revoked_hash]),

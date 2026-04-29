@@ -382,18 +382,16 @@ def _build_parser() -> argparse.ArgumentParser:
     # task
     p = subs.add_parser("task", help="Run a single task with arcrun.")
     p.add_argument("prompt", help="Task prompt.")
+    p.add_argument("--model", default="anthropic/claude-haiku-4-5-20251001", help="provider/model")
     p.add_argument(
-        "--model", default="anthropic/claude-haiku-4-5-20251001", help="provider/model"
-    )
-    p.add_argument(
-        "--system", dest="system_prompt", default="You are a helpful assistant.",
-        help="System prompt."
+        "--system",
+        dest="system_prompt",
+        default="You are a helpful assistant.",
+        help="System prompt.",
     )
     p.add_argument("--max-turns", dest="max_turns", type=int, default=10)
     p.add_argument("--tool-timeout", dest="tool_timeout", type=float, default=None)
-    p.add_argument(
-        "--strategy", choices=["react", "code"], default=None, help="Force strategy."
-    )
+    p.add_argument("--strategy", choices=["react", "code"], default=None, help="Force strategy.")
     p.add_argument("--with-code-exec", dest="with_code_exec", action="store_true")
     p.add_argument("--code-timeout", dest="code_timeout", type=float, default=30.0)
     p.add_argument("--with-calc", dest="with_calc", action="store_true")

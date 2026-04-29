@@ -78,7 +78,8 @@ def _make_executor(resource_limits: ResourceLimits | None = None) -> SubprocessE
     """Build a SubprocessExecutor pointing at the source worker."""
     return SubprocessExecutor(
         worker_cmd=_WORKER_CMD,
-        resource_limits=resource_limits or ResourceLimits(
+        resource_limits=resource_limits
+        or ResourceLimits(
             memory_mb=512,
             cpu_seconds=60,
             file_descriptors=256,
@@ -182,8 +183,7 @@ class TestSubprocessIsolation:
         assert pid_a is not None, "Session A must emit subprocess-audit terminator with PID"
         assert pid_b is not None, "Session B must emit subprocess-audit terminator with PID"
         assert pid_a != pid_b, (
-            f"Two sessions must run in separate subprocesses. "
-            f"pid_a={pid_a} pid_b={pid_b}"
+            f"Two sessions must run in separate subprocesses. pid_a={pid_a} pid_b={pid_b}"
         )
 
     @pytest.mark.asyncio
@@ -218,7 +218,9 @@ class TestWorkerLifecycle:
         worker's EOF handling in isolation. The worker should exit 0.
         """
         proc = await asyncio.create_subprocess_exec(
-            *(_WORKER_CMD + ["--did", "did:arc:agent:test-eof"]),
+            *_WORKER_CMD,
+            "--did",
+            "did:arc:agent:test-eof",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -245,10 +247,7 @@ class TestWorkerLifecycle:
             timeout=_SUBPROCESS_TIMEOUT,
         )
         # The subprocess-audit Delta is the done sentinel from the parent
-        audit_done = [
-            d for d in deltas
-            if d.is_final and "subprocess-audit" in d.content
-        ]
+        audit_done = [d for d in deltas if d.is_final and "subprocess-audit" in d.content]
         assert audit_done, (
             "SubprocessExecutor must emit a subprocess-audit terminator Delta. "
             f"Got deltas: {deltas!r}"
@@ -276,7 +275,9 @@ class TestProtocolRobustness:
         exits cleanly (exit code 0) and emits a done sentinel.
         """
         proc = await asyncio.create_subprocess_exec(
-            *(_WORKER_CMD + ["--did", "did:arc:agent:robustness-test"]),
+            *_WORKER_CMD,
+            "--did",
+            "did:arc:agent:robustness-test",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -319,7 +320,9 @@ class TestProtocolRobustness:
         encountering bad input (does not enter an error state).
         """
         proc = await asyncio.create_subprocess_exec(
-            *(_WORKER_CMD + ["--did", "did:arc:agent:recovery-test"]),
+            *_WORKER_CMD,
+            "--did",
+            "did:arc:agent:recovery-test",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

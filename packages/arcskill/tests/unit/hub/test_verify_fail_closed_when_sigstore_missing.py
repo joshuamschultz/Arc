@@ -19,11 +19,9 @@ import unittest.mock
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import HubConfig, RevocationConfig, SkillSource, TierPolicy
 from arcskill.hub.errors import SigstoreUnavailable
-from arcskill.hub.verify import VerifyResult, verify_bundle, _run_sigstore, _crl_cache
-
+from arcskill.hub.verify import VerifyResult, _crl_cache, _run_sigstore, verify_bundle
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,9 +91,7 @@ class TestFederalSigstoreMissing:
         bundle = _make_bundle_file()
         config = _federal_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
             with pytest.raises(SigstoreUnavailable):
                 verify_bundle(
                     bundle_path=bundle,
@@ -109,9 +105,7 @@ class TestFederalSigstoreMissing:
         bundle = _make_bundle_file()
         config = _federal_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
             with pytest.raises(SigstoreUnavailable) as exc_info:
                 verify_bundle(
                     bundle_path=bundle,
@@ -128,9 +122,7 @@ class TestFederalSigstoreMissing:
         bundle = _make_bundle_file()
         config = _federal_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
             with pytest.raises(SigstoreUnavailable) as exc_info:
                 verify_bundle(
                     bundle_path=bundle,
@@ -147,9 +139,7 @@ class TestFederalSigstoreMissing:
         bundle = _make_bundle_file()
         config = _federal_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
             with pytest.raises(SigstoreUnavailable):
                 _run_sigstore(bundle, _source(), config, "abc")
 
@@ -184,12 +174,8 @@ class TestPersonalSigstoreMissing:
         bundle = _make_bundle_file()
         config = _personal_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
-            with unittest.mock.patch(
-                "arcskill.hub.verify._fetch_crl", return_value=frozenset()
-            ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
+            with unittest.mock.patch("arcskill.hub.verify._fetch_crl", return_value=frozenset()):
                 result = verify_bundle(
                     bundle_path=bundle,
                     source=_source(),
@@ -233,9 +219,7 @@ class TestPersonalSigstoreMissing:
         revoked_hash = "abc"
         _crl_cache.clear()  # Clear global cache to avoid cross-test pollution.
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
             with unittest.mock.patch(
                 "arcskill.hub.verify._fetch_crl", return_value=frozenset([revoked_hash])
             ):
@@ -255,12 +239,8 @@ class TestPersonalSigstoreMissing:
         bundle = _make_bundle_file()
         config = _personal_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
-            with unittest.mock.patch(
-                "arcskill.hub.verify._fetch_crl", return_value=frozenset()
-            ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
+            with unittest.mock.patch("arcskill.hub.verify._fetch_crl", return_value=frozenset()):
                 # Must not raise.
                 result = verify_bundle(
                     bundle_path=bundle,
@@ -284,12 +264,8 @@ class TestEnterpriseSigstoreMissing:
         bundle = _make_bundle_file()
         config = _enterprise_config()
 
-        with unittest.mock.patch(
-            "arcskill.hub.verify._sigstore_importable", return_value=False
-        ):
-            with unittest.mock.patch(
-                "arcskill.hub.verify._fetch_crl", return_value=frozenset()
-            ):
+        with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
+            with unittest.mock.patch("arcskill.hub.verify._fetch_crl", return_value=frozenset()):
                 result = verify_bundle(
                     bundle_path=bundle,
                     source=_source(),

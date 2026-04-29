@@ -12,13 +12,13 @@ signal than "page loads".
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from arcllm.trace_store import JSONLTraceStore, TraceRecord
 from starlette.testclient import TestClient
 
-from arcllm.trace_store import JSONLTraceStore, TraceRecord
 from arcui.auth import AuthConfig
 from arcui.federated_store import FederatedTraceStore
 from arcui.server import create_app
@@ -127,9 +127,7 @@ class TestStatsAggregation:
             (0.025, 1800, 400),
             (0.012, 1100, 220),
         ]:
-            await store.append(
-                _record(cost=cost, in_tokens=in_t, out_tokens=out_t)
-            )
+            await store.append(_record(cost=cost, in_tokens=in_t, out_tokens=out_t))
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
         app = create_app(auth_config=auth, trace_store=store)
@@ -232,9 +230,7 @@ class TestFederatedQueryFlow:
         traces = resp.json()["traces"]
         assert len(traces) == 2
         for t in traces:
-            assert t["agent_label"] == "agent_b", (
-                "agent filter leaked another agent's records"
-            )
+            assert t["agent_label"] == "agent_b", "agent filter leaked another agent's records"
 
 
 class TestBrowserBootstrapAuthFlow:
@@ -250,9 +246,7 @@ class TestBrowserBootstrapAuthFlow:
         """Token from URL hash (server-issued) authenticates API calls when
         sent in Authorization: Bearer header."""
         viewer_token = "viewer-from-bootstrap"
-        auth = AuthConfig(
-            {"viewer_token": viewer_token, "operator_token": "op"}
-        )
+        auth = AuthConfig({"viewer_token": viewer_token, "operator_token": "op"})
         app = create_app(auth_config=auth)
         client = TestClient(app)
 
@@ -271,9 +265,7 @@ class TestBrowserBootstrapAuthFlow:
         to RobustWebSocket, which sends `{"token": "..."}` as first frame.
         """
         viewer_token = "viewer-from-bootstrap"
-        auth = AuthConfig(
-            {"viewer_token": viewer_token, "operator_token": "op"}
-        )
+        auth = AuthConfig({"viewer_token": viewer_token, "operator_token": "op"})
         app = create_app(auth_config=auth)
         client = TestClient(app)
 

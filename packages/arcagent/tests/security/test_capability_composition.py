@@ -31,9 +31,7 @@ class TestBasicComposition:
         checker = ForbiddenCompositionChecker(
             forbidden=[frozenset({"file_read", "network_egress"})]
         )
-        assert (
-            checker.is_forbidden({"file_read", "network_egress"}) is True
-        )
+        assert checker.is_forbidden({"file_read", "network_egress"}) is True
 
     def test_superset_also_rejected(self) -> None:
         """If a batch contains {a, b, c} and {a, b} is forbidden, reject."""

@@ -90,7 +90,6 @@ def __getattr__(name: str):
 
 
 __all__ = [
-    "__version__",
     "AnthropicAdapter",
     "ArcLLMAPIError",
     "ArcLLMConfigError",
@@ -143,6 +142,7 @@ __all__ = [
     "VaultResolver",
     "VllmAdapter",
     "XaiAdapter",
+    "__version__",
     "clear_cache",
     "load_global_config",
     "load_model",

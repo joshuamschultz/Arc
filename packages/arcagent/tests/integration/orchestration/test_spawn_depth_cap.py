@@ -10,18 +10,18 @@ import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 import pytest
-from ._mock_llm import LLMResponse, MockModel
-
-from arctrust import ChildIdentity, derive_child_identity
-from arcagent.orchestration.spawn import (
-    SpawnResult,
-    TokenUsage,
-    spawn,
-)
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.types import Tool
+from arctrust import ChildIdentity, derive_child_identity
+
+from arcagent.orchestration.spawn import (
+    SpawnResult,
+    spawn,
+)
+
+from ._mock_llm import LLMResponse, MockModel
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -174,7 +174,6 @@ class TestDepthCapEnforcement:
         """Even on rejection, spawn.start event is NOT emitted (depth check is pre-emit)."""
         state = _make_state(depth=2, max_depth=2)
         identity = _identity(6)
-        initial_event_count = len(state.event_bus.events)
 
         await spawn(
             parent_state=state,
@@ -194,6 +193,7 @@ class TestDepthCapEnforcement:
 # ---------------------------------------------------------------------------
 # Patch SpawnResult for test helper method
 # ---------------------------------------------------------------------------
+
 
 def _depth_error_contains_limit(self: SpawnResult, limit: int) -> bool:
     """Helper to check that error message references the depth limit."""

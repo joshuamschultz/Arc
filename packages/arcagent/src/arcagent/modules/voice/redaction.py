@@ -54,14 +54,10 @@ _EMAIL = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
 # Credit card -- 13-19 digit sequences with optional separators
 # Anchored to word boundaries to avoid matching larger number blocks.
-_CREDIT_CARD = re.compile(
-    r"\b(?:\d{4}[-\s]?){3,4}\d{1,4}\b"
-)
+_CREDIT_CARD = re.compile(r"\b(?:\d{4}[-\s]?){3,4}\d{1,4}\b")
 
 # IPv4 address
-_IPV4 = re.compile(
-    r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
-)
+_IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b")
 
 # Ordered list: (pattern, replacement_token)
 # SSN must be checked before PHONE to avoid partial matches.

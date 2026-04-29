@@ -128,12 +128,8 @@ class TestFederalManifestDirectly:
 
     def test_name_not_in_manifest_raises(self) -> None:
         with pytest.raises(BackendSignatureError):
-            _enforce_federal_manifest(
-                "mybackend", allowed_backends={"other": "other:Other"}
-            )
+            _enforce_federal_manifest("mybackend", allowed_backends={"other": "other:Other"})
 
     def test_name_in_manifest_passes(self) -> None:
         # Should not raise — the helper itself still works for non-federal paths
-        _enforce_federal_manifest(
-            "mybackend", allowed_backends={"mybackend": "pkg:Cls"}
-        )
+        _enforce_federal_manifest("mybackend", allowed_backends={"mybackend": "pkg:Cls"})

@@ -16,8 +16,6 @@ Two verification approaches:
 from __future__ import annotations
 
 import ast
-import asyncio
-import importlib.util
 import pathlib
 
 import pytest
@@ -61,8 +59,7 @@ class TestToolContextParentStatePresentInAST:
         tree = self._load_ast()
         calls = self._find_tool_context_calls(tree)
         assert len(calls) >= 1, (
-            "executor.py does not construct ToolContext; "
-            "parent_state plumbing cannot be verified"
+            "executor.py does not construct ToolContext; parent_state plumbing cannot be verified"
         )
 
     def test_tool_context_call_includes_parent_state_kwarg(self) -> None:
@@ -143,10 +140,12 @@ class TestToolContextParentStateRuntime:
         sandbox = Sandbox(config=SandboxConfig(), event_bus=bus)
 
         # Build a minimal tool-call object
+        from typing import ClassVar
+
         class FakeTC:
             id = "tc-arch"
             name = "dummy"
-            arguments: dict = {}
+            arguments: ClassVar[dict] = {}
 
         await execute_tool_call(FakeTC(), state, sandbox)
 

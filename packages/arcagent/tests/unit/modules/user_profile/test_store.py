@@ -10,11 +10,10 @@ Test contract:
 from __future__ import annotations
 
 import os
-import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -22,7 +21,6 @@ from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.errors import BodyOverflow, ProfileNotFound
 from arcagent.modules.user_profile.models import ACL, UserProfile
 from arcagent.modules.user_profile.store import ProfileStore, _atomic_write, _body_size
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -282,9 +280,7 @@ class TestDurableFactsAppendOnly:
         fact_ts = profile.durable_facts[0].ts
         assert before <= fact_ts <= after
 
-    def test_existing_facts_preserved_on_identity_overwrite(
-        self, tmp_path: Path
-    ) -> None:
+    def test_existing_facts_preserved_on_identity_overwrite(self, tmp_path: Path) -> None:
         """Overwriting Identity section leaves Durable Facts intact."""
         store = _make_store(tmp_path)
         store.append_durable_fact(

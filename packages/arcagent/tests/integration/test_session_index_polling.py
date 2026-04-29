@@ -18,7 +18,6 @@ import pytest
 
 from arcagent.modules.session.index import SessionIndex
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -107,9 +106,7 @@ class TestPollingFullCycle:
 
 class TestCrashRecovery:
     @pytest.mark.asyncio
-    async def test_partial_line_at_eof_not_indexed_on_first_run(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_partial_line_at_eof_not_indexed_on_first_run(self, tmp_path: Path) -> None:
         """A partial (no trailing newline) JSONL line must be skipped.
 
         This simulates the indexer seeing an in-progress write — the writer
@@ -146,9 +143,7 @@ class TestCrashRecovery:
         assert "complete line" in rows[0][0]
 
     @pytest.mark.asyncio
-    async def test_partial_line_indexed_after_writer_completes(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_partial_line_indexed_after_writer_completes(self, tmp_path: Path) -> None:
         """After the writer finishes the partial line, the next poll picks it up."""
         sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir()

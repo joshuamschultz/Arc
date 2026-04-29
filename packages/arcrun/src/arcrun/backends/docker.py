@@ -127,9 +127,7 @@ class DockerBackend:
 
         stdin_data = stdin.encode() if stdin is not None else None
         stdin_mode = (
-            asyncio.subprocess.PIPE
-            if stdin_data is not None
-            else asyncio.subprocess.DEVNULL
+            asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL
         )
 
         proc = await asyncio.create_subprocess_exec(
@@ -265,9 +263,7 @@ async def _docker_run_detached(
     )
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"docker run failed (rc={proc.returncode}): {stderr.decode().strip()}"
-        )
+        raise RuntimeError(f"docker run failed (rc={proc.returncode}): {stderr.decode().strip()}")
     return stdout.decode().strip()
 
 

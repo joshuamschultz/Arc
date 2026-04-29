@@ -27,16 +27,13 @@ Reference dates (2026):
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pytest
 from cronsim import CronSim
 
 from arcagent.modules.scheduler.nl_parser import (
-    ParseError,
     Schedule,
-    parse_cron_cronsim,
     validate,
 )
 
@@ -112,9 +109,7 @@ class TestUsEasternSpringForward:
         for fire in post_transition:
             utc_fire = fire.astimezone(ZoneInfo("UTC"))
             # 2am EDT = UTC-4 → 06:00 UTC.
-            assert utc_fire.hour == 6, (
-                f"Expected UTC 06:00 (EDT), got UTC {utc_fire.hour}:00"
-            )
+            assert utc_fire.hour == 6, f"Expected UTC 06:00 (EDT), got UTC {utc_fire.hour}:00"
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +134,8 @@ class TestUsEasternFallBack:
         assert fires, "Expected at least one fire"
         # Filter to fires that are local 1:30 on fall-back day.
         fall_back_day_fires = [
-            f for f in fires
+            f
+            for f in fires
             if f.astimezone(_US_EASTERN).date() == datetime(2026, 11, 1).date()
             and f.astimezone(_US_EASTERN).hour == 1
             and f.astimezone(_US_EASTERN).minute == 30
@@ -206,10 +202,13 @@ class TestUKSpringForward:
         assert len(fires) >= 2
         # Post-transition fires (skip day-of-transition) must be at 1am.
         post_transition = [
-            f for f in fires
-            if not (f.astimezone(_UK).year == 2026
-                    and f.astimezone(_UK).month == 3
-                    and f.astimezone(_UK).day == 29)
+            f
+            for f in fires
+            if not (
+                f.astimezone(_UK).year == 2026
+                and f.astimezone(_UK).month == 3
+                and f.astimezone(_UK).day == 29
+            )
         ]
         for fire in post_transition:
             local = fire.astimezone(_UK)

@@ -297,7 +297,8 @@ class MessagingModule:
         # Sanitize identity fields before prompt interpolation (LLM01, ASI06).
         entity_id = sanitize_text(self._config.entity_id, max_length=200)
         entity_name = sanitize_text(
-            self._config.entity_name or self._config.entity_id, max_length=200,
+            self._config.entity_name or self._config.entity_id,
+            max_length=200,
         )
 
         lines = [
@@ -424,10 +425,7 @@ class MessagingModule:
                 priority = sanitize_text(str(msg["priority"]), max_length=50)
 
                 action_flag = " [ACTION REQUIRED]" if msg["action_required"] else ""
-                lines.append(
-                    f"**From {sender}** ({msg_type}, "
-                    f"{priority} priority){action_flag}:"
-                )
+                lines.append(f"**From {sender}** ({msg_type}, {priority} priority){action_flag}:")
                 lines.append(f"> {body}")
                 if msg["thread_id"] and msg["thread_id"] != msg["id"]:
                     thread_id = sanitize_text(str(msg["thread_id"]), max_length=200)
@@ -455,9 +453,7 @@ class MessagingModule:
                         if msgs:
                             last = msgs[-1]
                             # SPEC-017 R-005 — store real byte offset
-                            byte_pos = await _stream_end_byte_pos_or_zero(
-                                self._svc, stream
-                            )
+                            byte_pos = await _stream_end_byte_pos_or_zero(self._svc, stream)
                             await self._svc.ack(
                                 stream,
                                 entity_id,

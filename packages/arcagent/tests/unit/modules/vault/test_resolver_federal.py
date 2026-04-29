@@ -10,8 +10,6 @@ Federal tier contract:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from arcagent.modules.vault.protocol import VaultUnreachable

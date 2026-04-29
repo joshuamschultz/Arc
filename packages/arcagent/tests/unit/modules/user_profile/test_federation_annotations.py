@@ -21,12 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.errors import ProfileNotFound
 from arcagent.modules.user_profile.models import ACL, UserProfile
 from arcagent.modules.user_profile.store import ProfileStore
 from arcagent.modules.user_profile.tombstone import apply_tombstone
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -81,9 +79,7 @@ class TestWriteAgentAnnotation:
         )
 
         annotation_path = store.agent_annotation_path(user_did, agent_did)
-        assert annotation_path.is_file(), (
-            f"Expected annotation file at {annotation_path}"
-        )
+        assert annotation_path.is_file(), f"Expected annotation file at {annotation_path}"
 
     def test_annotation_file_separate_from_base_profile(
         self, store: ProfileStore, workspace: Path
@@ -101,9 +97,7 @@ class TestWriteAgentAnnotation:
         assert base_path != annotation_path, "Annotation must not overwrite base profile"
         assert base_path.is_file(), "Base profile must still exist after annotation write"
 
-    def test_annotation_file_contains_section_and_content(
-        self, store: ProfileStore
-    ) -> None:
+    def test_annotation_file_contains_section_and_content(self, store: ProfileStore) -> None:
         """Annotation file should contain the section heading and body content."""
         user_did = "did:arc:user:bob"
         agent_did = "did:arc:agent:coder"
@@ -128,9 +122,7 @@ class TestWriteAgentAnnotation:
 
         annotation_path = store.agent_annotation_path(user_did, agent_did)
         # The path must include the "agents" directory component
-        assert "agents" in annotation_path.parts, (
-            f"Expected 'agents' in path {annotation_path}"
-        )
+        assert "agents" in annotation_path.parts, f"Expected 'agents' in path {annotation_path}"
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +131,7 @@ class TestWriteAgentAnnotation:
 
 
 class TestReadBaseOnly:
-    def test_read_without_agent_did_returns_base_profile(
-        self, store: ProfileStore
-    ) -> None:
+    def test_read_without_agent_did_returns_base_profile(self, store: ProfileStore) -> None:
         """read_user_profile(user_did) with no agent_did returns base profile text."""
         user_did = "did:arc:user:diana"
         _write_base_profile(store, user_did)
@@ -150,9 +140,7 @@ class TestReadBaseOnly:
 
         assert user_did in text or "diana" in text.lower() or len(text) > 0
 
-    def test_read_without_agent_did_excludes_annotation_content(
-        self, store: ProfileStore
-    ) -> None:
+    def test_read_without_agent_did_excludes_annotation_content(self, store: ProfileStore) -> None:
         """When agent_did is None, annotation content must not appear in result."""
         user_did = "did:arc:user:diana"
         agent_did = "did:arc:agent:x"
@@ -162,13 +150,9 @@ class TestReadBaseOnly:
         store.write_agent_annotation(user_did, agent_did, "Notes", annotation_marker)
 
         text = store.read_user_profile(user_did)
-        assert annotation_marker not in text, (
-            "Base-only read must not include annotation content"
-        )
+        assert annotation_marker not in text, "Base-only read must not include annotation content"
 
-    def test_read_without_agent_did_raises_for_missing_profile(
-        self, store: ProfileStore
-    ) -> None:
+    def test_read_without_agent_did_raises_for_missing_profile(self, store: ProfileStore) -> None:
         """read_user_profile raises ProfileNotFound when no base profile exists."""
         with pytest.raises(ProfileNotFound):
             store.read_user_profile("did:arc:user:ghost")
@@ -180,9 +164,7 @@ class TestReadBaseOnly:
 
 
 class TestReadWithAnnotation:
-    def test_read_with_agent_did_includes_annotation(
-        self, store: ProfileStore
-    ) -> None:
+    def test_read_with_agent_did_includes_annotation(self, store: ProfileStore) -> None:
         """read_user_profile(user_did, agent_did) merges base + annotation."""
         user_did = "did:arc:user:eve"
         agent_did = "did:arc:agent:planner"
@@ -193,13 +175,9 @@ class TestReadWithAnnotation:
 
         merged = store.read_user_profile(user_did, agent_did=agent_did)
 
-        assert annotation_marker in merged, (
-            "Merged result must include annotation content"
-        )
+        assert annotation_marker in merged, "Merged result must include annotation content"
 
-    def test_read_with_agent_did_includes_base_profile(
-        self, store: ProfileStore
-    ) -> None:
+    def test_read_with_agent_did_includes_base_profile(self, store: ProfileStore) -> None:
         """The merged result must still contain base profile content."""
         user_did = "did:arc:user:eve"
         agent_did = "did:arc:agent:planner"
@@ -212,9 +190,7 @@ class TestReadWithAnnotation:
         # Base profile contains the user_did in frontmatter
         assert user_did in merged, "Merged result must contain base profile content"
 
-    def test_read_with_nonexistent_annotation_returns_base_only(
-        self, store: ProfileStore
-    ) -> None:
+    def test_read_with_nonexistent_annotation_returns_base_only(self, store: ProfileStore) -> None:
         """When the annotation file doesn't exist, base profile is returned unchanged."""
         user_did = "did:arc:user:frank"
         _write_base_profile(store, user_did)
@@ -226,9 +202,7 @@ class TestReadWithAnnotation:
             "Missing annotation file should return base profile identical to no-agent read"
         )
 
-    def test_annotation_content_appended_after_base(
-        self, store: ProfileStore
-    ) -> None:
+    def test_annotation_content_appended_after_base(self, store: ProfileStore) -> None:
         """Annotation content appears after base profile content in merged output."""
         user_did = "did:arc:user:grace"
         agent_did = "did:arc:agent:writer"
@@ -255,9 +229,7 @@ class TestReadWithAnnotation:
 
 
 class TestTombstoneSweeopsAgentsDir:
-    def test_tombstone_deletes_agents_subdir(
-        self, store: ProfileStore, workspace: Path
-    ) -> None:
+    def test_tombstone_deletes_agents_subdir(self, store: ProfileStore, workspace: Path) -> None:
         """apply_tombstone deletes the agents/ annotation subdirectory."""
         user_did = "did:arc:user:harry"
         agent_did = "did:arc:agent:assistant"
@@ -287,9 +259,7 @@ class TestTombstoneSweeopsAgentsDir:
         apply_tombstone(user_did, workspace=workspace)
 
         assert not store.profile_path(user_did).is_file(), "Base profile must be deleted"
-        assert not store._agent_annotations_dir(user_did).is_dir(), (
-            "agents/ dir must be deleted"
-        )
+        assert not store._agent_annotations_dir(user_did).is_dir(), "agents/ dir must be deleted"
 
     def test_tombstone_without_agents_dir_does_not_crash(
         self, store: ProfileStore, workspace: Path
@@ -309,9 +279,7 @@ class TestTombstoneSweeopsAgentsDir:
 
 
 class TestIsolatedAgentAnnotations:
-    def test_two_agents_have_separate_annotation_files(
-        self, store: ProfileStore
-    ) -> None:
+    def test_two_agents_have_separate_annotation_files(self, store: ProfileStore) -> None:
         """Each agent's annotation is stored in a separate file."""
         user_did = "did:arc:user:kate"
         agent_a = "did:arc:agent:alpha"
@@ -375,9 +343,7 @@ class TestIsolatedAgentAnnotations:
         assert content_b in merged_b
         assert content_a not in merged_b
 
-    def test_overwrite_annotation_replaces_content(
-        self, store: ProfileStore
-    ) -> None:
+    def test_overwrite_annotation_replaces_content(self, store: ProfileStore) -> None:
         """Writing a new annotation for the same agent replaces the old one."""
         user_did = "did:arc:user:mia"
         agent_did = "did:arc:agent:assistant"

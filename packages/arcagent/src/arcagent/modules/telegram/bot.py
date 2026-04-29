@@ -41,8 +41,7 @@ def _user_facing_error(exc: Exception) -> str:
 
     if isinstance(exc, ArcLLMAPIError) and exc.status_code == 429:
         return (
-            "I'm currently rate limited by the LLM provider. "
-            "Please try again in a minute or two."
+            "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
         )
     if isinstance(exc, ArcLLMAPIError) and exc.status_code in {500, 502, 503}:
         return "The LLM provider is temporarily unavailable. Please try again shortly."
@@ -240,7 +239,7 @@ class TelegramBot:
                         init_err,
                     )
                     raise
-                delay = 2 ** attempt
+                delay = 2**attempt
                 _logger.warning(
                     "Telegram init attempt %d/%d failed (%s), retrying in %ds",
                     attempt,
@@ -335,9 +334,7 @@ class TelegramBot:
         self._current_session_id = str(uuid.uuid4())
         self._save_state()
 
-        await update.message.reply_text(
-            f"Connected. Session: {self._current_session_id[:8]}..."
-        )
+        await update.message.reply_text(f"Connected. Session: {self._current_session_id[:8]}...")
         self._emit_event(
             "telegram:message_received",
             {

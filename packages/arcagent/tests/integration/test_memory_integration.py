@@ -471,14 +471,14 @@ class TestAgentWithMemoryModule:
         agent = ArcAgent(config=config)
         await agent.startup()
 
-        # Memory module should be registered
+        # Memory module hooks should be subscribed to the bus via the
+        # SPEC-021 capability bridge (no Module-protocol registration).
         assert agent._bus is not None
-        assert len(agent._bus._modules) >= 1
-        assert any(m.name == "memory" for m in agent._bus._modules)
-
-        # Handlers should be registered
         assert agent._bus.handler_count("agent:pre_tool") >= 1
         assert agent._bus.handler_count("agent:assemble_prompt") >= 1
+
+        # The memory_search tool should appear in the registry.
+        assert "memory_search" in agent._tool_registry.tools
 
         await agent.shutdown()
 

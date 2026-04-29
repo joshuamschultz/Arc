@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from arcagent.modules.skill_improver.nudge.dedup import (
     compute_tool_sequence_hash,
     is_fingerprint_match,
@@ -79,11 +77,14 @@ class TestIsSemanticallySimilar:
 
     def test_completely_different_tools(self) -> None:
         """No overlap = cosine similarity 0."""
-        assert is_semantically_similar(
-            ["read", "bash"],
-            [["write", "delete"]],
-            threshold=0.85,
-        ) is False
+        assert (
+            is_semantically_similar(
+                ["read", "bash"],
+                [["write", "delete"]],
+                threshold=0.85,
+            )
+            is False
+        )
 
     def test_empty_candidate(self) -> None:
         assert is_semantically_similar([], [["read"]], threshold=0.85) is False
@@ -94,11 +95,14 @@ class TestIsSemanticallySimilar:
     def test_above_threshold_threshold(self) -> None:
         """Tools that share most members exceed 0.85 threshold."""
         # ["a","a","b"] vs ["a","b"] — high overlap
-        assert is_semantically_similar(
-            ["read", "read", "bash"],
-            [["read", "bash"]],
-            threshold=0.85,
-        ) is True
+        assert (
+            is_semantically_similar(
+                ["read", "read", "bash"],
+                [["read", "bash"]],
+                threshold=0.85,
+            )
+            is True
+        )
 
     def test_below_threshold_not_similar(self) -> None:
         """Very low overlap is below threshold."""

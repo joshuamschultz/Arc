@@ -109,6 +109,7 @@ def test_sigstore_importable_returns_false_when_absent() -> None:
     with patch.dict("sys.modules", {"sigstore": None}):
         # Removing the key forces actual import attempt
         import sys
+
         original = sys.modules.pop("sigstore", None)
         try:
             with patch("builtins.__import__", side_effect=ImportError("no sigstore")):
@@ -172,21 +173,13 @@ def test_detect_bundle_kind_dsse_via_tlog_body() -> None:
     """Detects dsse when tlog entry body has kind=dsse."""
     body = json.dumps({"kind": "dsse"})
     body_b64 = base64.b64encode(body.encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "tlogEntries": [{"canonicalizedBody": body_b64}]
-        }
-    }
+    bundle_data = {"verificationMaterial": {"tlogEntries": [{"canonicalizedBody": body_b64}]}}
     assert _detect_bundle_kind(bundle_data) == "dsse"
 
 
 def test_detect_bundle_kind_dsse_via_envelope_field() -> None:
     """Detects dsse when dsseEnvelope is directly in verificationMaterial."""
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": "abc="}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": "abc="}}}
     assert _detect_bundle_kind(bundle_data) == "dsse"
 
 
@@ -200,20 +193,14 @@ def test_detect_bundle_kind_hashedrekord_from_tlog() -> None:
     """Returns hashedrekord when tlog body has non-dsse kind."""
     body = json.dumps({"kind": "hashedrekord"})
     body_b64 = base64.b64encode(body.encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "tlogEntries": [{"canonicalizedBody": body_b64}]
-        }
-    }
+    bundle_data = {"verificationMaterial": {"tlogEntries": [{"canonicalizedBody": body_b64}]}}
     assert _detect_bundle_kind(bundle_data) == "hashedrekord"
 
 
 def test_detect_bundle_kind_handles_malformed_tlog_gracefully() -> None:
     """Malformed tlog body falls through to hashedrekord without raising."""
     bundle_data = {
-        "verificationMaterial": {
-            "tlogEntries": [{"canonicalizedBody": "!!not-base64!!"}]
-        }
+        "verificationMaterial": {"tlogEntries": [{"canonicalizedBody": "!!not-base64!!"}]}
     }
     # Should not raise; defaults to hashedrekord
     assert _detect_bundle_kind(bundle_data) == "hashedrekord"
@@ -233,6 +220,7 @@ def test_assert_slsa_predicate_non_federal_warns_on_unknown_type(
     signers may use non-SLSA attestation formats. However, a warning is emitted.
     """
     import logging
+
     with caplog.at_level(logging.WARNING, logger="arcskill.hub.verify"):
         _assert_slsa_predicate_type(
             "application/random",
@@ -304,9 +292,7 @@ def test_assert_slsa_predicate_federal_invalid_json_raises() -> None:
 def test_extract_rekor_uuid_from_bundle_happy_path() -> None:
     """Extracts log_index from live bundle object via internal API."""
     mock_bundle = SimpleNamespace(
-        log_entry=SimpleNamespace(
-            _inner=SimpleNamespace(log_index=42069)
-        )
+        log_entry=SimpleNamespace(_inner=SimpleNamespace(log_index=42069))
     )
     result = _extract_rekor_uuid_from_bundle(mock_bundle)
     assert result == "42069"
@@ -315,9 +301,7 @@ def test_extract_rekor_uuid_from_bundle_happy_path() -> None:
 def test_extract_rekor_uuid_from_bundle_none_log_index() -> None:
     """Returns empty string when log_index is None."""
     mock_bundle = SimpleNamespace(
-        log_entry=SimpleNamespace(
-            _inner=SimpleNamespace(log_index=None)
-        )
+        log_entry=SimpleNamespace(_inner=SimpleNamespace(log_index=None))
     )
     result = _extract_rekor_uuid_from_bundle(mock_bundle)
     assert result == ""
@@ -458,9 +442,9 @@ def test_sigstore_verify_audited_any_issuer_when_no_identity(
     def _spy_verify_artifact(input_: bytes, bundle: object, policy: object) -> None:
         captured_policies.append(policy)
 
-    mods["sigstore.verify"].Verifier.production.return_value.verify_artifact.side_effect = (
-        _spy_verify_artifact
-    )
+    mods[
+        "sigstore.verify"
+    ].Verifier.production.return_value.verify_artifact.side_effect = _spy_verify_artifact
 
     with caplog.at_level(logging.WARNING, logger="arcskill.hub.verify"):
         with patch.dict("sys.modules", mods):
@@ -645,11 +629,7 @@ def test_sha256_path_large_file() -> None:
 
 def test_extract_slsa_level_empty_payload_b64_returns_zero() -> None:
     """dsseEnvelope present but payload is empty string → 0."""
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": ""}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": ""}}}
     assert _extract_slsa_level(bundle_data) == 0
 
 
@@ -658,17 +638,11 @@ def test_extract_slsa_level_non_standard_slsa_in_build_type_returns_one() -> Non
     attestation = {
         "predicate": {
             "buildType": "https://custom.example.com/slsa-custom-builder/v1",
-            "runDetails": {
-                "builder": {"id": "https://custom.example.com/builder"}
-            }
+            "runDetails": {"builder": {"id": "https://custom.example.com/builder"}},
         }
     }
     payload_b64 = base64.b64encode(json.dumps(attestation).encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": payload_b64}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": payload_b64}}}
     assert _extract_slsa_level(bundle_data) == 1
 
 
@@ -680,11 +654,7 @@ def test_extract_slsa_level_non_slsa_build_type_returns_zero() -> None:
         }
     }
     payload_b64 = base64.b64encode(json.dumps(attestation).encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": payload_b64}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": payload_b64}}}
     assert _extract_slsa_level(bundle_data) == 0
 
 
@@ -693,19 +663,11 @@ def test_extract_slsa_level_explicit_level2_builder_id() -> None:
     attestation = {
         "predicate": {
             "buildType": "https://slsa.dev/provenance/v1",
-            "runDetails": {
-                "builder": {
-                    "id": "https://example.com/builders/buildLevel@v1=2"
-                }
-            }
+            "runDetails": {"builder": {"id": "https://example.com/builders/buildLevel@v1=2"}},
         }
     }
     payload_b64 = base64.b64encode(json.dumps(attestation).encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": payload_b64}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": payload_b64}}}
     assert _extract_slsa_level(bundle_data) == 2
 
 
@@ -714,19 +676,11 @@ def test_extract_slsa_level_slsa_dev_without_builder_annotation_returns_one() ->
     attestation = {
         "predicate": {
             "buildType": "https://slsa.dev/provenance/v1",
-            "runDetails": {
-                "builder": {
-                    "id": "https://example.com/generic-builder"
-                }
-            }
+            "runDetails": {"builder": {"id": "https://example.com/generic-builder"}},
         }
     }
     payload_b64 = base64.b64encode(json.dumps(attestation).encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": payload_b64}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": payload_b64}}}
     assert _extract_slsa_level(bundle_data) == 1
 
 
@@ -766,9 +720,7 @@ def test_sigstore_verify_verification_error_raises_signature_invalid() -> None:
 def test_extract_rekor_uuid_with_tlog_entries() -> None:
     """_extract_rekor_uuid returns logIndex when tlogEntries is present."""
     bundle_data: dict[str, object] = {
-        "verificationMaterial": {
-            "tlogEntries": [{"logIndex": "77777"}]
-        }
+        "verificationMaterial": {"tlogEntries": [{"logIndex": "77777"}]}
     }
     result = _extract_rekor_uuid(bundle_data)
     assert result == "77777"
@@ -776,11 +728,7 @@ def test_extract_rekor_uuid_with_tlog_entries() -> None:
 
 def test_extract_rekor_uuid_empty_tlog_entries() -> None:
     """_extract_rekor_uuid returns empty string when tlogEntries is empty list."""
-    bundle_data: dict[str, object] = {
-        "verificationMaterial": {
-            "tlogEntries": []
-        }
-    }
+    bundle_data: dict[str, object] = {"verificationMaterial": {"tlogEntries": []}}
     result = _extract_rekor_uuid(bundle_data)
     assert result == ""
 

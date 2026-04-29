@@ -76,9 +76,7 @@ class TestStateTransitions:
         from arcagent.modules.proactive.circuit_breaker import CircuitBreaker
 
         clock = _FakeClock()
-        cb = CircuitBreaker(
-            failure_threshold=2, base_wait_seconds=1, monotonic=clock
-        )
+        cb = CircuitBreaker(failure_threshold=2, base_wait_seconds=1, monotonic=clock)
         cb.record_failure()
         cb.record_failure()
         clock.advance(2)

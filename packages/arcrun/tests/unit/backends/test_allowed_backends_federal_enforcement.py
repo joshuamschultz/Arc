@@ -51,7 +51,11 @@ def _write_issuers(trust_dir: Path, did: str, pubkey: bytes) -> None:
 
 
 def _emit_manifest(
-    path: Path, *, meta: Mapping[str, Any], backends: Sequence[Mapping[str, Any]], signature_b64: str
+    path: Path,
+    *,
+    meta: Mapping[str, Any],
+    backends: Sequence[Mapping[str, Any]],
+    signature_b64: str,
 ) -> None:
     lines = [
         "[meta]",
@@ -103,9 +107,7 @@ def issuer_did() -> str:
 
 
 @pytest.fixture
-def trusted_trust_dir(
-    trust_dir: Path, issuer_did: str, issuer_key: SigningKey
-) -> Path:
+def trusted_trust_dir(trust_dir: Path, issuer_did: str, issuer_key: SigningKey) -> Path:
     _write_issuers(trust_dir, issuer_did, bytes(issuer_key.verify_key))
     return trust_dir
 
@@ -126,9 +128,7 @@ def _build_signed_manifest(
     backends: Sequence[Mapping[str, Any]],
 ) -> Path:
     meta = {"issued_at": "2026-04-18T00:00:00Z", "issuer_did": issuer_did}
-    sig_b64 = base64.b64encode(
-        issuer_key.sign(_canonical(meta, backends)).signature
-    ).decode()
+    sig_b64 = base64.b64encode(issuer_key.sign(_canonical(meta, backends)).signature).decode()
     manifest = tmp_path / "allowed_backends.toml"
     _emit_manifest(manifest, meta=meta, backends=backends, signature_b64=sig_b64)
     return manifest
@@ -160,9 +160,7 @@ def test_backend_in_manifest_with_matching_hash_loads(
             "content_hash": local_content_hash,
         }
     ]
-    manifest = _build_signed_manifest(
-        tmp_path, issuer_did, issuer_key, backends
-    )
+    manifest = _build_signed_manifest(tmp_path, issuer_did, issuer_key, backends)
 
     b = load_backend(
         "arcrun.backends.local:LocalBackend",
@@ -188,9 +186,7 @@ def test_backend_not_in_manifest_refused(
             "content_hash": local_content_hash,
         }
     ]
-    manifest = _build_signed_manifest(
-        tmp_path, issuer_did, issuer_key, backends
-    )
+    manifest = _build_signed_manifest(tmp_path, issuer_did, issuer_key, backends)
 
     # Request a different dotted path that is NOT in the manifest
     with pytest.raises(BackendSignatureError, match="not in the signed"):
@@ -222,9 +218,7 @@ def test_backend_content_hash_mismatch_refused(
             "content_hash": "sha256:" + "0" * 64,  # Deliberately wrong
         }
     ]
-    manifest = _build_signed_manifest(
-        tmp_path, issuer_did, issuer_key, backends
-    )
+    manifest = _build_signed_manifest(tmp_path, issuer_did, issuer_key, backends)
 
     with pytest.raises(BackendSignatureError, match="content_hash mismatch"):
         load_backend(
@@ -255,9 +249,7 @@ def test_manifest_with_tampered_backends_table_refused(
             "content_hash": local_content_hash,
         }
     ]
-    manifest = _build_signed_manifest(
-        tmp_path, issuer_did, issuer_key, backends
-    )
+    manifest = _build_signed_manifest(tmp_path, issuer_did, issuer_key, backends)
 
     # Tamper: append a new [[backends]] block AFTER the real signature
     tampered_text = manifest.read_text() + (
@@ -291,24 +283,20 @@ def test_unsigned_entry_in_manifest_refused(
     loader can prove the wheel is the one the issuer reviewed."""
     meta = {"issued_at": "2026-04-18T00:00:00Z", "issuer_did": issuer_did}
     # Backend entry missing content_hash
-    backends = [
-        {"name": "no_hash", "module": "arcrun.backends.local:LocalBackend"}
-    ]
+    backends = [{"name": "no_hash", "module": "arcrun.backends.local:LocalBackend"}]
     # Build canonical payload WITHOUT content_hash so the signature is valid
-    sig_b64 = base64.b64encode(
-        issuer_key.sign(_canonical(meta, backends)).signature
-    ).decode()
+    sig_b64 = base64.b64encode(issuer_key.sign(_canonical(meta, backends)).signature).decode()
 
     # Write manually — _emit_manifest assumes content_hash is present
     manifest = tmp_path / "no_hash.toml"
     manifest.write_text(
-        f'[meta]\n'
+        f"[meta]\n"
         f'issued_at = "{meta["issued_at"]}"\n'
         f'issuer_did = "{meta["issuer_did"]}"\n\n'
-        f'[[backends]]\n'
+        f"[[backends]]\n"
         f'name = "no_hash"\n'
         f'module = "arcrun.backends.local:LocalBackend"\n\n'
-        f'[signature]\n'
+        f"[signature]\n"
         f'algorithm = "ed25519"\n'
         f'signature = "{sig_b64}"\n',
         encoding="utf-8",
@@ -344,9 +332,7 @@ def test_short_alias_at_federal_still_refused_with_manifest(
             "content_hash": local_content_hash,
         }
     ]
-    manifest = _build_signed_manifest(
-        tmp_path, issuer_did, issuer_key, backends
-    )
+    manifest = _build_signed_manifest(tmp_path, issuer_did, issuer_key, backends)
 
     with pytest.raises(FederalBackendPolicyError):
         load_backend(

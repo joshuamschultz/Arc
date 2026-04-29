@@ -73,7 +73,7 @@ async def _run_cancel_after(runner: GatewayRunner, *, delay: float = 0.05) -> No
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup, swallow is intentional
         pass  # expected
 
 
@@ -88,6 +88,7 @@ async def _run_via_shutdown_event(runner: GatewayRunner, *, delay: float = 0.05)
     reconnect_watcher task cancellation.  We therefore use a much shorter
     RECONNECT_POLL_INTERVAL via monkeypatching.
     """
+
     async def _trigger() -> None:
         await asyncio.sleep(delay)
         runner._shutdown_event.set()
@@ -291,7 +292,7 @@ async def test_run_writes_pid_file_on_startup(tmp_path: Path) -> None:
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup, swallow is intentional
         pass
 
 
@@ -305,7 +306,7 @@ async def test_run_with_no_adapters_starts_cleanly(tmp_path: Path) -> None:
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup, swallow is intentional
         pass
     # The runtime dir should have been created.
     assert tmp_path.exists()

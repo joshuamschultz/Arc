@@ -29,7 +29,6 @@ from arcagent.modules.user_profile.models import ACL, DurableFact, UserProfile
 from arcagent.modules.user_profile.store import ProfileStore
 from arcagent.modules.user_profile.tombstone import apply_tombstone
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -206,9 +205,7 @@ class TestGDPRTombstoneE2E:
         assert "timestamp" in record
         assert "sessions_redacted" in record
 
-    def test_e2e_session_field_redaction(
-        self, populated_workspace: Path, tel: MagicMock
-    ) -> None:
+    def test_e2e_session_field_redaction(self, populated_workspace: Path, tel: MagicMock) -> None:
         """Step 3: Session JSONLs redacted field-wise; audit structure preserved."""
         sessions_dir = populated_workspace / "sessions"
         apply_tombstone(
@@ -225,7 +222,7 @@ class TestGDPRTombstoneE2E:
         assert line0["user_did"] == "[redacted]"
         assert line0["content"] == "[redacted]"  # contained USER_DID
         assert "role" in line0  # key preserved
-        assert "ts" in line0   # key preserved
+        assert "ts" in line0  # key preserved
 
         # Line 1: assistant message (no user_did reference)
         line1 = json.loads(sess1_lines[1])
@@ -234,10 +231,10 @@ class TestGDPRTombstoneE2E:
 
         # Line 2: tool_call — structure preserved, user_did args redacted
         line2 = json.loads(sess1_lines[2])
-        assert line2["type"] == "tool_call"       # structure key preserved
-        assert line2["tool"] == "memory_write"    # structure key preserved
+        assert line2["type"] == "tool_call"  # structure key preserved
+        assert line2["tool"] == "memory_write"  # structure key preserved
         assert line2["args"]["user_did"] == "[redacted]"
-        assert line2["result"] == "ok"            # non-DID value unchanged
+        assert line2["result"] == "ok"  # non-DID value unchanged
 
         # sess-002.jsonl
         sess2_lines = (sessions_dir / "sess-002.jsonl").read_text().splitlines()
@@ -285,9 +282,7 @@ class TestGDPRTombstoneE2E:
         # Must not raise
         _mark_derived_regeneratable(USER_DID, populated_workspace)
 
-    def test_e2e_tombstone_count_reported(
-        self, populated_workspace: Path, tel: MagicMock
-    ) -> None:
+    def test_e2e_tombstone_count_reported(self, populated_workspace: Path, tel: MagicMock) -> None:
         """Tombstone record includes the number of sessions redacted."""
         apply_tombstone(
             USER_DID,
@@ -297,9 +292,7 @@ class TestGDPRTombstoneE2E:
         )
 
         tombstone_dir = populated_workspace / "tombstone_events"
-        record = json.loads(
-            (tombstone_dir / f"{USER_DID_HASH}.json").read_text()
-        )
+        record = json.loads((tombstone_dir / f"{USER_DID_HASH}.json").read_text())
         # 2 sessions (sess-001 and sess-002) reference the user
         assert record["sessions_redacted"] == 2
 

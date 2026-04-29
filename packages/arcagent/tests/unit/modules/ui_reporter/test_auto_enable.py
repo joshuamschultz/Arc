@@ -24,7 +24,6 @@ from arcagent.modules.ui_reporter import (
     _should_auto_enable,
 )
 
-
 _LOOPBACK_URL = "ws://127.0.0.1:8420/api/agent/connect"
 
 
@@ -89,16 +88,12 @@ class TestOpenTokenFileSecure:
 
 class TestServerReachable:
     def test_rejects_non_loopback_host(self) -> None:
-        ok, reason = _server_reachable(
-            "ws://10.0.0.5:8420/api/agent/connect"
-        )
+        ok, reason = _server_reachable("ws://10.0.0.5:8420/api/agent/connect")
         assert ok is False
         assert reason == "url_not_loopback"
 
     def test_rejects_remote_dns_name(self) -> None:
-        ok, reason = _server_reachable(
-            "wss://attacker.example.com/api/agent/connect"
-        )
+        ok, reason = _server_reachable("wss://attacker.example.com/api/agent/connect")
         assert ok is False
         assert reason == "url_not_loopback"
 
@@ -118,9 +113,7 @@ class TestServerReachable:
             response = MagicMock()
             response.status_code = 200
             mock_client.head.return_value = response
-            ok, _ = _server_reachable(
-                "ws://localhost:8420/api/agent/connect"
-            )
+            ok, _ = _server_reachable("ws://localhost:8420/api/agent/connect")
         assert ok is True
 
     def test_connection_error(self) -> None:
@@ -159,26 +152,20 @@ class TestServerReachable:
 
 
 class TestShouldAutoEnableComposition:
-    def test_returns_three_tuple_with_token_on_success(
-        self, token_file: Path
-    ) -> None:
+    def test_returns_three_tuple_with_token_on_success(self, token_file: Path) -> None:
         with patch("httpx.Client") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             response = MagicMock()
             response.status_code = 200
             mock_client.head.return_value = response
-            enable, reason, token = _should_auto_enable(
-                token_file, _LOOPBACK_URL
-            )
+            enable, reason, token = _should_auto_enable(token_file, _LOOPBACK_URL)
         assert enable is True
         assert reason == "probe_ok"
         # Token MUST come from the same fd that validated perms (H-3).
         assert token == "secret-token"
 
     def test_file_failure_yields_no_token(self, tmp_path: Path) -> None:
-        enable, reason, token = _should_auto_enable(
-            tmp_path / "absent", _LOOPBACK_URL
-        )
+        enable, reason, token = _should_auto_enable(tmp_path / "absent", _LOOPBACK_URL)
         assert enable is False
         assert reason == "token_file_absent"
         assert token is None
@@ -187,16 +174,12 @@ class TestShouldAutoEnableComposition:
         with patch("httpx.Client") as mock_client_cls:
             mock_client = mock_client_cls.return_value.__enter__.return_value
             mock_client.head.side_effect = httpx.ConnectError("refused")
-            enable, reason, token = _should_auto_enable(
-                token_file, _LOOPBACK_URL
-            )
+            enable, reason, token = _should_auto_enable(token_file, _LOOPBACK_URL)
         assert enable is False
         assert reason.startswith("probe_failed_")
         assert token is None
 
-    def test_non_loopback_url_rejected_even_with_good_file(
-        self, token_file: Path
-    ) -> None:
+    def test_non_loopback_url_rejected_even_with_good_file(self, token_file: Path) -> None:
         # Review H-4: a poisoned config can't redirect autoconnect to an
         # attacker host. _should_auto_enable refuses non-loopback URLs
         # before any HTTP request is made.
@@ -242,9 +225,7 @@ class TestStartupBranching:
         ctx.config.agent = MagicMock()
         ctx.config.agent.name = "x"
 
-        with patch(
-            "arcagent.modules.ui_reporter._should_auto_enable"
-        ) as mock_probe:
+        with patch("arcagent.modules.ui_reporter._should_auto_enable") as mock_probe:
             await module.startup(ctx)
         mock_probe.assert_not_called()
         assert module._transport is None
@@ -275,9 +256,7 @@ class TestAgentAutoconnectAuditFields:
     where, by which OS user, on what evidence.
     """
 
-    async def test_all_four_fields_emitted_on_successful_probe(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_all_four_fields_emitted_on_successful_probe(self, tmp_path: Path) -> None:
         import os
 
         emitted: list[tuple[str, dict]] = []

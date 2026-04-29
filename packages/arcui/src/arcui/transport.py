@@ -17,15 +17,11 @@ from arcui.types import ControlMessage, ControlResponse, UIEvent
 class UITransport(Protocol):
     """Abstract transport for agent <-> UI communication."""
 
-    async def send_event(
-        self, agent_id: str, event: UIEvent | ControlResponse
-    ) -> None:
+    async def send_event(self, agent_id: str, event: UIEvent | ControlResponse) -> None:
         """Send a UIEvent or ControlResponse from agent to server."""
         ...
 
-    async def send_control(
-        self, agent_id: str, message: ControlMessage
-    ) -> None:
+    async def send_control(self, agent_id: str, message: ControlMessage) -> None:
         """Send a ControlMessage from server to agent."""
         ...
 
@@ -69,16 +65,12 @@ class InMemoryTransport:
         server = cls(outbox=b_to_a, inbox=a_to_b)
         return client, server
 
-    async def send_event(
-        self, agent_id: str, event: UIEvent | ControlResponse
-    ) -> None:
+    async def send_event(self, agent_id: str, event: UIEvent | ControlResponse) -> None:
         if self._closed:
             raise RuntimeError("Transport is closed")
         await self._outbox.put((agent_id, event))
 
-    async def send_control(
-        self, agent_id: str, message: ControlMessage
-    ) -> None:
+    async def send_control(self, agent_id: str, message: ControlMessage) -> None:
         if self._closed:
             raise RuntimeError("Transport is closed")
         await self._outbox.put((agent_id, message))

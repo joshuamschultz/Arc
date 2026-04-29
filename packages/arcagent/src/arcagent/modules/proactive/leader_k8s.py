@@ -74,10 +74,7 @@ class KubernetesLeaseElection:
         renew_seconds: int = _DEFAULT_RENEW_SECONDS,
     ) -> None:
         if lease_seconds <= renew_seconds:
-            msg = (
-                f"lease_seconds ({lease_seconds}) must exceed "
-                f"renew_seconds ({renew_seconds})"
-            )
+            msg = f"lease_seconds ({lease_seconds}) must exceed renew_seconds ({renew_seconds})"
             raise ValueError(msg)
         self._namespace = namespace
         self._lease_name = lease_name
@@ -183,9 +180,7 @@ class KubernetesLeaseElection:
             )
         except ApiException as err:
             if err.status == 404:
-                self._coord_v1.create_namespaced_lease(
-                    namespace=self._namespace, body=lease_body
-                )
+                self._coord_v1.create_namespaced_lease(namespace=self._namespace, body=lease_body)
                 return True
             return False
 

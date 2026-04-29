@@ -101,7 +101,6 @@ async def test_add_entry_visible() -> None:
     """add_entry mounts a label in the widget."""
     from textual.app import App, ComposeResult
 
-
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
             yield ActivityView(id="av")
@@ -120,7 +119,6 @@ async def test_clear_resets_state() -> None:
     """clear() removes all entries and labels."""
     from textual.app import App, ComposeResult
 
-
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
             yield ActivityView(id="av")
@@ -138,7 +136,6 @@ async def test_clear_resets_state() -> None:
 async def test_max_rows_eviction() -> None:
     """Entries beyond MAX_ACTIVITY_ROWS are evicted."""
     from textual.app import App, ComposeResult
-
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:

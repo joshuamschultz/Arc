@@ -20,9 +20,7 @@ from arcrun.backends.local import LocalBackend, SeparatedResult
 async def test_separated_stdout_and_stderr_are_distinct() -> None:
     """Stdout and stderr content arrive in separate fields, not mixed."""
     backend = LocalBackend()
-    result = await backend.run_separated(
-        "bash -c 'echo OUT_MARKER; echo ERR_MARKER >&2'"
-    )
+    result = await backend.run_separated("bash -c 'echo OUT_MARKER; echo ERR_MARKER >&2'")
     assert isinstance(result, SeparatedResult)
     assert b"OUT_MARKER" in result.stdout
     assert b"ERR_MARKER" in result.stderr
@@ -51,9 +49,7 @@ async def test_separated_stderr_captured_without_stdout_contamination() -> None:
     """Mirrors test_stderr_capture: stderr written by a script appears in stderr only."""
     backend = LocalBackend()
     # Use python to write to stderr
-    result = await backend.run_separated(
-        "python3 -c \"import sys; sys.stderr.write('oops\\n')\""
-    )
+    result = await backend.run_separated("python3 -c \"import sys; sys.stderr.write('oops\\n')\"")
     assert b"oops" in result.stderr
     # stdout must be empty or whitespace only
     assert result.stdout.strip() == b""
@@ -63,9 +59,7 @@ async def test_separated_stderr_captured_without_stdout_contamination() -> None:
 async def test_separated_stdout_not_in_stderr() -> None:
     """Stdout written by script appears in stdout only."""
     backend = LocalBackend()
-    result = await backend.run_separated(
-        "python3 -c \"print('hello_stdout')\""
-    )
+    result = await backend.run_separated("python3 -c \"print('hello_stdout')\"")
     assert b"hello_stdout" in result.stdout
     assert b"hello_stdout" not in result.stderr
 
@@ -74,9 +68,7 @@ async def test_separated_stdout_not_in_stderr() -> None:
 async def test_separated_exit_code_from_python_raise() -> None:
     """Python script that raises should produce nonzero exit — matches test_exit_code_on_failure."""
     backend = LocalBackend()
-    result = await backend.run_separated(
-        "python3 -c \"raise ValueError('bad')\""
-    )
+    result = await backend.run_separated("python3 -c \"raise ValueError('bad')\"")
     assert result.exit_code != 0
     # Traceback lands on stderr
     assert b"ValueError" in result.stderr
@@ -95,9 +87,7 @@ async def test_separated_timeout_returns_minus_one_exit_code() -> None:
 async def test_separated_stdout_cap_respected() -> None:
     """Output exceeding max_stdout_bytes is truncated."""
     backend = LocalBackend(max_stdout_bytes=20)
-    result = await backend.run_separated(
-        "python3 -c \"print('x' * 1000)\""
-    )
+    result = await backend.run_separated("python3 -c \"print('x' * 1000)\"")
     assert len(result.stdout) <= 20
 
 

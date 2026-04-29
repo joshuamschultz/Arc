@@ -433,10 +433,13 @@ async def test_run_firecracker_raises_when_kernel_missing() -> None:
     skill_dir = Path(tempfile.mkdtemp())
 
     # Ensure neither path exists by pointing to non-existent files
-    with patch.dict("os.environ", {
-        "ARC_FC_KERNEL": "/nonexistent/vmlinux.bin",
-        "ARC_FC_ROOTFS": "/nonexistent/rootfs.ext4",
-    }):
+    with patch.dict(
+        "os.environ",
+        {
+            "ARC_FC_KERNEL": "/nonexistent/vmlinux.bin",
+            "ARC_FC_ROOTFS": "/nonexistent/rootfs.ext4",
+        },
+    ):
         with pytest.raises(SandboxRequired, match="kernel"):
             await _run_firecracker("pytest", skill_dir)
 

@@ -7,8 +7,7 @@ Air-gap violation must be emitted at federal tier.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,9 +32,9 @@ class TestVoiceProviderAuditAllTiers:
             telemetry=telemetry,
         )
         calls = [c[0][0] for c in telemetry.audit_event.call_args_list]
-        assert any("voice.provider" in c or "cloud" in c or "provider_selected" in c for c in calls), (
-            f"Expected a voice provider audit event at {tier} tier, got: {calls}"
-        )
+        assert any(
+            "voice.provider" in c or "cloud" in c or "provider_selected" in c for c in calls
+        ), f"Expected a voice provider audit event at {tier} tier, got: {calls}"
 
     def test_provider_selected_audit_emitted_at_personal(self) -> None:
         """voice.provider_selected must be emitted on construction at personal tier."""
@@ -77,4 +76,8 @@ class TestVoiceProviderAuditAllTiers:
         all_details = [c[0][1] for c in telemetry.audit_event.call_args_list]
         # At least one event should reference the providers
         all_details_str = str(all_details)
-        assert "whisper_api" in all_details_str or "piper" in all_details_str or "enterprise" in all_details_str
+        assert (
+            "whisper_api" in all_details_str
+            or "piper" in all_details_str
+            or "enterprise" in all_details_str
+        )

@@ -15,21 +15,19 @@ import time
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 import pytest
-from ._mock_llm import LLMResponse, MockModel
-
-from arctrust import ChildIdentity, derive_child_identity
-from arcagent.orchestration.spawn import (
-    RootTokenBudget,
-    SpawnResult,
-    SpawnSpec,
-    TokenUsage,
-    spawn,
-    spawn_many,
-)
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.types import Tool
+from arctrust import ChildIdentity, derive_child_identity
+
+from arcagent.orchestration.spawn import (
+    RootTokenBudget,
+    SpawnSpec,
+    spawn_many,
+)
+
+from ._mock_llm import LLMResponse, MockModel
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -175,8 +173,6 @@ class TestSpawnManyParallel:
             ]
         )
 
-        identity = _make_child_identity(0)
-
         # Third child requests more than remaining budget (200 total / 100 each = 2 can fit)
         specs = [
             SpawnSpec(
@@ -233,10 +229,7 @@ class TestSpawnManyParallel:
     async def test_results_ordered_same_as_specs(self) -> None:
         """Result list must be in the same order as the input specs list."""
         model = MockModel(
-            [
-                LLMResponse(content=f"Result-{i}", stop_reason="end_turn")
-                for i in range(3)
-            ]
+            [LLMResponse(content=f"Result-{i}", stop_reason="end_turn") for i in range(3)]
         )
         parent = _make_parent_state(model=model)
 

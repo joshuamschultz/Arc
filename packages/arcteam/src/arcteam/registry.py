@@ -17,9 +17,7 @@ def _entity_key(entity_id: str) -> str:
     return entity_id.replace("://", "_")
 
 
-async def list_entities_readonly(
-    backend: StorageBackend, role: str | None = None
-) -> list[Entity]:
+async def list_entities_readonly(backend: StorageBackend, role: str | None = None) -> list[Entity]:
     """Read-only enumeration of every Entity, no audit logger required.
 
     Wave 2 review: arccli was rebuilding `AuditLogger` + `FileBackend`

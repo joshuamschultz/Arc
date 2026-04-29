@@ -183,8 +183,7 @@ def _provider(args: argparse.Namespace) -> None:
         cfg = load_provider_config(name)
     except ArcLLMConfigError:
         sys.stderr.write(
-            f"Error: Provider '{name}' not found. "
-            "Run `arc llm providers` to see available.\n"
+            f"Error: Provider '{name}' not found. Run `arc llm providers` to see available.\n"
         )
         sys.exit(1)
 
@@ -465,7 +464,9 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="Force-disable SecurityModule for this call.",
     )
-    p.add_argument("--json", dest="as_json", action="store_true", help="Output full response JSON.")
+    p.add_argument(
+        "--json", dest="as_json", action="store_true", help="Output full response JSON."
+    )
 
     # validate
     p = subs.add_parser("validate", help="Validate configs and API key availability.")

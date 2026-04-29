@@ -6,7 +6,6 @@ TDD — these tests are written before implementation (RED phase).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -68,9 +67,7 @@ class TestArcAgentRequiresDID:
         agent = ArcAgent(config=config_no_did)
         assert agent is not None
 
-    async def test_startup_with_invalid_did_raises_identity_error(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_startup_with_invalid_did_raises_identity_error(self, tmp_path: Path) -> None:
         """If identity config has a malformed DID, startup should raise IdentityError
         (or a subclass) — not a bare exception.
         """

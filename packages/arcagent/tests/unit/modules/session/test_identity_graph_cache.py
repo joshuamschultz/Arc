@@ -15,12 +15,10 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-from arcagent.modules.session.identity_graph import IdentityGraph, _LRU_MAX_SIZE
-
+from arcagent.modules.session.identity_graph import _LRU_MAX_SIZE, IdentityGraph
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -95,7 +93,7 @@ def test_cache_miss_populates_cache(db_path: Path) -> None:
     g2 = IdentityGraph(db_path=db_path)
     assert ("telegram", "T999") not in g2._cache
 
-    result = g2.lookup_user_did("telegram", "T999")
+    g2.lookup_user_did("telegram", "T999")
     # Cache must now be populated.
     assert ("telegram", "T999") in g2._cache
     assert g2._cache[("telegram", "T999")] == did
@@ -180,9 +178,7 @@ def test_concurrent_reads(db_path: Path) -> None:
     graph.close()
 
     assert not errors, f"Thread errors: {errors}"
-    assert all(r == expected_did for r in results), (
-        "Not all threads returned the expected DID"
-    )
+    assert all(r == expected_did for r in results), "Not all threads returned the expected DID"
 
 
 # ---------------------------------------------------------------------------

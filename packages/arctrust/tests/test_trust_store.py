@@ -54,9 +54,7 @@ def _write_operators(trust_dir: Path, did: str, pubkey: bytes, *, mode: int = 0o
     file = trust_dir / "operators.toml"
     pub_b64 = base64.b64encode(pubkey).decode("ascii")
     file.write_text(
-        f'[operators."{did}"]\n'
-        f'public_key = "{pub_b64}"\n'
-        f'added_at = "2026-04-18T00:00:00Z"\n',
+        f'[operators."{did}"]\npublic_key = "{pub_b64}"\nadded_at = "2026-04-18T00:00:00Z"\n',
         encoding="utf-8",
     )
     os.chmod(file, mode)
@@ -67,9 +65,7 @@ def _write_issuers(trust_dir: Path, did: str, pubkey: bytes, *, mode: int = 0o60
     file = trust_dir / "issuers.toml"
     pub_b64 = base64.b64encode(pubkey).decode("ascii")
     file.write_text(
-        f'[issuers."{did}"]\n'
-        f'public_key = "{pub_b64}"\n'
-        f'added_at = "2026-04-18T00:00:00Z"\n',
+        f'[issuers."{did}"]\npublic_key = "{pub_b64}"\nadded_at = "2026-04-18T00:00:00Z"\n',
         encoding="utf-8",
     )
     os.chmod(file, mode)
@@ -177,8 +173,7 @@ class TestErrorPaths:
     def test_malformed_base64(self, trust_dir: Path) -> None:
         file = trust_dir / "operators.toml"
         file.write_text(
-            '[operators."did:arc:org:operator/bad"]\n'
-            'public_key = "!!!this_is_not_base64!!!"\n',
+            '[operators."did:arc:org:operator/bad"]\npublic_key = "!!!this_is_not_base64!!!"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)
@@ -192,8 +187,7 @@ class TestErrorPaths:
         short = base64.b64encode(b"\x00" * 16).decode("ascii")
         file = trust_dir / "operators.toml"
         file.write_text(
-            '[operators."did:arc:org:operator/short"]\n'
-            f'public_key = "{short}"\n',
+            f'[operators."did:arc:org:operator/short"]\npublic_key = "{short}"\n',
             encoding="utf-8",
         )
         os.chmod(file, 0o600)

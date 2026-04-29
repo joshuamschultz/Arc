@@ -11,7 +11,6 @@ Validates:
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 import pytest
@@ -55,18 +54,19 @@ class TestRegisterWorkspace:
         _register(args)
 
         # Check stored entity
-        from arcteam.config import TeamConfig
         from arcteam.storage import FileBackend
+
         backend = FileBackend(root)
 
         import asyncio
-        record = asyncio.run(
-            backend.read("messages/registry", "agent_w1")
-        )
+
+        record = asyncio.run(backend.read("messages/registry", "agent_w1"))
         assert record is not None
         assert record["workspace_path"] == str(ws.resolve())
 
-    def test_default_workspace_is_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_workspace_is_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         root = _init_root(tmp_path)
         cwd_dir = tmp_path / "cwd_subdir"
         cwd_dir.mkdir()
@@ -76,12 +76,12 @@ class TestRegisterWorkspace:
         _register(args)
 
         from arcteam.storage import FileBackend
+
         backend = FileBackend(root)
 
         import asyncio
-        record = asyncio.run(
-            backend.read("messages/registry", "agent_w1")
-        )
+
+        record = asyncio.run(backend.read("messages/registry", "agent_w1"))
         assert record is not None
         assert record["workspace_path"] == str(cwd_dir.resolve())
 

@@ -12,7 +12,6 @@ These are real failure modes a federal SCIF deployment will hit.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,14 +34,16 @@ class TestRegistryCorruption:
         _init_cmd(argparse.Namespace(root_path=str(tmp_path)))
         ws = tmp_path / "ws_a"
         ws.mkdir()
-        _register(argparse.Namespace(
-            root=str(tmp_path),
-            entity_id="agent://a1",
-            name="A1",
-            entity_type="agent",
-            roles="",
-            workspace=str(ws),
-        ))
+        _register(
+            argparse.Namespace(
+                root=str(tmp_path),
+                entity_id="agent://a1",
+                name="A1",
+                entity_type="agent",
+                roles="",
+                workspace=str(ws),
+            )
+        )
         # Locate the persisted entity record via the arcteam-public
         # `REGISTRY_COLLECTION` constant rather than hardcoding the
         # `messages/registry/` filesystem layout — Wave 2 review TD-LOW
@@ -61,9 +62,7 @@ class TestRegistryCorruption:
         try:
             stores = _resolve_trace_stores(args)
         except Exception as exc:  # pragma: no cover — crashes here are the bug
-            pytest.fail(
-                f"_resolve_trace_stores crashed on corrupt registry: {exc}"
-            )
+            pytest.fail(f"_resolve_trace_stores crashed on corrupt registry: {exc}")
         # Either zero stores (registry list errored) or it skipped the bad
         # one. The contract is "didn't crash" — the dashboard surfaces an
         # empty state, not a stack trace.
@@ -76,9 +75,7 @@ class TestWebbrowserOpenReturnsFalse:
     Review BLOCKER #14: must NOT fall back to printing the URL with token.
     """
 
-    def test_returns_false_no_token_in_stdout(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_returns_false_no_token_in_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:
         with patch("webbrowser.open", return_value=False):
             ok = _maybe_open_browser("127.0.0.1", 8420, "viewer-tok-abc")
         assert ok is False
@@ -89,12 +86,8 @@ class TestWebbrowserOpenReturnsFalse:
         assert "viewer-tok-abc" not in out
         assert "#auth=" not in out
 
-    def test_fallback_prints_no_token_url(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _print_browser_open_fallback(
-            "127.0.0.1", 8420, "viewer-tok-abc", show_tokens=False
-        )
+    def test_fallback_prints_no_token_url(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _print_browser_open_fallback("127.0.0.1", 8420, "viewer-tok-abc", show_tokens=False)
         out = capsys.readouterr().out
         # The URL line MUST NOT carry the auth fragment under any condition.
         assert "#auth=" not in out
@@ -118,14 +111,16 @@ class TestBackfillNameCollision:
         # Register one agent so the registry has a target id to match.
         first_ws = tmp_path / "first" / "workspace"
         first_ws.mkdir(parents=True)
-        _register(argparse.Namespace(
-            root=str(tmp_path),
-            entity_id="dup_agent",
-            name="dup_agent",
-            entity_type="agent",
-            roles="",
-            workspace=None,  # leave None so backfill is the test
-        ))
+        _register(
+            argparse.Namespace(
+                root=str(tmp_path),
+                entity_id="dup_agent",
+                name="dup_agent",
+                entity_type="agent",
+                roles="",
+                workspace=None,  # leave None so backfill is the test
+            )
+        )
 
         # Two team subdirs both naming the same agent.
         team_dir = tmp_path / "team"
@@ -134,9 +129,7 @@ class TestBackfillNameCollision:
             d.mkdir(parents=True)
             (d / "workspace").mkdir()
             (d / "arcagent.toml").write_text(
-                "[agent]\n"
-                'name = "dup_agent"\n'
-                'workspace = "./workspace"\n'
+                '[agent]\nname = "dup_agent"\nworkspace = "./workspace"\n'
             )
 
         args = argparse.Namespace(
@@ -155,6 +148,4 @@ class TestBackfillNameCollision:
         # match overwrites the first, glob order is sorted and stable).
         out = capsys.readouterr().out
         # At least one update message should mention the agent name.
-        assert "dup_agent" in out, (
-            "operator must see SOMETHING about the duplicate name in stdout"
-        )
+        assert "dup_agent" in out, "operator must see SOMETHING about the duplicate name in stdout"

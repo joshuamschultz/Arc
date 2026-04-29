@@ -21,9 +21,7 @@ from arcagent.core.config import (
     ContextConfig,
     IdentityConfig,
     LLMConfig,
-    NativeToolEntry,
     TelemetryConfig,
-    ToolsConfig,
 )
 from arcagent.core.errors import ToolVetoedError
 from arcagent.core.module_bus import EventContext
@@ -173,52 +171,6 @@ class TestRunWithMockLLM:
         assert "test-only" in prompt
 
         assert result is not None
-        await agent.shutdown()
-
-    @patch("arcagent.core.agent.load_eval_model")
-    @patch("arcagent.core.agent.arcrun_run")
-    async def test_run_with_native_tools(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Native tools are registered and passed to arcrun."""
-        config = ArcAgentConfig(
-            agent=AgentConfig(
-                name="tool-agent",
-                workspace=str(tmp_path / "ws"),
-            ),
-            llm=LLMConfig(model="test/model"),
-            identity=IdentityConfig(key_dir=str(tmp_path / "keys")),
-            tools=ToolsConfig(
-                native={
-                    "echo": NativeToolEntry(
-                        module="arcagent.core.tool_registry:_echo_tool",
-                        description="Echo tool",
-                    )
-                }
-            ),
-            telemetry=TelemetryConfig(enabled=False),
-        )
-
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="done")
-
-        agent = ArcAgent(config=config)
-        await agent.startup()
-
-        # Tool should be registered
-        assert "echo" in agent._tool_registry.tools
-
-        await agent.run("use echo tool")
-
-        # Tools should be passed to run_loop (4 built-in + 1 echo)
-        tools = mock_arcrun_run.call_args.kwargs["tools"]
-        tool_names = {t.name for t in tools}
-        assert "echo" in tool_names
-        assert {"read", "write", "edit", "bash"}.issubset(tool_names)
-
         await agent.shutdown()
 
 

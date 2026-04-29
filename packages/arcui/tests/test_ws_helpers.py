@@ -44,9 +44,7 @@ class TestAuthenticateWS:
     @pytest.mark.asyncio
     async def test_valid_token_returns_role(self):
         ws = AsyncMock()
-        ws.receive_text = AsyncMock(
-            return_value=json.dumps({"token": "valid-token"})
-        )
+        ws.receive_text = AsyncMock(return_value=json.dumps({"token": "valid-token"}))
         auth_config = MagicMock()
         auth_config.validate_token.return_value = "viewer"
 
@@ -57,9 +55,7 @@ class TestAuthenticateWS:
     @pytest.mark.asyncio
     async def test_invalid_token_returns_none(self):
         ws = AsyncMock()
-        ws.receive_text = AsyncMock(
-            return_value=json.dumps({"token": "bad"})
-        )
+        ws.receive_text = AsyncMock(return_value=json.dumps({"token": "bad"}))
         auth_config = MagicMock()
         auth_config.validate_token.return_value = None
 
@@ -93,9 +89,7 @@ class TestAuthenticateWS:
     @pytest.mark.asyncio
     async def test_require_role_matches(self):
         ws = AsyncMock()
-        ws.receive_text = AsyncMock(
-            return_value=json.dumps({"token": "agent-tok"})
-        )
+        ws.receive_text = AsyncMock(return_value=json.dumps({"token": "agent-tok"}))
         auth_config = MagicMock()
         auth_config.validate_token.return_value = "agent"
 
@@ -105,9 +99,7 @@ class TestAuthenticateWS:
     @pytest.mark.asyncio
     async def test_require_role_mismatch(self):
         ws = AsyncMock()
-        ws.receive_text = AsyncMock(
-            return_value=json.dumps({"token": "viewer-tok"})
-        )
+        ws.receive_text = AsyncMock(return_value=json.dumps({"token": "viewer-tok"}))
         auth_config = MagicMock()
         auth_config.validate_token.return_value = "viewer"
 

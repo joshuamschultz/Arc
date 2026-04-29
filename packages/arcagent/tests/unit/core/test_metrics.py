@@ -14,20 +14,34 @@ class TestMetricRegistry:
         from arcagent.core.metrics import MetricRegistry
 
         registry = MetricRegistry()
-        registry.increment("arc_policy_decisions_total", labels={"layer": "global", "outcome": "deny"})
-        registry.increment("arc_policy_decisions_total", labels={"layer": "global", "outcome": "deny"})
-        registry.increment("arc_policy_decisions_total", labels={"layer": "agent", "outcome": "allow"})
+        registry.increment(
+            "arc_policy_decisions_total", labels={"layer": "global", "outcome": "deny"}
+        )
+        registry.increment(
+            "arc_policy_decisions_total", labels={"layer": "global", "outcome": "deny"}
+        )
+        registry.increment(
+            "arc_policy_decisions_total", labels={"layer": "agent", "outcome": "allow"}
+        )
 
         counters = registry.counters()
-        assert counters[("arc_policy_decisions_total", (("layer", "global"), ("outcome", "deny")))] == 2
-        assert counters[("arc_policy_decisions_total", (("layer", "agent"), ("outcome", "allow")))] == 1
+        assert (
+            counters[("arc_policy_decisions_total", (("layer", "global"), ("outcome", "deny")))]
+            == 2
+        )
+        assert (
+            counters[("arc_policy_decisions_total", (("layer", "agent"), ("outcome", "allow")))]
+            == 1
+        )
 
     def test_histogram_records_observation(self) -> None:
         from arcagent.core.metrics import MetricRegistry
 
         registry = MetricRegistry()
         for value in (100, 200, 300, 400, 500):
-            registry.observe("arc_policy_evaluation_duration_us", value, labels={"layer": "global"})
+            registry.observe(
+                "arc_policy_evaluation_duration_us", value, labels={"layer": "global"}
+            )
 
         hist = registry.histogram_stats(
             "arc_policy_evaluation_duration_us", labels={"layer": "global"}
@@ -47,10 +61,15 @@ class TestMetricRegistry:
             labels={"schedule_id": "heartbeat", "state": "OPEN"},
         )
         gauges = registry.gauges()
-        assert gauges[(
-            "arc_schedule_circuit_breaker_state",
-            (("schedule_id", "heartbeat"), ("state", "OPEN")),
-        )] == 1
+        assert (
+            gauges[
+                (
+                    "arc_schedule_circuit_breaker_state",
+                    (("schedule_id", "heartbeat"), ("state", "OPEN")),
+                )
+            ]
+            == 1
+        )
 
 
 class TestPolicyMetricsSink:
@@ -201,7 +220,9 @@ class TestPrometheusExposition:
         from arcagent.core.metrics import MetricRegistry
 
         registry = MetricRegistry()
-        registry.increment("arc_policy_decisions_total", labels={"layer": "global", "outcome": "deny"})
+        registry.increment(
+            "arc_policy_decisions_total", labels={"layer": "global", "outcome": "deny"}
+        )
         text = registry.render_prometheus()
         assert "arc_policy_decisions_total" in text
         assert 'layer="global"' in text
@@ -263,9 +284,7 @@ class TestPrometheusExposition:
         registry.increment(
             "arc_policy_decisions_total", labels={"layer": "l1", "outcome": "allow"}
         )
-        registry.increment(
-            "arc_policy_decisions_total", labels={"layer": "l2", "outcome": "deny"}
-        )
+        registry.increment("arc_policy_decisions_total", labels={"layer": "l2", "outcome": "deny"})
         text = registry.render_prometheus()
         # TYPE line must appear exactly once
         assert text.count("# TYPE arc_policy_decisions_total counter") == 1
@@ -291,7 +310,10 @@ class TestSinkIgnoresUnrelatedEvents:
         sink("policy.evaluate", {"layer": "global", "decision": "allow"})
         # Counter incremented, but no histogram observation
         counters = registry.counters()
-        assert counters[("arc_policy_decisions_total", (("layer", "global"), ("outcome", "allow")))] == 1
+        assert (
+            counters[("arc_policy_decisions_total", (("layer", "global"), ("outcome", "allow")))]
+            == 1
+        )
         stats = registry.histogram_stats(
             "arc_policy_evaluation_duration_us", labels={"layer": "global"}
         )

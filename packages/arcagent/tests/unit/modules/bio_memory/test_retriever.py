@@ -323,7 +323,6 @@ class TestTeamEntitySearch:
         assert any("shared-only" in s for s in sources)
         assert not any("local-only" in s for s in sources)
 
-
     @pytest.mark.asyncio
     async def test_team_scope_with_no_team_dir(
         self,

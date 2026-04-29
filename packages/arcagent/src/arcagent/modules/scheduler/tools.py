@@ -64,16 +64,18 @@ def create_scheduler_tools(
 
             # Use model_validate so Pydantic coerces `type` literal and
             # `active_hours` dict into their proper model types.
-            entry = ScheduleEntry.model_validate({
-                "id": generate_schedule_id(),
-                "type": type,
-                "prompt": prompt,
-                "expression": expression,
-                "at": at,
-                "every_seconds": every_seconds,
-                "active_hours": active_hours,
-                "timeout_seconds": timeout_seconds,
-            })
+            entry = ScheduleEntry.model_validate(
+                {
+                    "id": generate_schedule_id(),
+                    "type": type,
+                    "prompt": prompt,
+                    "expression": expression,
+                    "at": at,
+                    "every_seconds": every_seconds,
+                    "active_hours": active_hours,
+                    "timeout_seconds": timeout_seconds,
+                }
+            )
             store.add(entry)
             _logger.info("Created schedule %s (type=%s)", entry.id, type)
             return entry.model_dump_json()

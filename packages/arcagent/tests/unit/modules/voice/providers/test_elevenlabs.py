@@ -11,7 +11,6 @@ import pytest
 from arcagent.modules.voice.errors import TTSFailed
 from arcagent.modules.voice.providers.elevenlabs import ElevenLabsProvider
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -35,6 +34,7 @@ def _fake_response(
     resp.content = content
     if status_code != 200:
         import httpx
+
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
             f"HTTP {status_code}",
             request=MagicMock(),
@@ -95,9 +95,7 @@ class TestElevenLabsProvider:
 
         with patch("arcagent.modules.voice.providers.elevenlabs.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = mock_client
-            await provider.synthesize(
-                "test", voice_id="custom_voice_123", output_path=output
-            )
+            await provider.synthesize("test", voice_id="custom_voice_123", output_path=output)
 
         assert any("custom_voice_123" in u for u in captured_url)
 
@@ -176,9 +174,7 @@ class TestElevenLabsProvider:
         assert "empty" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
-    async def test_non_absolute_path_raises(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_non_absolute_path_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TEST_ELEVENLABS_KEY", "el-test")
         provider = _make_provider()
         with pytest.raises(TTSFailed) as exc_info:

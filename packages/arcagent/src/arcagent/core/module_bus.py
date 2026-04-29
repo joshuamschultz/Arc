@@ -131,6 +131,14 @@ class ModuleBus:
         """Number of registered handlers for an event."""
         return len(self._handlers[event])
 
+    def handler_count_by_module(self, event: str, module_name: str) -> int:
+        """Number of handlers for ``event`` registered under ``module_name``.
+
+        Used by the capability bridge to detect already-subscribed hooks
+        across reloads so we never double-subscribe.
+        """
+        return sum(1 for h in self._handlers.get(event, ()) if h.module_name == module_name)
+
     def unsubscribe_by_module_prefix(self, prefix: str) -> int:
         """Remove all handlers whose module_name starts with prefix.
 

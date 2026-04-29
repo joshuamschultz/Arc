@@ -21,8 +21,7 @@ from arcagent.modules.voice.providers.whisper_cpp import WhisperCppProvider
 
 WHISPER_CPP_AVAILABLE = shutil.which("whisper-cpp") is not None
 SKIP_REASON = (
-    "whisper-cpp binary not found on PATH; "
-    "install whisper.cpp to run these tests in non-stub mode"
+    "whisper-cpp binary not found on PATH; install whisper.cpp to run these tests in non-stub mode"
 )
 
 
@@ -40,9 +39,7 @@ class TestWhisperCppStub:
         # Should be an async method
         assert asyncio.iscoroutinefunction(provider.transcribe)
 
-    def test_binary_not_found_raises_stt_failed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_binary_not_found_raises_stt_failed(self, tmp_path: Path) -> None:
         """When binary is absent, transcribe raises STTFailed with guidance."""
         from arcagent.modules.voice.errors import STTFailed
 

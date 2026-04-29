@@ -9,9 +9,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
-from arcagent.core.config import ArcAgentConfig, AgentConfig, LLMConfig
+from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
 
@@ -70,14 +68,13 @@ class TestToolDispatchAuditActorDID:
         arcrun_tools = registry.to_arcrun_tools()
         assert len(arcrun_tools) == 1
 
-        from unittest.mock import AsyncMock
-
         ctx = MagicMock()
         await arcrun_tools[0].execute({}, ctx)
 
         # audit_event must have been called with "tool.executed"
         calls = [
-            call for call in mock_telemetry.audit_event.call_args_list
+            call
+            for call in mock_telemetry.audit_event.call_args_list
             if call[0][0] == "tool.executed"
         ]
         assert len(calls) >= 1, "Expected at least one tool.executed audit event"
@@ -93,7 +90,6 @@ class TestToolDispatchAuditActorDID:
         registry.register(tool)
 
         arcrun_tools = registry.to_arcrun_tools()
-        from unittest.mock import AsyncMock
 
         ctx = MagicMock()
         await arcrun_tools[0].execute({}, ctx)
@@ -112,7 +108,8 @@ class TestToolDispatchAuditActorDID:
         await arcrun_tools[0].execute({}, ctx)
 
         calls = [
-            call for call in mock_telemetry.audit_event.call_args_list
+            call
+            for call in mock_telemetry.audit_event.call_args_list
             if call[0][0] == "tool.executed"
         ]
         assert len(calls) >= 1

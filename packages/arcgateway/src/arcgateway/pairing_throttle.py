@@ -154,8 +154,7 @@ class PairingThrottle:
 
         if pending_count >= self._max_pending:
             raise PairingPlatformFull(
-                f"Platform {platform!r} already has {self._max_pending} "
-                "pending pairing codes"
+                f"Platform {platform!r} already has {self._max_pending} pending pairing codes"
             )
 
     # -----------------------------------------------------------------------

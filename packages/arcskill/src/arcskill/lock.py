@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 class HubLockFileCorrupted(Exception):  # noqa: N818
     """Raised when the lock file on disk cannot be parsed or fails integrity check."""
 
+
 logger = logging.getLogger(__name__)
 
 _LOCK_VERSION = 1
@@ -94,12 +95,8 @@ class SkillLockEntry(BaseModel):
     scan_verdict: str = "safe"
     install_path: str = ""
     files: list[str] = Field(default_factory=list)
-    installed_at: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
-    updated_at: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    installed_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     quarantined: bool = False
 
 
@@ -173,9 +170,7 @@ class HubLockFile(BaseModel):
         payload = self.model_dump_json(indent=2)
 
         # Atomic write: write to temp file in same directory, then replace.
-        fd, tmp_path = tempfile.mkstemp(
-            dir=target.parent, prefix=".lock_", suffix=".json.tmp"
-        )
+        fd, tmp_path = tempfile.mkstemp(dir=target.parent, prefix=".lock_", suffix=".json.tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(payload)
@@ -235,6 +230,4 @@ class HubLockFile(BaseModel):
 
     def installed_names(self) -> list[str]:
         """Return names of all non-quarantined installed skills."""
-        return [
-            name for name, entry in self.skills.items() if not entry.quarantined
-        ]
+        return [name for name, entry in self.skills.items() if not entry.quarantined]

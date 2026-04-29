@@ -16,14 +16,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
-_INDEX_HTML = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "arcui"
-    / "static"
-    / "index.html"
-)
+_INDEX_HTML = Path(__file__).resolve().parents[2] / "src" / "arcui" / "static" / "index.html"
 
 
 class TestBootstrapPlacement:
@@ -47,7 +40,7 @@ class TestBootstrapPlacement:
         # would defeat SR-2 (token reachable via window.location.hash).
         first_script = re.search(r"<script[^>]*>", head, flags=re.IGNORECASE)
         assert first_script is not None
-        snippet = head[first_script.end():head.find("</script>", first_script.end())]
+        snippet = head[first_script.end() : head.find("</script>", first_script.end())]
         assert "arcui_viewer_token" in snippet
 
 
@@ -60,8 +53,10 @@ class TestBootstrapBehaviorContract:
         assert re.search(r"location\.hash", text) is not None
         assert re.search(r"auth=", text) is not None
         # localStorage write
-        assert "localStorage.setItem('arcui_viewer_token'" in text or \
-               'localStorage.setItem("arcui_viewer_token"' in text
+        assert (
+            "localStorage.setItem('arcui_viewer_token'" in text
+            or 'localStorage.setItem("arcui_viewer_token"' in text
+        )
 
     def test_calls_history_replace_state(self) -> None:
         text = _INDEX_HTML.read_text()
@@ -77,5 +72,7 @@ class TestApiClientCarriesAuth:
         assert "Authorization" in text
         assert "Bearer " in text
         # localStorage is the source of truth.
-        assert "localStorage.getItem('arcui_viewer_token')" in text or \
-               'localStorage.getItem("arcui_viewer_token")' in text
+        assert (
+            "localStorage.getItem('arcui_viewer_token')" in text
+            or 'localStorage.getItem("arcui_viewer_token")' in text
+        )

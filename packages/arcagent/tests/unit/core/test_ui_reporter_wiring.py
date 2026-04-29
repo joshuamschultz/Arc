@@ -1,10 +1,8 @@
-"""Tests for UIReporter wiring into arcagent's tool, module, skill, and memory layers.
+"""Tests for UIReporter wiring into arcagent's tool and module layers.
 
 Verifies that emit_agent_event fires for:
   - tool_call  (ToolRegistry._create_wrapped_execute)
   - module_lifecycle  (ModuleBus.startup / shutdown)
-  - skill_load  (SkillRegistry.discover)
-  - extension_load  (ExtensionLoader._run_factory)
 """
 
 from __future__ import annotations
@@ -17,7 +15,6 @@ import pytest
 
 from arcagent.core.config import ToolConfig, ToolsConfig
 from arcagent.core.module_bus import ModuleBus, ModuleContext
-from arcagent.core.skill_registry import SkillRegistry
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransport
 
 # ---------------------------------------------------------------------------
@@ -196,9 +193,7 @@ class TestModuleBusUIReporter:
         )
 
     @pytest.mark.asyncio
-    async def test_module_startup_event_data_has_name_and_phase(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_module_startup_event_data_has_name_and_phase(self, tmp_path: Path) -> None:
         reporter = FakeReporter()
         bus = ModuleBus(ui_reporter=reporter)
         bus.register_module(_StartupModule("beta"))
@@ -250,159 +245,3 @@ def _make_module_context(bus: ModuleBus, workspace: Path) -> ModuleContext:
         workspace=workspace,
         llm_config=llm_config,
     )
-
-
-# ---------------------------------------------------------------------------
-# Task A-3: SkillRegistry emits skill_load
-# ---------------------------------------------------------------------------
-
-
-class TestSkillRegistryUIReporter:
-    """SkillRegistry.discover emits skill_load for each skill found."""
-
-    def _make_skill_file(self, directory: Path, name: str) -> Path:
-        skill_path = directory / f"{name}.md"
-        skill_path.write_text(
-            "---\n"
-            f"name: {name}\n"
-            "description: Test skill\n"
-            "version: 1.0.0\n"
-            "---\n\nSkill body.\n",
-            encoding="utf-8",
-        )
-        return skill_path
-
-    def test_discover_emits_skill_load_per_skill(self, tmp_path: Path) -> None:
-        reporter = FakeReporter()
-        skills_dir = tmp_path / "skills"
-        skills_dir.mkdir()
-        self._make_skill_file(skills_dir, "code_review")
-        self._make_skill_file(skills_dir, "testing")
-
-        registry = SkillRegistry(ui_reporter=reporter)
-        registry.discover(workspace=tmp_path, global_dir=Path("/nonexistent"))
-
-        event_types = reporter.call_event_types()
-        skill_loads = [et for et in event_types if et == "skill_load"]
-        assert len(skill_loads) == 2, (
-            f"Expected 2 skill_load events, got {len(skill_loads)}: {event_types}"
-        )
-
-    def test_skill_load_event_has_skill_name(self, tmp_path: Path) -> None:
-        reporter = FakeReporter()
-        skills_dir = tmp_path / "skills"
-        skills_dir.mkdir()
-        self._make_skill_file(skills_dir, "planning")
-
-        registry = SkillRegistry(ui_reporter=reporter)
-        registry.discover(workspace=tmp_path, global_dir=Path("/nonexistent"))
-
-        data = reporter.first_of("skill_load")
-        assert data is not None
-        assert data["skill_name"] == "planning"
-
-    def test_no_reporter_does_not_crash(self, tmp_path: Path) -> None:
-        skills_dir = tmp_path / "skills"
-        skills_dir.mkdir()
-        self._make_skill_file(skills_dir, "summary")
-
-        registry = SkillRegistry(ui_reporter=None)
-        skills = registry.discover(workspace=tmp_path, global_dir=Path("/nonexistent"))
-        assert len(skills) == 1
-
-
-# ---------------------------------------------------------------------------
-# Task A-4: ExtensionLoader emits extension_load
-# ---------------------------------------------------------------------------
-
-
-class TestExtensionLoaderUIReporter:
-    """ExtensionLoader._run_factory emits extension_load on success."""
-
-    def _make_extension_file(self, directory: Path, name: str) -> Path:
-        ext_path = directory / f"{name}.py"
-        ext_path.write_text(
-            "def extension(api):\n    pass\n",
-            encoding="utf-8",
-        )
-        return ext_path
-
-    @pytest.mark.asyncio
-    async def test_extension_load_emits_event(self, tmp_path: Path) -> None:
-        from arcagent.core.config import ExtensionConfig
-        from arcagent.core.extensions import ExtensionLoader
-
-        reporter = FakeReporter()
-        ext_dir = tmp_path / "extensions"
-        ext_dir.mkdir()
-        self._make_extension_file(ext_dir, "my_ext")
-
-        tool_registry = _make_registry()
-        bus = ModuleBus()
-        telemetry = MagicMock()
-        telemetry.audit_event = MagicMock()
-
-        loader = ExtensionLoader(
-            tool_registry=tool_registry,
-            bus=bus,
-            telemetry=telemetry,
-            config=ExtensionConfig(),
-            ui_reporter=reporter,
-        )
-        await loader.discover_and_load(workspace=tmp_path, global_dir=Path("/nonexistent"))
-
-        assert "extension_load" in reporter.call_event_types(), (
-            f"Expected extension_load event, got: {reporter.call_event_types()}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_extension_load_event_has_name(self, tmp_path: Path) -> None:
-        from arcagent.core.config import ExtensionConfig
-        from arcagent.core.extensions import ExtensionLoader
-
-        reporter = FakeReporter()
-        ext_dir = tmp_path / "extensions"
-        ext_dir.mkdir()
-        self._make_extension_file(ext_dir, "vault_helper")
-
-        tool_registry = _make_registry()
-        bus = ModuleBus()
-        telemetry = MagicMock()
-        telemetry.audit_event = MagicMock()
-
-        loader = ExtensionLoader(
-            tool_registry=tool_registry,
-            bus=bus,
-            telemetry=telemetry,
-            config=ExtensionConfig(),
-            ui_reporter=reporter,
-        )
-        await loader.discover_and_load(workspace=tmp_path, global_dir=Path("/nonexistent"))
-
-        data = reporter.first_of("extension_load")
-        assert data is not None
-        assert data["extension_name"] == "vault_helper"
-
-    @pytest.mark.asyncio
-    async def test_no_reporter_does_not_crash(self, tmp_path: Path) -> None:
-        from arcagent.core.config import ExtensionConfig
-        from arcagent.core.extensions import ExtensionLoader
-
-        ext_dir = tmp_path / "extensions"
-        ext_dir.mkdir()
-        self._make_extension_file(ext_dir, "quiet_ext")
-
-        tool_registry = _make_registry()
-        bus = ModuleBus()
-        telemetry = MagicMock()
-        telemetry.audit_event = MagicMock()
-
-        loader = ExtensionLoader(
-            tool_registry=tool_registry,
-            bus=bus,
-            telemetry=telemetry,
-            config=ExtensionConfig(),
-            ui_reporter=None,
-        )
-        # Must not raise
-        await loader.discover_and_load(workspace=tmp_path, global_dir=Path("/nonexistent"))

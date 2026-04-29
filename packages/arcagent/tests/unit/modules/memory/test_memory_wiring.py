@@ -65,7 +65,8 @@ class TestEvalModelLazyInit:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with(
-                "anthropic/claude-haiku", agent_label="memory",
+                "anthropic/claude-haiku",
+                agent_label="memory",
             )
             assert model is not None
 
@@ -81,7 +82,8 @@ class TestEvalModelLazyInit:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with(
-                "anthropic/claude-haiku", agent_label="memory",
+                "anthropic/claude-haiku",
+                agent_label="memory",
             )
             assert model is not None
 
@@ -102,7 +104,8 @@ class TestEvalModelLazyInit:
             mock_load.return_value = MagicMock()
             model = module._get_eval_model()
             mock_load.assert_called_once_with(
-                "anthropic/claude-haiku", agent_label="memory",
+                "anthropic/claude-haiku",
+                agent_label="memory",
             )
             assert model is not None
 

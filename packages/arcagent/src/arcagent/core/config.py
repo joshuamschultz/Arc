@@ -73,13 +73,6 @@ class ToolConfig(BaseModel):
     allowed_paths: list[str] = []
 
 
-class NativeToolEntry(BaseModel):
-    """Python function tool entry."""
-
-    module: str
-    description: str = ""
-
-
 class MCPServerEntry(BaseModel):
     """MCP server tool entry."""
 
@@ -109,7 +102,6 @@ class ProcessToolEntry(BaseModel):
 class ToolsConfig(BaseModel):
     """All tool configurations by transport."""
 
-    native: dict[str, NativeToolEntry] = {}
     mcp_servers: dict[str, MCPServerEntry] = {}
     http: dict[str, HTTPToolEntry] = {}
     process: dict[str, ProcessToolEntry] = {}
@@ -183,25 +175,6 @@ class TeamSection(BaseModel):
     root: str = ""
 
 
-class ExtensionEntry(BaseModel):
-    """Per-extension configuration."""
-
-    sandbox_mode: str = "workspace"  # workspace | paths | strict
-    enabled: bool = True
-    allowed_paths: list[str] = []  # Additional paths for 'paths' sandbox mode
-
-
-class ExtensionConfig(BaseModel):
-    """Extension system configuration."""
-
-    paths: list[str] = []
-    extensions: dict[str, ExtensionEntry] = {}
-    global_dir: str = "~/.arcagent/extensions"
-    workspace_tools_dir: str = "tools"
-
-
-
-
 class SpawnConfig(BaseModel):
     """Spawn / orchestration configuration.
 
@@ -239,6 +212,45 @@ class SpawnConfig(BaseModel):
     )
 
 
+class ValidatorEntry(BaseModel):
+    """A single TOFU-approved validator script (R-042 / R-043).
+
+    Persisted under ``[[security.validators.approved]]`` in
+    ``arcagent.toml``. Written only by the human user via
+    ``arc trust approve`` — the agent has no write access.
+
+    ``hash`` is the sha256 digest of the validator source body, prefixed
+    ``sha256:``. ``timestamp`` is RFC3339 UTC.
+    """
+
+    name: str = Field(description="Validator script logical name")
+    hash: str = Field(description="sha256:<digest> of approved source")
+    approver: str = Field(description="Identity that approved (email or DID)")
+    timestamp: str = Field(description="RFC3339 UTC timestamp of approval")
+
+
+class ValidatorsConfig(BaseModel):
+    """``[security.validators]`` block — TOFU policy state.
+
+    Lives at agent-root, never inside workspace (R-043). Default is
+    federal-safe: ``auto_run_agent_code = False`` and zero approved
+    entries. Personal-tier templates seed it to ``True``; enterprise +
+    federal templates leave it ``False``.
+    """
+
+    auto_run_agent_code: bool = Field(
+        default=False,
+        description=(
+            "Personal tier only — auto-run agent-authored Python after "
+            "AST validation. Enterprise/federal must approve via TOFU."
+        ),
+    )
+    approved: tuple[ValidatorEntry, ...] = Field(
+        default=(),
+        description="Persisted TOFU approvals; appended by `arc trust approve`",
+    )
+
+
 class SecurityConfig(BaseModel):
     """Security and tier configuration.
 
@@ -260,6 +272,9 @@ class SecurityConfig(BaseModel):
             "executor selection."
         ),
     )
+
+    # SPEC-021 — TOFU approvals for self-executing agent code.
+    validators: ValidatorsConfig = Field(default_factory=ValidatorsConfig)
 
 
 # --- Root config ---
@@ -285,7 +300,6 @@ class ArcAgentConfig(BaseModel):
     context: ContextConfig = ContextConfig()
     eval: EvalConfig = EvalConfig()
     session: SessionConfig = SessionConfig()
-    extensions: ExtensionConfig = ExtensionConfig()
     security: SecurityConfig = SecurityConfig()
     spawn: SpawnConfig = SpawnConfig()
 
@@ -298,7 +312,6 @@ _ENV_DELIMITER = "__"
 _ENV_DENYLIST_PREFIXES = frozenset(
     {
         "vault__backend",
-        "tools__native",
         "tools__process",
         "tools__preamble",
         "identity__key_dir",

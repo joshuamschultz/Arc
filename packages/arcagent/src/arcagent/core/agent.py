@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import logging
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -21,18 +22,29 @@ from arcrun import run_async as arcrun_run_async
 from arcrun import run_stream as arcrun_run_stream
 from arctrust import AgentIdentity
 
+from arcagent.core.capability_loader import CapabilityLoader
+from arcagent.core.capability_registry import CapabilityRegistry, SkillEntry
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.errors import ConfigError
-from arcagent.core.extensions import ExtensionLoader
-from arcagent.core.module_bus import ModuleBus, ModuleContext
+from arcagent.core.module_bus import EventContext, ModuleBus
 from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.settings_manager import SettingsManager
-from arcagent.core.skill_registry import SkillMeta, SkillRegistry
 from arcagent.core.telemetry import AgentTelemetry
-from arcagent.core.tool_registry import ToolRegistry
+from arcagent.core.tool_registry import (
+    RegisteredTool,
+    ToolRegistry,
+    ToolTransport,
+)
 from arcagent.utils import load_eval_model
 
 _logger = logging.getLogger("arcagent.agent")
+
+# Per D-346/D-347 — short skill-usage instruction injected at priority 91.
+_SKILL_USAGE_INSTRUCTION = (
+    "## Skills\n"
+    "When the manifest above lists a relevant skill, read its SKILL.md "
+    "for step-by-step guidance before invoking the related tools."
+)
 
 
 def _validate_vault_backend(backend_ref: str) -> None:
@@ -324,11 +336,15 @@ class ArcAgent:
         self._tool_registry: ToolRegistry | None = None
         self._context: ContextManager | None = None
         self._session: SessionManager | None = None
-        self._extension_loader: ExtensionLoader | None = None
-        self._skill_registry: SkillRegistry | None = None
+        self._capability_registry: CapabilityRegistry | None = None
+        self._capability_loader: CapabilityLoader | None = None
         self._settings: SettingsManager | None = None
         self._vault_resolver: Any = None
         self._model: Any = None
+        # Names of tools currently registered in ToolRegistry that came
+        # from the capability loader. Tracked so reload() can drop them
+        # cleanly and re-register the latest set.
+        self._capability_tool_names: set[str] = set()
 
     async def startup(self) -> None:
         """Initialize all components in dependency order.
@@ -373,21 +389,8 @@ class ArcAgent:
             telemetry=self._telemetry,
         )
 
-        # Register built-in tools (read, write, edit, bash)
         workspace = self._workspace
         workspace.mkdir(parents=True, exist_ok=True)
-        from arcagent.tools import create_builtin_tools
-
-        # Wire allowed_paths from config to tools
-        allowed_paths = [
-            Path(p).resolve() for p in self._config.tools.policy.allowed_paths
-        ] or None
-        for tool in create_builtin_tools(workspace, allowed_paths=allowed_paths):
-            self._tool_registry.register(tool)
-
-        # Register user-configured native tools from config
-        if self._config.tools.native:
-            self._tool_registry.register_native_tools(self._config.tools.native)
 
         # 6. Context Manager
         self._context = ContextManager(
@@ -413,47 +416,19 @@ class ArcAgent:
             config_path=self._config_path,
         )
 
-        # 9. Skill Registry
-        self._skill_registry = SkillRegistry()
-        global_skills = Path("~/.arcagent/skills").expanduser()
-        self._skill_registry.discover(workspace, global_skills)
-        # Inject tools and skills into system prompt via bus events
-        self._setup_tool_prompt_injection()
-        self._setup_skill_prompt_injection()
+        # 9. Capability subsystem (replaces SkillRegistry, ExtensionLoader,
+        # MODULE.yaml-based module loading, and the hardcoded built-in
+        # tool list — SPEC-021 unified capability surface).
+        await self._setup_capabilities(workspace)
 
-        # 10. Extension Loader
-        self._extension_loader = ExtensionLoader(
-            tool_registry=self._tool_registry,
-            bus=self._bus,
-            telemetry=self._telemetry,
-            config=self._config.extensions,
-            vault_resolver=self._vault_resolver,
-        )
-        global_ext = Path(self._config.extensions.global_dir).expanduser()
-        await self._extension_loader.discover_and_load(workspace, global_ext)
-
-        # 11. Convention-based module loading (replaces _register_modules)
-        module_ctx = ModuleContext(
-            bus=self._bus,
-            tool_registry=self._tool_registry,
-            config=self._config,
-            telemetry=self._telemetry,
-            workspace=workspace,
-            llm_config=self._config.llm,
-        )
-        self._load_modules_by_convention(module_ctx)
-
-        # 12. Start modules with context
-        await self._bus.startup(module_ctx)
-
-        # Mark started BEFORE emitting agent:ready so modules that
+        # 10. Mark started BEFORE emitting agent:ready so capabilities that
         # immediately invoke agent.run() (e.g. scheduler) don't hit
         # the _ensure_started() guard.
         self._started = True
 
-        # 13. Emit agent:ready with deferred-binding callbacks.
-        # Modules subscribe to this event during startup() to receive
-        # agent.run/chat callbacks without core knowing about them.
+        # 11. Emit agent:ready with deferred-binding callbacks. Hooks
+        # subscribed to this event receive agent.run/chat callbacks
+        # without core knowing about them.
         await self._bus.emit(
             "agent:ready",
             {
@@ -465,8 +440,6 @@ class ArcAgent:
         )
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
-        await self._bus.emit("agent:extensions_loaded", {})
-        await self._bus.emit("agent:skills_loaded", {})
         _logger.info(
             "Agent %s started (DID: %s)",
             self._config.agent.name,
@@ -819,49 +792,46 @@ class ArcAgent:
             eval_model = self._ensure_model()
             await session.compact(eval_model, self._workspace)
 
-    async def reload(self) -> None:
-        """Re-discover extensions and skills. Hot reload.
+    async def reload(self) -> str:
+        """Re-scan capability roots; return R-005 diff string.
 
-        Clears extension-registered tools/hooks and skill cache,
-        then re-discovers from all sources. Serialized via lock
-        to prevent concurrent reloads from corrupting state.
+        Drops capability-loaded tools from the ToolRegistry, runs the
+        loader's incremental scan (cached AST validation, drain-then-
+        replace for background tasks, last-wins for tools/skills),
+        re-bridges the new tool set, and re-subscribes hooks.
         """
         if not self._started:
             msg = "Agent not started. Call startup() first."
             raise RuntimeError(msg)
 
         async with self._reload_lock:
-            bus = self._bus
+            loader = self._capability_loader
+            registry = self._capability_registry
             tool_registry = self._tool_registry
-            if bus is None or tool_registry is None:
-                return
+            bus = self._bus
+            if loader is None or registry is None or tool_registry is None or bus is None:
+                return "reload: capability subsystem not initialized"
 
-            # Clear extensions
-            if self._extension_loader is not None:
-                self._extension_loader.clear(tool_registry, bus)
+            # Drop capability-owned tools from ToolRegistry; the new
+            # set is re-registered after scan.
+            for name in self._capability_tool_names:
+                tool_registry.unregister(name)
+            self._capability_tool_names.clear()
 
-            # Clear and re-discover skills
-            if self._skill_registry is not None:
-                self._skill_registry.clear()
-                global_skills = Path("~/.arcagent/skills").expanduser()
-                self._skill_registry.discover(self._workspace, global_skills)
-
-            # Re-discover and load extensions
-            if self._extension_loader is not None:
-                global_ext = Path(self._config.extensions.global_dir).expanduser()
-                await self._extension_loader.discover_and_load(self._workspace, global_ext)
-
-            await bus.emit("agent:extensions_loaded", {})
-            await bus.emit("agent:skills_loaded", {})
+            diff = await loader.scan_and_register()
+            await self._bridge_capability_tools_to_registry()
+            await self._bridge_capability_hooks_to_bus()
             await bus.emit("agent:tools_reloaded", {})
-            _logger.info("Reload complete")
+            text = diff.render()
+            _logger.info("Reload complete: %s", text)
+            return text
 
     @property
-    def skills(self) -> list[SkillMeta]:
-        """All discovered skills."""
-        if self._skill_registry is None:
+    def skills(self) -> list[SkillEntry]:
+        """All registered skill entries."""
+        if self._capability_registry is None:
             return []
-        return self._skill_registry.skills
+        return list(self._capability_registry._skills.values())
 
     @property
     def settings(self) -> SettingsManager | None:
@@ -886,17 +856,13 @@ class ArcAgent:
         # Emit shutdown event
         await bus.emit("agent:shutdown", {})
 
-        # Clear extensions before bus shutdown
-        if self._extension_loader is not None:
-            self._extension_loader.clear(tool_registry, bus)
+        # Tear down capability lifecycles in reverse-topo order.
+        if self._capability_loader is not None:
+            await self._capability_loader.shutdown()
 
         # Reverse-order cleanup
         await bus.shutdown()
         await tool_registry.shutdown()
-
-        # Clear skills
-        if self._skill_registry is not None:
-            self._skill_registry.clear()
 
         # Close LLM client (releases httpx connection pool). Guarded
         # because _model is lazy — may never have been materialized.
@@ -909,76 +875,249 @@ class ArcAgent:
         self._started = False
         _logger.info("Agent %s shut down", self._config.agent.name)
 
-    def _setup_tool_prompt_injection(self) -> None:
-        """Subscribe to agent:assemble_prompt to inject tool catalog."""
+    async def _setup_capabilities(self, workspace: Path) -> None:
+        """Wire the SPEC-021 capability subsystem.
+
+        Builds the :class:`CapabilityRegistry`, configures per-module
+        runtimes, scans builtin + enabled-module roots through the
+        :class:`CapabilityLoader`, bridges discovered tools and hooks
+        into the existing :class:`ToolRegistry` and :class:`ModuleBus`,
+        and starts ``@capability`` class lifecycles.
+        """
         bus = self._bus
         tool_registry = self._tool_registry
         telemetry = self._telemetry
-        if bus is None or tool_registry is None:
-            return
+        identity = self._identity
+        if bus is None or tool_registry is None or telemetry is None or identity is None:
+            msg = "Capability subsystem requires bus, tool_registry, telemetry, and identity"
+            raise RuntimeError(msg)
 
-        async def _inject_tools(ctx: Any) -> None:
-            sections = ctx.data.get("sections")
-            if not isinstance(sections, dict):
-                return
-            # Only audit on actual rebuild (cache miss)
-            was_cached = tool_registry.is_prompt_cached
-            prompt_text = tool_registry.format_for_prompt()
-            if prompt_text:
-                sections["tools"] = prompt_text
-                if not was_cached and telemetry is not None:
-                    telemetry.audit_event(
-                        "prompt.tools_catalog_rebuilt",
-                        {"tool_count": len(tool_registry.tools)},
-                    )
-
-        bus.subscribe(
-            event="agent:assemble_prompt",
-            handler=_inject_tools,
-            priority=85,
-            module_name="tool_registry",
+        self._capability_registry = CapabilityRegistry(
+            bus=bus,
+            audit_sink=None,
+            agent_did=identity.did,
+            tier=self._config.security.tier,
         )
 
-    def _setup_skill_prompt_injection(self) -> None:
-        """Subscribe to agent:assemble_prompt to inject skill list."""
+        # Configure builtin runtime — workspace + allowed_paths visible
+        # to read/write/edit/bash; loader reference patched in below.
+        from arcagent.builtins.capabilities import _runtime as builtin_runtime
+
+        allowed_paths = [
+            Path(p).resolve() for p in self._config.tools.policy.allowed_paths
+        ] or None
+        builtin_runtime.configure(
+            workspace=workspace,
+            allowed_paths=allowed_paths,
+            loader=None,
+            vault_resolver=self._vault_resolver,
+        )
+
+        # Configure each enabled module's runtime via signature dispatch.
+        self._configure_module_runtimes(workspace)
+
+        # Scan roots per SPEC-021 R-001 precedence:
+        # 1. builtins + builtin skills (always)
+        # 2. ~/.arc/capabilities/             — global, opt-in by user
+        # 3. <agent_root>/capabilities/       — per-agent
+        # 4. <workspace>/.capabilities/       — agent-authored
+        # Plus enabled modules with capabilities.py.
+        import arcagent.builtins.capabilities as builtins_pkg
+
+        builtins_root = Path(builtins_pkg.__file__).parent
+        scan_roots: list[tuple[str, Path]] = [
+            ("builtins", builtins_root),
+            ("builtins-skills", builtins_root / "skills"),
+        ]
+
+        global_root = Path("~/.arc/capabilities").expanduser()
+        if global_root.is_dir():
+            scan_roots.append(("global", global_root))
+
+        agent_root = self._config_path.parent.resolve()
+        agent_caps = agent_root / "capabilities"
+        if agent_caps.is_dir():
+            scan_roots.append(("agent", agent_caps))
+
+        workspace_caps = workspace / ".capabilities"
+        if workspace_caps.is_dir():
+            scan_roots.append(("workspace", workspace_caps))
+
+        modules_dir = Path(__file__).parent.parent / "modules"
+        for mod_name, mod_entry in self._config.modules.items():
+            if not mod_entry.enabled:
+                continue
+            mod_dir = modules_dir / mod_name
+            if (mod_dir / "capabilities.py").is_file():
+                scan_roots.append((f"module:{mod_name}", mod_dir))
+
+        self._capability_loader = CapabilityLoader(
+            scan_roots=scan_roots,
+            registry=self._capability_registry,
+            bus=bus,
+        )
+        builtin_runtime.configure(
+            workspace=workspace,
+            allowed_paths=allowed_paths,
+            loader=self._capability_loader,
+            vault_resolver=self._vault_resolver,
+        )
+
+        diff = await self._capability_loader.scan_and_register()
+        if diff.errors:
+            for path, detail in diff.errors:
+                _logger.warning("Capability load error %s: %s", path, detail)
+        _logger.info("Capability scan: %s", diff.render())
+
+        await self._bridge_capability_tools_to_registry()
+        await self._bridge_capability_hooks_to_bus()
+        self._setup_capability_prompt_injection()
+        await self._capability_loader.start_lifecycles()
+
+    def _configure_module_runtimes(self, workspace: Path) -> None:
+        """Call ``_runtime.configure(...)`` on every enabled module.
+
+        Each module's configure() declares the kwargs it needs; we
+        introspect the signature and pass only matching values.
+        Modules without a ``_runtime`` submodule are silently ignored
+        — they may legitimately have no shared state.
+        """
+        identity = self._identity
+        telemetry = self._telemetry
+        agent_name = self._config.agent.name
+        team_root = self._config.team.root
+        llm_config = self._config.llm
+        eval_config = self._config.eval
+
+        for mod_name, mod_entry in self._config.modules.items():
+            if not mod_entry.enabled:
+                continue
+            try:
+                runtime_mod = importlib.import_module(f"arcagent.modules.{mod_name}._runtime")
+            except ImportError:
+                continue
+            configure_fn = getattr(runtime_mod, "configure", None)
+            if configure_fn is None:
+                continue
+
+            available: dict[str, Any] = {
+                "config": mod_entry.config,
+                "eval_config": eval_config,
+                "telemetry": telemetry,
+                "workspace": workspace,
+                "llm_config": llm_config,
+                "agent_name": agent_name,
+                "team_root": team_root,
+                "bus": self._bus,
+                "agent_did": identity.did if identity else "",
+                "identity": identity,
+            }
+            sig = inspect.signature(configure_fn)
+            kwargs = {name: value for name, value in available.items() if name in sig.parameters}
+            try:
+                configure_fn(**kwargs)
+            except Exception:
+                _logger.exception("Module %s _runtime.configure failed", mod_name)
+
+    async def _bridge_capability_tools_to_registry(self) -> None:
+        """Register every CapabilityRegistry tool into ToolRegistry.
+
+        ToolRegistry owns the security wrapping (policy pipeline,
+        audit, pre/post bus events, telemetry span). Capability tools
+        flow through the same wrapper so behavior is identical.
+        """
+        registry = self._capability_registry
+        tool_registry = self._tool_registry
+        if registry is None or tool_registry is None:
+            return
+        async with registry._lock.reader:
+            entries = list(registry._tools.values())
+        for entry in entries:
+            if entry.meta.name in self._capability_tool_names:
+                continue
+            registered = RegisteredTool(
+                name=entry.meta.name,
+                description=entry.meta.description,
+                input_schema=entry.meta.input_schema,
+                transport=ToolTransport.NATIVE,
+                execute=entry.execute,
+                source=str(entry.source_path),
+            )
+            tool_registry.register(registered)
+            self._capability_tool_names.add(entry.meta.name)
+
+    async def _bridge_capability_hooks_to_bus(self) -> None:
+        """Subscribe each registered hook to the module bus.
+
+        Idempotent: tracks already-bridged (event, name) pairs so
+        reload doesn't double-subscribe.
+        """
+        registry = self._capability_registry
         bus = self._bus
-        skill_registry = self._skill_registry
-        if bus is None or skill_registry is None:
+        if registry is None or bus is None:
             return
+        async with registry._lock.reader:
+            hook_lists = {evt: list(hooks) for evt, hooks in registry._hooks.items()}
+        for event, hooks in hook_lists.items():
+            for hook in hooks:
+                module_name = f"capability:{hook.meta.name}"
+                if bus.handler_count_by_module(event, module_name) > 0:
+                    continue
+                bus.subscribe(
+                    event=event,
+                    handler=hook.handler,
+                    priority=hook.meta.priority,
+                    module_name=module_name,
+                )
 
-        async def _inject_skills(ctx: Any) -> None:
-            sections = ctx.data.get("sections")
-            if not isinstance(sections, dict):
-                return
-            prompt_text = skill_registry.format_for_prompt()
-            if prompt_text:
-                sections["skills"] = prompt_text
+    def _setup_capability_prompt_injection(self) -> None:
+        """Subscribe to agent:assemble_prompt to inject the capability manifest.
 
-        bus.subscribe(
-            event="agent:assemble_prompt",
-            handler=_inject_skills,
-            priority=90,
-            module_name="skill_registry",
-        )
-
-    def _load_modules_by_convention(self, ctx: ModuleContext) -> None:
-        """Discover and register modules via convention-based loading.
-
-        Scans arcagent/modules/*/MODULE.yaml for enabled modules,
-        imports their entry_point classes, and registers with the bus.
+        Single subscriber at priority 85 calls
+        :meth:`CapabilityRegistry.format_for_prompt` for the unified
+        XML manifest (tools + skills). A second subscriber at priority
+        91 injects the per-skill usage instruction.
         """
         bus = self._bus
-        if bus is None:
+        registry = self._capability_registry
+        telemetry = self._telemetry
+        if bus is None or registry is None:
             return
 
-        from arcagent.core.module_loader import ModuleLoader
+        async def _inject_capabilities(ctx: EventContext) -> None:
+            sections = ctx.data.get("sections")
+            if not isinstance(sections, dict):
+                return
+            prompt_text = await registry.format_for_prompt()
+            if prompt_text:
+                sections["capabilities"] = prompt_text
+                if telemetry is not None:
+                    telemetry.audit_event(
+                        "prompt.capabilities_manifest_rebuilt",
+                        {
+                            "tool_count": len(registry._tools),
+                            "skill_count": len(registry._skills),
+                        },
+                    )
 
-        loader = ModuleLoader()
-        modules_dir = Path(__file__).parent.parent / "modules"
-        loaded = loader.load_all(modules_dir, ctx)
-        for mod in loaded:
-            bus.register_module(mod)
-            _logger.info("Registered module: %s", mod.name)
+        async def _inject_skill_usage(ctx: EventContext) -> None:
+            sections = ctx.data.get("sections")
+            if not isinstance(sections, dict) or not registry._skills:
+                return
+            sections["skill_usage"] = _SKILL_USAGE_INSTRUCTION
+
+        bus.subscribe(
+            event="agent:assemble_prompt",
+            handler=_inject_capabilities,
+            priority=85,
+            module_name="capability_registry",
+        )
+        bus.subscribe(
+            event="agent:assemble_prompt",
+            handler=_inject_skill_usage,
+            priority=91,
+            module_name="capability_registry.skills",
+        )
 
     def _create_vault_resolver(self) -> Any:
         """Create vault resolver from config.

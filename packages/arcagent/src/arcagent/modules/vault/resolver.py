@@ -80,9 +80,7 @@ async def resolve_secret(
     if not name:
         raise ValueError("Secret name must not be empty")
     if tier not in _VALID_TIERS:
-        raise ValueError(
-            f"Invalid tier {tier!r}. Must be one of: {sorted(_VALID_TIERS)}"
-        )
+        raise ValueError(f"Invalid tier {tier!r}. Must be one of: {sorted(_VALID_TIERS)}")
 
     sink = audit_sink if audit_sink is not None else _NULL_SINK
 

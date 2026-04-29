@@ -165,9 +165,7 @@ def _wire_adapters(runner: object, config: object) -> None:
                 if bot_token is None
                 else config.platforms.slack.app_token_env
             )
-            msg = (
-                f"arcgateway: Slack token not found in env var {missing!r}"
-            )
+            msg = f"arcgateway: Slack token not found in env var {missing!r}"
             if tier == "federal":
                 _logger.error("%s — hard error at federal tier", msg)
                 sys.exit(1)
@@ -211,10 +209,7 @@ def cmd_stop(*, runtime_dir: Path | None = None) -> None:
     pid_file = rt / _PID_FILE_NAME
 
     if not pid_file.exists():
-        _echo(
-            "arcgateway stop: no PID file found at "
-            f"{pid_file} — is the gateway running?"
-        )
+        _echo(f"arcgateway stop: no PID file found at {pid_file} — is the gateway running?")
         return
 
     try:

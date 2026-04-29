@@ -346,9 +346,7 @@ class ArcTUI(App[None]):
         cmd = resolve_command(command)
         if cmd is None:
             if self._transcript is not None:
-                self._transcript.add_message(
-                    MessageRole.SYSTEM, f"Unknown command: /{command}"
-                )
+                self._transcript.add_message(MessageRole.SYSTEM, f"Unknown command: /{command}")
             return
 
         if cmd.handler is not None:

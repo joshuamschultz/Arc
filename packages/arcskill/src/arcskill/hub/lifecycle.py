@@ -194,9 +194,7 @@ def _get_crl(config: HubConfig) -> frozenset[str]:
         return hashes
     except (urllib.error.URLError, OSError) as exc:
         if config.revocation.fail_closed_if_unreachable:
-            raise CRLUnreachable(
-                f"CRL endpoint {url!r} unreachable at boot: {exc}"
-            ) from exc
+            raise CRLUnreachable(f"CRL endpoint {url!r} unreachable at boot: {exc}") from exc
         logger.warning("[hub] CRL unreachable on boot (%s); using empty set", exc)
         return frozenset()
 

@@ -19,24 +19,20 @@ We mock at the lowest useful layer:
 from __future__ import annotations
 
 import platform
+import shutil
 import sys
-import unittest.mock
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from arcskill.hub.config import HubConfig, TierPolicy
 from arcskill.hub.dry_run import (
-    DryRunResult,
     FirecrackerSandbox,
-    _platform_is_macos,
     _run_in_sandbox,
     is_firecracker_available,
     run_dry_run,
 )
 from arcskill.hub.errors import SandboxRequired
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,9 +76,7 @@ def test_is_firecracker_available_returns_false_on_macos() -> None:
     This ensures the check is genuinely exercised on the macOS CI runner.
     """
     result = is_firecracker_available()
-    assert result is False, (
-        "Firecracker must be reported unavailable on macOS (no KVM hardware)"
-    )
+    assert result is False, "Firecracker must be reported unavailable on macOS (no KVM hardware)"
 
 
 def test_is_firecracker_available_detects_kvm_and_binaries() -> None:
@@ -107,7 +101,9 @@ def test_is_firecracker_available_detects_kvm_and_binaries() -> None:
         mock_path_class.side_effect = path_side_effect
 
         # Both binaries present
-        mock_which.side_effect = lambda name: f"/usr/bin/{name}" if name in ("firecracker", "jailer") else None
+        mock_which.side_effect = lambda name: (
+            f"/usr/bin/{name}" if name in ("firecracker", "jailer") else None
+        )
 
         result = is_firecracker_available()
         assert result is True
@@ -121,7 +117,9 @@ def test_is_firecracker_available_returns_false_when_kvm_missing() -> None:
     ):
         kvm_instance = MagicMock()
         kvm_instance.exists.return_value = False
-        mock_path_class.side_effect = lambda p: kvm_instance if str(p) == "/dev/kvm" else MagicMock(exists=lambda: False)
+        mock_path_class.side_effect = lambda p: (
+            kvm_instance if str(p) == "/dev/kvm" else MagicMock(exists=lambda: False)
+        )
 
         result = is_firecracker_available()
         assert result is False
@@ -135,10 +133,14 @@ def test_is_firecracker_available_returns_false_when_jailer_missing() -> None:
     ):
         kvm_instance = MagicMock()
         kvm_instance.exists.return_value = True
-        mock_path_class.side_effect = lambda p: kvm_instance if str(p) == "/dev/kvm" else MagicMock()
+        mock_path_class.side_effect = lambda p: (
+            kvm_instance if str(p) == "/dev/kvm" else MagicMock()
+        )
 
         # firecracker present but jailer absent
-        mock_which.side_effect = lambda name: "/usr/bin/firecracker" if name == "firecracker" else None
+        mock_which.side_effect = lambda name: (
+            "/usr/bin/firecracker" if name == "firecracker" else None
+        )
 
         result = is_firecracker_available()
         assert result is False
@@ -247,7 +249,8 @@ def test_federal_raises_sandbox_required_when_firecracker_missing() -> None:
     with patch("arcskill.hub.dry_run.is_firecracker_available", return_value=False):
         with pytest.raises(SandboxRequired) as exc_info:
             import asyncio
-            asyncio.run(_run_in_sandbox("python -c 'pass'", Path("/tmp"), config))
+
+            asyncio.run(_run_in_sandbox("python -c 'pass'", Path("/tmp"), config))  # noqa: S108 — test fixture
 
     assert "Federal tier" in str(exc_info.value)
     assert "Firecracker" in str(exc_info.value)

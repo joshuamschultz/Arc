@@ -24,7 +24,6 @@ from arcagent.core.config import (
     TelemetryConfig,
     VaultConfig,
 )
-from arcagent.core.errors import IdentityError
 from arcagent.core.module_bus import ModuleBus
 
 
@@ -250,7 +249,10 @@ class TestArcLLMBridge:
         record = MagicMock()
         record.model_dump.return_value = {
             "event_type": "config_change",
-            "event_data": {"actor": "operator", "changes": {"temperature": {"old": 0.7, "new": 0.3}}},
+            "event_data": {
+                "actor": "operator",
+                "changes": {"temperature": {"old": 0.7, "new": 0.3}},
+            },
         }
         bridge(record)
 
@@ -688,83 +690,39 @@ class TestReloadEdgeCases:
 
 
 class TestSkillsPropertyEdgeCase:
-    """Line 390: skills property returns [] when skill_registry is None."""
+    """`skills` property returns [] when capability_registry is None."""
 
     def test_skills_returns_empty_when_registry_none(self, agent: ArcAgent) -> None:
-        """Line 390: return [] when skill_registry is None."""
-        # Before startup, skill_registry is None
-        assert agent._skill_registry is None
-        skills = agent.skills
-        assert skills == []
+        # Before startup, capability_registry is None
+        assert agent._capability_registry is None
+        assert agent.skills == []
 
 
 class TestShutdownEdgeCases:
-    """Line 406: shutdown returns early when bus/tool_registry is None."""
+    """shutdown returns early when bus/tool_registry is None."""
 
     async def test_shutdown_returns_when_bus_none(self, agent: ArcAgent) -> None:
-        """Line 406: return when bus/tool_registry is None in shutdown."""
         await agent.startup()
-        # Artificially set bus to None
         agent._bus = None
-
-        # shutdown should return early without crashing
         await agent.shutdown()
 
 
-class TestSkillPromptInjectionEdgeCases:
-    """Line 432: _setup_skill_prompt_injection returns when bus/skill_registry is None."""
+class TestCapabilityPromptInjectionEdgeCases:
+    """_setup_capability_prompt_injection returns when bus/registry is None."""
 
-    async def test_skill_prompt_injection_returns_when_bus_none(self, agent: ArcAgent) -> None:
-        """Line 432: return when bus/skill_registry is None."""
-        await agent.startup()
-        # Artificially set bus to None
-        agent._bus = None
-
-        # Should not crash when called
-        agent._setup_skill_prompt_injection()
-
-
-class TestToolPromptInjection:
-    """R7.1: _setup_tool_prompt_injection wires audit and catalog injection."""
-
-    async def test_tool_prompt_injection_returns_when_bus_none(self, agent: ArcAgent) -> None:
-        """Guard: returns early when bus is None."""
+    async def test_capability_prompt_injection_returns_when_bus_none(
+        self, agent: ArcAgent
+    ) -> None:
         await agent.startup()
         agent._bus = None
-        # Should not crash
-        agent._setup_tool_prompt_injection()
+        agent._setup_capability_prompt_injection()  # no-op
 
-    async def test_tool_prompt_injection_returns_when_registry_none(self, agent: ArcAgent) -> None:
-        """Guard: returns early when tool_registry is None."""
+    async def test_capability_prompt_injection_returns_when_registry_none(
+        self, agent: ArcAgent
+    ) -> None:
         await agent.startup()
-        agent._tool_registry = None
-        # Should not crash
-        agent._setup_tool_prompt_injection()
-
-
-class TestLoadModulesEdgeCases:
-    """Line 456: _load_modules_by_convention returns when bus is None."""
-
-    async def test_load_modules_returns_when_bus_none(self, agent: ArcAgent) -> None:
-        """Line 456: return when bus is None in _load_modules_by_convention."""
-        from arcagent.core.module_bus import ModuleContext
-
-        await agent.startup()
-        # Artificially set bus to None
-        agent._bus = None
-
-        # Create a dummy module context
-        ctx = ModuleContext(
-            bus=MagicMock(),
-            tool_registry=MagicMock(),
-            config=agent._config,
-            telemetry=MagicMock(),
-            workspace=agent._workspace,
-            llm_config=agent._config.llm,
-        )
-
-        # Should return early without crashing
-        agent._load_modules_by_convention(ctx)
+        agent._capability_registry = None
+        agent._setup_capability_prompt_injection()  # no-op
 
 
 class TestVaultResolverEdgeCases:

@@ -17,7 +17,6 @@ from arcagent.modules.browser.errors import (
 )
 from arcagent.modules.browser.session import BrowserSession, _format_ax_tree
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -98,7 +97,9 @@ class TestEmitCreated:
         async def capture(name: str, payload: dict[str, Any]) -> None:
             events.append((name, payload))
 
-        s = BrowserSession(page=page, session_id="s1", mode="remote", provider="bb", audit_fn=capture)
+        s = BrowserSession(
+            page=page, session_id="s1", mode="remote", provider="bb", audit_fn=capture
+        )
         await s.emit_created()
 
         assert len(events) == 1

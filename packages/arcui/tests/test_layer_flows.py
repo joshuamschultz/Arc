@@ -434,9 +434,7 @@ class TestTeamLayer:
         sub_mgr.set_subscription(
             research_queue, Subscription(layers=["team"], teams=["research-team"])
         )
-        sub_mgr.set_subscription(
-            ops_queue, Subscription(layers=["team"], teams=["ops-team"])
-        )
+        sub_mgr.set_subscription(ops_queue, Subscription(layers=["team"], teams=["ops-team"]))
 
         reporter = UIEventReporter(
             event_buffer=buffer,
@@ -484,9 +482,7 @@ class TestMultiLayerIndependence:
         sub_mgr.set_subscription(team_q, Subscription(layers=["team"]))
         sub_mgr.set_subscription(all_q, Subscription())
 
-        reporter = UIEventReporter(
-            event_buffer=buffer, agent_id="agent1", agent_name="test"
-        )
+        reporter = UIEventReporter(event_buffer=buffer, agent_id="agent1", agent_name="test")
         reporter.emit_llm_trace(model="gpt-4o", provider="openai", duration_ms=100.0)
         reporter.emit_run_event(event_type="spawn_start", data={"run_id": "r1"})
         reporter.emit_agent_event(event_type="tool_call", data={"tool": "x"})
@@ -507,9 +503,7 @@ class TestMultiLayerIndependence:
         queue = conn_mgr.create_queue()
         sub_mgr.set_subscription(queue, Subscription())
 
-        reporter = UIEventReporter(
-            event_buffer=buffer, agent_id="agent1", agent_name="test"
-        )
+        reporter = UIEventReporter(event_buffer=buffer, agent_id="agent1", agent_name="test")
         reporter.emit_llm_trace(model="gpt-4o", provider="openai", duration_ms=100.0)
         reporter.emit_run_event(event_type="spawn_start", data={"run_id": "r1"})
         buffer.flush_once()

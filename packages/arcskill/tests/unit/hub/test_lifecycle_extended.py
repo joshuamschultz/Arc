@@ -332,9 +332,7 @@ def test_crl_refresh_loop_handles_crl_unreachable() -> None:
                 from arcskill.hub.lifecycle import _crl_refresh_loop
 
                 with pytest.raises(asyncio.CancelledError):
-                    await _crl_refresh_loop(
-                        config, install_base=None, lock_path=None
-                    )
+                    await _crl_refresh_loop(config, install_base=None, lock_path=None)
 
     asyncio.run(_run_one())
 
@@ -362,9 +360,7 @@ def test_crl_refresh_loop_handles_unexpected_exception() -> None:
                 from arcskill.hub.lifecycle import _crl_refresh_loop
 
                 with pytest.raises(asyncio.CancelledError):
-                    await _crl_refresh_loop(
-                        config, install_base=None, lock_path=None
-                    )
+                    await _crl_refresh_loop(config, install_base=None, lock_path=None)
 
     asyncio.run(_run_one())
 

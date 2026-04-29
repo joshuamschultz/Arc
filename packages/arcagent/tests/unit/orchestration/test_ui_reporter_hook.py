@@ -18,13 +18,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from arcagent.orchestration.spawn import spawn
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.streams import TurnEndEvent, run_stream
 from arcrun.types import LoopResult
+
+from arcagent.orchestration.spawn import spawn
 
 # ---------------------------------------------------------------------------
 # FakeReporter — records emit_run_event calls (no arcui dependency)
@@ -192,6 +192,7 @@ class TestRunStreamUIReporter:
             on_event = kwargs.get("on_event")
             if on_event is not None:
                 from arcrun.events import EventBus
+
                 bus = EventBus(run_id="test-tool-start", on_event=on_event)
                 bus.emit("tool.start", {"name": "read_file", "arguments": {}})
             return _fake_loop_result()
@@ -220,6 +221,7 @@ class TestRunStreamUIReporter:
             on_event = kwargs.get("on_event")
             if on_event is not None:
                 from arcrun.events import EventBus
+
                 bus = EventBus(run_id="test-tool-end", on_event=on_event)
                 bus.emit("tool.start", {"name": "read_file", "arguments": {}})
                 bus.emit("tool.end", {"result": "file contents"})

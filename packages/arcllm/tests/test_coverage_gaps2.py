@@ -98,9 +98,7 @@ class TestOtelRemainingBranches:
         from arcllm.modules.otel import _create_otlp_exporter
 
         # Remove the grpc exporter module so the import fails
-        saved = sys.modules.pop(
-            "opentelemetry.exporter.otlp.proto.grpc.trace_exporter", None
-        )
+        saved = sys.modules.pop("opentelemetry.exporter.otlp.proto.grpc.trace_exporter", None)
         sys.modules["opentelemetry.exporter.otlp.proto.grpc.trace_exporter"] = None  # type: ignore[assignment]
 
         try:
@@ -110,9 +108,7 @@ class TestOtelRemainingBranches:
             if saved is not None:
                 sys.modules["opentelemetry.exporter.otlp.proto.grpc.trace_exporter"] = saved
             else:
-                sys.modules.pop(
-                    "opentelemetry.exporter.otlp.proto.grpc.trace_exporter", None
-                )
+                sys.modules.pop("opentelemetry.exporter.otlp.proto.grpc.trace_exporter", None)
 
     def test_create_exporter_console_returns_console_exporter(self) -> None:
         """Lines 106-108: console exporter type returns ConsoleSpanExporter."""
@@ -175,16 +171,12 @@ class TestQueueSpanAttributes:
         qm = QueueModule({"max_concurrent": 1, "max_queued": 5}, inner)
 
         # First call acquires the semaphore and blocks
-        task1 = asyncio.create_task(
-            qm.invoke([Message(role="user", content="first")])
-        )
+        task1 = asyncio.create_task(qm.invoke([Message(role="user", content="first")]))
         # Give task1 time to acquire the semaphore
         await asyncio.sleep(0)
 
         # Second call waits for the semaphore (entered_semaphore=False)
-        task2 = asyncio.create_task(
-            qm.invoke([Message(role="user", content="second")])
-        )
+        task2 = asyncio.create_task(qm.invoke([Message(role="user", content="second")]))
         await asyncio.sleep(0)  # task2 is now waiting
 
         # Cancel task2 while it's waiting for the semaphore
@@ -347,9 +339,7 @@ class TestRegistryRemainingPaths:
         class FakeVaultCfg:
             backend: str | None = None
 
-        adapter = _build_adapter(
-            "anthropic", "claude-sonnet-4-6", FakeVaultCfg(), None
-        )
+        adapter = _build_adapter("anthropic", "claude-sonnet-4-6", FakeVaultCfg(), None)
         assert adapter is not None
 
     def test_load_model_routing_with_valid_rules(self) -> None:
@@ -438,9 +428,7 @@ class TestTraceStoreRemainingBranches:
         return TraceRecord(**defaults)
 
     @pytest.mark.asyncio
-    async def test_query_skips_file_newer_than_cursor_date(
-        self, agent_root: Path
-    ) -> None:
+    async def test_query_skips_file_newer_than_cursor_date(self, agent_root: Path) -> None:
         """Line 315: file dated AFTER cursor_date is skipped in query iteration.
 
         We create a file with a future date, then use a cursor from an older date.
@@ -497,9 +485,7 @@ class TestTraceStoreRemainingBranches:
         assert "empty-line-second" in found_ids
 
     @pytest.mark.asyncio
-    async def test_query_handles_bad_json_lines_gracefully(
-        self, agent_root: Path
-    ) -> None:
+    async def test_query_handles_bad_json_lines_gracefully(self, agent_root: Path) -> None:
         """Lines 329-330: JSONDecodeError in query iteration is skipped."""
         store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="good-record")
@@ -519,9 +505,7 @@ class TestTraceStoreRemainingBranches:
         assert len(found) == 1
 
     @pytest.mark.asyncio
-    async def test_query_end_date_filter_excludes_future(
-        self, agent_root: Path
-    ) -> None:
+    async def test_query_end_date_filter_excludes_future(self, agent_root: Path) -> None:
         """Line 348: end timestamp filter excludes records after the cutoff."""
         store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="end-filter-test")
@@ -532,9 +516,7 @@ class TestTraceStoreRemainingBranches:
         assert len(results) == 0
 
     @pytest.mark.asyncio
-    async def test_get_handles_bad_json_lines_gracefully(
-        self, agent_root: Path
-    ) -> None:
+    async def test_get_handles_bad_json_lines_gracefully(self, agent_root: Path) -> None:
         """Lines 364, 367-368: JSONDecodeError in get() iteration is skipped."""
         store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="get-good")
@@ -592,9 +574,7 @@ class TestTraceStoreRemainingBranches:
         assert valid is True
 
     @pytest.mark.asyncio
-    async def test_verify_chain_prev_hash_mismatch_returns_false(
-        self, agent_root: Path
-    ) -> None:
+    async def test_verify_chain_prev_hash_mismatch_returns_false(self, agent_root: Path) -> None:
         """Lines 397-401: verify_chain returns False on prev_hash chain break."""
         store = JSONLTraceStore(agent_root)
 
@@ -638,9 +618,7 @@ class TestVaultFromConfigSuccess:
         fake_mod._FakeBackend = _FakeBackend  # type: ignore[attr-defined]
 
         with patch.dict(sys.modules, {"arcllm._vault_success_test": fake_mod}):
-            resolver = VaultResolver.from_config(
-                "arcllm._vault_success_test:_FakeBackend", 120
-            )
+            resolver = VaultResolver.from_config("arcllm._vault_success_test:_FakeBackend", 120)
 
         assert isinstance(resolver, VaultResolver)
         assert resolver._backend is not None

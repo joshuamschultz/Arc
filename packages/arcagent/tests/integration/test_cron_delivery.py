@@ -19,8 +19,7 @@ import pytest
 
 from arcagent.modules.scheduler.cron_runner import CronRunner
 from arcagent.modules.scheduler.delivery import DeliverySender
-from arcagent.modules.scheduler.models import CronJob, SILENT_MARKER
-
+from arcagent.modules.scheduler.models import SILENT_MARKER, CronJob
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,9 +46,7 @@ def _make_runner(
         telemetry = MagicMock()
         telemetry.audit_event = MagicMock()
     if agent_fn is None:
-        agent_fn = AsyncMock(
-            return_value=type("R", (), {"content": "agent output"})()
-        )
+        agent_fn = AsyncMock(return_value=type("R", (), {"content": "agent output"})())
     runner = CronRunner(
         agent_run_fn=agent_fn,
         telemetry=telemetry,

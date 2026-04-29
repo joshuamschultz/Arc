@@ -14,7 +14,6 @@ import unittest.mock
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import HubConfig, RevocationConfig, TierPolicy
 from arcskill.hub.lifecycle import (
     _crl_state,
@@ -54,7 +53,6 @@ def _federal_config() -> HubConfig:
 
 
 class TestRevocationLifecycle:
-
     def test_installed_skill_quarantined_on_crl_hit(self) -> None:
         """Skill installed → CRL updated with its hash → next boot quarantines it."""
         with tempfile.TemporaryDirectory() as tmpdir_str:
@@ -87,9 +85,7 @@ class TestRevocationLifecycle:
 
             # Simulate CRL being updated to include this skill's hash.
             _crl_state.clear()
-            with unittest.mock.patch(
-                "arcskill.hub.lifecycle._fetch_crl_remote"
-            ) as mock_fetch:
+            with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
                 mock_fetch.return_value = frozenset([skill_hash])
                 quarantined = check_revocation_on_boot(
                     _personal_config(),
@@ -148,9 +144,7 @@ class TestRevocationLifecycle:
             lock.save(lock_path)
 
             _crl_state.clear()
-            with unittest.mock.patch(
-                "arcskill.hub.lifecycle._fetch_crl_remote"
-            ) as mock_fetch:
+            with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
                 mock_fetch.return_value = frozenset([bad_hash])  # different hash
                 quarantined = check_revocation_on_boot(
                     _personal_config(),
@@ -197,9 +191,7 @@ class TestRevocationLifecycle:
             lock.save(lock_path)
 
             _crl_state.clear()
-            with unittest.mock.patch(
-                "arcskill.hub.lifecycle._fetch_crl_remote"
-            ) as mock_fetch:
+            with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
                 mock_fetch.return_value = frozenset([revoked_hash])
                 quarantined = check_revocation_on_boot(
                     _personal_config(),
@@ -232,9 +224,7 @@ class TestRevocationLifecycle:
             lock.save(lock_path)
 
             _crl_state.clear()
-            with unittest.mock.patch(
-                "arcskill.hub.lifecycle._fetch_crl_remote"
-            ) as mock_fetch:
+            with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
                 mock_fetch.return_value = frozenset([revoked_hash])
                 quarantined = check_revocation_on_boot(
                     _personal_config(),
@@ -252,7 +242,6 @@ class TestRevocationLifecycle:
 
 
 class TestFederalRevocation:
-
     def test_federal_revocation_on_crl_hit(self) -> None:
         """Federal tier: CRL hit quarantines skill."""
         with tempfile.TemporaryDirectory() as tmpdir_str:
@@ -274,9 +263,7 @@ class TestFederalRevocation:
             lock.save(lock_path)
 
             _crl_state.clear()
-            with unittest.mock.patch(
-                "arcskill.hub.lifecycle._fetch_crl_remote"
-            ) as mock_fetch:
+            with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
                 mock_fetch.return_value = frozenset([federal_hash])
                 quarantined = check_revocation_on_boot(
                     _federal_config(),
@@ -289,14 +276,13 @@ class TestFederalRevocation:
 
     def test_federal_crl_unreachable_hard_fails(self) -> None:
         """Federal with fail_closed=True: CRL unreachable at boot → raises."""
-        from arcskill.hub.errors import CRLUnreachable
         import urllib.error
+
+        from arcskill.hub.errors import CRLUnreachable
 
         _crl_state.clear()
 
-        with unittest.mock.patch(
-            "arcskill.hub.lifecycle._fetch_crl_remote"
-        ) as mock_fetch:
+        with unittest.mock.patch("arcskill.hub.lifecycle._fetch_crl_remote") as mock_fetch:
             mock_fetch.side_effect = urllib.error.URLError("timeout")
             with pytest.raises(CRLUnreachable):
                 check_revocation_on_boot(_federal_config())

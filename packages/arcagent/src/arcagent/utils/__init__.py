@@ -41,6 +41,10 @@ def load_eval_model(
     _logger.info("Loading model: %s (label=%s)", model_id, agent_label)
     provider, _, model_name = model_id.partition("/")
     return arcllm_load_model(
-        provider, model_name or None, retry=True, agent_label=agent_label,
-        trace_store=trace_store, on_event=on_event,
+        provider,
+        model_name or None,
+        retry=True,
+        agent_label=agent_label,
+        trace_store=trace_store,
+        on_event=on_event,
     )

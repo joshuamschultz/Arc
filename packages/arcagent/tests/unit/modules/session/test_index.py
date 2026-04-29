@@ -16,7 +16,6 @@ from arcagent.modules.session.index import (
     _classifications_up_to,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -79,9 +78,7 @@ class TestSessionIndexSchema:
         conn = sqlite3.connect(str(db_path))
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         conn.close()
         assert "messages" in tables
@@ -124,9 +121,7 @@ class TestSessionIndexSchema:
 
 class TestSessionIndexPolling:
     @pytest.mark.asyncio
-    async def test_scan_once_indexes_10_lines(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_scan_once_indexes_10_lines(self, db_path: Path, tmp_sessions: Path) -> None:
         """Insert 10 JSONL lines, run one poll cycle, assert all 10 in messages."""
         entries = [_make_entry(content=f"message {i}") for i in range(10)]
         _write_session(tmp_sessions, "sess-abc", entries)
@@ -144,9 +139,7 @@ class TestSessionIndexPolling:
         assert count == 10
 
     @pytest.mark.asyncio
-    async def test_scan_once_populates_fts5(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_scan_once_populates_fts5(self, db_path: Path, tmp_sessions: Path) -> None:
         """After indexing, FTS5 virtual table must contain rows."""
         entries = [_make_entry(content=f"unique_token_{i}") for i in range(5)]
         _write_session(tmp_sessions, "sess-fts", entries)
@@ -162,9 +155,7 @@ class TestSessionIndexPolling:
         assert count == 5
 
     @pytest.mark.asyncio
-    async def test_second_scan_does_not_duplicate(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_second_scan_does_not_duplicate(self, db_path: Path, tmp_sessions: Path) -> None:
         """Running scan_once twice must not insert duplicate rows (idempotent)."""
         entries = [_make_entry(content="dedupe test")]
         _write_session(tmp_sessions, "sess-dedup", entries)
@@ -261,9 +252,7 @@ class TestSessionIndexSearch:
         assert ">>" in hits[0].snippet
 
     @pytest.mark.asyncio
-    async def test_search_no_match_returns_empty(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_search_no_match_returns_empty(self, db_path: Path, tmp_sessions: Path) -> None:
         entries = [_make_entry(content="hello world")]
         _write_session(tmp_sessions, "sess-nomatch", entries)
 
@@ -276,9 +265,7 @@ class TestSessionIndexSearch:
         assert hits == []
 
     @pytest.mark.asyncio
-    async def test_search_since_filter(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_search_since_filter(self, db_path: Path, tmp_sessions: Path) -> None:
         """since filter excludes messages before the cutoff timestamp."""
         old_ts = "2020-01-01T00:00:00+00:00"
         new_ts = "2026-01-01T00:00:00+00:00"
@@ -322,9 +309,7 @@ class TestSessionIndexSearch:
         assert hits[0].classification == "unclassified"
 
     @pytest.mark.asyncio
-    async def test_search_returns_searchhit_model(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_search_returns_searchhit_model(self, db_path: Path, tmp_sessions: Path) -> None:
         entries = [_make_entry(content="test hit model")]
         _write_session(tmp_sessions, "sess-model", entries)
 
@@ -352,9 +337,7 @@ class TestSessionIndexSearch:
         assert hits == []
 
     @pytest.mark.asyncio
-    async def test_search_limit_respected(
-        self, db_path: Path, tmp_sessions: Path
-    ) -> None:
+    async def test_search_limit_respected(self, db_path: Path, tmp_sessions: Path) -> None:
         entries = [_make_entry(content=f"apple banana cherry {i}") for i in range(10)]
         _write_session(tmp_sessions, "sess-limit", entries)
 

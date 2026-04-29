@@ -668,9 +668,7 @@ def _run_interactive_build(agent_dir: Path) -> None:
     config_path = agent_dir / "arcagent.toml"
     if config_path.exists():
         config = _load_agent_config(agent_dir)
-        sys.stdout.write(
-            f"Existing config: {config.get('agent', {}).get('name', '?')}\n"
-        )
+        sys.stdout.write(f"Existing config: {config.get('agent', {}).get('name', '?')}\n")
 
     def _prompt(label: str, default: str) -> str:
         sys.stdout.write(f"{label} [{default}]: ")
@@ -692,9 +690,7 @@ def _run_interactive_build(agent_dir: Path) -> None:
         status = "ready" if has_key else f"needs {env_var}"
         sys.stdout.write(f"  {i}. {p} ({status})\n")
 
-    default_model = config.get("llm", {}).get(
-        "model", "anthropic/claude-sonnet-4-5-20250929"
-    )
+    default_model = config.get("llm", {}).get("model", "anthropic/claude-sonnet-4-5-20250929")
     current_provider = default_model.split("/")[0] if "/" in default_model else "anthropic"
     default_idx = providers.index(current_provider) + 1 if current_provider in providers else 1
 
@@ -1006,12 +1002,11 @@ def _try_auto_register(name: str, agent_dir: Path) -> None:
                 sys.stdout.write(f"  arcteam: {name} already registered (ok)\n")
                 return
             sys.stdout.write(
-                f"Registered with arcteam: {name}\n"
-                f"  Workspace: {agent_dir / 'workspace'}\n"
+                f"Registered with arcteam: {name}\n  Workspace: {agent_dir / 'workspace'}\n"
             )
 
         asyncio.run(_do())
-    except Exception as exc:  # noqa: BLE001 — best-effort, never block create
+    except Exception as exc:
         sys.stdout.write(
             f"Warning: arcteam auto-register failed: {exc}\n"
             f"  Run manually: arc team register {name} --type agent "
@@ -1166,9 +1161,7 @@ def _serve(args: argparse.Namespace) -> None:
         loop.add_signal_handler(sig, shutdown_event.set)
 
     try:
-        loop.run_until_complete(
-            _serve_daemon(agent_dir, shutdown_event, verbose)
-        )
+        loop.run_until_complete(_serve_daemon(agent_dir, shutdown_event, verbose))
     finally:
         loop.close()
 
@@ -1315,7 +1308,7 @@ async def _chat_interactive(
                 continue
 
             if user_input.startswith("/switch"):
-                arg = user_input[len("/switch"):].strip()
+                arg = user_input[len("/switch") :].strip()
                 if arg:
                     current_session_id = arg
                     sys.stdout.write(f"  Switched to session: {arg}\n")

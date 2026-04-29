@@ -190,13 +190,10 @@ def _gateway_pair_approve_handler(args: list[str]) -> None:
         store = PairingStore()
         result = await store.verify_and_consume(code)
         if result is None:
-            sys.stderr.write(
-                f"Error: code {code!r} is invalid, expired, or already consumed.\n"
-            )
+            sys.stderr.write(f"Error: code {code!r} is invalid, expired, or already consumed.\n")
             sys.exit(1)
         sys.stdout.write(
-            f"Approved: platform={result.platform!r} "
-            f"user_hash={result.platform_user_id_hash!r}\n"
+            f"Approved: platform={result.platform!r} user_hash={result.platform_user_id_hash!r}\n"
         )
 
     asyncio.run(_approve())
@@ -230,8 +227,7 @@ def _gateway_pair_list_handler(args: list[str]) -> None:
 
             remaining = max(0, pc.expires_at - time.time())
             sys.stdout.write(
-                f"  {pc.code}  platform={pc.platform!r}  "
-                f"expires_in={int(remaining // 60)}m\n"
+                f"  {pc.code}  platform={pc.platform!r}  expires_in={int(remaining // 60)}m\n"
             )
 
     asyncio.run(_list())
@@ -251,8 +247,7 @@ def _gateway_pair_revoke_handler(args: list[str]) -> None:
     """
     if not args:
         sys.stderr.write(
-            "Usage: gateway pair revoke <code>\n"
-            "  <code>  8-char pairing code to invalidate\n"
+            "Usage: gateway pair revoke <code>\n  <code>  8-char pairing code to invalidate\n"
         )
         sys.exit(1)
 
@@ -268,9 +263,7 @@ def _gateway_pair_revoke_handler(args: list[str]) -> None:
         if revoked:
             sys.stdout.write(f"Revoked: {code!r}\n")
         else:
-            sys.stderr.write(
-                f"Warning: code {code!r} was not found or already consumed.\n"
-            )
+            sys.stderr.write(f"Warning: code {code!r} was not found or already consumed.\n")
 
     asyncio.run(_revoke())
 

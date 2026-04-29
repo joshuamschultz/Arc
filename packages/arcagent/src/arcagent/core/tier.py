@@ -112,8 +112,7 @@ def tier_from_config(cfg: Any) -> Tier:
     except ValueError as exc:
         valid = [t.value for t in Tier]
         raise ValueError(
-            f"Invalid security.tier {tier_str!r} in config.  "
-            f"Must be one of: {valid}"
+            f"Invalid security.tier {tier_str!r} in config.  Must be one of: {valid}"
         ) from exc
 
 

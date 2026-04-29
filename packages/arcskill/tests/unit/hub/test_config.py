@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from arcskill.hub.config import (
     FindingsAllowed,
     HubConfig,
@@ -12,7 +11,6 @@ from arcskill.hub.config import (
     SkillSource,
     TierPolicy,
 )
-
 
 # ---------------------------------------------------------------------------
 # TierPolicy
@@ -116,8 +114,8 @@ def test_skill_source_registry() -> None:
 
 
 def test_skill_source_local() -> None:
-    src = SkillSource(name="local-dev", type="local", path="/tmp/skills")
-    assert src.path == "/tmp/skills"
+    src = SkillSource(name="local-dev", type="local", path="/tmp/skills")  # noqa: S108 — test fixture
+    assert src.path == "/tmp/skills"  # noqa: S108 — test fixture
 
 
 def test_skill_source_invalid_type() -> None:

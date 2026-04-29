@@ -137,9 +137,7 @@ class RedisLockElection:
                 pass
             self._renewer = None
         try:
-            await self._redis.eval(
-                _RELEASE_SCRIPT, 1, self._key, self._fence_token
-            )
+            await self._redis.eval(_RELEASE_SCRIPT, 1, self._key, self._fence_token)
         except Exception:
             _logger.debug("Lock release failed (may have expired)", exc_info=True)
 
@@ -158,9 +156,7 @@ class RedisLockElection:
                 )
                 if not extended:
                     # Someone else holds the lock now; we lost it.
-                    _logger.warning(
-                        "Redis leader lock %r lost during renewal", self._key
-                    )
+                    _logger.warning("Redis leader lock %r lost during renewal", self._key)
                     self._acquired = False
                     return
             except asyncio.CancelledError:

@@ -113,8 +113,7 @@ def is_firecracker_available() -> bool:
     available = kvm_present and fc_present and jailer_present
     if not available:
         logger.debug(
-            "is_firecracker_available=False "
-            "(kvm=%s firecracker=%s jailer=%s)",
+            "is_firecracker_available=False (kvm=%s firecracker=%s jailer=%s)",
             kvm_present,
             fc_present,
             jailer_present,
@@ -413,9 +412,7 @@ class FirecrackerSandbox:
     # Internal VM lifecycle helpers
     # ------------------------------------------------------------------
 
-    async def _prepare_chroot(
-        self, vm_id: str, jailer_dir: Path, skill_path: Path
-    ) -> None:
+    async def _prepare_chroot(self, vm_id: str, jailer_dir: Path, skill_path: Path) -> None:
         """Create the jailer chroot directory and bind-mount the skill.
 
         The skill directory is mounted read-only inside the chroot at
@@ -450,9 +447,7 @@ class FirecrackerSandbox:
                 stderr_bytes.decode("utf-8", errors="replace").strip(),
             )
 
-    async def _spawn_jailer(
-        self, vm_id: str, _jailer_dir: Path
-    ) -> asyncio.subprocess.Process:
+    async def _spawn_jailer(self, vm_id: str, _jailer_dir: Path) -> asyncio.subprocess.Process:
         """Spawn the Firecracker process via the jailer binary.
 
         The jailer performs chroot, seccomp filtering, network namespace
@@ -550,9 +545,7 @@ class FirecrackerSandbox:
         """
         if not vsock_path.exists():
             # VM did not boot; treat as failure but let cleanup happen.
-            logger.warning(
-                "[firecracker] vsock not available, cannot dispatch command"
-            )
+            logger.warning("[firecracker] vsock not available, cannot dispatch command")
             return "", "VM did not boot (vsock missing)", -1
 
         request = json.dumps({"cmd": command}) + "\n"
@@ -579,9 +572,7 @@ class FirecrackerSandbox:
             return stdout, stderr, exit_code
 
         except TimeoutError:
-            logger.warning(
-                "[firecracker] Command timed out after %ds: %r", timeout_s, command
-            )
+            logger.warning("[firecracker] Command timed out after %ds: %r", timeout_s, command)
             return "", "[DRY-RUN TIMEOUT]", -1
 
         except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -605,9 +596,7 @@ class FirecrackerSandbox:
         try:
             await asyncio.wait_for(proc.wait(), timeout=3.0)
         except TimeoutError:
-            logger.warning(
-                "[firecracker] SIGTERM ignored; sending SIGKILL to pid=%d", proc.pid
-            )
+            logger.warning("[firecracker] SIGTERM ignored; sending SIGKILL to pid=%d", proc.pid)
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 await proc.wait()

@@ -204,12 +204,8 @@ class NudgeEmitter:
         data = ctx.data
         tool_calls: list[dict[str, Any]] = data.get("tool_calls", [])
 
-        tool_calls_ok = sum(
-            1 for tc in tool_calls if tc.get("result_status") == "ok"
-        )
-        error_count = sum(
-            1 for tc in tool_calls if tc.get("result_status") == "error"
-        )
+        tool_calls_ok = sum(1 for tc in tool_calls if tc.get("result_status") == "ok")
+        error_count = sum(1 for tc in tool_calls if tc.get("result_status") == "error")
 
         return NudgeSignals(
             tool_calls_ok=tool_calls_ok,
@@ -272,9 +268,7 @@ class NudgeEmitter:
     def _record_nudge(self, turn_number: int, tool_seq_hash: str) -> None:
         """Update cooldown state after a successful nudge emission."""
         self._nudge_turns.append(turn_number)
-        self._shape_suppressed_until[tool_seq_hash] = (
-            turn_number + self._config.cooloff_turns
-        )
+        self._shape_suppressed_until[tool_seq_hash] = turn_number + self._config.cooloff_turns
         self._session_nudge_count += 1
 
     # ------------------------------------------------------------------

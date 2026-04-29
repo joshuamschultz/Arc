@@ -235,7 +235,7 @@ async def _stream_generator(
         words = content.split(" ")
         for i, word in enumerate(words):
             # Re-add the space between words (not before the first word)
-            text = ((" " + word) if i > 0 else word)
+            text = (" " + word) if i > 0 else word
             yield TokenEvent(text=text)
             # Mirror each token chunk to the UI reporter for live display
             _emit_ui_run_event(

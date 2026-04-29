@@ -929,9 +929,7 @@ async def spawn_many(
             return
 
         # Check token budget before acquiring the semaphore
-        root_budget: RootTokenBudget | None = getattr(
-            spec.parent_state, "root_token_budget", None
-        )
+        root_budget: RootTokenBudget | None = getattr(spec.parent_state, "root_token_budget", None)
         if root_budget is not None and spec.token_budget is not None:
             granted = await root_budget.try_debit(spec.token_budget)
             if not granted:

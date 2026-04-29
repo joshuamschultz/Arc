@@ -54,6 +54,7 @@ async def _signed_consume(
     sig = bytes(sk.sign(challenge).signature)
     return await store.verify_and_consume(code_obj.code, approver_did=did, signature=sig)
 
+
 # ---------------------------------------------------------------------------
 # Concurrent mint tests
 # ---------------------------------------------------------------------------
@@ -142,9 +143,7 @@ async def test_concurrent_different_platforms_independent(tmp_path: Path) -> Non
         _mint_other_platform("discord", "d1"),
         _mint_other_platform("slack", "s2"),
     )
-    assert all(results), (
-        "Mints on non-full platforms must succeed even when telegram is at max"
-    )
+    assert all(results), "Mints on non-full platforms must succeed even when telegram is at max"
 
 
 @pytest.mark.asyncio
@@ -190,8 +189,7 @@ async def test_five_concurrent_failure_recordings(tmp_path: Path) -> None:
 
     # Five concurrent bad attempts, all attributed to telegram
     bad_attempts = [
-        store.verify_and_consume(f"BADCODE{i}", platform_hint="telegram")
-        for i in range(5)
+        store.verify_and_consume(f"BADCODE{i}", platform_hint="telegram") for i in range(5)
     ]
     results = await asyncio.gather(*bad_attempts)
     assert all(r is None for r in results), "Bad codes must all return None"

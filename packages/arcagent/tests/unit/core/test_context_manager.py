@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from arcagent.core.config import ArcAgentConfig, ContextConfig
-from arcagent.core.session_internal.context import ContextManager
 from arcagent.core.module_bus import EventContext, ModuleBus
+from arcagent.core.session_internal.context import ContextManager
 
 
 @pytest.fixture()
@@ -142,9 +142,7 @@ class TestExtraSections:
         (tmp_path / "identity.md").write_text("I am agent")
         extra = {"strategies": "Strategy guidance"}
 
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(
-            tmp_path, extra_sections=extra
-        )
+        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, extra_sections=extra)
         assert "Bus-injected tools" in prompt
         assert "Strategy guidance" in prompt
 
@@ -159,9 +157,7 @@ class TestExtraSections:
         mock_bus.subscribe("agent:assemble_prompt", inject_via_bus)
         extra = {"overlap": "caller version"}
 
-        prompt = await ctx_mgr_with_bus.assemble_system_prompt(
-            tmp_path, extra_sections=extra
-        )
+        prompt = await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, extra_sections=extra)
         assert "caller version" in prompt
         assert "bus version" not in prompt
 

@@ -70,9 +70,7 @@ class UserProfileModule:
         """Wire into the module bus and initialise the profile store."""
         self._workspace = ctx.workspace
         self._telemetry = ctx.telemetry
-        self._store = ProfileStore(
-            ctx.workspace, self._config, telemetry=ctx.telemetry
-        )
+        self._store = ProfileStore(ctx.workspace, self._config, telemetry=ctx.telemetry)
 
         # Subscribe: optional durable-fact extraction hint on each response
         ctx.bus.subscribe(
@@ -231,9 +229,7 @@ class UserProfileModule:
 
     def _require_store(self) -> ProfileStore:
         if self._store is None:
-            raise RuntimeError(
-                "UserProfileModule has not been started; call startup() first."
-            )
+            raise RuntimeError("UserProfileModule has not been started; call startup() first.")
         return self._store
 
     def _overwrite_section(

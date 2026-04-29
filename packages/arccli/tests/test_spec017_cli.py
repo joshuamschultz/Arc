@@ -108,9 +108,7 @@ class TestScheduleList:
         proactive_dir = tmp_path / "workspace" / "proactive"
         proactive_dir.mkdir(parents=True)
         payload = {"schedules": [{"id": "nightly", "interval_seconds": 3600}]}
-        (proactive_dir / "schedules.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (proactive_dir / "schedules.json").write_text(json.dumps(payload), encoding="utf-8")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -124,9 +122,7 @@ class TestScheduleList:
 class TestScheduleMigrate:
     def test_noop_when_legacy_dir_absent(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        result = runner.invoke(
-            schedule_group, ["migrate", "--path", str(tmp_path)]
-        )
+        result = runner.invoke(schedule_group, ["migrate", "--path", str(tmp_path)])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["status"] == "no-op"
@@ -156,9 +152,7 @@ class TestScheduleMigrate:
         )
 
         runner = CliRunner()
-        result = runner.invoke(
-            schedule_group, ["migrate", "--path", str(tmp_path)]
-        )
+        result = runner.invoke(schedule_group, ["migrate", "--path", str(tmp_path)])
         assert result.exit_code == 0
         payload = json.loads(result.output)
         assert payload["status"] == "migrated"

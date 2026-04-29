@@ -76,8 +76,6 @@ class TestPairingCleanupScheduler:
         runner = GatewayRunner()
         runner.set_pairing_store(mock_store)
 
-        sleep_call_count = 0
-
         async def fast_sleep(seconds: float) -> None:
             # Let the loop proceed without actual waiting
             pass

@@ -70,10 +70,20 @@ class AgentAutoconnectFields(BaseModel):
 # clauses (e.g., `auth_token` appeared in both anchored and prefix
 # branches with subtly different meanings). Two collections, two clear
 # rules — easier to extend without regression.
-_SENSITIVE_KEY_EXACT: frozenset[str] = frozenset({
-    "password", "secret", "token", "tokens", "key", "credential",
-    "authorization", "auth_token", "api_key", "private",
-})
+_SENSITIVE_KEY_EXACT: frozenset[str] = frozenset(
+    {
+        "password",
+        "secret",
+        "token",
+        "tokens",
+        "key",
+        "credential",
+        "authorization",
+        "auth_token",
+        "api_key",
+        "private",
+    }
+)
 _SENSITIVE_KEY_PREFIX_PATTERN = re.compile(
     r"^(password|secret|api_key|private_key|auth_token"
     r"|access_token|refresh_token|bearer)",
@@ -84,9 +94,9 @@ _SENSITIVE_KEY_PREFIX_PATTERN = re.compile(
 def _is_sensitive_key(key: str) -> bool:
     """A key is sensitive if it matches an exact name or starts with one of the prefixes."""
     return (
-        key.lower() in _SENSITIVE_KEY_EXACT
-        or _SENSITIVE_KEY_PREFIX_PATTERN.match(key) is not None
+        key.lower() in _SENSITIVE_KEY_EXACT or _SENSITIVE_KEY_PREFIX_PATTERN.match(key) is not None
     )
+
 
 # Value-side patterns: even when the key name doesn't flag the field as
 # sensitive, certain content shapes always leak credentials.
@@ -141,9 +151,7 @@ class UIAuditLogger:
         self._tracer = trace.get_tracer("arcui", "0.1.0") if enabled else None
         self._audit_logger = logging.getLogger("arcui.audit")
 
-    def audit_event(
-        self, event_type: UIEvent | str, details: dict[str, Any]
-    ) -> None:
+    def audit_event(self, event_type: UIAuditEvent | str, details: dict[str, Any]) -> None:
         """Emit structured audit log + OTel span event.
 
         Always logs (even when OTel spans are disabled) because audit
@@ -155,11 +163,7 @@ class UIAuditLogger:
         the enum is the preferred path. Raw-string emissions are still
         accepted for legacy callers but flagged by the taxonomy test.
         """
-        event_name = (
-            event_type.value
-            if isinstance(event_type, UIAuditEvent)
-            else event_type
-        )
+        event_name = event_type.value if isinstance(event_type, UIAuditEvent) else event_type
         redacted = _redact_sensitive(details)
         audit_data = {
             "event_type": event_name,
@@ -180,8 +184,8 @@ class UIAuditLogger:
 
 
 __all__ = [
-    "UIAuditLogger",
-    "UIAuditEvent",
-    "SessionStartFields",
     "AgentAutoconnectFields",
+    "SessionStartFields",
+    "UIAuditEvent",
+    "UIAuditLogger",
 ]

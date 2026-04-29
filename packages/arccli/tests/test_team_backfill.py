@@ -38,7 +38,9 @@ def _register_agent(root: Path, entity_id: str, name: str) -> None:
     _register(args)
 
 
-def _make_team_dir(team_dir: Path, agent_name: str, workspace_subpath: str = "./workspace") -> Path:
+def _make_team_dir(
+    team_dir: Path, agent_name: str, workspace_subpath: str = "./workspace"
+) -> Path:
     """Create a `team/<agent_name>/arcagent.toml` and an inner workspace dir.
 
     Returns the absolute resolved workspace path the backfill should record.
@@ -65,6 +67,7 @@ def _backfill_args(root: Path, team_dir: Path, *, apply: bool) -> argparse.Names
 
 def _read_workspace_path(root: Path, entity_id: str) -> str | None:
     from arcteam.storage import FileBackend
+
     backend = FileBackend(root)
     key = entity_id.replace("://", "_")
     record = asyncio.run(backend.read("messages/registry", key))

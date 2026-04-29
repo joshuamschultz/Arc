@@ -153,11 +153,11 @@ class TestRedactionExceptionSafety:
         re.Pattern.subn is immutable in CPython, so we patch _REDACTION_RULES
         to inject a fake pattern whose sub() raises instead.
         """
-        import re
         import arcagent.modules.voice.redaction as redaction_mod
 
         class _ExplodingPattern:
             """A fake compiled pattern that always raises on subn()."""
+
             def subn(self, repl: str, string: str) -> tuple[str, int]:
                 raise RuntimeError("simulated regex failure")
 

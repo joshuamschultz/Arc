@@ -214,9 +214,7 @@ class _ThreadedProcessHandle:
                 with suppress(OSError):
                     wf.close()
 
-        self._thread = threading.Thread(
-            target=_worker, daemon=True, name="arcrun-threaded-handle"
-        )
+        self._thread = threading.Thread(target=_worker, daemon=True, name="arcrun-threaded-handle")
         # loop is captured by _worker's closure — used only in future _done signalling.
         # We keep it assigned to avoid flake8 F841, but it is intentionally captured.
         _ = loop

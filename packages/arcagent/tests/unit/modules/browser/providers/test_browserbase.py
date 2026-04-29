@@ -15,7 +15,6 @@ import pytest
 from arcagent.modules.browser.errors import BrowserNotAvailableError, RemoteProviderError
 from arcagent.modules.browser.providers.browserbase import BrowserbaseProvider
 
-
 _ENDPOINT = "wss://connect.browserbase.com?apiKey=test-key"
 
 

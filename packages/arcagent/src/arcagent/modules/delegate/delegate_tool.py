@@ -29,14 +29,13 @@ import uuid
 from typing import Any
 
 from arcrun.types import Tool, ToolContext
+from arctrust import ChildIdentity, derive_child_identity
 
+from arcagent.modules.delegate.config import DELEGATE_BLOCKED_TOOLS, DelegateConfig
 from arcagent.orchestration import (
     SpawnResult,
     spawn,
 )
-from arctrust import ChildIdentity, derive_child_identity
-
-from arcagent.modules.delegate.config import DELEGATE_BLOCKED_TOOLS, DelegateConfig
 
 _logger = logging.getLogger("arcagent.modules.delegate")
 
@@ -169,9 +168,7 @@ def make_delegate_tool(
         child_tools, stripped = _build_child_tool_list(parent_tools, requested_names)
 
         if stripped:
-            _logger.info(
-                "delegate: stripped blocked tools from child tool list: %s", stripped
-            )
+            _logger.info("delegate: stripped blocked tools from child tool list: %s", stripped)
 
         if not child_tools:
             return json.dumps(

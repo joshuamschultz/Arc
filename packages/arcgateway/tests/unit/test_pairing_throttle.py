@@ -21,7 +21,7 @@ from arcgateway.pairing_throttle import PairingThrottle
 
 def _make_db() -> tuple[sqlite3.Connection, Path]:
     """Create an in-memory-like temp SQLite DB for testing."""
-    tmp = tempfile.mktemp(suffix=".db")
+    tmp = tempfile.mktemp(suffix=".db")  # noqa: S306 — test-only fixture, not security-sensitive
     conn = sqlite3.connect(tmp)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA_SQL)

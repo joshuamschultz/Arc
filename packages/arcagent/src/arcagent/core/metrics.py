@@ -23,20 +23,14 @@ MetricKey = tuple[str, LabelTuple]
 
 
 _HELP: dict[str, str] = {
-    "arc_policy_decisions_total": (
-        "Policy-pipeline decisions counted by layer and outcome."
-    ),
-    "arc_policy_evaluation_duration_us": (
-        "Policy evaluation latency in microseconds."
-    ),
+    "arc_policy_decisions_total": ("Policy-pipeline decisions counted by layer and outcome."),
+    "arc_policy_evaluation_duration_us": ("Policy evaluation latency in microseconds."),
     "arc_policy_cache_hits_total": "Policy decision cache hits by layer.",
     "arc_policy_cache_misses_total": "Policy decision cache misses by layer.",
     "arc_policy_exceptions_total": (
         "Exceptions raised inside policy layers (MUST be zero in healthy state)."
     ),
-    "arc_schedule_circuit_breaker_state": (
-        "Current circuit-breaker state as a gauge (1=active)."
-    ),
+    "arc_schedule_circuit_breaker_state": ("Current circuit-breaker state as a gauge (1=active)."),
     "arc_schedule_missed_concurrency_total": (
         "Schedule ticks skipped because prior run was still in-flight."
     ),
@@ -47,12 +41,8 @@ _HELP: dict[str, str] = {
     "arc_heartbeat_silent_suppressions_total": (
         "Heartbeat ticks suppressed by cheap-model idle signal."
     ),
-    "arc_tool_dispatch_parallelism": (
-        "Observed concurrency when dispatching tool batches."
-    ),
-    "arc_dynamic_tool_creations_total": (
-        "Dynamic tool creations counted by tier and outcome."
-    ),
+    "arc_tool_dispatch_parallelism": ("Observed concurrency when dispatching tool batches."),
+    "arc_dynamic_tool_creations_total": ("Dynamic tool creations counted by tier and outcome."),
 }
 
 
@@ -232,9 +222,7 @@ def _format_labels(labels: LabelTuple) -> str:
     return "{" + pairs + "}"
 
 
-def _ensure_header(
-    lines: list[str], emitted: set[str], name: str, mtype: str
-) -> None:
+def _ensure_header(lines: list[str], emitted: set[str], name: str, mtype: str) -> None:
     if name in emitted:
         return
     help_text = _HELP.get(name, f"{name} metric.")

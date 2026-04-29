@@ -61,10 +61,12 @@ async def list_traces(request: Request) -> JSONResponse:
         start=_validate_filter(params.get("start")),
         end=_validate_filter(params.get("end")),
     )
-    return JSONResponse({
-        "traces": [r.model_dump() for r in records],
-        "cursor": cursor,
-    })
+    return JSONResponse(
+        {
+            "traces": [r.model_dump() for r in records],
+            "cursor": cursor,
+        }
+    )
 
 
 async def get_trace(request: Request) -> JSONResponse:

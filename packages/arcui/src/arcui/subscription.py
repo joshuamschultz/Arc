@@ -36,9 +36,7 @@ class SubscriptionManager:
     def __init__(self) -> None:
         self._subscriptions: dict[asyncio.Queue[str], Subscription] = {}
 
-    def set_subscription(
-        self, queue: asyncio.Queue[str], subscription: Subscription
-    ) -> None:
+    def set_subscription(self, queue: asyncio.Queue[str], subscription: Subscription) -> None:
         """Set or update subscription for a client queue."""
         self._subscriptions[queue] = subscription
 

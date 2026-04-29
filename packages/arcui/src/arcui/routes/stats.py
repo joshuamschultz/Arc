@@ -28,18 +28,12 @@ def _get_aggregator_for_request(request: Request) -> tuple[object | None, JSONRe
     if agent_id is not None:
         registry = getattr(request.app.state, "agent_registry", None)
         if registry is None:
-            return None, JSONResponse(
-                {"error": "Agent registry not available"}, status_code=404
-            )
+            return None, JSONResponse({"error": "Agent registry not available"}, status_code=404)
         entry = registry.get(agent_id)
         if entry is None:
-            return None, JSONResponse(
-                {"error": f"Agent {agent_id} not found"}, status_code=404
-            )
+            return None, JSONResponse({"error": f"Agent {agent_id} not found"}, status_code=404)
         if entry.aggregator is None:
-            return None, JSONResponse(
-                {"error": "No per-agent aggregator"}, status_code=404
-            )
+            return None, JSONResponse({"error": "No per-agent aggregator"}, status_code=404)
         return entry.aggregator, None
     return request.app.state.aggregator, None
 

@@ -183,7 +183,9 @@ class TestFirecrawlClientReuse:
             constructor_call_count += 1
             return shared_client
 
-        with patch("arcagent.modules.web.providers.firecrawl.httpx.AsyncClient", counting_constructor):
+        with patch(
+            "arcagent.modules.web.providers.firecrawl.httpx.AsyncClient", counting_constructor
+        ):
             await provider.search("first")
             await provider.search("second")
 
@@ -198,7 +200,10 @@ class TestFirecrawlClientReuse:
         shared_client.post = AsyncMock(return_value=mock_response)
         shared_client.aclose = AsyncMock()
 
-        with patch("arcagent.modules.web.providers.firecrawl.httpx.AsyncClient", return_value=shared_client):
+        with patch(
+            "arcagent.modules.web.providers.firecrawl.httpx.AsyncClient",
+            return_value=shared_client,
+        ):
             await provider.search("query")
             assert provider._client is not None
             await provider.close()

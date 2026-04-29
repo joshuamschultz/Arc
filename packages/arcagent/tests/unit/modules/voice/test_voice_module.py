@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,7 +12,6 @@ from arcagent.modules.voice.config import VoiceConfig
 from arcagent.modules.voice.errors import AirGapProviderRequired, STTFailed, TTSFailed
 from arcagent.modules.voice.protocols import TranscriptionResult
 from arcagent.modules.voice.voice_module import VoiceModule
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,23 +49,17 @@ class TestFederalTierEnforcement:
     def test_federal_with_openai_whisper_raises(self) -> None:
         """openai_whisper alias should also be rejected at federal tier."""
         with pytest.raises(AirGapProviderRequired):
-            make_module(
-                tier="federal", stt_provider="openai_whisper", tts_provider="piper"
-            )
+            make_module(tier="federal", stt_provider="openai_whisper", tts_provider="piper")
 
     def test_federal_with_cloud_tts_raises(self) -> None:
         """Federal tier + cloud TTS provider must raise at construction."""
         with pytest.raises(AirGapProviderRequired) as exc_info:
-            make_module(
-                tier="federal", stt_provider="whisper_cpp", tts_provider="elevenlabs"
-            )
+            make_module(tier="federal", stt_provider="whisper_cpp", tts_provider="elevenlabs")
         assert "elevenlabs" in str(exc_info.value)
 
     def test_federal_with_airgap_providers_ok(self) -> None:
         """Federal tier + air-gap providers should initialise without error."""
-        module = make_module(
-            tier="federal", stt_provider="whisper_cpp", tts_provider="piper"
-        )
+        module = make_module(tier="federal", stt_provider="whisper_cpp", tts_provider="piper")
         assert module is not None
 
     def test_federal_error_details_contain_allowed_providers(self) -> None:
@@ -184,9 +177,7 @@ class TestTranscribePipeline:
         audio = tmp_path / "audio.wav"
         audio.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
 
-        mock_result = TranscriptionResult(
-            text="hello world", language="en", duration_s=2.0
-        )
+        mock_result = TranscriptionResult(text="hello world", language="en", duration_s=2.0)
         mock_stt = AsyncMock()
         mock_stt.transcribe = AsyncMock(return_value=mock_result)
 
@@ -199,9 +190,7 @@ class TestTranscribePipeline:
         assert result["duration_s"] == pytest.approx(2.0)
 
     @pytest.mark.asyncio
-    async def test_transcribe_applies_redaction_enterprise(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_transcribe_applies_redaction_enterprise(self, tmp_path: Path) -> None:
         """Enterprise tier applies PII redaction to transcript."""
         audio = tmp_path / "audio.wav"
         audio.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
@@ -245,9 +234,7 @@ class TestTranscribePipeline:
         audio = tmp_path / "audio.wav"
         audio.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
 
-        mock_result = TranscriptionResult(
-            text="secret content", language="en", duration_s=1.0
-        )
+        mock_result = TranscriptionResult(text="secret content", language="en", duration_s=1.0)
         mock_stt = AsyncMock()
         mock_stt.transcribe = AsyncMock(return_value=mock_result)
 
@@ -319,9 +306,7 @@ class TestSynthesisPipeline:
         module = make_module(tier="enterprise", stt_provider="whisper_cpp")
         module._tts = mock_tts
 
-        await module._synthesize(
-            "call me at 555-867-5309", output_path=output
-        )
+        await module._synthesize("call me at 555-867-5309", output_path=output)
         assert captured
         # Phone number should be redacted before reaching the provider
         assert "555-867-5309" not in captured[0]
@@ -376,30 +361,35 @@ class TestProviderBuilding:
         module = make_module(stt_provider="whisper_cpp")
         provider = module._build_stt_provider()
         from arcagent.modules.voice.providers.whisper_cpp import WhisperCppProvider
+
         assert isinstance(provider, WhisperCppProvider)
 
     def test_build_piper_tts(self) -> None:
         module = make_module(tts_provider="piper")
         provider = module._build_tts_provider()
         from arcagent.modules.voice.providers.piper import PiperProvider
+
         assert isinstance(provider, PiperProvider)
 
     def test_build_whisper_api_stt(self) -> None:
         module = make_module(stt_provider="whisper_api")
         provider = module._build_stt_provider()
         from arcagent.modules.voice.providers.whisper_api import WhisperApiProvider
+
         assert isinstance(provider, WhisperApiProvider)
 
     def test_build_elevenlabs_tts(self) -> None:
         module = make_module(tts_provider="elevenlabs")
         provider = module._build_tts_provider()
         from arcagent.modules.voice.providers.elevenlabs import ElevenLabsProvider
+
         assert isinstance(provider, ElevenLabsProvider)
 
     def test_unknown_stt_provider_raises(self) -> None:
         module = make_module(stt_provider="whisper_cpp")
         module._config.stt_provider = "nonexistent_stt"
         from arcagent.modules.voice.errors import UnsupportedProvider
+
         with pytest.raises(UnsupportedProvider):
             module._build_stt_provider()
 
@@ -407,6 +397,7 @@ class TestProviderBuilding:
         module = make_module(tts_provider="piper")
         module._config.tts_provider = "nonexistent_tts"
         from arcagent.modules.voice.errors import UnsupportedProvider
+
         with pytest.raises(UnsupportedProvider):
             module._build_tts_provider()
 

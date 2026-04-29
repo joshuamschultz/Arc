@@ -272,11 +272,15 @@ class WhisperCppProvider:
         """
         cmd = [
             binary_path,
-            "-m", str(model),      # GGML model file
-            "-f", str(audio_path), # input audio
-            "-t", str(self._threads),
-            "-ojf",                # output JSON format
-            "-of", "-",            # write output to stdout ("-" = stdout)
+            "-m",
+            str(model),  # GGML model file
+            "-f",
+            str(audio_path),  # input audio
+            "-t",
+            str(self._threads),
+            "-ojf",  # output JSON format
+            "-of",
+            "-",  # write output to stdout ("-" = stdout)
         ]
         if language:
             cmd += ["-l", language]
@@ -338,8 +342,7 @@ class WhisperCppProvider:
 
         if returncode != 0:
             raise STTFailed(
-                f"whisper-cpp exited with code {returncode}: "
-                f"{stderr[:_MAX_STDERR_LOG_BYTES]}",
+                f"whisper-cpp exited with code {returncode}: {stderr[:_MAX_STDERR_LOG_BYTES]}",
                 details={
                     "returncode": returncode,
                     "stderr": stderr[:_MAX_STDERR_LOG_BYTES],
@@ -351,9 +354,7 @@ class WhisperCppProvider:
             data = json.loads(stdout)
         except json.JSONDecodeError:
             # Fallback: some builds emit plain text when -of - isn't supported
-            _logger.debug(
-                "whisper_cpp: JSON parse failed; treating stdout as plain text"
-            )
+            _logger.debug("whisper_cpp: JSON parse failed; treating stdout as plain text")
             text = stdout.strip()
             if not text:
                 raise STTFailed(
@@ -369,9 +370,7 @@ class WhisperCppProvider:
         segments: list[dict[str, object]] = data.get("transcription", [])
 
         # Join segment texts — each typically has a leading space
-        text = " ".join(
-            str(seg.get("text", "")).strip() for seg in segments
-        ).strip()
+        text = " ".join(str(seg.get("text", "")).strip() for seg in segments).strip()
 
         # Language lives under result.language in the JSON schema
         result_block: dict[str, object] = data.get("result", {})

@@ -6,7 +6,6 @@ and always terminates with a TurnEndEvent.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,7 +20,6 @@ from arcrun import (
     run_stream,
 )
 from arcrun.types import LoopResult, Tool
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -226,8 +224,7 @@ async def test_run_stream_turn_end_is_last() -> None:
             events.append(event)
 
     assert isinstance(events[-1], TurnEndEvent), (
-        "Last event must always be TurnEndEvent; got "
-        f"{type(events[-1]).__name__}"
+        f"Last event must always be TurnEndEvent; got {type(events[-1]).__name__}"
     )
 
 

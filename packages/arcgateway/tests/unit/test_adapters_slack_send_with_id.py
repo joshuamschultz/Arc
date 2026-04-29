@@ -146,9 +146,7 @@ class TestSendWithId:
         """send_with_id() truncates long messages to the first chunk only."""
         mock_app, mock_app_cls, mock_handler, mock_handler_cls = _build_mock_bolt()
         modules = _make_bolt_modules(mock_app_cls, mock_handler_cls)
-        mock_app.client.chat_postMessage = AsyncMock(
-            return_value={"ok": True, "ts": "ts-001"}
-        )
+        mock_app.client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "ts-001"})
 
         with patch.dict(sys.modules, modules):
             adapter = _make_adapter()

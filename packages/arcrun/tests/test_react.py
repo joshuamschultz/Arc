@@ -271,8 +271,7 @@ class TestParallelSafeDispatch:
             [
                 LLMResponse(
                     tool_calls=[
-                        ToolCall(id=f"tc{i}", name="slow", arguments={"n": i})
-                        for i in range(3)
+                        ToolCall(id=f"tc{i}", name="slow", arguments={"n": i}) for i in range(3)
                     ],
                     stop_reason="tool_use",
                 ),
@@ -312,8 +311,7 @@ class TestParallelSafeDispatch:
             [
                 LLMResponse(
                     tool_calls=[
-                        ToolCall(id=f"tc{i}", name="slow", arguments={"n": i})
-                        for i in range(3)
+                        ToolCall(id=f"tc{i}", name="slow", arguments={"n": i}) for i in range(3)
                     ],
                     stop_reason="tool_use",
                 ),

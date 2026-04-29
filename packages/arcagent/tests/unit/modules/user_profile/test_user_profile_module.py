@@ -182,9 +182,7 @@ class TestReadUserProfile:
         )
         assert result is mock_profile
 
-    def test_read_before_startup_raises_runtime_error(
-        self, module: UserProfileModule
-    ) -> None:
+    def test_read_before_startup_raises_runtime_error(self, module: UserProfileModule) -> None:
         with pytest.raises(RuntimeError, match="startup"):
             module.read_user_profile(_TEST_USER_DID)
 
@@ -205,7 +203,9 @@ class TestWriteUserProfile:
         await module.startup(module_ctx)
         mock_profile = _mock_profile()
         with patch.object(
-            module._store, "append_durable_fact", return_value=mock_profile  # type: ignore[union-attr]
+            module._store,
+            "append_durable_fact",
+            return_value=mock_profile,  # type: ignore[union-attr]
         ) as mock_append:
             result = module.write_user_profile(_TEST_USER_DID, "durable_facts", "new fact")
         mock_append.assert_called_once()
@@ -244,7 +244,9 @@ class TestWriteUserProfile:
 
         with patch.object(module._store, "exists", return_value=False):  # type: ignore[union-attr]
             with patch.object(
-                module._store, "create_default", return_value=mock_profile  # type: ignore[union-attr]
+                module._store,
+                "create_default",
+                return_value=mock_profile,  # type: ignore[union-attr]
             ) as mock_create:
                 with patch.object(module._store, "write"):  # type: ignore[union-attr]
                     module.write_user_profile(user_did, "identity", "My name is Arc")
@@ -266,9 +268,7 @@ class TestWriteUserProfile:
             {"user_did": _TEST_USER_DID, "section": "durable_facts"},
         )
 
-    def test_write_before_startup_raises_runtime_error(
-        self, module: UserProfileModule
-    ) -> None:
+    def test_write_before_startup_raises_runtime_error(self, module: UserProfileModule) -> None:
         with pytest.raises(RuntimeError, match="startup"):
             module.write_user_profile(_TEST_USER_DID, "identity", "x")
 

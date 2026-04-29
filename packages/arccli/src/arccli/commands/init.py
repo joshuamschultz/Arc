@@ -306,8 +306,6 @@ def _init(args: argparse.Namespace) -> None:
     for path, content in targets:
         path.write_text(content, encoding="utf-8")
 
-    config_path = arc_dir / "arcllm.toml"  # primary path shown in summary
-
     env_path = arc_dir / ".env"
     if not env_path.exists():
         env_path.touch(mode=0o600)
@@ -365,9 +363,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dir", dest="config_dir", default=None, help="Config directory (default: ~/.arc)."
     )
     parser.add_argument("--provider", default=None, help="Default LLM provider.")
-    parser.add_argument(
-        "--quick", action="store_true", help="Quick start — open tier."
-    )
+    parser.add_argument("--quick", action="store_true", help="Quick start — open tier.")
     return parser
 
 

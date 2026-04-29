@@ -130,12 +130,14 @@ class TeamFileStore:
                 return []
             for f in sorted(search_dir.iterdir()):
                 if f.is_file():
-                    results.append({
-                        "path": str(f),
-                        "filename": f.name,
-                        "size": f.stat().st_size,
-                        "agent": agent_name,
-                    })
+                    results.append(
+                        {
+                            "path": str(f),
+                            "filename": f.name,
+                            "size": f.stat().st_size,
+                            "agent": agent_name,
+                        }
+                    )
         else:
             if not self._shared_dir.exists():
                 return []
@@ -143,11 +145,13 @@ class TeamFileStore:
                 if agent_dir.is_dir():
                     for f in sorted(agent_dir.iterdir()):
                         if f.is_file():
-                            results.append({
-                                "path": str(f),
-                                "filename": f.name,
-                                "size": f.stat().st_size,
-                                "agent": agent_dir.name,
-                            })
+                            results.append(
+                                {
+                                    "path": str(f),
+                                    "filename": f.name,
+                                    "size": f.stat().st_size,
+                                    "agent": agent_dir.name,
+                                }
+                            )
 
         return results

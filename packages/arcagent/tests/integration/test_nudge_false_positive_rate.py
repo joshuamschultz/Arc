@@ -36,10 +36,10 @@ from arcagent.core.module_bus import EventContext
 from arcagent.modules.skill_improver.config import SkillImproverConfig
 from arcagent.modules.skill_improver.nudge.nudge_emitter import NudgeEmitter
 
-
 # ---------------------------------------------------------------------------
 # Fixture type
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ConversationFixture:
@@ -58,6 +58,7 @@ class ConversationFixture:
 # Fixture library
 # ---------------------------------------------------------------------------
 
+
 def _build_fixtures() -> list[ConversationFixture]:
     """Build 100 synthetic conversation fixtures.
 
@@ -75,81 +76,95 @@ def _build_fixtures() -> list[ConversationFixture]:
 
     # Category 1: simple 1-3 tool turns (30 fixtures)
     for i in range(10):
-        fixtures.append(ConversationFixture(
-            name=f"simple-1-tool-{i}",
-            tool_calls_ok=1,
-            error_count=0,
-            task_outcome="success",
-            max_existing_skill_coverage=0.8,
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"simple-1-tool-{i}",
+                tool_calls_ok=1,
+                error_count=0,
+                task_outcome="success",
+                max_existing_skill_coverage=0.8,
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
     for i in range(10):
-        fixtures.append(ConversationFixture(
-            name=f"simple-2-tool-{i}",
-            tool_calls_ok=2,
-            error_count=0,
-            task_outcome="success",
-            max_existing_skill_coverage=0.6,
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"simple-2-tool-{i}",
+                tool_calls_ok=2,
+                error_count=0,
+                task_outcome="success",
+                max_existing_skill_coverage=0.6,
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
     for i in range(10):
-        fixtures.append(ConversationFixture(
-            name=f"simple-3-tool-{i}",
-            tool_calls_ok=3,
-            error_count=0,
-            task_outcome="success",
-            max_existing_skill_coverage=0.5,
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"simple-3-tool-{i}",
+                tool_calls_ok=3,
+                error_count=0,
+                task_outcome="success",
+                max_existing_skill_coverage=0.5,
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
 
     # Category 2: 4-tool success turns (20 fixtures) — below 5 threshold
     for i in range(20):
-        fixtures.append(ConversationFixture(
-            name=f"four-tools-{i}",
-            tool_calls_ok=4,
-            error_count=0,
-            task_outcome="success",
-            max_existing_skill_coverage=0.2,  # low coverage but NOT enough tools
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"four-tools-{i}",
+                tool_calls_ok=4,
+                error_count=0,
+                task_outcome="success",
+                max_existing_skill_coverage=0.2,  # low coverage but NOT enough tools
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
 
     # Category 3: 5+ tool success with high coverage (20 fixtures) — no novelty
     for i in range(20):
-        fixtures.append(ConversationFixture(
-            name=f"high-coverage-{i}",
-            tool_calls_ok=6,
-            error_count=0,
-            task_outcome="success",
-            max_existing_skill_coverage=0.7,  # >= 0.3 and no errors
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"high-coverage-{i}",
+                tool_calls_ok=6,
+                error_count=0,
+                task_outcome="success",
+                max_existing_skill_coverage=0.7,  # >= 0.3 and no errors
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
 
     # Category 4: failed/partial turns (10 fixtures)
     for i in range(5):
-        fixtures.append(ConversationFixture(
-            name=f"failure-{i}",
-            tool_calls_ok=5,
-            error_count=5,
-            task_outcome="failure",
-            max_existing_skill_coverage=0.1,
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"failure-{i}",
+                tool_calls_ok=5,
+                error_count=5,
+                task_outcome="failure",
+                max_existing_skill_coverage=0.1,
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
     for i in range(5):
-        fixtures.append(ConversationFixture(
-            name=f"partial-{i}",
-            tool_calls_ok=5,
-            error_count=2,
-            task_outcome="partial",
-            max_existing_skill_coverage=0.1,
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"partial-{i}",
+                tool_calls_ok=5,
+                error_count=2,
+                task_outcome="partial",
+                max_existing_skill_coverage=0.1,
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
 
     # Category 5: high-coverage with errors (but coverage >= 0.3) — 10 fixtures
     # Actually: error_count >= 1 is enough for novelty regardless of coverage
@@ -159,27 +174,31 @@ def _build_fixtures() -> list[ConversationFixture]:
     # We need to pick a category that genuinely should NOT fire
     # Category 5b: 5 ok tools, 0 errors, coverage=0.35 (above 0.3), no correction
     for i in range(10):
-        fixtures.append(ConversationFixture(
-            name=f"no-novelty-5tool-{i}",
-            tool_calls_ok=5,
-            error_count=0,
-            task_outcome="success",
-            max_existing_skill_coverage=0.35,  # > 0.3, no errors, no correction
-            user_correction_detected=False,
-            expected_fires=False,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"no-novelty-5tool-{i}",
+                tool_calls_ok=5,
+                error_count=0,
+                task_outcome="success",
+                max_existing_skill_coverage=0.35,  # > 0.3, no errors, no correction
+                user_correction_detected=False,
+                expected_fires=False,
+            )
+        )
 
     # Category 6: genuine true positives (10 fixtures)
     for i in range(10):
-        fixtures.append(ConversationFixture(
-            name=f"true-positive-{i}",
-            tool_calls_ok=6,
-            error_count=1,
-            task_outcome="success",
-            max_existing_skill_coverage=0.2,
-            user_correction_detected=False,
-            expected_fires=True,
-        ))
+        fixtures.append(
+            ConversationFixture(
+                name=f"true-positive-{i}",
+                tool_calls_ok=6,
+                error_count=1,
+                task_outcome="success",
+                max_existing_skill_coverage=0.2,
+                user_correction_detected=False,
+                expected_fires=True,
+            )
+        )
 
     assert len(fixtures) == 100, f"Expected 100 fixtures, got {len(fixtures)}"
     return fixtures
@@ -188,6 +207,7 @@ def _build_fixtures() -> list[ConversationFixture]:
 # ---------------------------------------------------------------------------
 # Helper: build EventContext from fixture
 # ---------------------------------------------------------------------------
+
 
 def _make_ctx_from_fixture(
     fixture: ConversationFixture,
@@ -199,15 +219,16 @@ def _make_ctx_from_fixture(
     tool_names = [f"tool_{i}" for i in range(n_ok)]
 
     tool_calls: list[dict[str, Any]] = [
-        {"tool_name": name, "result_status": "ok", "duration_ms": 10.0}
-        for name in tool_names
+        {"tool_name": name, "result_status": "ok", "duration_ms": 10.0} for name in tool_names
     ]
     for j in range(n_err):
-        tool_calls.append({
-            "tool_name": f"error_tool_{j}",
-            "result_status": "error",
-            "duration_ms": 5.0,
-        })
+        tool_calls.append(
+            {
+                "tool_name": f"error_tool_{j}",
+                "result_status": "error",
+                "duration_ms": 5.0,
+            }
+        )
 
     return EventContext(
         event="agent:post_plan",
@@ -229,6 +250,7 @@ def _make_ctx_from_fixture(
 # ---------------------------------------------------------------------------
 # Main test
 # ---------------------------------------------------------------------------
+
 
 def test_synthetic_conversation_false_positive_rate_below_5pct() -> None:
     """G2.4: Nudge false-positive rate < 5% on synthetic conversation suite.

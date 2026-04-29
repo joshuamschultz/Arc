@@ -284,9 +284,7 @@ def _discover_agent_tomls(team_dir: Path) -> list[tuple[str, Path]]:
             _write(f"  skip {toml_path}: no [agent].name")
             continue
         workspace_raw = agent_section.get("workspace", "./workspace")
-        matches.append(
-            (agent_name, (toml_path.parent / workspace_raw).resolve())
-        )
+        matches.append((agent_name, (toml_path.parent / workspace_raw).resolve()))
 
     if not matches:
         _write("  no arcagent.toml files found in team-dir")
@@ -509,15 +507,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("entity_id", help="Entity ID.")
     p.add_argument("--name", required=True, help="Display name.")
     p.add_argument(
-        "--type", dest="entity_type", required=True, choices=["agent", "user"],
-        help="Entity type."
+        "--type", dest="entity_type", required=True, choices=["agent", "user"], help="Entity type."
     )
     p.add_argument("--roles", default="", help="Comma-separated roles.")
     p.add_argument(
         "--workspace",
         default=None,
         help="Agent workspace path (default: cwd). Resolved to absolute. "
-             "Must exist as a directory; ~ and $VAR forms rejected (SR-6).",
+        "Must exist as a directory; ~ and $VAR forms rejected (SR-6).",
     )
 
     # entities

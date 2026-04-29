@@ -58,9 +58,7 @@ class TestPairingInterceptorAllowlist:
 
     def test_remove_approved_user(self) -> None:
         """remove_approved_user removes the DID from the allowlist."""
-        interceptor = PairingInterceptor(
-            user_allowlist={"did:arc:user:alice", "did:arc:user:bob"}
-        )
+        interceptor = PairingInterceptor(user_allowlist={"did:arc:user:alice", "did:arc:user:bob"})
         interceptor.remove_approved_user("did:arc:user:alice")
         assert interceptor.is_user_approved("did:arc:user:alice") is False
         assert interceptor.is_user_approved("did:arc:user:bob") is True

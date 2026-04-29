@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import pytest
-
 from arcagent.modules.memory_acl.acl import (
     SessionACL,
     _extract_acl_from_session_data,
-    _parse_simple_yaml,
 )
 from arcagent.modules.memory_acl.config import MemoryACLConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -138,7 +134,9 @@ class TestFromFrontmatter:
     def test_owner_did_falls_back_to_kwarg(self) -> None:
         # When frontmatter has no owner_did, use the kwarg
         content = "---\nacl:\n  cross_session_visibility: private\n---\n"
-        acl = SessionACL.from_frontmatter(content, _config("federal"), owner_did="did:arc:fallback")
+        acl = SessionACL.from_frontmatter(
+            content, _config("federal"), owner_did="did:arc:fallback"
+        )
         assert acl.owner_did == "did:arc:fallback"
 
 

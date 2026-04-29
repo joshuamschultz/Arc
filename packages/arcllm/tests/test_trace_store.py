@@ -202,9 +202,7 @@ class TestJSONLTraceStore:
 
         assert await store.verify_chain() is True
 
-    async def test_verify_chain_detects_tampering(
-        self, store: JSONLTraceStore, agent_root: Path
-    ):
+    async def test_verify_chain_detects_tampering(self, store: JSONLTraceStore, agent_root: Path):
         for i in range(3):
             await store.append(self._make_record(trace_id=f"rec-{i}"))
 

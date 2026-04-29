@@ -115,6 +115,7 @@ class TestNativeToolDecorator:
 
     def test_when_to_use_field(self) -> None:
         """R3.2: @native_tool accepts when_to_use."""
+
         @native_tool(
             description="Send a message",
             when_to_use="When you need to communicate with a teammate",
@@ -126,6 +127,7 @@ class TestNativeToolDecorator:
 
     def test_example_field(self) -> None:
         """R3.2: @native_tool accepts example."""
+
         @native_tool(
             description="Read a file",
             example='read_file(path="/etc/hosts")',
@@ -137,6 +139,7 @@ class TestNativeToolDecorator:
 
     def test_category_field(self) -> None:
         """R3.2: @native_tool accepts category."""
+
         @native_tool(description="Send a message", category="messaging")
         async def send(**kw: Any) -> str:
             return ""
@@ -145,6 +148,7 @@ class TestNativeToolDecorator:
 
     def test_all_three_new_fields(self) -> None:
         """R3.2, R3.3: All three new fields flow to RegisteredTool."""
+
         @native_tool(
             description="Test tool",
             when_to_use="When testing",
@@ -160,6 +164,7 @@ class TestNativeToolDecorator:
 
     def test_new_fields_default_empty(self) -> None:
         """R3.1, R3.4: New fields default to empty string."""
+
         @native_tool(description="Minimal tool")
         async def minimal(**kw: Any) -> str:
             return ""

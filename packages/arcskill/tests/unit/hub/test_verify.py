@@ -10,7 +10,6 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-
 from arcskill.hub.config import HubConfig, RevocationConfig, SkillSource, TierPolicy
 from arcskill.hub.errors import CRLUnreachable, SignatureInvalid, SigstoreUnavailable
 from arcskill.hub.verify import (
@@ -73,9 +72,7 @@ def test_federal_no_sigstore_raises_sigstore_unavailable() -> None:
     bundle = _make_bundle_file()
     config = _federal_config()
 
-    with unittest.mock.patch(
-        "arcskill.hub.verify._sigstore_importable", return_value=False
-    ):
+    with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
         with pytest.raises(SigstoreUnavailable, match="federal tier requires full"):
             verify_bundle(
                 bundle_path=bundle,
@@ -94,9 +91,7 @@ def test_federal_no_sigstore_raises_signature_invalid() -> None:
     bundle = _make_bundle_file()
     config = _federal_config()
 
-    with unittest.mock.patch(
-        "arcskill.hub.verify._sigstore_importable", return_value=False
-    ):
+    with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
         # SigstoreUnavailable inherits HubError, NOT SignatureInvalid.
         from arcskill.hub.errors import HubError
 
@@ -114,9 +109,7 @@ def test_personal_no_sigstore_skips_with_warning(caplog: pytest.LogCaptureFixtur
     bundle = _make_bundle_file()
     config = _personal_config()
 
-    with unittest.mock.patch(
-        "arcskill.hub.verify._sigstore_importable", return_value=False
-    ):
+    with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=False):
         # Also mock the CRL fetch so we don't hit the network.
         with unittest.mock.patch(
             "arcskill.hub.verify._fetch_crl",
@@ -143,9 +136,7 @@ def test_federal_missing_bundle_file_raises() -> None:
     bundle = _make_bundle_file()
     config = _federal_config()
 
-    with unittest.mock.patch(
-        "arcskill.hub.verify._sigstore_importable", return_value=True
-    ):
+    with unittest.mock.patch("arcskill.hub.verify._sigstore_importable", return_value=True):
         with unittest.mock.patch("arcskill.hub.verify._sigstore_verify") as mock_verify:
             mock_verify.side_effect = SignatureInvalid("No bundle sidecar")
             with pytest.raises(SignatureInvalid):
@@ -198,11 +189,7 @@ def test_mocked_sigstore_success() -> None:
 
 def test_rekor_uuid_extraction() -> None:
     """Rekor UUID is extracted from the tlogEntries field."""
-    bundle_data = {
-        "verificationMaterial": {
-            "tlogEntries": [{"logIndex": "42069"}]
-        }
-    }
+    bundle_data = {"verificationMaterial": {"tlogEntries": [{"logIndex": "42069"}]}}
     uuid = _extract_rekor_uuid(bundle_data)
     assert uuid == "42069"
 
@@ -228,15 +215,11 @@ def test_slsa_level_3_detected() -> None:
                 "builder": {
                     "id": "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/builder_go_slsa3.yml@v1.9.0"
                 }
-            }
+            },
         }
     }
     payload_b64 = base64.b64encode(json.dumps(attestation).encode()).decode()
-    bundle_data = {
-        "verificationMaterial": {
-            "dsseEnvelope": {"payload": payload_b64}
-        }
-    }
+    bundle_data = {"verificationMaterial": {"dsseEnvelope": {"payload": payload_b64}}}
     level = _extract_slsa_level(bundle_data)
     assert level == 3
 

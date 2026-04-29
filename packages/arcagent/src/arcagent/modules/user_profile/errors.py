@@ -38,8 +38,6 @@ class BodyOverflow(Exception):  # noqa: N818
     """
 
     def __init__(self, body_size: int, cap_bytes: int) -> None:
-        super().__init__(
-            f"Profile body size {body_size}B exceeds {cap_bytes}B cap"
-        )
+        super().__init__(f"Profile body size {body_size}B exceeds {cap_bytes}B cap")
         self.body_size = body_size
         self.cap_bytes = cap_bytes

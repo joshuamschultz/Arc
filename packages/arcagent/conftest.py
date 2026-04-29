@@ -4,6 +4,7 @@ When running pytest from the arcagent package directory, other workspace
 packages (arcrun, arcllm, arccli) are not automatically on sys.path.
 This conftest adds them so tests can import from sibling packages.
 """
+
 import sys
 from pathlib import Path
 

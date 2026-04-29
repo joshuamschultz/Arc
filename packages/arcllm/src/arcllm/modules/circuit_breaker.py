@@ -10,7 +10,7 @@ TelemetryModule (records all calls including rejections).
 import logging
 import threading
 import time
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from arcllm.exceptions import ArcLLMAPIError, ArcLLMConfigError
@@ -30,7 +30,7 @@ _VALID_CONFIG_KEYS = {
 }
 
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     """Circuit breaker states."""
 
     CLOSED = "closed"
@@ -45,8 +45,7 @@ class CircuitOpenError(Exception):
         self.provider = provider
         self.cooldown_remaining = cooldown_remaining
         super().__init__(
-            f"Circuit open for '{provider}': "
-            f"{cooldown_remaining:.1f}s remaining in cooldown"
+            f"Circuit open for '{provider}': {cooldown_remaining:.1f}s remaining in cooldown"
         )
 
 

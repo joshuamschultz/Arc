@@ -15,11 +15,13 @@ from arcui.types import AgentRegistration
 
 
 def _make_app() -> tuple[Starlette, AuthConfig, AgentRegistry]:
-    auth = AuthConfig({
-        "viewer_token": "viewer",
-        "operator_token": "operator",
-        "agent_token": "agent-secret",
-    })
+    auth = AuthConfig(
+        {
+            "viewer_token": "viewer",
+            "operator_token": "operator",
+            "agent_token": "agent-secret",
+        }
+    )
     registry = AgentRegistry()
 
     app = Starlette(routes=agent_routes)

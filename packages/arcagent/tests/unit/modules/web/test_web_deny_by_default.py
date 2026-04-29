@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from arcagent.modules.web.errors import URLNotAllowed
-from arcagent.modules.web.protocols import ExtractResult, SearchHit
+from arcagent.modules.web.protocols import ExtractResult
 from arcagent.modules.web.web_module import WebModule
 
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -150,9 +150,7 @@ class TestParseCronCronsim:
 
 class TestParseIsoDateparser:
     def test_iso_with_offset(self) -> None:
-        future = (datetime.now(tz=UTC) + timedelta(days=3)).strftime(
-            "%Y-%m-%dT09:00:00+00:00"
-        )
+        future = (datetime.now(tz=UTC) + timedelta(days=3)).strftime("%Y-%m-%dT09:00:00+00:00")
         s = parse_iso_dateparser(future, "UTC")
         assert s.kind == "once"
 
@@ -241,7 +239,7 @@ _VALID_LLM_RESPONSE: dict[str, object] = {
     "kind": "cron",
     "cron_or_iso": "0 9 * * 1-5",
     "tz": "America/New_York",
-    "rationale": "Monday–Friday at 9am NY",
+    "rationale": "Monday-Friday at 9am NY",
 }
 
 
@@ -294,8 +292,6 @@ class TestMultiTimezone:
     def test_la_9am_correct_utc(self) -> None:
         """LA 9am cron should fire at 17:00 UTC (during PDT, UTC-7)."""
         from zoneinfo import ZoneInfo
-
-        from cronsim import CronSim
 
         tz = ZoneInfo("America/Los_Angeles")
         # Fix a reference day in PDT (summer, UTC-7).

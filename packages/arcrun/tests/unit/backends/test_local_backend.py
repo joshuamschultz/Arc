@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -97,8 +98,8 @@ async def test_cancel_already_exited_no_error() -> None:
 @pytest.mark.asyncio
 async def test_close_disposes_all_handles() -> None:
     backend = LocalBackend()
-    h1 = await backend.run("sleep 60")
-    h2 = await backend.run("sleep 60")
+    await backend.run("sleep 60")
+    await backend.run("sleep 60")
     await asyncio.sleep(0.05)
     await backend.close()
     assert not backend._procs
@@ -122,7 +123,9 @@ async def test_orphan_pgroup_killed_on_cancel() -> None:
 @pytest.mark.asyncio
 async def test_env_passthrough() -> None:
     backend = LocalBackend()
-    handle = await backend.run("echo $MYVAR", env={"MYVAR": "arc_test_value", "PATH": "/usr/bin:/bin"})
+    handle = await backend.run(
+        "echo $MYVAR", env={"MYVAR": "arc_test_value", "PATH": "/usr/bin:/bin"}
+    )
     data = b""
     async for chunk in backend.stream(handle):
         data += chunk
@@ -131,8 +134,7 @@ async def test_env_passthrough() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cwd_passthrough(tmp_path: "pathlib.Path") -> None:  # type: ignore[name-defined]
-    import pathlib
+async def test_cwd_passthrough(tmp_path: Path) -> None:
 
     backend = LocalBackend()
     handle = await backend.run("pwd", cwd=str(tmp_path))

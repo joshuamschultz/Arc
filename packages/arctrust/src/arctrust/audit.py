@@ -198,9 +198,7 @@ class SignedChainSink:
     def write(self, event: AuditEvent) -> None:
         """Append a signed record to the chain."""
         event_json = json.dumps(event.model_dump(), sort_keys=True, default=str)
-        event_hash = hashlib.sha256(
-            (self._chain_tip + event_json).encode("utf-8")
-        ).hexdigest()
+        event_hash = hashlib.sha256((self._chain_tip + event_json).encode("utf-8")).hexdigest()
         sig = sign(event_hash.encode("utf-8"), self._private_key)
         record: dict[str, Any] = {
             "event": event.model_dump(),
@@ -220,12 +218,8 @@ class SignedChainSink:
         """
         prev_hash = ""
         for record in self._records:
-            event_json = json.dumps(
-                record["event"], sort_keys=True, default=str
-            )
-            expected_hash = hashlib.sha256(
-                (prev_hash + event_json).encode("utf-8")
-            ).hexdigest()
+            event_json = json.dumps(record["event"], sort_keys=True, default=str)
+            expected_hash = hashlib.sha256((prev_hash + event_json).encode("utf-8")).hexdigest()
             if record.get("event_hash") != expected_hash:
                 return False
             prev_hash = expected_hash

@@ -226,9 +226,7 @@ class ProactiveEngine:
         self._last_wake_us = timestamp_us
         return True
 
-    def check_clock_warp(
-        self, *, monotonic_delta: float, wall_delta: float
-    ) -> None:
+    def check_clock_warp(self, *, monotonic_delta: float, wall_delta: float) -> None:
         """Emit ``clock_warp`` event when wall/monotonic deltas diverge.
 
         Does not refuse to run — production systems want the engine
@@ -270,9 +268,7 @@ class ProactiveEngine:
 
     def _push(self, schedule: Schedule) -> None:
         self._heap_seq += 1
-        heapq.heappush(
-            self._heap, (schedule.next_run_monotonic, self._heap_seq, schedule.id)
-        )
+        heapq.heappush(self._heap, (schedule.next_run_monotonic, self._heap_seq, schedule.id))
 
     async def _dispatch(self, schedule: Schedule, now: float) -> None:
         """Run one schedule tick — circuit, concurrency, handler, reschedule."""

@@ -399,9 +399,7 @@ class TestTelemetryTraceRecording:
 
         events: list[TraceRecord] = []
         inner = _make_inner("anthropic")
-        module = TelemetryModule(
-            _make_config(on_event=events.append), inner
-        )
+        module = TelemetryModule(_make_config(on_event=events.append), inner)
 
         await module.invoke(messages)
 
@@ -430,9 +428,7 @@ class TestTelemetryTraceRecording:
 
         store = AsyncMock()
         inner = _make_inner("openai")
-        module = TelemetryModule(
-            _make_config(trace_store=store), inner
-        )
+        module = TelemetryModule(_make_config(trace_store=store), inner)
 
         await module.invoke(messages)
 
@@ -447,9 +443,7 @@ class TestTelemetryTraceRecording:
 
         events: list[TraceRecord] = []
         inner = _make_inner()
-        module = TelemetryModule(
-            _make_config(on_event=events.append), inner
-        )
+        module = TelemetryModule(_make_config(on_event=events.append), inner)
 
         await module.invoke(messages)
 
@@ -466,9 +460,7 @@ class TestTelemetryTraceRecording:
         mock_mono.side_effect = [0.0, 0.010, 0.510, 0.520]
         events: list[TraceRecord] = []
         inner = _make_inner()
-        module = TelemetryModule(
-            _make_config(on_event=events.append), inner
-        )
+        module = TelemetryModule(_make_config(on_event=events.append), inner)
 
         await module.invoke(messages)
 
@@ -523,9 +515,7 @@ class TestTelemetryTraceRecording:
 
         events: list[TraceRecord] = []
         inner = _make_inner()
-        module = TelemetryModule(
-            _make_config(on_event=events.append), inner
-        )
+        module = TelemetryModule(_make_config(on_event=events.append), inner)
 
         await module.invoke(messages)
 
@@ -574,9 +564,7 @@ class TestTelemetryTraceRecording:
         events: list[TraceRecord] = []
         store = AsyncMock()
         inner = _make_inner()
-        module = TelemetryModule(
-            _make_config(on_event=events.append, trace_store=store), inner
-        )
+        module = TelemetryModule(_make_config(on_event=events.append, trace_store=store), inner)
 
         await module.invoke(messages)
 
@@ -589,9 +577,7 @@ class TestTelemetryTraceRecording:
 
         events: list[TraceRecord] = []
         inner = _make_inner()
-        module = TelemetryModule(
-            _make_config(on_event=events.append), inner
-        )
+        module = TelemetryModule(_make_config(on_event=events.append), inner)
 
         await module.invoke(messages)
         await module.invoke(messages)

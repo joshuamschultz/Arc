@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Protocol
@@ -121,10 +120,7 @@ def _entities_to_stores(entities: list[Any]) -> list[Any]:
     stores: list[Any] = []
     for entity in entities:
         if entity.workspace_path is None:
-            _write(
-                f"  skip {entity.id}: no workspace_path "
-                f"(run `arc team backfill-workspaces`)"
-            )
+            _write(f"  skip {entity.id}: no workspace_path (run `arc team backfill-workspaces`)")
             continue
         wp = Path(entity.workspace_path)
         if not wp.is_dir():
@@ -146,9 +142,7 @@ class BrowserLauncher(Protocol):
     dependency and gives federal kiosk deployments a plug-in seam.
     """
 
-    def open_dashboard(
-        self, host: str, port: int, viewer_token: str
-    ) -> bool:
+    def open_dashboard(self, host: str, port: int, viewer_token: str) -> bool:
         """Open the dashboard pre-authenticated; return True iff opened."""
         ...
 
@@ -163,9 +157,7 @@ class DefaultBrowserLauncher:
     this method MUST NOT print the URL+token combination to stdout.
     """
 
-    def open_dashboard(
-        self, host: str, port: int, viewer_token: str
-    ) -> bool:
+    def open_dashboard(self, host: str, port: int, viewer_token: str) -> bool:
         if host not in LOOPBACK_HOSTS:
             return False
         import webbrowser
@@ -411,9 +403,7 @@ def _tail(args: argparse.Namespace) -> None:
                 raw = await ws.recv()
                 resp = json.loads(raw)
                 if resp.get("type") != "auth_ok":
-                    sys.stderr.write(
-                        f"arc ui tail: auth failed: {resp.get('error', resp)}\n"
-                    )
+                    sys.stderr.write(f"arc ui tail: auth failed: {resp.get('error', resp)}\n")
                     sys.exit(1)
 
                 sys.stderr.write(
@@ -470,9 +460,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--operator-token", dest="operator_token", default=None)
     p_start.add_argument("--agent-token", dest="agent_token", default=None)
     p_start.add_argument("--max-agents", dest="max_agents", type=int, default=100)
-    p_start.add_argument(
-        "--show-tokens", dest="show_tokens", action="store_true", default=False
-    )
+    p_start.add_argument("--show-tokens", dest="show_tokens", action="store_true", default=False)
 
     # ── tail ───────────────────────────────────────────────────────────
     p_tail = subs.add_parser(

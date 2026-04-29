@@ -8,14 +8,10 @@ Key scenarios:
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from arcagent.core.module_bus import ModuleBus, ModuleContext
 from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -181,8 +177,7 @@ class TestPromptInjectionRegression:
         )
 
         audit_calls = [
-            c for c in mock_telemetry.audit_event.call_args_list
-            if c[0][0] == "session.acl.veto"
+            c for c in mock_telemetry.audit_event.call_args_list if c[0][0] == "session.acl.veto"
         ]
         assert len(audit_calls) == 1
         payload = audit_calls[0][0][1]
@@ -203,7 +198,6 @@ class TestMemoryProviderDefenseInDepth:
 
     async def test_capability_store_has_no_capability_for_unauthorized_access(self) -> None:
         """No capability is issued for cross-user reads the ACL denies."""
-        agent_did = "did:arc:org:agent/agent1"
         user_b_did = "did:arc:org:user/UserB"
 
         module = MemoryACLModule(config={"tier": "federal"})
@@ -219,12 +213,11 @@ class TestMemoryProviderDefenseInDepth:
 
     async def test_valid_capability_issued_by_orchestrator_is_recognized(self) -> None:
         """Orchestrator-issued capability is recognized by the module."""
-        agent_did = "did:arc:org:agent/agent1"
         owner_did = "did:arc:org:user/owner"
 
         module = MemoryACLModule(config={"tier": "personal"})
 
-        cap = module.issue_capability(
+        module.issue_capability(
             caller_module="orchestrator",
             target_resource=f"user:{owner_did}:profile",
             allowed_actions=["read"],

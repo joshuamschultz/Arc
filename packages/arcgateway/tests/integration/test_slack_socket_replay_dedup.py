@@ -45,7 +45,6 @@ def _make_adapter(
     """Build a SlackAdapter with in-memory dedup store."""
     received: list[InboundEvent] = []
 
-
     async def _on_message(event: InboundEvent) -> None:
         received.append(event)
 
@@ -101,7 +100,9 @@ class TestSocketModeReplayDedup:
 
         # Second delivery (replay) → must be deduplicated
         await adapter._handle_inbound(event)
-        assert len(received) == 1, "Replay must be deduplicated; on_message must not be called again"
+        assert len(received) == 1, (
+            "Replay must be deduplicated; on_message must not be called again"
+        )
 
     async def test_different_event_ids_both_processed(self) -> None:
         """Two events with distinct IDs must both reach on_message (no false positive)."""
@@ -287,6 +288,6 @@ class TestDedupStoreSemantics:
         assert r1 is False
         assert r2 is False  # same id, different platform → new row
         assert r3 is False  # same platform, different id → new row
-        assert r4 is True   # exact match → duplicate
+        assert r4 is True  # exact match → duplicate
 
         store.close()

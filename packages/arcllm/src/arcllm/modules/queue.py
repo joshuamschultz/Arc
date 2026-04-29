@@ -139,9 +139,7 @@ class QueueModule(BaseModule):
     def queue_stats(self) -> dict[str, Any]:
         """Return current queue state for REST API and UI display."""
         avg_wait_ms = (
-            round(self._wait_sum_ms / self._wait_count, 1)
-            if self._wait_count > 0
-            else 0.0
+            round(self._wait_sum_ms / self._wait_count, 1) if self._wait_count > 0 else 0.0
         )
         return {
             "max_concurrent": self._max_concurrent,

@@ -114,9 +114,7 @@ async def agent_ws_endpoint(ws: WebSocket) -> None:
                         payload["agent_id"] = agent_id
                         event = UIEvent(**payload)
                     except pydantic.ValidationError:
-                        logger.warning(
-                            "Malformed UIEvent from agent %s, skipping", agent_id
-                        )
+                        logger.warning("Malformed UIEvent from agent %s, skipping", agent_id)
                         continue
 
                     entry.registration.last_event_at = datetime.now(UTC).isoformat()
@@ -129,9 +127,7 @@ async def agent_ws_endpoint(ws: WebSocket) -> None:
                     # on page load (event_buffer flushes + clears every 100ms,
                     # so it doesn't retain past events).
                     if event.layer == "scheduler":
-                        sched_history = getattr(
-                            ws.app.state, "schedule_history", None
-                        )
+                        sched_history = getattr(ws.app.state, "schedule_history", None)
                         if sched_history is not None:
                             sched_history.append(event.model_dump())
 
@@ -165,9 +161,7 @@ async def agent_ws_endpoint(ws: WebSocket) -> None:
         # Only error futures targeting THIS disconnecting agent
         for req_id, (target_id, future) in list(pending_controls.items()):
             if target_id == agent_id and not future.done():
-                future.set_exception(
-                    TimeoutError(f"Agent {agent_id} disconnected")
-                )
+                future.set_exception(TimeoutError(f"Agent {agent_id} disconnected"))
                 pending_controls.pop(req_id, None)
 
         if audit:

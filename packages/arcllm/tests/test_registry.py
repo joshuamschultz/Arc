@@ -81,7 +81,14 @@ class TestLoadModelHappyPath:
         # security=False: test raw adapter without default security wrapper.
         # Per ADR-019, security is enabled by default; disable here to test
         # that the adapter accepts an unknown model name without rejection.
-        model = load_model("anthropic", "claude-nonexistent-99", telemetry=False, retry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic",
+            "claude-nonexistent-99",
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
         assert model.model_name == "claude-nonexistent-99"
         assert model._model_meta is None
 
@@ -243,7 +250,9 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry={"max_retries": 5}, telemetry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic", retry={"max_retries": 5}, telemetry=False, queue=False, security=False
+        )
         assert isinstance(model, RetryModule)
         assert model._max_retries == 5
 
@@ -286,7 +295,9 @@ class TestModuleStacking:
         from arcllm.modules.fallback import FallbackModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", fallback=True, telemetry=False, retry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic", fallback=True, telemetry=False, retry=False, queue=False, security=False
+        )
         assert isinstance(model, FallbackModule)
 
     def test_load_model_with_fallback_dict(self):
@@ -298,7 +309,14 @@ class TestModuleStacking:
         from arcllm.modules.fallback import FallbackModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", fallback={"chain": ["openai"]}, telemetry=False, retry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic",
+            fallback={"chain": ["openai"]},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
         assert isinstance(model, FallbackModule)
         assert model._chain == ["openai"]
 
@@ -313,7 +331,9 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, fallback=True, telemetry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic", retry=True, fallback=True, telemetry=False, queue=False, security=False
+        )
         # Outermost is Retry (security disabled)
         assert isinstance(model, RetryModule)
         # Inner is Fallback
@@ -357,7 +377,9 @@ class TestModuleStacking:
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", rate_limit=True, telemetry=False, retry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic", rate_limit=True, telemetry=False, retry=False, queue=False, security=False
+        )
         assert isinstance(model, RateLimitModule)
 
     def test_load_model_with_rate_limit_dict(self):
@@ -369,7 +391,14 @@ class TestModuleStacking:
         from arcllm.modules.rate_limit import RateLimitModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", rate_limit={"requests_per_minute": 120}, telemetry=False, retry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic",
+            rate_limit={"requests_per_minute": 120},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
         assert isinstance(model, RateLimitModule)
 
     def test_load_model_rate_limit_false_overrides_config(self):
@@ -400,7 +429,15 @@ class TestModuleStacking:
         from arcllm.modules.retry import RetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", retry=True, fallback=True, rate_limit=True, telemetry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic",
+            retry=True,
+            fallback=True,
+            rate_limit=True,
+            telemetry=False,
+            queue=False,
+            security=False,
+        )
         assert isinstance(model, RetryModule)
         assert isinstance(model._inner, FallbackModule)
         assert isinstance(model._inner._inner, RateLimitModule)
@@ -431,7 +468,9 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", "claude-haiku-4-5-20251001", telemetry=True, retry=False, queue=False)
+        model = load_model(
+            "anthropic", "claude-haiku-4-5-20251001", telemetry=True, retry=False, queue=False
+        )
         assert isinstance(model, TelemetryModule)
         assert model._cost_input == 0.80
         assert model._cost_output == 4.00
@@ -441,7 +480,9 @@ class TestModuleStacking:
         from arcllm.modules.telemetry import TelemetryModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", telemetry={"cost_input_per_1m": 99.0}, retry=False, queue=False)
+        model = load_model(
+            "anthropic", telemetry={"cost_input_per_1m": 99.0}, retry=False, queue=False
+        )
         assert isinstance(model, TelemetryModule)
         # Explicit override wins
         assert model._cost_input == 99.0
@@ -666,7 +707,14 @@ class TestModuleStacking:
         from arcllm.modules.otel import OtelModule
         from arcllm.registry import load_model
 
-        model = load_model("anthropic", otel={"exporter": "none"}, telemetry=False, retry=False, queue=False, security=False)
+        model = load_model(
+            "anthropic",
+            otel={"exporter": "none"},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
         assert isinstance(model, OtelModule)
         assert isinstance(model._inner, AnthropicAdapter)
 

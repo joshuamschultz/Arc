@@ -6,14 +6,11 @@ must result in a DENY decision (not bypass).
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from arcagent.core.tool_policy import (
     Decision,
     PolicyContext,
-    PolicyLayer,
     PolicyPipeline,
     ToolCall,
 )

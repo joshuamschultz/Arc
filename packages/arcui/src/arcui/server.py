@@ -28,8 +28,8 @@ from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
-from arcui.routes import stats as stats_routes
 from arcui.routes import schedules as schedules_routes
+from arcui.routes import stats as stats_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import ws as ws_routes
 from arcui.subscription import SubscriptionManager
@@ -61,7 +61,7 @@ async def _index(request: Request) -> HTMLResponse:
 
     The HTML is read once at app startup into `app.state.index_html`
     (Wave 2 perf fix). At one tab refresh per second across 5 tabs,
-    serving from disk would be 5 × 77KB read+decode per second — the
+    serving from disk would be 5 x 77KB read+decode per second — the
     cache is a one-line change for a meaningful saving.
 
     `Cache-Control: no-store` still applies to the *browser* — the
@@ -128,9 +128,7 @@ def create_app(
     # Read index.html once at module-import time; serving from memory
     # avoids a 77KB disk read on every dashboard GET.
     index_path = _STATIC_DIR / "index.html"
-    cached_index_html = (
-        index_path.read_text() if index_path.exists() else None
-    )
+    cached_index_html = index_path.read_text() if index_path.exists() else None
 
     # Starlette lifespan replaces the deprecated `on_startup=` parameter.
     # The async context manager runs the startup half before the server
@@ -161,9 +159,7 @@ def create_app(
     aggregator = RollingAggregator()
     subscription_manager = SubscriptionManager()
     agent_registry = AgentRegistry(max_agents=max_agents)
-    event_buffer = EventBuffer(
-        connection_manager, subscription_manager=subscription_manager
-    )
+    event_buffer = EventBuffer(connection_manager, subscription_manager=subscription_manager)
 
     app.state.index_html = cached_index_html
     app.state._extra_startup_hooks = []
@@ -186,6 +182,7 @@ def create_app(
     # Bounded ring buffer of recent scheduler-layer UIEvents for warm-start
     # of the Schedule History card. Append-on-receive in agent_ws._receive.
     from collections import deque as _deque
+
     app.state.schedule_history = _deque(maxlen=50)
     app.state.on_event_callbacks = []
     app.state.agent_info = agent_info or {}

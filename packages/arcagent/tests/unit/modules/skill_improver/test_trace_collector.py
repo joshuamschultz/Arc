@@ -3,18 +3,39 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from arcagent.core.module_bus import EventContext
-from arcagent.core.skill_registry import SkillMeta, SkillRegistry
 from arcagent.modules.skill_improver.config import SkillImproverConfig
 from arcagent.modules.skill_improver.trace_collector import (
     TraceCollector,
     _hash_args,
     _parse_expected_tools,
 )
+
+
+# ----- Duck-typed stand-ins for the deleted core.skill_registry surface -----
+@dataclass
+class SkillMeta:
+    name: str
+    description: str = ""
+    file_path: Path | None = None
+
+
+@dataclass
+class SkillRegistry:
+    _skills: dict[str, SkillMeta] = field(default_factory=dict)
+
+    @property
+    def skills(self) -> list[SkillMeta]:
+        return list(self._skills.values())
+
+    def discover(self, *_args: Any, **_kwargs: Any) -> list[SkillMeta]:
+        return self.skills
 
 
 @pytest.fixture

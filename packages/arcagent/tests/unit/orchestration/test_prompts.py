@@ -29,6 +29,6 @@ class TestSpawnGuidance:
 
     def test_exported_from_orchestration(self) -> None:
         """SPAWN_GUIDANCE is exported at the orchestration package level."""
-        from arcagent.orchestration import SPAWN_GUIDANCE as exported
+        from arcagent.orchestration import SPAWN_GUIDANCE as EXPORTED
 
-        assert exported is SPAWN_GUIDANCE
+        assert EXPORTED is SPAWN_GUIDANCE

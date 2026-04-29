@@ -254,7 +254,9 @@ class TestOtelHelpers:
         """Lines 87-89: ImportError on missing HTTP exporter package."""
         from arcllm.modules.otel import _create_otlp_exporter
 
-        with patch.dict("sys.modules", {"opentelemetry.exporter.otlp.proto.http.trace_exporter": None}):
+        with patch.dict(
+            "sys.modules", {"opentelemetry.exporter.otlp.proto.http.trace_exporter": None}
+        ):
             with pytest.raises((ArcLLMConfigError, ImportError)):
                 _create_otlp_exporter({"protocol": "http"})
 
@@ -760,9 +762,7 @@ class TestTraceStoreEdgePaths:
         return TraceRecord(**defaults)
 
     @pytest.mark.asyncio
-    async def test_warm_start_reads_last_hash_from_existing_file(
-        self, agent_root: Path
-    ) -> None:
+    async def test_warm_start_reads_last_hash_from_existing_file(self, agent_root: Path) -> None:
         """Lines 188-205: warm-start path reads last hash from pre-existing JSONL file."""
         store = JSONLTraceStore(agent_root)
 
@@ -784,7 +784,6 @@ class TestTraceStoreEdgePaths:
     ) -> None:
         """Lines 199-200: bad JSON on last line handled gracefully."""
         import logging
-
 
         store = JSONLTraceStore(agent_root)
         traces_dir = agent_root / "traces"
@@ -861,9 +860,7 @@ class TestTraceStoreEdgePaths:
         assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
-    async def test_rotation_tombstone_written_on_date_change(
-        self, agent_root: Path
-    ) -> None:
+    async def test_rotation_tombstone_written_on_date_change(self, agent_root: Path) -> None:
         """Lines 250-258: rotation tombstone written when date changes."""
         store = JSONLTraceStore(agent_root)
 
@@ -903,9 +900,7 @@ class TestTraceStoreEdgePaths:
         assert found.trace_id == "find-me-xyz"
 
     @pytest.mark.asyncio
-    async def test_get_returns_none_for_missing_trace_id(
-        self, agent_root: Path
-    ) -> None:
+    async def test_get_returns_none_for_missing_trace_id(self, agent_root: Path) -> None:
         """get() returns None when trace_id not found."""
         store = JSONLTraceStore(agent_root)
         r = self._make_record(trace_id="present")
@@ -941,9 +936,7 @@ class TestTraceStoreEdgePaths:
         assert all(r.status == "error" for r in results)
 
     @pytest.mark.asyncio
-    async def test_verify_chain_with_start_seq_skips_early_records(
-        self, agent_root: Path
-    ) -> None:
+    async def test_verify_chain_with_start_seq_skips_early_records(self, agent_root: Path) -> None:
         """Lines 385-391: start_seq causes early records to be skipped."""
         store = JSONLTraceStore(agent_root)
 
@@ -956,9 +949,7 @@ class TestTraceStoreEdgePaths:
         assert valid is True
 
     @pytest.mark.asyncio
-    async def test_verify_chain_detects_tampered_record(
-        self, agent_root: Path
-    ) -> None:
+    async def test_verify_chain_detects_tampered_record(self, agent_root: Path) -> None:
         """Lines 397-401: verify_chain returns False on hash mismatch."""
         store = JSONLTraceStore(agent_root)
 
@@ -981,9 +972,7 @@ class TestTraceStoreEdgePaths:
         assert valid is False
 
     @pytest.mark.asyncio
-    async def test_verify_chain_bad_json_returns_false(
-        self, agent_root: Path
-    ) -> None:
+    async def test_verify_chain_bad_json_returns_false(self, agent_root: Path) -> None:
         """Line 386: JSONDecodeError during verify_chain returns False."""
         store = JSONLTraceStore(agent_root)
         traces_dir = agent_root / "traces"

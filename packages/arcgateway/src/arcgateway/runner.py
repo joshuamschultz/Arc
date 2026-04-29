@@ -153,9 +153,7 @@ class GatewayRunner:
         self._runtime_dir: Path = runtime_dir or _DEFAULT_RUNTIME_DIR
         self._session_router = SessionRouter(executor=self._executor)
         self._failed_adapters: dict[str, FailedAdapter] = {}
-        self._adapter_index: dict[str, BasePlatformAdapter] = {
-            a.name: a for a in self._adapters
-        }
+        self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}
         self._shutdown_event = asyncio.Event()
 
         # T1.13 — DeliverySenderImpl satisfies arcagent's DeliverySender Protocol.
@@ -230,6 +228,7 @@ class GatewayRunner:
         # enforce all four pillars through the same policy stack.
         if tier == "federal":
             import sys
+
             executor: Executor = SubprocessExecutor(
                 worker_cmd=[sys.executable, "-m", "arccli.agent_worker"],
             )
@@ -291,6 +290,7 @@ class GatewayRunner:
         )
 
         from arcgateway.audit import emit_event as _arc_emit
+
         _arc_emit(
             action="gateway.runner.start",
             target="gateway",
@@ -338,6 +338,7 @@ class GatewayRunner:
             self._remove_pid_file()
             self._write_clean_shutdown_marker()
             from arcgateway.audit import emit_event as _arc_emit
+
             _arc_emit(
                 action="gateway.runner.stop",
                 target="gateway",
@@ -365,13 +366,9 @@ class GatewayRunner:
                     else:
                         removed = 0
                     if removed:
-                        _logger.debug(
-                            "Pairing cleanup: removed %d expired codes", removed
-                        )
+                        _logger.debug("Pairing cleanup: removed %d expired codes", removed)
                 except Exception:
-                    _logger.exception(
-                        "GatewayRunner: pairing cleanup_expired raised"
-                    )
+                    _logger.exception("GatewayRunner: pairing cleanup_expired raised")
         except asyncio.CancelledError:
             _logger.info("GatewayRunner: pairing cleanup scheduler stopped")
             raise
@@ -397,9 +394,7 @@ class GatewayRunner:
             raise  # CancelledError must propagate to TaskGroup for clean exit
         except Exception as exc:
             _logger.exception("Adapter %s failed: %s", adapter.name, exc)
-            self._failed_adapters[adapter.name] = FailedAdapter(
-                name=adapter.name, last_error=exc
-            )
+            self._failed_adapters[adapter.name] = FailedAdapter(name=adapter.name, last_error=exc)
             # TODO (M1 integration): emit gateway.adapter.fail audit event
 
     async def _wait_for_shutdown(self) -> None:

@@ -178,9 +178,7 @@ async def test_invalid_signature_raises_and_does_not_consume(
     conn.close()
     assert consumed == 0
 
-    invalid_msgs = [
-        r for r in caplog.records if "signature_invalid" in r.getMessage()
-    ]
+    invalid_msgs = [r for r in caplog.records if "signature_invalid" in r.getMessage()]
     assert invalid_msgs, "Expected gateway.pairing.signature_invalid audit event"
 
 
@@ -210,12 +208,8 @@ async def test_tampered_code_fails_verification(
     operator_key: SigningKey,
 ) -> None:
     """Signature bound to code A cannot approve code B (challenge mismatch)."""
-    code_a = await federal_store_with_trust.mint_code(
-        platform="telegram", platform_user_id="uA"
-    )
-    code_b = await federal_store_with_trust.mint_code(
-        platform="telegram", platform_user_id="uB"
-    )
+    code_a = await federal_store_with_trust.mint_code(platform="telegram", platform_user_id="uA")
+    code_b = await federal_store_with_trust.mint_code(platform="telegram", platform_user_id="uB")
 
     # Sign challenge for code A
     challenge_a = build_pairing_challenge(code_a.code, code_a.minted_at)
@@ -240,9 +234,7 @@ async def test_signature_failure_increments_lockout_counter(
     signatures don't count against per-user rate limits or the per-platform
     pending cap (both of which would trip on 5 fresh mints).
     """
-    code = await federal_store_with_trust.mint_code(
-        platform="telegram", platform_user_id="victim"
-    )
+    code = await federal_store_with_trust.mint_code(platform="telegram", platform_user_id="victim")
 
     for _ in range(5):
         with pytest.raises(PairingSignatureInvalid):
@@ -269,7 +261,7 @@ async def test_unknown_operator_did_in_trust_store_raises(
     """DID not in operators.toml → PairingSignatureInvalid (federal hard-fail)."""
     # Trust dir is empty: no operators.toml entries
     operators_file = trust_dir / "operators.toml"
-    operators_file.write_text('[operators]\n', encoding="utf-8")
+    operators_file.write_text("[operators]\n", encoding="utf-8")
     operators_file.chmod(0o600)
 
     from arctrust import invalidate_cache

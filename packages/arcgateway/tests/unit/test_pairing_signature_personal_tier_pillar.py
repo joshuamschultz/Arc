@@ -46,9 +46,7 @@ def _make_row(
         (platform, minted_at, expires_at),
     )
     conn.commit()
-    return conn.execute(
-        "SELECT * FROM pairing_codes WHERE code = 'TESTCODE'"
-    ).fetchone()
+    return conn.execute("SELECT * FROM pairing_codes WHERE code = 'TESTCODE'").fetchone()
 
 
 def _noop_failure(conn: sqlite3.Connection, platform: str, now: float) -> None:

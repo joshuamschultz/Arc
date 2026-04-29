@@ -62,13 +62,13 @@ def split_message(text: str, max_length: int = _MAX_MESSAGE_LENGTH) -> list[str]
         split_pos = chunk.rfind("\n\n")
         if split_pos > 0:
             chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 2:]
+            remaining = remaining[split_pos + 2 :]
             continue
 
         split_pos = chunk.rfind("\n")
         if split_pos > 0:
             chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 1:]
+            remaining = remaining[split_pos + 1 :]
             continue
 
         chunks.append(remaining[:max_length])
@@ -211,10 +211,7 @@ class SlackAdapter:
             )
             from slack_bolt.async_app import AsyncApp
         except ImportError as exc:
-            msg = (
-                "slack-bolt is not installed. "
-                "Install with: pip install 'arcgateway[slack]'"
-            )
+            msg = "slack-bolt is not installed. Install with: pip install 'arcgateway[slack]'"
             raise ImportError(msg) from exc
 
         self._app = AsyncApp(token=self._bot_token)
@@ -371,6 +368,7 @@ class SlackAdapter:
                 )
                 # Canonical arctrust.audit emit for replay deduplication.
                 from arcgateway.audit import emit_event as _arc_emit
+
                 _arc_emit(
                     action="gateway.message.deduped",
                     target=f"slack:{channel}",

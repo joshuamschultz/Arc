@@ -174,15 +174,11 @@ class FederatedTraceStore:
         last_ts = merged[-1][0]
         # Records sharing the watermark timestamp must be remembered so
         # the next page does not re-emit them when it requests `end=last_ts`.
-        skip_ids = [
-            rec.trace_id for ts, _idx, rec in merged if ts == last_ts
-        ]
+        skip_ids = [rec.trace_id for ts, _idx, rec in merged if ts == last_ts]
         return self._encode_cursor(last_ts, skip_ids)
 
     @staticmethod
-    def _tighter_end(
-        caller_end: str | None, watermark_end: str | None
-    ) -> str | None:
+    def _tighter_end(caller_end: str | None, watermark_end: str | None) -> str | None:
         """Intersect caller-supplied `end` with our pagination watermark."""
         if caller_end is None:
             return watermark_end
@@ -242,9 +238,11 @@ class FederatedTraceStore:
             return None, frozenset()
         watermark = parsed.get("ts")
         skip_raw = parsed.get("skip", [])
-        skip_ids = frozenset(
-            str(s) for s in skip_raw if isinstance(s, str)
-        ) if isinstance(skip_raw, list) else frozenset()
+        skip_ids = (
+            frozenset(str(s) for s in skip_raw if isinstance(s, str))
+            if isinstance(skip_raw, list)
+            else frozenset()
+        )
         return (str(watermark) if watermark else None), skip_ids
 
     @staticmethod

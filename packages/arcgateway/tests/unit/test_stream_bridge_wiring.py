@@ -184,10 +184,9 @@ async def test_flood_disabled_in_summary() -> None:
 
     # Send enough tokens to hit FLOOD_STRIKE_LIMIT edit attempts.
     # Each flush attempt requires >= EDIT_TOKEN_BUFFER_SIZE tokens.
-    tokens = (
-        [_delta(f"t{i}") for i in range(FLOOD_STRIKE_LIMIT * 25)]
-        + [_delta("", is_final=True)]
-    )
+    tokens = [_delta(f"t{i}") for i in range(FLOOD_STRIKE_LIMIT * 25)] + [
+        _delta("", is_final=True)
+    ]
 
     with patch("arcgateway.stream_bridge._audit", fake_emit_audit):
         await bridge.consume(_stream(*tokens), target, adapter)

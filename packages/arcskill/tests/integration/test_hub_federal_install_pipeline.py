@@ -16,8 +16,6 @@ import tempfile
 import unittest.mock
 from pathlib import Path
 
-import pytest
-
 from arcskill.hub.config import (
     FindingsAllowed,
     HubConfig,
@@ -124,15 +122,9 @@ def test_federal_valid_signed_skill_installs() -> None:
 
         with (
             unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter,
-            unittest.mock.patch(
-                "arcskill.hub.installer.verify_bundle", return_value=mock_verify
-            ),
-            unittest.mock.patch(
-                "arcskill.hub.installer.scan", return_value=mock_scan
-            ),
-            unittest.mock.patch(
-                "arcskill.hub.installer.run_dry_run", return_value=mock_dry_run
-            ),
+            unittest.mock.patch("arcskill.hub.installer.verify_bundle", return_value=mock_verify),
+            unittest.mock.patch("arcskill.hub.installer.scan", return_value=mock_scan),
+            unittest.mock.patch("arcskill.hub.installer.run_dry_run", return_value=mock_dry_run),
         ):
             mock_adapter.return_value.fetch.return_value = mock_fetch
 
@@ -203,7 +195,11 @@ def test_federal_missing_signature_refused() -> None:
             )
 
         assert result.success is False
-        assert "sigstore" in result.error.lower() or "signature" in result.error.lower() or "bundle" in result.error.lower()
+        assert (
+            "sigstore" in result.error.lower()
+            or "signature" in result.error.lower()
+            or "bundle" in result.error.lower()
+        )
 
         # Skill must NOT appear in lock file.
         lock = HubLockFile.load(lock_path)
@@ -238,9 +234,7 @@ def test_federal_crl_unreachable_hard_error() -> None:
             unittest.mock.patch("arcskill.hub.installer.make_adapter") as mock_adapter,
             unittest.mock.patch(
                 "arcskill.hub.installer.verify_bundle",
-                side_effect=CRLUnreachable(
-                    "CRL endpoint unreachable: connection refused"
-                ),
+                side_effect=CRLUnreachable("CRL endpoint unreachable: connection refused"),
             ),
         ):
             mock_adapter.return_value.fetch.return_value = mock_fetch
@@ -254,10 +248,9 @@ def test_federal_crl_unreachable_hard_error() -> None:
             )
 
         assert result.success is False
-        assert (
-            "crl" in result.error.lower()
-            or "unreachable" in result.error.lower()
-        ), f"Expected CRL error; got: {result.error!r}"
+        assert "crl" in result.error.lower() or "unreachable" in result.error.lower(), (
+            f"Expected CRL error; got: {result.error!r}"
+        )
 
         # Skill must NOT appear in lock file.
         lock = HubLockFile.load(lock_path)

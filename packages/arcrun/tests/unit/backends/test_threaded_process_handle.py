@@ -41,9 +41,7 @@ async def test_stream_large_output_truncated() -> None:
     def exec_fn(command: str) -> bytes:
         return b"x" * 200
 
-    handle = _ThreadedProcessHandle(
-        exec_fn=exec_fn, cancel_fn=lambda: None, max_stdout_bytes=10
-    )
+    handle = _ThreadedProcessHandle(exec_fn=exec_fn, cancel_fn=lambda: None, max_stdout_bytes=10)
     await handle.start("cmd")
 
     chunks: list[bytes] = []

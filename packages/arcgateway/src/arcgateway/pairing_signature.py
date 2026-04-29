@@ -248,8 +248,7 @@ class PairingSignatureVerifier:
             from nacl.signing import VerifyKey
         except ImportError as exc:  # pragma: no cover — arctrust is a required dep
             raise PairingSignatureInvalid(
-                "PyNaCl / arctrust trust store not available; cannot "
-                f"verify signatures: {exc}"
+                f"PyNaCl / arctrust trust store not available; cannot verify signatures: {exc}"
             ) from exc
 
         try:
@@ -267,8 +266,7 @@ class PairingSignatureVerifier:
                 },
             )
             raise PairingSignatureInvalid(
-                f"Cannot resolve operator pubkey for {approver_did!r}: "
-                f"[{exc.code}] {exc.message}"
+                f"Cannot resolve operator pubkey for {approver_did!r}: [{exc.code}] {exc.message}"
             ) from exc
 
         challenge = build_pairing_challenge(code, minted_at)

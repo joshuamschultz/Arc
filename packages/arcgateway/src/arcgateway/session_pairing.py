@@ -64,6 +64,7 @@ class PairingInterceptor:
             self._pairing_store: object | None = pairing_store
         elif pairing_db_path is not None:
             from arcgateway.pairing import PairingStore
+
             self._pairing_store = PairingStore(db_path=pairing_db_path)
         else:
             self._pairing_store = None
@@ -141,7 +142,8 @@ class PairingInterceptor:
         if self._pairing_store is None:
             _logger.warning(
                 "Pairing: no store — uid_h=%s platform=%s dropped",
-                uid_h, event.platform,
+                uid_h,
+                event.platform,
             )
             return
 
@@ -162,7 +164,8 @@ class PairingInterceptor:
             )
             _logger.info(
                 "Pairing: minted code for uid_h=%s platform=%r (code hidden)",
-                uid_h, event.platform,
+                uid_h,
+                event.platform,
             )
             # Deliver the pairing code via adapter DM (closes TODO M1 T1.7).
             if adapter is not None:
@@ -179,7 +182,8 @@ class PairingInterceptor:
         except PairingRateLimited:
             _logger.info(
                 "Pairing: rate-limited uid_h=%s platform=%r",
-                uid_h, event.platform,
+                uid_h,
+                event.platform,
             )
             # Re-send reminder (closes TODO M1 T1.7 rate-limited branch).
             if adapter is not None:
@@ -192,7 +196,8 @@ class PairingInterceptor:
         except PairingPlatformFull:
             _logger.warning(
                 "Pairing: platform %r full — uid_h=%s dropped",
-                event.platform, uid_h,
+                event.platform,
+                uid_h,
             )
             # Notify user that pairing is at capacity (closes TODO M1 T1.7 full branch).
             if adapter is not None:
@@ -204,7 +209,8 @@ class PairingInterceptor:
         except PairingPlatformLocked:
             _logger.warning(
                 "Pairing: platform %r locked — uid_h=%s dropped",
-                event.platform, uid_h,
+                event.platform,
+                uid_h,
             )
             # Notify user that pairing is locked (closes TODO M1 T1.7 locked branch).
             if adapter is not None:

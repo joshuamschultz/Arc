@@ -15,11 +15,13 @@ from arcui.subscription import SubscriptionManager
 
 
 def _make_app(max_agents: int = 100) -> tuple[Starlette, AuthConfig]:
-    auth = AuthConfig({
-        "viewer_token": "viewer",
-        "operator_token": "operator",
-        "agent_token": "agent-secret",
-    })
+    auth = AuthConfig(
+        {
+            "viewer_token": "viewer",
+            "operator_token": "operator",
+            "agent_token": "agent-secret",
+        }
+    )
     cm = ConnectionManager()
     registry = AgentRegistry(max_agents=max_agents)
     sub_mgr = SubscriptionManager()
@@ -96,19 +98,21 @@ class TestAgentWSEventHandling:
             assert resp["type"] == "auth_ok"
 
             # Send a UIEvent
-            ws.send_json({
-                "type": "event",
-                "payload": {
-                    "layer": "llm",
-                    "event_type": "trace_record",
-                    "agent_id": "",
-                    "agent_name": "test-agent",
-                    "source_id": "call-1",
-                    "timestamp": "2026-03-03T12:00:00+00:00",
-                    "data": {"model": "gpt-4"},
-                    "sequence": 0,
-                },
-            })
+            ws.send_json(
+                {
+                    "type": "event",
+                    "payload": {
+                        "layer": "llm",
+                        "event_type": "trace_record",
+                        "agent_id": "",
+                        "agent_name": "test-agent",
+                        "source_id": "call-1",
+                        "timestamp": "2026-03-03T12:00:00+00:00",
+                        "data": {"model": "gpt-4"},
+                        "sequence": 0,
+                    },
+                }
+            )
 
     def test_malformed_event_continues_connection(self):
         """A ValidationError from bad payload should not kill the WS."""
@@ -120,25 +124,29 @@ class TestAgentWSEventHandling:
             assert resp["type"] == "auth_ok"
 
             # Send malformed event (missing required fields)
-            ws.send_json({
-                "type": "event",
-                "payload": {"bad": "data"},
-            })
+            ws.send_json(
+                {
+                    "type": "event",
+                    "payload": {"bad": "data"},
+                }
+            )
 
             # Connection should still be alive — send a valid event
-            ws.send_json({
-                "type": "event",
-                "payload": {
-                    "layer": "llm",
-                    "event_type": "test_event",
-                    "agent_id": "",
-                    "agent_name": "test-agent",
-                    "source_id": "call-1",
-                    "timestamp": "2026-03-03T12:00:00+00:00",
-                    "data": {},
-                    "sequence": 1,
-                },
-            })
+            ws.send_json(
+                {
+                    "type": "event",
+                    "payload": {
+                        "layer": "llm",
+                        "event_type": "test_event",
+                        "agent_id": "",
+                        "agent_name": "test-agent",
+                        "source_id": "call-1",
+                        "timestamp": "2026-03-03T12:00:00+00:00",
+                        "data": {},
+                        "sequence": 1,
+                    },
+                }
+            )
 
     def test_per_agent_aggregator_created_on_register(self):
         app, _ = _make_app()

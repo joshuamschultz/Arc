@@ -6,8 +6,6 @@ passes isinstance(obj, ExecutorBackend) via @runtime_checkable.
 
 from __future__ import annotations
 
-import pytest
-
 from arcrun.backends import (
     BackendCapabilities,
     DockerBackend,
@@ -29,7 +27,7 @@ class TestProtocolConformance:
 
     def test_arbitrary_conforming_class_passes_protocol(self) -> None:
         """Any class with the required interface satisfies the Protocol."""
-        from typing import AsyncIterator
+        from collections.abc import AsyncIterator
 
         from arcrun.backends.base import ExecHandle
 
@@ -65,7 +63,7 @@ class TestProtocolConformance:
 
     def test_object_missing_close_fails_protocol(self) -> None:
         """Missing close() means the class does NOT pass isinstance."""
-        from typing import AsyncIterator
+        from collections.abc import AsyncIterator
 
         from arcrun.backends.base import ExecHandle
 

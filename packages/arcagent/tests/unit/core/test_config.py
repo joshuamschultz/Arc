@@ -142,7 +142,6 @@ class TestVaultConfig:
 class TestToolsConfig:
     def test_defaults(self) -> None:
         cfg = ToolsConfig()
-        assert cfg.native == {}
         assert cfg.mcp_servers == {}
         assert cfg.http == {}
         assert cfg.process == {}
@@ -231,13 +230,13 @@ class TestEnvDenylist:
         cfg = load_config(minimal_toml)
         assert cfg.identity.key_dir == "~/.arcagent/keys"  # Default
 
-    def test_tools_native_env_blocked(
+    def test_tools_process_env_blocked(
         self, minimal_toml: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Env var override for tools.native.* is blocked."""
-        monkeypatch.setenv("ARCAGENT_TOOLS__NATIVE__EVIL__MODULE", "os:system")
+        """Env var override for tools.process.* is blocked."""
+        monkeypatch.setenv("ARCAGENT_TOOLS__PROCESS__EVIL__COMMAND", "/bin/sh")
         cfg = load_config(minimal_toml)
-        assert len(cfg.tools.native) == 0
+        assert len(cfg.tools.process) == 0
 
     def test_non_sensitive_env_allowed(
         self, minimal_toml: Path, monkeypatch: pytest.MonkeyPatch
@@ -367,10 +366,6 @@ class TestFullConfig:
             deny = ["shell_exec"]
             timeout_seconds = 60
 
-            [tools.native.read_file]
-            module = "arcagent.tools.fs:read_file"
-            description = "Read a file"
-
             [tools.mcp_servers.filesystem]
             command = "npx"
             args = ["-y", "@modelcontextprotocol/server-filesystem"]
@@ -406,7 +401,6 @@ class TestFullConfig:
         assert cfg.vault.backend == "my_vault:HashicorpBackend"
         assert cfg.tools.policy.allow == ["read_file", "write_file"]
         assert cfg.tools.policy.deny == ["shell_exec"]
-        assert "read_file" in cfg.tools.native
         assert "filesystem" in cfg.tools.mcp_servers
         assert cfg.telemetry.log_level == "DEBUG"
         assert cfg.context.max_tokens == 200000

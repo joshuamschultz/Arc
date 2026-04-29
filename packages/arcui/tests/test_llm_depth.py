@@ -175,9 +175,7 @@ class TestLLMCallDepth:
         )
 
         # ── cost ──────────────────────────────────────────────────────────
-        assert payload.get("cost_usd") == 0.00412, (
-            f"cost_usd wrong: {payload.get('cost_usd')!r}"
-        )
+        assert payload.get("cost_usd") == 0.00412, f"cost_usd wrong: {payload.get('cost_usd')!r}"
 
         # ── request_body — messages + tools ──────────────────────────────
         req = payload.get("request_body")
@@ -215,15 +213,16 @@ class TestLLMCallDepth:
         multi_tool_response = {
             "content": "Using multiple tools",
             "tool_calls": [
-                {"id": f"call_{i}", "function": {"name": f"tool_{i}", "arguments": f'{{"x": {i}}}'}}
+                {
+                    "id": f"call_{i}",
+                    "function": {"name": f"tool_{i}", "arguments": f'{{"x": {i}}}'},
+                }
                 for i in range(5)
             ],
             "usage": {"input_tokens": 100, "output_tokens": 50},
         }
 
-        reporter = UIEventReporter(
-            event_buffer=buffer, agent_id="agent1", agent_name="test"
-        )
+        reporter = UIEventReporter(event_buffer=buffer, agent_id="agent1", agent_name="test")
         reporter.emit_llm_trace(
             model="gpt-4o",
             provider="openai",
@@ -234,9 +233,7 @@ class TestLLMCallDepth:
 
         raw = await queue.get()
         payload = json.loads(raw)["data"]
-        assert len(payload["response_body"]["tool_calls"]) == 5, (
-            "tool_calls were truncated"
-        )
+        assert len(payload["response_body"]["tool_calls"]) == 5, "tool_calls were truncated"
 
     async def test_layer_is_llm(self) -> None:
         """LLM trace events must have layer='llm'."""
@@ -244,9 +241,7 @@ class TestLLMCallDepth:
         queue = conn_mgr.create_queue()
         sub_mgr.set_subscription(queue, Subscription())
 
-        reporter = UIEventReporter(
-            event_buffer=buffer, agent_id="agent1", agent_name="test"
-        )
+        reporter = UIEventReporter(event_buffer=buffer, agent_id="agent1", agent_name="test")
         reporter.emit_llm_trace(
             model="gpt-4o",
             provider="openai",
@@ -271,9 +266,7 @@ class TestLLMCallDepth:
             "queue_wait_ms": 25.0,
             "retry_delay_ms": 0.0,
         }
-        reporter = UIEventReporter(
-            event_buffer=buffer, agent_id="agent1", agent_name="test"
-        )
+        reporter = UIEventReporter(event_buffer=buffer, agent_id="agent1", agent_name="test")
         reporter.emit_llm_trace(
             model="claude-opus-4",
             provider="anthropic",

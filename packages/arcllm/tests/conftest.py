@@ -11,14 +11,16 @@ assertions reflect explicit kwargs, not ambient user settings.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def _isolate_user_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+def _isolate_user_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Generator[None, None, None]:
     """Point ARC_CONFIG_DIR at an empty tmp dir for every test.
 
     This prevents ~/.arc/arcllm.toml (or any user-installed override) from

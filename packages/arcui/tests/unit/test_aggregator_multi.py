@@ -7,14 +7,11 @@ ordering, single-store equivalence to legacy warm_start, and bounded perf.
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-from typing import Any, AsyncIterator
-
-import pytest
+from typing import Any
 
 from arcui.aggregator import RollingAggregator
-
 
 # ---------------------------------------------------------------------------
 # Test doubles — minimal TraceStore that yields records in fixed order.
@@ -35,13 +32,12 @@ class _FakeStore:
         for rec in self._records:
             yield rec
 
-    async def query(
-        self, *, limit: int = 50, **_: Any
-    ) -> tuple[list[Any], None]:
+    async def query(self, *, limit: int = 50, **_: Any) -> tuple[list[Any], None]:
         # Used by single-store legacy warm_start equivalence comparison.
         # Return TraceRecord-shaped objects but really just pass dicts through
         # since aggregator.warm_start uses model_dump() with hasattr guard.
         from arcllm.trace_store import TraceRecord
+
         objs = [TraceRecord(**r) for r in self._records[:limit]]
         return objs, None
 
@@ -89,17 +85,23 @@ class TestWarmStartMultiThreeStores:
 
     async def test_interleaved_timestamps(self) -> None:
         now = datetime.now(UTC)
-        s_a = _FakeStore([
-            _record(now - timedelta(minutes=10), "a"),
-            _record(now - timedelta(minutes=4), "a"),
-        ])
-        s_b = _FakeStore([
-            _record(now - timedelta(minutes=8), "b"),
-            _record(now - timedelta(minutes=2), "b"),
-        ])
-        s_c = _FakeStore([
-            _record(now - timedelta(minutes=6), "c"),
-        ])
+        s_a = _FakeStore(
+            [
+                _record(now - timedelta(minutes=10), "a"),
+                _record(now - timedelta(minutes=4), "a"),
+            ]
+        )
+        s_b = _FakeStore(
+            [
+                _record(now - timedelta(minutes=8), "b"),
+                _record(now - timedelta(minutes=2), "b"),
+            ]
+        )
+        s_c = _FakeStore(
+            [
+                _record(now - timedelta(minutes=6), "c"),
+            ]
+        )
 
         agg = RollingAggregator()
         await agg.warm_start_multi([s_a, s_b, s_c])
@@ -129,21 +131,27 @@ class TestWarmStartMultiIngestOrder:
         # Three stores where each emits a strictly increasing timestamp
         # series. Globally interleaved order would be: a@t0, b@t1, c@t2,
         # a@t3, b@t4, c@t5, a@t6, b@t7, c@t8.
-        s_a = _FakeStore([
-            _record(now - timedelta(seconds=8), "a"),
-            _record(now - timedelta(seconds=5), "a"),
-            _record(now - timedelta(seconds=2), "a"),
-        ])
-        s_b = _FakeStore([
-            _record(now - timedelta(seconds=7), "b"),
-            _record(now - timedelta(seconds=4), "b"),
-            _record(now - timedelta(seconds=1), "b"),
-        ])
-        s_c = _FakeStore([
-            _record(now - timedelta(seconds=6), "c"),
-            _record(now - timedelta(seconds=3), "c"),
-            _record(now, "c"),
-        ])
+        s_a = _FakeStore(
+            [
+                _record(now - timedelta(seconds=8), "a"),
+                _record(now - timedelta(seconds=5), "a"),
+                _record(now - timedelta(seconds=2), "a"),
+            ]
+        )
+        s_b = _FakeStore(
+            [
+                _record(now - timedelta(seconds=7), "b"),
+                _record(now - timedelta(seconds=4), "b"),
+                _record(now - timedelta(seconds=1), "b"),
+            ]
+        )
+        s_c = _FakeStore(
+            [
+                _record(now - timedelta(seconds=6), "c"),
+                _record(now - timedelta(seconds=3), "c"),
+                _record(now, "c"),
+            ]
+        )
 
         emitted: list[tuple[str, str]] = []
         async for rec in merge_by_timestamp([s_a, s_b, s_c]):
@@ -177,23 +185,18 @@ class TestMergeByTimestampContract:
         sorted output. Property: for every consecutive pair (a, b) in
         the emitted sequence, a.timestamp <= b.timestamp.
         """
+        import random
+
         from arcui.aggregator import merge_by_timestamp
 
-        import random
-        rng = random.Random(42)
+        rng = random.Random(42)  # noqa: S311 — test fixture, not a security primitive
         stores = []
         all_seeded = []
         for store_idx in range(5):
             count = rng.randint(0, 30)
             # Pick `count` distinct timestamps in non-decreasing order.
-            tss = sorted(
-                f"2026-01-01T00:00:{rng.randint(0, 99):02d}+00:00"
-                for _ in range(count)
-            )
-            recs = [
-                {"timestamp": ts, "agent_label": f"a{store_idx}"}
-                for ts in tss
-            ]
+            tss = sorted(f"2026-01-01T00:00:{rng.randint(0, 99):02d}+00:00" for _ in range(count))
+            recs = [{"timestamp": ts, "agent_label": f"a{store_idx}"} for ts in tss]
             stores.append(_FakeStore(recs))
             all_seeded.extend(recs)
 
@@ -206,8 +209,7 @@ class TestMergeByTimestampContract:
         # Globally non-decreasing.
         timestamps = [r["timestamp"] for r in emitted]
         assert timestamps == sorted(timestamps), (
-            "merge_by_timestamp must yield non-decreasing timestamps "
-            "across all stores"
+            "merge_by_timestamp must yield non-decreasing timestamps across all stores"
         )
 
     async def test_tie_break_by_store_index(self) -> None:
@@ -255,16 +257,13 @@ class TestWarmStartMultiTieOrder:
 
 
 class TestWarmStartMultiPerformance:
-    """NFR-1, NFR-2: 5 stores × 1000 records under 500ms."""
+    """NFR-1, NFR-2: 5 stores x 1000 records under 500ms."""
 
     async def test_5x1000_under_500ms(self) -> None:
         now = datetime.now(UTC)
         stores = []
         for s_idx in range(5):
-            recs = [
-                _record(now - timedelta(seconds=i), f"agent_{s_idx}")
-                for i in range(1000)
-            ]
+            recs = [_record(now - timedelta(seconds=i), f"agent_{s_idx}") for i in range(1000)]
             stores.append(_FakeStore(recs))
 
         agg = RollingAggregator()

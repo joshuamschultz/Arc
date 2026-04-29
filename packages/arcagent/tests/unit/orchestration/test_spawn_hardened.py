@@ -9,14 +9,13 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from arctrust import ChildIdentity, derive_child_identity
+
 from arcagent.orchestration.spawn import (
     RootTokenBudget,
     SpawnResult,
     TokenUsage,
 )
-
 
 # ---------------------------------------------------------------------------
 # SpawnResult model

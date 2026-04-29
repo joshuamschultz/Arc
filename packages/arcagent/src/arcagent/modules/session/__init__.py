@@ -46,9 +46,7 @@ class SessionModule:
     ) -> None:
         cfg = config or {}
         self._workspace = workspace
-        self._poll_interval: float = float(
-            cfg.get("poll_interval", _DEFAULT_POLL_INTERVAL)
-        )
+        self._poll_interval: float = float(cfg.get("poll_interval", _DEFAULT_POLL_INTERVAL))
         self._index: SessionIndex | None = None
 
     @property

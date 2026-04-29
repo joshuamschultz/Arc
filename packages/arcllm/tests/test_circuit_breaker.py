@@ -82,9 +82,7 @@ class TestCircuitBreakerStateMachine:
 
     async def test_opens_after_threshold_failures(self, messages: list[Message]):
         inner = _make_inner()
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "server error", "test")
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "server error", "test"))
         module = CircuitBreakerModule(_make_config(failure_threshold=3), inner)
 
         for _ in range(3):
@@ -96,9 +94,7 @@ class TestCircuitBreakerStateMachine:
 
     async def test_rejects_calls_when_open(self, messages: list[Message]):
         inner = _make_inner()
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "server error", "test")
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "server error", "test"))
         module = CircuitBreakerModule(
             _make_config(failure_threshold=2, cooldown_seconds=100.0), inner
         )
@@ -146,9 +142,7 @@ class TestCircuitBreakerStateMachine:
         assert module.get_state()["state"] == "closed"
 
     @patch("arcllm.modules.circuit_breaker.time.monotonic")
-    async def test_half_open_failure_reopens(
-        self, mock_mono: MagicMock, messages: list[Message]
-    ):
+    async def test_half_open_failure_reopens(self, mock_mono: MagicMock, messages: list[Message]):
         inner = _make_inner()
         failure = ArcLLMAPIError(500, "error", "test")
 
@@ -197,12 +191,8 @@ class TestCircuitBreakerStateMachine:
             transitions.append((old, new, info))
 
         inner = _make_inner()
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "error", "test")
-        )
-        module = CircuitBreakerModule(
-            _make_config(failure_threshold=2, on_state_change=cb), inner
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "error", "test"))
+        module = CircuitBreakerModule(_make_config(failure_threshold=2, on_state_change=cb), inner)
 
         for _ in range(2):
             with pytest.raises(ArcLLMAPIError):
@@ -239,9 +229,7 @@ class TestCircuitBreakerTraceEvents:
 
         events: list[TraceRecord] = []
         inner = _make_inner("anthropic")
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "error", "anthropic")
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "error", "anthropic"))
         module = CircuitBreakerModule(
             _make_config(failure_threshold=2, on_event=events.append), inner
         )
@@ -305,12 +293,8 @@ class TestCircuitBreakerTraceEvents:
     async def test_no_events_when_on_event_none(self, messages: list[Message]):
         """No crash when on_event is not configured."""
         inner = _make_inner()
-        inner.invoke = AsyncMock(
-            side_effect=ArcLLMAPIError(500, "error", "test")
-        )
-        module = CircuitBreakerModule(
-            _make_config(failure_threshold=2), inner
-        )
+        inner.invoke = AsyncMock(side_effect=ArcLLMAPIError(500, "error", "test"))
+        module = CircuitBreakerModule(_make_config(failure_threshold=2), inner)
 
         for _ in range(2):
             with pytest.raises(ArcLLMAPIError):

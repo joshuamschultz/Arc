@@ -121,7 +121,6 @@ def build_session_key(agent_did: str, user_did: str) -> str:
     return digest[:16]
 
 
-
 class SessionRouter:
     """Routes inbound events to per-session agent tasks.
 
@@ -264,10 +263,12 @@ class SessionRouter:
         if self._identity_graph is not None:
             resolved_did = self._resolve_user_did(event.platform, event.user_did)
             if resolved_did != event.user_did:
-                event = event.model_copy(update={
-                    "user_did": resolved_did,
-                    "session_key": build_session_key(event.agent_did, resolved_did),
-                })
+                event = event.model_copy(
+                    update={
+                        "user_did": resolved_did,
+                        "session_key": build_session_key(event.agent_did, resolved_did),
+                    }
+                )
 
         # --- Pairing interceptor (T1.8) ---
         if not self._pairing.is_user_approved(event.user_did):
@@ -357,7 +358,9 @@ class SessionRouter:
         """
         _logger.info(
             "Session %s: turn start platform=%s uid_h=%s",
-            session_key, event.platform, hash_user_did(event.user_did),
+            session_key,
+            event.platform,
+            hash_user_did(event.user_did),
         )
         try:
             delta_stream: AsyncIterator[Delta] = await self._executor.run(event)
@@ -417,9 +420,7 @@ class SessionRouter:
             try:
                 await self._run_turn(session_key, next_event)
             except Exception:
-                _logger.exception(
-                    "Unhandled error draining queue for session %s", session_key
-                )
+                _logger.exception("Unhandled error draining queue for session %s", session_key)
             finally:
                 done_event.set()
 
@@ -440,7 +441,7 @@ class SessionRouter:
 
         prefix = f"did:arc:{platform}:"
         if raw_user_did.startswith(prefix):
-            platform_user_id = raw_user_did[len(prefix):]
+            platform_user_id = raw_user_did[len(prefix) :]
         elif ":" in raw_user_did:
             platform_user_id = raw_user_did.split(":", 1)[-1]
         else:

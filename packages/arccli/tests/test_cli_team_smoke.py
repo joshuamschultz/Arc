@@ -130,8 +130,15 @@ class TestTeamStatus:
         """
         _init_team(tmp_path)
         reg = _arc(
-            "team", "--root", str(tmp_path),
-            "register", "agent_one", "--name", "Agent One", "--type", "agent",
+            "team",
+            "--root",
+            str(tmp_path),
+            "register",
+            "agent_one",
+            "--name",
+            "Agent One",
+            "--type",
+            "agent",
         )
         assert reg.returncode == 0, f"register failed: {reg.stderr}"
 

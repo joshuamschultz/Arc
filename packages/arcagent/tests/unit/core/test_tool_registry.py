@@ -13,7 +13,6 @@ from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
     LLMConfig,
-    NativeToolEntry,
     ToolConfig,
     ToolsConfig,
 )
@@ -152,9 +151,14 @@ class TestPolicyEnforcement:
         registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=telemetry)
         registry.register(_make_tool("shell_exec"))
         # Audit event fired for the policy-denied registration
-        calls = [c for c in telemetry.audit_event.call_args_list
-                 if c.args and c.args[0] == "tool.policy_denied"]
-        assert len(calls) == 1, f"expected one tool.policy_denied audit event; got {telemetry.audit_event.call_args_list}"
+        calls = [
+            c
+            for c in telemetry.audit_event.call_args_list
+            if c.args and c.args[0] == "tool.policy_denied"
+        ]
+        assert len(calls) == 1, (
+            f"expected one tool.policy_denied audit event; got {telemetry.audit_event.call_args_list}"
+        )
         assert calls[0].args[1]["tool"] == "shell_exec"
 
     def test_skip_logs_at_debug_level(self, caplog) -> None:
@@ -284,93 +288,6 @@ class TestTimeoutEnforcement:
         assert exc_info.value.code == "TOOL_TIMEOUT"
 
 
-class TestNativeToolRegistration:
-    def test_register_native_tools(self, registry: ToolRegistry) -> None:
-        """Register native tools from config entries."""
-        entries = {
-            "echo": NativeToolEntry(
-                module="arcagent.core.tool_registry:_echo_tool",
-                description="Echo input",
-            )
-        }
-        registry.register_native_tools(entries)
-        assert "echo" in registry.tools
-
-
-class TestModuleAllowlist:
-    def test_allowed_module_accepted(self) -> None:
-        """Module in allowed prefixes can be imported."""
-        config = ArcAgentConfig(
-            agent=AgentConfig(name="test"),
-            llm=LLMConfig(model="test/model"),
-            tools=ToolsConfig(
-                allowed_module_prefixes=["arcagent."],
-            ),
-        )
-        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
-        entries = {
-            "echo": NativeToolEntry(
-                module="arcagent.core.tool_registry:_echo_tool",
-                description="Echo",
-            )
-        }
-        registry.register_native_tools(entries)
-        assert "echo" in registry.tools
-
-    def test_getattr_nonexistent_function(self) -> None:
-        """Line 172: getattr on module for nonexistent function."""
-        config = ArcAgentConfig(
-            agent=AgentConfig(name="test"),
-            llm=LLMConfig(model="test/model"),
-        )
-        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
-        entries = {
-            "nonexistent": NativeToolEntry(
-                module="arcagent.core.tool_registry:_nonexistent_func",
-                description="Nonexistent",
-            )
-        }
-        with pytest.raises(AttributeError):
-            registry.register_native_tools(entries)
-
-    def test_disallowed_module_rejected(self) -> None:
-        """Module not in allowed prefixes is rejected."""
-        config = ArcAgentConfig(
-            agent=AgentConfig(name="test"),
-            llm=LLMConfig(model="test/model"),
-            tools=ToolsConfig(
-                allowed_module_prefixes=["arcagent."],
-            ),
-        )
-        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
-        entries = {
-            "evil": NativeToolEntry(
-                module="os:system",
-                description="Evil tool",
-            )
-        }
-        with pytest.raises(ToolError) as exc_info:
-            registry.register_native_tools(entries)
-        assert exc_info.value.code == "TOOL_MODULE_NOT_ALLOWED"
-
-    def test_missing_colon_rejected(self) -> None:
-        """Module ref without ':' separator is rejected."""
-        config = ArcAgentConfig(
-            agent=AgentConfig(name="test"),
-            llm=LLMConfig(model="test/model"),
-        )
-        registry = ToolRegistry(config=config.tools, bus=MagicMock(), telemetry=MagicMock())
-        entries = {
-            "bad": NativeToolEntry(
-                module="os.system",
-                description="Bad format",
-            )
-        }
-        with pytest.raises(ToolError) as exc_info:
-            registry.register_native_tools(entries)
-        assert exc_info.value.code == "TOOL_INVALID_MODULE"
-
-
 class TestArgValidation:
     async def test_missing_required_arg_rejected(self, registry: ToolRegistry) -> None:
         """Tool call missing required args is rejected."""
@@ -448,22 +365,6 @@ class TestEchoTool:
         from arcagent.core.tool_registry import _echo_tool
 
         assert _echo_tool() == "echo: "
-
-
-class TestNativeToolAsyncWrapper:
-    """Line 172: _async_wrapper wraps sync functions."""
-
-    async def test_native_tool_wrapper_invokes_function(self, registry: ToolRegistry) -> None:
-        native_tools = {
-            "echo": NativeToolEntry(
-                module="arcagent.core.tool_registry:_echo_tool",
-                description="Echo tool",
-            )
-        }
-        registry.register_native_tools(native_tools)
-        tool = registry._tools["echo"]
-        result = await tool.execute(text="world")
-        assert result == "echo: world"
 
 
 class TestFormatForPrompt:
@@ -645,34 +546,6 @@ class TestToolClassification:
             classification="read_only",
         )
         assert tool.classification == "read_only"
-
-
-class TestBuiltinToolClassifications:
-    """SPEC-017 Task 3.2: Every built-in tool has a correct classification.
-
-    Read-only: read, grep, find, ls (observe filesystem, no mutation)
-    State-modifying: bash, edit, write (mutate filesystem or process state)
-    """
-
-    def test_builtin_classifications(self, tmp_path: Any) -> None:
-        from arcagent.tools import create_builtin_tools
-
-        tools = {t.name: t for t in create_builtin_tools(tmp_path)}
-
-        expected_read_only = {"read", "grep", "find", "ls"}
-        expected_state_mod = {"bash", "edit", "write"}
-
-        for name in expected_read_only:
-            assert name in tools, f"missing built-in: {name}"
-            assert tools[name].classification == "read_only", (
-                f"{name} must be read_only but is {tools[name].classification}"
-            )
-
-        for name in expected_state_mod:
-            assert name in tools, f"missing built-in: {name}"
-            assert tools[name].classification == "state_modifying", (
-                f"{name} must be state_modifying but is {tools[name].classification}"
-            )
 
 
 class TestPipelineEnforcement:

@@ -1,8 +1,8 @@
 """Unit tests for RootTokenBudget — atomic debit, exhaustion, in-flight propagation.
 
 These tests directly validate the Hermes implicit-token-pool bug fix.
-Hermes bug: children debit no shared root budget; 3 children × 50 iters each
-silently spends 4× the caller's allocation with no warning.
+Hermes bug: children debit no shared root budget; 3 children x 50 iters each
+silently spends 4x the caller's allocation with no warning.
 
 This test suite proves:
 1. Pre-debit refusal on over-budget
@@ -143,11 +143,11 @@ class TestConcurrentAtomicity:
 
     @pytest.mark.asyncio
     async def test_concurrent_debits_exceed_budget_exactly_once(self) -> None:
-        """Exactly N debits should succeed when N × amount == total."""
+        """Exactly N debits should succeed when N x amount == total."""
         budget = RootTokenBudget(total=500)
         results = await asyncio.gather(*[budget.try_debit(100) for _ in range(7)])
         successes = results.count(True)
-        assert successes == 5  # exactly 5 × 100 = 500
+        assert successes == 5  # exactly 5 x 100 = 500
         assert budget.used == 500
 
 

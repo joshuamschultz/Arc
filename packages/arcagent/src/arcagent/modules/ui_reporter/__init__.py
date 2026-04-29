@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from arcui._constants import LOOPBACK_HOSTS
 from pydantic import BaseModel, Field
 
 from arcagent.core.module_bus import EventContext, ModuleContext
-from arcui._constants import LOOPBACK_HOSTS
 
 _logger = logging.getLogger("arcagent.ui_reporter")
 
@@ -28,12 +28,14 @@ _logger = logging.getLogger("arcagent.ui_reporter")
 
 # Events from arcrun bridged as agent:pre_tool/post_tool etc.
 # These map to UIEvent layer="run", not "agent".
-_RUN_LAYER_SUFFIXES = frozenset({
-    "pre_tool",
-    "post_tool",
-    "pre_plan",
-    "post_plan",
-})
+_RUN_LAYER_SUFFIXES = frozenset(
+    {
+        "pre_tool",
+        "post_tool",
+        "pre_plan",
+        "post_plan",
+    }
+)
 
 # Known ModuleBus events to subscribe to.
 _LLM_EVENTS = (
@@ -147,9 +149,7 @@ def _server_reachable(url: str) -> tuple[bool, str]:
     return False, f"probe_status_{response.status_code}"
 
 
-def _should_auto_enable(
-    token_file: Path, url: str
-) -> tuple[bool, str, str | None]:
+def _should_auto_enable(token_file: Path, url: str) -> tuple[bool, str, str | None]:
     """Compose the file-perm probe and the URL probe.
 
     Returns (enable, reason, token_bytes). On enable=True, token_bytes is
@@ -214,9 +214,7 @@ class UIReporterModule:
             _logger.debug("ui_reporter: explicitly disabled")
             return
 
-        enable, reason, file_token = _should_auto_enable(
-            _TOKEN_FILE, self._config.url
-        )
+        enable, reason, file_token = _should_auto_enable(_TOKEN_FILE, self._config.url)
         if not enable:
             _logger.debug("ui_reporter: auto-disabled (%s)", reason)
             return
@@ -229,12 +227,7 @@ class UIReporterModule:
         # Token precedence: config > ARCUI_AGENT_TOKEN env > file bytes
         # already read by the secure probe. H-3: never re-read the path —
         # that re-opens the TOCTOU window between probe and use.
-        token = (
-            self._config.token
-            or os.environ.get("ARCUI_AGENT_TOKEN", "")
-            or file_token
-            or ""
-        )
+        token = self._config.token or os.environ.get("ARCUI_AGENT_TOKEN", "") or file_token or ""
 
         # Create transport if not injected and token is available
         if self._transport is None and token:
@@ -329,9 +322,7 @@ class UIReporterModule:
                 _logger.debug("Error closing transport", exc_info=True)
         _logger.info("UI reporter shut down")
 
-    async def _emit_autoconnect_audit(
-        self, ctx: ModuleContext, reason: str
-    ) -> None:
+    async def _emit_autoconnect_audit(self, ctx: ModuleContext, reason: str) -> None:
         """Emit `ui.agent_autoconnect` (SPEC-019 SR-3, T5.2).
 
         Uses ctx.telemetry.audit_event when available so the event lands
@@ -345,18 +336,15 @@ class UIReporterModule:
         IO-error on the audit sink (OSError). Anything broader hides
         real bugs.
         """
-        from pydantic import ValidationError
-
         from arcui.audit import AgentAutoconnectFields, UIAuditEvent
+        from pydantic import ValidationError
 
         try:
             telemetry = ctx.telemetry
             audit_event = getattr(telemetry, "audit_event", None)
             if audit_event is None:
                 return
-            agent_id = (
-                getattr(ctx.config.agent, "did", "") or ctx.config.agent.name
-            )
+            agent_id = getattr(ctx.config.agent, "did", "") or ctx.config.agent.name
             fields = AgentAutoconnectFields(
                 agent_id=agent_id,
                 uid=os.getuid(),
@@ -365,9 +353,7 @@ class UIReporterModule:
             )
             audit_event(UIAuditEvent.AGENT_AUTOCONNECT, fields.model_dump())
         except (AttributeError, OSError, ValidationError):  # pragma: no cover
-            _logger.debug(
-                "ui.agent_autoconnect audit failed", exc_info=True
-            )
+            _logger.debug("ui.agent_autoconnect audit failed", exc_info=True)
 
     async def _on_event(self, ctx: EventContext) -> None:
         """Handle any subscribed bus event — wrap and forward to UI."""
@@ -384,9 +370,7 @@ class UIReporterModule:
             except Exception:
                 _logger.debug("Failed to send event via transport", exc_info=True)
 
-    def _wrap_event(
-        self, event: str, data: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _wrap_event(self, event: str, data: dict[str, Any]) -> dict[str, Any]:
         """Convert a ModuleBus event into a UIEvent-compatible dict."""
         layer = self._classify_layer(event)
         event_type = event.split(":", 1)[1] if ":" in event else event

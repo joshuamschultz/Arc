@@ -139,9 +139,7 @@ class PolicyLayer(Protocol):
 
     name: str
 
-    async def evaluate(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision: ...
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision: ...
 
 
 class GlobalLayer:
@@ -158,9 +156,7 @@ class GlobalLayer:
         self._deny_rules = deny_rules
         self._forbidden_compositions = forbidden_compositions
 
-    async def evaluate(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision:
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         reason = self._deny_rules.get(call.tool_name)
         now_us = _monotonic_us()
         if reason is not None:
@@ -179,12 +175,8 @@ class ProviderLayer:
 
     name = "provider"
 
-    async def evaluate(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision:
-        return Decision.allow(
-            input_hash=_hash_call(call), evaluated_at_us=_monotonic_us()
-        )
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
+        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_monotonic_us())
 
 
 class AgentLayer:
@@ -192,14 +184,10 @@ class AgentLayer:
 
     name = "agent"
 
-    def __init__(
-        self, *, allowlist_by_agent: dict[str, set[str]]
-    ) -> None:
+    def __init__(self, *, allowlist_by_agent: dict[str, set[str]]) -> None:
         self._allowlist = allowlist_by_agent
 
-    async def evaluate(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision:
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         allow_set = self._allowlist.get(call.agent_did)
         now_us = _monotonic_us()
         if allow_set is not None and call.tool_name not in allow_set:
@@ -221,12 +209,8 @@ class TeamLayer:
 
     name = "team"
 
-    async def evaluate(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision:
-        return Decision.allow(
-            input_hash=_hash_call(call), evaluated_at_us=_monotonic_us()
-        )
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
+        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_monotonic_us())
 
 
 class SandboxLayer:
@@ -234,12 +218,8 @@ class SandboxLayer:
 
     name = "sandbox"
 
-    async def evaluate(
-        self, call: ToolCall, ctx: PolicyContext
-    ) -> Decision:
-        return Decision.allow(
-            input_hash=_hash_call(call), evaluated_at_us=_monotonic_us()
-        )
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
+        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_monotonic_us())
 
 
 # ---------------------------------------------------------------------------

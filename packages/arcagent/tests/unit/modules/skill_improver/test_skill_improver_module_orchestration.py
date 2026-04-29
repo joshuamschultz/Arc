@@ -84,7 +84,9 @@ def module(workspace: Path, telemetry: MagicMock) -> SkillImproverModule:
     return SkillImproverModule(workspace=workspace, telemetry=telemetry)
 
 
-def _wire_collector(module: SkillImproverModule, traces: list, turn_number: int = 100) -> MagicMock:
+def _wire_collector(
+    module: SkillImproverModule, traces: list, turn_number: int = 100
+) -> MagicMock:
     """Inject a mock trace collector into the module."""
     collector = MagicMock()
     collector.turn_number = turn_number
@@ -95,7 +97,9 @@ def _wire_collector(module: SkillImproverModule, traces: list, turn_number: int 
     return collector
 
 
-def _wire_skill_registry(module: SkillImproverModule, skill_name: str, skill_path: Path) -> MagicMock:
+def _wire_skill_registry(
+    module: SkillImproverModule, skill_name: str, skill_path: Path
+) -> MagicMock:
     """Inject a mock skill registry pointing skill_name at skill_path."""
     registry = MagicMock()
     skill = MagicMock()
@@ -144,9 +148,7 @@ class TestTraceBufferFiltering:
         assert recent_trace not in traces_passed
 
     @pytest.mark.asyncio
-    async def test_all_traces_within_buffer_exits_early(
-        self, module: SkillImproverModule
-    ) -> None:
+    async def test_all_traces_within_buffer_exits_early(self, module: SkillImproverModule) -> None:
         """When all traces fall within the buffer, check_eligible sees [] and exits."""
         skill_name = "my-skill"
         current_turn = 100
@@ -156,9 +158,7 @@ class TestTraceBufferFiltering:
         traces = [_make_trace(turn_number=current_turn - 1) for _ in range(40)]
         _wire_collector(module, traces, turn_number=current_turn)
 
-        with patch.object(
-            module._guardrails, "check_eligible", return_value=False
-        ) as mock_check:
+        with patch.object(module._guardrails, "check_eligible", return_value=False) as mock_check:
             await module._optimize_skill(skill_name)
 
         call_args = mock_check.call_args
@@ -251,9 +251,7 @@ class TestAuditEvents:
 
         with patch.object(module._guardrails, "check_eligible", return_value=True):
             with patch.object(module, "_get_eval_model", return_value=MagicMock()):
-                with patch(
-                    "arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"
-                ):
+                with patch("arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"):
                     with patch(
                         "arcagent.modules.skill_improver.skill_improver_module.SkillReflector"
                     ):
@@ -285,9 +283,7 @@ class TestAuditEvents:
 
         with patch.object(module._guardrails, "check_eligible", return_value=True):
             with patch.object(module, "_get_eval_model", return_value=MagicMock()):
-                with patch(
-                    "arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"
-                ):
+                with patch("arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"):
                     with patch(
                         "arcagent.modules.skill_improver.skill_improver_module.SkillReflector"
                     ):
@@ -327,9 +323,7 @@ class TestNoImprovementLogic:
 
         with patch.object(module._guardrails, "check_eligible", return_value=True):
             with patch.object(module, "_get_eval_model", return_value=MagicMock()):
-                with patch(
-                    "arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"
-                ):
+                with patch("arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"):
                     with patch(
                         "arcagent.modules.skill_improver.skill_improver_module.SkillReflector"
                     ):
@@ -360,9 +354,7 @@ class TestNoImprovementLogic:
 
         with patch.object(module._guardrails, "check_eligible", return_value=True):
             with patch.object(module, "_get_eval_model", return_value=MagicMock()):
-                with patch(
-                    "arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"
-                ):
+                with patch("arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"):
                     with patch(
                         "arcagent.modules.skill_improver.skill_improver_module.SkillReflector"
                     ):
@@ -437,9 +429,7 @@ class TestPostApplyUpdates:
 
         with patch.object(module._guardrails, "check_eligible", return_value=True):
             with patch.object(module, "_get_eval_model", return_value=MagicMock()):
-                with patch(
-                    "arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"
-                ):
+                with patch("arcagent.modules.skill_improver.skill_improver_module.SkillEvaluator"):
                     with patch(
                         "arcagent.modules.skill_improver.skill_improver_module.SkillReflector"
                     ):
@@ -464,9 +454,7 @@ class TestPostApplyUpdates:
 
 class TestBusHandlers:
     @pytest.mark.asyncio
-    async def test_on_post_tool_delegates_to_collector(
-        self, module: SkillImproverModule
-    ) -> None:
+    async def test_on_post_tool_delegates_to_collector(self, module: SkillImproverModule) -> None:
         collector = MagicMock()
         collector.on_post_tool = AsyncMock()
         module._collector = collector
@@ -476,17 +464,13 @@ class TestBusHandlers:
         collector.on_post_tool.assert_called_once_with(ctx)
 
     @pytest.mark.asyncio
-    async def test_on_post_tool_noop_when_no_collector(
-        self, module: SkillImproverModule
-    ) -> None:
+    async def test_on_post_tool_noop_when_no_collector(self, module: SkillImproverModule) -> None:
         """_on_post_tool with no collector must not raise."""
         ctx = MagicMock()
         await module._on_post_tool(ctx)  # must not raise
 
     @pytest.mark.asyncio
-    async def test_on_post_plan_delegates_to_collector(
-        self, module: SkillImproverModule
-    ) -> None:
+    async def test_on_post_plan_delegates_to_collector(self, module: SkillImproverModule) -> None:
         collector = MagicMock()
         collector.on_post_plan = AsyncMock()
         module._collector = collector
@@ -496,9 +480,7 @@ class TestBusHandlers:
         collector.on_post_plan.assert_called_once_with(ctx)
 
     @pytest.mark.asyncio
-    async def test_on_post_plan_noop_when_no_collector(
-        self, module: SkillImproverModule
-    ) -> None:
+    async def test_on_post_plan_noop_when_no_collector(self, module: SkillImproverModule) -> None:
         ctx = MagicMock()
         await module._on_post_plan(ctx)  # must not raise
 
@@ -549,9 +531,7 @@ class TestBusHandlers:
         mock_collector_cls.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_on_ready_noop_when_no_registry(
-        self, module: SkillImproverModule
-    ) -> None:
+    async def test_on_ready_noop_when_no_registry(self, module: SkillImproverModule) -> None:
         """_on_ready with no skill_registry warns and disables collection."""
         ctx = MagicMock()
         ctx.data = {}  # no skill_registry key

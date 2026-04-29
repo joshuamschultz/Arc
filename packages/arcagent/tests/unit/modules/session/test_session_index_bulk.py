@@ -18,8 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from arcagent.modules.session.index import SessionIndex, _INSERT_BATCH_SIZE
-
+from arcagent.modules.session.index import _INSERT_BATCH_SIZE, SessionIndex
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -80,6 +79,7 @@ def test_bulk_insert_10k_under_3s(tmp_path: Path) -> None:
 
     # Verify rows were actually inserted.
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
     conn.close()
@@ -147,6 +147,7 @@ def test_executemany_batching(tmp_path: Path) -> None:
     index._scan_once()
 
     import sqlite3
+
     conn = sqlite3.connect(str(db_path))
     count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
     conn.close()

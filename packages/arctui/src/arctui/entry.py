@@ -76,9 +76,7 @@ def _load_agent() -> object | None:
 
         config_path = Path("arcagent.toml")
         if not config_path.exists():
-            _logger.info(
-                "No arcagent.toml found at %s; starting in no-agent mode.", config_path
-            )
+            _logger.info("No arcagent.toml found at %s; starting in no-agent mode.", config_path)
             return None
 
         config = load_config(config_path)

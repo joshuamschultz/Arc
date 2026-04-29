@@ -24,8 +24,10 @@ from __future__ import annotations
 
 import ast
 import builtins as _builtins
+import hashlib
 import re
 from collections.abc import Iterable
+from pathlib import Path
 
 from arcagent.core.errors import ArcAgentError
 
@@ -46,21 +48,39 @@ _BLOCKED_IMPORTS: frozenset[str] = frozenset(
 
 _BLOCKED_ATTRIBUTES: frozenset[str] = frozenset(
     {
+        # Frame / generator / traceback internals (CVE-2023-37271 class)
         "gi_frame",
+        "gi_code",
+        "gi_yieldfrom",
+        "tb_frame",
         "f_back",
         "f_builtins",
         "f_globals",
         "f_locals",
+        # Class-graph traversal (CVE-2024-47532 class)
         "__class__",
         "__bases__",
         "__subclasses__",
+        "__init_subclass__",
+        "__class_getitem__",
         "__reduce__",
         "__reduce_ex__",
         "__mro__",
         "__dict__",
+        # Descriptor protocol side-channels — used in subscript bypasses
+        # to reach bound descriptor objects.
+        "__get__",
+        "__set__",
+        "__pos__",
+        "__neg__",
         "modules",  # guards against m.modules['os'] via any alias
     }
 )
+
+# AttributeError instances expose ``obj`` and ``name`` (Python 3.10+) —
+# these leak the failed-access target. Reject within ``except`` bindings
+# that catch ``AttributeError``.
+_ATTRIBUTE_ERROR_LEAKED_ATTRS: frozenset[str] = frozenset({"obj", "name"})
 
 _BLOCKED_CALLS: frozenset[str] = frozenset(
     {
@@ -81,9 +101,7 @@ _BLOCKED_ASSIGN_TARGETS: frozenset[str] = frozenset(
 
 # Matches PEP 263 ``coding`` declarations in the first two lines of a
 # source file. Anything other than utf-8 is rejected.
-_CODING_DECL_RE = re.compile(
-    rb"^[ \t\f]*#.*?coding[:=][ \t]*([-_.a-zA-Z0-9]+)", re.MULTILINE
-)
+_CODING_DECL_RE = re.compile(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-_.a-zA-Z0-9]+)", re.MULTILINE)
 
 
 # --- Errors ---------------------------------------------------------------
@@ -115,6 +133,12 @@ class AstValidator(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self._violation: tuple[str, str] | None = None
+        # Names bound by ``except AttributeError as <name>`` — accessing
+        # ``.obj`` / ``.name`` on these is rejected (R-040).
+        self._attr_error_vars: set[str] = set()
+        # Class-defs flagged as defining ``__getitem__`` so a class
+        # using one as metaclass can be rejected at the consumer site.
+        self._classes_with_getitem: set[str] = set()
 
     def validate(self, source: str) -> None:
         """Reject ``source`` if it contains a prohibited construct.
@@ -169,9 +193,48 @@ class AstValidator(ast.NodeVisitor):
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr in _BLOCKED_ATTRIBUTES:
+            self._reject(f"attribute:{node.attr}", f"access to attribute {node.attr!r} is blocked")
+        # Python 3.10+ ``AttributeError.obj`` / ``.name`` leak — reject
+        # access on names bound by ``except AttributeError as <name>``.
+        if (
+            node.attr in _ATTRIBUTE_ERROR_LEAKED_ATTRS
+            and isinstance(node.value, ast.Name)
+            and node.value.id in self._attr_error_vars
+        ):
             self._reject(
-                f"attribute:{node.attr}", f"access to attribute {node.attr!r} is blocked"
+                f"exception_attr:{node.attr}",
+                f"AttributeError.{node.attr} leak via {node.value.id!r}",
             )
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        """Track ``except AttributeError as <name>:`` bindings.
+
+        Scope: bindings are added before visiting handler body and
+        removed after. Nested handlers stack correctly.
+        """
+        added_name = self._maybe_track_attribute_error(node)
+        try:
+            self.generic_visit(node)
+        finally:
+            if added_name is not None:
+                self._attr_error_vars.discard(added_name)
+
+    def _maybe_track_attribute_error(self, node: ast.ExceptHandler) -> str | None:
+        if node.name is None or node.type is None:
+            return None
+        if not _is_attribute_error_type(node.type):
+            return None
+        self._attr_error_vars.add(node.name)
+        return node.name
+
+    def visit_FormattedValue(self, node: ast.FormattedValue) -> None:
+        """Recurse into f-string interpolations.
+
+        Default ``generic_visit`` already covers this, but the explicit
+        override documents intent and protects against future AST
+        shape changes.
+        """
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -194,19 +257,32 @@ class AstValidator(ast.NodeVisitor):
         for target in node.targets:
             name = _name_of(target)
             if name in _BLOCKED_ASSIGN_TARGETS:
-                self._reject(
-                    f"assign:{name}", f"assignment to {name!r} is blocked"
-                )
+                self._reject(f"assign:{name}", f"assignment to {name!r} is blocked")
         self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if _class_defines_getitem(node):
+            self._classes_with_getitem.add(node.name)
         for item in _iter_class_methods(node):
             if item.name == "__init_subclass__":
                 self._reject(
                     "method:__init_subclass__",
                     "class must not define __init_subclass__",
                 )
+        if self._uses_blocked_metaclass(node):
+            self._reject(
+                "metaclass:__getitem__",
+                f"class {node.name!r} uses metaclass that defines __getitem__",
+            )
         self.generic_visit(node)
+
+    def _uses_blocked_metaclass(self, node: ast.ClassDef) -> bool:
+        for kw in node.keywords:
+            if kw.arg != "metaclass":
+                continue
+            if isinstance(kw.value, ast.Name) and kw.value.id in self._classes_with_getitem:
+                return True
+        return False
 
 
 def _name_of(node: ast.AST) -> str:
@@ -224,6 +300,66 @@ def _iter_class_methods(
     for item in cls.body:
         if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
             yield item
+
+
+def _class_defines_getitem(cls: ast.ClassDef) -> bool:
+    """True if ``cls`` declares an explicit ``__getitem__`` method."""
+    return any(method.name == "__getitem__" for method in _iter_class_methods(cls))
+
+
+def _is_attribute_error_type(node: ast.expr) -> bool:
+    """Match ``AttributeError`` or ``(AttributeError, ...)`` exception clauses."""
+    if isinstance(node, ast.Name) and node.id == "AttributeError":
+        return True
+    if isinstance(node, ast.Tuple):
+        return any(isinstance(elt, ast.Name) and elt.id == "AttributeError" for elt in node.elts)
+    return False
+
+
+# --- AST validation cache -------------------------------------------------
+
+
+class AstValidationCache:
+    """Skip re-validation of unchanged files (R-001 perf gate).
+
+    Keyed by absolute path → ``(md5, mtime)``. A second call with the
+    same content + same mtime returns immediately. Either an mtime
+    bump or a content hash change forces re-validation. Validation
+    failures do NOT populate the cache, so the next attempt re-runs
+    and re-raises (no false positives, no silent passes).
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[Path, tuple[str, float]] = {}
+
+    def validate(self, path: Path) -> None:
+        """Validate ``path`` once per (md5, mtime) tuple.
+
+        Reads the file, hashes it, compares against the last good run.
+        On hit: returns. On miss: runs ``AstValidator().validate(...)``
+        (re-uses module-level :class:`AstValidator` so monkey-patching
+        in tests works) and stores the new fingerprint.
+        """
+        source = path.read_text(encoding="utf-8")
+        # md5 is fine here — this is a cache key, not a security hash;
+        # the security layer is the AstValidator + sandbox, not this.
+        digest = hashlib.md5(source.encode("utf-8"), usedforsecurity=False).hexdigest()
+        mtime = path.stat().st_mtime
+        cached = self._entries.get(path)
+        if cached == (digest, mtime):
+            return
+        # AstValidator looked up via module dict so test patches stick.
+        from arcagent.tools import _dynamic_loader as _self
+
+        _self.AstValidator().validate(source)
+        self._entries[path] = (digest, mtime)
+
+    def invalidate(self, path: Path) -> None:
+        """Drop a single entry; called by the loader on file removal."""
+        self._entries.pop(path, None)
+
+    def __contains__(self, path: Path) -> bool:
+        return path in self._entries
 
 
 # --- Restricted builtins dict ---------------------------------------------
@@ -275,15 +411,12 @@ _SAFE_BUILTIN_NAMES: tuple[str, ...] = (
 )
 
 RESTRICTED_BUILTINS: dict[str, object] = {
-    name: getattr(_builtins, name)
-    for name in _SAFE_BUILTIN_NAMES
-    if hasattr(_builtins, name)
+    name: getattr(_builtins, name) for name in _SAFE_BUILTIN_NAMES if hasattr(_builtins, name)
 }
 
 
 # --- DynamicToolLoader ----------------------------------------------------
 
-import hashlib  # noqa: E402 — grouped with loader below
 import logging  # noqa: E402
 from collections.abc import Callable  # noqa: E402
 from typing import Any, Literal  # noqa: E402
@@ -358,10 +491,7 @@ class DynamicToolLoader:
             )
             raise ToolError(
                 code="DYNAMIC_TOOL_NO_DECORATOR",
-                message=(
-                    f"Dynamic source for {name!r} contains no function "
-                    "decorated with @tool"
-                ),
+                message=(f"Dynamic source for {name!r} contains no function decorated with @tool"),
                 details={"name": name},
             )
 
@@ -404,9 +534,7 @@ class DynamicToolLoader:
 
     # --- Internals --------------------------------------------------------
 
-    def _compile_in_sandbox(
-        self, source: str, *, name: str, content_hash: str
-    ) -> dict[str, Any]:
+    def _compile_in_sandbox(self, source: str, *, name: str, content_hash: str) -> dict[str, Any]:
         """Compile ``source`` into a fresh namespace with restricted builtins.
 
         The namespace doubles as the module's globals and is returned
@@ -440,14 +568,10 @@ class DynamicToolLoader:
                 details={"name": name},
             )
         if policy == "warn":
-            _loader_logger.warning(
-                "Dynamic tool name collision — replacing %r", name
-            )
+            _loader_logger.warning("Dynamic tool name collision — replacing %r", name)
             return True
         if policy == "ignore":
-            _loader_logger.debug(
-                "Dynamic tool name collision — keeping prior %r", name
-            )
+            _loader_logger.debug("Dynamic tool name collision — keeping prior %r", name)
             return False
         # "replace" — silent overwrite
         return True
@@ -518,7 +642,7 @@ def _find_decorated_tool(
     if no decorated tool is found.
     """
     for value in module_globals.values():
-        meta = getattr(value, "_arc_tool_meta", None)
+        meta = getattr(value, "_arc_capability_meta", None)
         if meta is not None and callable(value):
             return value, meta
     return None, None
@@ -527,6 +651,7 @@ def _find_decorated_tool(
 __all__ = [
     "RESTRICTED_BUILTINS",
     "ASTValidationError",
+    "AstValidationCache",
     "AstValidator",
     "CollisionPolicy",
     "DynamicToolLoader",

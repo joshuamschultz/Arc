@@ -94,9 +94,7 @@ class TestInMemoryTransportSendReceive:
         await client.send_event("a", event)
 
         # Server sends control
-        ctrl = ControlMessage(
-            action="ping", target="a", data={}, request_id="r1"
-        )
+        ctrl = ControlMessage(action="ping", target="a", data={}, request_id="r1")
         await server.send_control("a", ctrl)
 
         # Server receives event

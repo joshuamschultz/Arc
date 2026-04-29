@@ -60,9 +60,7 @@ class StreamBridge:
                 break
 
             if delta.kind != "token":
-                _logger.debug(
-                    "StreamBridge: skipping non-token delta kind=%s", delta.kind
-                )
+                _logger.debug("StreamBridge: skipping non-token delta kind=%s", delta.kind)
                 continue
 
             buffer.append(delta.content)
@@ -71,9 +69,7 @@ class StreamBridge:
             should_flush = self._should_flush(buffer, last_edit_at)
             if should_flush and not flood_disabled and message_id is not None:
                 accumulated = "".join(accumulated_parts)
-                success = await self._attempt_edit(
-                    adapter, target, message_id, accumulated
-                )
+                success = await self._attempt_edit(adapter, target, message_id, accumulated)
                 if success:
                     consecutive_edit_failures = 0
                     edit_count += 1
@@ -174,12 +170,11 @@ class StreamBridge:
                 {"target": str(target), "text_len": len(text)},
             )
         except Exception as exc:
-            _logger.error(
-                "StreamBridge: final send failed (target=%s): %s", target, exc
-            )
+            _logger.error("StreamBridge: final send failed (target=%s): %s", target, exc)
             raise
 
 
 def _audit(event_name: str, data: dict[str, object]) -> None:
     from arcgateway.telemetry import emit_audit
+
     emit_audit(_logger, event_name, dict(data))

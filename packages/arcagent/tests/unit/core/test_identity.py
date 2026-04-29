@@ -12,10 +12,10 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from arctrust import AgentIdentity
 from nacl.signing import SigningKey
 
 from arcagent.core.config import IdentityConfig
-from arctrust import AgentIdentity
 
 
 class TestGenerate:
@@ -42,6 +42,7 @@ class TestGenerate:
     def test_deterministic_did_from_same_key(self) -> None:
         """Same keypair always produces the same DID."""
         from arctrust.identity import generate_did
+
         key = SigningKey.generate()
         id1 = generate_did(key.verify_key, org="org", agent_type="type")
         id2 = generate_did(key.verify_key, org="org", agent_type="type")
@@ -221,7 +222,10 @@ class TestFromConfig:
             key_dir=str(tmp_path / "keys"),
         )
         identity = AgentIdentity.from_config(
-            config, org="test", agent_type="executor", config_path=config_file,
+            config,
+            org="test",
+            agent_type="executor",
+            config_path=config_file,
         )
 
         # Config file now contains the full DID
@@ -240,11 +244,15 @@ class TestFromConfig:
         # First startup — generates and writes back
         config1 = IdentityConfig(did="", key_dir=str(tmp_path / "keys"))
         id1 = AgentIdentity.from_config(
-            config1, org="test", agent_type="executor", config_path=config_file,
+            config1,
+            org="test",
+            agent_type="executor",
+            config_path=config_file,
         )
 
         # Read the updated DID from config file
         import re
+
         content = config_file.read_text(encoding="utf-8")
         match = re.search(r'did\s*=\s*"([^"]+)"', content)
         assert match is not None
@@ -253,7 +261,10 @@ class TestFromConfig:
         # Second startup — loads from config with the written DID
         config2 = IdentityConfig(did=persisted_did, key_dir=str(tmp_path / "keys"))
         id2 = AgentIdentity.from_config(
-            config2, org="test", agent_type="executor", config_path=config_file,
+            config2,
+            org="test",
+            agent_type="executor",
+            config_path=config_file,
         )
 
         assert id2.did == id1.did
@@ -316,25 +327,30 @@ class TestValidateDid:
 
     def test_empty_returns_empty(self) -> None:
         from arctrust.identity import validate_did
+
         assert validate_did("") == ""
 
     def test_full_did_accepted(self) -> None:
         from arctrust.identity import validate_did
+
         full = "did:arc:local:executor/9b43ee77"
         assert validate_did(full) == full
 
     def test_short_hash_rejected(self) -> None:
         from arctrust.identity import validate_did
+
         with pytest.raises(ValueError, match="Invalid DID format"):
             validate_did("9b43ee77")
 
     def test_partial_prefix_rejected(self) -> None:
         from arctrust.identity import validate_did
+
         with pytest.raises(ValueError, match="Invalid DID format"):
             validate_did("did:other:something")
 
     def test_missing_hash_rejected(self) -> None:
         from arctrust.identity import validate_did
+
         with pytest.raises(ValueError, match="Malformed DID structure"):
             validate_did("did:arc:local:executor")
 

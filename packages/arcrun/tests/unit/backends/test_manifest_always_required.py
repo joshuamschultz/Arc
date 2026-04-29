@@ -103,9 +103,7 @@ def _build_signed_manifest(
     backends: Sequence[Mapping[str, Any]],
 ) -> Path:
     meta = {"issued_at": "2026-04-18T00:00:00Z", "issuer_did": issuer_did}
-    sig_b64 = base64.b64encode(
-        issuer_key.sign(_canonical(meta, backends)).signature
-    ).decode()
+    sig_b64 = base64.b64encode(issuer_key.sign(_canonical(meta, backends)).signature).decode()
     manifest = tmp_path / "allowed_backends.toml"
     _emit_manifest(manifest, meta=meta, backends=backends, signature_b64=sig_b64)
     return manifest
@@ -143,9 +141,7 @@ def trust_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def trusted_trust_dir(
-    trust_dir: Path, issuer_did: str, issuer_key: SigningKey
-) -> Path:
+def trusted_trust_dir(trust_dir: Path, issuer_did: str, issuer_key: SigningKey) -> Path:
     _write_issuers(trust_dir, issuer_did, bytes(issuer_key.verify_key))
     return trust_dir
 

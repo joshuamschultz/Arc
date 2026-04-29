@@ -249,8 +249,7 @@ class AsyncioExecutor:
         yield Delta(
             kind="token",
             content=(
-                f"[AsyncioExecutor stub] Received: {event.message!r} "
-                f"(session={event.session_key})"
+                f"[AsyncioExecutor stub] Received: {event.message!r} (session={event.session_key})"
             ),
             is_final=False,
             turn_id=event.session_key,

@@ -111,9 +111,7 @@ def issuer_did() -> str:
 
 
 @pytest.fixture
-def trusted_trust_dir(
-    trust_dir: Path, issuer_did: str, issuer_key: SigningKey
-) -> Path:
+def trusted_trust_dir(trust_dir: Path, issuer_did: str, issuer_key: SigningKey) -> Path:
     _write_issuers(trust_dir, issuer_did, bytes(issuer_key.verify_key))
     return trust_dir
 
@@ -179,9 +177,7 @@ def test_tampered_meta_fails(
     backends = [{"name": name, "module": module_path, "content_hash": content_hash}]
 
     # Sign the ORIGINAL meta
-    sig_b64 = base64.b64encode(
-        issuer_key.sign(_canonical(meta, backends)).signature
-    ).decode()
+    sig_b64 = base64.b64encode(issuer_key.sign(_canonical(meta, backends)).signature).decode()
 
     # Emit the manifest with a DIFFERENT issued_at — tamper
     tampered_meta = {"issued_at": "2099-01-01T00:00:00Z", "issuer_did": issuer_did}
@@ -204,9 +200,7 @@ def test_tampered_backends_fails(
     """Swapping a backend module path after signing → signature fails."""
     module_path, name, content_hash = real_backend_module
     meta = {"issued_at": "2026-04-18T00:00:00Z", "issuer_did": issuer_did}
-    backends_original = [
-        {"name": name, "module": module_path, "content_hash": content_hash}
-    ]
+    backends_original = [{"name": name, "module": module_path, "content_hash": content_hash}]
     sig_b64 = base64.b64encode(
         issuer_key.sign(_canonical(meta, backends_original)).signature
     ).decode()
@@ -240,9 +234,7 @@ def test_bogus_signature_bytes_fails(
     bogus_sig_b64 = base64.b64encode(b"\x00" * 64).decode()
 
     manifest = tmp_path / "bogus_sig.toml"
-    _emit_manifest(
-        manifest, meta=meta, backends=backends, signature_b64=bogus_sig_b64
-    )
+    _emit_manifest(manifest, meta=meta, backends=backends, signature_b64=bogus_sig_b64)
 
     with pytest.raises(BackendSignatureError):
         _verify_allowed_backends_signature(
@@ -263,9 +255,7 @@ def test_unknown_issuer_fails(
         "issuer_did": "did:arc:org:trust-authority/rogue",
     }
     backends = [{"name": name, "module": module_path, "content_hash": content_hash}]
-    sig_b64 = base64.b64encode(
-        issuer_key.sign(_canonical(meta, backends)).signature
-    ).decode()
+    sig_b64 = base64.b64encode(issuer_key.sign(_canonical(meta, backends)).signature).decode()
 
     manifest = tmp_path / "unknown_issuer.toml"
     _emit_manifest(manifest, meta=meta, backends=backends, signature_b64=sig_b64)
@@ -276,9 +266,7 @@ def test_unknown_issuer_fails(
         )
 
 
-def test_missing_manifest_file(
-    tmp_path: Path, trusted_trust_dir: Path
-) -> None:
+def test_missing_manifest_file(tmp_path: Path, trusted_trust_dir: Path) -> None:
     missing = tmp_path / "not_there.toml"
     with pytest.raises(BackendSignatureError, match="not found"):
         _verify_allowed_backends_signature(
@@ -286,9 +274,7 @@ def test_missing_manifest_file(
         )
 
 
-def test_bad_toml_fails(
-    tmp_path: Path, trusted_trust_dir: Path
-) -> None:
+def test_bad_toml_fails(tmp_path: Path, trusted_trust_dir: Path) -> None:
     manifest = tmp_path / "bad.toml"
     manifest.write_text("this is not = = valid toml [[", encoding="utf-8")
     with pytest.raises(BackendSignatureError, match="invalid TOML"):

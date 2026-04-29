@@ -10,7 +10,6 @@ Personal tier contract:
 
 from __future__ import annotations
 
-import stat
 from pathlib import Path
 
 import pytest
@@ -102,6 +101,7 @@ async def test_personal_file_fallback_returns_content(
 
     # Patch FileBackend's default dir to use tmp_path
     import arcagent.modules.vault.backends.file as file_mod
+
     original_default = file_mod._DEFAULT_SECRETS_DIR
     file_mod._DEFAULT_SECRETS_DIR = secrets_dir
     try:
@@ -126,6 +126,7 @@ async def test_personal_all_sources_missing_raises(
     monkeypatch.delenv("MY_SECRET", raising=False)
 
     import arcagent.modules.vault.backends.file as file_mod
+
     original_default = file_mod._DEFAULT_SECRETS_DIR
     file_mod._DEFAULT_SECRETS_DIR = tmp_path / "nonexistent"
     try:

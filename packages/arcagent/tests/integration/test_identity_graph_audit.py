@@ -16,17 +16,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
-from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.config import TelemetryConfig
+from arcagent.core.telemetry import AgentTelemetry
 from arcagent.modules.session.identity_graph import IdentityGraph
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -107,14 +105,11 @@ def test_first_seen_audit_event_has_hashed_user_id(
 
     for evt in captured_events:
         details_str = json.dumps(evt["details"])
-        assert raw_uid not in details_str, (
-            f"Raw platform_user_id leaked into audit event: {evt}"
-        )
+        assert raw_uid not in details_str, f"Raw platform_user_id leaked into audit event: {evt}"
 
     link_events = [e for e in captured_events if e["event_type"] == "gateway.identity.link"]
     assert any(
-        evt["details"].get("platform_user_id_hash") == expected_hash
-        for evt in link_events
+        evt["details"].get("platform_user_id_hash") == expected_hash for evt in link_events
     ), f"Expected platform_user_id_hash={expected_hash} in one of {link_events}"
 
 
@@ -175,14 +170,11 @@ def test_explicit_link_audit_event_has_hashed_user_id(
             assert raw_uid not in details_str
 
     link_events = [
-        e for e in captured_events
-        if e["event_type"] == "gateway.identity.link"
-        and e["details"].get("platform") == "slack"
+        e
+        for e in captured_events
+        if e["event_type"] == "gateway.identity.link" and e["details"].get("platform") == "slack"
     ]
-    assert any(
-        evt["details"].get("platform_user_id_hash") == expected_hash
-        for evt in link_events
-    )
+    assert any(evt["details"].get("platform_user_id_hash") == expected_hash for evt in link_events)
 
 
 # ---------------------------------------------------------------------------

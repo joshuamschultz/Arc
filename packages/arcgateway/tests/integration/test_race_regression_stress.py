@@ -182,9 +182,7 @@ async def test_race_regression_100_runs() -> None:
     if failures:
         summary = (
             f"Race regression FAILED: {len(failures)}/{_N_RUNS} runs detected a race.\n\n"
-            "Failures:\n"
-            + "\n".join(f"  {f}" for f in failures)
-            + "\n\n"
+            "Failures:\n" + "\n".join(f"  {f}" for f in failures) + "\n\n"
             "Background (Hermes PR #4926):\n"
             "  The pre-await race occurs when two coroutines both pass the\n"
             "  ``if session_key not in _active_sessions`` check before either\n"
@@ -234,9 +232,7 @@ async def test_race_regression_stress_all_n20_produce_single_task() -> None:
         await asyncio.sleep(0.02)
 
     # All 100 runs must produce exactly 1 spawn + 19 queued.
-    bad_runs = [
-        r for r in per_run_results if r[1] != 1 or r[2] != _N_MESSAGES - 1
-    ]
+    bad_runs = [r for r in per_run_results if r[1] != 1 or r[2] != _N_MESSAGES - 1]
 
     assert not bad_runs, (
         f"G1.3 FAILED: {len(bad_runs)}/{_N_RUNS} runs did not satisfy "

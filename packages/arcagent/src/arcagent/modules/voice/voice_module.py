@@ -102,6 +102,7 @@ class VoiceModule:
 
         async def _execute(params: dict[str, Any], ctx: ToolContext) -> str:
             import json as _json
+
             audio_path = Path(params["audio_path"])
             language: str | None = params.get("language")
             return _json.dumps(await self._transcribe(audio_path, language=language))
@@ -136,6 +137,7 @@ class VoiceModule:
 
         async def _execute(params: dict[str, Any], ctx: ToolContext) -> str:
             import json as _json
+
             text = params["text"]
             voice_id: str | None = params.get("voice_id")
             # Generate a unique output path per call to prevent collisions
@@ -183,9 +185,7 @@ class VoiceModule:
         stt = self._get_stt_provider()
 
         try:
-            result: TranscriptionResult = await stt.transcribe(
-                audio_path, language=language
-            )
+            result: TranscriptionResult = await stt.transcribe(audio_path, language=language)
         except STTFailed:
             raise
         except Exception as exc:
@@ -293,6 +293,7 @@ class VoiceModule:
 
         if name in ("whisper_cpp",):
             from arcagent.modules.voice.providers.whisper_cpp import WhisperCppProvider
+
             # Pass model_path only when the config value looks like a filesystem
             # path. A bare name like 'base.en' is not a path — _locate_model
             # falls back to the default cache.
@@ -307,6 +308,7 @@ class VoiceModule:
 
         if name in ("whisper_api", "openai_whisper"):
             from arcagent.modules.voice.providers.whisper_api import WhisperApiProvider
+
             return WhisperApiProvider(
                 api_key_env=self._config.openai_api_key_env,
                 model=self._config.openai_whisper_model,
@@ -314,6 +316,7 @@ class VoiceModule:
             )
 
         from arcagent.modules.voice.errors import UnsupportedProvider
+
         raise UnsupportedProvider(name)
 
     def _build_tts_provider(self) -> TTSProvider:
@@ -322,6 +325,7 @@ class VoiceModule:
 
         if name in ("piper",):
             from arcagent.modules.voice.providers.piper import PiperProvider
+
             # Pass voice_path only when the config value looks like a filesystem
             # path. A bare name like 'en_US-lessac-medium' is not a path —
             # _locate_voice falls back to the default cache.
@@ -336,6 +340,7 @@ class VoiceModule:
 
         if name in ("elevenlabs",):
             from arcagent.modules.voice.providers.elevenlabs import ElevenLabsProvider
+
             return ElevenLabsProvider(
                 api_key_env=self._config.elevenlabs_api_key_env,
                 base_url=self._config.elevenlabs_base_url,
@@ -344,6 +349,7 @@ class VoiceModule:
             )
 
         from arcagent.modules.voice.errors import UnsupportedProvider
+
         raise UnsupportedProvider(name)
 
     # ------------------------------------------------------------------

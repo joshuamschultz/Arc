@@ -49,9 +49,7 @@ class TestConfigController:
         assert ctrl.get_snapshot().temperature == 0.3
 
     def test_patch_preserves_unchanged_fields(self):
-        ctrl = ConfigController(
-            {"model": "claude-sonnet-4", "max_tokens": 8192}
-        )
+        ctrl = ConfigController({"model": "claude-sonnet-4", "max_tokens": 8192})
         new = ctrl.patch({"temperature": 0.5}, actor="test")
         assert new.max_tokens == 8192
         assert new.model == "claude-sonnet-4"
@@ -119,9 +117,7 @@ class TestConfigControllerAuditEvents:
 
     def test_patch_emits_config_change_event(self):
         events: list[TraceRecord] = []
-        ctrl = ConfigController(
-            {"model": "claude-sonnet-4"}, on_event=events.append
-        )
+        ctrl = ConfigController({"model": "claude-sonnet-4"}, on_event=events.append)
 
         ctrl.patch({"temperature": 0.3}, actor="operator-1")
 
@@ -153,9 +149,7 @@ class TestConfigControllerAuditEvents:
             on_event=events.append,
         )
 
-        ctrl.patch(
-            {"model": "gpt-4o", "temperature": 0.1}, actor="admin"
-        )
+        ctrl.patch({"model": "gpt-4o", "temperature": 0.1}, actor="admin")
 
         assert len(events) == 1
         changes = events[0].event_data["changes"]

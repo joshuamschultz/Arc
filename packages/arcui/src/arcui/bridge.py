@@ -108,6 +108,7 @@ class UIBridgeSink:
             # Never let bridge errors reach the caller (AU-5 equivalent for UI path).
             # The canonical arctrust sink (e.g. JsonlSink) still gets the event.
             import logging
+
             logging.getLogger(__name__).warning(
                 "UIBridgeSink failed to push event %r — swallowing",
                 event.action,

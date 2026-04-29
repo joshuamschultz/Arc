@@ -72,7 +72,7 @@ def _federal_config(tmp_path: Path) -> GatewayConfig:
 [gateway]
 tier = "federal"
 agent_did = "did:arc:agent:federal_test"
-runtime_dir = "{tmp_path / 'run'}"
+runtime_dir = "{tmp_path / "run"}"
 """)
 
 
@@ -82,7 +82,7 @@ def _personal_config(tmp_path: Path) -> GatewayConfig:
 [gateway]
 tier = "personal"
 agent_did = "did:arc:agent:personal_test"
-runtime_dir = "{tmp_path / 'run'}"
+runtime_dir = "{tmp_path / "run"}"
 """)
 
 
@@ -115,7 +115,7 @@ class TestTierExecutorSelection:
         config = GatewayConfig.from_toml_str(f"""
 [gateway]
 tier = "enterprise"
-runtime_dir = "{tmp_path / 'run'}"
+runtime_dir = "{tmp_path / "run"}"
 """)
         runner = GatewayRunner.from_config(config)
         assert isinstance(runner._executor, AsyncioExecutor), (
@@ -173,9 +173,7 @@ class TestFederalTierSubprocessRoundTrip:
 
         # Last delta must be final
         assert deltas, "Must have deltas"
-        assert deltas[-1].is_final, (
-            f"Last delta must have is_final=True; got: {deltas[-1]!r}"
-        )
+        assert deltas[-1].is_final, f"Last delta must have is_final=True; got: {deltas[-1]!r}"
 
     @pytest.mark.asyncio
     async def test_subprocess_executor_used_via_runner(self, tmp_path: Path) -> None:
@@ -242,9 +240,7 @@ class TestFederalTierSubprocessRoundTrip:
         assert pid2 is not None, f"Event 2 deltas have no PID: {deltas2}"
 
         # PIDs must differ — each event gets its own subprocess
-        assert pid1 != pid2, (
-            f"Federal isolation violated: both events used same PID {pid1}"
-        )
+        assert pid1 != pid2, f"Federal isolation violated: both events used same PID {pid1}"
 
 
 # ---------------------------------------------------------------------------

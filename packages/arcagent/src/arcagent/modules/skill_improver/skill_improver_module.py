@@ -12,10 +12,7 @@ import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from arcagent.core.skill_registry import SkillRegistry
+from typing import Any
 
 from arcagent.core.config import EvalConfig
 from arcagent.core.module_bus import EventContext, ModuleContext
@@ -65,7 +62,7 @@ class SkillImproverModule:
         self._store = CandidateStore(self._workspace)
         self._eval_model: Any = None
         self._eval_label = f"{agent_name}/skill_improver" if agent_name else "skill_improver"
-        self._skill_registry: SkillRegistry | None = None
+        self._skill_registry: Any = None
 
     @property
     def name(self) -> str:

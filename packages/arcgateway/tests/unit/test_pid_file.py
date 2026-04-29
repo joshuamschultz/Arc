@@ -139,7 +139,9 @@ def test_already_running_error_message(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_write_pid_file_overwrites_stale_pid(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_write_pid_file_overwrites_stale_pid(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """Stale PID file (dead process) is overwritten with a log warning."""
     import logging
 
@@ -199,7 +201,7 @@ async def test_run_writes_pid_file_at_startup(tmp_path: Path) -> None:
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup, swallow is intentional
         pass
 
 
@@ -220,7 +222,7 @@ async def test_run_removes_pid_file_on_cancel(tmp_path: Path) -> None:
     task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup, swallow is intentional
         pass
 
     # finally block runs on cancellation too — PID should be removed.

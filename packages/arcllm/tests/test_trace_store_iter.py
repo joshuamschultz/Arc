@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import AsyncIterator
 
 import pytest
 
@@ -79,9 +78,7 @@ class TestIterRecordsMultiFile:
 class TestIterRecordsMalformedLineTolerated:
     """Unparseable lines are skipped (logged as warning), iteration continues."""
 
-    async def test_malformed_line_skipped(
-        self, store: JSONLTraceStore, agent_root: Path
-    ) -> None:
+    async def test_malformed_line_skipped(self, store: JSONLTraceStore, agent_root: Path) -> None:
         traces_dir = agent_root / "traces"
         traces_dir.mkdir(exist_ok=True)
         f = traces_dir / "traces-2026-04-26.jsonl"
@@ -95,9 +92,7 @@ class TestIterRecordsMalformedLineTolerated:
 
 
 class TestIterRecordsBlankLineSkipped:
-    async def test_blank_lines(
-        self, store: JSONLTraceStore, agent_root: Path
-    ) -> None:
+    async def test_blank_lines(self, store: JSONLTraceStore, agent_root: Path) -> None:
         traces_dir = agent_root / "traces"
         traces_dir.mkdir(exist_ok=True)
         f = traces_dir / "traces-2026-04-26.jsonl"

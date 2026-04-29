@@ -10,15 +10,13 @@ Verifies:
 
 from __future__ import annotations
 
-import pytest
-
 from arctrust import ChildIdentity, derive_child_identity
 
 
 class TestHKDFDIDDerivation:
     def test_deterministic_same_nonce(self) -> None:
         """Same parent + same nonce always produces same child DID."""
-        sk = b"\xAA" * 32
+        sk = b"\xaa" * 32
         id1 = derive_child_identity(sk, "nonce-stable", 300)
         id2 = derive_child_identity(sk, "nonce-stable", 300)
         assert id1.did == id2.did
@@ -26,7 +24,7 @@ class TestHKDFDIDDerivation:
 
     def test_different_nonce_different_did(self) -> None:
         """Different nonces must produce different child DIDs."""
-        sk = b"\xBB" * 32
+        sk = b"\xbb" * 32
         ids = [derive_child_identity(sk, f"nonce-{i}", 300) for i in range(10)]
         dids = [i.did for i in ids]
         # All DIDs must be unique
@@ -49,7 +47,7 @@ class TestHKDFDIDDerivation:
         """The hash segment in the DID should be 8 hex characters."""
         identity = derive_child_identity(b"\x55" * 32, "n2", 300)
         prefix = "did:arc:delegate:child/"
-        hash_segment = identity.did[len(prefix):]
+        hash_segment = identity.did[len(prefix) :]
         assert len(hash_segment) == 8
         # Must be valid hex
         int(hash_segment, 16)
@@ -81,7 +79,7 @@ class TestHKDFDIDDerivation:
         """Simulates 5 sibling children from same parent — all DIDs must differ."""
         import uuid
 
-        sk = b"\xDE" * 32
+        sk = b"\xde" * 32
         spawn_ids = [str(uuid.uuid4()) for _ in range(5)]
         identities = [derive_child_identity(sk, sid, 300) for sid in spawn_ids]
         dids = [i.did for i in identities]
@@ -89,7 +87,7 @@ class TestHKDFDIDDerivation:
 
     def test_child_identity_model_validity(self) -> None:
         """ChildIdentity Pydantic model can be constructed and serialized."""
-        identity = derive_child_identity(b"\xFF" * 32, "model-test", 300)
+        identity = derive_child_identity(b"\xff" * 32, "model-test", 300)
         assert isinstance(identity, ChildIdentity)
         # Can round-trip through dict
         data = identity.model_dump()

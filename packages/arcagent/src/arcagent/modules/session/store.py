@@ -37,9 +37,7 @@ def iter_session_files(workspace: Path) -> list[Path]:
     return sorted(sdir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
 
 
-def read_messages_from_offset(
-    path: Path, start_offset: int
-) -> tuple[list[dict[str, Any]], int]:
+def read_messages_from_offset(path: Path, start_offset: int) -> tuple[list[dict[str, Any]], int]:
     """Read complete JSONL lines starting from byte offset.
 
     Reads from *start_offset* to EOF, parses only complete lines (lines

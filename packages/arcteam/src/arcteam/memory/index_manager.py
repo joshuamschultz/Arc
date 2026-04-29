@@ -201,9 +201,7 @@ class IndexManager:
                 )
                 return
             # enterprise / federal: missing checksum = hard error
-            raise IndexCorruptionError(
-                f"checksum file missing for {self._config.tier} tier"
-            )
+            raise IndexCorruptionError(f"checksum file missing for {self._config.tier} tier")
 
         # Checksum file is present — validate at every tier
         stored = self._checksum_path.read_text(encoding="utf-8").strip()

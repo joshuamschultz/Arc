@@ -194,9 +194,7 @@ class TestAutoRegister:
             f"{list(_registry_dir(isolated_home).iterdir()) if _registry_dir(isolated_home).is_dir() else 'dir missing'}"
         )
 
-    def test_registered_workspace_path_ends_in_workspace_subdir(
-        self, tmp_path, isolated_home
-    ):
+    def test_registered_workspace_path_ends_in_workspace_subdir(self, tmp_path, isolated_home):
         _arc("agent", "create", "wp-test", "--dir", str(tmp_path))
 
         registry_file = _registry_dir(isolated_home) / "wp-test.json"
@@ -215,8 +213,12 @@ class TestAutoRegister:
 
     def test_no_register_flag_skips_registration(self, tmp_path, isolated_home):
         result = _arc(
-            "agent", "create", "skip-reg-test",
-            "--dir", str(tmp_path), "--no-register",
+            "agent",
+            "create",
+            "skip-reg-test",
+            "--dir",
+            str(tmp_path),
+            "--no-register",
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
@@ -225,14 +227,13 @@ class TestAutoRegister:
             f"--no-register should not write a registry entry, but found {registry_file}"
         )
 
-    def test_create_succeeds_even_if_already_registered(
-        self, tmp_path, isolated_home
-    ):
+    def test_create_succeeds_even_if_already_registered(self, tmp_path, isolated_home):
         # First create + register
         _arc("agent", "create", "dup-test", "--dir", str(tmp_path))
         # Delete the agent dir and recreate with the same name — registry entry
         # already exists; second create should not crash on the registration.
         import shutil
+
         shutil.rmtree(tmp_path / "dup-test")
         result = _arc("agent", "create", "dup-test", "--dir", str(tmp_path))
         # Create itself succeeds (filesystem); registration is best-effort idempotent

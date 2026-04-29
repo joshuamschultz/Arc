@@ -24,6 +24,7 @@ def probe_ok() -> Any:
     ) as m:
         yield m
 
+
 # --- Helpers ---
 
 
@@ -214,9 +215,7 @@ class TestLayerClassification:
 
 class TestTransportWiring:
     @pytest.mark.asyncio
-    async def test_startup_sets_agent_id_from_config(
-        self, tmp_path: Path, probe_ok: Any
-    ) -> None:
+    async def test_startup_sets_agent_id_from_config(self, tmp_path: Path, probe_ok: Any) -> None:
         module = _make_module(tmp_path)
         ctx = _make_ctx()
         await module.startup(ctx)
@@ -271,10 +270,13 @@ class TestTransportWiring:
             workspace=tmp_path,
         )
         ctx = _make_ctx()
-        with patch(
-            "arcagent.modules.ui_reporter._should_auto_enable",
-            return_value=(True, "probe_ok", None),
-        ), patch.dict("os.environ", {"ARCUI_AGENT_TOKEN": ""}, clear=False):
+        with (
+            patch(
+                "arcagent.modules.ui_reporter._should_auto_enable",
+                return_value=(True, "probe_ok", None),
+            ),
+            patch.dict("os.environ", {"ARCUI_AGENT_TOKEN": ""}, clear=False),
+        ):
             await module.startup(ctx)
         assert module._transport is None
 
@@ -291,41 +293,29 @@ class TestSchedulerEventSubscription:
     """
 
     @pytest.mark.asyncio
-    async def test_subscribes_to_schedule_completed(
-        self, tmp_path: Path, probe_ok: Any
-    ) -> None:
+    async def test_subscribes_to_schedule_completed(self, tmp_path: Path, probe_ok: Any) -> None:
         module = _make_module(tmp_path)
         ctx = _make_ctx()
         await module.startup(ctx)
 
-        subscribed_events = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed_events = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "schedule:completed" in subscribed_events, (
-            f"ui_reporter did not subscribe to schedule:completed; "
-            f"got: {subscribed_events}"
+            f"ui_reporter did not subscribe to schedule:completed; got: {subscribed_events}"
         )
 
     @pytest.mark.asyncio
-    async def test_subscribes_to_schedule_failed(
-        self, tmp_path: Path, probe_ok: Any
-    ) -> None:
+    async def test_subscribes_to_schedule_failed(self, tmp_path: Path, probe_ok: Any) -> None:
         module = _make_module(tmp_path)
         ctx = _make_ctx()
         await module.startup(ctx)
 
-        subscribed_events = [
-            call.args[0] for call in ctx.bus.subscribe.call_args_list
-        ]
+        subscribed_events = [call.args[0] for call in ctx.bus.subscribe.call_args_list]
         assert "schedule:failed" in subscribed_events, (
-            f"ui_reporter did not subscribe to schedule:failed; "
-            f"got: {subscribed_events}"
+            f"ui_reporter did not subscribe to schedule:failed; got: {subscribed_events}"
         )
 
     @pytest.mark.asyncio
-    async def test_schedule_completed_event_forwarded_to_transport(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_schedule_completed_event_forwarded_to_transport(self, tmp_path: Path) -> None:
         mock_transport = AsyncMock()
         mock_transport.send_event = AsyncMock()
         module = _make_module(tmp_path, transport=mock_transport)

@@ -39,9 +39,7 @@ class TestPiperStub:
         provider = PiperProvider()
         assert asyncio.iscoroutinefunction(provider.synthesize)
 
-    def test_binary_not_found_raises_tts_failed(
-        self, tmp_path: Path
-    ) -> None:
+    def test_binary_not_found_raises_tts_failed(self, tmp_path: Path) -> None:
         """When binary is absent, synthesize raises TTSFailed with guidance."""
         from arcagent.modules.voice.errors import TTSFailed
 
@@ -123,9 +121,7 @@ class TestPiperStub:
         captured_cmd: list[list[str]] = []
         output = tmp_path / "voice_override.wav"
 
-        async def _fake_run_subprocess(
-            cmd: list[str], text: str
-        ) -> tuple[str, int]:
+        async def _fake_run_subprocess(cmd: list[str], text: str) -> tuple[str, int]:
             captured_cmd.append(list(cmd))
             # Write a non-empty file so the existence check passes
             output.write_bytes(b"audio")
@@ -135,15 +131,9 @@ class TestPiperStub:
             # Patch both _available and _resolved_binary as instance attrs
             provider._available = True
             provider._resolved_binary = "/usr/bin/piper"
-            with patch.object(
-                provider, "_locate_voice", return_value=voice_file
-            ):
-                with patch.object(
-                    provider, "_run_subprocess", side_effect=_fake_run_subprocess
-                ):
-                    await provider.synthesize(
-                        "test", voice_id="custom_voice", output_path=output
-                    )
+            with patch.object(provider, "_locate_voice", return_value=voice_file):
+                with patch.object(provider, "_run_subprocess", side_effect=_fake_run_subprocess):
+                    await provider.synthesize("test", voice_id="custom_voice", output_path=output)
 
         asyncio.run(_run())
 

@@ -193,10 +193,7 @@ def _echo_stub(message: str, session_key: str) -> list[dict[str, object]]:
     return [
         {
             "kind": "token",
-            "content": (
-                f"[arc-agent-worker echo] Received: {message!r} "
-                f"(session={session_key})"
-            ),
+            "content": (f"[arc-agent-worker echo] Received: {message!r} (session={session_key})"),
             "is_final": False,
             "turn_id": turn_id,
         },

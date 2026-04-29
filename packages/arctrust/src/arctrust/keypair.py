@@ -56,9 +56,7 @@ class KeyPair:
             ValueError: Seed is not exactly 32 bytes.
         """
         if len(seed) != KEY_SIZE:
-            raise ValueError(
-                f"Ed25519 seed must be {KEY_SIZE} bytes, got {len(seed)}"
-            )
+            raise ValueError(f"Ed25519 seed must be {KEY_SIZE} bytes, got {len(seed)}")
         sk = SigningKey(seed)
         return cls(
             public_key=bytes(sk.verify_key),
@@ -93,9 +91,7 @@ def sign(message: bytes, private_key: bytes) -> bytes:
         ValueError: private_key is not exactly 32 bytes.
     """
     if len(private_key) != KEY_SIZE:
-        raise ValueError(
-            f"Ed25519 private key must be {KEY_SIZE} bytes, got {len(private_key)}"
-        )
+        raise ValueError(f"Ed25519 private key must be {KEY_SIZE} bytes, got {len(private_key)}")
     sk = SigningKey(private_key)
     signed = sk.sign(message)
     # PyNaCl returns the signature (not the signed message) via .signature

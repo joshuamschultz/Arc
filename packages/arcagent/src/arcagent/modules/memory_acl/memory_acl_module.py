@@ -28,7 +28,7 @@ from typing import Any
 
 from arcagent.core.module_bus import EventContext, ModuleContext
 from arcagent.modules.memory_acl.acl import SessionACL, _extract_acl_from_session_data
-from arcagent.modules.memory_acl.capabilities import Capability, CapabilityStore
+from arcagent.modules.memory_acl.capability_tokens import Capability, CapabilityStore
 from arcagent.modules.memory_acl.config import MemoryACLConfig
 from arcagent.utils.audit import safe_audit
 

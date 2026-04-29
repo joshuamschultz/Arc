@@ -41,11 +41,13 @@ class TestAuthConfig:
         assert cfg.agent_token != cfg.operator_token
 
     def test_uses_provided_tokens(self) -> None:
-        cfg = AuthConfig({
-            "viewer_token": "v-token",
-            "operator_token": "o-token",
-            "agent_token": "a-token",
-        })
+        cfg = AuthConfig(
+            {
+                "viewer_token": "v-token",
+                "operator_token": "o-token",
+                "agent_token": "a-token",
+            }
+        )
         assert cfg.viewer_token == "v-token"
         assert cfg.operator_token == "o-token"
         assert cfg.agent_token == "a-token"
@@ -126,9 +128,7 @@ class TestAuthMiddleware:
         async def test_route(request: Request) -> JSONResponse:
             return JSONResponse({"ok": True})
 
-        app = Starlette(
-            routes=[Route("/api/health", health), Route("/api/test", test_route)]
-        )
+        app = Starlette(routes=[Route("/api/health", health), Route("/api/test", test_route)])
         app.add_middleware(AuthMiddleware, auth_config=auth)
         client = TestClient(app)
 

@@ -7,7 +7,6 @@ before propagating the exception.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -23,11 +22,8 @@ class _AlwaysRaisesBackend:
 class TestVaultUnreachableAuditEvent:
     """§5: VaultUnreachable must trigger an audit log before propagating."""
 
-    async def test_federal_vault_unreachable_emits_audit_log(
-        self, caplog: Any
-    ) -> None:
+    async def test_federal_vault_unreachable_emits_audit_log(self, caplog: Any) -> None:
         """vault.unreachable must appear in logs when vault is unreachable at federal."""
-        import logging
 
         with pytest.raises(VaultUnreachable):
             await resolve_secret(
@@ -36,14 +32,12 @@ class TestVaultUnreachableAuditEvent:
                 backend=_AlwaysRaisesBackend(),
             )
         # Audit log must mention vault.unreachable
-        assert any(
-            "vault.unreachable" in record.message
-            for record in caplog.records
-        ), f"Expected vault.unreachable in logs, got: {[r.message for r in caplog.records]}"
+        assert any("vault.unreachable" in record.message for record in caplog.records), (
+            f"Expected vault.unreachable in logs, got: {[r.message for r in caplog.records]}"
+        )
 
     async def test_federal_no_backend_emits_audit_log(self, caplog: Any) -> None:
         """vault.unreachable logged when no backend at federal tier."""
-        import logging
 
         with pytest.raises(VaultUnreachable):
             await resolve_secret(
@@ -51,16 +45,10 @@ class TestVaultUnreachableAuditEvent:
                 tier="federal",
                 backend=None,
             )
-        assert any(
-            "vault.unreachable" in record.message
-            for record in caplog.records
-        )
+        assert any("vault.unreachable" in record.message for record in caplog.records)
 
-    async def test_enterprise_vault_unreachable_emits_audit_log(
-        self, caplog: Any
-    ) -> None:
+    async def test_enterprise_vault_unreachable_emits_audit_log(self, caplog: Any) -> None:
         """vault.unreachable must appear in logs at enterprise tier."""
-        import logging
 
         with pytest.raises(RuntimeError):
             await resolve_secret(

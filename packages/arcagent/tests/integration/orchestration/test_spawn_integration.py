@@ -1,10 +1,10 @@
 """Integration tests for recursive agent spawning via run()."""
 
 import pytest
-from ._mock_llm import LLMResponse, MockModel, ToolCall, setup_spawn_tools
-
 from arcrun.loop import run
 from arcrun.types import Tool
+
+from ._mock_llm import LLMResponse, MockModel, ToolCall, setup_spawn_tools
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -79,7 +79,9 @@ class TestNestedSpawn:
                 # Parent spawns child
                 LLMResponse(
                     tool_calls=[
-                        ToolCall(id="tc1", name="spawn_task", arguments={"task": "delegate deeper"})
+                        ToolCall(
+                            id="tc1", name="spawn_task", arguments={"task": "delegate deeper"}
+                        )
                     ],
                     stop_reason="tool_use",
                 ),
@@ -121,9 +123,7 @@ class TestDepthLimit:
         model = MockModel(
             [
                 LLMResponse(
-                    tool_calls=[
-                        ToolCall(id="tc1", name="spawn_task", arguments={"task": "x"})
-                    ],
+                    tool_calls=[ToolCall(id="tc1", name="spawn_task", arguments={"task": "x"})],
                     stop_reason="tool_use",
                 ),
                 LLMResponse(content="Saw max depth error.", stop_reason="end_turn"),

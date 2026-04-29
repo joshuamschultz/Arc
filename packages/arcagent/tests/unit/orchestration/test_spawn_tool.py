@@ -3,13 +3,14 @@
 import asyncio
 
 import pytest
-from ._mock_llm import LLMResponse, Message, MockModel
-
-from arcagent.orchestration.spawn import _make_bubble_handler, make_spawn_tool
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.types import Tool, ToolContext
+
+from arcagent.orchestration.spawn import _make_bubble_handler, make_spawn_tool
+
+from ._mock_llm import LLMResponse, Message, MockModel
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:

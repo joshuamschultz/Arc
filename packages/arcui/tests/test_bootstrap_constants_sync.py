@@ -14,9 +14,7 @@ from pathlib import Path
 
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
 
-_INDEX_HTML = (
-    Path(__file__).parent.parent / "src" / "arcui" / "static" / "index.html"
-)
+_INDEX_HTML = Path(__file__).parent.parent / "src" / "arcui" / "static" / "index.html"
 
 
 class TestBootstrapHashKeySync:
@@ -43,10 +41,7 @@ class TestLoopbackHostsSingleSource:
         return Path(__file__).parent.parent.parent
 
     def test_arccli_imports_from_constants(self) -> None:
-        ui_py = (
-            self._packages_root() / "arccli" / "src" / "arccli"
-            / "commands" / "ui.py"
-        )
+        ui_py = self._packages_root() / "arccli" / "src" / "arccli" / "commands" / "ui.py"
         text = ui_py.read_text()
         assert "from arcui._constants import" in text
         assert "LOOPBACK_HOSTS" in text
@@ -55,8 +50,13 @@ class TestLoopbackHostsSingleSource:
 
     def test_ui_reporter_imports_from_constants(self) -> None:
         ur_py = (
-            self._packages_root() / "arcagent" / "src" / "arcagent"
-            / "modules" / "ui_reporter" / "__init__.py"
+            self._packages_root()
+            / "arcagent"
+            / "src"
+            / "arcagent"
+            / "modules"
+            / "ui_reporter"
+            / "__init__.py"
         )
         text = ur_py.read_text()
         assert "from arcui._constants import LOOPBACK_HOSTS" in text

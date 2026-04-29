@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import pytest
 
-
 _SAFE_TOOL_SOURCE = """\
 from arcagent.tools._decorator import tool
 
@@ -112,10 +111,7 @@ class TestNoDecoratedToolFound:
         from arcagent.tools._dynamic_loader import DynamicToolLoader
 
         loader = DynamicToolLoader()
-        src = (
-            "async def orphan(a: int) -> int:\n"
-            "    return a\n"
-        )
+        src = "async def orphan(a: int) -> int:\n    return a\n"
         with pytest.raises(ToolError) as exc:
             loader.load(src, name="orphan")
         assert "decorated with @tool" in str(exc.value)

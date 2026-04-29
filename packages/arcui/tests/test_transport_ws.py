@@ -174,9 +174,7 @@ class TestWebSocketTransportSend:
             url="ws://localhost:8420/api/agent/connect",
             token="test-token",
         )
-        msg = ControlMessage(
-            action="ping", target="a", data={}, request_id="r1"
-        )
+        msg = ControlMessage(action="ping", target="a", data={}, request_id="r1")
         with pytest.raises(RuntimeError, match="Not connected"):
             await transport.send_control("agent-1", msg)
 
@@ -189,16 +187,18 @@ class TestWebSocketTransportReceive:
             token="test-token",
         )
         mock_ws = AsyncMock()
-        mock_ws.recv.return_value = json.dumps({
-            "agent_id": "a1",
-            "type": "control",
-            "payload": {
-                "action": "cancel",
-                "target": "a1",
-                "data": {},
-                "request_id": "r1",
-            },
-        })
+        mock_ws.recv.return_value = json.dumps(
+            {
+                "agent_id": "a1",
+                "type": "control",
+                "payload": {
+                    "action": "cancel",
+                    "target": "a1",
+                    "data": {},
+                    "request_id": "r1",
+                },
+            }
+        )
         transport._ws = mock_ws
         transport._closed = False
 
@@ -254,7 +254,8 @@ class TestTokenProviderRefresh:
     def test_provider_returning_new_token_replaces_cached(self):
         tokens = iter(["initial", "rotated"])
         t = WebSocketTransport(
-            url="ws://x", token="initial",
+            url="ws://x",
+            token="initial",
             token_provider=lambda: next(tokens),
         )
         # First call exhausts "initial" — same as cached, no swap
@@ -265,7 +266,8 @@ class TestTokenProviderRefresh:
 
     def test_provider_returning_empty_falls_back_to_cached(self):
         t = WebSocketTransport(
-            url="ws://x", token="cached",
+            url="ws://x",
+            token="cached",
             token_provider=lambda: "",
         )
         assert t._current_token() == "cached"
@@ -273,8 +275,10 @@ class TestTokenProviderRefresh:
     def test_provider_raising_exception_falls_back_silently(self):
         def boom() -> str:
             raise OSError("file gone")
+
         t = WebSocketTransport(
-            url="ws://x", token="cached",
+            url="ws://x",
+            token="cached",
             token_provider=boom,
         )
         # Should not raise; falls back to cached.

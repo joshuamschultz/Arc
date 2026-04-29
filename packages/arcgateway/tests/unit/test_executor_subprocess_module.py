@@ -140,7 +140,8 @@ class TestSubprocessExecutorFromSubprocessModule:
             logger.setLevel(original_level)
 
         relevant = [
-            r for r in log_records
+            r
+            for r in log_records
             if "executor_choice" in r.getMessage() or "SubprocessExecutor" in r.getMessage()
         ]
         assert relevant, (
@@ -196,7 +197,9 @@ class TestSubprocessExecutorFromSubprocessModule:
 
         # A done sentinel followed by more data that should NOT be yielded
         done_line = json.dumps({"kind": "done", "content": "", "is_final": True, "turn_id": "s"})
-        extra_line = json.dumps({"kind": "token", "content": "should not appear", "is_final": False, "turn_id": "s"})
+        extra_line = json.dumps(
+            {"kind": "token", "content": "should not appear", "is_final": False, "turn_id": "s"}
+        )
         data = (done_line + "\n" + extra_line + "\n").encode()
 
         reader = asyncio.StreamReader()
@@ -208,9 +211,9 @@ class TestSubprocessExecutorFromSubprocessModule:
             deltas.append(delta)
 
         # Done sentinel breaks the loop — no deltas yielded (sentinel itself not yielded)
-        assert all(
-            "should not appear" not in d.content for d in deltas
-        ), "Content after done sentinel must not be yielded"
+        assert all("should not appear" not in d.content for d in deltas), (
+            "Content after done sentinel must not be yielded"
+        )
 
     @pytest.mark.asyncio
     async def test_read_deltas_invalid_delta_schema_skipped(self) -> None:
@@ -266,6 +269,7 @@ class TestMakePreexecFnInnerFunction:
 
         def _raises_on_as(resource_id: int, _limits: tuple[int, int]) -> None:
             import resource as _r
+
             if resource_id == _r.RLIMIT_AS:
                 raise ValueError("macOS: RLIM_INFINITY cannot be lowered")
 

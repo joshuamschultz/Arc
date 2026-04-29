@@ -95,7 +95,9 @@ class TestTypedFieldSchemas:
 
         with pytest.raises(ValidationError):
             SessionStartFields(  # type: ignore[call-arg]
-                session_id="x", uid=1000, remote_addr="127.0.0.1"
+                session_id="x",
+                uid=1000,
+                remote_addr="127.0.0.1",
                 # auth_method missing
             )
 
@@ -105,7 +107,9 @@ class TestTypedFieldSchemas:
 
         with pytest.raises(ValidationError):
             AgentAutoconnectFields(  # type: ignore[call-arg]
-                agent_id="a1", uid=1000, url="ws://localhost"
+                agent_id="a1",
+                uid=1000,
+                url="ws://localhost",
                 # reason missing
             )
 

@@ -17,16 +17,16 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 # Base palette — Arc dark-terminal aesthetic
-COLOR_BG_DARK = "#0d1117"        # main background
-COLOR_BG_PANEL = "#161b22"       # panel / sidebar background
-COLOR_BG_BORDER = "#30363d"      # border / separator
-COLOR_ACCENT_BLUE = "#58a6ff"    # primary accent (Arc brand blue)
-COLOR_ACCENT_GREEN = "#3fb950"   # success / tool complete
+COLOR_BG_DARK = "#0d1117"  # main background
+COLOR_BG_PANEL = "#161b22"  # panel / sidebar background
+COLOR_BG_BORDER = "#30363d"  # border / separator
+COLOR_ACCENT_BLUE = "#58a6ff"  # primary accent (Arc brand blue)
+COLOR_ACCENT_GREEN = "#3fb950"  # success / tool complete
 COLOR_ACCENT_YELLOW = "#d29922"  # warning / pending
-COLOR_ACCENT_RED = "#f85149"     # error
-COLOR_TEXT_PRIMARY = "#e6edf3"   # body text
-COLOR_TEXT_MUTED = "#8b949e"     # secondary / metadata text
-COLOR_CURSOR = "#58a6ff"         # input cursor and selection highlight
+COLOR_ACCENT_RED = "#f85149"  # error
+COLOR_TEXT_PRIMARY = "#e6edf3"  # body text
+COLOR_TEXT_MUTED = "#8b949e"  # secondary / metadata text
+COLOR_CURSOR = "#58a6ff"  # input cursor and selection highlight
 
 
 def build_tcss() -> str:

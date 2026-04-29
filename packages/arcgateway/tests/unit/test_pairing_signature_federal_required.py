@@ -60,9 +60,7 @@ async def test_federal_missing_signature_raises(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Federal: approver_did supplied but signature=None → PairingSignatureInvalid."""
-    code = await federal_store.mint_code(
-        platform="telegram", platform_user_id="victim"
-    )
+    code = await federal_store.mint_code(platform="telegram", platform_user_id="victim")
 
     caplog.set_level(logging.INFO, logger="arcgateway.pairing.audit")
     with pytest.raises(PairingSignatureInvalid):
@@ -73,9 +71,7 @@ async def test_federal_missing_signature_raises(
         )
 
     invalid_msgs = [
-        r.getMessage()
-        for r in caplog.records
-        if "signature_invalid" in r.getMessage()
+        r.getMessage() for r in caplog.records if "signature_invalid" in r.getMessage()
     ]
     assert invalid_msgs
     assert any("missing_signature" in m for m in invalid_msgs)
@@ -86,9 +82,7 @@ async def test_federal_missing_signature_does_not_consume(
     federal_store: PairingStore, tmp_path: Path
 ) -> None:
     """Row must remain unconsumed after a hard-fail sig-missing approval attempt."""
-    code = await federal_store.mint_code(
-        platform="slack", platform_user_id="victim2"
-    )
+    code = await federal_store.mint_code(platform="slack", platform_user_id="victim2")
 
     with pytest.raises(PairingSignatureInvalid):
         await federal_store.verify_and_consume(
@@ -118,9 +112,7 @@ async def test_federal_missing_signature_counts_as_failure(
     same row correctly exercise the per-platform failure counter without
     running into the per-user 10-min rate limit or the 3-pending cap.
     """
-    code = await federal_store.mint_code(
-        platform="telegram", platform_user_id="fedvic"
-    )
+    code = await federal_store.mint_code(platform="telegram", platform_user_id="fedvic")
     for _ in range(5):
         with pytest.raises(PairingSignatureInvalid):
             await federal_store.verify_and_consume(
@@ -145,9 +137,7 @@ async def test_federal_missing_approver_did_raises_and_audits(
     no-DID approval attempt cannot be used to probe for valid codes
     without tripping the lockout counter.
     """
-    code = await federal_store.mint_code(
-        platform="discord", platform_user_id="victim3"
-    )
+    code = await federal_store.mint_code(platform="discord", platform_user_id="victim3")
     caplog.set_level(logging.INFO, logger="arcgateway.pairing.audit")
     with pytest.raises(PairingSignatureInvalid, match="federal tier requires"):
         await federal_store.verify_and_consume(
@@ -158,9 +148,7 @@ async def test_federal_missing_approver_did_raises_and_audits(
         )
 
     invalid_msgs = [
-        r.getMessage()
-        for r in caplog.records
-        if "signature_invalid" in r.getMessage()
+        r.getMessage() for r in caplog.records if "signature_invalid" in r.getMessage()
     ]
     assert invalid_msgs, "expected a signature_invalid audit event"
     assert any("missing_approver_did" in m for m in invalid_msgs), (

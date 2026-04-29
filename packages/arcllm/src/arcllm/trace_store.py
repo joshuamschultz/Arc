@@ -40,8 +40,8 @@ def _read_lines_reverse(
 
     This version scans the file once for newline byte-positions
     (storing only ints, ~8 bytes per line) then seeks + reads each line
-    on demand. Memory cost: O(line count × 8 bytes) instead of
-    O(file size × per-line allocation overhead). Caller can stop
+    on demand. Memory cost: O(line count x 8 bytes) instead of
+    O(file size x per-line allocation overhead). Caller can stop
     iteration early; remaining lines are never decoded.
 
     `before_line_idx` lets pagination resume from a known position
@@ -61,7 +61,7 @@ def _read_lines_reverse(
     with path.open("rb") as fh:
         # First pass: collect newline byte-offsets without materializing
         # any line content. This is O(size) scanned but O(line count)
-        # memory — for a 10K-line × 1KB file, ~80KB of ints vs ~10MB of
+        # memory — for a 10K-line x 1KB file, ~80KB of ints vs ~10MB of
         # decoded strings.
         newline_positions: list[int] = []
         offset = 0
@@ -82,19 +82,13 @@ def _read_lines_reverse(
         # Total lines: if file ends with \n the last newline terminates
         # the last line. If not, there's an extra partial line trailing.
         ends_with_newline = bool(newline_positions) and newline_positions[-1] == size - 1
-        total_lines = (
-            len(newline_positions)
-            if ends_with_newline
-            else len(newline_positions) + 1
-        )
+        total_lines = len(newline_positions) if ends_with_newline else len(newline_positions) + 1
         if total_lines == 0:
             return
 
         last_idx = total_lines - 1
         start_idx = (
-            min(before_line_idx, last_idx + 1) - 1
-            if before_line_idx is not None
-            else last_idx
+            min(before_line_idx, last_idx + 1) - 1 if before_line_idx is not None else last_idx
         )
         if start_idx < 0:
             return
@@ -102,14 +96,8 @@ def _read_lines_reverse(
         # Walk lines in reverse. line[i] occupies bytes
         # [prev_newline + 1, this_newline_or_eof].
         for i in range(start_idx, -1, -1):
-            line_start = (
-                newline_positions[i - 1] + 1 if i > 0 else 0
-            )
-            line_end = (
-                newline_positions[i]
-                if i < len(newline_positions)
-                else size
-            )
+            line_start = newline_positions[i - 1] + 1 if i > 0 else 0
+            line_end = newline_positions[i] if i < len(newline_positions) else size
             fh.seek(line_start)
             line_bytes = fh.read(line_end - line_start)
             yield i, line_bytes.decode("utf-8", errors="replace")
@@ -124,9 +112,7 @@ class TraceRecord(BaseModel, frozen=True):
     """Single LLM call record. Immutable, hashable, serializable."""
 
     trace_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     provider: str
     model: str
     agent_label: str | None = None
@@ -159,9 +145,7 @@ class TraceRecord(BaseModel, frozen=True):
     phase_timings: dict[str, float] = Field(default_factory=dict)
 
     # Event type discriminator
-    event_type: Literal[
-        "llm_call", "config_change", "circuit_change", "rotation"
-    ] = "llm_call"
+    event_type: Literal["llm_call", "config_change", "circuit_change", "rotation"] = "llm_call"
     event_data: dict[str, Any] | None = None
 
     # Hash chain
@@ -330,7 +314,8 @@ class JSONLTraceStore:
             if prev_hash is not None and record.prev_hash != prev_hash:
                 logger.error(
                     "TAMPER DETECTED: hash chain broken — expected prev=%s, got prev=%s",
-                    prev_hash, record.prev_hash,
+                    prev_hash,
+                    record.prev_hash,
                 )
                 return
 
@@ -338,7 +323,8 @@ class JSONLTraceStore:
             if record.record_hash != expected:
                 logger.error(
                     "TAMPER DETECTED: record hash mismatch — stored=%s, computed=%s",
-                    record.record_hash, expected,
+                    record.record_hash,
+                    expected,
                 )
                 return
 
@@ -426,9 +412,7 @@ class JSONLTraceStore:
             if cursor_date and file_date > cursor_date:
                 continue
 
-            cursor_line_for_file = (
-                cursor_line - 1 if cursor_date == file_date else None
-            )
+            cursor_line_for_file = cursor_line - 1 if cursor_date == file_date else None
             for line_idx, line in await asyncio.to_thread(
                 _read_lines_reverse, file_path, cursor_line_for_file
             ):
@@ -503,7 +487,9 @@ class JSONLTraceStore:
                 if record.prev_hash != prev_hash:
                     logger.error(
                         "Hash chain break at seq %d: expected prev=%s, got prev=%s",
-                        seq, prev_hash, record.prev_hash,
+                        seq,
+                        prev_hash,
+                        record.prev_hash,
                     )
                     return False
 
@@ -512,7 +498,9 @@ class JSONLTraceStore:
                 if record.record_hash != expected:
                     logger.error(
                         "Hash mismatch at seq %d: stored=%s, computed=%s",
-                        seq, record.record_hash, expected,
+                        seq,
+                        record.record_hash,
+                        expected,
                     )
                     return False
 

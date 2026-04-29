@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 # --- Stubs ---------------------------------------------------------------
 
 
@@ -138,29 +137,6 @@ class TestTaskCompleteTerminates:
 class TestMaxTurns:
     async def test_max_turns_synthesizes_failed_completion(self) -> None:
         """Model that never calls task_complete gets capped at max_turns."""
-        model = _StubModel(
-            [
-                _ModelResponse(
-                    stop_reason="tool_use",
-                    tool_calls=[
-                        _ToolCall(
-                            id="tc1",
-                            name="task_complete",
-                            arguments={},  # invalid — forces retry
-                        )
-                    ],
-                )
-            ]
-            * 20
-        )
-        # Actually we want a model that doesn't call task_complete at all
-        model = _StubModel(
-            [
-                _ModelResponse(
-                    stop_reason="end_turn", content="turn-1"
-                ),  # no tool calls; this ends cleanly, not what we want
-            ]
-        )
 
         # Use a model that always returns end_turn with no tool_calls
         # to simulate an agent that never signals completion. The loop

@@ -54,8 +54,7 @@ def _validate_provider_name(provider_name: str) -> None:
     """
     if not _VALID_PROVIDER_RE.match(provider_name):
         raise ArcLLMConfigError(
-            f"Invalid provider name '{provider_name}'. "
-            f"Must match [a-z][a-z0-9_]{{0,63}}."
+            f"Invalid provider name '{provider_name}'. Must match [a-z][a-z0-9_]{{0,63}}."
         )
 
 

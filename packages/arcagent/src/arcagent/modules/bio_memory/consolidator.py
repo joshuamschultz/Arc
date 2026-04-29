@@ -789,9 +789,7 @@ class Consolidator:
                 timeout=_PROMOTE_BATCH_TIMEOUT,
             )
         except TimeoutError:
-            _logger.warning(
-                "Batch team promote timed out after %.1fs", _PROMOTE_BATCH_TIMEOUT
-            )
+            _logger.warning("Batch team promote timed out after %.1fs", _PROMOTE_BATCH_TIMEOUT)
 
         promoted = sum(1 for r in results if r)
         if promoted:

@@ -280,8 +280,7 @@ def _read_trust_file(path: Path, *, top_level_key: str) -> dict[str, bytes]:
         raise TrustStoreError(
             code="TRUST_STORE_BAD_SCHEMA",
             message=(
-                f"Trust file {path} is missing required top-level table "
-                f"[{top_level_key}.*]."
+                f"Trust file {path} is missing required top-level table [{top_level_key}.*]."
             ),
             details={"path": str(path), "expected_section": top_level_key},
         )
@@ -326,8 +325,7 @@ def _decode_pubkey(*, did: str, entry: object, path: Path) -> bytes:
         raise TrustStoreError(
             code="TRUST_STORE_BAD_KEY",
             message=(
-                f"Trust file {path}: public_key for DID {did!r} is not valid "
-                f"base64 ({exc})."
+                f"Trust file {path}: public_key for DID {did!r} is not valid base64 ({exc})."
             ),
             details={"path": str(path), "did": did},
         ) from exc

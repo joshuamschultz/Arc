@@ -149,9 +149,7 @@ class SessionACL(BaseModel):
         parsed_owner: str = parsed.get("owner_did", owner_did) or owner_did
 
         # classification_raw is validated above; cast is safe
-        classification: Literal["unclassified", "cui", "secret"] = (
-            classification_raw  # type: ignore[assignment]
-        )
+        classification: Literal["unclassified", "cui", "secret"] = classification_raw  # type: ignore[assignment]
 
         return cls(
             owner_did=parsed_owner,

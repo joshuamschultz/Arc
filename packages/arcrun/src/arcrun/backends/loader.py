@@ -246,9 +246,7 @@ def _load_dotted(path: str) -> ExecutorBackend:
     try:
         instance = cls()
     except Exception as exc:
-        raise ValueError(
-            f"Could not instantiate backend class '{class_name}': {exc}"
-        ) from exc
+        raise ValueError(f"Could not instantiate backend class '{class_name}': {exc}") from exc
 
     if not isinstance(instance, ExecutorBackend):
         raise ValueError(
@@ -287,23 +285,17 @@ def _verify_allowed_backends_signature(
         BackendSignatureError: Any step of verification failed.
     """
     if not manifest_path.exists():
-        raise BackendSignatureError(
-            f"allowed_backends manifest not found: {manifest_path}"
-        )
+        raise BackendSignatureError(f"allowed_backends manifest not found: {manifest_path}")
 
     try:
         raw = manifest_path.read_bytes()
     except OSError as exc:
-        raise BackendSignatureError(
-            f"Cannot read manifest {manifest_path}: {exc}"
-        ) from exc
+        raise BackendSignatureError(f"Cannot read manifest {manifest_path}: {exc}") from exc
 
     try:
         data = tomllib.loads(raw.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise BackendSignatureError(
-            f"Manifest {manifest_path} has invalid TOML: {exc}"
-        ) from exc
+        raise BackendSignatureError(f"Manifest {manifest_path} has invalid TOML: {exc}") from exc
 
     meta = data.get("meta")
     backends = data.get("backends")
@@ -312,9 +304,7 @@ def _verify_allowed_backends_signature(
     if not isinstance(meta, dict):
         raise BackendSignatureError("Manifest missing required [meta] table")
     if not isinstance(backends, list) or not backends:
-        raise BackendSignatureError(
-            "Manifest missing required [[backends]] array (or empty)"
-        )
+        raise BackendSignatureError("Manifest missing required [[backends]] array (or empty)")
     if not isinstance(sig_block, dict):
         raise BackendSignatureError("Manifest missing required [signature] table")
 
@@ -352,9 +342,7 @@ def _verify_allowed_backends_signature(
         from nacl.exceptions import BadSignatureError
         from nacl.signing import VerifyKey
     except ImportError as exc:  # pragma: no cover — arctrust is a required dep
-        raise BackendSignatureError(
-            f"PyNaCl / arctrust trust store not available: {exc}"
-        ) from exc
+        raise BackendSignatureError(f"PyNaCl / arctrust trust store not available: {exc}") from exc
 
     try:
         pubkey = load_issuer_pubkey(issuer_did, trust_dir=trust_dir)
@@ -366,8 +354,7 @@ def _verify_allowed_backends_signature(
             sink=sink,
         )
         raise BackendSignatureError(
-            f"Cannot resolve issuer pubkey for {issuer_did!r}: "
-            f"[{exc.code}] {exc.message}"
+            f"Cannot resolve issuer pubkey for {issuer_did!r}: [{exc.code}] {exc.message}"
         ) from exc
 
     try:
@@ -389,9 +376,7 @@ def _verify_allowed_backends_signature(
     verified: dict[str, dict[str, Any]] = {}
     for entry in backends:
         if not isinstance(entry, dict):
-            raise BackendSignatureError(
-                "Each [[backends]] entry must be a TOML table"
-            )
+            raise BackendSignatureError("Each [[backends]] entry must be a TOML table")
         name = entry.get("name")
         module = entry.get("module")
         content_hash = entry.get("content_hash")
@@ -400,9 +385,7 @@ def _verify_allowed_backends_signature(
                 "Each [[backends]] entry requires string 'name' and 'module' fields"
             )
         if not isinstance(content_hash, str):
-            raise BackendSignatureError(
-                f"Backend {name!r}: missing 'content_hash' field"
-            )
+            raise BackendSignatureError(f"Backend {name!r}: missing 'content_hash' field")
         verified[name] = {
             "name": name,
             "module": module,
@@ -426,9 +409,7 @@ def _enforce_manifest_contains(
     if name in verified:
         return
     _emit_denied(name, tier=tier, reason="not in signed manifest", sink=sink)
-    raise BackendSignatureError(
-        f"Backend '{name}' is not in the signed allowed_backends manifest."
-    )
+    raise BackendSignatureError(f"Backend '{name}' is not in the signed allowed_backends manifest.")
 
 
 def _verify_backend_content_hash(
@@ -450,9 +431,7 @@ def _verify_backend_content_hash(
     module_path = entry["module"]
 
     if not isinstance(expected, str) or not expected.startswith("sha256:"):
-        raise BackendSignatureError(
-            f"Backend {name!r}: content_hash must start with 'sha256:'"
-        )
+        raise BackendSignatureError(f"Backend {name!r}: content_hash must start with 'sha256:'")
     expected_hex = expected.split(":", 1)[1].strip().lower()
 
     if ":" in module_path:
@@ -491,9 +470,7 @@ def _verify_backend_content_hash(
         )
 
 
-def _canonical_json_payload(
-    *, meta: dict[str, Any], backends: list[Any]
-) -> bytes:
+def _canonical_json_payload(*, meta: dict[str, Any], backends: list[Any]) -> bytes:
     """Return the canonical-JSON bytes that are signed by the issuer.
 
     Uses ``sort_keys=True`` and the most compact separators so the signer
@@ -533,9 +510,7 @@ def _enforce_federal_manifest(
         )
 
     if name not in allowed_backends:
-        _emit_denied_log(
-            name, tier="federal", reason=f"'{name}' not in allowed_backends manifest"
-        )
+        _emit_denied_log(name, tier="federal", reason=f"'{name}' not in allowed_backends manifest")
         raise BackendSignatureError(
             f"Backend '{name}' is not in the allowed_backends manifest.  "
             "Add it under [[executor.allowed_backends]] in arcrun.toml."
@@ -602,9 +577,7 @@ def _emit_denied_log(name: str, *, tier: str, reason: str) -> None:
     )
 
 
-def _emit_sig_verified(
-    *, manifest_path: Path, issuer_did: str, sink: Any | None
-) -> None:
+def _emit_sig_verified(*, manifest_path: Path, issuer_did: str, sink: Any | None) -> None:
     """Emit backend.signature_verified AuditEvent."""
     logger.info(
         "backend.signature_verified manifest=%s issuer_did=%s",
@@ -641,9 +614,7 @@ def _emit_sig_invalid(
         )
 
 
-def _emit_content_mismatch(
-    *, name: str, expected: str, actual: str, sink: Any | None
-) -> None:
+def _emit_content_mismatch(*, name: str, expected: str, actual: str, sink: Any | None) -> None:
     """Emit backend.content_hash_mismatch AuditEvent."""
     logger.warning(
         "backend.content_hash_mismatch name=%s expected=sha256:%s actual=sha256:%s",

@@ -13,11 +13,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, AsyncIterator
-
-import pytest
 
 from arcllm.trace_store import JSONLTraceStore, TraceRecord
+
 from arcui.federated_store import FederatedTraceStore
 
 
@@ -136,7 +134,7 @@ class TestFederatedCursorPagination:
     async def test_paginates_across_three_stores_in_strict_timestamp_order(
         self, tmp_path: Path
     ) -> None:
-        # Three stores × 30 records each (90 total). Distinct timestamps so
+        # Three stores x 30 records each (90 total). Distinct timestamps so
         # ordering is unambiguous. Limit=10 → 9 pages expected.
         # Records are appended in chronological order (oldest first) — that
         # is the production agent flow, and JSONLTraceStore's query iterates
@@ -191,8 +189,7 @@ class TestFederatedCursorPagination:
             # Append oldest-first; JSONLTraceStore relies on append order
             # mirroring chronological order for newest-first iteration.
             recs = [
-                _record(agent=agent, ts=base + timedelta(seconds=10 * i + n))
-                for n in range(20)
+                _record(agent=agent, ts=base + timedelta(seconds=10 * i + n)) for n in range(20)
             ]
             stores.append(await _seed_store(ws, recs))
 
@@ -201,9 +198,7 @@ class TestFederatedCursorPagination:
         all_target: list[TraceRecord] = []
         cursor: str | None = None
         while True:
-            page, cursor = await federated.query(
-                limit=5, cursor=cursor, agent="target"
-            )
+            page, cursor = await federated.query(limit=5, cursor=cursor, agent="target")
             all_target.extend(page)
             if cursor is None:
                 break
@@ -217,17 +212,13 @@ class TestFederatedCursorPagination:
 
     async def test_malformed_cursor_decodes_to_empty(self) -> None:
         """A garbage cursor must not crash; treat as start-of-stream."""
-        watermark, skip_ids = FederatedTraceStore._decode_cursor(
-            "not-base64!@#"
-        )
+        watermark, skip_ids = FederatedTraceStore._decode_cursor("not-base64!@#")
         assert watermark is None
         assert skip_ids == frozenset()
 
         # Round-trip via public query() with bad cursor: should not raise.
         federated = FederatedTraceStore([])
-        recs, cursor = await federated.query(
-            limit=10, cursor="garbage-cursor"
-        )
+        recs, cursor = await federated.query(limit=10, cursor="garbage-cursor")
         assert recs == []
         assert cursor is None
 

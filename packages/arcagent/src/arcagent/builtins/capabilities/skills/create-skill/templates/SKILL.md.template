@@ -1,0 +1,45 @@
+---
+name: <skill-name-with-dashes>
+version: 1.0.0
+description: <one sentence — what this skill teaches>
+triggers: [<trigger phrase 1>, <trigger phrase 2>, <trigger phrase 3>]
+tools: [<tool 1>, <tool 2>]
+---
+
+## Resources
+
+(auto-filled by the loader)
+
+## Contract
+
+Inputs you must have:
+- <input>
+
+Outputs the agent must produce:
+- <output>
+
+## Knowledge
+
+<background and rationale — why this approach, what constraints>
+
+## Steps
+
+1. <first action>
+2. <second action>
+3. <third action>
+
+## Anti Patterns
+
+- **Don't** <specific failure mode>.
+- **Don't** <another specific failure mode>.
+
+## Examples
+
+```python
+<concrete tool invocation example>
+```
+
+## Validation
+
+- <observable check 1>
+- <observable check 2>

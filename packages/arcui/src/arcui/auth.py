@@ -36,9 +36,7 @@ logger = logging.getLogger(__name__)
 # sessions and 1K bootstrap markers cap memory at < 5 MB total.
 # Wave 2 TD-MED: env overrides for federal tuning without code edit.
 _DEFAULT_MAX_SESSIONS = int(os.environ.get("ARCUI_MAX_SESSIONS", "10000"))
-_DEFAULT_MAX_BOOTSTRAP_MARKERS = int(
-    os.environ.get("ARCUI_MAX_BOOTSTRAP_MARKERS", "1000")
-)
+_DEFAULT_MAX_BOOTSTRAP_MARKERS = int(os.environ.get("ARCUI_MAX_BOOTSTRAP_MARKERS", "1000"))
 
 
 class _BoundedLRU:
@@ -104,9 +102,7 @@ class SessionTracker:
         max_bootstrap_markers: int = _DEFAULT_MAX_BOOTSTRAP_MARKERS,
     ) -> None:
         self._sessions: _BoundedLRU = _BoundedLRU(max_sessions)
-        self._bootstrap_token_hashes: _BoundedLRU = _BoundedLRU(
-            max_bootstrap_markers
-        )
+        self._bootstrap_token_hashes: _BoundedLRU = _BoundedLRU(max_bootstrap_markers)
 
     @staticmethod
     def _hash(token: str) -> str:
@@ -121,9 +117,7 @@ class SessionTracker:
         """
         self._bootstrap_token_hashes.put(self._hash(token), None)
 
-    def observe(
-        self, token: str, remote_addr: str
-    ) -> tuple[str, str] | None:
+    def observe(self, token: str, remote_addr: str) -> tuple[str, str] | None:
         """Return (session_id, auth_method) on first sighting; None on repeat.
 
         First sighting per (token, remote_addr) returns the new session_id
@@ -140,6 +134,7 @@ class SessionTracker:
         if token_hash in self._bootstrap_token_hashes:
             return session_id, "browser_bootstrap"
         return session_id, "manual_token"
+
 
 # Paths exempt from bearer token enforcement.
 # /api/agent/* is handled by the WS endpoint's first-message auth.
@@ -189,9 +184,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._auth = auth_config
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
 
         # Skip auth for non-API routes (static files, dashboard SPA, etc.)
@@ -228,17 +221,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         if not token:
             logger.warning("auth.missing_token path=%s", path)
-            return JSONResponse(
-                {"error": "Missing token"}, status_code=401
-            )
+            return JSONResponse({"error": "Missing token"}, status_code=401)
 
         role = self._auth.validate_token(token)
 
         if role is None:
             logger.warning("auth.invalid_token path=%s", path)
-            return JSONResponse(
-                {"error": "Invalid token"}, status_code=401
-            )
+            return JSONResponse({"error": "Invalid token"}, status_code=401)
 
         # Agent tokens are for WebSocket connections only — block on REST (ASI03).
         if role == "agent":

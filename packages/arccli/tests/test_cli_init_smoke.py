@@ -61,16 +61,12 @@ class TestInitHelp:
 class TestInitTierOpen:
     def test_init_open_exits_zero(self, tmp_path: Path) -> None:
         """arc init --tier open --provider anthropic exits 0."""
-        result = _arc(
-            "init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path)
-        )
+        result = _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
 
     def test_init_open_output_nonempty(self, tmp_path: Path) -> None:
         """arc init produces non-empty stdout."""
-        result = _arc(
-            "init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path)
-        )
+        result = _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
         assert result.stdout.strip()
 
     def test_init_open_writes_config(self, tmp_path: Path) -> None:
@@ -86,9 +82,7 @@ class TestInitTierOpen:
 
     def test_init_shows_summary(self, tmp_path: Path) -> None:
         """arc init shows configuration summary."""
-        result = _arc(
-            "init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path)
-        )
+        result = _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
         assert "Tier" in result.stdout or "tier" in result.stdout.lower()
 
 

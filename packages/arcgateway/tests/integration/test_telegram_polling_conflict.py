@@ -38,10 +38,8 @@ from arcgateway.adapters.telegram import (
 # ── Fake exception classes (no library needed) ────────────────────────────────
 
 
-class _FakeConflict(Exception):
+class _FakeConflictError(Exception):
     """Simulates python-telegram-bot's Conflict exception."""
-
-    pass
 
 
 class _FakeNetworkError(Exception):
@@ -96,8 +94,8 @@ async def test_polling_conflict_bounded_retries() -> None:
     _set_fatal_error(retryable=True) so the runner can restart cleanly.
 
     This test drives the polling loop by:
-    1. Making start_polling raise _FakeConflict.
-    2. Patching _is_conflict_error to recognise _FakeConflict.
+    1. Making start_polling raise _FakeConflictError.
+    2. Patching _is_conflict_error to recognise _FakeConflictError.
     3. Patching asyncio.sleep to avoid real delays.
     4. Running the loop and asserting fatal_retryable=True is set.
     """
@@ -108,28 +106,33 @@ async def test_polling_conflict_bounded_retries() -> None:
     adapter._bot_id = 77
 
     # Raise conflict on start_polling
-    mock_app.updater.start_polling.side_effect = _FakeConflict(
+    mock_app.updater.start_polling.side_effect = _FakeConflictError(
         "Conflict: terminated by other getUpdates request"
     )
 
     # Patch _is_conflict_error to recognise our fake class
-    # Patch _is_network_error to return False for _FakeConflict
+    # Patch _is_network_error to return False for _FakeConflictError
     # Patch asyncio.sleep to skip waits
-    with patch(
-        "arcgateway.adapters.telegram._is_conflict_error",
-        side_effect=lambda e: isinstance(e, _FakeConflict),
-    ), patch(
-        "arcgateway.adapters.telegram._is_network_error",
-        side_effect=lambda e: isinstance(e, _FakeNetworkError),
-    ), patch(
-        "arcgateway.adapters.telegram.asyncio.sleep",
-        new_callable=AsyncMock,
-    ), patch.dict(
-        "sys.modules",
-        {
-            "telegram": MagicMock(),
-            "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-        },
+    with (
+        patch(
+            "arcgateway.adapters.telegram._is_conflict_error",
+            side_effect=lambda e: isinstance(e, _FakeConflictError),
+        ),
+        patch(
+            "arcgateway.adapters.telegram._is_network_error",
+            side_effect=lambda e: isinstance(e, _FakeNetworkError),
+        ),
+        patch(
+            "arcgateway.adapters.telegram.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+        patch.dict(
+            "sys.modules",
+            {
+                "telegram": MagicMock(),
+                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+            },
+        ),
     ):
         await adapter._run_polling_loop()
 
@@ -152,7 +155,7 @@ async def test_polling_conflict_escalates_after_max_retries() -> None:
     adapter._running = True
     adapter._bot_id = 77
 
-    mock_app.updater.start_polling.side_effect = _FakeConflict(
+    mock_app.updater.start_polling.side_effect = _FakeConflictError(
         "Conflict: terminated by other getUpdates request"
     )
 
@@ -160,26 +163,31 @@ async def test_polling_conflict_escalates_after_max_retries() -> None:
 
     def _conflict_side_effect(e: Any) -> bool:
         nonlocal conflict_call_count
-        if isinstance(e, _FakeConflict):
+        if isinstance(e, _FakeConflictError):
             conflict_call_count += 1
             return True
         return False
 
-    with patch(
-        "arcgateway.adapters.telegram._is_conflict_error",
-        side_effect=_conflict_side_effect,
-    ), patch(
-        "arcgateway.adapters.telegram._is_network_error",
-        return_value=False,
-    ), patch(
-        "arcgateway.adapters.telegram.asyncio.sleep",
-        new_callable=AsyncMock,
-    ), patch.dict(
-        "sys.modules",
-        {
-            "telegram": MagicMock(),
-            "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-        },
+    with (
+        patch(
+            "arcgateway.adapters.telegram._is_conflict_error",
+            side_effect=_conflict_side_effect,
+        ),
+        patch(
+            "arcgateway.adapters.telegram._is_network_error",
+            return_value=False,
+        ),
+        patch(
+            "arcgateway.adapters.telegram.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+        patch.dict(
+            "sys.modules",
+            {
+                "telegram": MagicMock(),
+                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+            },
+        ),
     ):
         # Simulate running the loop _CONFLICT_MAX_RETRIES + 1 times
         # by resetting conflict_attempts between runs (as the runner restarts)
@@ -209,21 +217,26 @@ async def test_network_error_reconnects() -> None:
 
     mock_app.updater.start_polling.side_effect = _FakeNetworkError("connection refused")
 
-    with patch(
-        "arcgateway.adapters.telegram._is_conflict_error",
-        return_value=False,
-    ), patch(
-        "arcgateway.adapters.telegram._is_network_error",
-        side_effect=lambda e: isinstance(e, _FakeNetworkError),
-    ), patch(
-        "arcgateway.adapters.telegram.asyncio.sleep",
-        new_callable=AsyncMock,
-    ), patch.dict(
-        "sys.modules",
-        {
-            "telegram": MagicMock(),
-            "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-        },
+    with (
+        patch(
+            "arcgateway.adapters.telegram._is_conflict_error",
+            return_value=False,
+        ),
+        patch(
+            "arcgateway.adapters.telegram._is_network_error",
+            side_effect=lambda e: isinstance(e, _FakeNetworkError),
+        ),
+        patch(
+            "arcgateway.adapters.telegram.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+        patch.dict(
+            "sys.modules",
+            {
+                "telegram": MagicMock(),
+                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+            },
+        ),
     ):
         await adapter._run_polling_loop()
 
@@ -250,21 +263,26 @@ async def test_network_error_escalates_after_max_retries() -> None:
 
     mock_app.updater.start_polling.side_effect = _FakeNetworkError("timeout")
 
-    with patch(
-        "arcgateway.adapters.telegram._is_conflict_error",
-        return_value=False,
-    ), patch(
-        "arcgateway.adapters.telegram._is_network_error",
-        side_effect=_network_side_effect,
-    ), patch(
-        "arcgateway.adapters.telegram.asyncio.sleep",
-        new_callable=AsyncMock,
-    ), patch.dict(
-        "sys.modules",
-        {
-            "telegram": MagicMock(),
-            "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-        },
+    with (
+        patch(
+            "arcgateway.adapters.telegram._is_conflict_error",
+            return_value=False,
+        ),
+        patch(
+            "arcgateway.adapters.telegram._is_network_error",
+            side_effect=_network_side_effect,
+        ),
+        patch(
+            "arcgateway.adapters.telegram.asyncio.sleep",
+            new_callable=AsyncMock,
+        ),
+        patch.dict(
+            "sys.modules",
+            {
+                "telegram": MagicMock(),
+                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+            },
+        ),
     ):
         for _ in range(_NETWORK_MAX_RETRIES):
             adapter._fatal_error = None
@@ -287,18 +305,22 @@ async def test_unhandled_error_is_not_retryable() -> None:
 
     mock_app.updater.start_polling.side_effect = ValueError("unexpected internal error")
 
-    with patch(
-        "arcgateway.adapters.telegram._is_conflict_error",
-        return_value=False,
-    ), patch(
-        "arcgateway.adapters.telegram._is_network_error",
-        return_value=False,
-    ), patch.dict(
-        "sys.modules",
-        {
-            "telegram": MagicMock(),
-            "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-        },
+    with (
+        patch(
+            "arcgateway.adapters.telegram._is_conflict_error",
+            return_value=False,
+        ),
+        patch(
+            "arcgateway.adapters.telegram._is_network_error",
+            return_value=False,
+        ),
+        patch.dict(
+            "sys.modules",
+            {
+                "telegram": MagicMock(),
+                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+            },
+        ),
     ):
         with pytest.raises(ValueError):
             await adapter._run_polling_loop()

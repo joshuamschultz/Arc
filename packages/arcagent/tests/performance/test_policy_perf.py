@@ -23,8 +23,8 @@ async def test_pipeline_p95_under_1ms_with_100_rules() -> None:
     from arcagent.core.tool_policy import (
         GlobalLayer,
         PolicyContext,
-        ToolCall,
         PolicyPipeline,
+        ToolCall,
     )
 
     # 100 denylist rules — none will match the read/grep tools we evaluate,
@@ -78,8 +78,8 @@ async def test_cache_accelerates_repeated_calls() -> None:
     from arcagent.core.tool_policy import (
         GlobalLayer,
         PolicyContext,
-        ToolCall,
         PolicyPipeline,
+        ToolCall,
     )
 
     deny_rules = {f"forbidden_{i}": f"rule {i}" for i in range(100)}

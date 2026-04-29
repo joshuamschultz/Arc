@@ -78,6 +78,7 @@ def _percentile(samples: list[float], p: float) -> float:
     idx = min(math.ceil(p / 100 * n) - 1, n - 1)
     return samples[max(0, idx)]
 
+
 # Max records to replay from TraceStore during warm_start().
 # Limits startup time while recovering recent history.
 _WARM_START_LIMIT = 500
@@ -222,9 +223,7 @@ class BucketedWindow:
             self._current_bucket_start = bucket_start
             return
 
-        elapsed_buckets = (
-            bucket_start - self._current_bucket_start
-        ) // self._bucket_duration
+        elapsed_buckets = (bucket_start - self._current_bucket_start) // self._bucket_duration
 
         if elapsed_buckets <= 0:
             return
@@ -239,9 +238,7 @@ class BucketedWindow:
                 idx = (self._current_index + i) % self._bucket_count
                 self._buckets[idx].reset()
 
-        self._current_index = (
-            self._current_index + elapsed_buckets
-        ) % self._bucket_count
+        self._current_index = (self._current_index + elapsed_buckets) % self._bucket_count
         self._current_bucket_start = bucket_start
 
     def ingest(self, record_data: dict[str, Any], now: float | None = None) -> None:
@@ -257,16 +254,18 @@ class BucketedWindow:
             # Walk from oldest to newest
             idx = (self._current_index + 1 + i) % self._bucket_count
             bucket = self._buckets[idx]
-            results.append({
-                "request_count": bucket.request_count,
-                "total_tokens": bucket.total_tokens,
-                "total_cost": round(bucket.total_cost, 6),
-                "latency_avg": (
-                    round(bucket.latency_sum / bucket.request_count, 1)
-                    if bucket.request_count > 0
-                    else 0.0
-                ),
-            })
+            results.append(
+                {
+                    "request_count": bucket.request_count,
+                    "total_tokens": bucket.total_tokens,
+                    "total_cost": round(bucket.total_cost, 6),
+                    "latency_avg": (
+                        round(bucket.latency_sum / bucket.request_count, 1)
+                        if bucket.request_count > 0
+                        else 0.0
+                    ),
+                }
+            )
         return results
 
     def snapshot(self) -> dict[str, Any]:
@@ -341,9 +340,7 @@ class BucketedWindow:
             "retry_count": total_retries,
             "latency_min": latency_min if total_requests > 0 else 0.0,
             "latency_max": latency_max if total_requests > 0 else 0.0,
-            "latency_avg": (
-                round(sum(all_latencies) / n, 1) if n > 0 else 0.0
-            ),
+            "latency_avg": (round(sum(all_latencies) / n, 1) if n > 0 else 0.0),
             "latency_p50": round(_percentile(all_latencies, 50), 1),
             "latency_p95": round(_percentile(all_latencies, 95), 1),
             "latency_p99": round(_percentile(all_latencies, 99), 1),
@@ -372,9 +369,9 @@ class RollingAggregator:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._windows: dict[str, BucketedWindow] = {
-            "1h": BucketedWindow(60, 60),       # 60 x 1min
-            "24h": BucketedWindow(24, 3600),     # 24 x 1hr
-            "7d": BucketedWindow(7, 86400),      # 7 x 1day
+            "1h": BucketedWindow(60, 60),  # 60 x 1min
+            "24h": BucketedWindow(24, 3600),  # 24 x 1hr
+            "7d": BucketedWindow(7, 86400),  # 7 x 1day
         }
 
     def ingest(self, record_data: dict[str, Any]) -> None:
@@ -415,13 +412,15 @@ class RollingAggregator:
             total_tokens = data["total_tokens"]
             total_cost = data["total_cost"]
             cost_per_token = total_cost / total_tokens if total_tokens > 0 else 0.0
-            models.append({
-                "model": model,
-                "total_cost": round(total_cost, 6),
-                "total_tokens": int(total_tokens),
-                "cost_per_token": round(cost_per_token, 10),
-                "request_count": int(data["request_count"]),
-            })
+            models.append(
+                {
+                    "model": model,
+                    "total_cost": round(total_cost, 6),
+                    "total_tokens": int(total_tokens),
+                    "cost_per_token": round(cost_per_token, 10),
+                    "request_count": int(data["request_count"]),
+                }
+            )
 
         # Sort by cost_per_token ascending (cheapest first)
         models.sort(key=lambda m: m["cost_per_token"])
@@ -440,11 +439,7 @@ class RollingAggregator:
                     potential_savings_usd += actual - hypothetical
 
         total_cost = snap.get("total_cost", 0.0)
-        savings_pct = (
-            (potential_savings_usd / total_cost * 100)
-            if total_cost > 0
-            else 0.0
-        )
+        savings_pct = (potential_savings_usd / total_cost * 100) if total_cost > 0 else 0.0
 
         return {
             "window": window,
@@ -498,18 +493,20 @@ class RollingAggregator:
                 err = data["error_count"]
                 success_rate = round((req - err) / req * 100, 1) if req > 0 else 0.0
 
-                rows.append({
-                    "name": name,
-                    "request_count": req,
-                    "error_count": err,
-                    "retry_count": data["retry_count"],
-                    "success_rate": success_rate,
-                    "total_cost": round(data["total_cost"], 6),
-                    "total_tokens": int(data["total_tokens"]),
-                    "latency_avg": round(sum(samples) / n, 1) if n > 0 else 0.0,
-                    "latency_p50": round(_percentile(samples, 50), 1),
-                    "latency_p95": round(_percentile(samples, 95), 1),
-                })
+                rows.append(
+                    {
+                        "name": name,
+                        "request_count": req,
+                        "error_count": err,
+                        "retry_count": data["retry_count"],
+                        "success_rate": success_rate,
+                        "total_cost": round(data["total_cost"], 6),
+                        "total_tokens": int(data["total_tokens"]),
+                        "latency_avg": round(sum(samples) / n, 1) if n > 0 else 0.0,
+                        "latency_p50": round(_percentile(samples, 50), 1),
+                        "latency_p95": round(_percentile(samples, 95), 1),
+                    }
+                )
             rows.sort(key=lambda r: r["request_count"], reverse=True)
             return rows
 
@@ -531,7 +528,7 @@ class RollingAggregator:
         (7 days) BEFORE acquiring the aggregator lock. Records past that
         horizon contribute to nothing and were previously being walked
         through every window's per-bucket math (3 lock takes per record)
-        only to be filtered out individually. At 100 agents × 10K records
+        only to be filtered out individually. At 100 agents x 10K records
         with most records older than 7d, this prefilter eliminates ~99%
         of the lock contention during cold start.
 
@@ -550,8 +547,7 @@ class RollingAggregator:
                 window._advance_to(now_mono)
 
         max_window_seconds = max(
-            w._bucket_count * w._bucket_duration
-            for w in self._windows.values()
+            w._bucket_count * w._bucket_duration for w in self._windows.values()
         )
 
         async for record in merge_by_timestamp(stores):
@@ -603,7 +599,10 @@ class RollingAggregator:
             return 0.0
 
     def _ingest_historical(
-        self, record_data: dict[str, Any], age_seconds: float, now_mono: float,
+        self,
+        record_data: dict[str, Any],
+        age_seconds: float,
+        now_mono: float,
     ) -> None:
         """Place a historical record into the correct bucket by age.
 

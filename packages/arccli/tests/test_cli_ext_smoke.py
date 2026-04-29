@@ -98,9 +98,7 @@ class TestExtValidate:
     def test_validate_valid_extension(self, tmp_path: Path) -> None:
         """arc ext validate passes on a valid extension file."""
         ext_file = tmp_path / "good_ext.py"
-        ext_file.write_text(
-            '"""Good extension."""\n\ndef extension(api):\n    pass\n'
-        )
+        ext_file.write_text('"""Good extension."""\n\ndef extension(api):\n    pass\n')
         result = _arc("ext", "validate", str(ext_file))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
         assert "OK" in result.stdout or "ok" in result.stdout.lower()
@@ -138,9 +136,7 @@ class TestExtInstall:
         Cleanup is not guaranteed — acceptable for smoke tests.
         """
         ext_file = tmp_path / "smoke_install_test.py"
-        ext_file.write_text(
-            '"""Smoke test extension."""\n\ndef extension(api):\n    pass\n'
-        )
+        ext_file.write_text('"""Smoke test extension."""\n\ndef extension(api):\n    pass\n')
         global_dir = Path.home() / ".arcagent" / "extensions"
         dest = global_dir / "smoke_install_test.py"
 

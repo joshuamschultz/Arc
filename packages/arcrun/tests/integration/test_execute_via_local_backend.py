@@ -11,7 +11,6 @@ import json
 
 import pytest
 
-from arcrun.backends import LocalBackend
 from arcrun.builtins.execute import make_execute_tool
 from arcrun.events import EventBus
 from arcrun.types import ToolContext
