@@ -35,16 +35,15 @@ from collections import deque
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from arcgateway import team_roster
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.registry import AgentRegistration, AgentRegistry
 from arcui.routes.agent_detail import routes as agent_detail_routes
 from arcui.routes.agents import routes as agent_routes
-from starlette.applications import Starlette
-from starlette.testclient import TestClient
-
 
 _ROOT = Path(__file__).resolve().parents[3]
 _INDEX = _ROOT / "packages/arcui/src/arcui/static/index.html"

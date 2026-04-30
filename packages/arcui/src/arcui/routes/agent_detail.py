@@ -332,7 +332,7 @@ async def get_skills(request: Request) -> JSONResponse:
         try:
             _merge(_scan_skills_dir(agent_id, global_skills.parent, "skills", "global"))
         except Exception:
-            pass
+            logger.debug("global skills scan failed", exc_info=True)
     # System-wide built-in skills shipped with arcagent (create-skill,
     # update-skill, create-tool, update-tool, ...). These are SKILL.md
     # folders — _scan_skills_dir already understands that convention.
@@ -344,7 +344,7 @@ async def get_skills(request: Request) -> JSONResponse:
                 agent_id, builtin_skills.parent, "skills", "builtin"
             ))
     except Exception:
-        pass
+        logger.debug("builtin skills scan failed", exc_info=True)
 
     return JSONResponse({"skills": skills})
 

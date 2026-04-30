@@ -63,16 +63,21 @@ class TestAgentDetail:
 
     def test_routes_into_existing_endpoints(self) -> None:
         text = _read("agent-detail.js")
-        # Hits the read endpoints registered in agent_detail.py
+        # Hits the read endpoints registered in agent_detail.py. Per-agent
+        # `/policy` returns bullets+raw inline; bullets are no longer
+        # fetched from `/policy/bullets` separately. Same with the bullet
+        # render path — `/policy/stats` is still consulted for the stat row.
         for ep in (
             "/api/agents/",
             "/config",
-            "/policy/bullets",
+            "/policy",
+            "/policy/stats",
             "/sessions",
             "/skills",
             "/tools",
             "/files/tree",
             "/stats",
+            "/traces",
         ):
             assert ep in text, f"agent-detail.js missing endpoint: {ep}"
 

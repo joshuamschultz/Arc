@@ -102,13 +102,14 @@ class TestRollingAggregator:
         agg = RollingAggregator()
         agg.ingest(_make_record())
 
-        for window in ("1h", "24h", "7d"):
+        for window in ("1h", "24h", "7d", "30d"):
             s = agg.stats(window)
             assert s["request_count"] == 1
 
     def test_stats_invalid_window(self):
+        # SPEC-022 added 30d. Error path uses an obviously-invalid window.
         agg = RollingAggregator()
-        result = agg.stats("30d")
+        result = agg.stats("999y")
         assert "error" in result
 
     def test_cost_efficiency_single_model(self):

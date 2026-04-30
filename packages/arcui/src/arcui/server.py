@@ -138,13 +138,18 @@ def create_app(
     # us belt-and-suspenders against the dev-loop bug where a restarted
     # server serves new HTML referencing new code but the browser keeps
     # the old JS in disk cache.
-    class _NoCacheStaticFiles(StaticFiles):  # type: ignore[misc]
-        async def get_response(self, path: str, scope: Any) -> Any:  # type: ignore[override]
+    class _NoCacheStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope: Any) -> Any:
             resp = await super().get_response(path, scope)
+            # Some response types (e.g. PlainTextResponse for 405) ship
+            # immutable header dicts under specific Starlette versions; the
+            # log-and-fall-through here is a defense-in-depth measure for
+            # those edge cases. The asset will still serve, just without
+            # the no-cache hint.
             try:
                 resp.headers["Cache-Control"] = "no-cache"
             except Exception:
-                pass
+                logger.debug("could not set Cache-Control on static asset", exc_info=True)
             return resp
 
     if _STATIC_DIR.exists():

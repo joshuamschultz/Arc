@@ -816,7 +816,11 @@ class TestEdgeCases:
         resp = client.get("/api/agents/alpha/config", headers=_viewer(auth))
         assert resp.status_code == 500
 
-    def test_skills_with_no_skills_dir_returns_empty(self, tmp_path):
+    def test_skills_with_no_skills_dir_returns_only_system_skills(self, tmp_path):
+        # SPEC-022 final round: agents always inherit system-wide built-in
+        # skills (create-skill, update-skill, create-tool, update-tool)
+        # shipped with arcagent. So an agent with no workspace/skills dir
+        # surfaces those builtins, not an empty list.
         team_root = tmp_path / "team"
         team_root.mkdir()
         agent = team_root / "beta_agent"
@@ -830,7 +834,18 @@ class TestEdgeCases:
         client = TestClient(app)
         resp = client.get("/api/agents/beta/skills", headers=_viewer(auth))
         assert resp.status_code == 200
-        assert resp.json() == {"skills": []}
+        body = resp.json()
+        skills = body["skills"]
+        # Workspace skills: 0 (no workspace/skills dir).
+        # Builtin skills: 4 known names from arcagent.builtins.capabilities.skills
+        sources = {s.get("source") for s in skills}
+        assert sources == {"builtin"} or sources == set(), \
+            f"expected only builtin skills, got sources={sources}"
+        # If arcagent is installed and has the canonical builtins, all 4 show up.
+        if skills:
+            names = {s["name"] for s in skills}
+            for must_have in ("create-skill", "update-skill", "create-tool", "update-tool"):
+                assert must_have in names, f"missing builtin skill: {must_have}"
 
     def test_sessions_no_sessions_dir(self, tmp_path):
         team_root = tmp_path / "team"

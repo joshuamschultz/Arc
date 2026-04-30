@@ -32,8 +32,8 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 
 def _find_arc() -> str | None:
