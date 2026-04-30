@@ -87,8 +87,13 @@ class UIReporterConfig(BaseModel):
 _TOKEN_FILE = Path.home() / ".arcagent" / "ui-token"
 
 
-# Probe budget — keep agent cold-start unaffected when no UI is running (NFR-5).
-_PROBE_TIMEOUT_SECONDS = 0.05
+# Probe budget — fast enough that "no UI running" doesn't add measurable
+# cold-start lag, generous enough that a real loopback HEAD on macOS (where
+# the first httpx.Client.head() reproducibly takes ~95ms for socket+SSL
+# context setup) doesn't false-negative. 50ms was the original budget, but
+# benchmarks showed cold loopback HEAD at 90-150ms — every chat session
+# was failing the probe and silently auto-disabling ui_reporter.
+_PROBE_TIMEOUT_SECONDS = 0.5
 
 
 def _open_token_file_secure(token_file: Path) -> tuple[str | None, str]:

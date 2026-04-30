@@ -7,9 +7,13 @@ serve() is the one-liner entry point for developers.
 from __future__ import annotations
 
 import logging
+from collections import deque as _deque
 from pathlib import Path
 from typing import Any
 
+from arcgateway import team_roster
+from arcgateway.file_events import default_bus as _default_file_bus
+from arcgateway.fs_watcher import WatcherManager
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
@@ -21,7 +25,9 @@ from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.connection import ConnectionManager
 from arcui.event_buffer import EventBuffer
+from arcui.file_change_bridge import FileChangeBridge
 from arcui.registry import AgentRegistry
+from arcui.routes import agent_detail as agent_detail_routes
 from arcui.routes import agent_ws as agent_ws_routes
 from arcui.routes import agents as agents_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
@@ -30,6 +36,7 @@ from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
 from arcui.routes import schedules as schedules_routes
 from arcui.routes import stats as stats_routes
+from arcui.routes import team_pages as team_pages_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import ws as ws_routes
 from arcui.subscription import SubscriptionManager
@@ -85,6 +92,7 @@ def create_app(
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
+    team_root: Path | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -94,6 +102,11 @@ def create_app(
         config_controller: ArcLLM ConfigController instance.
         agent_info: Agent metadata (name, did, model, provider) for UI display.
         max_agents: Maximum concurrent agent connections (default 100).
+        team_root: Path to ``team/`` directory containing ``<name>_agent/``
+            subdirs. arcgateway.team_roster walks this to enumerate the fleet
+            and arcgateway.fs_reader scopes file reads under each agent's
+            workspace. ``None`` disables fleet/agent-detail endpoints — they
+            return empty rosters and 404 for per-agent paths.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -114,21 +127,51 @@ def create_app(
         *ws_routes.routes,
         *agent_ws_routes.routes,
         *agents_routes.routes,
+        *agent_detail_routes.routes,
+        *team_pages_routes.routes,
     ]
 
-    # Mount static files if the directory exists
+    # Mount static files if the directory exists.
+    # `no-cache` (NOT `no-store`) means: browser MAY cache, but MUST
+    # revalidate with a conditional request before reuse. Combined with
+    # the per-startup cache-bust on asset URLs in index.html this gives
+    # us belt-and-suspenders against the dev-loop bug where a restarted
+    # server serves new HTML referencing new code but the browser keeps
+    # the old JS in disk cache.
+    class _NoCacheStaticFiles(StaticFiles):  # type: ignore[misc]
+        async def get_response(self, path: str, scope: Any) -> Any:  # type: ignore[override]
+            resp = await super().get_response(path, scope)
+            try:
+                resp.headers["Cache-Control"] = "no-cache"
+            except Exception:
+                pass
+            return resp
+
     if _STATIC_DIR.exists():
         routes.append(
             Mount(
                 "/assets",
-                app=StaticFiles(directory=str(_STATIC_DIR / "assets")),
+                app=_NoCacheStaticFiles(directory=str(_STATIC_DIR / "assets")),
             )
         )
 
     # Read index.html once at module-import time; serving from memory
     # avoids a 77KB disk read on every dashboard GET.
+    #
+    # SPEC-022 cache-bust: substitute `{{ARC_BUILD_ID}}` placeholders in
+    # asset URLs with a per-process uuid so the browser refetches every
+    # JS/CSS asset on every server restart. StaticFiles doesn't set
+    # Cache-Control, so without this the browser happily reuses a cached
+    # arc-shell.js across restarts and the user sees the old sidebar.
     index_path = _STATIC_DIR / "index.html"
-    cached_index_html = index_path.read_text() if index_path.exists() else None
+    if index_path.exists():
+        import uuid as _uuid
+        _build_id = _uuid.uuid4().hex[:12]
+        cached_index_html = index_path.read_text().replace(
+            "{{ARC_BUILD_ID}}", _build_id
+        )
+    else:
+        cached_index_html = None
 
     # Starlette lifespan replaces the deprecated `on_startup=` parameter.
     # The async context manager runs the startup half before the server
@@ -148,8 +191,16 @@ def create_app(
         try:
             yield
         finally:
-            # No shutdown work today; reserved for future cleanup.
-            pass
+            # SPEC-022 Phase 3: tear down all per-agent watchers cleanly.
+            # The bridge listener is best-effort detached; FileEventBus
+            # tolerates a stale handler for the duration of an emit.
+            wm = getattr(starlette_app.state, "watcher_manager", None)
+            if wm is not None:
+                await wm.shutdown()
+            bridge = getattr(starlette_app.state, "file_change_bridge", None)
+            bus = getattr(starlette_app.state, "file_event_bus", None)
+            if bridge is not None and bus is not None:
+                bridge.detach(bus)
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(AuthMiddleware, auth_config=auth)
@@ -181,11 +232,44 @@ def create_app(
     app.state.queue_modules = []
     # Bounded ring buffer of recent scheduler-layer UIEvents for warm-start
     # of the Schedule History card. Append-on-receive in agent_ws._receive.
-    from collections import deque as _deque
-
     app.state.schedule_history = _deque(maxlen=50)
     app.state.on_event_callbacks = []
     app.state.agent_info = agent_info or {}
+    # SPEC-022 Phase 2: arcgateway data plane wiring. team_root scopes
+    # all gateway fs reads; roster_provider walks it on each call so the
+    # online overlay reflects the current AgentRegistry state. Routes
+    # call this through app.state — they never import the registry or
+    # team_root directly.
+    app.state.team_root = team_root
+    # Bounded ring of recent gateway/UI audit events surfaced through the
+    # /api/agents/{id}/audit and fleet /api/team/audit endpoints. Phase 3
+    # populates this from the gateway audit sink; Phase 2 leaves it empty
+    # so route handlers have a stable contract from day one.
+    app.state.audit_buffer = _deque(maxlen=1000)
+    # SPEC-022 Phase 3: live-update plumbing. WatcherManager owns per-agent
+    # filesystem watchers (ref-counted so an agent stops being watched the
+    # moment the last browser stops looking). FileChangeBridge is the
+    # arcgateway.file_events → /ws fan-out — it attaches to the gateway's
+    # default bus so watcher emissions reach subscribed browser clients.
+    app.state.file_event_bus = _default_file_bus
+    app.state.watcher_manager = WatcherManager()
+    file_change_bridge = FileChangeBridge()
+    file_change_bridge.attach(_default_file_bus)
+    app.state.file_change_bridge = file_change_bridge
+
+    def _roster_provider() -> list[team_roster.RosterEntry]:
+        if app.state.team_root is None:
+            return []
+        # The WS handler assigns each connection a random uuid as agent_id,
+        # but the on-disk roster keys agents by their stable directory name
+        # (== `arcagent.toml [agent].name`). agent_name is what the team_roster
+        # uses for `agent_id`; matching the registry by agent_name + agent_id
+        # both is forward-compat for the day connections register by name.
+        agents = app.state.agent_registry.list_agents()
+        online = {a.agent_id for a in agents} | {a.agent_name for a in agents}
+        return team_roster.list_team(team_root=app.state.team_root, online_ids=online)
+
+    app.state.roster_provider = _roster_provider
 
     return app
 

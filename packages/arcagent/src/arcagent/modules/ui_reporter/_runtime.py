@@ -58,8 +58,17 @@ def configure(
     agent_name: str = "",
     agent_id: str = "",
     source_id: str = "",
+    llm_config: Any | None = None,
 ) -> None:
-    """Bind module state. Called once at agent startup."""
+    """Bind module state. Called once at agent startup.
+
+    Also starts the WebSocketTransport when the auto-enable probe passes.
+    The agent's module loader calls this for every enabled `[modules.X]`
+    section but does NOT call `UIReporterModule.startup()`, so the connect
+    logic must live here too — otherwise ui_reporter would silently never
+    push events to arcui (the bug that produced an always-empty
+    `app.state.agent_registry`).
+    """
     global _state
     cfg = UIReporterConfig(**(config or {}))
     _state = _State(
@@ -69,6 +78,80 @@ def configure(
         agent_name=agent_name,
         agent_id=agent_id or agent_name,
         source_id=source_id,
+    )
+
+    # If a transport was injected by the caller (tests usually) we're done.
+    if transport is not None:
+        return
+
+    if not cfg.enabled:
+        _logger.info("ui_reporter: explicitly disabled")
+        return
+
+    # Lazy import to avoid loading the probe machinery when the module is
+    # disabled or in environments without httpx.
+    from arcagent.modules.ui_reporter import _TOKEN_FILE, _should_auto_enable
+
+    enable, reason, file_token = _should_auto_enable(_TOKEN_FILE, cfg.url)
+    if not enable:
+        _logger.info("ui_reporter: not connecting (%s)", reason)
+        return
+
+    import os as _os
+
+    token = (
+        cfg.token
+        or _os.environ.get("ARCUI_AGENT_TOKEN", "")
+        or file_token
+        or ""
+    )
+    if not token:
+        _logger.warning("ui_reporter: probe ok but no token resolved")
+        return
+
+    try:
+        from arcui.transport_ws import WebSocketTransport
+    except ImportError:
+        _logger.warning("ui_reporter: arcui not installed; transport disabled")
+        return
+
+    model = ""
+    if llm_config is not None:
+        model = getattr(llm_config, "model", "") or ""
+    provider = model.split("/", 1)[0] if "/" in model else "unknown"
+
+    registration = {
+        "agent_name": agent_name,
+        "model": model,
+        "provider": provider,
+        "workspace": str(workspace),
+        "modules": [],
+    }
+    config_token = cfg.token
+
+    def _refresh_token() -> str:
+        if config_token:
+            return config_token
+        env_token = _os.environ.get("ARCUI_AGENT_TOKEN", "")
+        if env_token:
+            return env_token
+        try:
+            return _TOKEN_FILE.read_text().strip()
+        except OSError:
+            return token
+
+    new_transport = WebSocketTransport(
+        url=cfg.url,
+        token=token,
+        reconnect_cap=cfg.reconnect_max_interval,
+        buffer_size=cfg.buffer_size,
+        registration=registration,
+        token_provider=_refresh_token,
+    )
+    new_transport.start()
+    _state.transport = new_transport
+    _logger.info(
+        "ui_reporter: connected to %s as agent_name=%s", cfg.url, agent_name
     )
 
 

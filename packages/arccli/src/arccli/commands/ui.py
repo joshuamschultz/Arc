@@ -228,6 +228,7 @@ def _start(args: argparse.Namespace) -> None:
     agent_token: str | None = getattr(args, "agent_token", None)
     max_agents: int = getattr(args, "max_agents", 100)
     show_tokens: bool = getattr(args, "show_tokens", False)
+    no_browser: bool = getattr(args, "no_browser", False)
 
     config_dict: dict[str, str] = {}
     if viewer_token:
@@ -248,10 +249,19 @@ def _start(args: argparse.Namespace) -> None:
     # are mounted (Wave 2 simplification: was a one-line helper).
     trace_store = FederatedTraceStore(stores) if stores else None
 
+    team_root_arg: str | None = getattr(args, "team_root", None)
+    team_root: Path | None
+    if team_root_arg:
+        team_root = Path(team_root_arg).expanduser().resolve()
+    else:
+        default = Path.cwd() / "team"
+        team_root = default.resolve() if default.is_dir() else None
+
     app = create_app(
         auth_config=auth,
         max_agents=max_agents,
         trace_store=trace_store,
+        team_root=team_root,
     )
 
     is_loopback = host in LOOPBACK_HOSTS
@@ -280,7 +290,7 @@ def _start(args: argparse.Namespace) -> None:
     if trace_store is not None and stores:
         asyncio.run(app.state.aggregator.warm_start_multi(stores))
 
-    if is_loopback:
+    if is_loopback and not no_browser:
         viewer_token_value = app.state.auth_config.viewer_token
 
         # SPEC-019 T5.3: mark the bootstrapped token so AuthMiddleware emits
@@ -460,7 +470,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--operator-token", dest="operator_token", default=None)
     p_start.add_argument("--agent-token", dest="agent_token", default=None)
     p_start.add_argument("--max-agents", dest="max_agents", type=int, default=100)
+    p_start.add_argument(
+        "--team-root",
+        dest="team_root",
+        default=None,
+        help=(
+            "Directory containing <name>_agent/ subdirs. SPEC-022 routes "
+            "(/api/team/roster, /api/agents/{id}/...) discover agents from "
+            "here. Defaults to ./team if it exists, else None."
+        ),
+    )
     p_start.add_argument("--show-tokens", dest="show_tokens", action="store_true", default=False)
+    p_start.add_argument(
+        "--no-browser",
+        dest="no_browser",
+        action="store_true",
+        default=False,
+        help="Do not auto-open a browser tab on loopback start. Useful for tests, "
+        "headless boxes, and developers who already have a tab open.",
+    )
 
     # ── tail ───────────────────────────────────────────────────────────
     p_tail = subs.add_parser(

@@ -70,7 +70,7 @@ class EventBuffer:
             else:
                 raw_events.append(item)
 
-        if ui_events and has_sub_mgr:
+        if ui_events and self._sub_mgr is not None:
             for event in ui_events:
                 self._sub_mgr.broadcast_filtered(event)
         elif ui_events and has_clients:

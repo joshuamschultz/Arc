@@ -29,13 +29,44 @@ async def list_agents(request: Request) -> JSONResponse:
 
 
 async def get_agent(request: Request) -> JSONResponse:
-    """GET /api/agents/{id} — Agent details."""
+    """GET /api/agents/{id} — Agent details.
+
+    Returns live registration if the agent is currently connected, otherwise
+    falls back to the disk-discovered RosterEntry (SPEC-022) so offline
+    agents still surface their identity, model, and workspace path.
+    """
     agent_id = request.path_params["id"]
     registry = request.app.state.agent_registry
     entry = registry.get(agent_id)
-    if entry is None:
-        return JSONResponse({"error": "Agent not found"}, status_code=404)
-    return JSONResponse({"agent": entry.registration.model_dump()})
+    if entry is not None:
+        meta = entry.registration.model_dump()
+        meta.setdefault("agent_id", agent_id)
+        meta["online"] = True
+        return JSONResponse(meta)
+
+    # Roster fallback — read-only agent metadata from arcagent.toml on disk.
+    roster_provider = getattr(request.app.state, "roster_provider", None)
+    if roster_provider is not None:
+        for r in roster_provider():
+            if r.agent_id == agent_id:
+                return JSONResponse(
+                    {
+                        "agent_id": r.agent_id,
+                        "name": r.name,
+                        "did": r.did,
+                        "org": r.org,
+                        "type": r.type,
+                        "model": r.model,
+                        "provider": r.provider,
+                        "online": False,
+                        "display_name": r.display_name,
+                        "color": r.color,
+                        "role_label": r.role_label,
+                        "hidden": r.hidden,
+                        "workspace_path": r.workspace_path,
+                    }
+                )
+    return JSONResponse({"error": "Agent not found"}, status_code=404)
 
 
 async def control_agent(request: Request) -> JSONResponse:

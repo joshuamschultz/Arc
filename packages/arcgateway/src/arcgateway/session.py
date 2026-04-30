@@ -193,7 +193,7 @@ class SessionRouter:
         self._pending_tasks: set[asyncio.Task[None]] = set()
 
         # StreamBridge adapter wiring (optional — no-op when None).
-        self._adapter: _AdapterProtocol | None = adapter  # type: ignore[assignment]
+        self._adapter: _AdapterProtocol | None = adapter
         self._delivery_target_factory = delivery_target_factory
         self._stream_bridge = StreamBridge()
 

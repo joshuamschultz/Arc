@@ -145,7 +145,32 @@ from arcgateway import (
 
     DeliveryTarget,          # parsed "platform:chat_id[:thread_id]" address
 )
+
+# SPEC-022 — agent data plane (read-only)
+from arcgateway import (
+    fs_reader,               # read_file() / list_tree() with audit + size cap
+    fs_watcher,              # WatcherManager (lazy, ref-counted, watchfiles+poll)
+    policy_parser,           # parse_bullets() — pure ACE bullet parser
+    team_roster,             # list_team() — discover agents from team/<id>_agent/
+    agent_config,            # load_ui_section() — optional [ui] in arcagent.toml
+    file_events,              # FileChangeEvent + FileEventBus async pub/sub
+)
 ```
+
+### Agent data plane (SPEC-022)
+
+The `fs_reader`, `fs_watcher`, `policy_parser`, `team_roster`, `agent_config`, and `file_events` modules together form the **single read API for `team/<agent>/...`**. arcui consumes them in-process; nothing else may. ADR-020 explains why this lives in gateway.
+
+| Module | Responsibility |
+|--------|----------------|
+| `fs_reader` | All read access. `read_file(scope, agent_id, agent_workspace, rel_path, caller_did)` and `list_tree(...)`. Path traversal blocked, size capped at 1 MB, depth-limited tree. Read-only by structure (no write methods exist). `scope: agent\|team\|shared` arg from day one — only `agent` is wired today; `team` and `shared` raise `NotImplementedError` for forward-compat. |
+| `fs_watcher` | Per-agent watcher lifecycle. `WatcherManager.subscribe(agent_id, workspace_root)` lazy-starts a watcher, ref-counted; `unsubscribe()` decrements and tears down at zero. Uses `watchfiles` when available, polls stdlib mtime otherwise (D-007). |
+| `policy_parser` | Pure parser for ACE policy bullets `- [P##] <text> {score:N, ...}`. Text in / dataclasses out. No I/O coupling. Same parser used in arcui detail Policy tab and fleet Policy Engine page. |
+| `team_roster` | `list_team(team_root, online_ids) -> list[RosterEntry]`. Walks `team/*_agent/arcagent.toml`, applies `[ui]` overrides, overlays online/offline status from caller-supplied set. |
+| `agent_config` | `load_ui_section(toml_dict) -> UISection`. Optional `[ui]` block: `display_name`, `color`, `role_label`, `hidden`. ADR-021. |
+| `file_events` | `FileChangeEvent` dataclass + `FileEventBus` in-process async pub/sub. Bus is fanout — every subscriber sees every event. Audit emission is direct via `arcgateway.audit.emit_event` (D-022-B). |
+
+Audit events emitted on every fs op: `gateway.fs.read`, `gateway.fs.tree`, `gateway.fs.changed`. Each row carries `caller_did`, `agent_id`, `path`, `scope` for NIST AU-2.
 
 ### How the runner stays resilient
 

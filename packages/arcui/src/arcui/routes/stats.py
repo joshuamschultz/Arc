@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+if TYPE_CHECKING:
+    from arcui.aggregator import RollingAggregator
+
 # NIST SI-10: Allowlist valid window values at the API boundary
-_VALID_WINDOWS = frozenset({"1h", "24h", "7d"})
+_VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
 
 
 def _validated_window(request: Request) -> str | None:
@@ -18,7 +23,9 @@ def _validated_window(request: Request) -> str | None:
     return window
 
 
-def _get_aggregator_for_request(request: Request) -> tuple[object | None, JSONResponse | None]:
+def _get_aggregator_for_request(
+    request: Request,
+) -> tuple[RollingAggregator | None, JSONResponse | None]:
     """Return the appropriate aggregator: per-agent or global.
 
     If ``?agent_id=`` is provided, looks up the per-agent aggregator
@@ -51,7 +58,7 @@ async def get_stats(request: Request) -> JSONResponse:
 
     window = _validated_window(request)
     if window is None:
-        return JSONResponse({"error": "Invalid window. Use 1h, 24h, or 7d."}, status_code=400)
+        return JSONResponse({"error": "Invalid window. Use 1h, 24h, 7d, or 30d."}, status_code=400)
     return JSONResponse(aggregator.stats(window))
 
 
@@ -68,7 +75,7 @@ async def get_timeseries(request: Request) -> JSONResponse:
 
     window = _validated_window(request)
     if window is None:
-        return JSONResponse({"error": "Invalid window. Use 1h, 24h, or 7d."}, status_code=400)
+        return JSONResponse({"error": "Invalid window. Use 1h, 24h, 7d, or 30d."}, status_code=400)
     return JSONResponse(aggregator.timeseries(window))
 
 
@@ -103,7 +110,7 @@ async def get_performance(request: Request) -> JSONResponse:
 
     window = _validated_window(request)
     if window is None:
-        return JSONResponse({"error": "Invalid window. Use 1h, 24h, or 7d."}, status_code=400)
+        return JSONResponse({"error": "Invalid window. Use 1h, 24h, 7d, or 30d."}, status_code=400)
     return JSONResponse(aggregator.performance(window))
 
 

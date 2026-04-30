@@ -20,6 +20,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "tomlkit>=0.12",
     "arcllm>=0.1",
+    "arcgateway>=0.2",
     "websockets>=12.0",
 ]
 

@@ -7,6 +7,7 @@ specific agent + layer combinations. Verifies only matching events arrive.
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from arcui.connection import ConnectionManager
 from arcui.event_buffer import EventBuffer
@@ -16,7 +17,7 @@ from arcui.types import UIEvent
 
 def _make_event(
     agent_id: str,
-    layer: str,
+    layer: Literal["llm", "run", "agent", "team", "scheduler"],
     event_type: str = "test",
     team: str | None = None,
     sequence: int = 0,

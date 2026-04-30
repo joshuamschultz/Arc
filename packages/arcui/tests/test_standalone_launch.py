@@ -1,13 +1,26 @@
-"""Standalone launch tests for `arc ui start`.
+"""End-to-end smoke for ``arc ui start``.
 
-Verifies:
-- `arc ui start` can run without any agent process.
-- It opens the specified port.
-- Accepts a WebSocket connection.
-- Terminates cleanly when SIGTERM is sent.
+One subprocess, multiple assertions. Replaces an earlier suite that booted
+a separate subprocess per assertion — each of those was opening a real
+browser tab on a random ephemeral port because the parent's pytest
+``webbrowser.open`` mock does not propagate to subprocesses.
 
-These are subprocess tests — they start a real process and make real
-network connections to verify end-to-end behavior.
+Strategy
+--------
+* Use the canonical port (``8420``) so the test exercises the same address
+  developers see in production. If 8420 is already bound (e.g. the
+  developer is running ``arc ui start`` themselves), skip rather than fail.
+* Pass ``--no-browser`` so even on loopback no browser tab is launched.
+* Spin up the server **once** and run every assertion (port open, health,
+  WS auth_ok, clean SIGTERM) against the same process.
+
+What this test is NOT
+---------------------
+* Frontend rendering / CSS / DOM — a Playwright suite (Phase 8.4) is the
+  right tool for that. This is a process-level smoke for the launcher.
+* Subprocess port-allocator / signal-handler unit coverage — those live
+  in :mod:`arccli.tests.test_ui_start_launcher` and exercise the helpers
+  directly without spawning anything.
 """
 
 from __future__ import annotations
@@ -22,8 +35,10 @@ from pathlib import Path
 import pytest
 
 _ARC = Path(__file__).parent.parent.parent.parent.parent / "arccli" / ".venv" / "bin" / "arc"
-# Fall back to the shared .venv at the root
 _ARC_FALLBACK = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
+
+_PORT = 8420
+_HOST = "127.0.0.1"
 
 
 def _arc_bin() -> Path:
@@ -34,15 +49,22 @@ def _arc_bin() -> Path:
     raise FileNotFoundError("arc binary not found — ensure venv is set up")
 
 
-def _free_port() -> int:
-    """Find a free TCP port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def _port_busy(port: int, host: str = _HOST) -> bool:
+    """True if something is actively listening on (host, port).
+
+    A simple ``bind`` would also flag TIME_WAIT sockets left behind by a
+    previous test run as busy. uvicorn itself binds with SO_REUSEADDR, so
+    we match its semantics: only refuse if the port is in active LISTEN.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=0.3):
+            return True
+    except (ConnectionRefusedError, OSError):
+        return False
 
 
-def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0) -> bool:
-    """Poll until port accepts connections or timeout expires."""
+def _wait_for_port(port: int, host: str = _HOST, timeout: float = 12.0) -> bool:
+    """Poll until the port accepts connections or timeout expires."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -53,126 +75,73 @@ def _wait_for_port(port: int, host: str = "127.0.0.1", timeout: float = 10.0) ->
     return False
 
 
-class TestStandaloneLaunch:
-    """arc ui start runs without any agent process."""
+def test_arc_ui_start_smoke() -> None:
+    """End-to-end: ``arc ui start`` boots, accepts HTTP + WS, exits clean.
 
-    def test_starts_on_specified_port(self) -> None:
-        """arc ui start binds the given port and accepts TCP connections."""
-        port = _free_port()
-        proc = subprocess.Popen(
-            [str(_arc_bin()), "ui", "start", "--port", str(port), "--show-tokens"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+    Single subprocess. Single test. Multiple assertions in lock-step so
+    the boot cost is paid once.
+    """
+    if _port_busy(_PORT):
+        pytest.skip(
+            f"port {_PORT} already in use — kill the running `arc ui start` "
+            f"before re-running this test"
         )
-        try:
-            opened = _wait_for_port(port, timeout=12.0)
-            assert opened, f"Server did not open port {port} within 12s"
-        finally:
-            proc.send_signal(signal.SIGTERM)
-            proc.wait(timeout=5)
 
-    def test_prints_port_in_output(self) -> None:
-        """arc ui start prints the port number in its startup output.
+    import websockets.sync.client  # type: ignore[import-untyped]
 
-        The port appears in uvicorn's log (stderr) in the form
-        'Uvicorn running on http://...<port>'. The test checks stdout+stderr
-        combined because Python's _write() calls may be buffered until after
-        uvicorn.run() completes.
-        """
-        port = _free_port()
-        proc = subprocess.Popen(
-            [str(_arc_bin()), "ui", "start", "--port", str(port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+    proc = subprocess.Popen(
+        [
+            str(_arc_bin()),
+            "ui",
+            "start",
+            "--port",
+            str(_PORT),
+            "--viewer-token",
+            "test-viewer-tok",
+            "--no-browser",
+            "--show-tokens",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        # 1. Port opens within the boot budget.
+        assert _wait_for_port(_PORT), f"server did not bind {_PORT} within 12s"
+
+        # 2. /api/health responds 200 with status ok (no agent attached).
+        import urllib.request
+
+        with urllib.request.urlopen(
+            f"http://{_HOST}:{_PORT}/api/health", timeout=3
+        ) as resp:
+            body = json.loads(resp.read())
+        assert body == {"status": "ok"}
+
+        # 3. /ws first-message auth round-trips with the supplied token.
+        with websockets.sync.client.connect(
+            f"ws://{_HOST}:{_PORT}/ws", open_timeout=5
+        ) as ws:
+            ws.send(json.dumps({"token": "test-viewer-tok"}))
+            resp = json.loads(ws.recv(timeout=5))
+            assert resp.get("type") == "auth_ok", f"expected auth_ok, got {resp}"
+            assert resp.get("role") == "viewer"
+
+        # 4. SIGTERM exits cleanly within the shutdown budget.
+        proc.send_signal(signal.SIGTERM)
         try:
-            _wait_for_port(port, timeout=12.0)
-            proc.send_signal(signal.SIGTERM)
             stdout, stderr = proc.communicate(timeout=8)
-            combined = stdout.decode() + stderr.decode()
-            assert str(port) in combined, (
-                f"Port {port} not mentioned in output.\n"
-                f"stdout: {stdout.decode()!r}\nstderr: {stderr.decode()!r}"
-            )
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+        except subprocess.TimeoutExpired:
+            pytest.fail("process did not terminate within 8s after SIGTERM")
 
-    def test_accepts_websocket_connection(self) -> None:
-        """arc ui start accepts a WebSocket connection from a browser client."""
-        import websockets.sync.client  # type: ignore[import-untyped]
-
-        port = _free_port()
-        proc = subprocess.Popen(
-            [
-                str(_arc_bin()),
-                "ui",
-                "start",
-                "--port",
-                str(port),
-                "--viewer-token",
-                "test-viewer-tok",
-                "--show-tokens",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        # 5. uvicorn logged the real bind address — guards against false
+        # passes where the subprocess crashed and a stale TIME_WAIT entry
+        # tricked the port poll. uvicorn writes startup banners to stderr.
+        combined = stdout.decode() + stderr.decode()
+        assert f"{_HOST}:{_PORT}" in combined, (
+            f"server banner missing port {_PORT} — process likely crashed.\n"
+            f"stdout: {stdout!r}\nstderr: {stderr!r}"
         )
-        try:
-            opened = _wait_for_port(port, timeout=12.0)
-            assert opened, "Server did not open port"
-
-            # Connect as a browser viewer
-            with websockets.sync.client.connect(f"ws://127.0.0.1:{port}/ws", open_timeout=5) as ws:
-                ws.send(json.dumps({"token": "test-viewer-tok"}))
-                resp = json.loads(ws.recv(timeout=5))
-                assert resp.get("type") == "auth_ok", f"Expected auth_ok, got {resp}"
-                assert resp.get("role") == "viewer"
-
-        finally:
-            proc.send_signal(signal.SIGTERM)
-            proc.wait(timeout=5)
-
-    def test_sigterm_terminates_cleanly(self) -> None:
-        """SIGTERM causes arc ui start to exit without a non-zero return code."""
-        port = _free_port()
-        proc = subprocess.Popen(
-            [str(_arc_bin()), "ui", "start", "--port", str(port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        try:
-            _wait_for_port(port, timeout=12.0)
-            proc.send_signal(signal.SIGTERM)
-            try:
-                proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                pytest.fail("Process did not terminate within 8s after SIGTERM")
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
-
-    def test_no_agent_dependency_required(self) -> None:
-        """arc ui start must not fail just because no agent is connected."""
-        port = _free_port()
-        proc = subprocess.Popen(
-            [str(_arc_bin()), "ui", "start", "--port", str(port)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        try:
-            opened = _wait_for_port(port, timeout=12.0)
-            assert opened, "Server failed to start — may have agent dependency issue"
-            # Verify health endpoint responds without any agent connected
-            import urllib.request
-
-            req = urllib.request.Request(f"http://127.0.0.1:{port}/api/health")
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                body = json.loads(resp.read())
-            assert body.get("status") == "ok"
-        finally:
-            proc.send_signal(signal.SIGTERM)
-            proc.wait(timeout=5)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

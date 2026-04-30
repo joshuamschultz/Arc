@@ -187,6 +187,61 @@ The dashboard surfaces:
 
 `arc ui tail` gives you the same data as JSONL on stdout — pipe it into `jq`, `grep`, or any structured-log tool.
 
+### SPEC-022 Pages (`?page=...`)
+
+The dashboard is a single-page app driven by `?page=&agent=` on the URL bar. Bookmark a tab and the deep-link reopens to it.
+
+| Page | Path | Source |
+|------|------|--------|
+| Agent Fleet | `?page=agents` | `/api/team/roster` — total + live count, card grid, online/offline filter |
+| Agent Detail | `?page=agent-detail&agent=<id>` | 9 lazy-loaded tabs: Overview · Identity · Sessions · Skills · Memory · Policy · Tools · Telemetry · Files |
+| Tasks | `?page=tasks` | `/api/team/tasks` — across all agents, filter by status |
+| Tools & Skills | `?page=tools-skills` | `/api/team/tools-skills` — tools matrix + skills directory |
+| Security & Audit | `?page=security` | `/api/team/audit` + control actions log + policy denials + connection security panel |
+| Policy Engine | `?page=policy` | `/api/team/policy/{bullets,stats}` — fleet-wide ACE bullets with score-tiered rendering |
+| LLM Telemetry | `?page=telemetry` | original SPEC-015 surface — overview, traces, cost |
+| Settings | `?page=settings` | arcllm config (PATCH `/api/arcllm-config`) |
+
+### WS Subscribe Protocol (SPEC-022)
+
+In addition to the existing event_batch stream, `/ws` accepts:
+
+```json
+// Browser → server
+{"type": "subscribe:agent",   "agent_id": "alpha"}
+{"type": "unsubscribe:agent", "agent_id": "alpha"}
+
+// Server → browser
+{"type": "file_change", "agent_id": "alpha",
+ "event_type": "policy:bullets_updated",
+ "path": "workspace/policy.md",
+ "payload": {"bullets": [...]}}
+```
+
+Page-specific event mapping:
+
+| Tab / Page | Subscribed events |
+|------------|-------------------|
+| Overview | `config:updated`, `pulse:updated`, `tasks:updated`, `schedules:updated` |
+| Sessions | `session:changed` |
+| Memory | `memory:updated`, `skills:updated` |
+| Policy | `policy:bullets_updated` |
+| Files | all of the above |
+| Agents fleet | `agent:online`, `agent:offline`, `roster:changed` |
+
+Reconnect handler re-fires `subscribe:agent` for every tracked agent automatically.
+
+### Vendored Frontend Infrastructure
+
+Air-gap-friendly: no CDN dependency, all assets vendored under `static/assets/`.
+
+- `prism.min.js` (15.6 KB, MIT — concatenation of prism-core + python + toml + json + javascript) and `prism.css` (okaidia theme)
+- `markdown.js` — minimal renderer (~115 LOC). HTML-escapes input. Supports h1-h6, paragraphs, ul/ol, code fences (lang-class for Prism), blockquote, inline code, bold, italic, links.
+- `file-tree.js` — `ARC.FileTree.mount(rootEl, {agentId, fetchTree, fetchFile})`. Folder expand/collapse persisted under `arcui:tree:<agent_id>:<path>` localStorage key.
+- `policy-bullet.js` — `ARC.PolicyBullet.{render, renderList, scoreTier, sortBy, filterBy}`. Pure helpers; one component for both detail Policy tab and fleet Policy Engine page.
+- `event-drawer.js` — singleton right-side drawer for inspecting any event payload. ESC-to-close.
+- `audit-viewer.js` — paginated table over a fetchPage callback; row click opens EventDrawer.
+
 ---
 
 ## 🛡️ Security Architecture

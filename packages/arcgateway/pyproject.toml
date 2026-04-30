@@ -23,6 +23,7 @@ dependencies = [
     "pydantic>=2.0,<3",
     "httpx>=0.27,<1",
     "arc-agent>=0.2",
+    "watchfiles>=0.21",
 ]
 
 # ── Optional extras — adapters are tier-3 modular (PLAN T1.7) ────────────────
@@ -72,7 +73,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # CLI is a user-facing text interface; print() is correct output mechanism here
 "src/arcgateway/cli.py" = ["T201"]
-"tests/**/*.py" = ["S101", "S105", "S106", "S108", "E402", "E501", "N806", "E741", "B007", "B017", "S603", "RUF043", "RUF059", "F811", "F821", "RUF003"]
+"tests/**/*.py" = ["S101", "S105", "S106", "S108", "E402", "E501", "N802", "N806", "E741", "B007", "B017", "S603", "RUF043", "RUF059", "F811", "F821", "RUF003"]
 # Exception names are SDD-018 §3.1 public API contract; cannot rename.
 # PostgresPairingStore stub has intentionally unused 'dsn' param (deferred impl T1.8.4).
 "src/arcgateway/pairing.py" = ["N818"]

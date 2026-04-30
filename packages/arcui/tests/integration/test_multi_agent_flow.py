@@ -7,6 +7,7 @@ SubscriptionManager → delivered to browser queue.
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from arcui.aggregator import RollingAggregator
 from arcui.connection import ConnectionManager
@@ -19,7 +20,7 @@ from arcui.types import UIEvent
 def _make_event(
     agent_id: str = "agent-1",
     agent_name: str = "test-agent",
-    layer: str = "llm",
+    layer: Literal["llm", "run", "agent", "team", "scheduler"] = "llm",
     event_type: str = "call_complete",
     sequence: int = 0,
 ) -> UIEvent:

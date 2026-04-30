@@ -1,6 +1,6 @@
 """RollingAggregator — time-bucketed aggregation of TraceRecords.
 
-Three windows: 1h (60 x 1min), 24h (24 x 1hr), 7d (7 x 1day).
+Four windows: 1h (60 x 1min), 24h (24 x 1hr), 7d (7 x 1day), 30d (30 x 1day).
 Uses simple sorted-sample percentiles (no ddsketch dependency).
 """
 
@@ -360,18 +360,24 @@ class BucketedWindow:
 
 
 class RollingAggregator:
-    """Three rolling windows: 1h, 24h, 7d.
+    """Four rolling windows: 1h, 24h, 7d, 30d.
 
     Thread-safe. All mutations go through ingest() which acquires the lock.
     stats() returns a snapshot for the requested window.
+
+    The 30d window was added so the global Telemetry page shows historical
+    activity for agents that have not pushed traces recently — without it,
+    a workspace whose newest trace is N>7 days old looks identical to one
+    with no traces at all.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._windows: dict[str, BucketedWindow] = {
-            "1h": BucketedWindow(60, 60),  # 60 x 1min
-            "24h": BucketedWindow(24, 3600),  # 24 x 1hr
-            "7d": BucketedWindow(7, 86400),  # 7 x 1day
+            "1h": BucketedWindow(60, 60),       # 60 x 1min
+            "24h": BucketedWindow(24, 3600),    # 24 x 1hr
+            "7d": BucketedWindow(7, 86400),     # 7 x 1day
+            "30d": BucketedWindow(30, 86400),   # 30 x 1day
         }
 
     def ingest(self, record_data: dict[str, Any]) -> None:
@@ -385,7 +391,7 @@ class RollingAggregator:
         """Return aggregated stats for the specified window."""
         w = self._windows.get(window)
         if w is None:
-            return {"error": f"Unknown window: {window}. Use 1h, 24h, or 7d."}
+            return {"error": f"Unknown window: {window}. Use 1h, 24h, 7d, or 30d."}
         with self._lock:
             snap = w.snapshot()
         snap["window"] = window
@@ -395,7 +401,7 @@ class RollingAggregator:
         """Return per-bucket timeseries data for chart rendering."""
         w = self._windows.get(window)
         if w is None:
-            return {"error": f"Unknown window: {window}. Use 1h, 24h, or 7d."}
+            return {"error": f"Unknown window: {window}. Use 1h, 24h, 7d, or 30d."}
         with self._lock:
             buckets = w.timeseries()
         return {"window": window, "buckets": buckets}
@@ -454,7 +460,7 @@ class RollingAggregator:
         """Compute per-model and per-agent performance with percentiles."""
         w = self._windows.get(window)
         if w is None:
-            return {"error": f"Unknown window: {window}. Use 1h, 24h, or 7d."}
+            return {"error": f"Unknown window: {window}. Use 1h, 24h, 7d, or 30d."}
 
         # Collect raw latency samples per model and per agent across buckets
         model_agg: dict[str, dict[str, Any]] = {}

@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from arcllm.trace_store import TraceRecord, TraceStore
@@ -32,8 +32,8 @@ from arcllm.trace_store import TraceRecord, TraceStore
 class FederatedTraceStore:
     """Read-only TraceStore Protocol implementation that fans out across N stores."""
 
-    def __init__(self, stores: list[TraceStore]) -> None:
-        self._stores = stores
+    def __init__(self, stores: Sequence[TraceStore]) -> None:
+        self._stores = list(stores)
 
     async def append(self, record: TraceRecord) -> None:
         """Federated stores are read-only — appending is rejected.
