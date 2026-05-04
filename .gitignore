@@ -62,8 +62,8 @@ Basic_Agent/
 my_agent/
 team/
 
-# Deployment (contains secrets in parameters.json)
-deploy/
+# Deployment — Azure dir contains secrets in parameters.json
+deploy/azure/
 
 # Demo UI
 demo/
@@ -76,3 +76,7 @@ packages/*/PROMPT_INJECTION*.md
 # Added by code-review-graph
 .code-review-graph/
 .mcp.json
+
+# SPEC-024 NLIT SCAP demo: keep real files private
+demo-data/raw/
+.arc-logs/

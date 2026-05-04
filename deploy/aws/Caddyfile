@@ -1,0 +1,22 @@
+# Replace DEMO_DOMAIN with your subdomain (e.g. demo.blackarcsystems.com)
+DEMO_DOMAIN {
+	reverse_proxy 127.0.0.1:8420 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-For {remote_host}
+	}
+
+	# WebSocket upgrades for live agent traces
+	@websockets {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	reverse_proxy @websockets 127.0.0.1:8420
+
+	encode zstd gzip
+
+	log {
+		output file /var/log/caddy/arc-access.log
+		format json
+	}
+}
