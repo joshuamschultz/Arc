@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -38,55 +37,26 @@ async def get_agent(request: Request) -> JSONResponse:
     """
     agent_id = request.path_params["id"]
     registry = request.app.state.agent_registry
-    roster_provider = getattr(request.app.state, "roster_provider", None)
-
-    def _roster_meta(name_or_id: str) -> dict[str, Any] | None:
-        """Look up the disk roster entry by agent_id (toml dir name)."""
-        if roster_provider is None:
-            return None
-        for r in roster_provider():
-            if r.agent_id == name_or_id:
-                return {
-                    "agent_id": r.agent_id,
-                    "name": r.name,
-                    "did": r.did,
-                    "org": r.org,
-                    "type": r.type,
-                    "model": r.model,
-                    "provider": r.provider,
-                    "display_name": r.display_name,
-                    "color": r.color,
-                    "role_label": r.role_label,
-                    "hidden": r.hidden,
-                    "workspace_path": r.workspace_path,
-                }
-        return None
-
-    # Live entry takes precedence. Two ways to find it:
-    #   (a) registry.get(hex_id) — only matches if the URL passed the hex id
-    #   (b) by-name scan — the detail UI puts agent_name in the URL
     entry = registry.get(agent_id)
-    live_meta: dict[str, Any] | None = None
-    if entry is not None:
-        live_meta = entry.registration.model_dump()
-        live_meta.setdefault("agent_id", agent_id)
-    else:
+    if entry is None:
+        # The detail UI navigates with agent_name in the URL, but the registry
+        # is keyed by the hex agent_id the agent self-generates at WS connect.
+        # Fall back to a name-based scan so the page resolves to the live
+        # WebSocket entry instead of the disk-only roster (which renders the
+        # whole detail page as "offline" and hides every live tab).
         for candidate in registry.list_agents():
             if candidate.agent_name == agent_id:
-                live_meta = candidate.model_dump()
-                break
-
-    if live_meta is not None:
-        # The WS registration only carries connection metadata (agent_name,
-        # model, workspace, sequence). The detail UI also needs the disk-side
-        # fields (did, display_name, role_label, color, ...) — without them the
-        # right-rail and tabs render blank even though the agent is online.
-        # Overlay the live record on top of the roster so dynamic fields win.
-        roster = _roster_meta(live_meta.get("agent_name") or agent_id) or {}
-        merged = {**roster, **live_meta, "online": True}
-        return JSONResponse(merged)
+                meta = candidate.model_dump()
+                meta["online"] = True
+                return JSONResponse(meta)
+    if entry is not None:
+        meta = entry.registration.model_dump()
+        meta.setdefault("agent_id", agent_id)
+        meta["online"] = True
+        return JSONResponse(meta)
 
     # Roster fallback — read-only agent metadata from arcagent.toml on disk.
+    roster_provider = getattr(request.app.state, "roster_provider", None)
     if roster_provider is not None:
         for r in roster_provider():
             if r.agent_id == agent_id:
