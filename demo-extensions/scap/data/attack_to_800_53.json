@@ -68,7 +68,9 @@
     ],
     "CM-6": [
       {"technique_id": "T1547",     "name": "Boot or Logon Autostart Execution",                  "tactic": "Persistence / Privilege Escalation"},
-      {"technique_id": "T1543",     "name": "Create or Modify System Process",                    "tactic": "Persistence / Privilege Escalation"}
+      {"technique_id": "T1543",     "name": "Create or Modify System Process",                    "tactic": "Persistence / Privilege Escalation"},
+      {"technique_id": "T1554",     "name": "Compromise Host Software Binary",                    "tactic": "Persistence"},
+      {"technique_id": "T1565",     "name": "Data Manipulation",                                  "tactic": "Impact"}
     ],
     "CM-7": [
       {"technique_id": "T1543",     "name": "Create or Modify System Process",                    "tactic": "Persistence / Privilege Escalation"},
@@ -138,6 +140,7 @@
     "AC-7": "Without lockout enforcement, online password guessing has no rate limit. An adversary can run T1110.001 (password guessing) at scale until they hit a valid credential.",
     "AC-17": "Without remote-access hardening, SSH/RDP becomes the path of least resistance. T1021.004 (SSH lateral movement) and T1133 (external remote services) become unrestricted entry points.",
     "AU-12": "Audit-record gaps blind the SOC. T1562.001 (disable defenses) and T1070.002 (clear logs) become invisible because the recording layer they target was never trustworthy.",
+    "CM-6": "Configuration baseline drift opens persistence paths. T1554 (compromise binary) becomes invisible without file-integrity monitoring (`aide`); T1547/T1543 (autostart, system process creation) ride the gap between intended baseline and current state.",
     "CM-7": "Excess functionality is excess attack surface. Every disabled-but-installed package is a potential T1543 (create system service) or T1059 (script interpreter) staging point.",
     "IA-2": "Weak authentication is the universal bypass. T1078 (valid accounts) requires only credential possession; without strong auth, every other control is footnoted.",
     "SI-7": "Without integrity monitoring, T1565 (data manipulation) and T1554 (binary compromise) leave no fingerprint. The system reports healthy while it's been replaced underneath."
