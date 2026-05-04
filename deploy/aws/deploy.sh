@@ -27,9 +27,12 @@ TEMPLATE="${SCRIPT_DIR}/main.yaml"
 PARAMS="${SCRIPT_DIR}/parameters.json"
 KEY_PATH="${HOME}/.ssh/lightsail-${REGION}.pem"
 
+STATIC_IP_NAME="${STATIC_IP_NAME:-arc-demo-ip}"
+
 echo "=== Arc Demo AWS Deployment ==="
 echo "Stack:    ${STACK_NAME}"
 echo "Region:   ${REGION}"
+echo "Static IP: ${STATIC_IP_NAME}"
 echo "Template: ${TEMPLATE}"
 echo ""
 
@@ -73,19 +76,42 @@ aws cloudformation deploy \
   --region "${REGION}" \
   --no-fail-on-empty-changeset
 
-# --- Step 5: Pull stack outputs ---
-echo "[5/6] Reading stack outputs..."
-OUTPUTS=$(aws cloudformation describe-stacks \
+# --- Step 4.5: Allocate (if needed) and attach the persistent static IP ---
+# The IP lives outside the stack so `delete-stack` doesn't release it.
+# DNS (agent.blackarcsystems.com → IP) is set once and stays valid through
+# every redeploy.
+echo "[5/7] Ensuring static IP ${STATIC_IP_NAME}..."
+if aws lightsail get-static-ip --static-ip-name "${STATIC_IP_NAME}" --region "${REGION}" --output text >/dev/null 2>&1; then
+  echo "  Reusing existing static IP"
+else
+  aws lightsail allocate-static-ip --static-ip-name "${STATIC_IP_NAME}" --region "${REGION}" --output text >/dev/null
+  echo "  Allocated new static IP"
+fi
+
+INSTANCE_NAME=$(aws cloudformation describe-stacks \
   --stack-name "${STACK_NAME}" \
   --region "${REGION}" \
-  --query "Stacks[0].Outputs" \
-  --output json)
+  --query "Stacks[0].Outputs[?OutputKey=='InstanceName'].OutputValue" \
+  --output text)
 
-VM_IP=$(echo "${OUTPUTS}" | jq -r '.[] | select(.OutputKey=="StaticIp").OutputValue')
-INSTANCE_NAME=$(echo "${OUTPUTS}" | jq -r '.[] | select(.OutputKey=="InstanceName").OutputValue')
+# attach-static-ip is idempotent — re-attaching the same IP to the same
+# instance is a no-op. If the IP was attached elsewhere it gets moved.
+aws lightsail attach-static-ip \
+  --static-ip-name "${STATIC_IP_NAME}" \
+  --instance-name "${INSTANCE_NAME}" \
+  --region "${REGION}" \
+  --output text >/dev/null
+echo "  Attached ${STATIC_IP_NAME} to ${INSTANCE_NAME}"
+
+VM_IP=$(aws lightsail get-static-ip \
+  --static-ip-name "${STATIC_IP_NAME}" \
+  --region "${REGION}" \
+  --query "staticIp.ipAddress" \
+  --output text)
+echo "  Public IP: ${VM_IP}"
 
 # --- Step 6: Download default SSH key (Lightsail-managed) ---
-echo "[6/6] Downloading Lightsail default SSH key..."
+echo "[6/7] Downloading Lightsail default SSH key..."
 mkdir -p "$(dirname "${KEY_PATH}")"
 if [ ! -f "${KEY_PATH}" ]; then
   aws lightsail download-default-key-pair \
@@ -98,8 +124,8 @@ else
   echo "  Already present: ${KEY_PATH}"
 fi
 
-# --- Wait for instance to be reachable on SSH (Lightsail boots ~60s) ---
-echo "  Waiting for SSH on ${VM_IP}:22 ..."
+# --- Step 7: Wait for instance to be reachable on SSH (Lightsail boots ~60s) ---
+echo "[7/7] Waiting for SSH on ${VM_IP}:22 ..."
 for i in $(seq 1 30); do
   if nc -z -w 2 "${VM_IP}" 22 2>/dev/null; then
     echo "  SSH is up"

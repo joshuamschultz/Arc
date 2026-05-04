@@ -88,26 +88,18 @@ Resources:
         - Key: ManagedBy
           Value: cloudformation
 
-  ArcDemoStaticIp:
-    Type: AWS::Lightsail::StaticIp
-    Properties:
-      StaticIpName: !Sub '${InstanceName}-ip'
-      AttachedTo: !Ref ArcDemoInstance
+  # Static IP is intentionally NOT in this stack. It's allocated once by
+  # `deploy.sh` via `aws lightsail allocate-static-ip` and reattached on
+  # every deploy. That way `delete-stack` removes the instance + ports
+  # without touching the IP, and your DNS A-record points at the same
+  # address forever. See deploy.sh for the attach logic.
 
 Outputs:
 
   InstanceName:
-    Description: Lightsail instance name
+    Description: Lightsail instance name (deploy.sh attaches the static IP after creation)
     Value: !Ref ArcDemoInstance
 
-  StaticIp:
-    Description: Static public IP — point your DNS A-record at this
-    Value: !GetAtt ArcDemoStaticIp.IpAddress
-
-  SshHint:
-    Description: SSH command (after `aws lightsail download-default-key-pair`)
-    Value: !Sub 'ssh -i ~/.ssh/lightsail-${AWS::Region}.pem ubuntu@${ArcDemoStaticIp.IpAddress}'
-
-  DnsRecord:
-    Description: DNS A-record value to add at your registrar
-    Value: !Sub 'A demo.<your-domain>  →  ${ArcDemoStaticIp.IpAddress}'
+  StaticIpName:
+    Description: Static IP resource name (allocated outside this stack — see deploy.sh)
+    Value: !Sub '${InstanceName}-ip'

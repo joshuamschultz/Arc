@@ -47,12 +47,19 @@ Idempotent — re-run safely. It does:
 1. Validates AWS auth
 2. Detects your IP (informational; `parameters.json` keeps SSH open by default)
 3. Validates the CloudFormation template
-4. `aws cloudformation deploy` — creates `arc-demo` stack
-5. Reads stack outputs (instance name, static IP)
+4. `aws cloudformation deploy` — creates the `arc-demo` stack (instance + ports)
+5. **Allocates the static IP outside the stack** (idempotent — reuses
+   `arc-demo-ip` if it already exists), attaches it to the instance
 6. Downloads the Lightsail default keypair to `~/.ssh/lightsail-us-east-1.pem`
 7. Polls SSH until reachable
 
 Outputs the static IP, SSH command, and the runbook for the remaining 3 steps.
+
+**Why the static IP is outside the stack:** so `aws cloudformation
+delete-stack` releases the VM but keeps the IP. Your DNS A-record
+(`agent.blackarcsystems.com → <ip>`) is set once and stays valid through
+every redeploy. If you ever want to release the IP entirely:
+`aws lightsail release-static-ip --static-ip-name arc-demo-ip --region us-east-1`.
 
 ## Step 2 — point DNS at the static IP (2 min)
 
