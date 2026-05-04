@@ -38,17 +38,6 @@ async def get_agent(request: Request) -> JSONResponse:
     agent_id = request.path_params["id"]
     registry = request.app.state.agent_registry
     entry = registry.get(agent_id)
-    if entry is None:
-        # The detail UI navigates with agent_name in the URL, but the registry
-        # is keyed by the hex agent_id the agent self-generates at WS connect.
-        # Fall back to a name-based scan so the page resolves to the live
-        # WebSocket entry instead of the disk-only roster (which renders the
-        # whole detail page as "offline" and hides every live tab).
-        for candidate in registry.list_agents():
-            if candidate.agent_name == agent_id:
-                meta = candidate.model_dump()
-                meta["online"] = True
-                return JSONResponse(meta)
     if entry is not None:
         meta = entry.registration.model_dump()
         meta.setdefault("agent_id", agent_id)
