@@ -1,0 +1,145 @@
+{
+  "_about": {
+    "source": "MITRE Center for Threat-Informed Defense (CTID) NIST 800-53 → ATT&CK mapping (https://github.com/center-for-threat-informed-defense/mappings-explorer)",
+    "scope": "Curated subset of demo-relevant controls and their MITRE ATT&CK technique exposure. Production deployment would load the full CTID JSON.",
+    "version": "ATT&CK v15 / 800-53 Rev 5",
+    "retrieved": "2026-05-04",
+    "narrative": "When a control fails, the techniques listed under it become more viable for an adversary. The threat_narrative field tells the agent how to frame the regression in plain language."
+  },
+  "controls": {
+    "AC-2": [
+      {"technique_id": "T1136",     "name": "Create Account",                                     "tactic": "Persistence"},
+      {"technique_id": "T1078",     "name": "Valid Accounts",                                     "tactic": "Defense Evasion / Persistence / Privilege Escalation / Initial Access"},
+      {"technique_id": "T1098",     "name": "Account Manipulation",                               "tactic": "Persistence / Privilege Escalation"}
+    ],
+    "AC-2(5)": [
+      {"technique_id": "T1078",     "name": "Valid Accounts",                                     "tactic": "Defense Evasion"}
+    ],
+    "AC-3": [
+      {"technique_id": "T1548",     "name": "Abuse Elevation Control Mechanism",                  "tactic": "Privilege Escalation / Defense Evasion"},
+      {"technique_id": "T1222",     "name": "File and Directory Permissions Modification",        "tactic": "Defense Evasion"}
+    ],
+    "AC-6": [
+      {"technique_id": "T1078.003", "name": "Valid Accounts: Local Accounts",                     "tactic": "Privilege Escalation"},
+      {"technique_id": "T1548",     "name": "Abuse Elevation Control Mechanism",                  "tactic": "Privilege Escalation"}
+    ],
+    "AC-6(2)": [
+      {"technique_id": "T1078.003", "name": "Valid Accounts: Local Accounts",                     "tactic": "Privilege Escalation"}
+    ],
+    "AC-6(9)": [
+      {"technique_id": "T1562.001", "name": "Impair Defenses: Disable or Modify Tools",           "tactic": "Defense Evasion"}
+    ],
+    "AC-7": [
+      {"technique_id": "T1110",     "name": "Brute Force",                                        "tactic": "Credential Access"},
+      {"technique_id": "T1110.001", "name": "Brute Force: Password Guessing",                     "tactic": "Credential Access"},
+      {"technique_id": "T1110.003", "name": "Brute Force: Password Spraying",                     "tactic": "Credential Access"},
+      {"technique_id": "T1110.004", "name": "Brute Force: Credential Stuffing",                   "tactic": "Credential Access"}
+    ],
+    "AC-12": [
+      {"technique_id": "T1078",     "name": "Valid Accounts",                                     "tactic": "Defense Evasion"}
+    ],
+    "AC-17": [
+      {"technique_id": "T1021.004", "name": "Remote Services: SSH",                               "tactic": "Lateral Movement"},
+      {"technique_id": "T1133",     "name": "External Remote Services",                           "tactic": "Initial Access / Persistence"},
+      {"technique_id": "T1110.001", "name": "Brute Force: Password Guessing",                     "tactic": "Credential Access"}
+    ],
+    "AC-17(2)": [
+      {"technique_id": "T1040",     "name": "Network Sniffing",                                   "tactic": "Credential Access / Discovery"},
+      {"technique_id": "T1557",     "name": "Adversary-in-the-Middle",                            "tactic": "Credential Access / Collection"}
+    ],
+    "AU-2": [
+      {"technique_id": "T1562.002", "name": "Impair Defenses: Disable Windows Event Logging",     "tactic": "Defense Evasion"},
+      {"technique_id": "T1070",     "name": "Indicator Removal",                                  "tactic": "Defense Evasion"}
+    ],
+    "AU-3": [
+      {"technique_id": "T1070",     "name": "Indicator Removal",                                  "tactic": "Defense Evasion"}
+    ],
+    "AU-9": [
+      {"technique_id": "T1070.002", "name": "Indicator Removal: Clear Linux or Mac System Logs",  "tactic": "Defense Evasion"},
+      {"technique_id": "T1070.003", "name": "Indicator Removal: Clear Command History",           "tactic": "Defense Evasion"},
+      {"technique_id": "T1565",     "name": "Data Manipulation",                                  "tactic": "Impact"}
+    ],
+    "AU-10": [
+      {"technique_id": "T1070",     "name": "Indicator Removal",                                  "tactic": "Defense Evasion"}
+    ],
+    "AU-12": [
+      {"technique_id": "T1562.001", "name": "Impair Defenses: Disable or Modify Tools",           "tactic": "Defense Evasion"},
+      {"technique_id": "T1070.002", "name": "Indicator Removal: Clear Linux or Mac System Logs",  "tactic": "Defense Evasion"}
+    ],
+    "CM-6": [
+      {"technique_id": "T1547",     "name": "Boot or Logon Autostart Execution",                  "tactic": "Persistence / Privilege Escalation"},
+      {"technique_id": "T1543",     "name": "Create or Modify System Process",                    "tactic": "Persistence / Privilege Escalation"}
+    ],
+    "CM-7": [
+      {"technique_id": "T1543",     "name": "Create or Modify System Process",                    "tactic": "Persistence / Privilege Escalation"},
+      {"technique_id": "T1136",     "name": "Create Account",                                     "tactic": "Persistence"},
+      {"technique_id": "T1112",     "name": "Modify Registry",                                    "tactic": "Defense Evasion"},
+      {"technique_id": "T1059",     "name": "Command and Scripting Interpreter",                  "tactic": "Execution"}
+    ],
+    "IA-2": [
+      {"technique_id": "T1078",     "name": "Valid Accounts",                                     "tactic": "Defense Evasion / Persistence / Initial Access"},
+      {"technique_id": "T1110",     "name": "Brute Force",                                        "tactic": "Credential Access"},
+      {"technique_id": "T1556",     "name": "Modify Authentication Process",                      "tactic": "Credential Access / Defense Evasion"}
+    ],
+    "IA-2(5)": [
+      {"technique_id": "T1078.001", "name": "Valid Accounts: Default Accounts",                   "tactic": "Defense Evasion"}
+    ],
+    "IA-5": [
+      {"technique_id": "T1552",     "name": "Unsecured Credentials",                              "tactic": "Credential Access"},
+      {"technique_id": "T1110.001", "name": "Brute Force: Password Guessing",                     "tactic": "Credential Access"},
+      {"technique_id": "T1556",     "name": "Modify Authentication Process",                      "tactic": "Credential Access"}
+    ],
+    "MA-4": [
+      {"technique_id": "T1133",     "name": "External Remote Services",                           "tactic": "Initial Access / Persistence"},
+      {"technique_id": "T1021",     "name": "Remote Services",                                    "tactic": "Lateral Movement"}
+    ],
+    "MA-4(6)": [
+      {"technique_id": "T1040",     "name": "Network Sniffing",                                   "tactic": "Credential Access"}
+    ],
+    "SC-7": [
+      {"technique_id": "T1133",     "name": "External Remote Services",                           "tactic": "Initial Access"},
+      {"technique_id": "T1071",     "name": "Application Layer Protocol",                         "tactic": "Command and Control"}
+    ],
+    "SC-8": [
+      {"technique_id": "T1040",     "name": "Network Sniffing",                                   "tactic": "Credential Access / Discovery"},
+      {"technique_id": "T1557",     "name": "Adversary-in-the-Middle",                            "tactic": "Credential Access / Collection"}
+    ],
+    "SC-13": [
+      {"technique_id": "T1573",     "name": "Encrypted Channel",                                  "tactic": "Command and Control"},
+      {"technique_id": "T1040",     "name": "Network Sniffing",                                   "tactic": "Credential Access"}
+    ],
+    "SC-23": [
+      {"technique_id": "T1557",     "name": "Adversary-in-the-Middle",                            "tactic": "Credential Access"},
+      {"technique_id": "T1185",     "name": "Browser Session Hijacking",                          "tactic": "Collection"}
+    ],
+    "SC-28": [
+      {"technique_id": "T1005",     "name": "Data from Local System",                             "tactic": "Collection"},
+      {"technique_id": "T1486",     "name": "Data Encrypted for Impact",                          "tactic": "Impact"}
+    ],
+    "SI-2": [
+      {"technique_id": "T1190",     "name": "Exploit Public-Facing Application",                  "tactic": "Initial Access"},
+      {"technique_id": "T1068",     "name": "Exploitation for Privilege Escalation",              "tactic": "Privilege Escalation"}
+    ],
+    "SI-3": [
+      {"technique_id": "T1204",     "name": "User Execution",                                     "tactic": "Execution"},
+      {"technique_id": "T1059",     "name": "Command and Scripting Interpreter",                  "tactic": "Execution"}
+    ],
+    "SI-4": [
+      {"technique_id": "T1562",     "name": "Impair Defenses",                                    "tactic": "Defense Evasion"},
+      {"technique_id": "T1070",     "name": "Indicator Removal",                                  "tactic": "Defense Evasion"}
+    ],
+    "SI-7": [
+      {"technique_id": "T1565",     "name": "Data Manipulation",                                  "tactic": "Impact"},
+      {"technique_id": "T1070",     "name": "Indicator Removal",                                  "tactic": "Defense Evasion"},
+      {"technique_id": "T1554",     "name": "Compromise Host Software Binary",                    "tactic": "Persistence"}
+    ]
+  },
+  "narratives": {
+    "AC-7": "Without lockout enforcement, online password guessing has no rate limit. An adversary can run T1110.001 (password guessing) at scale until they hit a valid credential.",
+    "AC-17": "Without remote-access hardening, SSH/RDP becomes the path of least resistance. T1021.004 (SSH lateral movement) and T1133 (external remote services) become unrestricted entry points.",
+    "AU-12": "Audit-record gaps blind the SOC. T1562.001 (disable defenses) and T1070.002 (clear logs) become invisible because the recording layer they target was never trustworthy.",
+    "CM-7": "Excess functionality is excess attack surface. Every disabled-but-installed package is a potential T1543 (create system service) or T1059 (script interpreter) staging point.",
+    "IA-2": "Weak authentication is the universal bypass. T1078 (valid accounts) requires only credential possession; without strong auth, every other control is footnoted.",
+    "SI-7": "Without integrity monitoring, T1565 (data manipulation) and T1554 (binary compromise) leave no fingerprint. The system reports healthy while it's been replaced underneath."
+  }
+}
