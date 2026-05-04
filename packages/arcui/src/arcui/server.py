@@ -319,13 +319,12 @@ def create_app(
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:
             return []
-        # The WS handler assigns each connection a random uuid as agent_id,
-        # but the on-disk roster keys agents by their stable directory name
-        # (== `arcagent.toml [agent].name`). agent_name is what the team_roster
-        # uses for `agent_id`; matching the registry by agent_name + agent_id
-        # both is forward-compat for the day connections register by name.
+        # Registry and roster both key agents by `agent_name` (== the
+        # arcagent.toml [agent].name == the directory name minus _agent).
+        # Single identifier across both views — list_agents()[i].agent_id ==
+        # arcagent.toml [agent].name == r.agent_id from team_roster.
         agents = app.state.agent_registry.list_agents()
-        online = {a.agent_id for a in agents} | {a.agent_name for a in agents}
+        online = {a.agent_id for a in agents}
         return team_roster.list_team(team_root=app.state.team_root, online_ids=online)
 
     app.state.roster_provider = _roster_provider

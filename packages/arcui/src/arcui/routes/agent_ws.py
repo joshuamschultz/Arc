@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from datetime import UTC, datetime
 
 import pydantic
@@ -55,11 +54,30 @@ async def agent_ws_endpoint(ws: WebSocket) -> None:
             audit.audit_event("capacity.rejected", {"transport": "agent_ws"})
         return
 
-    agent_id = uuid.uuid4().hex
+    # Use the agent's stable name as its registry key. Every other surface
+    # (disk roster, /api/team/roster, traces, sessions, schedules) keys by
+    # agent_name; generating a per-connection UUID created two parallel ID
+    # spaces and forced every consumer to do a name→uuid lookup. With the
+    # name as agent_id, registry.get(name) resolves directly and the disk
+    # and live views share one identifier.
     reg_data = msg.get("registration", {})
+    agent_name = reg_data.get("agent_name")
+    if not agent_name or agent_name == "unknown":
+        await ws.send_json(
+            {"error": "registration.agent_name is required and must not be 'unknown'"}
+        )
+        await ws.close(code=1008)  # policy violation
+        if audit:
+            audit.audit_event(
+                "agent.registration_rejected",
+                {"reason": "missing_agent_name"},
+            )
+        return
+    agent_id = agent_name
+
     registration = AgentRegistration(
         agent_id=agent_id,
-        agent_name=reg_data.get("agent_name", "unknown"),
+        agent_name=agent_name,
         model=reg_data.get("model", "unknown"),
         provider=reg_data.get("provider", "unknown"),
         team=reg_data.get("team"),
