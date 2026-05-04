@@ -36,9 +36,17 @@ fi
 if [ -z "${DOMAIN}" ]; then
   cat >&2 <<EOF
 ✗ usage: bash deploy/aws/setup-vm.sh <domain> [agent_name ...]
-   e.g.   bash deploy/aws/setup-vm.sh demo.blackarcsystems.com my_agent
+   e.g.   bash deploy/aws/setup-vm.sh agent.blackarcsystems.com nlit_cora_agent
 EOF
   exit 1
+fi
+
+# Auto-append <public-ip>.nip.io as a fallback hostname so the demo URL
+# works immediately, even before the operator's DNS A-record has
+# propagated. Caddy site addresses accept comma-separated hostnames.
+PUBLIC_IP=$(curl -fsSL --max-time 3 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
+if [ -n "${PUBLIC_IP}" ] && [[ "${DOMAIN}" != *"${PUBLIC_IP}.nip.io"* ]]; then
+  DOMAIN="${DOMAIN}, ${PUBLIC_IP}.nip.io"
 fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
