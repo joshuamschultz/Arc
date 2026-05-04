@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  Arc demo deploy — Lightsail VM + static IP + firewall rules.
+  Mirrors deploy/azure/main.bicep. One CloudFormation stack owns the VM,
+  the IP, and the port rules so `aws cloudformation delete-stack` is a
+  clean one-shot teardown.
+
+  Secrets (LLM API keys) are not in this template — they live in
+  /home/ubuntu/arc/.env on the VM (chmod 600). For a federal-grade
+  setup, swap to an EC2 instance with an IAM Instance Profile reading
+  AWS Secrets Manager (TODO documented in DEPLOY.md).
+
+Parameters:
+
+  InstanceName:
+    Type: String
+    Default: arc-demo
+    Description: Lightsail instance + static IP base name.
+
+  AvailabilityZone:
+    Type: String
+    Default: us-east-1a
+    Description: Lightsail AZ. Static IP is regional; pick one in your region.
+
+  BundleId:
+    Type: String
+    Default: small_3_0
+    AllowedValues:
+      - micro_3_0
+      - small_3_0
+      - medium_3_0
+      - large_3_0
+    Description: |
+      Lightsail bundle. small_3_0 = 2GB/2vCPU/$12 — fine for one Anthropic agent.
+      Bump to medium_3_0 (4GB/$24) if running multiple agents or Azure-OpenAI ones.
+
+  BlueprintId:
+    Type: String
+    Default: ubuntu_22_04
+    Description: Lightsail OS blueprint.
+
+  AllowedSshCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: |
+      CIDR allowed to reach SSH (port 22). Default 0.0.0.0/0 keeps Terminus-on-iPhone
+      working from any cell network. Tighten to YOUR_IP/32 if SSH-from-anywhere isn't
+      acceptable for your demo.
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$'
+
+  ProjectTag:
+    Type: String
+    Default: arc-demo
+    Description: Tag value applied to all resources for cost tracking and grouping.
+
+Resources:
+
+  ArcDemoInstance:
+    Type: AWS::Lightsail::Instance
+    Properties:
+      InstanceName: !Ref InstanceName
+      AvailabilityZone: !Ref AvailabilityZone
+      BlueprintId: !Ref BlueprintId
+      BundleId: !Ref BundleId
+      Networking:
+        Ports:
+          - FromPort: 22
+            ToPort: 22
+            Protocol: tcp
+            AccessFrom: !Sub 'SSH (${AllowedSshCidr})'
+            Cidrs:
+              - !Ref AllowedSshCidr
+          - FromPort: 80
+            ToPort: 80
+            Protocol: tcp
+            AccessFrom: 'HTTP (Caddy ACME challenge + redirect)'
+            Cidrs:
+              - 0.0.0.0/0
+          - FromPort: 443
+            ToPort: 443
+            Protocol: tcp
+            AccessFrom: 'HTTPS (ArcUI via Caddy)'
+            Cidrs:
+              - 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
+        - Key: ManagedBy
+          Value: cloudformation
+
+  ArcDemoStaticIp:
+    Type: AWS::Lightsail::StaticIp
+    Properties:
+      StaticIpName: !Sub '${InstanceName}-ip'
+      AttachedTo: !Ref ArcDemoInstance
+
+Outputs:
+
+  InstanceName:
+    Description: Lightsail instance name
+    Value: !Ref ArcDemoInstance
+
+  StaticIp:
+    Description: Static public IP — point your DNS A-record at this
+    Value: !GetAtt ArcDemoStaticIp.IpAddress
+
+  SshHint:
+    Description: SSH command (after `aws lightsail download-default-key-pair`)
+    Value: !Sub 'ssh -i ~/.ssh/lightsail-${AWS::Region}.pem ubuntu@${ArcDemoStaticIp.IpAddress}'
+
+  DnsRecord:
+    Description: DNS A-record value to add at your registrar
+    Value: !Sub 'A demo.<your-domain>  →  ${ArcDemoStaticIp.IpAddress}'
