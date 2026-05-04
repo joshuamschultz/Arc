@@ -84,6 +84,19 @@ if [ ! -x "${REPO_ROOT}/.venv/bin/arc" ]; then
   echo "✗ ${REPO_ROOT}/.venv/bin/arc missing after uv sync — bailing." >&2
   exit 1
 fi
+# `uv sync` only installs packages declared as deps of the root project
+# (arc-agent, arccmd, arcgateway). The remaining workspace members are
+# siblings, not transitive deps, so `arc ui start` would fail with
+# "No module named 'arcui'". Install every package/ subdir explicitly.
+echo "  Installing remaining workspace packages..."
+PACKAGES=()
+for p in "${REPO_ROOT}/packages"/*/; do
+  [ -f "${p}pyproject.toml" ] || continue
+  PACKAGES+=(-e "${p%/}")
+done
+"${REPO_ROOT}/.venv/bin/pip" install --quiet "${PACKAGES[@]}"
+"${REPO_ROOT}/.venv/bin/python" -c "import arcui" 2>/dev/null \
+  || { echo "✗ arcui still not importable — bailing." >&2; exit 1; }
 
 # --- 5. .env ---
 echo "[5/8] Checking .env..."

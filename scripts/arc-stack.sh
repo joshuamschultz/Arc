@@ -162,14 +162,45 @@ wait_for_ui() {
 }
 
 register_agents() {
-  # Idempotent: already-registered is treated as success.
-  local a
+  # Idempotent: already-registered is a no-op.
+  #
+  # The Agent Fleet page in arcui reads from $TEAM_ROOT/shared/messages/registry/.
+  # `arc team register` writes there ONLY when --root points at $TEAM_ROOT/shared.
+  # The default root resolves to ~/.arc/team/, which arcui never reads — so a
+  # default-root register silently succeeds but the agent never appears in the
+  # fleet. That's exactly the bug that left every prior deploy with an empty
+  # dashboard.
+  #
+  # Entity ID format must be agent://<name> (the URI scheme arcui's registry
+  # adapter expects). Display name comes from [agent].name in arcagent.toml,
+  # falling back to the dir name.
+  local a entity_id name reg_root
+  reg_root="$TEAM_ROOT/shared"
   for a in "$@"; do
     [ -d "$TEAM_ROOT/$a" ] || continue
-    "$ARC_BIN" team register "$a" \
-      --type agent --roles executor \
-      --workspace "$TEAM_ROOT/$a/workspace" \
-      >/dev/null 2>&1 || true
+    entity_id="agent://$a"
+
+    if "$ARC_BIN" team --root "$reg_root" entities 2>/dev/null \
+         | awk 'NR>2 {print $1}' | grep -qx "$entity_id"; then
+      echo "  ✓ already registered: $entity_id"
+      continue
+    fi
+
+    name=$(awk -F'=' '
+      /^\[/ { in_agent = ($0 == "[agent]") }
+      in_agent && /^[[:space:]]*name[[:space:]]*=/ {
+        gsub(/^[[:space:]"'\'']+|[[:space:]"'\'']+$/, "", $2); print $2; exit
+      }
+    ' "$TEAM_ROOT/$a/arcagent.toml" 2>/dev/null)
+    : "${name:=$a}"
+
+    echo "→ Registering $entity_id ($name)"
+    if ! "$ARC_BIN" team --root "$reg_root" register "$entity_id" \
+        --name "$name" --type agent --roles executor \
+        --workspace "$TEAM_ROOT/$a/workspace"; then
+      echo "  ✗ registration failed for $a — aborting startup."
+      return 1
+    fi
   done
 }
 

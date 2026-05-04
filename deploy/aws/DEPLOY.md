@@ -89,6 +89,35 @@ rsync -avz --delete \
 You decide when to push by re-running `rsync`. There's no webhook, no Action,
 no CI rebuilding the VM behind your back.
 
+## Step 3.5 — copy agent identity keys (one-time, ~10 sec)
+
+Each agent in `team/<name>/arcagent.toml` has a pinned DID like
+`did:arc:local:executor/79430140`. The matching keypair lives at
+`~/.arcagent/keys/<did-flattened>.{key,pub}` on your laptop and is **not** in
+the repo (private key — never commit). Without it, the agent crashes with
+`Key file not found` at startup.
+
+From your laptop, copy the keys for the agents you're enabling:
+
+```bash
+# extract the DID hashes for the agents you want
+DIDS=$(grep -h '^did =' \
+  ~/Projects/arc/team/nlit_cora_agent/arcagent.toml \
+  ~/Projects/arc/team/nlit_soc_agent/arcagent.toml \
+  | sed -E 's/.*"did:arc:[^/]+\/([^"]+)".*/\1/')
+
+# rsync just those keypairs (and nothing else from ~/.arcagent/)
+ssh -i ~/.ssh/lightsail-us-east-1.pem ubuntu@<static-ip> \
+    'mkdir -p ~/.arcagent/keys && chmod 700 ~/.arcagent'
+for d in $DIDS; do
+  rsync -az -e "ssh -i ~/.ssh/lightsail-us-east-1.pem" \
+    ~/.arcagent/keys/did_arc_*_${d}.{key,pub} \
+    ubuntu@<static-ip>:~/.arcagent/keys/
+done
+ssh -i ~/.ssh/lightsail-us-east-1.pem ubuntu@<static-ip> \
+    'chmod 600 ~/.arcagent/keys/*.key && chmod 644 ~/.arcagent/keys/*.pub'
+```
+
 ## Step 4 — SSH in and run `setup-vm.sh` (10–15 min)
 
 ```bash
@@ -96,7 +125,7 @@ ssh -i ~/.ssh/lightsail-us-east-1.pem ubuntu@<static-ip>
 
 # First time on this VM:
 nano ~/arc/.env                                   # ANTHROPIC_API_KEY=sk-ant-...
-bash ~/arc/deploy/aws/setup-vm.sh demo.blackarcsystems.com my_agent
+bash ~/arc/deploy/aws/setup-vm.sh demo.blackarcsystems.com nlit_cora_agent nlit_soc_agent
 ```
 
 `setup-vm.sh`:
