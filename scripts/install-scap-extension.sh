@@ -34,6 +34,13 @@ rsync -a $DRY_RUN --delete \
   --exclude '__pycache__' --exclude '*.pyc' \
   "$SRC_SKILL" "$DST_SKILL"
 
+# Top-level shim: arcagent's CapabilityLoader scans ~/.arc/capabilities/
+# for flat *.py files only, not subdirectories. scap_tools.py imports
+# the 6 @tool functions from the scap/ package so they're discoverable.
+echo "  scap_tools.py shim → $HOME/.arc/capabilities/scap_tools.py"
+cp $DRY_RUN "$REPO_ROOT/demo-extensions/scap_tools.py" \
+  "$HOME/.arc/capabilities/scap_tools.py"
+
 if [[ -z "$DRY_RUN" ]]; then
   echo "Done. Extension installed."
 fi
