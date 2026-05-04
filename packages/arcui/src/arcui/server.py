@@ -31,9 +31,11 @@ from arcui.routes import agent_detail as agent_detail_routes
 from arcui.routes import agent_ws as agent_ws_routes
 from arcui.routes import agents as agents_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
+from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
 from arcui.routes import export as export_routes
+from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import schedules as schedules_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import team_pages as team_pages_routes
@@ -93,6 +95,7 @@ def create_app(
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
     team_root: Path | None = None,
+    gateway_config: Any | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -107,6 +110,10 @@ def create_app(
             and arcgateway.fs_reader scopes file reads under each agent's
             workspace. ``None`` disables fleet/agent-detail endpoints — they
             return empty rosters and 404 for per-agent paths.
+        gateway_config: Optional ``arcgateway.config.GatewayConfig``. When
+            non-None and ``team_root`` is set, the lifespan composes an
+            in-process gateway runtime (executor, session router, web/slack/
+            telegram adapters) and exposes it via ``app.state``. SPEC-023.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -126,6 +133,8 @@ def create_app(
         *cost_efficiency_routes.routes,
         *ws_routes.routes,
         *agent_ws_routes.routes,
+        *chat_ws_routes.routes,
+        *knowledge_routes.routes,
         *agents_routes.routes,
         *agent_detail_routes.routes,
         *team_pages_routes.routes,
@@ -188,6 +197,34 @@ def create_app(
     @asynccontextmanager
     async def lifespan(starlette_app: Starlette) -> Any:
         starlette_app.state.event_buffer.start()
+        # SPEC-023: when a gateway_config is supplied, compose the in-process
+        # gateway runtime and expose its components on app.state. Routes that
+        # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
+        # tools) or the executor (introspection) read them from there.
+        embedded_gateway = None
+        if gateway_config is not None and team_root is not None:
+            from arcgateway.bootstrap import build_for_embedded
+
+            embedded_gateway = await build_for_embedded(team_root, gateway_config)
+            starlette_app.state.embedded_gateway = embedded_gateway
+            starlette_app.state.executor = embedded_gateway.executor
+            starlette_app.state.session_router = embedded_gateway.session_router
+            starlette_app.state.web_adapter = embedded_gateway.web_adapter
+            starlette_app.state.stream_bridge = embedded_gateway.stream_bridge
+            # SPEC-023: cache loaded agents and register them in the
+            # fleet so chat-loaded agents show as LIVE without a separate
+            # /api/agent/connect WebSocket. One install_ call, idempotent.
+            from arcui.embedded_agents import install_embedded_agent_hooks
+
+            install_embedded_agent_hooks(starlette_app)
+            # Connect each adapter once so it's ready for inbound traffic.
+            for adapter in (
+                embedded_gateway.web_adapter,
+                embedded_gateway.slack_adapter,
+                embedded_gateway.telegram_adapter,
+            ):
+                if adapter is not None:
+                    await adapter.connect()
         # Browser-open callback (registered by `arc ui start` on
         # loopback) hooks the same lifespan via app.router.lifespan
         # extension below.
@@ -196,6 +233,23 @@ def create_app(
         try:
             yield
         finally:
+            # SPEC-023: shut adapters down in reverse — disconnect cancels
+            # all per-socket tasks and closes the WebSockets cleanly.
+            if embedded_gateway is not None:
+                for adapter in (
+                    embedded_gateway.web_adapter,
+                    embedded_gateway.slack_adapter,
+                    embedded_gateway.telegram_adapter,
+                ):
+                    if adapter is None:
+                        continue
+                    try:
+                        await adapter.disconnect()
+                    except Exception:
+                        logger.exception(
+                            "lifespan: error disconnecting adapter %s",
+                            getattr(adapter, "name", "unknown"),
+                        )
             # SPEC-022 Phase 3: tear down all per-agent watchers cleanly.
             # The bridge listener is best-effort detached; FileEventBus
             # tolerates a stale handler for the duration of an emit.

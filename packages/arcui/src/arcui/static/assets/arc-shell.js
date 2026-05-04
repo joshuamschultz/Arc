@@ -5,6 +5,8 @@
 
 const ICONS = {
   agents: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>',
+  messages: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>',
+  knowledge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>',
   agentDetail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0116 0v1"/></svg>',
   telemetry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
   security: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
@@ -21,6 +23,8 @@ const ICONS = {
 const PAGES = [
   { id: 'agents',         label: 'Agent Fleet',     icon: 'agents' },
   { id: 'agent-detail',   label: 'Agent Detail',    icon: 'agentDetail', hidden: true },
+  { id: 'messages',       label: 'Messages',        icon: 'messages' },
+  { id: 'knowledge',      label: 'Knowledge',       icon: 'knowledge', hidden: true },
   { divider: true },
   { id: 'telemetry',      label: 'LLM Telemetry',   icon: 'telemetry' },
   { id: 'security',       label: 'Security & Audit', icon: 'security' },

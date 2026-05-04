@@ -176,6 +176,26 @@ class AsyncioExecutor:
         """
         self._agent_factory = agent_factory
 
+    def set_agent_factory(self, agent_factory: AgentFactory | None) -> None:
+        """Replace the agent factory after construction.
+
+        Used by arcui's ``embedded_agents.install_embedded_agent_hooks``
+        to wrap the bootstrap-built factory with a cache + fleet-registry
+        hook without losing the original load logic. Pass ``None`` to
+        revert to the echo stub (useful in tests).
+        """
+        self._agent_factory = agent_factory
+
+    @property
+    def agent_factory(self) -> AgentFactory | None:
+        """Expose the current agent factory for wrapping.
+
+        Wrappers should pull the current factory, build their wrapper
+        closure around it, then call ``set_agent_factory(wrapped)`` —
+        atomic replace, no private-attribute mutation required.
+        """
+        return self._agent_factory
+
     async def run(self, event: InboundEvent) -> AsyncIterator[Delta]:
         """Run ArcAgent in-process for the given event.
 
@@ -202,14 +222,18 @@ class AsyncioExecutor:
 
         When ``_agent_factory`` is set:
           1. Calls ``await _agent_factory(event.agent_did)`` to obtain an agent.
-          2. Calls ``await agent.run(event.message)`` — returns a result object.
+          2. Calls ``await agent.chat(event.message, session_id=event.session_key)``
+             so every turn is appended to the agent's persistent session log
+             at ``<workspace>/sessions/<session_key>.jsonl``. This is what
+             surfaces in arcui's Sessions tab and provides chat history on
+             reconnect (Slack/Telegram/Web all share the same path).
           3. Extracts text from ``result.content`` (ArcRun result) or str(result).
           4. Yields one token Delta with the full response, then the done sentinel.
 
         ArcAgent does not expose a true streaming iterator today — it returns
-        a complete result from run().  The single-token wrapping is honest: the
-        whole response arrives as one chunk.  Streaming will be possible once
-        ArcRun exposes an async event stream (tracked as M2 work).
+        a complete result from chat().  The single-token wrapping is honest:
+        the whole response arrives as one chunk.  Streaming will be possible
+        once ArcRun exposes an async event stream (tracked as M2 work).
 
         When ``_agent_factory`` is None the echo stub is used instead so that
         all existing tests continue to pass without a real agent configured.
@@ -221,7 +245,21 @@ class AsyncioExecutor:
             turn_id = str(uuid.uuid4())
             try:
                 agent = await self._agent_factory(event.agent_did)
-                result = await agent.run(event.message)
+                # Prefer ``agent.chat(message, session_id=...)`` — appends the
+                # turn to the agent's persistent SessionManager log so the
+                # arcui Sessions tab and Messages page reconnect history
+                # work out of the box. Fall back to ``agent.run(message)``
+                # for stateless agent factories (test fakes, simple
+                # one-shot agents) that don't expose ``chat``.
+                # session_key is deterministic per (agent_did, user_did) — same
+                # browser tab, slack DM, or telegram chat resumes the same
+                # session across reconnects.
+                if hasattr(agent, "chat"):
+                    result = await agent.chat(
+                        event.message, session_id=event.session_key
+                    )
+                else:
+                    result = await agent.run(event.message)
                 # ArcRun returns a result object; .content holds the text reply.
                 content: str = getattr(result, "content", None) or str(result)
                 yield Delta(

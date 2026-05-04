@@ -69,6 +69,37 @@ def _read_token_file() -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _maybe_build_gateway_config(args: argparse.Namespace, team_root: Path | None) -> Any | None:
+    """Build a GatewayConfig for the in-process gateway runtime (SPEC-023).
+
+    Resolution order:
+      1. ``--no-chat`` ⇒ return None (chat disabled).
+      2. ``--gateway-config <path>`` ⇒ load from TOML.
+      3. ``team_root`` is set ⇒ build a default with [platforms.web]
+         enabled and the same defaults the wizard produces.
+      4. Otherwise return None — no chat, but the dashboard still works.
+    """
+    if getattr(args, "no_chat", False):
+        return None
+
+    from arcgateway.config import GatewayConfig
+
+    config_path: str | None = getattr(args, "gateway_config", None)
+    if config_path:
+        return GatewayConfig.from_toml(Path(config_path).expanduser().resolve())
+
+    if team_root is None:
+        return None
+
+    return GatewayConfig.from_toml_str(
+        '[gateway]\n'
+        'agent_did = "did:arc:agent:default"\n'
+        '\n'
+        '[platforms.web]\n'
+        'enabled = true\n'
+    )
+
+
 def _resolve_trace_stores(args: argparse.Namespace) -> list[Any]:
     """Build the list of TraceStores from the arcteam registry.
 
@@ -257,11 +288,19 @@ def _start(args: argparse.Namespace) -> None:
         default = Path.cwd() / "team"
         team_root = default.resolve() if default.is_dir() else None
 
+    # SPEC-023: when a team_root is present, auto-build a default
+    # GatewayConfig so the in-process web platform is wired and
+    # /ws/chat/{agent_id} works out of the box. Operators who need a
+    # custom config (slack/telegram, federal tier) can override via
+    # --gateway-config later.
+    gateway_config = _maybe_build_gateway_config(args, team_root)
+
     app = create_app(
         auth_config=auth,
         max_agents=max_agents,
         trace_store=trace_store,
         team_root=team_root,
+        gateway_config=gateway_config,
     )
 
     is_loopback = host in LOOPBACK_HOSTS
@@ -488,6 +527,22 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Do not auto-open a browser tab on loopback start. Useful for tests, "
         "headless boxes, and developers who already have a tab open.",
+    )
+    p_start.add_argument(
+        "--gateway-config",
+        dest="gateway_config",
+        default=None,
+        help="Path to gateway.toml. When omitted, a default config is "
+        "auto-built with [platforms.web].enabled=true so /ws/chat/{agent_id} "
+        "works out of the box. Pass an explicit file to enable Slack/Telegram "
+        "or set tier=federal.",
+    )
+    p_start.add_argument(
+        "--no-chat",
+        dest="no_chat",
+        action="store_true",
+        default=False,
+        help="Disable the in-process web chat platform even when team_root is set.",
     )
 
     # ── tail ───────────────────────────────────────────────────────────

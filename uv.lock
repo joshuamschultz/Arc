@@ -355,6 +355,7 @@ dependencies = [
     { name = "arc-agent" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "watchfiles" },
 ]
 
 [package.optional-dependencies]
@@ -379,6 +380,7 @@ requires-dist = [
     { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=20,<22" },
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.18" },
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3" },
+    { name = "watchfiles", specifier = ">=0.21" },
 ]
 provides-extras = ["telegram", "slack"]
 
@@ -523,6 +525,7 @@ name = "arcui"
 version = "0.2.0"
 source = { editable = "packages/arcui" }
 dependencies = [
+    { name = "arcgateway" },
     { name = "arcllm" },
     { name = "starlette" },
     { name = "tomlkit" },
@@ -532,6 +535,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "arcgateway", editable = "packages/arcgateway" },
     { name = "arcllm", editable = "packages/arcllm" },
     { name = "starlette", specifier = ">=0.40" },
     { name = "tomlkit", specifier = ">=0.12" },

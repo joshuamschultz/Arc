@@ -337,12 +337,20 @@ async def get_skills(request: Request) -> JSONResponse:
     # update-skill, create-tool, update-tool, ...). These are SKILL.md
     # folders — _scan_skills_dir already understands that convention.
     try:
-        import arcagent
-        builtin_skills = Path(arcagent.__file__).parent / "builtins" / "capabilities" / "skills"
-        if builtin_skills.is_dir():
-            _merge(_scan_skills_dir(
-                agent_id, builtin_skills.parent, "skills", "builtin"
-            ))
+        # importlib.util.find_spec preserves the arcui→arcagent boundary
+        # (SPEC-023 §2.2) — we only need arcagent's filesystem path, never
+        # its runtime behaviour.
+        import importlib.util as _ilu
+
+        spec = _ilu.find_spec("arcagent")
+        if spec is not None and spec.origin is not None:
+            builtin_skills = (
+                Path(spec.origin).parent / "builtins" / "capabilities" / "skills"
+            )
+            if builtin_skills.is_dir():
+                _merge(_scan_skills_dir(
+                    agent_id, builtin_skills.parent, "skills", "builtin"
+                ))
     except Exception:
         logger.debug("builtin skills scan failed", exc_info=True)
 
@@ -401,12 +409,22 @@ _KW_DESC_RE = re.compile(r'description\s*=\s*(?P<q>["\']{1,3})(?P<text>.+?)(?P=q
 
 def _arcagent_modules_dir() -> Path:
     """Locate ``arcagent/modules/`` on disk so we can scan capabilities files
-    for `@tool(...)` declarations without importing the package."""
+    for `@tool(...)` declarations without importing the package.
+
+    Uses ``importlib.util.find_spec`` rather than ``import arcagent`` so this
+    module preserves the SPEC-023 §2.2 boundary that arcui does not import
+    arcagent. The spec only locates the package's filesystem path; it does
+    not execute arcagent code.
+    """
+    import importlib.util
+
     try:
-        import arcagent
-        return Path(arcagent.__file__).parent / "modules"
-    except Exception:
-        return Path(__file__).resolve().parents[5] / "arcagent/src/arcagent/modules"
+        spec = importlib.util.find_spec("arcagent")
+        if spec is not None and spec.origin is not None:
+            return Path(spec.origin).parent / "modules"
+    except (ImportError, ValueError):
+        pass
+    return Path(__file__).resolve().parents[5] / "arcagent/src/arcagent/modules"
 
 
 def _parse_tool_blocks(text: str) -> list[dict[str, str]]:

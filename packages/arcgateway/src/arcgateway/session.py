@@ -217,6 +217,27 @@ class SessionRouter:
     # Allowlist delegation (public API — callers reference SessionRouter)
     # -----------------------------------------------------------------------
 
+    def set_adapter(self, adapter: BasePlatformAdapter) -> None:
+        """Register the primary adapter for outbound delivery.
+
+        Resolves the constructor-time circular dependency: SessionRouter
+        needs the adapter to deliver agent replies via StreamBridge, but
+        each adapter needs ``session_router.handle`` for ``on_message``.
+        Two-step construction breaks the cycle — build the router first,
+        then the adapters with a closure over ``router.handle``, then
+        call ``router.set_adapter(adapter)``.
+
+        Idempotent: replacing an existing adapter is permitted and is
+        the supported pattern for runtime adapter swaps (e.g. hot
+        reload during development).
+
+        Args:
+            adapter: A ``BasePlatformAdapter`` instance. Must be the
+                same type the router was originally configured for, or
+                a compatible peer.
+        """
+        self._adapter = adapter
+
     def add_approved_user(self, user_did: str) -> None:
         """Add a user DID to the allowlist (called after pairing approval).
 

@@ -1544,3 +1544,54 @@ th.sortable:hover { color: var(--accent); }
   overflow-y: auto;
   padding: 20px;
 }
+
+/* ============================================================
+   SPEC-023: Messages page (Slack-style chat with served agents)
+   ============================================================ */
+
+[data-page-content="messages"] { padding: 0 !important; }
+
+.channel-list {
+  width: 240px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+.channel-item {
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-left: 3px solid transparent;
+  transition: background-color 0.1s, color 0.1s;
+}
+.channel-item:hover {
+  background: var(--bg-deepest);
+  color: var(--text-primary);
+}
+.channel-item.active {
+  background: var(--accent-fill);
+  color: var(--text-white);
+  border-left-color: var(--accent);
+}
+.channel-item.active .text-dimmed { color: var(--text-secondary); }
+
+.msg-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+}
+.msg-input {
+  flex: 1;
+  background: var(--bg-deepest);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font);
+  outline: none;
+}
+.msg-input:focus { border-color: var(--accent); }
+.msg-input:disabled { opacity: 0.5; cursor: not-allowed; }

@@ -465,8 +465,12 @@ class ArcAgent:
         """Load and cache model on first use.
 
         Passes a JSONLTraceStore so every LLM call is persisted to
-        workspace/traces/ for historical UI display and audit.
-        Labels the agent so traces are attributed correctly.
+        ``<agent_root>/traces/`` for historical UI display and audit.
+        Per ``arcllm.JSONLTraceStore`` (NIST AU-9), traces live OUTSIDE
+        the workspace tool sandbox — the trace store wants the agent
+        root, not the workspace subdirectory. arcui's federated trace
+        store reads from the same location, so this mismatch was the
+        cause of "I chatted but no session shows" symptoms.
 
         Wires ArcLLM's ``on_event`` callback through ``create_arcllm_bridge``
         so ``llm_call``, ``config_change``, and ``circuit_change`` events
@@ -475,7 +479,8 @@ class ArcAgent:
         if self._model is None:
             from arcllm.trace_store import JSONLTraceStore
 
-            trace_store = JSONLTraceStore(self._workspace)
+            agent_root = self._workspace.parent
+            trace_store = JSONLTraceStore(agent_root)
             self._trace_store = trace_store
             # Bridge ArcLLM TraceRecords onto the ModuleBus. Bus is only
             # available after startup(); _ensure_model is lazy so this

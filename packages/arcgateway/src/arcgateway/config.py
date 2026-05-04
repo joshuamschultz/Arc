@@ -108,11 +108,33 @@ class SlackPlatformConfig(BaseModel):
         return os.environ.get(self.app_token_env)
 
 
+class WebPlatformConfig(BaseModel):
+    """[platforms.web] section.
+
+    The web platform is the in-process browser chat adapter (SPEC-023).
+    Unlike Telegram/Slack, it has no remote token: arcui hosts the gateway
+    runtime and routes browser WebSocket connections directly into the
+    adapter.
+
+    Bounds (validated by Pydantic Field constraints):
+        - max_connections: 1..10000
+        - idle_timeout_seconds: 60..86400
+        - max_frame_bytes: 1024..1048576
+    """
+
+    enabled: bool = False
+    agent_did: str = ""  # Overrides [gateway].agent_did for this platform.
+    max_connections: int = Field(default=50, ge=1, le=10_000)
+    idle_timeout_seconds: int = Field(default=3600, ge=60, le=86_400)
+    max_frame_bytes: int = Field(default=65_536, ge=1024, le=1_048_576)
+
+
 class PlatformsSection(BaseModel):
     """[platforms] section containing per-platform configs."""
 
     telegram: TelegramPlatformConfig = Field(default_factory=TelegramPlatformConfig)
     slack: SlackPlatformConfig = Field(default_factory=SlackPlatformConfig)
+    web: WebPlatformConfig = Field(default_factory=WebPlatformConfig)
 
 
 class PairingSection(BaseModel):
@@ -242,6 +264,8 @@ class GatewayConfig(BaseModel):
             plat_did = self.platforms.telegram.agent_did
         elif platform == "slack":
             plat_did = self.platforms.slack.agent_did
+        elif platform == "web":
+            plat_did = self.platforms.web.agent_did
         else:
             plat_did = ""
         return plat_did or self.gateway.agent_did

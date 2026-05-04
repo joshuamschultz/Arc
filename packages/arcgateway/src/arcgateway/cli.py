@@ -155,6 +155,21 @@ def _wire_adapters(runner: object, config: object) -> None:
                 if tier == "federal":
                     sys.exit(1)
 
+    # Web (browser chat platform — no remote token, no env-var lookup)
+    if config.platforms.web.enabled:
+        from arcgateway.adapters.web import WebPlatformAdapter
+
+        agent_did = config.effective_agent_did("web")
+        web_adapter = WebPlatformAdapter(
+            on_message=runner.session_router.handle,
+            agent_did=agent_did,
+            max_connections=config.platforms.web.max_connections,
+            idle_timeout_seconds=config.platforms.web.idle_timeout_seconds,
+            max_frame_bytes=config.platforms.web.max_frame_bytes,
+        )
+        runner.add_adapter(web_adapter)
+        _logger.info("arcgateway: Web adapter registered (agent_did=%s)", agent_did)
+
     # Slack
     if config.platforms.slack.enabled:
         bot_token = config.platforms.slack.resolve_bot_token()
