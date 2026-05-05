@@ -45,7 +45,10 @@ class QueueModule(BaseModule):
         super().__init__(config, inner)
 
         self._max_concurrent: int = config.get("max_concurrent", 2)
-        self._call_timeout: float = config.get("call_timeout", 60.0)
+        # Match the adapter-level httpx timeout (180s) so a long but
+        # legitimate LLM call doesn't hit the queue cutoff before the
+        # provider one. Configurable per-agent via [modules.queue].
+        self._call_timeout: float = config.get("call_timeout", 180.0)
         self._max_queued: int = config.get("max_queued", 10)
 
         if self._max_concurrent < 1:

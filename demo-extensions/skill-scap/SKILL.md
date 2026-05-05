@@ -131,14 +131,50 @@ scap_baseline_compare(baseline="moderate")
 scap_evidence_pack(control_family="AC", baseline="moderate", output_dir="...")
 ```
 
-For follow-up requests of the form "Now AU.", "Now CM.", "Now SC.", or
-"Build me the <family> evidence package against FedRAMP <baseline>",
-the agent **MUST** call `scap_evidence_pack` again with the new
-`control_family`. The artifact paths are real files on disk — the
-agent is forbidden from describing artifacts that do not exist. If
-the user types a short follow-up like "Now AU.", treat it as
-shorthand for the full prompt and call the tool. Never template a
-response from the prior turn.
+## CRITICAL — Every "build me the <FAMILY> evidence package" turn requires a fresh tool call
+
+When the user asks for an evidence package — whether on the very
+first turn or as a follow-up like "Now AU." — the **only** way to
+produce that package is to call `scap_evidence_pack` for that
+specific family. There is no implicit reuse, no caching, no batch
+mode. Each control family is a separate tool call.
+
+### Hard rules
+
+1. If a user message names a control family + a baseline (or refers
+   to one via "now AU", "do CM next", etc.), the **next thing the
+   agent emits must be a `tool_use` block** for `scap_evidence_pack`
+   with that family. Not text first, not a summary, not an
+   acknowledgement — the tool call is the only acceptable next move.
+
+2. The agent must NEVER cite an artifact path it didn't see returned
+   from a tool call in this turn. The PDF and CSV paths come from
+   the tool's return value — they are real files on disk. Inventing
+   paths is the worst possible failure mode.
+
+3. Past success on a different family is not evidence the new
+   family's files exist. Each turn starts fresh on this question.
+
+### Anti-pattern (WRONG — never do this)
+
+> User: "Build me the AU evidence package against FedRAMP Moderate."
+>
+> Assistant: "## ✅ AU Evidence Package — FedRAMP Moderate
+> Generated artifacts:
+> - PDF: `/tmp/scap-out/AU_evidence_moderate.pdf`
+> ..."
+
+That response did not call `scap_evidence_pack`. The path was
+fabricated by extrapolating from a prior turn's structure. The file
+does not exist. This is a hallucination. Never do this.
+
+### Correct pattern
+
+> User: "Build me the AU evidence package against FedRAMP Moderate."
+>
+> Assistant: [tool_use: scap_evidence_pack(control_family="AU", baseline="moderate", output_dir="/tmp/scap-out")]
+> [tool_result: {"pdf_path": "/tmp/scap-out/AU_evidence_moderate.pdf", ...}]
+> [text: "Generated AU package..."]
 
 Reference [`control_narrative_template.md`](references/control_narrative_template.md) for
 the prose conventions to mirror in any in-chat narrative the agent writes.

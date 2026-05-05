@@ -44,7 +44,13 @@ class BaseAdapter(LLMProvider):
                 )
         self._api_key = api_key
 
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+        # 180s send-side timeout. Multi-tool agentic turns (e.g. SCAP
+        # demo's "build me the SC evidence package", which runs
+        # baseline_compare + evidence_pack + a long synthesis pass)
+        # routinely take 60-90s on a single LLM round-trip with a 100k
+        # token context. The previous 60s default failed those legitimate
+        # calls.
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(180.0))
 
     @property
     def name(self) -> str:
