@@ -128,8 +128,24 @@ def _load_entities(args: argparse.Namespace) -> list[Any]:
     from arcteam.registry import list_entities_readonly
     from arcteam.storage import FileBackend
 
+    # Resolution order:
+    #   1. explicit --root            (test harnesses, advanced users)
+    #   2. <--team-root>/shared       (production: arc-stack.sh passes
+    #                                   --team-root <repo>/team and the
+    #                                   team backend lives at /shared per
+    #                                   `arc team init` convention)
+    #   3. TeamConfig().root default  (~/.arc/team/)
+    # Without step 2, `arc ui start --team-root .../team` would silently
+    # read trace-store entities from ~/.arc/team/ — empty in production —
+    # and every /api/traces and /api/agents/{id}/traces returns [].
     root_arg: str | None = getattr(args, "root", None)
-    root = Path(root_arg) if root_arg else TeamConfig().root
+    team_root_arg: str | None = getattr(args, "team_root", None)
+    if root_arg:
+        root = Path(root_arg)
+    elif team_root_arg:
+        root = Path(team_root_arg) / "shared"
+    else:
+        root = TeamConfig().root
     backend = FileBackend(root)
 
     try:

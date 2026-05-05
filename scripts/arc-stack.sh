@@ -318,9 +318,16 @@ case "$cmd" in
     ;;
   start|restart)
     stop_all
+    # Register agents BEFORE starting the UI. arcui's trace-store loader
+    # runs at process startup against the team/shared registry — if the
+    # registry is empty at that moment, the UI builds 0 trace stores
+    # and every /api/traces and /api/agents/{id}/traces query returns
+    # empty for the rest of the process lifetime, even as agents write
+    # traces to disk. Registering first means workspace_path entries
+    # exist when the UI initializes, so each agent gets a live store.
+    register_agents "${agents[@]}"
     start_ui
     wait_for_ui
-    register_agents "${agents[@]}"
     start_agents    "${agents[@]}"
     if wait_for_agents "${agents[@]}"; then
       echo
