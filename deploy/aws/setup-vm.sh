@@ -41,13 +41,48 @@ EOF
   exit 1
 fi
 
-# Auto-append <public-ip>.nip.io as a fallback hostname so the demo URL
-# works immediately, even before the operator's DNS A-record has
-# propagated. Caddy site addresses accept comma-separated hostnames.
+# Filter the Caddy hostname list to only those that ALREADY resolve to
+# this VM's public IP. Hostnames whose DNS hasn't propagated yet would
+# trigger ACME challenges that resolve to the wrong server, and Caddy
+# would fall back to the Let's Encrypt staging issuer (whose certs the
+# browser rejects with ERR_SSL_PROTOCOL_ERROR). Cleaning the staging
+# fallback later requires deleting Caddy's cert state and restarting —
+# a real footgun. So: only feed Caddy hostnames it can validate today.
+#
+# `<public-ip>.nip.io` is always added because nip.io's DNS is by
+# construction correct. The operator's real domain is included only if
+# its current A-record matches this VM. If it doesn't, we print a clear
+# message and the operator can re-run setup-vm.sh once DNS is updated.
 PUBLIC_IP=$(curl -fsSL --max-time 3 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
-if [ -n "${PUBLIC_IP}" ] && [[ "${DOMAIN}" != *"${PUBLIC_IP}.nip.io"* ]]; then
-  DOMAIN="${DOMAIN}, ${PUBLIC_IP}.nip.io"
+if [ -z "${PUBLIC_IP}" ]; then
+  echo "✗ could not read public IP from instance metadata — bailing." >&2
+  exit 1
 fi
+
+VALID_HOSTS=()
+IFS=',' read -r -a _RAW_HOSTS <<< "${DOMAIN}"
+for raw in "${_RAW_HOSTS[@]}"; do
+  host=$(echo "${raw}" | tr -d '[:space:]')
+  [ -z "${host}" ] && continue
+  if [[ "${host}" == *".nip.io" ]]; then
+    VALID_HOSTS+=("${host}")
+    continue
+  fi
+  resolved=$(getent hosts "${host}" 2>/dev/null | awk '{print $1; exit}')
+  if [ "${resolved}" = "${PUBLIC_IP}" ]; then
+    VALID_HOSTS+=("${host}")
+    echo "  ✓ DNS for ${host} → ${PUBLIC_IP} (will be served)"
+  else
+    echo "  ✗ DNS for ${host} → ${resolved:-unresolved} (NOT this VM ${PUBLIC_IP})"
+    echo "    Skipping until DNS propagates. Re-run this script after the A-record updates."
+  fi
+done
+
+# Always include the IP-based nip.io so the URL works regardless of DNS.
+if [[ ! " ${VALID_HOSTS[*]} " =~ " ${PUBLIC_IP}.nip.io " ]]; then
+  VALID_HOSTS+=("${PUBLIC_IP}.nip.io")
+fi
+DOMAIN=$(IFS=, ; echo "${VALID_HOSTS[*]}")
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
