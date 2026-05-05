@@ -1329,7 +1329,45 @@
       }
     }
     panelEl.addEventListener('click', onClick);
-    render();
+    try {
+      render();
+    } catch (err) {
+      console.error('[AgentDetail] render threw:', err);
+      panelEl.innerHTML =
+        '<div class="empty-state" style="padding:48px;text-align:center;color:var(--text-muted);">' +
+          'Detail render failed: <code>' +
+          String(err && err.message || err).replace(/[<>&]/g, function (c) {
+            return ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c];
+          }) +
+        '</code><br>See browser console for the full stack.</div>';
+    }
+
+    // Optional render-state diagnostic. Toggle on by setting
+    // localStorage.arcui_debug_render = '1' in DevTools — useful when
+    // chasing down browser-extension or content-script CSS injection
+    // that hides the tabs/body without raising any JS error
+    // (incident: Dia browser AI sidebar shipped a content script that
+    //  set `.tabs { display: none }` to harvest reading content).
+    if (window.localStorage && window.localStorage.getItem('arcui_debug_render') === '1') {
+      setTimeout(function () {
+        var tabsEl = panelEl.querySelector('.ad-tabs');
+        var bodyEl = panelEl.querySelector('.ad-body');
+        var info = {
+          tabs_display: tabsEl ? getComputedStyle(tabsEl).display : 'n/a',
+          tabs_count: tabsEl ? tabsEl.children.length : 0,
+          body_display: bodyEl ? getComputedStyle(bodyEl).display : 'n/a',
+          body_height: bodyEl ? bodyEl.offsetHeight : 0,
+          panel_height: panelEl.offsetHeight,
+        };
+        var bar = document.createElement('div');
+        bar.style.cssText =
+          'background:#fbbf24;color:#1f2937;padding:8px 12px;' +
+          'font-family:ui-monospace,monospace;font-size:11px;' +
+          'border-bottom:2px solid #f59e0b;z-index:9999;';
+        bar.textContent = '[arcui_debug_render] ' + JSON.stringify(info);
+        panelEl.insertBefore(bar, panelEl.firstChild);
+      }, 200);
+    }
 
     function onArcEvent(ev) {
       var msg = ev && ev.detail;
