@@ -30,13 +30,20 @@ DOMAIN="${1:-}"
 shift || true
 AGENTS=("$@")
 if [ ${#AGENTS[@]} -eq 0 ]; then
-  AGENTS=("my_agent")
+  # Default trio for the NLIT 2026 demo:
+  #   nlit_cora_agent   — STIG cross-reference, POA&M validation, gap reports
+  #   nlit_soc_agent    — SOC threat hunter, entity capture, incident triage
+  #   scap_isso_agent   — ISSO assistant: ATO evidence, FedRAMP gap analysis,
+  #                       drift detection, threat-informed compliance
+  # All three use Anthropic so the only key the .env needs is ANTHROPIC_API_KEY.
+  AGENTS=("nlit_cora_agent" "nlit_soc_agent" "scap_isso_agent")
 fi
 
 if [ -z "${DOMAIN}" ]; then
   cat >&2 <<EOF
 ✗ usage: bash deploy/aws/setup-vm.sh <domain> [agent_name ...]
-   e.g.   bash deploy/aws/setup-vm.sh agent.blackarcsystems.com nlit_cora_agent
+   e.g.   bash deploy/aws/setup-vm.sh agent.blackarcsystems.com
+   (with no agent args, defaults to: ${AGENTS[*]})
 EOF
   exit 1
 fi

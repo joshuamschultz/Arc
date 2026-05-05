@@ -111,6 +111,7 @@ From your laptop, copy the keys for the agents you're enabling:
 DIDS=$(grep -h '^did =' \
   ~/Projects/arc/team/nlit_cora_agent/arcagent.toml \
   ~/Projects/arc/team/nlit_soc_agent/arcagent.toml \
+  ~/Projects/arc/team/scap_isso_agent/arcagent.toml \
   | sed -E 's/.*"did:arc:[^/]+\/([^"]+)".*/\1/')
 
 # rsync just those keypairs (and nothing else from ~/.arcagent/)
@@ -132,7 +133,8 @@ ssh -i ~/.ssh/lightsail-us-east-1.pem ubuntu@<static-ip>
 
 # First time on this VM:
 nano ~/arc/.env                                   # ANTHROPIC_API_KEY=sk-ant-...
-bash ~/arc/deploy/aws/setup-vm.sh demo.blackarcsystems.com nlit_cora_agent nlit_soc_agent
+bash ~/arc/deploy/aws/setup-vm.sh demo.blackarcsystems.com
+# (no agent args ⇒ defaults to: nlit_cora_agent + nlit_soc_agent + scap_isso_agent)
 ```
 
 `setup-vm.sh`:
