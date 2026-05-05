@@ -1219,7 +1219,7 @@
 
   function tabHeader(activeId) {
     return '<div class="tabs ad-tabs">' + TAB_LABELS.map(function (p) {
-      var cls = p[0] === activeId ? 'tab active' : 'tab';
+      var cls = p[0] === activeId ? 'tab pill-nav-item active' : 'tab pill-nav-item';
       return '<div class="' + cls + '" data-tab="' + p[0] + '">' + p[1] + '</div>';
     }).join('') + '</div>';
   }

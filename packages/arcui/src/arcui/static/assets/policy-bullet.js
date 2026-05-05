@@ -75,7 +75,8 @@
 
   function render(b) {
     if (!b || !b.id) return '';
-    var cls = demoClassFor(b);
+    var demoCls = demoClassFor(b);
+    var tier = b.retired ? 'retired' : scoreTier(b.score);
     var color = colorFor(b);
     var score = b.score == null ? 0 : Number(b.score);
     var pct = Math.max(0, Math.min(100, Math.round(score * 10)));
@@ -85,12 +86,12 @@
       : '';
 
     return (
-      '<div class="policy-bullet ' + cls + '" ' +
+      '<div class="pb pb-tier-' + tier + ' ' + demoCls + '" ' +
         'data-bullet-id="' + escText(b.id) + '" ' +
         'data-score="' + escText(score) + '">' +
-        '<div class="flex items-center justify-between">' +
+        '<div class="pb-head flex items-center justify-between">' +
           '<div class="flex items-center gap-8">' +
-            '<span class="policy-bullet-id">' + escText(b.id) + '</span>' +
+            '<span class="pb-id">' + escText(b.id) + '</span>' +
             agentTag +
           '</div>' +
           '<div class="score-bar">' +
@@ -101,8 +102,8 @@
             '<span class="score-value ' + color + '">' + escText(score) + '</span>' +
           '</div>' +
         '</div>' +
-        '<div class="policy-bullet-text">' + escText(b.text) + '</div>' +
-        '<div class="policy-bullet-meta">' +
+        '<div class="pb-text">' + escText(b.text) + '</div>' +
+        '<div class="pb-meta">' +
           metaItem('uses', b.uses) +
           metaItem('reviewed', b.reviewed) +
           metaItem('created', b.created) +
@@ -116,7 +117,7 @@
     if (!Array.isArray(bullets) || bullets.length === 0) {
       return '<div class="text-dimmed text-xs" style="padding:24px;text-align:center;">No bullets</div>';
     }
-    return bullets.map(render).join('');
+    return '<div class="pb-list">' + bullets.map(render).join('') + '</div>';
   }
 
   function sortBy(bullets, key, dir) {

@@ -20,6 +20,7 @@ agents, or details" + "blank, no data" + "this is not connected".
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -138,10 +139,19 @@ def browser(server: tuple[str, Path]) -> Iterator[object]:
 
 
 def _fresh_page(browser: object, url: str) -> tuple[object, list[str]]:
-    """Brand-new context: no cookies, no localStorage, JS cache off."""
+    """Brand-new context: no cookies, JS cache off, viewer token seeded.
+
+    Without seeding `arcui_viewer_token` into localStorage before navigation,
+    the SPA loads but every /api/* call returns 401 — agents-page.js
+    silently renders zero cards and the test fails on selector timeout.
+    Mirrors the working pattern in `test_browser_rehearsal._new_page`.
+    """
     ctx = browser.new_context(  # type: ignore[attr-defined]
         viewport={"width": 1400, "height": 900},
         bypass_csp=True,
+    )
+    ctx.add_init_script(
+        f"window.localStorage.setItem('arcui_viewer_token', {json.dumps(VIEWER)});"
     )
     page = ctx.new_page()
     page.route("**/*", lambda r: r.continue_(headers={**r.request.headers, "Cache-Control": "no-cache"}))

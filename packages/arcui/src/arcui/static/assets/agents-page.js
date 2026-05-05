@@ -148,7 +148,7 @@
         statCard('Offline', offlineCt, 'var(--status-idle)') +
         statCard('Hidden', agents.length - totalAll) +
       '</div>' +
-      '<div class="grid-3 mb-20" id="agent-grid">' +
+      '<div class="agent-grid mb-20" id="agent-grid">' +
         (visible.length
           ? visible.map(function (a) { return agentCard(a, metrics[a.agent_id]); }).join('')
           : '<div class="card"><div class="card-body"><div class="empty-state">No agents</div></div></div>') +
