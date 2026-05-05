@@ -1,13 +1,15 @@
 # Replace DEMO_DOMAIN with your subdomain (e.g. demo.blackarcsystems.com)
 DEMO_DOMAIN {
 	# Static file server for SCAP evidence packages (PDFs + POA&M CSVs).
-	# Each scap_evidence_pack call writes into /home/ubuntu/arc/evidence-packages/.
-	# `browse` enables the directory index so the operator can refresh and see
-	# new artifacts appear. Public read — sanitized data only, no secrets.
-	# Caddy needs traverse perms on /home/ubuntu, so setup-vm.sh adds the
-	# `caddy` user to the `ubuntu` group and chmods /home/ubuntu g+x.
+	# scap_evidence_pack defaults to writing into /tmp/scap-out — keep
+	# the path here aligned with what the agent picks. `browse` shows
+	# the directory listing so the presenter can refresh and see new
+	# artifacts appear. Public read — sanitized data only, no secrets.
+	# (Caddy's stock unit has PrivateTmp=yes, which would isolate this
+	# /tmp from the agent's. setup-vm.sh installs an override to flip
+	# it off so both processes share the same /tmp.)
 	handle_path /artifacts/* {
-		root * /home/ubuntu/arc/evidence-packages
+		root * /tmp/scap-out
 		file_server browse
 	}
 

@@ -243,14 +243,22 @@ sudo systemctl enable arc-stack.service
 sudo mkdir -p /var/log/caddy
 sudo chown caddy:caddy /var/log/caddy
 
-# Caddy needs to traverse /home/ubuntu to serve /artifacts/* from
-# /home/ubuntu/arc/evidence-packages/ (where scap_evidence_pack writes).
-# Default home perms are 750 (owner+group only); add caddy to ubuntu's
-# group and grant group-traverse so the file_server route can reach
-# the dir without making /home/ubuntu world-readable.
-sudo usermod -aG ubuntu caddy
-sudo chmod g+x "${HOME}"
-mkdir -p "${REPO_ROOT}/evidence-packages"
+# scap_evidence_pack writes its PDFs + POA&M CSVs to /tmp/scap-out
+# (the path the agent's tool-use args pick by default — derived from
+# the SCAP skill's example invocations). Caddy's stock systemd unit
+# sets PrivateTmp=yes, which gives Caddy its own /tmp namespace
+# isolated from the agent's. With that on, /artifacts/ returns 404
+# even though files exist.
+# Override: disable PrivateTmp so Caddy and the agent share /tmp.
+sudo mkdir -p /etc/systemd/system/caddy.service.d
+echo -e "[Service]\nPrivateTmp=false" \
+  | sudo tee /etc/systemd/system/caddy.service.d/private-tmp.conf >/dev/null
+sudo systemctl daemon-reload
+
+# Make sure the artifact dir exists at boot so /artifacts/ renders an
+# (empty) directory listing instead of 404 before any tool has run.
+mkdir -p /tmp/scap-out
+chmod 755 /tmp/scap-out
 sed "s/DEMO_DOMAIN/${DOMAIN}/g" "${REPO_ROOT}/deploy/aws/Caddyfile" \
   | sudo tee /etc/caddy/Caddyfile >/dev/null
 sudo systemctl enable caddy
