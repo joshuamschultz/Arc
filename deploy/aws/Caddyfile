@@ -1,5 +1,16 @@
 # Replace DEMO_DOMAIN with your subdomain (e.g. demo.blackarcsystems.com)
 DEMO_DOMAIN {
+	# Static file server for SCAP evidence packages (PDFs + POA&M CSVs).
+	# Each scap_evidence_pack call writes into /home/ubuntu/arc/evidence-packages/.
+	# `browse` enables the directory index so the operator can refresh and see
+	# new artifacts appear. Public read — sanitized data only, no secrets.
+	# Caddy needs traverse perms on /home/ubuntu, so setup-vm.sh adds the
+	# `caddy` user to the `ubuntu` group and chmods /home/ubuntu g+x.
+	handle_path /artifacts/* {
+		root * /home/ubuntu/arc/evidence-packages
+		file_server browse
+	}
+
 	reverse_proxy 127.0.0.1:8420 {
 		header_up Host {host}
 		header_up X-Forwarded-Proto {scheme}

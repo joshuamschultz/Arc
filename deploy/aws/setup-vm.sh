@@ -242,6 +242,15 @@ sudo systemctl enable arc-stack.service
 
 sudo mkdir -p /var/log/caddy
 sudo chown caddy:caddy /var/log/caddy
+
+# Caddy needs to traverse /home/ubuntu to serve /artifacts/* from
+# /home/ubuntu/arc/evidence-packages/ (where scap_evidence_pack writes).
+# Default home perms are 750 (owner+group only); add caddy to ubuntu's
+# group and grant group-traverse so the file_server route can reach
+# the dir without making /home/ubuntu world-readable.
+sudo usermod -aG ubuntu caddy
+sudo chmod g+x "${HOME}"
+mkdir -p "${REPO_ROOT}/evidence-packages"
 sed "s/DEMO_DOMAIN/${DOMAIN}/g" "${REPO_ROOT}/deploy/aws/Caddyfile" \
   | sudo tee /etc/caddy/Caddyfile >/dev/null
 sudo systemctl enable caddy
