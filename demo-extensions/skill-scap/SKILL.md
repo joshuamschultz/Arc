@@ -131,7 +131,15 @@ scap_baseline_compare(baseline="moderate")
 scap_evidence_pack(control_family="AC", baseline="moderate", output_dir="...")
 ```
 
-Then "Now AU. Now CM. Now SC." → re-run `scap_evidence_pack` per family.
+For follow-up requests of the form "Now AU.", "Now CM.", "Now SC.", or
+"Build me the <family> evidence package against FedRAMP <baseline>",
+the agent **MUST** call `scap_evidence_pack` again with the new
+`control_family`. The artifact paths are real files on disk — the
+agent is forbidden from describing artifacts that do not exist. If
+the user types a short follow-up like "Now AU.", treat it as
+shorthand for the full prompt and call the tool. Never template a
+response from the prior turn.
+
 Reference [`control_narrative_template.md`](references/control_narrative_template.md) for
 the prose conventions to mirror in any in-chat narrative the agent writes.
 
