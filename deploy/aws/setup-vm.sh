@@ -107,7 +107,12 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   python3.11 python3.11-venv python3.11-dev \
   build-essential pkg-config libssl-dev libffi-dev \
   curl ca-certificates gnupg jq \
-  debian-keyring debian-archive-keyring apt-transport-https
+  debian-keyring debian-archive-keyring apt-transport-https \
+  libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz0b \
+  libcairo2 libgdk-pixbuf-2.0-0
+  # Last 5 are needed by WeasyPrint (used by the SCAP evidence-pack
+  # tool to render PDFs). Without them, scap_evidence_pack errors at
+  # call time. Cheap to install up-front.
 
 # --- 2. Caddy ---
 echo "[2/8] Installing Caddy..."
@@ -147,6 +152,33 @@ done
 "${REPO_ROOT}/.venv/bin/pip" install --quiet "${PACKAGES[@]}"
 "${REPO_ROOT}/.venv/bin/python" -c "import arcui" 2>/dev/null \
   || { echo "✗ arcui still not importable — bailing." >&2; exit 1; }
+
+# SCAP demo extension dependencies. The scap_tools.py shim imports
+# bs4/lxml/jinja2/weasyprint/pypdf transitively; if any are missing,
+# the entire shim fails to load and ALL 6 SCAP @tool functions stay
+# unregistered (the agent then says "the SCAP tools haven't been
+# created yet" when the user asks it to ingest scans).
+echo "  Installing SCAP extension dependencies..."
+"${REPO_ROOT}/.venv/bin/pip" install --quiet \
+  lxml beautifulsoup4 jinja2 tomli-w weasyprint pypdf
+
+# --- 4.5. SCAP extension install (dev-mode rsync into ~/.arc/) ---
+# Mirrors scripts/install-scap-extension.sh — the loader scans
+# ~/.arc/capabilities/*.py for flat shim files (not subdirs), so the
+# scap/ package needs to land at ~/.arc/capabilities/scap/ and the
+# scap_tools.py shim at ~/.arc/capabilities/scap_tools.py.
+if [ -d "${REPO_ROOT}/demo-extensions/scap" ]; then
+  echo "  Installing SCAP extension into ~/.arc/..."
+  mkdir -p "${HOME}/.arc/capabilities" "${HOME}/.arc/skills"
+  rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' \
+    "${REPO_ROOT}/demo-extensions/scap/" "${HOME}/.arc/capabilities/scap/"
+  if [ -d "${REPO_ROOT}/demo-extensions/skill-scap" ]; then
+    rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' \
+      "${REPO_ROOT}/demo-extensions/skill-scap/" "${HOME}/.arc/skills/scap/"
+  fi
+  cp "${REPO_ROOT}/demo-extensions/scap_tools.py" \
+     "${HOME}/.arc/capabilities/scap_tools.py"
+fi
 
 # --- 5. .env ---
 echo "[5/8] Checking .env..."
