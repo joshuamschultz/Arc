@@ -69,27 +69,41 @@ self.addEventListener('fetch', (event) => {
   // 2. Cache-first for hashed assets (/assets/*).
   //    These files have content-addressed names so a cache hit is
   //    always correct; misses are fetched, cloned, and stored.
+  //    On network failure with no cache entry, return a 503 Response
+  //    rather than `undefined` — respondWith(undefined) throws
+  //    "Failed to convert value to 'Response'" and breaks the page.
   if (url.pathname.startsWith(ASSETS_PREFIX)) {
     event.respondWith(
       caches.match(event.request).then((cached) => {
         if (cached) return cached;
-        return fetch(event.request).then((response) => {
-          const clone = response.clone();
-          caches
-            .open(CACHE_VERSION)
-            .then((cache) => cache.put(event.request, clone));
-          return response;
-        });
+        return fetch(event.request)
+          .then((response) => {
+            if (response && response.ok) {
+              const clone = response.clone();
+              caches
+                .open(CACHE_VERSION)
+                .then((cache) => cache.put(event.request, clone))
+                .catch(() => undefined);
+            }
+            return response;
+          })
+          .catch(() =>
+            new Response('asset unavailable', {
+              status: 503,
+              statusText: 'Service Unavailable',
+            })
+          );
       })
     );
     return;
   }
 
-  // 3. Network-first for everything else (HTML, etc.).
-  //    Serves from the network when online; falls back to the cached
-  //    shell when the network is unavailable so the UI rehydrates
-  //    rather than showing a browser error page.
-  event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
-  );
+  // 3. Everything else (HTML page navigation, JSON manifests, etc.) —
+  //    do NOT intercept. The browser handles the request directly so
+  //    auth headers from localStorage flow through unchanged and the
+  //    SW never has to manufacture a Response for the navigation
+  //    path. (Earlier "network-first with cache fallback" rejected
+  //    promises with undefined whenever both fetch and cache missed,
+  //    breaking page navigation entirely.)
+  return;
 });
