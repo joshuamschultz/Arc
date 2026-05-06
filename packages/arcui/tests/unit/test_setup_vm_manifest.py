@@ -1,8 +1,9 @@
-"""Shell-level tests for the agent manifest reader in `deploy/aws/setup-vm.sh`.
+"""Shell-level tests for the shared agent-manifest reader.
 
 These run the `_read_agent_manifest` shell function in isolation by sourcing
-the script with a fake REPO_ROOT, so we can exercise the malformed-entry
-branch without invoking the rest of the deploy. SPEC-025 §M3.
+``deploy/lib/agent-manifest.sh`` with a fake REPO_ROOT, so we can exercise
+the malformed-entry branch without invoking the rest of the deploy.
+SPEC-025 §M3 + §TD-4 (extracted to a shared lib for AWS + Azure).
 """
 
 from __future__ import annotations
@@ -11,35 +12,23 @@ import subprocess
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_SETUP_VM = _REPO_ROOT / "deploy" / "aws" / "setup-vm.sh"
+_MANIFEST_LIB = _REPO_ROOT / "deploy" / "lib" / "agent-manifest.sh"
 
 
 def _run_manifest(manifest_text: str | None, tmp_path: Path) -> subprocess.CompletedProcess[str]:
-    """Source setup-vm.sh's manifest function against a synthetic REPO_ROOT.
+    """Source the shared manifest lib against a synthetic manifest file.
 
     Writes ``manifest_text`` (or omits the file if None) to
-    ``tmp_path/deploy/aws/agents.enabled`` and runs the shell function.
+    ``tmp_path/agents.enabled`` and runs the shell function.
     Returns the CompletedProcess so callers can assert on returncode/stderr.
     """
-    fake_repo = tmp_path / "fake_repo"
-    (fake_repo / "deploy" / "aws").mkdir(parents=True)
+    manifest_path = tmp_path / "agents.enabled"
     if manifest_text is not None:
-        (fake_repo / "deploy" / "aws" / "agents.enabled").write_text(
-            manifest_text, encoding="utf-8"
-        )
-    # Extract just the function — sourcing the whole script triggers the
-    # main flow which expects DOMAIN, sudo, etc.
-    setup_text = _SETUP_VM.read_text(encoding="utf-8")
-    func_start = setup_text.index("_read_agent_manifest()")
-    func_body = setup_text[func_start:]
-    # Find the closing brace of the function (first '}' at column 0).
-    close = func_body.index("\n}\n") + 3
-    function_only = func_body[:close]
+        manifest_path.write_text(manifest_text, encoding="utf-8")
     snippet = (
         "set -u\n"
-        f"REPO_ROOT='{fake_repo}'\n"
-        f"{function_only}\n"
-        '_read_agent_manifest\n'
+        f". '{_MANIFEST_LIB}'\n"
+        f"_read_agent_manifest '{manifest_path}'\n"
     )
     return subprocess.run(
         ["/bin/bash", "-c", snippet],  # absolute path to satisfy S607

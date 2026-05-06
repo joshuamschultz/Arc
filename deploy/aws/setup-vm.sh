@@ -81,44 +81,21 @@ done
 if [[ ! " ${VALID_HOSTS[*]} " =~ " ${PUBLIC_IP}.nip.io " ]]; then
   VALID_HOSTS+=("${PUBLIC_IP}.nip.io")
 fi
+# Caddy site-address syntax wants space-separated hostnames, NOT
+# comma-separated. Comma-separated produces "Site addresses cannot
+# contain a comma" at config-load and the unit fails. Use the bash
+# default-IFS (space) join.
+CADDY_DOMAIN="${VALID_HOSTS[*]}"
+# DOMAIN keeps the comma form for the demo URL banner ("Visit https://X").
 DOMAIN=$(IFS=, ; echo "${VALID_HOSTS[*]}")
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-# ---------------------------------------------------------------------------
-# Read the per-host agent manifest (deploy/aws/agents.enabled).
-# ---------------------------------------------------------------------------
-# Returns ENABLED_AGENTS as a newline-separated string of agent dir names.
-# SPEC-025 §TD-4 — when (not if) deploy/azure/setup-vm.sh adopts the same
-# manifest, extract this function to deploy/lib/agent-manifest.sh and
-# source it from both. Don't duplicate.
-_read_agent_manifest() {
-  local manifest="${REPO_ROOT}/deploy/aws/agents.enabled"
-  if [ ! -f "${manifest}" ]; then
-    echo "[WARN] deploy/aws/agents.enabled not found — falling back to default demo agents." >&2
-    printf 'nlit_cora_agent\nnlit_soc_agent\nscap_isso_agent\n'
-    return
-  fi
-  local enabled
-  enabled=$(grep -v '^#' "${manifest}" | grep -v '^[[:space:]]*$' || true)
-  if [ -z "${enabled}" ]; then
-    echo "✗ deploy/aws/agents.enabled exists but is empty — misconfiguration, aborting." >&2
-    exit 1
-  fi
-  # Defense-in-depth (SPEC-025 §M3): every line must match a strict shape
-  # so a tampered manifest cannot smuggle path-traversal, shell metachars,
-  # or whitespace tricks into the rm -rf loop downstream.
-  while IFS= read -r line; do
-    if [[ ! "${line}" =~ ^[a-z0-9_]+_agent$ ]]; then
-      echo "✗ agents.enabled contains malformed entry: '${line}' (must match ^[a-z0-9_]+_agent$)" >&2
-      exit 1
-    fi
-  done <<< "${enabled}"
-  printf '%s\n' "${enabled}"
-}
-
-ENABLED_AGENTS=$(_read_agent_manifest)
+# Per-host agent manifest. SPEC-025 §TD-4 — shared with deploy/azure/.
+# shellcheck source=../lib/agent-manifest.sh
+. "${REPO_ROOT}/deploy/lib/agent-manifest.sh"
+ENABLED_AGENTS=$(_read_agent_manifest "${REPO_ROOT}/deploy/aws/agents.enabled")
 
 echo "=== Arc Demo VM Setup ==="
 echo "Repo:    ${REPO_ROOT}"
@@ -302,7 +279,7 @@ sudo systemctl daemon-reload
 # (empty) directory listing instead of 404 before any tool has run.
 mkdir -p /tmp/scap-out
 chmod 755 /tmp/scap-out
-sed "s/DEMO_DOMAIN/${DOMAIN}/g" "${REPO_ROOT}/deploy/aws/Caddyfile" \
+sed "s/DEMO_DOMAIN/${CADDY_DOMAIN}/g" "${REPO_ROOT}/deploy/aws/Caddyfile" \
   | sudo tee /etc/caddy/Caddyfile >/dev/null
 sudo systemctl enable caddy
 sudo systemctl restart caddy
