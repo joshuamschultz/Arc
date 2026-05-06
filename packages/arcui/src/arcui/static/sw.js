@@ -26,6 +26,10 @@ const ALWAYS_LIVE = [/^\/api\//, /^\/ws\//, /^\/artifacts\//];
 // succeeding; the network-first fetch handler still populates the cache
 // lazily on the first authenticated navigation.
 self.addEventListener('install', (event) => {
+  // Take over immediately — without skipWaiting the old (broken) SW
+  // keeps controlling open tabs until every one is closed, so a deploy
+  // that fixes a SW bug appears to "not work" for users with sticky tabs.
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_VERSION).then((cache) =>
       Promise.all(
@@ -42,17 +46,22 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// On activation delete every cache that is not the current version.
-// This prevents stale asset bundles from accumulating on the device.
+// On activation delete every cache that is not the current version
+// AND claim every existing client so the new SW handles their next
+// fetch — without this the new SW only takes effect on subsequent
+// page loads, leaving the broken SW in charge of the current tab.
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys
-          .filter((k) => k !== CACHE_VERSION)
-          .map((k) => caches.delete(k))
-      )
-    )
+    Promise.all([
+      caches.keys().then((keys) =>
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE_VERSION)
+            .map((k) => caches.delete(k))
+        )
+      ),
+      self.clients.claim(),
+    ])
   );
 });
 
