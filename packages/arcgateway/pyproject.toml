@@ -30,7 +30,8 @@ dependencies = [
 # Install only the adapters you need:
 #   pip install 'arcgateway[telegram]'
 #   pip install 'arcgateway[slack]'
-#   pip install 'arcgateway[telegram,slack]'
+#   pip install 'arcgateway[mattermost]'
+#   pip install 'arcgateway[telegram,slack,mattermost]'
 [project.optional-dependencies]
 telegram = [
     "python-telegram-bot>=20,<22",
@@ -41,6 +42,12 @@ telegram = [
 slack = [
     "slack-bolt>=1.18",
     "slack-sdk>=3",
+]
+# aiohttp is NOT required for arcgateway base.
+# MattermostAdapter lazily imports it inside connect() so the package stays
+# importable without it installed. (SPEC-025 Track F)
+mattermost = [
+    "aiohttp>=3.9,<4",
 ]
 
 [project.scripts]
@@ -97,6 +104,11 @@ ignore_missing_imports = true
 module = ["slack_bolt.*", "slack_sdk.*"]
 ignore_missing_imports = true
 
+# aiohttp is an optional extra for the Mattermost adapter; suppress missing-import errors.
+[[tool.mypy.overrides]]
+module = ["aiohttp.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -118,5 +130,6 @@ fail_under = 80
 
 [dependency-groups]
 dev = [
+    "aiohttp>=3.13.3",
     "mypy>=1.19.1",
 ]

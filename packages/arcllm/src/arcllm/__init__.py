@@ -77,6 +77,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "SecurityModule": "arcllm.modules.security",
     "TelemetryModule": "arcllm.modules.telemetry",
     "VaultResolver": "arcllm.vault",
+    "AwsSecretsManagerBackend": "arcllm.backends.aws_secrets",
 }
 
 
@@ -96,6 +97,7 @@ __all__ = [
     "ArcLLMError",
     "ArcLLMParseError",
     "AuditModule",
+    "AwsSecretsManagerBackend",
     "Azure_OpenaiAdapter",
     "BaseAdapter",
     "BaseModule",

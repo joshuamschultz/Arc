@@ -101,6 +101,39 @@ class TestTypedFieldSchemas:
                 # auth_method missing
             )
 
+    def test_session_start_fields_username_required(self) -> None:
+        """Architecture-review §M-2 — `username` is REQUIRED.
+
+        Pydantic must reject construction without it so a forgetful caller
+        cannot silently emit a fallback string. The resolver (auth.py
+        ``_resolve_username``) is the only path allowed to produce the
+        ``<unknown:uid=...>`` fallback.
+        """
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            SessionStartFields(  # type: ignore[call-arg]
+                session_id="x",
+                uid=1000,
+                remote_addr="127.0.0.1",
+                auth_method="browser_bootstrap",
+                # username missing
+            )
+
+    def test_session_start_fields_username_round_trip(self) -> None:
+        """Explicit username flows through to model_dump() unchanged."""
+        fields = SessionStartFields(
+            session_id="x",
+            uid=1000,
+            username="alice",
+            remote_addr="127.0.0.1",
+            auth_method="browser_bootstrap",
+        )
+        dumped = fields.model_dump()
+        assert dumped["username"] == "alice"
+        assert dumped["uid"] == 1000
+
     def test_agent_autoconnect_fields_require_all_four(self) -> None:
         import pytest
         from pydantic import ValidationError
