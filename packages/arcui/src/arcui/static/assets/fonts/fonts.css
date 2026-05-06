@@ -1,56 +1,23 @@
-/* Self-hosted fonts (SPEC-023 §FR-26).
+/* Font loading — currently relying on system fallbacks.
  *
- * font-display: swap so text remains visible while the WOFF2 loads
- * (perceived perf + accessibility win for slow disks / first paint).
- * unicode-range covers the basic Latin block we actually use; if a glyph
- * outside this range is rendered the browser falls back to system fonts
- * rather than fetching anything external. (Air-gap-safe.)
+ * The CSS vars in arc-platform.css declare:
+ *   --font:       'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+ *   --font-mono:  'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+ *
+ * Inter / JetBrains Mono `@font-face` rules have been removed because
+ * the woff2 files were never committed — the page was 404-ing every
+ * font request, polluting the console with no functional improvement
+ * over the (already excellent) system-font fallbacks. SPEC-023 §FR-26
+ * called for self-hosted woff2 as an air-gap-readiness improvement;
+ * that work needs the actual font binaries committed alongside this CSS.
+ *
+ * To restore self-hosted fonts:
+ *   1. Drop the woff2 files into this directory (Inter regular/medium/
+ *      semibold/bold + JetBrains Mono regular/medium).
+ *   2. Re-add the `@font-face` rules below the system-fallback comment.
+ *   3. Verify the deploy ships the woff2 files (no .gitignore exclusion).
+ *
+ * Until then, the system stack renders cleanly on macOS / Windows /
+ * Linux without any network requests — which is also exactly what
+ * an air-gapped deployment wants.
  */
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("inter-regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("inter-medium.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("inter-semibold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("inter-bold.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("jetbrains-mono-regular.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "JetBrains Mono";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("jetbrains-mono-medium.woff2") format("woff2");
-}

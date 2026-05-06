@@ -19,10 +19,26 @@ const ASSETS_PREFIX = '/assets/';
 const ALWAYS_LIVE = [/^\/api\//, /^\/ws\//, /^\/artifacts\//];
 
 // Pre-cache the bare HTML shell so a network blip does not leave
-// the operator with a blank page.
+// the operator with a blank page. Each path is added independently —
+// `cache.addAll` is atomic and fails the whole install if ANY request
+// returns non-2xx (e.g. when the auth middleware redirects `/` for an
+// unauthenticated SW fetch). Tolerant individual `put`s keep install
+// succeeding; the network-first fetch handler still populates the cache
+// lazily on the first authenticated navigation.
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL_PATHS))
+    caches.open(CACHE_VERSION).then((cache) =>
+      Promise.all(
+        SHELL_PATHS.map((path) =>
+          fetch(path, { credentials: 'same-origin' })
+            .then((resp) => {
+              if (resp && resp.ok) return cache.put(path, resp);
+              return undefined;  // skip non-2xx silently
+            })
+            .catch(() => undefined)  // skip network errors silently
+        )
+      )
+    )
   );
 });
 
