@@ -877,15 +877,50 @@
         if (!panel) return;
         if (_pageInstances[route.page]) return; // already mounted
         const M = window.ARC;
-        if (route.page === 'agents'        && M.AgentsPage)        _pageInstances.agents        = M.AgentsPage.mount(panel);
-        if (route.page === 'agent-detail'  && M.AgentDetail && route.agent) {
-          _pageInstances['agent-detail'] = M.AgentDetail.mount(panel, route.agent);
-          _detailMountedAgent = route.agent;
+
+        // Page → mount-module map. Each entry resolves the module name on
+        // window.ARC so we can detect "module never registered" cleanly
+        // (rather than silently rendering an empty panel — the failure mode
+        // we just spent an hour debugging in production).
+        const PAGE_MODULES = {
+          'agents':        ['AgentsPage',       false],
+          'agent-detail':  ['AgentDetail',      true],   // requires route.agent
+          'tasks':         ['TasksPage',        false],
+          'tools-skills':  ['ToolsSkillsPage',  false],
+          'security':      ['SecurityPage',     false],
+          'policy':        ['PolicyPage',       false],
+        };
+        const entry = PAGE_MODULES[route.page];
+        if (entry) {
+          const [modName, needsAgent] = entry;
+          const mod = M[modName];
+          if (!mod) {
+            console.error('[router]', modName, 'not on window.ARC — JS bundle missing or failed to register');
+            panel.innerHTML =
+              '<div class="empty-state" style="padding:48px;text-align:center;color:var(--text-muted);">' +
+                'Failed to load <code>' + modName + '</code>. ' +
+                'Open DevTools → Network and refresh — look for a 4xx on the JS bundle. ' +
+                'If clean, hard-reload (Cmd+Shift+R) or open in incognito.' +
+              '</div>';
+          } else if (needsAgent && !route.agent) {
+            console.warn('[router]', route.page, 'needs ?agent= but none in URL');
+            panel.innerHTML = '<div class="empty-state" style="padding:48px;text-align:center;">No agent selected.</div>';
+          } else {
+            try {
+              const args = needsAgent ? [panel, route.agent] : [panel];
+              _pageInstances[route.page] = mod.mount.apply(mod, args);
+              if (route.page === 'agent-detail') _detailMountedAgent = route.agent;
+            } catch (err) {
+              console.error('[router]', modName, 'mount threw:', err);
+              panel.innerHTML =
+                '<div class="empty-state" style="padding:48px;text-align:center;color:var(--text-muted);">' +
+                  '<code>' + modName + '.mount()</code> threw: <code>' +
+                  String(err.message || err).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'})[c]) +
+                '</code><br>Check the browser console for the full stack.' +
+                '</div>';
+            }
+          }
         }
-        if (route.page === 'tasks'         && M.TasksPage)         _pageInstances.tasks         = M.TasksPage.mount(panel);
-        if (route.page === 'tools-skills'  && M.ToolsSkillsPage)   _pageInstances['tools-skills'] = M.ToolsSkillsPage.mount(panel);
-        if (route.page === 'security'      && M.SecurityPage)      _pageInstances.security      = M.SecurityPage.mount(panel);
-        if (route.page === 'policy'        && M.PolicyPage)        _pageInstances.policy        = M.PolicyPage.mount(panel);
       });
     }
 
@@ -2030,6 +2065,23 @@
       const item = e.target.closest('.sidebar-item');
       if (item && item.dataset.page === 'settings') loadArcLLMConfig();
     });
+
+    /* --- Service Worker Registration (SPEC-025 §FR-3 / D3+D4) ---
+       Set window.__SW_DISABLE__ = true before this script runs to skip
+       SW registration — useful when a buggy SW deploy locks operators out.
+       The protocol check is required because SW only works on HTTPS or
+       localhost; calling register on a plain HTTP URL throws a SecurityError. */
+    if (window.__SW_DISABLE__ !== true && 'serviceWorker' in navigator) {
+      if (
+        window.location.protocol === 'https:' ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1'
+      ) {
+        navigator.serviceWorker
+          .register('/sw.js')
+          .catch(function () { /* silent — SW is best-effort */ });
+      }
+    }
   </script>
 </body>
 </html>

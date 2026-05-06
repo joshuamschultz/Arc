@@ -1,0 +1,9 @@
+# Append this block to team/scap_isso/arcagent.toml after [modules.scheduler]
+# so the agent pushes events to the arcui dashboard.
+
+[modules.ui_reporter]
+enabled = true
+
+[modules.ui_reporter.config]
+url = "ws://localhost:8420/api/agent/connect"
+token = ""

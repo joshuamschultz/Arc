@@ -66,7 +66,10 @@ half_open_max_calls = 1
 [modules.queue]
 enabled = true
 max_concurrent = 2
-call_timeout = 60.0
+# 180s — long agentic turns (multi-tool reasoning + 100k-token context
+# + thinking) routinely take 60-90s on a single LLM call. The previous
+# 60s default failed legitimate calls in production demos.
+call_timeout = 180.0
 max_queued = 10
 
 # --- OpenTelemetry distributed tracing ---

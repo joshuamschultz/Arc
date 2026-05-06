@@ -57,6 +57,35 @@ _CLOSE_AGENT_NOT_FOUND = 4404
 _CLOSE_TOO_MANY_CONNECTIONS = 4429
 
 
+_MAX_SINCE_SEQ = 2**31  # bounds an attacker-controlled int (SPEC-025 §M1)
+_MAX_SINCE_SEQ_DIGITS = 12  # rejects multi-megabyte digit strings before int()
+
+
+def _parse_since_seq(raw: str | None) -> int | None:
+    """Parse the ``?since_seq`` query param.
+
+    Treats any non-int or negative input as ``None`` (no replay). Used by
+    reconnecting clients per SPEC-025 Track A — the value is the highest
+    ``seq`` the client has already received, so the adapter replays anything
+    strictly after it.
+
+    Bounded: rejects strings longer than ``_MAX_SINCE_SEQ_DIGITS`` to defeat
+    the slow-DoS where Python's arbitrary-precision int parsing is O(n²)
+    on digit count, and caps the parsed value at ``_MAX_SINCE_SEQ``.
+    """
+    if raw is None:
+        return None
+    if len(raw) > _MAX_SINCE_SEQ_DIGITS:
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if value < 0 or value > _MAX_SINCE_SEQ:
+        return None
+    return value
+
+
 def _resolve_agent_did(ws: WebSocket, agent_id: str) -> str | None:
     """Find the agent DID for a roster id, or None if unknown.
 
@@ -122,8 +151,17 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
     # ensures the test for "arcui does not import arcagent" remains true.
     from arcgateway.adapters.web import WebAdapterFull
 
+    # SPEC-025 Track A — reconnecting clients pass ?since_seq=N so the
+    # adapter replays any frames they missed during the disconnect. Parse
+    # leniently: a non-int or negative value is treated as "no replay
+    # requested" (no recovery banner, no replay), which is safe — fresh
+    # connections get the next stream of frames as they arrive.
+    since_seq = _parse_since_seq(ws.query_params.get("since_seq"))
+
     try:
-        web_adapter.register_socket(ws, agent_did, user_did, chat_id)
+        web_adapter.register_socket(
+            ws, agent_did, user_did, chat_id, since_seq=since_seq
+        )
     except WebAdapterFull:
         await ws.send_json({"error": "Server at capacity"})
         await ws.close(code=_CLOSE_TOO_MANY_CONNECTIONS)

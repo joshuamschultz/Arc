@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-if TYPE_CHECKING:
-    from arcui.aggregator import RollingAggregator
+from arcui.aggregator import RollingAggregator
 
 # NIST SI-10: Allowlist valid window values at the API boundary
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
@@ -29,7 +26,10 @@ def _get_aggregator_for_request(
     """Return the appropriate aggregator: per-agent or global.
 
     If ``?agent_id=`` is provided, looks up the per-agent aggregator
-    from the agent registry. Returns (aggregator, error_response).
+    from the agent registry. For an agent that's known on disk but not
+    currently connected, returns an empty aggregator (200 with zero
+    counts) — the agent-detail page renders "no activity yet" instead
+    of error-ing on a 404 just because the agent is offline.
     """
     agent_id = request.query_params.get("agent_id")
     if agent_id is not None:
@@ -37,10 +37,11 @@ def _get_aggregator_for_request(
         if registry is None:
             return None, JSONResponse({"error": "Agent registry not available"}, status_code=404)
         entry = registry.get(agent_id)
-        if entry is None:
-            return None, JSONResponse({"error": f"Agent {agent_id} not found"}, status_code=404)
-        if entry.aggregator is None:
-            return None, JSONResponse({"error": "No per-agent aggregator"}, status_code=404)
+        if entry is None or entry.aggregator is None:
+            # Offline agent (or one whose aggregator wasn't initialised
+            # yet): synthesise an empty per-call aggregator so callers
+            # get an empty-but-well-formed response.
+            return RollingAggregator(), None
         return entry.aggregator, None
     return request.app.state.aggregator, None
 

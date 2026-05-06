@@ -50,9 +50,9 @@
   function agentCard(a, metrics) {
     var m = metrics || {};
     return (
-      '<div class="card" data-agent="' + escText(a.agent_id) + '" ' +
+      '<div class="agent-card" data-agent="' + escText(a.agent_id) + '" ' +
       'style="cursor:pointer;">' +
-        '<div class="card-body">' +
+        '<div class="agent-card-body">' +
           '<div class="flex items-center gap-12 mb-12">' +
             avatar(a) +
             '<div style="flex:1;min-width:0;">' +
@@ -148,7 +148,7 @@
         statCard('Offline', offlineCt, 'var(--status-idle)') +
         statCard('Hidden', agents.length - totalAll) +
       '</div>' +
-      '<div class="grid-3 mb-20" id="agent-grid">' +
+      '<div class="agent-grid mb-20" id="agent-grid">' +
         (visible.length
           ? visible.map(function (a) { return agentCard(a, metrics[a.agent_id]); }).join('')
           : '<div class="card"><div class="card-body"><div class="empty-state">No agents</div></div></div>') +

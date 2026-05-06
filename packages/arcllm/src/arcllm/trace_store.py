@@ -429,8 +429,15 @@ class JSONLTraceStore:
                     continue
                 if provider and rec.provider != provider:
                     continue
-                if agent and rec.agent_label != agent:
-                    continue
+                if agent:
+                    # agent_label format: "<agent_name>" OR "<agent_name>/<sub>"
+                    # (e.g. "scap_isso" or "scap_isso/memory" when emitted by a
+                    # sub-component of the agent). Prefix-match so /api/traces
+                    # ?agent=scap_isso returns both forms — exact match would
+                    # silently filter out every sub-component trace.
+                    label = rec.agent_label or ""
+                    if label != agent and not label.startswith(agent + "/"):
+                        continue
                 if status and rec.status != status:
                     continue
                 if start and rec.timestamp < start:

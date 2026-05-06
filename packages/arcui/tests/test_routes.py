@@ -170,13 +170,18 @@ class TestStatsRoute:
         data = resp.json()
         assert "request_count" in data
 
-    def test_get_stats_unknown_agent_returns_404(self):
+    def test_get_stats_unknown_agent_returns_empty(self):
+        """Disk-roster agents that aren't currently connected return an
+        empty-but-well-formed response, not 404 — the agent-detail UI
+        renders 'no activity yet' instead of error-ing."""
         _, client, _ = _make_app()
         resp = client.get(
             "/api/stats?agent_id=nonexistent",
             headers={"Authorization": "Bearer viewer-tok"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("request_count", 0) == 0
 
     def test_get_stats_invalid_window_400(self):
         _, client, _ = _make_app()

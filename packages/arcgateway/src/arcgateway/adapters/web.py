@@ -34,6 +34,7 @@ import contextlib
 import hashlib
 import logging
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -50,6 +51,21 @@ _INACTIVITY_CHECK_SECONDS = 60.0
 _DEFAULT_MAX_CONNECTIONS = 50
 _DEFAULT_IDLE_TIMEOUT_SECONDS = 3600
 _DEFAULT_MAX_FRAME_BYTES = 65_536
+
+# SPEC-025 Track A — sequence-gap detection / replay buffer.
+# Per chat_id, retain the last N outbound frames so a reconnecting client
+# can ask "give me everything after seq=K". 50 covers a typical demo turn
+# (status + several tool_calls + final message); the client falls back to
+# a "recovery_banner" UX when the ring has overrun.
+_REPLAY_RING_MAXLEN = 50
+
+# SPEC-025 §TD-1 — TTL eviction of per-chat replay state.
+# When the last socket for a chat_id unregisters, schedule a deferred
+# cleanup task that drops `_replay_buffers[chat_id]` and `_outbound_seq[chat_id]`
+# after a grace period. A reconnect within the window cancels the task,
+# so transient browser disconnects still get full replay; a permanently
+# closed conversation no longer leaks ~100KB of ring per chat_id.
+_DEFAULT_REPLAY_TTL_SECONDS = 300  # 5 minutes
 
 
 class WebAdapterFull(RuntimeError):  # noqa: N818 — name predates ruff naming check
@@ -106,6 +122,7 @@ class WebPlatformAdapter:
         max_connections: int = _DEFAULT_MAX_CONNECTIONS,
         idle_timeout_seconds: int = _DEFAULT_IDLE_TIMEOUT_SECONDS,
         max_frame_bytes: int = _DEFAULT_MAX_FRAME_BYTES,
+        replay_ttl_seconds: float = _DEFAULT_REPLAY_TTL_SECONDS,
         audit_emitter: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self._on_message = on_message
@@ -113,6 +130,7 @@ class WebPlatformAdapter:
         self.max_connections = max_connections
         self.idle_timeout_seconds = idle_timeout_seconds
         self.max_frame_bytes = max_frame_bytes
+        self.replay_ttl_seconds = replay_ttl_seconds
         self._audit_emitter = audit_emitter
 
         self._sockets: dict[str, set[Any]] = {}
@@ -121,6 +139,17 @@ class WebPlatformAdapter:
         self._socket_tasks: dict[Any, list[asyncio.Task[None]]] = {}
         self._last_activity: dict[Any, float] = {}
         self._inbound_seq: dict[str, int] = {}
+        # SPEC-025 Track A — outbound seq counter and replay ring per chat_id.
+        # Counter starts at 0; first stamped frame gets seq=0. Ring stores
+        # the most recent _REPLAY_RING_MAXLEN frames so replay_from() can
+        # honour a reconnecting client's since_seq.
+        self._outbound_seq: dict[str, int] = {}
+        self._replay_buffers: dict[str, deque[dict[str, Any]]] = {}
+        # Pending TTL-eviction tasks per chat_id (TD-1 follow-up). Task is
+        # created on last-socket-unregister, cancelled on register before TTL
+        # expires; this trades latency-of-cleanup for replay liveness across
+        # transient disconnects.
+        self._eviction_tasks: dict[str, asyncio.Task[None]] = {}
         self._n_connections = 0
 
     # ── BasePlatformAdapter Protocol ──────────────────────────────────────────
@@ -136,6 +165,10 @@ class WebPlatformAdapter:
             self.unregister_socket(ws)
             with contextlib.suppress(Exception):
                 await ws.close(code=1000, reason="shutdown")
+        # Cancel any pending TTL evictions so they don't outlive the adapter.
+        for task in list(self._eviction_tasks.values()):
+            task.cancel()
+        self._eviction_tasks.clear()
 
     async def send(
         self,
@@ -174,6 +207,7 @@ class WebPlatformAdapter:
             "audit_hash": audit_hash,
             "ts": _utcnow_iso(),
         }
+        self._stamp_and_record(target.chat_id, payload)
         breakdown = self._fan_out(sockets, payload)
         self._audit(
             "gateway.message.delivered",
@@ -201,8 +235,17 @@ class WebPlatformAdapter:
         agent_did: str,
         user_did: str,
         chat_id: str,
+        *,
+        since_seq: int | None = None,
     ) -> None:
         """Register a freshly-accepted WebSocket for the given identities.
+
+        ``since_seq``: when non-None, replay any retained frames whose
+        ``seq > since_seq`` to *only* this newly-registered socket so a
+        reconnecting browser catches up after a transient disconnect.
+        If the ring buffer has overrun (the requested ``since_seq`` is
+        below the oldest retained frame), prepend a ``recovery_banner``
+        frame so the UI can warn the user that earlier history is gone.
 
         Raises:
             WebAdapterFull: When ``max_connections`` has been reached.
@@ -211,6 +254,12 @@ class WebPlatformAdapter:
             raise WebAdapterFull(
                 f"max_connections ({self.max_connections}) reached"
             )
+
+        # Cancel any pending TTL eviction for this chat_id — a reconnect
+        # within the grace window must preserve the replay state.
+        pending_eviction = self._eviction_tasks.pop(chat_id, None)
+        if pending_eviction is not None:
+            pending_eviction.cancel()
 
         self._sockets.setdefault(chat_id, set()).add(ws)
         self._socket_meta[ws] = (chat_id, agent_did, user_did)
@@ -239,6 +288,9 @@ class WebPlatformAdapter:
             },
         )
 
+        if since_seq is not None:
+            self._replay_to_socket(ws, chat_id, since_seq)
+
     def unregister_socket(self, ws: WebSocketLike) -> None:
         """Remove a socket from every internal map and cancel its tasks.
 
@@ -254,6 +306,11 @@ class WebPlatformAdapter:
             sockets_for_chat.discard(ws)
             if not sockets_for_chat:
                 del self._sockets[chat_id]
+                # SPEC-025 TD-1 — schedule a deferred eviction of the
+                # per-chat replay state. A reconnect within
+                # `replay_ttl_seconds` cancels this task, preserving replay.
+                # Otherwise, the buffer is dropped to bound memory.
+                self._schedule_eviction(chat_id)
 
         tasks = self._socket_tasks.pop(ws, [])
         for task in tasks:
@@ -335,11 +392,129 @@ class WebPlatformAdapter:
                 "turn_id": delta.turn_id,
                 "ts": _utcnow_iso(),
             }
+            self._stamp_and_record(target.chat_id, payload)
             self._fan_out(sockets, payload)
             return
         await self.send(target, delta.content, reply_to=delta.turn_id or None)
 
     # ── Internal ──────────────────────────────────────────────────────────────
+
+    def _schedule_eviction(self, chat_id: str) -> None:
+        """Defer per-chat replay-state cleanup by ``replay_ttl_seconds``.
+
+        Idempotent — replaces any pre-existing task for the same chat_id.
+        Cancelled by the next ``register_socket`` for this chat_id.
+        """
+        existing = self._eviction_tasks.pop(chat_id, None)
+        if existing is not None:
+            existing.cancel()
+        task = asyncio.create_task(
+            self._evict_after_ttl(chat_id),
+            name=f"web:evict:{chat_id}",
+        )
+        self._eviction_tasks[chat_id] = task
+
+    async def _evict_after_ttl(self, chat_id: str) -> None:
+        """Wait the grace period, then drop replay state if still no sockets.
+
+        Self-removes from ``_eviction_tasks`` on completion or cancellation.
+        """
+        try:
+            await asyncio.sleep(self.replay_ttl_seconds)
+        except asyncio.CancelledError:
+            self._eviction_tasks.pop(chat_id, None)
+            raise
+        # Re-check: a register may have happened during sleep without
+        # cancelling us (rare but possible if cancel races). Skip if the
+        # chat_id is currently active.
+        if chat_id in self._sockets:
+            self._eviction_tasks.pop(chat_id, None)
+            return
+        self._replay_buffers.pop(chat_id, None)
+        self._outbound_seq.pop(chat_id, None)
+        self._eviction_tasks.pop(chat_id, None)
+        self._audit(
+            "gateway.replay.evicted",
+            {"chat_id": chat_id, "reason": "ttl"},
+        )
+
+    def _stamp_and_record(self, chat_id: str, payload: dict[str, Any]) -> None:
+        """Stamp ``payload`` with the next per-chat ``seq`` and append it to the ring.
+
+        Mutation is in-place so callers see the stamped payload. SPEC-025 Track A.
+        """
+        seq = self._outbound_seq.get(chat_id, 0)
+        payload["seq"] = seq
+        self._outbound_seq[chat_id] = seq + 1
+        ring = self._replay_buffers.setdefault(
+            chat_id, deque(maxlen=_REPLAY_RING_MAXLEN)
+        )
+        ring.append(payload)
+
+    def _replay_to_socket(
+        self,
+        ws: WebSocketLike,
+        chat_id: str,
+        since_seq: int,
+    ) -> None:
+        """Push frames retained for ``chat_id`` whose ``seq > since_seq`` to ``ws``.
+
+        Replay is direct to ``ws``'s queue only — never fanned out — so other
+        sockets on the same chat_id are unaffected. If the ring's oldest
+        retained frame has ``seq > since_seq + 1``, the ring overran while the
+        client was disconnected; emit a single ``recovery_banner`` frame
+        first so the UI can flag missed history. The banner itself is *not*
+        appended to the ring (it is a transient client-only signal).
+        """
+        ring = self._replay_buffers.get(chat_id)
+        if not ring:
+            return
+        queue = self._socket_queues.get(ws)
+        if queue is None:
+            return
+        missed = [f for f in ring if f.get("seq", -1) > since_seq]
+        if not missed:
+            return
+        oldest_missed_seq = missed[0]["seq"]
+        if oldest_missed_seq > since_seq + 1:
+            banner = {
+                "type": "recovery_banner",
+                "lost_below_seq": oldest_missed_seq,
+                "ts": _utcnow_iso(),
+            }
+            self._enqueue_to_socket(chat_id, queue, banner)
+        for frame in missed:
+            self._enqueue_to_socket(chat_id, queue, frame)
+
+    def _enqueue_to_socket(
+        self,
+        chat_id: str,
+        queue: asyncio.Queue[dict[str, Any]],
+        payload: dict[str, Any],
+    ) -> None:
+        """Best-effort enqueue with drop-oldest fallback on full queue.
+
+        Reuses the same backpressure pattern as ``_fan_out`` but for a
+        single-socket replay path. SPEC-025 §TD-6 — emits a dedicated audit
+        event on the drop branch so replay backpressure has the same
+        observability as fan-out backpressure.
+        """
+        try:
+            queue.put_nowait(payload)
+        except asyncio.QueueFull:
+            try:
+                _ = queue.get_nowait()
+                queue.put_nowait(payload)
+                self._audit(
+                    "gateway.replay.dropped_backpressure",
+                    {"chat_id": chat_id, "reason": "queue_full"},
+                )
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                # Both ops failed — socket is effectively dead; nothing to do.
+                self._audit(
+                    "gateway.replay.dropped_dead",
+                    {"chat_id": chat_id, "reason": "queue_unusable"},
+                )
 
     def _fan_out(
         self,
