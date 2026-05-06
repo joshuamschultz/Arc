@@ -7,18 +7,22 @@
 # rsync'd the codebase to /home/ubuntu/arc/. Mirrors deploy/azure/setup-vm.sh.
 #
 # Usage:
-#   bash ~/arc/deploy/aws/setup-vm.sh <domain> [agent_name ...]
+#   bash ~/arc/deploy/aws/setup-vm.sh <domain>
 #
 # Args:
 #   $1   domain to serve (e.g. demo.blackarcsystems.com)
-#   $2+  agent names to keep enabled (default: my_agent)
+#
+# Which agents are started is controlled by deploy/aws/agents.enabled (one
+# agent directory name per line, # comments allowed). If the file is missing
+# the script falls back to the three NLIT demo agents and prints a warning.
+# If the file exists but is empty (misconfiguration) the script errors out.
 #
 # What it does:
 #   1. Installs system deps (Python 3.11, build tools, Caddy)
 #   2. Installs uv and runs `uv sync`
 #   3. Verifies .env has at least one provider key set
 #   4. Pre-warms ~/.arcagent/arc-stack.tokens (stable demo URL)
-#   5. Disables agents you didn't pass (rename-based, reversible)
+#   5. Applies agents.enabled manifest — removes unlisted agent dirs
 #   6. Installs systemd unit (arc-stack.service)
 #   7. Installs Caddyfile with your domain, reloads Caddy (Let's Encrypt auto)
 #   8. Starts arc-stack.service and prints the demo URL
@@ -27,23 +31,11 @@
 set -euo pipefail
 
 DOMAIN="${1:-}"
-shift || true
-AGENTS=("$@")
-if [ ${#AGENTS[@]} -eq 0 ]; then
-  # Default trio for the NLIT 2026 demo:
-  #   nlit_cora_agent   — STIG cross-reference, POA&M validation, gap reports
-  #   nlit_soc_agent    — SOC threat hunter, entity capture, incident triage
-  #   scap_isso_agent   — ISSO assistant: ATO evidence, FedRAMP gap analysis,
-  #                       drift detection, threat-informed compliance
-  # All three use Anthropic so the only key the .env needs is ANTHROPIC_API_KEY.
-  AGENTS=("nlit_cora_agent" "nlit_soc_agent" "scap_isso_agent")
-fi
 
 if [ -z "${DOMAIN}" ]; then
   cat >&2 <<EOF
-✗ usage: bash deploy/aws/setup-vm.sh <domain> [agent_name ...]
+usage: bash deploy/aws/setup-vm.sh <domain>
    e.g.   bash deploy/aws/setup-vm.sh agent.blackarcsystems.com
-   (with no agent args, defaults to: ${AGENTS[*]})
 EOF
   exit 1
 fi
@@ -94,10 +86,44 @@ DOMAIN=$(IFS=, ; echo "${VALID_HOSTS[*]}")
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
+# ---------------------------------------------------------------------------
+# Read the per-host agent manifest (deploy/aws/agents.enabled).
+# ---------------------------------------------------------------------------
+# Returns ENABLED_AGENTS as a newline-separated string of agent dir names.
+# SPEC-025 §TD-4 — when (not if) deploy/azure/setup-vm.sh adopts the same
+# manifest, extract this function to deploy/lib/agent-manifest.sh and
+# source it from both. Don't duplicate.
+_read_agent_manifest() {
+  local manifest="${REPO_ROOT}/deploy/aws/agents.enabled"
+  if [ ! -f "${manifest}" ]; then
+    echo "[WARN] deploy/aws/agents.enabled not found — falling back to default demo agents." >&2
+    printf 'nlit_cora_agent\nnlit_soc_agent\nscap_isso_agent\n'
+    return
+  fi
+  local enabled
+  enabled=$(grep -v '^#' "${manifest}" | grep -v '^[[:space:]]*$' || true)
+  if [ -z "${enabled}" ]; then
+    echo "✗ deploy/aws/agents.enabled exists but is empty — misconfiguration, aborting." >&2
+    exit 1
+  fi
+  # Defense-in-depth (SPEC-025 §M3): every line must match a strict shape
+  # so a tampered manifest cannot smuggle path-traversal, shell metachars,
+  # or whitespace tricks into the rm -rf loop downstream.
+  while IFS= read -r line; do
+    if [[ ! "${line}" =~ ^[a-z0-9_]+_agent$ ]]; then
+      echo "✗ agents.enabled contains malformed entry: '${line}' (must match ^[a-z0-9_]+_agent$)" >&2
+      exit 1
+    fi
+  done <<< "${enabled}"
+  printf '%s\n' "${enabled}"
+}
+
+ENABLED_AGENTS=$(_read_agent_manifest)
+
 echo "=== Arc Demo VM Setup ==="
 echo "Repo:    ${REPO_ROOT}"
 echo "Domain:  ${DOMAIN}"
-echo "Agents:  ${AGENTS[*]}"
+echo "Agents:  $(echo "${ENABLED_AGENTS}" | tr '\n' ' ')"
 echo ""
 
 # --- 1. System packages ---
@@ -180,6 +206,18 @@ if [ -d "${REPO_ROOT}/demo-extensions/scap" ]; then
      "${HOME}/.arc/capabilities/scap_tools.py"
 fi
 
+# --- 4.6. knowledge skill install (rsync into ~/.arc/skills/) ---
+# extract_knowledge is the universal "save this turn to memory" tool.
+# It lives in the agent's workspace/.capabilities/ (per-agent, ships
+# inside the team/ directory rsync), but its skill ships globally so
+# any agent on this VM can adopt it.
+if [ -d "${REPO_ROOT}/demo-extensions/skill-knowledge" ]; then
+  echo "  Installing knowledge skill into ~/.arc/skills/..."
+  mkdir -p "${HOME}/.arc/skills"
+  rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' \
+    "${REPO_ROOT}/demo-extensions/skill-knowledge/" "${HOME}/.arc/skills/knowledge/"
+fi
+
 # --- 5. .env ---
 echo "[5/8] Checking .env..."
 if [ ! -f "${REPO_ROOT}/.env" ]; then
@@ -214,20 +252,19 @@ if [ ! -f "${TOKENS_FILE}" ]; then
   chmod 600 "${TOKENS_FILE}"
 fi
 
-# --- 7. Restrict which agents arc-stack starts ---
-# arc-stack.sh starts every <name>_agent dir under TEAM_ROOT when no args
-# are passed. Disable the rest by renaming → cheap, reversible, survives `uv sync`.
-echo "[7/8] Disabling agents not in: ${AGENTS[*]}"
+# --- 7. Apply agents.enabled manifest — remove unlisted agent dirs ---
+# This runs BEFORE systemd start so arc-stack only sees the right agents.
+# Idempotent: re-running with the same manifest is a no-op.
+echo "[7/8] Applying agent manifest (removing unlisted agent dirs)..."
 shopt -s nullglob
 for d in "${REPO_ROOT}/team"/*_agent; do
+  [ -d "${d}" ] || continue
   name="$(basename "${d}")"
-  keep=0
-  for want in "${AGENTS[@]}"; do
-    if [ "${name}" = "${want}" ]; then keep=1; break; fi
-  done
-  if [ "${keep}" -eq 0 ]; then
-    mv "${d}" "${d}.disabled"
-    echo "  disabled: ${name}"
+  if echo "${ENABLED_AGENTS}" | grep -qx "${name}"; then
+    echo "  kept:    ${name}"
+  else
+    rm -rf "${d}"
+    echo "  removed: ${name} (not in agents.enabled)"
   fi
 done
 shopt -u nullglob
@@ -290,7 +327,7 @@ Logs:
 Restart everything:
   sudo systemctl restart arc-stack caddy
 
-Re-enable an agent later:
-  mv ${REPO_ROOT}/team/<name>_agent.disabled ${REPO_ROOT}/team/<name>_agent
-  sudo systemctl restart arc-stack
+Add/remove agents:
+  Edit ${REPO_ROOT}/deploy/aws/agents.enabled
+  then re-run this script.
 EOF

@@ -27,6 +27,13 @@ UI_HEALTH="http://127.0.0.1:${UI_PORT}/api/health"
 HEALTH_TIMEOUT_S="${ARC_HEALTH_TIMEOUT_S:-20}"
 AGENT_PROBE_TIMEOUT_S="${ARC_AGENT_PROBE_TIMEOUT_S:-15}"
 
+# Per-agent connect state: written atomically after all agents are probed so
+# arcui's roster endpoint can read it without races.
+# Format: {"<agent_name>": "connected"|"degraded", ...}
+# chmod 600 — tokens are not in this file, but it's in ~/.arcagent/ like the
+# other sensitive files there, so we follow the same permission convention.
+AGENT_STATE_FILE="${HOME}/.arcagent/agent-state.json"
+
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 # Stable token file. arcgateway derives the viewer DID by hashing the
@@ -227,11 +234,20 @@ start_agents() {
 #   stalled   — alive but never emitted a ui_reporter line (likely no
 #               [modules.ui_reporter] section in arcagent.toml, OR a
 #               long boot path)
-# Returns the count of agents not in state `ok`.
+#
+# After probing all agents the function:
+#   - Writes per-agent state to AGENT_STATE_FILE (atomic tmp+rename,
+#     chmod 600) so arcui's roster endpoint can surface `degraded` entries.
+#   - Exits 0 if at least one agent connected (systemd unit stays active).
+#   - Exits 1 only when zero agents connected (unit really is dead).
 wait_for_agents() {
-  local fails=0 a
+  local connected=0 total=0
+  local -A agent_states   # associative array: name → "connected"|"degraded"
+
+  local a
   for a in "$@"; do
     [ -d "$TEAM_ROOT/$a" ] || continue
+    total=$((total + 1))
     local log="$LOG_DIR/agent-$a.log"
     local pid; pid="$(cat "$PID_DIR/agent-$a.pid" 2>/dev/null || true)"
     local deadline=$((SECONDS + AGENT_PROBE_TIMEOUT_S))
@@ -252,30 +268,63 @@ wait_for_agents() {
     case "$result" in
       ok)
         echo "  ✓ $a connected to UI"
+        connected=$((connected + 1))
+        agent_states["$a"]="connected"
         ;;
       probe)
         echo "  ✗ $a UI probe failed (agent ran but couldn't reach UI):"
         grep "ui_reporter: not connecting" "$log" | tail -n 1 \
           | sed 's/^/      /'
-        fails=$((fails+1))
+        agent_states["$a"]="degraded"
         ;;
       crashed)
         echo "  ✗ $a crashed during startup:"
         # Last non-blank line is almost always the actionable error
         # ('arc: error in agent: ...').
         grep -v '^[[:space:]]*$' "$log" | tail -n 3 | sed 's/^/      /'
-        fails=$((fails+1))
+        agent_states["$a"]="degraded"
         ;;
       *)
         echo "  ! $a alive but no ui_reporter line in ${AGENT_PROBE_TIMEOUT_S}s"
         if ! grep -q "ui_reporter" "$log" 2>/dev/null; then
           echo "      (no [modules.ui_reporter] in $TEAM_ROOT/$a/arcagent.toml?)"
         fi
-        fails=$((fails+1))
+        agent_states["$a"]="degraded"
         ;;
     esac
   done
-  return "$fails"
+
+  # Persist per-agent state atomically so arcui can read it race-free.
+  # Format:
+  #   {"_meta": {"written_at": "<ISO-8601>"},
+  #    "<name>": "connected"|"degraded", ...}
+  # The _meta.written_at lets arcui reject stale state across an
+  # arc-stack restart (SPEC-025 §TD-5). umask 077 around the write so
+  # the tmp file is born 0600 — closes the L1 race where the parent
+  # umask leaked 0644 perms briefly (SPEC-025 §L1).
+  local tmp_state written_at
+  tmp_state="${AGENT_STATE_FILE}.tmp.$$"
+  written_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  ( umask 077
+    {
+      printf '{"_meta":{"written_at":"%s"}' "${written_at}"
+      for name in "${!agent_states[@]}"; do
+        printf ',"%s":"%s"' "${name}" "${agent_states[$name]}"
+      done
+      printf '}'
+    } >"${tmp_state}"
+  )
+  mv "${tmp_state}" "${AGENT_STATE_FILE}"
+
+  local degraded=$((total - connected))
+  echo ""
+  echo "✓ ${connected}/${total} agents connected (${degraded} degraded)"
+
+  if [ "${connected}" -ge 1 ]; then
+    return 0   # systemd unit stays active
+  fi
+  echo "✗ no agents connected — unit startup failed"
+  return 1
 }
 
 print_status() {
@@ -330,15 +379,11 @@ case "$cmd" in
     wait_for_ui
     start_agents    "${agents[@]}"
     if wait_for_agents "${agents[@]}"; then
-      echo
-      echo "✓ all agents connected"
+      print_status
     else
-      echo
-      echo "! some agents failed to connect to the UI"
       print_status
       exit 1
     fi
-    print_status
     ;;
   *)
     echo "usage: $0 {start|stop|restart|status} [agent_name ...]"

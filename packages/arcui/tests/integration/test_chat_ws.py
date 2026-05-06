@@ -241,9 +241,18 @@ def test_reconnect_preserves_session_key(app_with_chat: Any) -> None:
 
     original_register = web_adapter.register_socket
 
-    def _capture(ws: Any, agent_did: str, user_did: str, chat_id: str) -> None:
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
         captured_chat_ids.append(chat_id)
-        return original_register(ws, agent_did, user_did, chat_id)
+        return original_register(
+            ws, agent_did, user_did, chat_id, since_seq=since_seq
+        )
 
     with patch.object(web_adapter, "register_socket", _capture):
         with TestClient(app_with_chat) as client:
@@ -279,3 +288,226 @@ def test_agent_token_rejected(app_with_chat: Any) -> None:
                 assert "error" in err or err.get("type") == "error"
             except Exception:  # noqa: S110 — server may close before the error frame
                 pass
+
+
+# ── SPEC-025 Track A — sequence-gap query param + replay ────────────────────
+
+
+def test_since_seq_query_param_forwarded_to_adapter(app_with_chat: Any) -> None:
+    """``/ws/chat/{agent_id}?since_seq=N`` reaches register_socket as kwarg."""
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(f"{_ws_url()}?since_seq=5") as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()  # ready frame
+    assert captured == [5]
+
+
+def test_since_seq_negative_treated_as_none(app_with_chat: Any) -> None:
+    """Negative ``since_seq`` is sanitised to None (no replay requested)."""
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(f"{_ws_url()}?since_seq=-1") as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()
+    assert captured == [None]
+
+
+def test_since_seq_garbage_treated_as_none(app_with_chat: Any) -> None:
+    """Non-int ``since_seq`` is sanitised to None."""
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(f"{_ws_url()}?since_seq=oops") as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()
+    assert captured == [None]
+
+
+def test_no_since_seq_param_passes_none(app_with_chat: Any) -> None:
+    """No ``since_seq`` query param ⇒ register_socket receives None."""
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(_ws_url()) as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()
+    assert captured == [None]
+
+
+def test_malformed_json_inbound_returns_error_frame(app_with_chat: Any) -> None:
+    """Garbage on the inbound WS produces an explicit error frame, not a crash."""
+    with TestClient(app_with_chat) as client:
+        with client.websocket_connect(_ws_url()) as ws:
+            ws.send_json({"token": VIEWER_TOKEN})
+            ws.receive_json()  # ready
+            ws.send_text("{ this is not json")
+            err = ws.receive_json()
+            assert err.get("type") == "error"
+            assert err.get("code") == "malformed"
+
+
+def test_non_message_frame_silently_ignored(app_with_chat: Any) -> None:
+    """A well-formed frame whose type isn't 'message' is dropped silently (no error frame)."""
+    with TestClient(app_with_chat) as client:
+        with client.websocket_connect(_ws_url()) as ws:
+            ws.send_json({"token": VIEWER_TOKEN})
+            ws.receive_json()  # ready
+            # ping-style frame — should NOT produce a response
+            ws.send_json({"type": "ping"})
+            # follow with a real message; assert we get a message reply, not an error
+            ws.send_json({"type": "message", "text": "hello"})
+            # Drain until we see a real reply or run out of patience
+            saw_real = False
+            for _ in range(8):
+                try:
+                    f = ws.receive_json()
+                except Exception:
+                    break
+                if f.get("type") == "error":
+                    raise AssertionError(f"unexpected error frame: {f}")
+                if f.get("type") == "message" and f.get("from") == "agent":
+                    saw_real = True
+                    break
+            assert saw_real
+
+
+def test_since_seq_overlong_string_rejected(app_with_chat: Any) -> None:
+    """An overlong digit string for ``since_seq`` is rejected without parsing.
+
+    Defense against the slow-DoS where Python's arbitrary-precision int
+    parsing is O(n²) on digit count (SPEC-025 §M1). httpx caps URLs at
+    65k bytes, so the realistic attack surface is "longer than our digit
+    cap but shorter than the URL cap" — exactly what this test covers.
+    """
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    overlong = "9" * 1000  # well above _MAX_SINCE_SEQ_DIGITS=12, under URL cap
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(f"{_ws_url()}?since_seq={overlong}") as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()
+    assert captured == [None]
+
+
+def test_since_seq_above_max_rejected(app_with_chat: Any) -> None:
+    """Values above 2**31 are rejected (the bound that protects ring lookups)."""
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    too_big = str(2**31 + 1)
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(f"{_ws_url()}?since_seq={too_big}") as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()
+    assert captured == [None]
+
+
+def test_since_seq_scientific_notation_rejected(app_with_chat: Any) -> None:
+    """Scientific notation like '1e10' is not a valid since_seq (SPEC-025 §M1)."""
+    web_adapter: WebPlatformAdapter = app_with_chat.state.web_adapter
+    captured: list[int | None] = []
+    original_register = web_adapter.register_socket
+
+    def _capture(
+        ws: Any,
+        agent_did: str,
+        user_did: str,
+        chat_id: str,
+        *,
+        since_seq: int | None = None,
+    ) -> None:
+        captured.append(since_seq)
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
+
+    with patch.object(web_adapter, "register_socket", _capture):
+        with TestClient(app_with_chat) as client:
+            with client.websocket_connect(f"{_ws_url()}?since_seq=1e10") as ws:
+                ws.send_json({"token": VIEWER_TOKEN})
+                ws.receive_json()
+    assert captured == [None]

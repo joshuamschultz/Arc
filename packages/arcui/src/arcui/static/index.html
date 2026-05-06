@@ -2065,6 +2065,23 @@
       const item = e.target.closest('.sidebar-item');
       if (item && item.dataset.page === 'settings') loadArcLLMConfig();
     });
+
+    /* --- Service Worker Registration (SPEC-025 §FR-3 / D3+D4) ---
+       Set window.__SW_DISABLE__ = true before this script runs to skip
+       SW registration — useful when a buggy SW deploy locks operators out.
+       The protocol check is required because SW only works on HTTPS or
+       localhost; calling register on a plain HTTP URL throws a SecurityError. */
+    if (window.__SW_DISABLE__ !== true && 'serviceWorker' in navigator) {
+      if (
+        window.location.protocol === 'https:' ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1'
+      ) {
+        navigator.serviceWorker
+          .register('/sw.js')
+          .catch(function () { /* silent — SW is best-effort */ });
+      }
+    }
   </script>
 </body>
 </html>
