@@ -20,8 +20,8 @@ Manual push only — nothing automated, nothing fires on commit.
                                            │  │                        │  │
    ┌──────────────────┐    HTTPS           │  │  /home/ubuntu/arc/.env │  │
    │ demo.<your-dom>  │ ───────────────────┼──┼─►   (chmod 600)        │  │
-   │ (DNS A record)   │                    │  └────────────────────────┘  │
-   └──────────────────┘                    └──────────────────────────────┘
+   └──────────────────┘                    │  └────────────────────────┘  │
+                                           └──────────────────────────────┘
 ```
 
 **Secret flow (demo-tier):** API keys live in `/home/ubuntu/arc/.env` with `chmod 600`.
@@ -153,6 +153,95 @@ Pass multiple agents to keep more enabled:
 ```bash
 bash ~/arc/deploy/aws/setup-vm.sh demo.blackarcsystems.com my_agent nlit_cora_agent
 ```
+
+## Step 4.5 — Slack adapter setup (operator manual steps)
+
+This step enables the Slack fallback channel for all three demo agents
+(`scap_isso_agent`, `nlit_cora_agent`, `nlit_soc_agent`). Each agent's
+`arcagent.toml` already has `[platforms.slack]` enabled and reads tokens
+from the env vars below. The operator must complete steps B1 and B4 before
+the Slack path is live.
+
+### B1 — Provision the Slack workspace and bot (manual)
+
+1. Create a Slack workspace (or use an existing one you control).
+2. Go to https://api.slack.com/apps → **Create New App** → **From scratch**.
+3. Under **OAuth & Permissions**, add these **Bot Token Scopes**:
+   - `chat:write` — post messages as the bot
+   - `app_mentions:read` — receive @-mentions in channels
+   - `im:history` — read DMs sent to the bot
+   - `im:write` — open DM channels to users
+4. Under **Socket Mode**, enable Socket Mode and generate an **App-Level Token**
+   (`xapp-…`) with the `connections:write` scope.
+5. Install the app to your workspace. Copy the **Bot User OAuth Token** (`xoxb-…`)
+   from the OAuth & Permissions page.
+6. Invite the bot to the relevant channels: `/invite @<bot-name>`.
+
+### B4 — Add tokens to `.env` on the demo VM (manual)
+
+SSH into the demo VM and append the Slack tokens to `.env`:
+
+```bash
+ssh -i ~/.ssh/lightsail-us-east-1.pem ubuntu@<static-ip>
+nano ~/arc/.env
+```
+
+Add (replacing the placeholder values with your real tokens):
+
+```
+SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+SLACK_APP_TOKEN=xapp-your-app-token-here
+```
+
+Then lock the file:
+
+```bash
+chmod 600 ~/arc/.env
+```
+
+Never commit `.env` or print its contents in logs.
+
+### B4.5 — Populate `allowed_user_ids` on each agent (REQUIRED)
+
+The TOML configs ship with `allowed_user_ids = []`. **Empty means deny-all**
+(slack.py D-016). Until populated, the SlackAdapter rejects every inbound
+message from every Slack user. Get your Slack member ID from your profile
+page (a string like `U01ABCDEF`), then edit each agent's TOML:
+
+```bash
+nano ~/arc/team/scap_isso_agent/arcagent.toml
+# replace allowed_user_ids = []  →  allowed_user_ids = ["U01ABCDEF", ...]
+# repeat for nlit_cora_agent and nlit_soc_agent
+```
+
+Restart arc-stack after editing so the new allow-list takes effect.
+
+### Verify both adapters registered
+
+After restarting `arc-stack`, check the startup log for both adapter lines:
+
+```bash
+sudo systemctl restart arc-stack
+journalctl -u arc-stack -n 50 | grep -E "web_adapter|slack_adapter|registering"
+```
+
+You should see output like:
+
+```
+bootstrap: embedded gateway built (tier=personal web=True slack=True telegram=False)
+```
+
+A `web=True slack=True` line confirms both adapters registered for the agent.
+If `slack=False`, check that `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` are set
+in `.env` and that `arc-stack` was restarted after the edit.
+
+### B8 — Manual rehearsal (manual)
+
+Kill the arcui process, then open Slack and DM `@<bot-name>`. Verify:
+- The bot replies in Slack.
+- The audit log (`~/arc/.arc-logs/*.log`) shows `platform=slack` events.
+
+This confirms AC-2.3: killing arcui leaves Slack chat fully functional.
 
 ## Step 5 — open the URL
 

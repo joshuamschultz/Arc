@@ -16,7 +16,7 @@ from arcgateway.file_events import default_bus as _default_file_bus
 from arcgateway.fs_watcher import WatcherManager
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
@@ -87,6 +87,26 @@ async def _index(request: Request) -> HTMLResponse:
     )
 
 
+async def _service_worker(request: Request) -> Response:
+    """Serve sw.js with `{{ARC_BUILD_ID}}` substituted at startup.
+
+    SPEC-025 §TD-3 — without this, the SW's `CACHE_VERSION` constant is
+    static and browsers serve cached shell across deploys. Routing through
+    a Python handler (instead of StaticFiles) is what enables the
+    template substitution that already runs for index.html.
+    """
+    cached = getattr(request.app.state, "sw_js", None)
+    if cached is None:
+        return Response("", status_code=404)
+    # Service workers must be served with the right MIME and a no-cache
+    # policy on the SW file itself; the cached *content* manages staleness.
+    return Response(
+        cached,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 def create_app(
     *,
     auth_config: AuthConfig | None = None,
@@ -122,6 +142,7 @@ def create_app(
 
     routes = [
         Route("/", _index),
+        Route("/sw.js", _service_worker),
         Route("/api/health", _health),
         Route("/api/info", _agent_info),
         *traces_routes.routes,
@@ -178,14 +199,24 @@ def create_app(
     # Cache-Control, so without this the browser happily reuses a cached
     # arc-shell.js across restarts and the user sees the old sidebar.
     index_path = _STATIC_DIR / "index.html"
+    sw_path = _STATIC_DIR / "sw.js"
     if index_path.exists():
         import uuid as _uuid
         _build_id = _uuid.uuid4().hex[:12]
         cached_index_html = index_path.read_text().replace(
             "{{ARC_BUILD_ID}}", _build_id
         )
+        # SPEC-025 §TD-3 — sw.js gets the same template substitution so the
+        # cache key bumps every process restart. Without this, browsers
+        # serve the cached shell forever after asset changes.
+        cached_sw_js: str | None = (
+            sw_path.read_text().replace("{{ARC_BUILD_ID}}", _build_id)
+            if sw_path.exists()
+            else None
+        )
     else:
         cached_index_html = None
+        cached_sw_js = None
 
     # Starlette lifespan replaces the deprecated `on_startup=` parameter.
     # The async context manager runs the startup half before the server
@@ -272,6 +303,7 @@ def create_app(
     event_buffer = EventBuffer(connection_manager, subscription_manager=subscription_manager)
 
     app.state.index_html = cached_index_html
+    app.state.sw_js = cached_sw_js
     app.state._extra_startup_hooks = []
     app.state.audit = UIAuditLogger()
     # SPEC-019 T5.3: tracker is consulted by AuthMiddleware to emit

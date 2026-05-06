@@ -26,6 +26,9 @@
    *   placeholderId: string|null,
    *   bound: boolean,
    *   refreshTimer: number|null,
+   *   lastSeq: number,
+   *   reconnectAttempts: number,
+   *   reconnectDeadlineAt: number,
    * }} */
   const state = {
     agents: [],
@@ -37,7 +40,31 @@
     placeholderId: null,
     bound: false,
     refreshTimer: null,
+    // SPEC-025 Track A — client-side gap detection.
+    // lastSeq: highest server seq the client has acknowledged for this chat.
+    //   -1 means "fresh chat — accept any seq starting at 0".
+    // reconnectAttempts: count for exponential backoff (resets on a clean OPEN).
+    // reconnectDeadlineAt: monotonic ms timestamp; reconnect attempts that
+    //   miss this deadline give up and surface an error to the operator.
+    lastSeq: -1,
+    reconnectAttempts: 0,
+    reconnectDeadlineAt: 0,
   };
+
+  // Reconnect backoff: 800ms → 1.7× → 15s cap. Mirrors OpenClaw gateway.ts.
+  const RECONNECT_BASE_MS = 800;
+  const RECONNECT_FACTOR = 1.7;
+  const RECONNECT_CAP_MS = 15000;
+  // After this many ms with no successful OPEN, surface an error and stop.
+  const RECONNECT_MAX_WINDOW_MS = 60000;
+
+  function reconnectDelayMs() {
+    const exp = Math.min(
+      RECONNECT_BASE_MS * Math.pow(RECONNECT_FACTOR, state.reconnectAttempts),
+      RECONNECT_CAP_MS,
+    );
+    return Math.floor(exp);
+  }
 
   function rootEl() {
     return document.querySelector(`[data-page-content="${PAGE_ID}"]`);
@@ -279,28 +306,67 @@
 
   function openChat(agentId) {
     if (!agentId) return;
-    if (agentId === state.activeAgentId) return;
-    closeChat();
-    state.activeAgentId = agentId;
-    renderAgents();
-    renderHeader();
-    renderMessages();
-    renderThread();
+    // Reconnects to the same chat keep state.lastSeq for replay. Switching
+    // to a different agent is a fresh conversation — reset everything.
+    if (agentId !== state.activeAgentId) {
+      closeChat();
+      state.activeAgentId = agentId;
+      state.lastSeq = -1;
+      state.reconnectAttempts = 0;
+      state.reconnectDeadlineAt = 0;
+      renderAgents();
+      renderHeader();
+      renderMessages();
+      renderThread();
+    }
+    // If we already have an OPEN socket, nothing to do.
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) return;
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${window.location.host}/ws/chat/${encodeURIComponent(agentId)}`;
+    let url = `${proto}//${window.location.host}/ws/chat/${encodeURIComponent(agentId)}`;
+    if (state.lastSeq >= 0) {
+      url += `?since_seq=${state.lastSeq}`;
+    }
     const ws = new WebSocket(url);
     state.ws = ws;
 
     ws.addEventListener('open', () => {
       ws.send(JSON.stringify({ token: authToken() }));
+      // Successful OPEN — reset backoff so the next disconnect starts fresh.
+      state.reconnectAttempts = 0;
+      state.reconnectDeadlineAt = 0;
     });
     ws.addEventListener('message', (ev) => onIncoming(ev.data));
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (ev) => {
       setComposerEnabled(false);
       state.ws = null;
+      scheduleReconnect(agentId, ev && ev.code);
     });
     ws.addEventListener('error', () => { /* close handler will fire */ });
+  }
+
+  function scheduleReconnect(agentId, _code) {
+    // The user explicitly opened a different agent — don't fight them.
+    if (agentId !== state.activeAgentId) return;
+    if (state.reconnectDeadlineAt === 0) {
+      state.reconnectDeadlineAt = Date.now() + RECONNECT_MAX_WINDOW_MS;
+    }
+    if (Date.now() > state.reconnectDeadlineAt) {
+      state.localMessages.set(`sys-${Date.now()}`, {
+        role: 'agent',
+        text: '_(could not reconnect — please refresh the page)_',
+        time: timeNow(),
+      });
+      renderMessages();
+      return;
+    }
+    const delay = reconnectDelayMs();
+    state.reconnectAttempts += 1;
+    setTimeout(() => {
+      if (agentId !== state.activeAgentId) return;
+      if (state.ws) return; // someone else already reopened
+      openChat(agentId);
+    }, delay);
   }
 
   async function loadHistory(agentId, chatId) {
@@ -340,6 +406,39 @@
     let frame;
     try { frame = JSON.parse(raw); } catch (e) { return; }
     if (!frame || typeof frame !== 'object') return;
+
+    // SPEC-025 Track A — sequence-gap detection.
+    // The server stamps every outbound chat frame (status / tool_call /
+    // message) with a monotonic per-chat seq starting at 0. Frames that
+    // don't carry seq (the legacy 'ready' frame, errors, recovery_banner)
+    // are exempt from the check. A gap means the client missed at least
+    // one event during a transient stall — close + reconnect with
+    // ?since_seq=lastSeq so the adapter replays what we lost.
+    if (typeof frame.seq === 'number' &&
+        frame.type !== 'recovery_banner') {
+      const expected = state.lastSeq + 1;
+      if (state.lastSeq >= 0 && frame.seq !== expected) {
+        try { state.ws && state.ws.close(4000, 'seq-gap'); } catch (e) { /* noop */ }
+        return;
+      }
+      state.lastSeq = frame.seq;
+    }
+
+    if (frame.type === 'recovery_banner') {
+      // The ring overran while we were disconnected; surface a one-line
+      // notice and treat the next regular frame's seq as authoritative
+      // (it will land at lost_below_seq).
+      if (typeof frame.lost_below_seq === 'number') {
+        state.lastSeq = frame.lost_below_seq - 1;
+      }
+      state.localMessages.set(`sys-${Date.now()}`, {
+        role: 'agent',
+        text: '_(reconnected — earlier messages may be missing)_',
+        time: frame.ts || timeNow(),
+      });
+      renderMessages();
+      return;
+    }
 
     if (frame.type === 'ready') {
       state.chatId = frame.chat_id || null;
@@ -407,7 +506,45 @@
     if (!input) return;
     const text = (input.value || '').trim();
     if (!text) return;
-    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+
+    // If the chat WebSocket is closed (idle timeout, network blip, server
+    // restart), reopen it before sending. Previously this branch silently
+    // returned and the click looked like a no-op, which has burned us in
+    // every demo where the user typed a long prompt after the WS had
+    // dropped — the message just vanished with no feedback.
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      if (state.activeAgentId) {
+        state.localMessages.set(`sys-${Date.now()}`, {
+          role: 'agent',
+          text: '_(reconnecting…)_',
+          time: timeNow(),
+        });
+        renderMessages();
+        openChat(state.activeAgentId);
+        // Defer the send until the new WS reaches OPEN. Drop after 8s.
+        const deadline = Date.now() + 8000;
+        const tryAgain = () => {
+          if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+            sendMessage();
+            return;
+          }
+          if (Date.now() < deadline) {
+            setTimeout(tryAgain, 200);
+          } else {
+            state.localMessages.set(`err-${Date.now()}`, {
+              role: 'agent',
+              text: 'Could not reconnect chat WebSocket — refresh the page.',
+              time: timeNow(),
+            });
+            renderMessages();
+          }
+        };
+        // Re-fill the input so the user can edit / retry without losing text
+        // (don't clear input yet — let the recursive sendMessage do it).
+        setTimeout(tryAgain, 200);
+      }
+      return;
+    }
     state.clientSeq += 1;
     const id = `u${state.clientSeq}`;
     state.localMessages.set(id, { role: 'user', text, time: timeNow() });

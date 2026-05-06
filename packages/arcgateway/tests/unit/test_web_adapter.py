@@ -136,12 +136,19 @@ async def test_register_socket_different_tokens_different_chat_ids() -> None:
 
 
 async def test_register_socket_does_not_accept_viewer_token() -> None:
-    """Signature compliance: adapter is secret-free; no viewer_token parameter."""
+    """Signature compliance: adapter is secret-free; no viewer_token parameter.
+
+    The contract is: required positional args ``ws, agent_did, user_did, chat_id``
+    plus keyword-only optional ``since_seq`` for replay on reconnect (SPEC-025
+    Track A). The adapter never accepts the viewer token directly.
+    """
     sig = inspect.signature(WebPlatformAdapter.register_socket)
     assert "viewer_token" not in sig.parameters
-    # Positional arg names match the SDD contract exactly.
-    expected = ["self", "ws", "agent_did", "user_did", "chat_id"]
+    expected = ["self", "ws", "agent_did", "user_did", "chat_id", "since_seq"]
     assert list(sig.parameters.keys()) == expected
+    # since_seq is keyword-only with a None default
+    assert sig.parameters["since_seq"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert sig.parameters["since_seq"].default is None
 
 
 async def test_unregister_socket_removes_from_set() -> None:
@@ -505,4 +512,286 @@ async def test_audit_emitter_exception_is_swallowed() -> None:
     await adapter.send(target, "hello")  # also emits audit
     await _drain_once(adapter, ws)
     assert ws.sent  # delivery still happened
+    await adapter.disconnect()
+
+
+# ── SPEC-025 Track A — Sequence-gap detection + replay buffer ────────────────
+
+
+async def test_send_stamps_monotonic_seq_per_chat_id() -> None:
+    """Every outbound frame for a chat_id carries a monotonic 'seq' starting at 0."""
+    adapter = _make_adapter()
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    await adapter.send(target, "first")
+    await adapter.send(target, "second")
+    await adapter.send(target, "third")
+    await _drain_once(adapter, ws)
+    seqs = [p.get("seq") for p in ws.sent if p.get("type") == "message"]
+    assert seqs == [0, 1, 2]
+    await adapter.disconnect()
+
+
+async def test_seq_counters_are_independent_per_chat_id() -> None:
+    """Two chat_ids have independent seq counters."""
+    adapter = _make_adapter()
+    ws_a = FakeWebSocket()
+    ws_b = FakeWebSocket()
+    adapter.register_socket(ws_a, "did:arc:agent:a", "did:arc:viewer:u1", "chat-A")
+    adapter.register_socket(ws_b, "did:arc:agent:a", "did:arc:viewer:u2", "chat-B")
+    await adapter.send(DeliveryTarget(platform="web", chat_id="chat-A"), "a1")
+    await adapter.send(DeliveryTarget(platform="web", chat_id="chat-A"), "a2")
+    await adapter.send(DeliveryTarget(platform="web", chat_id="chat-B"), "b1")
+    await _drain_once(adapter, ws_a)
+    await _drain_once(adapter, ws_b)
+    a_seqs = [p.get("seq") for p in ws_a.sent if p.get("type") == "message"]
+    b_seqs = [p.get("seq") for p in ws_b.sent if p.get("type") == "message"]
+    assert a_seqs == [0, 1]
+    assert b_seqs == [0]
+    await adapter.disconnect()
+
+
+async def test_tool_call_frame_also_carries_seq() -> None:
+    """Tool-call frames stamp seq from the same per-chat counter as message frames."""
+    adapter = _make_adapter()
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    await adapter.dispatch_delta(target, Delta(kind="tool_call", content="read_file", turn_id="t1"))
+    await adapter.send(target, "result text")
+    await _drain_once(adapter, ws)
+    seqs = [p.get("seq") for p in ws.sent]
+    assert seqs == [0, 1]
+    await adapter.disconnect()
+
+
+async def test_register_with_since_seq_replays_missed_frames() -> None:
+    """Reconnecting with since_seq=N replays frames whose seq > N to the new socket only."""
+    adapter = _make_adapter()
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    # Original socket receives the first three frames (seq 0, 1, 2).
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await adapter.send(target, "msg-1")
+    await adapter.send(target, "msg-2")
+    await _drain_once(adapter, ws_old)
+    # Disconnect the old socket. Server-side ring still holds frames 0..2.
+    adapter.unregister_socket(ws_old)
+    # New socket reconnects, claims it last saw seq=0 — wants 1 and 2 replayed.
+    ws_new = FakeWebSocket()
+    adapter.register_socket(
+        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=0,
+    )
+    await _drain_once(adapter, ws_new)
+    replayed_seqs = [p.get("seq") for p in ws_new.sent if p.get("type") == "message"]
+    assert replayed_seqs == [1, 2]
+    replayed_texts = [p.get("text") for p in ws_new.sent if p.get("type") == "message"]
+    assert replayed_texts == ["msg-1", "msg-2"]
+    await adapter.disconnect()
+
+
+async def test_register_with_since_seq_replays_only_to_new_socket() -> None:
+    """Replay does not fan out to other sockets on the same chat_id."""
+    adapter = _make_adapter()
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_existing = FakeWebSocket()
+    adapter.register_socket(ws_existing, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await _drain_once(adapter, ws_existing)
+    n_seen_before = len(ws_existing.sent)
+    # New socket joins with since_seq=-1 — wants the full ring replayed.
+    ws_new = FakeWebSocket()
+    adapter.register_socket(
+        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=-1,
+    )
+    await _drain_once(adapter, ws_new)
+    await _drain_once(adapter, ws_existing)
+    # Existing socket received nothing extra; new socket got the replay.
+    assert len(ws_existing.sent) == n_seen_before
+    assert any(p.get("text") == "msg-0" for p in ws_new.sent)
+    await adapter.disconnect()
+
+
+async def test_replay_emits_recovery_banner_when_ring_overran() -> None:
+    """If since_seq is below the oldest frame in the ring, prepend a recovery_banner."""
+    adapter = _make_adapter()
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    # Send more frames than the ring can hold to force overrun (ring max = 50 per SDD §C1).
+    for i in range(60):
+        await adapter.send(target, f"msg-{i}")
+    await _drain_once(adapter, ws_old)
+    adapter.unregister_socket(ws_old)
+    # Reconnect claiming last seen seq=0 — but ring only holds frames 10..59.
+    ws_new = FakeWebSocket()
+    adapter.register_socket(
+        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=0,
+    )
+    await _drain_once(adapter, ws_new)
+    # First payload must be the recovery banner; client uses it to flag a UX warning.
+    banners = [p for p in ws_new.sent if p.get("type") == "recovery_banner"]
+    assert len(banners) == 1
+    assert banners[0]["lost_below_seq"] > 1, "banner must say which seq was the floor"
+    await adapter.disconnect()
+
+
+async def test_replay_with_since_seq_at_or_above_latest_is_noop() -> None:
+    """If client claims it's already at or past latest seq, replay sends nothing extra."""
+    adapter = _make_adapter()
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await adapter.send(target, "msg-1")
+    await _drain_once(adapter, ws_old)
+    adapter.unregister_socket(ws_old)
+    ws_new = FakeWebSocket()
+    adapter.register_socket(
+        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=1,
+    )
+    await _drain_once(adapter, ws_new)
+    # No replay frames (since_seq=1 means client already has up to seq 1).
+    msg_frames = [p for p in ws_new.sent if p.get("type") == "message"]
+    banners = [p for p in ws_new.sent if p.get("type") == "recovery_banner"]
+    assert msg_frames == []
+    assert banners == []
+    await adapter.disconnect()
+
+
+# ── SPEC-025 §TD-1 — TTL eviction of replay state ────────────────────────────
+
+
+def _make_adapter_with_eviction(*, ttl: float = 0.05, audit: Any = None) -> WebPlatformAdapter:
+    """Build an adapter with a tiny TTL so eviction tests stay fast."""
+    return WebPlatformAdapter(
+        on_message=_noop_on_message,
+        agent_did="did:arc:agent:test",
+        max_connections=50,
+        idle_timeout_seconds=3600,
+        max_frame_bytes=65536,
+        replay_ttl_seconds=ttl,
+        audit_emitter=audit,
+    )
+
+
+async def test_replay_buffer_survives_within_ttl_window() -> None:
+    """A reconnect inside the TTL window cancels eviction and gets full replay."""
+    adapter = _make_adapter_with_eviction(ttl=10.0)
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await adapter.send(target, "msg-1")
+    await _drain_once(adapter, ws_old)
+    adapter.unregister_socket(ws_old)
+    # Reconnect fast — TTL hasn't expired.
+    ws_new = FakeWebSocket()
+    adapter.register_socket(
+        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=-1,
+    )
+    await _drain_once(adapter, ws_new)
+    replayed = [p["text"] for p in ws_new.sent if p.get("type") == "message"]
+    assert replayed == ["msg-0", "msg-1"]
+    await adapter.disconnect()
+
+
+async def test_replay_buffer_evicted_after_ttl_elapses() -> None:
+    """After last unregister + TTL, _replay_buffers and _outbound_seq drop."""
+    audit = _AuditCapture()
+    adapter = _make_adapter_with_eviction(ttl=0.01, audit=audit)
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await _drain_once(adapter, ws_old)
+    adapter.unregister_socket(ws_old)
+    assert "chat-1" in adapter._replay_buffers
+    # Wait for the eviction task to fire.
+    await asyncio.sleep(0.1)
+    assert "chat-1" not in adapter._replay_buffers
+    assert "chat-1" not in adapter._outbound_seq
+    # Audit emits an evicted event.
+    evicted = audit.by_action("gateway.replay.evicted")
+    assert len(evicted) == 1
+    assert evicted[0]["chat_id"] == "chat-1"
+    await adapter.disconnect()
+
+
+async def test_register_within_ttl_cancels_pending_eviction() -> None:
+    """Reconnect cancels the eviction task; next unregister schedules a new one."""
+    adapter = _make_adapter_with_eviction(ttl=10.0)
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await _drain_once(adapter, ws_old)
+    adapter.unregister_socket(ws_old)
+    assert "chat-1" in adapter._eviction_tasks
+    pending_task = adapter._eviction_tasks["chat-1"]
+    # Reconnect — must cancel the pending task.
+    ws_new = FakeWebSocket()
+    adapter.register_socket(ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    # Yield to let the cancellation propagate.
+    for _ in range(5):
+        await asyncio.sleep(0)
+        if pending_task.done():
+            break
+    assert pending_task.cancelled() or pending_task.done()
+    assert "chat-1" not in adapter._eviction_tasks
+    await adapter.disconnect()
+
+
+async def test_disconnect_cancels_pending_evictions() -> None:
+    """adapter.disconnect() must not leave eviction tasks running."""
+    adapter = _make_adapter_with_eviction(ttl=10.0)
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws = FakeWebSocket()
+    adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    await adapter.send(target, "msg-0")
+    await _drain_once(adapter, ws)
+    adapter.unregister_socket(ws)
+    pending = adapter._eviction_tasks.get("chat-1")
+    assert pending is not None
+    await adapter.disconnect()
+    # Yield to let cancellation finish.
+    for _ in range(5):
+        await asyncio.sleep(0)
+        if pending.done():
+            break
+    assert adapter._eviction_tasks == {}
+    assert pending.cancelled() or pending.done()
+
+
+# ── SPEC-025 §TD-6 — replay drop-oldest emits audit ──────────────────────────
+
+
+async def test_replay_drop_oldest_emits_audit_event() -> None:
+    """When the per-socket queue is full during replay, the drop is audited."""
+    audit = _AuditCapture()
+    adapter = _make_adapter_with_eviction(ttl=10.0, audit=audit)
+    target = DeliveryTarget(platform="web", chat_id="chat-1")
+    ws_old = FakeWebSocket()
+    adapter.register_socket(ws_old, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
+    # Push frames into the ring without draining.
+    for i in range(5):
+        await adapter.send(target, f"msg-{i}")
+    adapter.unregister_socket(ws_old)
+    # New socket — fill its queue to capacity, then trigger replay.
+    ws_new = FakeWebSocket()
+    adapter.register_socket(
+        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1",
+    )
+    queue = adapter._socket_queues[ws_new]
+    # Fill to maxsize - 0 so any further put_nowait without get_nowait fails.
+    while not queue.full():
+        queue.put_nowait({"type": "filler"})
+    # Now manually replay — every frame should hit the QueueFull → drop branch.
+    adapter._replay_to_socket(ws_new, "chat-1", since_seq=-1)
+    # At least one drop event should have been audited.
+    drops = audit.by_action("gateway.replay.dropped_backpressure")
+    assert len(drops) >= 1
+    assert drops[0]["chat_id"] == "chat-1"
     await adapter.disconnect()

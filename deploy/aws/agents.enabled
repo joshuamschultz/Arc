@@ -1,0 +1,12 @@
+# AWS Lightsail demo VM — agents this host has keys/config for.
+# Updated when adding/removing agents from the demo lineup.
+# One agent directory name per line; # comments and blank lines are ignored.
+#
+# C5 (manual rehearsal) note: to verify this manifest works end-to-end,
+# deploy to the Lightsail VM, deliberately corrupt one agent's identity key,
+# redeploy, and confirm: (a) systemd unit stays `active`, (b) roster shows the
+# broken agent as `degraded`. This step is skipped in automated CI because it
+# requires the AWS VM.
+nlit_cora_agent
+nlit_soc_agent
+scap_isso_agent
