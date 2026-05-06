@@ -2,7 +2,7 @@
 
 import os
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -178,3 +178,48 @@ class TestVaultErrors:
         """Backend string must have module:Class format."""
         with pytest.raises(ArcLLMConfigError, match="format"):
             VaultResolver.from_config("just_a_module", 300)
+
+
+# SPEC-025 §M-4 — env-var fallback must emit a structured log
+
+
+def test_resolve_api_key_emits_fallback_log_when_vault_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When a vault is configured but unavailable, log the env-var fallback."""
+    backend = MagicMock(spec=VaultBackend)
+    backend.is_available.return_value = False
+    resolver = VaultResolver(backend=backend)
+    monkeypatch.setenv("ARC_TEST_API_KEY", "env-served-secret")
+
+    with caplog.at_level("WARNING", logger="arcllm.vault"):
+        result = resolver.resolve_api_key(
+            api_key_env="ARC_TEST_API_KEY",
+            vault_path="arc/prod/test",
+        )
+    assert result == "env-served-secret"
+    fallback_messages = [r for r in caplog.records if "arcllm.vault.fallback" in r.message]
+    assert len(fallback_messages) == 1
+
+
+def test_resolve_api_key_no_fallback_log_when_vault_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No fallback log when env var is the only configured source.
+
+    Logging on every env-var hit would be noisy in dev environments that
+    aren't running a vault at all.
+    """
+    resolver = VaultResolver(backend=None)
+    monkeypatch.setenv("ARC_TEST_API_KEY", "env-only-secret")
+
+    with caplog.at_level("WARNING", logger="arcllm.vault"):
+        result = resolver.resolve_api_key(
+            api_key_env="ARC_TEST_API_KEY",
+            vault_path=None,
+        )
+    assert result == "env-only-secret"
+    fallback_messages = [r for r in caplog.records if "arcllm.vault.fallback" in r.message]
+    assert fallback_messages == []

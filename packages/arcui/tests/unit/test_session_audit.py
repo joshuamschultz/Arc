@@ -211,3 +211,72 @@ class TestSessionStartHasRequiredFields:
         assert len(starts) == 2
         ids = {s["details"]["session_id"] for s in starts}
         assert len(ids) == 2, "two distinct sessions must yield two session_ids"
+
+
+class TestSpec025OsUserBinding:
+    """SPEC-025 §FR-7 — every session_start audit event includes a username.
+
+    Closes the FedRAMP Low audit gate (NIST AU-3 non-repudiation): an
+    auditor must be able to attribute every authenticated session to a
+    real OS user, not just a numeric uid.
+    """
+
+    def test_session_start_includes_username_field(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        auth = AuthConfig()
+        audit = UIAuditLogger(enabled=False)
+        tracker = SessionTracker()
+        app = _build_app(auth, audit, tracker)
+
+        client = TestClient(app)
+        with caplog.at_level(logging.INFO, logger="arcui.audit"):
+            client.get(
+                "/api/ping",
+                headers={"Authorization": f"Bearer {auth.viewer_token}"},
+            )
+        events = _capture_events(caplog)
+        starts = [e for e in events if e["event_type"] == "ui.session_start"]
+        assert len(starts) == 1
+        details = starts[0]["details"]
+        assert "username" in details, (
+            "SPEC-025 §FR-7 — session_start must include a username field"
+        )
+        # We can't pin the value (varies by host), but it must be a non-empty string
+        # and the model's <unknown> fallback should not be present in normal POSIX
+        # test runs. CI on Linux/macOS resolves to a real name.
+        assert isinstance(details["username"], str)
+        assert details["username"] != ""
+
+    def test_resolve_username_handles_missing_pwd(self) -> None:
+        """SPEC-025 §M-5 — fallback includes the uid suffix.
+
+        Without uid suffixing, every container with no /etc/passwd entry
+        for the runtime uid would aggregate into a single ``<unknown>``
+        audit identity. ``<unknown:uid=N>`` keeps per-uid attribution.
+        """
+        from arcui.auth import _resolve_username
+
+        assert _resolve_username(-1) == "<unknown:uid=-1>"
+
+    def test_resolve_username_uid_suffix_distinguishes_collisions(self) -> None:
+        """Two missing-pwd uids produce different fallback strings."""
+        from arcui.auth import _resolve_username
+
+        assert _resolve_username(-1) != _resolve_username(-2)
+
+    def test_resolve_username_returns_pw_name_for_current_user(self) -> None:
+        """On any POSIX host, the current uid resolves to a real username."""
+        import os
+
+        from arcui.auth import _resolve_username
+
+        # Skip on Windows — pwd is unavailable and the fallback is correct.
+        try:
+            import pwd  # noqa: F401
+        except ImportError:
+            pytest.skip("pwd module not available (Windows)")
+
+        name = _resolve_username(os.getuid())
+        assert name != "<unknown>"
+        assert name  # non-empty string

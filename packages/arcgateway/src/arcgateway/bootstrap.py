@@ -21,11 +21,13 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from arcgateway.dashboard_events import DashboardEventBus
 from arcgateway.executor import AsyncioExecutor, Executor
 from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
 
 if TYPE_CHECKING:
+    from arcgateway.adapters.mattermost import MattermostAdapter
     from arcgateway.adapters.slack import SlackAdapter
     from arcgateway.adapters.telegram import TelegramAdapter
     from arcgateway.adapters.web import WebPlatformAdapter
@@ -37,8 +39,10 @@ _logger = logging.getLogger("arcgateway.bootstrap")
 class EmbeddedGateway(NamedTuple):
     """Bundle of components arcui needs to host the gateway runtime.
 
-    Slack and Telegram adapter slots are populated only when their
-    ``[platforms.X]`` blocks are enabled; otherwise they are None.
+    Slack, Telegram, and Mattermost adapter slots are populated only when
+    their ``[platforms.X]`` blocks are enabled; otherwise they are None.
+    ``dashboard_bus`` is always present — aggregators publish into it
+    and ``/ws/dashboard`` drains it to browser sockets (SPEC-025 Track E).
     """
 
     executor: Executor
@@ -47,6 +51,8 @@ class EmbeddedGateway(NamedTuple):
     stream_bridge: StreamBridge
     slack_adapter: SlackAdapter | None = None
     telegram_adapter: TelegramAdapter | None = None
+    dashboard_bus: DashboardEventBus | None = None
+    mattermost_adapter: MattermostAdapter | None = None
 
 
 def _extract_agent_name(agent_did: str) -> str:
@@ -248,6 +254,44 @@ def _build_telegram_adapter(
     )
 
 
+def _build_mattermost_adapter(
+    cfg: GatewayConfig,
+    session_router: SessionRouter,
+) -> MattermostAdapter | None:
+    """Build a MattermostAdapter when enabled and the PAT is present.
+
+    The federal-tier air-gap guard runs inside MattermostAdapter.__init__:
+    a public-DNS server_url at tier=federal raises ValueError, which
+    propagates as a hard startup failure (correct: misconfigured federal
+    deployments should refuse to start rather than silently phone home).
+    """
+    if not cfg.platforms.mattermost.enabled:
+        return None
+    if not cfg.platforms.mattermost.server_url:
+        _logger.warning(
+            "bootstrap: Mattermost enabled but server_url is empty; skipping"
+        )
+        return None
+    bot_token = cfg.platforms.mattermost.resolve_bot_token()
+    if bot_token is None:
+        _logger.warning(
+            "bootstrap: Mattermost enabled but token missing (env=%s); skipping",
+            cfg.platforms.mattermost.bot_token_env,
+        )
+        return None
+    from arcgateway.adapters.mattermost import MattermostAdapter
+
+    return MattermostAdapter(
+        server_url=cfg.platforms.mattermost.server_url,
+        bot_token=bot_token,
+        on_message=session_router.handle,
+        allowed_channel_ids=cfg.platforms.mattermost.allowed_channel_ids or None,
+        bot_user_id=cfg.platforms.mattermost.bot_user_id,
+        tier=cfg.gateway.tier,
+        intranet_domains=cfg.platforms.mattermost.intranet_domains,
+    )
+
+
 async def build_for_embedded(
     team_root: Path,
     gateway_config: GatewayConfig,
@@ -261,10 +305,10 @@ async def build_for_embedded(
             disables adapters, and supplies per-adapter limits.
 
     Returns:
-        EmbeddedGateway with executor, session_router, stream_bridge, and
-        any enabled adapters. The arcui lifespan stores the named tuple
-        on ``app.state`` and is responsible for ``await connect()`` /
-        ``await disconnect()`` on each adapter.
+        EmbeddedGateway with executor, session_router, stream_bridge,
+        dashboard_bus, and any enabled adapters. The arcui lifespan stores
+        the named tuple on ``app.state`` and is responsible for
+        ``await connect()`` / ``await disconnect()`` on each adapter.
     """
     if not team_root.exists():
         _logger.warning(
@@ -276,26 +320,30 @@ async def build_for_embedded(
     executor = _build_executor(gateway_config.gateway.tier, agent_factory)
     session_router = SessionRouter(executor=executor)
     stream_bridge = StreamBridge()
+    dashboard_bus = DashboardEventBus()
 
     web_adapter = _build_web_adapter(gateway_config, session_router)
     slack_adapter = _build_slack_adapter(gateway_config, session_router)
     telegram_adapter = _build_telegram_adapter(gateway_config, session_router)
+    mattermost_adapter = _build_mattermost_adapter(gateway_config, session_router)
 
     # Wire the primary delivery adapter via the public setter.
     # SessionRouter needs an adapter for outbound delivery; each adapter
     # needs ``session_router.handle`` for inbound — two-step construction
     # breaks the cycle. Web is primary when present; else the first
     # available platform.
-    primary = web_adapter or slack_adapter or telegram_adapter
+    primary = web_adapter or slack_adapter or telegram_adapter or mattermost_adapter
     if primary is not None:
         session_router.set_adapter(primary)
 
     _logger.info(
-        "bootstrap: embedded gateway built (tier=%s web=%s slack=%s telegram=%s)",
+        "bootstrap: embedded gateway built "
+        "(tier=%s web=%s slack=%s telegram=%s mattermost=%s)",
         gateway_config.gateway.tier,
         bool(web_adapter),
         bool(slack_adapter),
         bool(telegram_adapter),
+        bool(mattermost_adapter),
     )
 
     return EmbeddedGateway(
@@ -305,6 +353,8 @@ async def build_for_embedded(
         stream_bridge=stream_bridge,
         slack_adapter=slack_adapter,
         telegram_adapter=telegram_adapter,
+        dashboard_bus=dashboard_bus,
+        mattermost_adapter=mattermost_adapter,
     )
 
 

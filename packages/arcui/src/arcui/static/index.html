@@ -796,8 +796,8 @@
       }
     }
 
-    async function fetchTimeseries() {
-      const data = await fetchAPI('/api/stats/timeseries?window=' + _chartWindow);
+    async function fetchTimeseries(data) {
+      if (!data) data = await fetchAPI('/api/stats/timeseries?window=' + _chartWindow);
       if (data && data.buckets) renderTokenChart(data.buckets);
     }
 
@@ -1034,9 +1034,9 @@
     /* Warm-start + periodic re-poll. Server keeps a 50-deep ring buffer of
        schedule:* events; without this the card only shows fires that happen
        while the tab is open. */
-    async function refreshScheduleHistory() {
+    async function refreshScheduleHistory(data) {
       try {
-        const data = await fetchAPI('/api/schedule-history?limit=5');
+        if (!data) data = await fetchAPI('/api/schedule-history?limit=5');
         if (!data) return;
         const events = data.events || [];
         // Replace store contents (newest-first from server).
@@ -1468,8 +1468,8 @@
     // show up. Pill clicks (1h/24h/7d/30d) override.
     let _statsWindow = '7d';
 
-    async function refreshStats() {
-      const data = await fetchAPI('/api/stats?window=' + _statsWindow);
+    async function refreshStats(data) {
+      if (!data) data = await fetchAPI('/api/stats?window=' + _statsWindow);
       if (!data || data.error) return;
       ArcStore.updateStats(data);
 
@@ -1541,8 +1541,8 @@
       });
     }
 
-    async function refreshCircuitBreakers() {
-      const data = await fetchAPI('/api/circuit-breakers');
+    async function refreshCircuitBreakers(data) {
+      if (!data) data = await fetchAPI('/api/circuit-breakers');
       if (!data) return;
       ArcStore.setCircuitBreakers(data.circuit_breakers || []);
       const cbs = data.circuit_breakers || [];
@@ -1566,8 +1566,8 @@
       });
     }
 
-    async function refreshCostEfficiency() {
-      const data = await fetchAPI('/api/cost-efficiency?window=24h');
+    async function refreshCostEfficiency(data) {
+      if (!data) data = await fetchAPI('/api/cost-efficiency?window=24h');
       if (!data || data.error) return;
       ArcStore.setCostEfficiency(data);
 
@@ -1606,8 +1606,8 @@
       });
     }
 
-    async function refreshBudgets() {
-      const data = await fetchAPI('/api/budget');
+    async function refreshBudgets(data) {
+      if (!data) data = await fetchAPI('/api/budget');
       if (!data) return;
       ArcStore.setBudgets(data.budgets || []);
       const budgets = data.budgets || [];
@@ -1656,8 +1656,8 @@
       }).join('');
     }
 
-    async function refreshPerformance() {
-      const data = await fetchAPI('/api/performance?window=' + _perfWindow);
+    async function refreshPerformance(data) {
+      if (!data) data = await fetchAPI('/api/performance?window=' + _perfWindow);
       if (!data || data.error) return;
       domBatcher.schedule(() => {
         renderPerfRows(data.models, 'perf-model-tbody');
@@ -1676,8 +1676,8 @@
     });
 
     /* --- Queue Stats --- */
-    async function refreshQueueStats() {
-      const data = await fetchAPI('/api/queue');
+    async function refreshQueueStats(data) {
+      if (!data) data = await fetchAPI('/api/queue');
       if (!data) return;
       const queues = data.queues || [];
 
@@ -1740,7 +1740,7 @@
       }
     }
 
-    /* --- Initial load + polling --- */
+    /* --- Initial load (one-shot fetch for warm-start while WS connects) --- */
     fetchTraces();
     refreshStats();
     refreshCircuitBreakers();
@@ -1749,16 +1749,66 @@
     refreshPerformance();
     refreshQueueStats();
     fetchTimeseries();
+    refreshScheduleHistory();
 
-    setInterval(refreshStats, 5000);
-    setInterval(fetchTimeseries, 10000);
-    setInterval(refreshCircuitBreakers, 10000);
-    setInterval(refreshCostEfficiency, 15000);
-    setInterval(refreshBudgets, 15000);
-    setInterval(refreshPerformance, 10000);
-    setInterval(refreshQueueStats, 10000);  // queue stats were only fetched once at boot
-    setInterval(refreshScheduleHistory, 15000);  // warm-start + periodic re-poll for cron fires
-    setInterval(refreshQueueStats, 5000);
+    /* --- SPEC-025 Track E: single-transport dashboard via /ws/dashboard ---
+       Replaces the 8 setInterval polling calls above. The server pushes each
+       topic as state changes; the browser no longer polls. On subscribe, the
+       server replays the last-known value for each topic so widgets don't
+       blink empty (replay-on-subscribe). Caddy access log: steady WS
+       connection per tab instead of ~20 GET/sec churn.                        */
+    (function initDashboardWS() {
+      const _dsTopics = [
+        'stats', 'stats.timeseries', 'circuit_breakers', 'budget',
+        'performance', 'queue', 'cost_efficiency', 'roster', 'schedule_history'
+      ];
+      const _dsHandlers = {
+        stats:             (p) => refreshStats(p),
+        'stats.timeseries': (p) => fetchTimeseries(p),
+        circuit_breakers:  (p) => refreshCircuitBreakers(p),
+        budget:            (p) => refreshBudgets(p),
+        performance:       (p) => refreshPerformance(p),
+        queue:             (p) => refreshQueueStats(p),
+        cost_efficiency:   (p) => refreshCostEfficiency(p),
+        roster:            (p) => { /* roster handled by messages-page.js via /api/team/roster */ },
+        schedule_history:  (p) => refreshScheduleHistory(p),
+      };
+      let _dsBackoffMs = 800;
+      let _dsWS = null;
+
+      function _dsConnect() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = proto + '//' + location.host + '/ws/dashboard';
+        _dsWS = new WebSocket(url);
+
+        _dsWS.onopen = function () {
+          _dsBackoffMs = 800;
+          const token = window.localStorage.getItem('arcui_viewer_token') || '';
+          _dsWS.send(JSON.stringify({ token }));
+          _dsWS.send(JSON.stringify({ type: 'subscribe', topics: _dsTopics }));
+        };
+
+        _dsWS.onmessage = function (ev) {
+          let frame;
+          try { frame = JSON.parse(ev.data); } catch { return; }
+          if (frame.type !== 'event') return;
+          const handler = _dsHandlers[frame.topic];
+          if (handler) handler(frame.payload);
+        };
+
+        _dsWS.onclose = function () {
+          _dsWS = null;
+          setTimeout(_dsConnect, _dsBackoffMs);
+          _dsBackoffMs = Math.min(_dsBackoffMs * 1.7, 15000);
+        };
+
+        _dsWS.onerror = function () {
+          /* onclose fires after onerror — let it handle reconnect */
+        };
+      }
+
+      _dsConnect();
+    })();
 
     /* --- Settings Page: Full ArcLLM Config --- */
     let _arcllmConfig = null;

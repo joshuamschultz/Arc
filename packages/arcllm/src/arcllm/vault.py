@@ -54,15 +54,27 @@ class VaultResolver:
         self._cache: dict[str, tuple[str, float]] = {}  # path -> (value, expiry)
 
     @classmethod
-    def from_config(cls, backend_ref: str, cache_ttl_seconds: int) -> VaultResolver:
+    def from_config(
+        cls,
+        backend_ref: str,
+        cache_ttl_seconds: int,
+        **backend_kwargs: object,
+    ) -> VaultResolver:
         """Create VaultResolver from a backend class reference string.
 
         Args:
             backend_ref: "module.path:ClassName" format.
             cache_ttl_seconds: TTL for cached keys.
+            **backend_kwargs: Forwarded verbatim to the backend's ``__init__``.
+                Caller is responsible for passing kwargs the backend recognises;
+                an unknown kwarg surfaces as a TypeError from the constructor,
+                which is the loud-fail behaviour we want for a misconfigured
+                operator-supplied vault config.
 
         Raises:
             ArcLLMConfigError: On invalid format or missing backend.
+            TypeError: When ``backend_kwargs`` contains a key the backend's
+                ``__init__`` does not accept.
         """
         if ":" not in backend_ref:
             raise ArcLLMConfigError(
@@ -92,7 +104,7 @@ class VaultResolver:
                 f"Vault backend class '{class_name}' not found in '{module_path}'"
             )
 
-        backend = backend_class()
+        backend = backend_class(**backend_kwargs)
         return cls(backend=backend, cache_ttl_seconds=cache_ttl_seconds)
 
     def resolve_api_key(
@@ -101,6 +113,12 @@ class VaultResolver:
         vault_path: str | None,
     ) -> str:
         """Resolve API key: vault first (if configured), then env var.
+
+        SPEC-025 §M-4 — every fallback to the environment variable when a
+        vault was configured emits a structured ``arcllm.vault.fallback``
+        log so a compliance auditor can see which secrets were served
+        from env-var instead of the configured backend (transient AWS
+        outage, IAM misconfig, etc.).
 
         Args:
             api_key_env: Environment variable name for the API key.
@@ -112,8 +130,9 @@ class VaultResolver:
         Raises:
             ArcLLMConfigError: If key cannot be found in any source.
         """
+        vault_attempted = self._backend is not None and bool(vault_path)
         # Try vault if backend and path are configured
-        if self._backend is not None and vault_path:
+        if vault_attempted and vault_path:
             vault_key = self._try_vault(vault_path)
             if vault_key is not None:
                 return vault_key
@@ -121,6 +140,15 @@ class VaultResolver:
         # Fall back to environment variable
         env_key = os.environ.get(api_key_env)
         if env_key is not None:
+            if vault_attempted:
+                logger.warning(
+                    "arcllm.vault.fallback",
+                    extra={
+                        "vault_path": vault_path,
+                        "env_var": api_key_env,
+                        "reason": "vault_unavailable_or_missing",
+                    },
+                )
             return env_key
 
         raise ArcLLMConfigError(
@@ -130,19 +158,26 @@ class VaultResolver:
 
     def _try_vault(self, path: str) -> str | None:
         """Try to get key from vault with caching."""
+        # The only caller (resolve_api_key) gates on ``self._backend is not None``,
+        # but mypy can't see that across the method boundary; the local
+        # narrowing keeps ``--strict`` honest without changing semantics.
+        backend = self._backend
+        if backend is None:
+            return None
+
         # Check cache first
         cached = self._get_cached(path)
         if cached is not None:
             return cached
 
         # Check availability
-        if not self._backend.is_available():
+        if not backend.is_available():
             logger.warning("Vault backend unavailable, falling back to env var")
             return None
 
         # Fetch from vault
         try:
-            value = self._backend.get_secret(path)
+            value = backend.get_secret(path)
         except Exception:
             logger.warning(
                 "Vault lookup failed for '%s', falling back to env var",
