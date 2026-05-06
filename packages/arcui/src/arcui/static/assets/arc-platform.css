@@ -323,10 +323,19 @@ a:hover { color: var(--accent-hover); }
 
 /* --- Cards --- */
 .card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg);
+  /* Fallback colors first — if --bg-secondary fails to resolve (stale CSS,
+     missing variable, etc.) the card still renders visibly distinct from
+     the page background instead of looking like an empty void. */
+  background: #242635;
+  background: var(--bg-secondary, #242635);
+  border: 1px solid #3a3d4f;
+  border: 1px solid var(--border-primary, #3a3d4f);
+  border-radius: 8px;
+  border-radius: var(--radius-lg, 8px);
   overflow: hidden;
+  /* Prevent collapsed-to-zero rendering when card-body content is empty
+     during the brief async loading window — still shows the card frame. */
+  min-height: 60px;
 }
 
 .card-header {
@@ -1328,32 +1337,32 @@ th.sortable:hover { color: var(--accent); }
 .ap-filter.active, .tp-filter.active { background: var(--accent-fill); border-color: var(--accent); color: var(--text-white); }
 
 /* Agent detail header / tabs / body */
-.ad-header { display: flex; align-items: center; gap: 16px; }
-.ad-header .ad-title { flex: 1; text-align: center; }
-.ad-back { background: var(--bg-secondary); color: var(--text-primary);
+.agd-header { display: flex; align-items: center; gap: 16px; }
+.agd-header .agd-title { flex: 1; text-align: center; }
+.agd-back { background: var(--bg-secondary); color: var(--text-primary);
            border: 1px solid var(--border-primary); padding: 4px 10px;
            border-radius: var(--radius-md); cursor: pointer; }
-.ad-tabs { margin-bottom: 16px; }
-.ad-body { min-height: 200px; }
-.ad-controls-slot .agent-controls { display: flex; gap: 8px; align-items: center; }
-.ad-controls-slot .btn {
+.agd-tabs { margin-bottom: 16px; }
+.agd-body { min-height: 200px; }
+.agd-controls-slot .agent-controls { display: flex; gap: 8px; align-items: center; }
+.agd-controls-slot .btn {
   background: var(--bg-secondary); color: var(--text-primary);
   border: 1px solid var(--border-primary); padding: 4px 12px;
   border-radius: var(--radius-md); cursor: pointer; font-size: 12px;
 }
-.ad-controls-slot .btn:hover:not(:disabled) { border-color: var(--accent); }
-.ad-controls-slot .btn:disabled { opacity: .5; cursor: not-allowed; }
-.ad-controls-slot .ac-status.ok  { color: var(--status-online); }
-.ad-controls-slot .ac-status.bad { color: var(--status-error); }
+.agd-controls-slot .btn:hover:not(:disabled) { border-color: var(--accent); }
+.agd-controls-slot .btn:disabled { opacity: .5; cursor: not-allowed; }
+.agd-controls-slot .ac-status.ok  { color: var(--status-online); }
+.agd-controls-slot .ac-status.bad { color: var(--status-error); }
 
 .kv { display: flex; gap: 12px; padding: 4px 0; font-size: 13px; }
 .kv .k { color: var(--text-muted); width: 110px; flex-shrink: 0; }
 .kv .v { color: var(--text-primary); word-break: break-word; }
 .kv .v.mono { font-family: var(--font-mono); font-size: 12px; }
-.ad-num { font-size: 28px; font-weight: 600; color: var(--text-white); }
-.ad-list { list-style: none; padding: 0; margin: 0; font-size: 12px; }
-.ad-list li { padding: 4px 0; border-bottom: 1px solid var(--border-primary); }
-.ad-list li:last-child { border-bottom: 0; }
+.agd-num { font-size: 28px; font-weight: 600; color: var(--text-white); }
+.agd-list { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.agd-list li { padding: 4px 0; border-bottom: 1px solid var(--border-primary); }
+.agd-list li:last-child { border-bottom: 0; }
 .muted { color: var(--text-muted); }
 .mono  { font-family: var(--font-mono); font-size: 12px; }
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
@@ -1365,8 +1374,8 @@ th.sortable:hover { color: var(--accent); }
 .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .data-table th, .data-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border-primary); }
 .data-table th { color: var(--text-muted); text-transform: uppercase; font-size: 10px; }
-.data-table tr.ad-session-row { cursor: pointer; }
-.data-table tr.ad-session-row:hover { background: var(--bg-tertiary); }
+.data-table tr.agd-session-row { cursor: pointer; }
+.data-table tr.agd-session-row:hover { background: var(--bg-tertiary); }
 
 /* Policy bullets */
 .pb-list { display: flex; flex-direction: column; gap: 6px; }
@@ -1385,21 +1394,21 @@ th.sortable:hover { color: var(--accent); }
 .pb-text { color: var(--text-primary); margin-top: 2px; font-size: 13px; }
 .pb-meta { color: var(--text-muted); font-size: 11px; margin-top: 4px; }
 .pb-empty { color: var(--text-muted); padding: 12px; }
-.ad-policy-controls, .pp-controls, .av-toolbar {
+.agd-policy-controls, .pp-controls, .av-toolbar {
   display: flex; gap: 8px; align-items: center; font-size: 12px;
 }
-.ad-policy-controls input[type=search],
+.agd-policy-controls input[type=search],
 .pp-controls input[type=search],
 .av-toolbar input[type=search] {
   background: var(--bg-tertiary); color: var(--text-primary);
   border: 1px solid var(--border-primary); padding: 4px 8px;
   border-radius: var(--radius-md); font-size: 12px;
 }
-.ad-policy-toggle-raw { background: var(--bg-secondary); color: var(--text-primary);
+.agd-policy-toggle-raw { background: var(--bg-secondary); color: var(--text-primary);
   border: 1px solid var(--border-primary); padding: 2px 8px; border-radius: var(--radius-md); cursor: pointer; }
 
 /* File tree */
-.ad-tree-wrap { display: grid; grid-template-columns: 280px 1fr; gap: 12px; min-height: 400px; }
+.agd-tree-wrap { display: grid; grid-template-columns: 280px 1fr; gap: 12px; min-height: 400px; }
 .ft-tree, .ft-viewer { background: var(--bg-secondary); border: 1px solid var(--border-primary);
                        border-radius: var(--radius-md); padding: 8px; overflow: auto; max-height: 70vh; }
 .ft-row { display: flex; align-items: center; gap: 4px; padding: 2px 4px;

@@ -114,19 +114,19 @@
       var compactThr = (ctx && ctx.compact_threshold) || 0.85;
       var emergencyThr = (ctx && ctx.emergency_threshold) || 0.95;
       var ctxBody =
-        '<div id="ad-ctx-window">' +
+        '<div id="agd-ctx-window">' +
           '<div class="flex justify-between text-xs text-muted mb-4">' +
             '<span>Last prompt size</span>' +
-            '<span id="ad-ctx-pct">—</span>' +
+            '<span id="agd-ctx-pct">—</span>' +
           '</div>' +
           '<div class="progress-bar" style="height:8px;margin-bottom:12px;">' +
-            '<div class="fill" id="ad-ctx-fill" style="width:0%"></div>' +
+            '<div class="fill" id="agd-ctx-fill" style="width:0%"></div>' +
           '</div>' +
           '<div class="grid-3" style="gap:12px;">' +
             '<div><div class="text-xs text-dimmed">Used</div>' +
-              '<div class="text-sm text-white font-bold" id="ad-ctx-used">—</div></div>' +
+              '<div class="text-sm text-white font-bold" id="agd-ctx-used">—</div></div>' +
             '<div><div class="text-xs text-dimmed">Available</div>' +
-              '<div class="text-sm text-white font-bold" id="ad-ctx-avail">—</div></div>' +
+              '<div class="text-sm text-white font-bold" id="agd-ctx-avail">—</div></div>' +
             '<div><div class="text-xs text-dimmed">Total</div>' +
               '<div class="text-sm text-white font-bold">' +
                 escText(fmt(totalCtx)) + '</div></div>' +
@@ -219,7 +219,7 @@
         '</div>' +
         '<div style="margin-top:16px;">' +
           '<div class="text-xs text-dimmed mb-8">Token Usage (24h)</div>' +
-          '<div id="ad-token-chart" style="height:80px;display:flex;align-items:flex-end;gap:2px;background:var(--bg-deepest);border-radius:var(--radius-sm);padding:8px;">' +
+          '<div id="agd-token-chart" style="height:80px;display:flex;align-items:flex-end;gap:2px;background:var(--bg-deepest);border-radius:var(--radius-sm);padding:8px;">' +
             '<div class="text-xs text-dimmed">loading…</div>' +
           '</div>' +
         '</div>' +
@@ -255,10 +255,10 @@
         var t = traces[0];
         var used = t.prompt_tokens || t.input_tokens || 0;
         var pct = Math.min(100, Math.round((used / totalCtx) * 100));
-        var fillEl = container.querySelector('#ad-ctx-fill');
-        var pctEl = container.querySelector('#ad-ctx-pct');
-        var usedEl = container.querySelector('#ad-ctx-used');
-        var availEl = container.querySelector('#ad-ctx-avail');
+        var fillEl = container.querySelector('#agd-ctx-fill');
+        var pctEl = container.querySelector('#agd-ctx-pct');
+        var usedEl = container.querySelector('#agd-ctx-used');
+        var availEl = container.querySelector('#agd-ctx-avail');
         if (fillEl) {
           fillEl.style.width = pct + '%';
           fillEl.classList.remove('warning', 'error', 'success');
@@ -273,7 +273,7 @@
 
       // -- Token usage bar chart from per-agent timeseries.
       api('/api/stats/timeseries?window=24h&agent_id=' + agentId).then(function (data) {
-        var chartEl = container.querySelector('#ad-token-chart');
+        var chartEl = container.querySelector('#agd-token-chart');
         if (!chartEl) return;
         var buckets = (data && data.buckets) || [];
         if (!buckets.length) {
@@ -374,12 +374,12 @@
       rows.map(function (r) {
         var dimmed = r.status === 'inactive' ? ' style="opacity:.5;"' : '';
         var detail = r.description
-          ? '<tr class="ad-tool-detail" style="display:none;">' +
+          ? '<tr class="agd-tool-detail" style="display:none;">' +
               '<td colspan="5" style="padding:8px 14px 12px 36px;' +
               'background:var(--bg-deepest);color:var(--text-secondary);' +
               'font-size:12px;">' + escText(r.description) + '</td>' +
             '</tr>' : '';
-        return '<tr class="ad-tool-row" data-name="' + escAttr(r.name) +
+        return '<tr class="agd-tool-row" data-name="' + escAttr(r.name) +
           '" style="cursor:pointer;"' + dimmed + '>' +
             '<td class="text-dimmed mono" style="font-size:10px;width:14px;">▸</td>' +
             '<td class="text-white">' + escText(r.name) + '</td>' +
@@ -393,9 +393,9 @@
 
   // Wire tool-row click for inline expand. Called after renderToolsTable mounts.
   function wireToolDrillDown(scopeEl) {
-    scopeEl.querySelectorAll('.ad-tool-row').forEach(function (row) {
+    scopeEl.querySelectorAll('.agd-tool-row').forEach(function (row) {
       var detail = row.nextElementSibling;
-      if (!detail || !detail.classList.contains('ad-tool-detail')) return;
+      if (!detail || !detail.classList.contains('agd-tool-detail')) return;
       row.addEventListener('click', function () {
         var open = detail.style.display !== 'none';
         detail.style.display = open ? 'none' : 'table-row';
@@ -439,7 +439,7 @@
       '</tr></thead><tbody>' +
       items.map(function (s) {
         var sid = s.sid || s.session_id || s.id || '';
-        return '<tr class="ad-session-row" data-sid="' + escAttr(sid) + '" style="cursor:pointer;">' +
+        return '<tr class="agd-session-row" data-sid="' + escAttr(sid) + '" style="cursor:pointer;">' +
           '<td class="mono text-accent">' + escText(sessionShort(sid)) + '</td>' +
           '<td class="text-muted">' + escText(fmtMtime(s.mtime)) + '</td>' +
           '<td class="mono text-muted">' + escText(fmtBytes(s.size)) + '</td>' +
@@ -462,7 +462,7 @@
     return tasks.slice(0, 8).map(function (t) {
       var summary = t.description || t.subject || t.title || t.id || '—';
       var truncated = summary.length > 100 ? summary.slice(0, 100) + '…' : summary;
-      return '<details class="ad-detail-row" style="border-bottom:1px solid var(--border-primary);padding:8px 0;">' +
+      return '<details class="agd-detail-row" style="border-bottom:1px solid var(--border-primary);padding:8px 0;">' +
         '<summary style="cursor:pointer;list-style:none;font-size:12px;display:flex;gap:8px;align-items:start;">' +
           '<span style="color:var(--accent);font-size:10px;margin-top:2px;">▸</span>' +
           '<span style="flex:1;min-width:0;">' +
@@ -493,7 +493,7 @@
       var timing = s.expression ? 'cron: ' + s.expression :
                    s.at ? 'once: ' + s.at :
                    s.every_seconds ? 'every ' + s.every_seconds + 's' : '—';
-      return '<details class="ad-detail-row" style="border-bottom:1px solid var(--border-primary);padding:8px 0;">' +
+      return '<details class="agd-detail-row" style="border-bottom:1px solid var(--border-primary);padding:8px 0;">' +
         '<summary style="cursor:pointer;list-style:none;font-size:12px;display:flex;gap:8px;align-items:start;">' +
           '<span style="color:var(--accent);font-size:10px;margin-top:2px;">▸</span>' +
           '<span style="flex:1;min-width:0;">' +
@@ -601,7 +601,7 @@
             list.map(function (s) {
               var sid = s.sid || s.session_id || '';
               return (
-                '<details class="ad-session-detail" data-sid="' + escAttr(sid) + '" ' +
+                '<details class="agd-session-detail" data-sid="' + escAttr(sid) + '" ' +
                 'style="border-bottom:1px solid var(--border-primary);">' +
                   '<summary style="display:flex;gap:12px;align-items:center;padding:10px 14px;' +
                     'cursor:pointer;list-style:none;font-size:13px;">' +
@@ -612,7 +612,7 @@
                     '<span class="mono text-muted">' + escText(fmtBytes(s.size)) + '</span>' +
                     '<span class="text-dimmed" style="font-size:10px;">▾</span>' +
                   '</summary>' +
-                  '<div class="ad-session-replay" style="padding:0 14px 14px 14px;' +
+                  '<div class="agd-session-replay" style="padding:0 14px 14px 14px;' +
                     'background:var(--bg-deepest);">' +
                     '<div class="loading">Click to load…</div>' +
                   '</div>' +
@@ -622,13 +622,13 @@
           '</div>' +
         '</div>';
 
-      container.querySelectorAll('.ad-session-detail').forEach(function (row) {
+      container.querySelectorAll('.agd-session-detail').forEach(function (row) {
         var loaded = false;
         row.addEventListener('toggle', function () {
           if (!row.open || loaded) return;
           loaded = true;
           var sid = row.getAttribute('data-sid');
-          var replay = row.querySelector('.ad-session-replay');
+          var replay = row.querySelector('.agd-session-replay');
           replay.innerHTML = '<div class="loading">Loading replay…</div>';
           api('/api/agents/' + agentId + '/sessions/' +
               encodeURIComponent(sid)).then(function (sr) {
@@ -697,7 +697,7 @@
                     : JSON.stringify(fm.triggers))
                 : '';
               return (
-                '<details class="ad-skill-row" data-path="' + escAttr(s.path || '') + '" ' +
+                '<details class="agd-skill-row" data-path="' + escAttr(s.path || '') + '" ' +
                 'style="border-bottom:1px solid var(--border-primary);">' +
                   '<summary style="cursor:pointer;list-style:none;padding:12px 14px;display:flex;gap:14px;align-items:start;">' +
                     '<span style="color:var(--accent);font-size:10px;margin-top:4px;">▸</span>' +
@@ -711,7 +711,7 @@
                     '</div>' +
                     '<span class="text-dimmed mono" style="font-size:10px;">' + escText(fmtMtime(s.mtime)) + '</span>' +
                   '</summary>' +
-                  '<div class="ad-skill-body" style="padding:0 14px 14px 36px;background:var(--bg-deepest);">' +
+                  '<div class="agd-skill-body" style="padding:0 14px 14px 36px;background:var(--bg-deepest);">' +
                     '<div class="loading">Click to load…</div>' +
                   '</div>' +
                 '</details>'
@@ -726,7 +726,7 @@
       var skillByPath = {};
       skills.forEach(function (s) { skillByPath[s.path || s.name] = s; });
 
-      container.querySelectorAll('.ad-skill-row').forEach(function (row) {
+      container.querySelectorAll('.agd-skill-row').forEach(function (row) {
         var path = row.getAttribute('data-path');
         var summary = row.querySelector('.text-dimmed.text-xs');
         var s = skillByPath[path] || {};
@@ -757,7 +757,7 @@
         row.addEventListener('toggle', function () {
           if (!row.open || loaded) return;
           loaded = true;
-          var bodyEl = row.querySelector('.ad-skill-body');
+          var bodyEl = row.querySelector('.agd-skill-body');
           if (!content) {
             bodyEl.innerHTML = '<div class="empty-state">Empty skill</div>';
             return;
@@ -837,7 +837,7 @@
           '</div>' +
           '<div class="card-body" style="padding:0;">' +
             (traces.length
-              ? '<table class="ad-trace-table"><thead><tr>' +
+              ? '<table class="agd-trace-table"><thead><tr>' +
                 '<th>Trace</th><th>Time</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Status</th>' +
                 '</tr></thead><tbody>' +
                 traces.map(function (t) {
@@ -848,7 +848,7 @@
                   var traceId = t.trace_id || '';
                   var traceShort = traceId.slice(0, 10);
                   var totalMs = t.duration_ms || t.latency_ms || 0;
-                  return '<tr class="ad-trace-row" data-trace-id="' +
+                  return '<tr class="agd-trace-row" data-trace-id="' +
                     escAttr(traceId) + '" style="cursor:pointer;">' +
                     '<td class="mono text-accent">' + escText(traceShort) + '</td>' +
                     '<td class="mono text-muted">' + escText(t.timestamp || '') + '</td>' +
@@ -864,7 +864,7 @@
         '</div>';
 
       // Wire click → global trace drawer (same one Telemetry page uses).
-      container.querySelectorAll('.ad-trace-row').forEach(function (row) {
+      container.querySelectorAll('.agd-trace-row').forEach(function (row) {
         row.addEventListener('click', function () {
           var tid = row.getAttribute('data-trace-id');
           if (tid && window.ARC && window.ARC.openTraceDrawer) {
@@ -1089,21 +1089,21 @@
               '<span class="card-title">Active Bullets</span>' +
               '<div class="text-xs text-dimmed" style="margin-top:2px;">Discovered by agent through reflection, scored by effectiveness</div>' +
             '</div>' +
-            '<div class="ad-policy-controls flex gap-8">' +
-              '<input type="search" class="ad-policy-filter filter-select" placeholder="Filter…">' +
-              '<select class="ad-policy-sort filter-select">' +
+            '<div class="agd-policy-controls flex gap-8">' +
+              '<input type="search" class="agd-policy-filter filter-select" placeholder="Filter…">' +
+              '<select class="agd-policy-sort filter-select">' +
                 '<option value="score">Sort: score↓</option>' +
                 '<option value="uses">Sort: uses↓</option>' +
                 '<option value="created">Sort: created↓</option>' +
               '</select>' +
               '<label class="text-xs text-muted">' +
-                '<input type="checkbox" class="ad-policy-hide-retired"> hide retired</label>' +
-              '<button type="button" class="btn btn-ghost btn-sm ad-policy-toggle-raw">Raw</button>' +
+                '<input type="checkbox" class="agd-policy-hide-retired"> hide retired</label>' +
+              '<button type="button" class="btn btn-ghost btn-sm agd-policy-toggle-raw">Raw</button>' +
             '</div>' +
           '</div>' +
-          '<div class="card-body ad-policy-body"></div>' +
+          '<div class="card-body agd-policy-body"></div>' +
         '</div>' +
-        '<div class="card mt-16 ad-policy-raw hidden">' +
+        '<div class="card mt-16 agd-policy-raw hidden">' +
           '<div class="card-header"><span class="card-title">Raw policy.md</span></div>' +
           '<div class="card-body" style="padding:0;">' +
             '<pre class="crypto-key" style="margin:0;border:0;border-radius:0;font-size:12px;overflow:auto;max-height:400px;padding:12px;">' +
@@ -1111,11 +1111,11 @@
           '</div>' +
         '</div>';
 
-      var bodyEl = container.querySelector('.ad-policy-body');
-      var filterEl = container.querySelector('.ad-policy-filter');
-      var sortEl = container.querySelector('.ad-policy-sort');
-      var hideRetiredEl = container.querySelector('.ad-policy-hide-retired');
-      var rawEl = container.querySelector('.ad-policy-raw');
+      var bodyEl = container.querySelector('.agd-policy-body');
+      var filterEl = container.querySelector('.agd-policy-filter');
+      var sortEl = container.querySelector('.agd-policy-sort');
+      var hideRetiredEl = container.querySelector('.agd-policy-hide-retired');
+      var rawEl = container.querySelector('.agd-policy-raw');
 
       function paint() {
         var filtered = window.ARC.PolicyBullet.filterBy(bullets, {
@@ -1127,7 +1127,7 @@
       filterEl.addEventListener('input', paint);
       sortEl.addEventListener('change', paint);
       hideRetiredEl.addEventListener('change', paint);
-      container.querySelector('.ad-policy-toggle-raw')
+      container.querySelector('.agd-policy-toggle-raw')
         .addEventListener('click', function () { rawEl.classList.toggle('hidden'); });
       paint();
     });
@@ -1176,8 +1176,8 @@
   }
 
   function renderMemory(container, agentId) {
-    container.innerHTML = '<div class="card"><div class="card-body ad-tree-wrap" style="padding:8px;"></div></div>';
-    var wrap = container.querySelector('.ad-tree-wrap');
+    container.innerHTML = '<div class="card"><div class="card-body agd-tree-wrap" style="padding:8px;"></div></div>';
+    var wrap = container.querySelector('.agd-tree-wrap');
     return window.ARC.FileTree.mount(wrap, {
       agentId: agentId,
       fetchTree: function () {
@@ -1191,8 +1191,8 @@
   }
 
   function renderFiles(container, agentId) {
-    container.innerHTML = '<div class="card"><div class="card-body ad-tree-wrap" style="padding:8px;"></div></div>';
-    var wrap = container.querySelector('.ad-tree-wrap');
+    container.innerHTML = '<div class="card"><div class="card-body agd-tree-wrap" style="padding:8px;"></div></div>';
+    var wrap = container.querySelector('.agd-tree-wrap');
     return window.ARC.FileTree.mount(wrap, {
       agentId: agentId,
       fetchTree: function () {
@@ -1218,7 +1218,7 @@
   };
 
   function tabHeader(activeId) {
-    return '<div class="tabs ad-tabs">' + TAB_LABELS.map(function (p) {
+    return '<div class="tabs agd-tabs">' + TAB_LABELS.map(function (p) {
       var cls = p[0] === activeId ? 'tab pill-nav-item active' : 'tab pill-nav-item';
       return '<div class="' + cls + '" data-tab="' + p[0] + '">' + p[1] + '</div>';
     }).join('') + '</div>';
@@ -1231,45 +1231,45 @@
     function render() {
       panelEl.innerHTML =
         '<div class="breadcrumb">' +
-          '<a href="?page=agents" class="ad-back-link">Dashboard</a>' +
+          '<a href="?page=agents" class="agd-back-link">Dashboard</a>' +
           '<span class="sep">/</span>' +
-          '<a href="?page=agents" class="ad-back-link">Agent Fleet</a>' +
+          '<a href="?page=agents" class="agd-back-link">Agent Fleet</a>' +
           '<span class="sep">/</span>' +
-          '<span id="ad-breadcrumb-title">' + escText(agentId) + '</span>' +
+          '<span id="agd-breadcrumb-title">' + escText(agentId) + '</span>' +
         '</div>' +
-        '<div class="flex items-center gap-12 mb-20" id="ad-header-block">' +
-          '<div class="message-avatar" id="ad-avatar" ' +
+        '<div class="flex items-center gap-12 mb-20" id="agd-header-block">' +
+          '<div class="message-avatar" id="agd-avatar" ' +
             'style="background:#006fff;width:48px;height:48px;font-size:18px;">' +
             escText(initials(agentId)) + '</div>' +
           '<div style="flex:1;min-width:0;">' +
             '<div class="flex items-center gap-12">' +
-              '<h1 id="ad-title" style="font-size:22px;font-weight:700;color:var(--text-white);">' +
+              '<h1 id="agd-title" style="font-size:22px;font-weight:700;color:var(--text-white);">' +
                 escText(agentId) + '</h1>' +
-              '<span class="badge badge-neutral" id="ad-status-badge">offline</span>' +
-              '<span class="tag" id="ad-type-tag" style="display:none;"></span>' +
+              '<span class="badge badge-neutral" id="agd-status-badge">offline</span>' +
+              '<span class="tag" id="agd-type-tag" style="display:none;"></span>' +
             '</div>' +
-            '<div class="did" id="ad-did" style="margin-top:4px;display:inline-block;">—</div>' +
+            '<div class="did" id="agd-did" style="margin-top:4px;display:inline-block;">—</div>' +
           '</div>' +
-          '<div class="page-header-actions ad-controls-slot"></div>' +
+          '<div class="page-header-actions agd-controls-slot"></div>' +
         '</div>' +
         tabHeader(activeTab) +
-        '<div class="tab-panel active ad-body" data-tab="' + escAttr(activeTab) + '"></div>';
+        '<div class="tab-panel active agd-body" data-tab="' + escAttr(activeTab) + '"></div>';
 
       // Populate header from /api/agents/{id}
       api('/api/agents/' + agentId).then(function (meta) {
         if (!meta) return;
-        var titleEl = panelEl.querySelector('#ad-title');
+        var titleEl = panelEl.querySelector('#agd-title');
         if (titleEl) titleEl.textContent = meta.display_name || meta.name || agentId;
-        var bcTitle = panelEl.querySelector('#ad-breadcrumb-title');
+        var bcTitle = panelEl.querySelector('#agd-breadcrumb-title');
         if (bcTitle) bcTitle.textContent = meta.display_name || meta.name || agentId;
-        var avatar = panelEl.querySelector('#ad-avatar');
+        var avatar = panelEl.querySelector('#agd-avatar');
         if (avatar) {
           avatar.textContent = initials(meta.display_name || meta.name || agentId);
           if (meta.color) avatar.style.background = meta.color;
         }
-        var did = panelEl.querySelector('#ad-did');
+        var did = panelEl.querySelector('#agd-did');
         if (did) did.textContent = meta.did || '—';
-        var statusBadge = panelEl.querySelector('#ad-status-badge');
+        var statusBadge = panelEl.querySelector('#agd-status-badge');
         if (statusBadge) {
           if (meta.online) {
             statusBadge.className = 'badge badge-online';
@@ -1279,14 +1279,14 @@
             statusBadge.textContent = 'offline';
           }
         }
-        var typeTag = panelEl.querySelector('#ad-type-tag');
+        var typeTag = panelEl.querySelector('#agd-type-tag');
         if (typeTag && (meta.role_label || meta.type)) {
           typeTag.textContent = meta.role_label || meta.type;
           typeTag.style.display = '';
         }
       });
 
-      var controlsSlot = panelEl.querySelector('.ad-controls-slot');
+      var controlsSlot = panelEl.querySelector('.agd-controls-slot');
       if (controlsSlot && window.ARC && window.ARC.AgentControls) {
         window.ARC.AgentControls.mount(controlsSlot, agentId);
       }
@@ -1301,11 +1301,11 @@
       currentInstance = null;
       activeTab = tabId;
 
-      panelEl.querySelectorAll('.ad-tabs .tab').forEach(function (el) {
+      panelEl.querySelectorAll('.agd-tabs .tab').forEach(function (el) {
         el.classList.toggle('active', el.dataset.tab === tabId);
       });
 
-      var body = panelEl.querySelector('.ad-body');
+      var body = panelEl.querySelector('.agd-body');
       body.dataset.tab = tabId;
       var fn = TAB_RENDERERS[tabId];
       if (!fn) {
@@ -1317,12 +1317,12 @@
     }
 
     function onClick(ev) {
-      var tab = ev.target.closest('.ad-tabs .tab');
+      var tab = ev.target.closest('.agd-tabs .tab');
       if (tab && tab.dataset.tab) {
         activate(tab.dataset.tab);
         return;
       }
-      var back = ev.target.closest('.ad-back-link');
+      var back = ev.target.closest('.agd-back-link');
       if (back) {
         ev.preventDefault();
         window.ARC.setRoute({ page: 'agents' });
@@ -1350,8 +1350,8 @@
     //  set `.tabs { display: none }` to harvest reading content).
     if (window.localStorage && window.localStorage.getItem('arcui_debug_render') === '1') {
       setTimeout(function () {
-        var tabsEl = panelEl.querySelector('.ad-tabs');
-        var bodyEl = panelEl.querySelector('.ad-body');
+        var tabsEl = panelEl.querySelector('.agd-tabs');
+        var bodyEl = panelEl.querySelector('.agd-body');
         var info = {
           tabs_display: tabsEl ? getComputedStyle(tabsEl).display : 'n/a',
           tabs_count: tabsEl ? tabsEl.children.length : 0,
