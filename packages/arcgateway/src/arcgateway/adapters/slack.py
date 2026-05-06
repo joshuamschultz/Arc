@@ -43,38 +43,17 @@ _DEDUP_SWEEP_INTERVAL_SECONDS = 3600
 
 
 def split_message(text: str, max_length: int = _MAX_MESSAGE_LENGTH) -> list[str]:
-    """Split text into chunks respecting natural boundaries."""
-    if not text:
-        return []
-    if len(text) <= max_length:
-        return [text]
+    """Split text into chunks respecting natural boundaries.
 
-    chunks: list[str] = []
-    remaining = text
+    Thin wrapper over the shared ``arcgateway.adapters._text.split_message``
+    helper (SPEC-025 §arch-M-1) so Slack, Mattermost, and Telegram all use
+    one canonical implementation. Slack uses paragraph → newline only —
+    Slack's UI handles long lines gracefully, so we don't fall back to
+    space-boundary cuts.
+    """
+    from arcgateway.adapters._text import split_message as _shared_split
 
-    while remaining:
-        if len(remaining) <= max_length:
-            chunks.append(remaining)
-            break
-
-        chunk = remaining[:max_length]
-
-        split_pos = chunk.rfind("\n\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 2 :]
-            continue
-
-        split_pos = chunk.rfind("\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 1 :]
-            continue
-
-        chunks.append(remaining[:max_length])
-        remaining = remaining[max_length:]
-
-    return chunks
+    return _shared_split(text, max_length, boundaries=("\n\n", "\n"))
 
 
 class _DedupStore:
@@ -206,10 +185,12 @@ class SlackAdapter:
     async def connect(self) -> None:
         """Establish Socket Mode connection."""
         try:
-            from slack_bolt.adapter.socket_mode.async_handler import (
+            # slack_bolt ships no type stubs; ignore-import keeps mypy --strict
+            # green while the lazy import path stays optional.
+            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]
                 AsyncSocketModeHandler,
             )
-            from slack_bolt.async_app import AsyncApp
+            from slack_bolt.async_app import AsyncApp  # type: ignore[import-not-found]
         except ImportError as exc:
             msg = "slack-bolt is not installed. Install with: pip install 'arcgateway[slack]'"
             raise ImportError(msg) from exc

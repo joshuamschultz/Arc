@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import sqlite3
 import tempfile
 import time
@@ -33,6 +34,12 @@ def _make_db() -> tuple[sqlite3.Connection, Path]:
     return conn, Path(tmp)
 
 
+# Monotonic counter so successive seeds within one test produce unique
+# `code` values; using id(user_hash) collided when the same hash was
+# reused across multiple seeds in a single test (pre-existing flake).
+_CODE_COUNTER = itertools.count(1)
+
+
 def _seed_pending_code(
     conn: sqlite3.Connection,
     platform: str,
@@ -40,10 +47,11 @@ def _seed_pending_code(
     minted_at: float,
     expires_at: float,
 ) -> None:
+    code = f"CODE{next(_CODE_COUNTER):08d}"
     conn.execute(
         """INSERT INTO pairing_codes(code, platform, user_hash, minted_at, expires_at, consumed)
            VALUES (?, ?, ?, ?, ?, 0)""",
-        (f"CODE{id(user_hash) % 10000:04d}", platform, user_hash, minted_at, expires_at),
+        (code, platform, user_hash, minted_at, expires_at),
     )
     conn.commit()
 

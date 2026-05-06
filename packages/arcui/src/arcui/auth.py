@@ -39,6 +39,29 @@ _DEFAULT_MAX_SESSIONS = int(os.environ.get("ARCUI_MAX_SESSIONS", "10000"))
 _DEFAULT_MAX_BOOTSTRAP_MARKERS = int(os.environ.get("ARCUI_MAX_BOOTSTRAP_MARKERS", "1000"))
 
 
+def _resolve_username(uid: int) -> str:
+    """Best-effort POSIX username for the given uid (SPEC-025 §FR-7 + §M-5).
+
+    Returns the ``pw_name`` on POSIX hosts. On lookup failure (Windows,
+    container without /etc/passwd, deleted user), returns
+    ``<unknown:uid=N>`` so different uids never collapse into a single
+    ``<unknown>`` audit identity — a federal scanner relies on per-user
+    attribution, and silent collisions would mask the gap.
+    """
+    try:
+        # pwd is unavailable on Windows; the ImportError branch handles
+        # that (Windows is not a federal target tier so degrading to a
+        # uid-only audit identity is acceptable). mypy on POSIX can find
+        # the stub, so no ``type: ignore`` is needed.
+        import pwd
+    except ImportError:
+        return f"<unknown:uid={uid}>"
+    try:
+        return pwd.getpwuid(uid).pw_name
+    except (KeyError, OSError):
+        return f"<unknown:uid={uid}>"
+
+
 class _BoundedLRU:
     """Tiny LRU that evicts oldest on overflow.
 
@@ -247,9 +270,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     def _maybe_emit_session_start(request: Request, token: str) -> None:
         """Emit `ui.session_start` exactly once per (token, remote_addr).
 
-        SR-3 mandates four fields — `session_id`, `uid`, `remote_addr`,
-        `auth_method` — so federal auditors can attribute the session to
-        the OS user running the UI server (NIST AU-3 non-repudiation).
+        SR-3 + SPEC-025 §FR-7 mandate five fields — `session_id`, `uid`,
+        `username`, `remote_addr`, `auth_method` — so federal auditors can
+        attribute the session to the named OS user running the UI server
+        (NIST AU-3 non-repudiation; closes FedRAMP Low gate).
         The `SessionStartFields` Pydantic model makes drop-a-field a
         type error rather than a silent audit gap.
         Looks up the SessionTracker on app.state; absent means a test
@@ -266,9 +290,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if observation is None:
             return
         session_id, auth_method = observation
+        uid = os.getuid()
         fields = SessionStartFields(
             session_id=session_id,
-            uid=os.getuid(),
+            uid=uid,
+            username=_resolve_username(uid),
             remote_addr=remote_addr,
             auth_method=auth_method,
         )

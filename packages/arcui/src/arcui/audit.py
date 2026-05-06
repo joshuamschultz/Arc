@@ -39,10 +39,23 @@ class SessionStartFields(BaseModel):
     Pydantic enforces presence + type at construction; an emitter that
     drops a field gets a validation error instead of a silent audit gap
     that an auditor finds later.
+
+    SPEC-025 §FR-7 — ``username`` resolves the FedRAMP Low audit gate by
+    binding every session-start event to a real OS user (NIST AU-3).
+    The emitter fills it via ``pwd.getpwuid(uid).pw_name`` on POSIX and
+    falls back to ``"<unknown:uid=N>"`` (uid-suffixed) when the lookup
+    fails so different uids can never collapse into one audit identity.
+
+    Architecture-review §M-2 — ``username`` is REQUIRED at the model
+    boundary. A caller that forgets to populate it gets a ValidationError
+    rather than silently emitting a fallback string. The resolver
+    (``arcui.auth._resolve_username``) is the only path allowed to
+    produce the ``"<unknown:...>"`` fallback.
     """
 
     session_id: str
     uid: int
+    username: str  # REQUIRED — see arcui.auth._resolve_username for fallback
     remote_addr: str
     auth_method: str  # "browser_bootstrap" | "manual_token" | "agent_token"
 

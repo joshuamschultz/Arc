@@ -21,6 +21,13 @@ Sections mirror the TOML structure used by ``arc gateway start --config``:
     app_token_env = "SLACK_APP_TOKEN"
     allowed_user_ids = ["UABC123"]
 
+    [platforms.mattermost]
+    enabled = true
+    server_url = "https://mattermost.internal.example.gov"
+    bot_token_env = "MM_BOT_TOKEN"
+    allowed_channel_ids = ["channelid1", "channelid2"]
+    intranet_domains = ["mattermost.internal.example.gov"]
+
     [pairing]
     db_path = "~/.arc/gateway/pairing.db"
 
@@ -108,6 +115,47 @@ class SlackPlatformConfig(BaseModel):
         return os.environ.get(self.app_token_env)
 
 
+class MattermostPlatformConfig(BaseModel):
+    """[platforms.mattermost] section.
+
+    Mattermost adapter for air-gapped DOE/National Lab deployments
+    (FedRAMP High / IL5 / JWICS). Authenticates via a Personal Access
+    Token (PAT); the token value is read from an environment variable at
+    runtime — never stored inline.
+
+    Fields:
+        enabled: Whether the adapter is active.
+        server_url: Base HTTPS URL of the Mattermost server, e.g.
+            ``https://mattermost.internal.doe.gov``.  No trailing slash.
+        bot_token_env: Name of the env var holding the PAT.
+        allowed_channel_ids: Channel IDs the bot accepts messages from.
+            Empty list = DMs only (conservative default).
+        bot_user_id: Mattermost user ID of the bot; used to skip own posts.
+            Leave empty to disable self-filtering.
+        intranet_domains: Additional hostnames treated as private for the
+            federal-tier air-gap guard even if they don't resolve to RFC 1918
+            addresses (e.g. ``mattermost.internal.doe.gov``).
+        agent_did: Overrides [gateway].agent_did for this platform.
+    """
+
+    enabled: bool = False
+    server_url: str = ""
+    bot_token_env: str = "MM_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
+    allowed_channel_ids: list[str] = Field(default_factory=list)
+    bot_user_id: str = ""
+    intranet_domains: list[str] = Field(default_factory=list)
+    agent_did: str = ""  # Overrides [gateway].agent_did for this platform
+
+    def resolve_bot_token(self) -> str | None:
+        """Read the PAT from the configured env var.
+
+        Returns None if unset so the caller can apply tier-appropriate
+        error handling (hard fail at federal, warn at enterprise, skip at
+        personal).
+        """
+        return os.environ.get(self.bot_token_env)
+
+
 class WebPlatformConfig(BaseModel):
     """[platforms.web] section.
 
@@ -134,6 +182,9 @@ class PlatformsSection(BaseModel):
 
     telegram: TelegramPlatformConfig = Field(default_factory=TelegramPlatformConfig)
     slack: SlackPlatformConfig = Field(default_factory=SlackPlatformConfig)
+    mattermost: MattermostPlatformConfig = Field(
+        default_factory=MattermostPlatformConfig
+    )
     web: WebPlatformConfig = Field(default_factory=WebPlatformConfig)
 
 
@@ -255,7 +306,7 @@ class GatewayConfig(BaseModel):
         has an empty agent_did.
 
         Args:
-            platform: Platform name ("telegram", "slack", etc.).
+            platform: Platform name ("telegram", "slack", "mattermost", etc.).
 
         Returns:
             Agent DID string.
@@ -264,6 +315,8 @@ class GatewayConfig(BaseModel):
             plat_did = self.platforms.telegram.agent_did
         elif platform == "slack":
             plat_did = self.platforms.slack.agent_did
+        elif platform == "mattermost":
+            plat_did = self.platforms.mattermost.agent_did
         elif platform == "web":
             plat_did = self.platforms.web.agent_did
         else:

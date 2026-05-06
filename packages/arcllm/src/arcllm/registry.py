@@ -258,8 +258,19 @@ def load_model(
     if vault_cfg.backend and _vault_resolver_cache is None:
         from arcllm.vault import VaultResolver
 
+        # Forward only the optional config fields the operator actually set
+        # to the backend. Each backend chooses which kwargs it accepts —
+        # passing only set fields means a backend ignoring `region` doesn't
+        # see a confusing empty-string default. See ADR-005.
+        backend_kwargs: dict[str, object] = {}
+        if vault_cfg.region:
+            backend_kwargs["region_name"] = vault_cfg.region
+        if vault_cfg.url:
+            backend_kwargs["url"] = vault_cfg.url
         _vault_resolver_cache = VaultResolver.from_config(
-            vault_cfg.backend, vault_cfg.cache_ttl_seconds
+            vault_cfg.backend,
+            vault_cfg.cache_ttl_seconds,
+            **backend_kwargs,
         )
 
     # Check if routing is enabled — if so, create a RoutingModule instead of

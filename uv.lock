@@ -359,6 +359,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+mattermost = [
+    { name = "aiohttp" },
+]
 slack = [
     { name = "slack-bolt" },
     { name = "slack-sdk" },
@@ -369,11 +372,13 @@ telegram = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "aiohttp" },
     { name = "mypy" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", marker = "extra == 'mattermost'", specifier = ">=3.9,<4" },
     { name = "arc-agent", editable = "packages/arcagent" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "pydantic", specifier = ">=2.0,<3" },
@@ -382,10 +387,13 @@ requires-dist = [
     { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3" },
     { name = "watchfiles", specifier = ">=0.21" },
 ]
-provides-extras = ["telegram", "slack"]
+provides-extras = ["telegram", "slack", "mattermost"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "mypy", specifier = ">=1.19.1" }]
+dev = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
+    { name = "mypy", specifier = ">=1.19.1" },
+]
 
 [[package]]
 name = "arcllm"

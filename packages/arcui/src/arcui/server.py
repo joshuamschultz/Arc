@@ -7,6 +7,7 @@ serve() is the one-liner entry point for developers.
 from __future__ import annotations
 
 import logging
+import os
 from collections import deque as _deque
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
+from arcui.routes import dashboard_ws as dashboard_ws_routes
 from arcui.routes import export as export_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import schedules as schedules_routes
@@ -46,6 +48,16 @@ from arcui.subscription import SubscriptionManager
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# SPEC-025 Track E — legacy polling feature flag.
+# When ARCUI_LEGACY_POLLING=false the 9 dashboard polling endpoints return
+# 410 Gone so external consumers (CLI, MCP) know to migrate to /ws/dashboard.
+# Default is "true" so existing deployments are unaffected until they opt out.
+_LEGACY_POLLING: bool = os.environ.get("ARCUI_LEGACY_POLLING", "true").lower() not in (
+    "false",
+    "0",
+    "no",
+)
 
 
 async def _health(request: Request) -> JSONResponse:
@@ -155,6 +167,7 @@ def create_app(
         *ws_routes.routes,
         *agent_ws_routes.routes,
         *chat_ws_routes.routes,
+        *dashboard_ws_routes.routes,
         *knowledge_routes.routes,
         *agents_routes.routes,
         *agent_detail_routes.routes,
@@ -242,6 +255,9 @@ def create_app(
             starlette_app.state.session_router = embedded_gateway.session_router
             starlette_app.state.web_adapter = embedded_gateway.web_adapter
             starlette_app.state.stream_bridge = embedded_gateway.stream_bridge
+            # SPEC-025 Track E — expose the dashboard event bus so routes
+            # and aggregators can publish without importing bootstrap.
+            starlette_app.state.dashboard_bus = embedded_gateway.dashboard_bus
             # SPEC-023: cache loaded agents and register them in the
             # fleet so chat-loaded agents show as LIVE without a separate
             # /api/agent/connect WebSocket. One install_ call, idempotent.
@@ -326,6 +342,10 @@ def create_app(
     app.state.schedule_history = _deque(maxlen=50)
     app.state.on_event_callbacks = []
     app.state.agent_info = agent_info or {}
+    # SPEC-025 Track E — dashboard bus; populated by the embedded gateway
+    # lifespan when gateway_config is supplied. Routes read from here; the
+    # bus itself is None in plain LLM-provider mode (no gateway wiring).
+    app.state.dashboard_bus = None
     # SPEC-022 Phase 2: arcgateway data plane wiring. team_root scopes
     # all gateway fs reads; roster_provider walks it on each call so the
     # online overlay reflects the current AgentRegistry state. Routes
@@ -347,6 +367,9 @@ def create_app(
     file_change_bridge = FileChangeBridge()
     file_change_bridge.attach(_default_file_bus)
     app.state.file_change_bridge = file_change_bridge
+    # SPEC-025 Track E — legacy polling flag exposed on state so route
+    # handlers can check it without importing os themselves.
+    app.state.legacy_polling = _LEGACY_POLLING
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:

@@ -188,6 +188,12 @@ echo "  Installing SCAP extension dependencies..."
 "${REPO_ROOT}/.venv/bin/pip" install --quiet \
   lxml beautifulsoup4 jinja2 tomli-w weasyprint pypdf
 
+# AWS Secrets Manager backend (arcllm.backends.aws_secrets). Required
+# for production secret resolution via IAM Instance Profile. Pinned to
+# a recent stable boto3 — bump as needed during dependency audits.
+echo "  Installing AWS SDK (boto3) for Secrets Manager backend..."
+"${REPO_ROOT}/.venv/bin/pip" install --quiet 'boto3>=1.40,<2.0'
+
 # --- 4.5. SCAP extension install (dev-mode rsync into ~/.arc/) ---
 # Mirrors scripts/install-scap-extension.sh — the loader scans
 # ~/.arc/capabilities/*.py for flat shim files (not subdirs), so the

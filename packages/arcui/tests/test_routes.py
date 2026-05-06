@@ -758,3 +758,82 @@ class TestArcllmConfigUnit:
         assert "Unknown config section" in _validate_updates({"bad": {}})
         assert "Unknown key" in _validate_updates({"defaults": {"bad_key": 1}})
         assert "Unknown module" in _validate_updates({"modules": {"bad_mod": {}}})
+
+
+# ---------------------------------------------------------------------------
+# SPEC-025 Track E — ARCUI_LEGACY_POLLING=false returns 410 Gone
+# ---------------------------------------------------------------------------
+
+
+def _make_app_no_polling() -> tuple:
+    """Build a test app with ARCUI_LEGACY_POLLING disabled on app.state."""
+    auth = AuthConfig({"viewer_token": "viewer-tok", "operator_token": "operator-tok"})
+    app = create_app(auth_config=auth)
+    # Override the flag directly on state (avoids env-var patching issues in parallel
+    # test runs — the module-level _LEGACY_POLLING constant is already set at import
+    # time, so we override per-app via state which the routes read).
+    app.state.legacy_polling = False
+    client = TestClient(app)
+    return app, client, auth
+
+
+_POLLING_ENDPOINTS = [
+    "/api/stats",
+    "/api/stats/timeseries",
+    "/api/circuit-breakers",
+    "/api/budget",
+    "/api/performance",
+    "/api/queue",
+    "/api/cost-efficiency",
+    "/api/schedule-history",
+]
+
+
+class TestLegacyPollingFlag:
+    """When legacy_polling=False the 9 polling endpoints return 410 Gone."""
+
+    def test_stats_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/stats", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_timeseries_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/stats/timeseries", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_circuit_breakers_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/circuit-breakers", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_budget_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/budget", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_performance_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/performance", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_queue_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/queue", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_cost_efficiency_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/cost-efficiency", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_schedule_history_returns_410(self) -> None:
+        _, client, _ = _make_app_no_polling()
+        r = client.get("/api/schedule-history", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 410
+
+    def test_legacy_polling_true_keeps_200(self) -> None:
+        """Default app (legacy_polling=True) still returns 200 on polling endpoints."""
+        _, client, _ = _make_app()
+        r = client.get("/api/stats", headers={"Authorization": "Bearer viewer-tok"})
+        assert r.status_code == 200
