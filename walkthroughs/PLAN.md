@@ -620,9 +620,9 @@ Each chunk is 3 notebooks dispatched in parallel. **Chunks must run in order** b
 | 5.2.18 | arcteam/02-task-distribution | CREATE | C12 | done | 60 cells, 53KB, 9 sections |
 | 5.2.19 | arcteam/03-messaging-channels | CREATE | C12 | done | 69 cells, 63KB, 10 sections |
 | 5.2.20 | arcteam/04-team-persistence | CREATE | C12 | done | 78 cells, 63KB, 10 sections |
-| 5.2.21 | arcui/01-dashboard-bringup | CREATE | C13 | pending | |
-| 5.2.22 | arcui/02-live-telemetry-attach | CREATE | C13 | pending | |
-| 5.2.23 | arcgateway/01-session-routing | CREATE | C13 | pending | |
+| 5.2.21 | arcui/01-dashboard-bringup | CREATE | C13 | done | 65 cells, 45KB, 9 sections |
+| 5.2.22 | arcui/02-live-telemetry-attach | CREATE | C13 | done | 65 cells, 46KB, 9 sections |
+| 5.2.23 | arcgateway/01-session-routing | CREATE | C13 | done | 87 cells, 64KB, 10 sections |
 | 5.2.24 | arcgateway/02-platform-adapters | CREATE | C14 | pending | |
 
 **Status legend:** `pending` → `in-progress` → `verified` → `done`. Use `failed` if a notebook needs redo and queue it for the next available slot.
