@@ -38,6 +38,12 @@ class IndexManager:
         self._dirty_path = entities_dir / ".dirty"
         self._index_path = entities_dir / "_index.json"
         self._checksum_path = entities_dir / "_index.sha256"
+        # Serialise read/write of the (index.json, _index.sha256) pair across
+        # in-process concurrent callers. The two files are an atomic unit:
+        # a reader that sees the new index but the old checksum (or vice
+        # versa) raises IndexCorruptionError. os.replace makes EACH file
+        # atomic; the lock makes the PAIR atomic.
+        self._io_lock = asyncio.Lock()
 
     def _is_dirty(self) -> bool:
         """Check if .dirty marker file exists."""
@@ -54,16 +60,20 @@ class IndexManager:
         Silently rebuilding over a tampered index is not safe — callers must
         decide how to recover.
         """
-        if self._cache is not None and not self._is_dirty():
-            return self._cache
-        # Try loading from disk first — IndexCorruptionError propagates
-        if self._index_path.exists() and not self._is_dirty():
-            index = await asyncio.to_thread(self._sync_load_index)
-            if index is not None:
-                self._cache = index
+        async with self._io_lock:
+            if self._cache is not None and not self._is_dirty():
                 return self._cache
-        # No usable on-disk index — rebuild from entity files
-        return await self.rebuild()
+            # Try loading from disk first — IndexCorruptionError propagates
+            if self._index_path.exists() and not self._is_dirty():
+                index = await asyncio.to_thread(self._sync_load_index)
+                if index is not None:
+                    self._cache = index
+                    return self._cache
+            # No usable on-disk index — rebuild from entity files (locked
+            # variant: we already hold _io_lock).
+            index = await asyncio.to_thread(self._sync_rebuild)
+            self._cache = index
+            return index
 
     async def lookup(self, entity_id: str) -> IndexEntry | None:
         """O(1) entity lookup by ID."""
@@ -85,9 +95,10 @@ class IndexManager:
 
     async def rebuild(self) -> dict[str, IndexEntry]:
         """Full index rebuild from entity frontmatter. Atomic write."""
-        index = await asyncio.to_thread(self._sync_rebuild)
-        self._cache = index
-        return index
+        async with self._io_lock:
+            index = await asyncio.to_thread(self._sync_rebuild)
+            self._cache = index
+            return index
 
     # --- Sync helpers ---
 
