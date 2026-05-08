@@ -590,9 +590,9 @@ Each chunk is 3 notebooks dispatched in parallel. **Chunks must run in order** b
 | 5.2.12 | arctrust/04-audit-sinks | CREATE | C02 | done | 55 cells, 38KB, 10 sections |
 | 5.1.10 | arcllm/10-audit-trail | REWRITE | C02 | done | 46 cells, 37KB, 10 sections |
 | 5.2.1 | arcllm/14-trace-store | CREATE | C02 | done | 54 cells, 51KB, 10 sections |
-| 5.2.13 | arcagent/01-first-agent | CREATE | C03 | pending | |
-| 5.2.14 | arcagent/02-tool-integration | CREATE | C03 | pending | |
-| 5.2.15 | arcagent/03-policy-and-modules | CREATE | C03 | pending | |
+| 5.2.13 | arcagent/01-first-agent | CREATE | C03 | done | 54 cells, 45KB, 10 sections |
+| 5.2.14 | arcagent/02-tool-integration | CREATE | C03 | done | 52 cells, 52KB, 10 sections |
+| 5.2.15 | arcagent/03-policy-and-modules | CREATE | C03 | done | 72 cells, 51KB, 10 sections |
 | 5.2.16 | arcagent/04-module-bus-events | CREATE | C04 | pending | |
 | 5.1.14 | arcrun/01-core-react | REWRITE | C04 | pending | |
 | 5.2.7 | arcrun/06-task-completion-budgets | CREATE | C04 | pending | |
