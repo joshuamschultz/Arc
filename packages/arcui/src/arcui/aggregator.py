@@ -374,10 +374,10 @@ class RollingAggregator:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._windows: dict[str, BucketedWindow] = {
-            "1h": BucketedWindow(60, 60),       # 60 x 1min
-            "24h": BucketedWindow(24, 3600),    # 24 x 1hr
-            "7d": BucketedWindow(7, 86400),     # 7 x 1day
-            "30d": BucketedWindow(30, 86400),   # 30 x 1day
+            "1h": BucketedWindow(60, 60),  # 60 x 1min
+            "24h": BucketedWindow(24, 3600),  # 24 x 1hr
+            "7d": BucketedWindow(7, 86400),  # 7 x 1day
+            "30d": BucketedWindow(30, 86400),  # 30 x 1day
         }
 
     def ingest(self, record_data: dict[str, Any]) -> None:

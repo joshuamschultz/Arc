@@ -26,8 +26,8 @@ _BUILTIN_TOOLS: tuple[tuple[str, str, str], ...] = (
 )
 # Capture name + every keyword argument across the (...) block.
 _TOOL_BLOCK_RE = re.compile(
-    r'@tool\s*\(\s*(?P<body>[^@]*?)\)\s*\n\s*async\s+def|'
-    r'@tool\s*\(\s*(?P<body2>[^@]*?)\)\s*\n\s*def',
+    r"@tool\s*\(\s*(?P<body>[^@]*?)\)\s*\n\s*async\s+def|"
+    r"@tool\s*\(\s*(?P<body2>[^@]*?)\)\s*\n\s*def",
     re.DOTALL,
 )
 _KW_NAME_RE = re.compile(r'name\s*=\s*["\']([^"\']+)["\']')
@@ -67,11 +67,13 @@ def _parse_tool_blocks(text: str) -> list[dict[str, str]]:
             continue
         cls_m = _KW_CLASS_RE.search(body)
         desc_m = _KW_DESC_RE.search(body)
-        rows.append({
-            "name": name_m.group(1),
-            "classification": cls_m.group(1) if cls_m else "",
-            "description": desc_m.group("text").strip() if desc_m else "",
-        })
+        rows.append(
+            {
+                "name": name_m.group(1),
+                "classification": cls_m.group(1) if cls_m else "",
+                "description": desc_m.group("text").strip() if desc_m else "",
+            }
+        )
     return rows
 
 
@@ -96,13 +98,15 @@ def _collect_module_tools(modules: dict[str, Any]) -> list[dict[str, str]]:
         except OSError:
             continue
         for row in _parse_tool_blocks(text):
-            out.append({
-                "name": row["name"],
-                "transport": f"module:{mod_name}",
-                "classification": row["classification"],
-                "description": row["description"],
-                "status": "allow" if enabled else "inactive",
-            })
+            out.append(
+                {
+                    "name": row["name"],
+                    "transport": f"module:{mod_name}",
+                    "classification": row["classification"],
+                    "description": row["description"],
+                    "status": "allow" if enabled else "inactive",
+                }
+            )
     return out
 
 
@@ -138,25 +142,45 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
                 try:
                     text = child.read_text(encoding="utf-8", errors="replace")
                 except OSError:
-                    out.append({"name": child.stem, "transport": transport,
-                                "classification": "", "description": ""})
+                    out.append(
+                        {
+                            "name": child.stem,
+                            "transport": transport,
+                            "classification": "",
+                            "description": "",
+                        }
+                    )
                     continue
                 blocks = _parse_tool_blocks(text)
                 if blocks:
                     for row in blocks:
-                        out.append({
-                            "name": row["name"],
-                            "transport": transport,
-                            "classification": row.get("classification") or "",
-                            "description": row.get("description") or "",
-                        })
+                        out.append(
+                            {
+                                "name": row["name"],
+                                "transport": transport,
+                                "classification": row.get("classification") or "",
+                                "description": row.get("description") or "",
+                            }
+                        )
                 else:
-                    out.append({"name": child.stem, "transport": transport,
-                                "classification": "", "description": ""})
+                    out.append(
+                        {
+                            "name": child.stem,
+                            "transport": transport,
+                            "classification": "",
+                            "description": "",
+                        }
+                    )
             elif child.is_dir():
                 # Capability folder convention — name comes from the dir.
-                out.append({"name": child.name, "transport": transport,
-                            "classification": "", "description": ""})
+                out.append(
+                    {
+                        "name": child.name,
+                        "transport": transport,
+                        "classification": "",
+                        "description": "",
+                    }
+                )
     return out
 
 
@@ -187,9 +211,9 @@ async def get_tools(request: Request) -> JSONResponse:
             caller_did=_CALLER_DID,
         )
         cfg = tomllib.loads(content.content)
-        policy = cfg.get("tools", {}).get("policy", {}) if isinstance(
-            cfg.get("tools"), dict
-        ) else {}
+        policy = (
+            cfg.get("tools", {}).get("policy", {}) if isinstance(cfg.get("tools"), dict) else {}
+        )
         if isinstance(policy, dict):
             allow = policy.get("allow")
             deny = policy.get("deny")
@@ -209,8 +233,13 @@ async def get_tools(request: Request) -> JSONResponse:
     def _add(name: str, **fields: Any) -> None:
         if not name or name in seen:
             return
-        row = {"name": name, "transport": "", "classification": "",
-               "description": "", "status": "allow"}
+        row = {
+            "name": name,
+            "transport": "",
+            "classification": "",
+            "description": "",
+            "status": "allow",
+        }
         row.update({k: v for k, v in fields.items() if v not in (None, "")})
         if name in denylist:
             row["status"] = "deny"
@@ -219,8 +248,7 @@ async def get_tools(request: Request) -> JSONResponse:
     for t in live_tools:
         _add(t, transport="registered")
     for name, classification, description in _BUILTIN_TOOLS:
-        _add(name, transport="builtin", classification=classification,
-             description=description)
+        _add(name, transport="builtin", classification=classification, description=description)
     for row in _collect_module_tools(enabled_modules):
         _add(
             row["name"],

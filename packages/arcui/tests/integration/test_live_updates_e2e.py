@@ -63,9 +63,7 @@ def _make_agent_dir(tmp_path: Path, agent_id: str = "alpha") -> Path:
     root = tmp_path / f"{agent_id}_agent"
     (root / "workspace").mkdir(parents=True)
     (root / "arcagent.toml").write_text("[agent]\nname = 'alpha'\n", encoding="utf-8")
-    (root / "workspace" / "policy.md").write_text(
-        "# initial\n", encoding="utf-8"
-    )
+    (root / "workspace" / "policy.md").write_text("# initial\n", encoding="utf-8")
     return root
 
 

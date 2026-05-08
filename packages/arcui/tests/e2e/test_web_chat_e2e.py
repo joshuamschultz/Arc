@@ -83,7 +83,6 @@ def test_air_gap_no_external_references_in_static_bundle() -> None:
         match = suspicious.search(text)
         if match:
             offenders.append((path.relative_to(static_root), match.group(0)))
-    assert not offenders, (
-        "external CDN references found in served static bundle:\n"
-        + "\n".join(f"  {p}: {m}" for p, m in offenders)
+    assert not offenders, "external CDN references found in served static bundle:\n" + "\n".join(
+        f"  {p}: {m}" for p, m in offenders
     )

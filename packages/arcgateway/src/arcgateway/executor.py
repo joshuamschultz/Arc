@@ -255,9 +255,7 @@ class AsyncioExecutor:
                 # browser tab, slack DM, or telegram chat resumes the same
                 # session across reconnects.
                 if hasattr(agent, "chat"):
-                    result = await agent.chat(
-                        event.message, session_id=event.session_key
-                    )
+                    result = await agent.chat(event.message, session_id=event.session_key)
                 else:
                     result = await agent.run(event.message)
                 # ArcRun returns a result object; .content holds the text reply.

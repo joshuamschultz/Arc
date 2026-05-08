@@ -19,19 +19,19 @@ def team_root(tmp_path: Path) -> Path:
     alice = root / "alice_agent"
     alice.mkdir()
     (alice / "arcagent.toml").write_text(
-        '[agent]\n'
+        "[agent]\n"
         'name = "alice"\n'
         'org = "research"\n'
         'type = "curator"\n'
-        '[identity]\n'
+        "[identity]\n"
         'did = "did:arc:agent:alice"\n'
-        '[llm]\n'
+        "[llm]\n"
         'model = "anthropic/claude-sonnet-4-6"\n'
-        '[ui]\n'
+        "[ui]\n"
         'display_name = "Alice the Curator"\n'
         'color = "#ff6b6b"\n'
         'role_label = "policy curator"\n'
-        'hidden = false\n',
+        "hidden = false\n",
         encoding="utf-8",
     )
 
@@ -39,13 +39,13 @@ def team_root(tmp_path: Path) -> Path:
     bob = root / "bob_agent"
     bob.mkdir()
     (bob / "arcagent.toml").write_text(
-        '[agent]\n'
+        "[agent]\n"
         'name = "bob"\n'
         'org = "ops"\n'
         'type = "responder"\n'
-        '[identity]\n'
+        "[identity]\n"
         'did = "did:arc:agent:bob"\n'
-        '[llm]\n'
+        "[llm]\n"
         'model = "openai/gpt-4o"\n',
         encoding="utf-8",
     )
@@ -54,10 +54,7 @@ def team_root(tmp_path: Path) -> Path:
     carol = root / "carol_agent"
     carol.mkdir()
     (carol / "arcagent.toml").write_text(
-        '[agent]\n'
-        'name = "carol"\n'
-        '[ui]\n'
-        'hidden = true\n',
+        '[agent]\nname = "carol"\n[ui]\nhidden = true\n',
         encoding="utf-8",
     )
 
@@ -170,9 +167,7 @@ class TestEdgeCases:
         # Also include a good agent so we can confirm it survives.
         good = root / "good_agent"
         good.mkdir()
-        (good / "arcagent.toml").write_text(
-            '[agent]\nname = "good"\n', encoding="utf-8"
-        )
+        (good / "arcagent.toml").write_text('[agent]\nname = "good"\n', encoding="utf-8")
 
         roster = list_team(team_root=root, online_ids=set())
         ids = {r.agent_id for r in roster}

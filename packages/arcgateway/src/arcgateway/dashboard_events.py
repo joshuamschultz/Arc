@@ -155,9 +155,7 @@ class DashboardEventBus:
                     {"topic": topic, "reason": "queue_full"},
                 )
             except (asyncio.QueueEmpty, asyncio.QueueFull):
-                _logger.debug(
-                    "dashboard_bus: drop frame for topic=%s (queue unusable)", topic
-                )
+                _logger.debug("dashboard_bus: drop frame for topic=%s (queue unusable)", topic)
                 self._audit(
                     "gateway.dashboard.dropped_dead",
                     {"topic": topic, "reason": "queue_unusable"},

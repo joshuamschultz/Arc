@@ -94,9 +94,7 @@ class _BoundedAgentCache:
             )
 
 
-def install_embedded_agent_hooks(
-    app: Any, *, cache_maxsize: int = _DEFAULT_CACHE_MAX
-) -> None:
+def install_embedded_agent_hooks(app: Any, *, cache_maxsize: int = _DEFAULT_CACHE_MAX) -> None:
     """Wrap the embedded executor's agent_factory with cache + registry hooks.
 
     Idempotent — the second call is a no-op so re-running this on a

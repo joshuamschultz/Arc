@@ -73,9 +73,7 @@ class TestHappyPath:
             backend = AwsSecretsManagerBackend()
             assert backend.get_secret("arc/prod/anthropic/api_key") == "sk-abc-123"
 
-        fake_client.get_secret_value.assert_called_once_with(
-            SecretId="arc/prod/anthropic/api_key"
-        )
+        fake_client.get_secret_value.assert_called_once_with(SecretId="arc/prod/anthropic/api_key")
 
     def test_get_secret_decodes_secret_binary(self) -> None:
         """If the secret was stored as binary, the backend decodes UTF-8."""
@@ -106,9 +104,7 @@ class TestErrorSemantics:
         from arcllm.backends.aws_secrets import AwsSecretsManagerBackend
 
         fake_client = MagicMock()
-        fake_client.get_secret_value.side_effect = _client_error(
-            "ResourceNotFoundException"
-        )
+        fake_client.get_secret_value.side_effect = _client_error("ResourceNotFoundException")
 
         with patch("boto3.client", return_value=fake_client):
             backend = AwsSecretsManagerBackend()
@@ -166,9 +162,11 @@ class TestBoto3ImportFailure:
         # Force a fresh import of the module with boto3 hidden.
         sys.modules.pop("arcllm.backends.aws_secrets", None)
 
-        original_import = __builtins__["__import__"] if isinstance(
-            __builtins__, dict
-        ) else __builtins__.__import__
+        original_import = (
+            __builtins__["__import__"]
+            if isinstance(__builtins__, dict)
+            else __builtins__.__import__
+        )
 
         def _fake_import(
             name: str,
@@ -230,9 +228,7 @@ class TestRegionAndProfile:
             AwsSecretsManagerBackend(profile_name="dev", region_name="us-west-2")
 
         mock_session_ctor.assert_called_once_with(profile_name="dev")
-        fake_session.client.assert_called_once_with(
-            "secretsmanager", region_name="us-west-2"
-        )
+        fake_session.client.assert_called_once_with("secretsmanager", region_name="us-west-2")
 
 
 # ---------------------------------------------------------------------------

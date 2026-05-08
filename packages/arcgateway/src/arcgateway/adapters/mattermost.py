@@ -69,9 +69,7 @@ def _split_message(text: str, max_length: int = _MAX_MESSAGE_LENGTH) -> list[str
     """
     from arcgateway.adapters._text import split_message as _shared_split
 
-    return _shared_split(
-        text, max_length, boundaries=("\n\n", "\n", " ")
-    )
+    return _shared_split(text, max_length, boundaries=("\n\n", "\n", " "))
 
 
 def _is_intranet_host(hostname: str, intranet_domains: list[str]) -> bool:
@@ -196,15 +194,19 @@ class MattermostAdapter:
         # tests that never network can still construct).
         self._http_session: Any | None = None
 
-        self._audit("gateway.adapter.register", {
-            "platform": "mattermost",
-            "server_url": self._server_url,
-            "tier": tier,
-        })
+        self._audit(
+            "gateway.adapter.register",
+            {
+                "platform": "mattermost",
+                "server_url": self._server_url,
+                "tier": tier,
+            },
+        )
 
     def _enforce_airgap_url(self, url: str) -> None:
         """Raise ValueError if server URL resolves to a public host (D-007)."""
         from urllib.parse import urlparse
+
         hostname = urlparse(url).hostname or ""
         if not _is_intranet_host(hostname, self._intranet_domains):
             raise ValueError(
@@ -222,16 +224,14 @@ class MattermostAdapter:
             import aiohttp  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "aiohttp is not installed. "
-                "Install with: pip install 'arcgateway[mattermost]'"
+                "aiohttp is not installed. Install with: pip install 'arcgateway[mattermost]'"
             ) from exc
         _logger.info(
             "MattermostAdapter: connecting to %s (tier=%s)",
-            self._server_url, self._tier,
+            self._server_url,
+            self._tier,
         )
-        self._ws_task = asyncio.create_task(
-            self._ws_loop(), name="arcgateway.mattermost.ws_loop"
-        )
+        self._ws_task = asyncio.create_task(self._ws_loop(), name="arcgateway.mattermost.ws_loop")
 
     async def disconnect(self) -> None:
         """Stop all drain queues and cancel the WS loop."""
@@ -247,9 +247,7 @@ class MattermostAdapter:
                 try:
                     await task
                 except (asyncio.CancelledError, Exception):
-                    _logger.debug(
-                        "MattermostAdapter: drain task for %r stopped", channel_id
-                    )
+                    _logger.debug("MattermostAdapter: drain task for %r stopped", channel_id)
         self._drain_tasks.clear()
         self._outbound_queues.clear()
         if self._ws_task and not self._ws_task.done():
@@ -267,9 +265,13 @@ class MattermostAdapter:
                 _logger.debug("MattermostAdapter: http session close failed")
         self._http_session = None
         self._ws_task = None
-        self._audit("gateway.adapter.disconnect", {
-            "platform": "mattermost", "server_url": self._server_url,
-        })
+        self._audit(
+            "gateway.adapter.disconnect",
+            {
+                "platform": "mattermost",
+                "server_url": self._server_url,
+            },
+        )
         _logger.info("MattermostAdapter: disconnected")
 
     async def send(
@@ -349,9 +351,7 @@ class MattermostAdapter:
         except asyncio.CancelledError:
             return
         except Exception:  # reason: fail-open — log + continue
-            _logger.exception(
-                "MattermostAdapter: drain_loop error channel=%r", channel_id
-            )
+            _logger.exception("MattermostAdapter: drain_loop error channel=%r", channel_id)
 
     async def _ensure_http_session(self) -> Any:
         """Lazily create the per-adapter aiohttp.ClientSession.
@@ -384,31 +384,38 @@ class MattermostAdapter:
             session = await self._ensure_http_session()
             async with session.post(url, json=body, headers=headers) as resp:
                 if resp.status in (200, 201):
-                    self._audit("gateway.message.delivered", {
-                        "platform": "mattermost",
-                        "chat_id": channel_id,
-                        "breakdown": {
-                            "delivered": 1, "dropped_backpressure": 0, "dead": 0,
+                    self._audit(
+                        "gateway.message.delivered",
+                        {
+                            "platform": "mattermost",
+                            "chat_id": channel_id,
+                            "breakdown": {
+                                "delivered": 1,
+                                "dropped_backpressure": 0,
+                                "dead": 0,
+                            },
                         },
-                    })
+                    )
                 else:
                     # NOTE: body deliberately NOT logged — see L-3 above.
                     _logger.warning(
-                        "MattermostAdapter: POST /api/v4/posts failed "
-                        "channel=%r status=%d",
-                        channel_id, resp.status,
+                        "MattermostAdapter: POST /api/v4/posts failed channel=%r status=%d",
+                        channel_id,
+                        resp.status,
                     )
                     self._audit_drop(channel_id, f"http_{resp.status}")
         except Exception as exc:  # reason: fail-open — log + continue
             _logger.warning(
                 "MattermostAdapter: _post_message error channel=%r: %s",
-                channel_id, exc,
+                channel_id,
+                exc,
             )
             self._audit_drop(channel_id, "post_exception")
 
     async def _ws_loop(self) -> None:
         """Connect, read events, reconnect with 800ms -> x1.7 -> 15s backoff."""
         import aiohttp
+
         backoff_ms = _BACKOFF_INITIAL_MS
         ws_url = (
             self._server_url.replace("https://", "wss://").replace("http://", "ws://")
@@ -418,9 +425,7 @@ class MattermostAdapter:
         while True:
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.ws_connect(
-                        ws_url, headers=headers, heartbeat=30
-                    ) as ws:
+                    async with session.ws_connect(ws_url, headers=headers, heartbeat=30) as ws:
                         self._connected = True
                         backoff_ms = _BACKOFF_INITIAL_MS
                         _logger.info("MattermostAdapter: WS connected to %s", ws_url)
@@ -442,7 +447,8 @@ class MattermostAdapter:
             except Exception as exc:  # reason: fail-open — log + continue
                 _logger.warning(
                     "MattermostAdapter: WS error -- reconnecting in %.0fms: %s",
-                    backoff_ms, exc,
+                    backoff_ms,
+                    exc,
                 )
             self._connected = False
             await asyncio.sleep(backoff_ms / 1000.0)
@@ -460,9 +466,7 @@ class MattermostAdapter:
         if not raw_post:
             return
         try:
-            post: dict[str, Any] = (
-                json.loads(raw_post) if isinstance(raw_post, str) else raw_post
-            )
+            post: dict[str, Any] = json.loads(raw_post) if isinstance(raw_post, str) else raw_post
         except json.JSONDecodeError:
             return
 
@@ -489,21 +493,24 @@ class MattermostAdapter:
         if not message:
             return
 
-        await self._on_message(InboundEvent(
-            platform="mattermost",
-            chat_id=channel_id,
-            thread_id=None,
-            user_did=f"mattermost:{user_id}",
-            agent_did="",
-            session_key=f"mattermost:{channel_id}:{user_id}",
-            message=message,
-            raw_payload=dict(post),
-        ))
+        await self._on_message(
+            InboundEvent(
+                platform="mattermost",
+                chat_id=channel_id,
+                thread_id=None,
+                user_did=f"mattermost:{user_id}",
+                agent_did="",
+                session_key=f"mattermost:{channel_id}:{user_id}",
+                message=message,
+                raw_payload=dict(post),
+            )
+        )
 
     def _audit(self, action: str, data: dict[str, Any]) -> None:
         """Emit audit event; swallowed per AU-5."""
         try:
             from arcgateway.audit import emit_event as _arc_emit
+
             _arc_emit(
                 action=action,
                 target=str(data.get("chat_id", data.get("server_url", "mattermost"))),

@@ -88,9 +88,9 @@ async def get_stats(request: Request) -> JSONResponse:
     window = _validated_window(request)
     if window is None:
         return JSONResponse(
-            ErrorResponse(
-                error="Invalid window. Use 1h, 24h, 7d, or 30d."
-            ).model_dump(mode="json"),
+            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
+                mode="json"
+            ),
             status_code=400,
         )
     data = aggregator.stats(window)
@@ -115,9 +115,9 @@ async def get_timeseries(request: Request) -> JSONResponse:
     window = _validated_window(request)
     if window is None:
         return JSONResponse(
-            ErrorResponse(
-                error="Invalid window. Use 1h, 24h, 7d, or 30d."
-            ).model_dump(mode="json"),
+            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
+                mode="json"
+            ),
             status_code=400,
         )
     data = aggregator.timeseries(window)
@@ -164,9 +164,9 @@ async def get_performance(request: Request) -> JSONResponse:
     window = _validated_window(request)
     if window is None:
         return JSONResponse(
-            ErrorResponse(
-                error="Invalid window. Use 1h, 24h, 7d, or 30d."
-            ).model_dump(mode="json"),
+            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
+                mode="json"
+            ),
             status_code=400,
         )
     data = aggregator.performance(window)

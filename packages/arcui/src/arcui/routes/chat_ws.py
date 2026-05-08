@@ -159,9 +159,7 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
     since_seq = _parse_since_seq(ws.query_params.get("since_seq"))
 
     try:
-        web_adapter.register_socket(
-            ws, agent_did, user_did, chat_id, since_seq=since_seq
-        )
+        web_adapter.register_socket(ws, agent_did, user_did, chat_id, since_seq=since_seq)
     except WebAdapterFull:
         await ws.send_json({"error": "Server at capacity"})
         await ws.close(code=_CLOSE_TOO_MANY_CONNECTIONS)
@@ -196,9 +194,7 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
                     client_seq=frame.get("client_seq"),
                 )
             except ValueError as exc:
-                await ws.send_json(
-                    {"type": "error", "code": "malformed", "message": str(exc)}
-                )
+                await ws.send_json({"type": "error", "code": "malformed", "message": str(exc)})
     except WebSocketDisconnect:
         pass
     finally:

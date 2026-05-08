@@ -450,9 +450,7 @@ async def test_dispatch_delta_tool_call_no_sockets_is_noop() -> None:
     """tool_call with no sockets registered for the chat_id is a silent no-op."""
     adapter = _make_adapter()
     target = DeliveryTarget(platform="web", chat_id="chat-empty")
-    await adapter.dispatch_delta(
-        target, Delta(kind="tool_call", content="read_file", turn_id="t")
-    )
+    await adapter.dispatch_delta(target, Delta(kind="tool_call", content="read_file", turn_id="t"))
     # Nothing to assert — just verify no exception.
 
 
@@ -558,7 +556,9 @@ async def test_tool_call_frame_also_carries_seq() -> None:
     ws = FakeWebSocket()
     adapter.register_socket(ws, "did:arc:agent:a", "did:arc:viewer:u", "chat-1")
     target = DeliveryTarget(platform="web", chat_id="chat-1")
-    await adapter.dispatch_delta(target, Delta(kind="tool_call", content="read_file", turn_id="t1"))
+    await adapter.dispatch_delta(
+        target, Delta(kind="tool_call", content="read_file", turn_id="t1")
+    )
     await adapter.send(target, "result text")
     await _drain_once(adapter, ws)
     seqs = [p.get("seq") for p in ws.sent]
@@ -582,7 +582,11 @@ async def test_register_with_since_seq_replays_missed_frames() -> None:
     # New socket reconnects, claims it last saw seq=0 — wants 1 and 2 replayed.
     ws_new = FakeWebSocket()
     adapter.register_socket(
-        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=0,
+        ws_new,
+        "did:arc:agent:a",
+        "did:arc:viewer:u",
+        "chat-1",
+        since_seq=0,
     )
     await _drain_once(adapter, ws_new)
     replayed_seqs = [p.get("seq") for p in ws_new.sent if p.get("type") == "message"]
@@ -604,7 +608,11 @@ async def test_register_with_since_seq_replays_only_to_new_socket() -> None:
     # New socket joins with since_seq=-1 — wants the full ring replayed.
     ws_new = FakeWebSocket()
     adapter.register_socket(
-        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=-1,
+        ws_new,
+        "did:arc:agent:a",
+        "did:arc:viewer:u",
+        "chat-1",
+        since_seq=-1,
     )
     await _drain_once(adapter, ws_new)
     await _drain_once(adapter, ws_existing)
@@ -628,7 +636,11 @@ async def test_replay_emits_recovery_banner_when_ring_overran() -> None:
     # Reconnect claiming last seen seq=0 — but ring only holds frames 10..59.
     ws_new = FakeWebSocket()
     adapter.register_socket(
-        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=0,
+        ws_new,
+        "did:arc:agent:a",
+        "did:arc:viewer:u",
+        "chat-1",
+        since_seq=0,
     )
     await _drain_once(adapter, ws_new)
     # First payload must be the recovery banner; client uses it to flag a UX warning.
@@ -650,7 +662,11 @@ async def test_replay_with_since_seq_at_or_above_latest_is_noop() -> None:
     adapter.unregister_socket(ws_old)
     ws_new = FakeWebSocket()
     adapter.register_socket(
-        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=1,
+        ws_new,
+        "did:arc:agent:a",
+        "did:arc:viewer:u",
+        "chat-1",
+        since_seq=1,
     )
     await _drain_once(adapter, ws_new)
     # No replay frames (since_seq=1 means client already has up to seq 1).
@@ -690,7 +706,11 @@ async def test_replay_buffer_survives_within_ttl_window() -> None:
     # Reconnect fast — TTL hasn't expired.
     ws_new = FakeWebSocket()
     adapter.register_socket(
-        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1", since_seq=-1,
+        ws_new,
+        "did:arc:agent:a",
+        "did:arc:viewer:u",
+        "chat-1",
+        since_seq=-1,
     )
     await _drain_once(adapter, ws_new)
     replayed = [p["text"] for p in ws_new.sent if p.get("type") == "message"]
@@ -782,7 +802,10 @@ async def test_replay_drop_oldest_emits_audit_event() -> None:
     # New socket — fill its queue to capacity, then trigger replay.
     ws_new = FakeWebSocket()
     adapter.register_socket(
-        ws_new, "did:arc:agent:a", "did:arc:viewer:u", "chat-1",
+        ws_new,
+        "did:arc:agent:a",
+        "did:arc:viewer:u",
+        "chat-1",
     )
     queue = adapter._socket_queues[ws_new]
     # Fill to maxsize - 0 so any further put_nowait without get_nowait fails.

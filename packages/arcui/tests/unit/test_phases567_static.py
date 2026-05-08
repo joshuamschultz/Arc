@@ -59,17 +59,27 @@ class TestAgentDetail:
         assert "AgentDetail" in text
         assert "mount" in text
 
-    @pytest.mark.parametrize("tab_id", [
-        "overview", "identity", "sessions", "skills",
-        "memory", "policy", "tools", "telemetry", "files",
-    ])
+    @pytest.mark.parametrize(
+        "tab_id",
+        [
+            "overview",
+            "identity",
+            "sessions",
+            "skills",
+            "memory",
+            "policy",
+            "tools",
+            "telemetry",
+            "files",
+        ],
+    )
     def test_all_nine_tabs_declared(self, tab_id: str) -> None:
         text = _read_agent_detail_bundle()
         # Each tab must be referenced — either as a key in TABS map or
         # as a `data-tab="<id>"` literal in the template.
-        assert (
-            f"'{tab_id}'" in text or f'"{tab_id}"' in text
-        ), f"agent-detail.js bundle missing tab: {tab_id}"
+        assert f"'{tab_id}'" in text or f'"{tab_id}"' in text, (
+            f"agent-detail.js bundle missing tab: {tab_id}"
+        )
 
     def test_lazy_fetch_per_tab(self) -> None:
         text = _read("agent-detail.js")
@@ -195,8 +205,12 @@ class TestLiveUpdates:
 
 
 _REQUIRED_PANELS = (
-    "agents", "agent-detail",
-    "tasks", "tools-skills", "security", "policy",
+    "agents",
+    "agent-detail",
+    "tasks",
+    "tools-skills",
+    "security",
+    "policy",
 )
 
 _REQUIRED_SCRIPTS = (
@@ -215,9 +229,7 @@ class TestIndexHtmlWiring:
     @pytest.mark.parametrize("panel_id", _REQUIRED_PANELS)
     def test_panel_present(self, panel_id: str) -> None:
         text = _INDEX.read_text()
-        assert (
-            f'data-page-content="{panel_id}"' in text
-        ), f"index.html missing panel: {panel_id}"
+        assert f'data-page-content="{panel_id}"' in text, f"index.html missing panel: {panel_id}"
 
     @pytest.mark.parametrize("script", _REQUIRED_SCRIPTS)
     def test_script_loaded(self, script: str) -> None:

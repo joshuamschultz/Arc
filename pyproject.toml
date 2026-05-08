@@ -45,6 +45,12 @@ arcllm = { workspace = true }
 arcrun = { workspace = true }
 arcteam = { workspace = true }
 arcmas = { workspace = true }
+arctrust = { workspace = true }
+arcskill = { workspace = true }
+arctui = { workspace = true }
+arcui = { workspace = true }
+arcprompt = { workspace = true }
+arcmodel = { workspace = true }
 arccmd = { workspace = true, editable = true }
 arc-agent = { workspace = true, editable = true }
 arcgateway = { workspace = true, editable = true }

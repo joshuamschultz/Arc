@@ -22,6 +22,7 @@ What it asserts (every line corresponds to a bug we shipped at some point):
     the Policy tab re-renders the new bullet
   - Page errors and /api/* HTTP errors are zero throughout
 """
+
 from __future__ import annotations
 
 import json
@@ -48,6 +49,7 @@ def _find_arc() -> str | None:
     if venv_arc.exists() and os.access(venv_arc, os.X_OK):
         return str(venv_arc)
     return None
+
 
 import pytest
 
@@ -91,7 +93,9 @@ def _build_team(team_root: Path) -> None:
             "created:2026-04-01, source:test-002}\n",
             encoding="utf-8",
         )
-        (ws / "identity.md").write_text(f"# {name}\nI am the {name} test agent.\n", encoding="utf-8")
+        (ws / "identity.md").write_text(
+            f"# {name}\nI am the {name} test agent.\n", encoding="utf-8"
+        )
         (ws / "skills").mkdir()
         (ws / "skills" / "demo.md").write_text(
             "---\nname: demo\ndescription: a demo skill\n---\n# body\n",
@@ -125,15 +129,23 @@ def server_team(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str,
     log_fh = open(log_path, "w")
     proc = subprocess.Popen(
         [
-            arc_bin, "ui", "start",
+            arc_bin,
+            "ui",
+            "start",
             "--no-browser",
-            "--viewer-token", VIEWER_TOKEN,
-            "--operator-token", OPERATOR_TOKEN,
-            "--agent-token", AGENT_TOKEN,
-            "--port", str(port),
-            "--team-root", str(team_root),
+            "--viewer-token",
+            VIEWER_TOKEN,
+            "--operator-token",
+            OPERATOR_TOKEN,
+            "--agent-token",
+            AGENT_TOKEN,
+            "--port",
+            str(port),
+            "--team-root",
+            str(team_root),
         ],
-        stdout=log_fh, stderr=subprocess.STDOUT,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
         env={**os.environ},
     )
     try:
@@ -186,9 +198,11 @@ def _new_page(browser: object, url: str) -> tuple[object, list[str], list[str]]:
     page.on("pageerror", lambda e: page_errors.append(str(e)))
     page.on(
         "response",
-        lambda r: api_errors.append(f"{r.status} {r.url}")
-        if r.status >= 400 and "/api/" in r.url
-        else None,
+        lambda r: (
+            api_errors.append(f"{r.status} {r.url}")
+            if r.status >= 400 and "/api/" in r.url
+            else None
+        ),
     )
     page.goto(url, wait_until="networkidle")
     return page, page_errors, api_errors
@@ -200,27 +214,40 @@ def _new_page(browser: object, url: str) -> tuple[object, list[str], list[str]]:
 
 
 class TestRehearsalSPABoot:
-    def test_index_html_has_all_panels_and_scripts(
-        self, server_team: tuple[str, Path]
-    ) -> None:
+    def test_index_html_has_all_panels_and_scripts(self, server_team: tuple[str, Path]) -> None:
         url, _ = server_team
         import urllib.request
+
         with urllib.request.urlopen(url + "/") as resp:
             html = resp.read().decode("utf-8")
-        for panel in ("agents", "agent-detail", "tasks", "tools-skills",
-                      "security", "policy", "telemetry", "settings"):
+        for panel in (
+            "agents",
+            "agent-detail",
+            "tasks",
+            "tools-skills",
+            "security",
+            "policy",
+            "telemetry",
+            "settings",
+        ):
             assert f'data-page-content="{panel}"' in html, f"missing panel: {panel}"
-        for asset in ("agents-page.js", "agent-detail.js", "agent-controls.js",
-                      "tasks-page.js", "tools-skills-page.js",
-                      "security-page.js", "policy-page.js",
-                      "live-updates.js", "prism.min.js", "markdown.js"):
+        for asset in (
+            "agents-page.js",
+            "agent-detail.js",
+            "agent-controls.js",
+            "tasks-page.js",
+            "tools-skills-page.js",
+            "security-page.js",
+            "policy-page.js",
+            "live-updates.js",
+            "prism.min.js",
+            "markdown.js",
+        ):
             assert f"assets/{asset}" in html, f"missing script tag: {asset}"
 
 
 class TestRehearsalAgentsPage:
-    def test_fleet_renders_cards(
-        self, browser: object, server_team: tuple[str, Path]
-    ) -> None:
+    def test_fleet_renders_cards(self, browser: object, server_team: tuple[str, Path]) -> None:
         url, _ = server_team
         page, page_errors, api_errors = _new_page(browser, f"{url}/?page=agents")
         try:
@@ -243,9 +270,7 @@ class TestRehearsalAgentDetail:
         self, browser: object, server_team: tuple[str, Path]
     ) -> None:
         url, _ = server_team
-        page, page_errors, api_errors = _new_page(
-            browser, f"{url}/?page=agent-detail&agent=alpha"
-        )
+        page, page_errors, api_errors = _new_page(browser, f"{url}/?page=agent-detail&agent=alpha")
         try:
             page.wait_for_selector(".ad-tabs", timeout=10_000)
             page.wait_for_load_state("networkidle", timeout=4_000)
@@ -266,9 +291,7 @@ class TestRehearsalAgentDetail:
         try:
             page.wait_for_selector(".ad-tabs", timeout=10_000)
             page.wait_for_load_state("networkidle", timeout=4_000)
-            page.evaluate(
-                "window.ARC.setRoute({page: 'agent-detail', agent: 'beta'})"
-            )
+            page.evaluate("window.ARC.setRoute({page: 'agent-detail', agent: 'beta'})")
             page.wait_for_load_state("networkidle", timeout=5_000)
             page.wait_for_function(
                 'document.querySelector("#ad-title")?.textContent === "Beta Test" '
@@ -292,17 +315,23 @@ class TestRehearsalAgentDetail:
         """R3+R4 regression: Overview previously failed silently due to
         Fmt.number `this` loss + /stats wrapper shape."""
         url, _ = server_team
-        page, page_errors, api_errors = _new_page(
-            browser, f"{url}/?page=agent-detail&agent=alpha"
-        )
+        page, page_errors, api_errors = _new_page(browser, f"{url}/?page=agent-detail&agent=alpha")
         try:
             page.wait_for_selector(".ad-tabs", timeout=10_000)
-            for tab in ("overview", "identity", "sessions", "skills", "memory",
-                        "policy", "tools", "telemetry", "files"):
+            for tab in (
+                "overview",
+                "identity",
+                "sessions",
+                "skills",
+                "memory",
+                "policy",
+                "tools",
+                "telemetry",
+                "files",
+            ):
                 page.click(f'.ad-tabs .pill-nav-item[data-tab="{tab}"]')
                 page.wait_for_function(
-                    f'document.querySelector(".ad-body")?.dataset.tab === '
-                    f'{json.dumps(tab)}',
+                    f'document.querySelector(".ad-body")?.dataset.tab === {json.dumps(tab)}',
                     timeout=5_000,
                 )
                 page.wait_for_timeout(700)
@@ -322,9 +351,7 @@ class TestRehearsalLiveUpdates:
         self, browser: object, server_team: tuple[str, Path]
     ) -> None:
         url, team_root = server_team
-        page, page_errors, _ = _new_page(
-            browser, f"{url}/?page=agent-detail&agent=alpha"
-        )
+        page, page_errors, _ = _new_page(browser, f"{url}/?page=agent-detail&agent=alpha")
         try:
             page.wait_for_selector(".ad-tabs", timeout=10_000)
             page.click('.ad-tabs .pill-nav-item[data-tab="policy"]')
@@ -348,10 +375,9 @@ class TestRehearsalLiveUpdates:
             original = policy.read_text(encoding="utf-8")
             try:
                 policy.write_text(
-                    original
-                    + f"\n- [{marker}] Browser-rehearsal canary "
-                      f"{{score:8, uses:1, reviewed:2026-04-29, "
-                      f"created:2026-04-29, source:test}}\n",
+                    original + f"\n- [{marker}] Browser-rehearsal canary "
+                    f"{{score:8, uses:1, reviewed:2026-04-29, "
+                    f"created:2026-04-29, source:test}}\n",
                     encoding="utf-8",
                 )
                 page.wait_for_function(

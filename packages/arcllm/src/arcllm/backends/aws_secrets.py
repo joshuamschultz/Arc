@@ -206,9 +206,7 @@ class AwsSecretsManagerBackend:
                 f"AccessDenied fetching AWS secret (code={code}). "
                 f"Attach secretsmanager:GetSecretValue to the instance role."
             )
-        logger.warning(
-            "AWS Secrets Manager call failed (path=%s): %s", path, exc, exc_info=True
-        )
+        logger.warning("AWS Secrets Manager call failed (path=%s): %s", path, exc, exc_info=True)
         self._available = False
 
     @staticmethod

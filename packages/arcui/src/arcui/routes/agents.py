@@ -100,9 +100,9 @@ async def get_agent(request: Request) -> JSONResponse:
         return JSONResponse(meta)
 
     return JSONResponse(
-            ErrorResponse(error="Agent not found").model_dump(mode="json"),
-            status_code=404,
-        )
+        ErrorResponse(error="Agent not found").model_dump(mode="json"),
+        status_code=404,
+    )
 
 
 async def control_agent(request: Request) -> JSONResponse:
@@ -145,9 +145,9 @@ async def control_agent(request: Request) -> JSONResponse:
 
     if not action or not request_id:
         return JSONResponse(
-            ErrorResponse(
-                error="Missing required fields: action, request_id"
-            ).model_dump(mode="json"),
+            ErrorResponse(error="Missing required fields: action, request_id").model_dump(
+                mode="json"
+            ),
             status_code=400,
         )
 

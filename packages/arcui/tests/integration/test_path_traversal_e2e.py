@@ -102,9 +102,7 @@ def client(tmp_path: Path) -> tuple[TestClient, AuthConfig]:
 
 class TestPathTraversalRejected:
     @pytest.mark.parametrize("payload", _TRAVERSAL_PAYLOADS)
-    def test_files_read_rejects(
-        self, payload: str, client: tuple[TestClient, AuthConfig]
-    ) -> None:
+    def test_files_read_rejects(self, payload: str, client: tuple[TestClient, AuthConfig]) -> None:
         c, auth = client
         resp = c.get(
             f"/api/agents/alpha/files/read?root=workspace&path={payload}",
@@ -121,9 +119,7 @@ class TestPathTraversalRejected:
             assert "system32" not in body.lower()
 
     @pytest.mark.parametrize("payload", _TRAVERSAL_PAYLOADS)
-    def test_files_tree_rejects(
-        self, payload: str, client: tuple[TestClient, AuthConfig]
-    ) -> None:
+    def test_files_tree_rejects(self, payload: str, client: tuple[TestClient, AuthConfig]) -> None:
         c, auth = client
         resp = c.get(
             f"/api/agents/alpha/files/tree?root=workspace&path={payload}",
@@ -143,9 +139,7 @@ class TestPathTraversalRejected:
 
 
 class TestSymlinkEscape:
-    def test_symlink_pointing_outside_workspace_is_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    def test_symlink_pointing_outside_workspace_is_rejected(self, tmp_path: Path) -> None:
         team_root = _build_team_dir(tmp_path)
         # Plant a symlink inside workspace pointing at a sensitive file.
         outside = tmp_path / "outside.txt"
@@ -166,8 +160,6 @@ class TestSymlinkEscape:
         # follows the link, the content must NEVER include the canary.
         if resp.status_code == 200:
             body = resp.json()
-            assert "EXFIL_CANARY" not in str(body), (
-                "symlink escape returned outside content"
-            )
+            assert "EXFIL_CANARY" not in str(body), "symlink escape returned outside content"
         else:
             assert resp.status_code in (400, 404)

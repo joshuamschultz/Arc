@@ -58,9 +58,7 @@ async def list_traces(request: Request) -> JSONResponse:
 
     store = request.app.state.trace_store
     if store is None:
-        return JSONResponse(
-            TracesResponse(traces=[], cursor=None).model_dump(mode="json")
-        )
+        return JSONResponse(TracesResponse(traces=[], cursor=None).model_dump(mode="json"))
 
     records, cursor = await store.query(
         limit=limit,

@@ -205,9 +205,7 @@ def _list(args: argparse.Namespace) -> None:
     for s in skills:
         name = s["name"] if isinstance(s, dict) else getattr(s, "name", "?")
         version = s["version"] if isinstance(s, dict) else getattr(s, "version", "")
-        desc = (
-            s["description"] if isinstance(s, dict) else getattr(s, "description", "")
-        )
+        desc = s["description"] if isinstance(s, dict) else getattr(s, "description", "")
         source = s["source"] if isinstance(s, dict) else getattr(s, "scan_root", "")
         fpath = s["file_path"] if isinstance(s, dict) else str(getattr(s, "location", ""))
         if len(desc) > 50:

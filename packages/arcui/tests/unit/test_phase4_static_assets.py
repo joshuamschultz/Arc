@@ -22,9 +22,7 @@ from pathlib import Path
 
 import pytest
 
-_ASSETS = (
-    Path(__file__).resolve().parents[2] / "src" / "arcui" / "static" / "assets"
-)
+_ASSETS = Path(__file__).resolve().parents[2] / "src" / "arcui" / "static" / "assets"
 
 
 def _read(name: str) -> str:
@@ -160,9 +158,9 @@ class TestArcShellPages:
     def test_page_in_pages_list(self, page_id: str) -> None:
         text = _read("arc-shell.js")
         # Match `id: 'agents'` or `id: "agents"`
-        assert (
-            f"id: '{page_id}'" in text or f'id: "{page_id}"' in text
-        ), f"PAGES list must contain id={page_id!r}"
+        assert f"id: '{page_id}'" in text or f'id: "{page_id}"' in text, (
+            f"PAGES list must contain id={page_id!r}"
+        )
 
     def test_agent_detail_is_hidden(self) -> None:
         text = _read("arc-shell.js")
@@ -192,9 +190,7 @@ class TestArcShellRouter:
 # -------------------- Index wiring --------------------
 
 
-_INDEX_HTML = (
-    Path(__file__).resolve().parents[2] / "src" / "arcui" / "static" / "index.html"
-)
+_INDEX_HTML = Path(__file__).resolve().parents[2] / "src" / "arcui" / "static" / "index.html"
 
 
 class TestIndexHtmlScriptOrder:

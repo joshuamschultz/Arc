@@ -128,16 +128,12 @@ def _make_agent_factory(team_root: Path) -> Any:
         from arcagent.core.agent import ArcAgent
         from arcagent.core.config import load_config
 
-        agent_dir = _resolve_agent_dir(
-            team_root, agent_did, did_index=cached_index["map"]
-        )
+        agent_dir = _resolve_agent_dir(team_root, agent_did, did_index=cached_index["map"])
         if agent_dir is None:
             # Cache miss may mean the agent was added since startup;
             # rebuild the index once and retry.
             cached_index["map"] = _load_did_index(team_root)
-            agent_dir = _resolve_agent_dir(
-                team_root, agent_did, did_index=cached_index["map"]
-            )
+            agent_dir = _resolve_agent_dir(team_root, agent_did, did_index=cached_index["map"])
         if agent_dir is None:
             msg = f"no agent under {team_root} matches {agent_did}"
             raise FileNotFoundError(msg)
@@ -249,9 +245,7 @@ def _build_mattermost_adapter(
     if not cfg.platforms.mattermost.enabled:
         return None
     if not cfg.platforms.mattermost.server_url:
-        _logger.warning(
-            "bootstrap: Mattermost enabled but server_url is empty; skipping"
-        )
+        _logger.warning("bootstrap: Mattermost enabled but server_url is empty; skipping")
         return None
     bot_token = cfg.platforms.mattermost.resolve_bot_token()
     if bot_token is None:
@@ -318,8 +312,7 @@ async def build_for_embedded(
         session_router.set_adapter(primary)
 
     _logger.info(
-        "bootstrap: embedded gateway built "
-        "(tier=%s web=%s slack=%s telegram=%s mattermost=%s)",
+        "bootstrap: embedded gateway built (tier=%s web=%s slack=%s telegram=%s mattermost=%s)",
         gateway_config.gateway.tier,
         bool(web_adapter),
         bool(slack_adapter),

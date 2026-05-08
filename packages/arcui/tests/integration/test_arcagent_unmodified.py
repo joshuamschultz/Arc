@@ -83,11 +83,10 @@ def _filter_allowed(diff_lines: list[str]) -> list[str]:
         path = line.split("|", 1)[0].strip()
         # diff --stat prints abbreviated paths like ".../arcagent/modules/...".
         # Suffix-match for robustness.
-        allowed_suffixes = tuple(
-            p.split("/", 1)[-1] for p in _ALLOWED_ARCAGENT_PATHS
-        )
-        if any(path.endswith(s) or s.endswith(path.lstrip(".").lstrip("/"))
-               for s in allowed_suffixes):
+        allowed_suffixes = tuple(p.split("/", 1)[-1] for p in _ALLOWED_ARCAGENT_PATHS)
+        if any(
+            path.endswith(s) or s.endswith(path.lstrip(".").lstrip("/")) for s in allowed_suffixes
+        ):
             continue
         out.append(line)
     return out
@@ -143,6 +142,5 @@ class TestArcagentUnmodified:
             unexpected.append(line)
 
         assert not unexpected, (
-            "arcagent has uncommitted changes outside the allow list:\n"
-            + "\n".join(unexpected)
+            "arcagent has uncommitted changes outside the allow list:\n" + "\n".join(unexpected)
         )

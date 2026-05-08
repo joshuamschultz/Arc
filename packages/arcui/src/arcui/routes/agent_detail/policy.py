@@ -33,9 +33,7 @@ async def get_policy(request: Request) -> JSONResponse:
     if err is not None:
         return err
     bullets = [_bullet_to_dict(b) for b in policy_parser.parse_bullets(raw)]
-    return JSONResponse(
-        PolicyResponse(raw=raw, bullets=bullets).model_dump(mode="json")
-    )
+    return JSONResponse(PolicyResponse(raw=raw, bullets=bullets).model_dump(mode="json"))
 
 
 async def get_policy_bullets(request: Request) -> JSONResponse:
@@ -52,9 +50,7 @@ async def get_policy_bullets(request: Request) -> JSONResponse:
     if err is not None:
         return err
     bullets = [_bullet_to_dict(b) for b in policy_parser.parse_bullets(raw)]
-    return JSONResponse(
-        PolicyBulletsResponse(bullets=bullets).model_dump(mode="json")
-    )
+    return JSONResponse(PolicyBulletsResponse(bullets=bullets).model_dump(mode="json"))
 
 
 async def get_policy_stats(request: Request) -> JSONResponse:

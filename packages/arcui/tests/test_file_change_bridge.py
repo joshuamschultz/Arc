@@ -185,5 +185,3 @@ class TestQueueFullIsResilient:
 
         # q_full had its old item dropped, q_ok received normally.
         assert q_ok.qsize() == 1
-
-

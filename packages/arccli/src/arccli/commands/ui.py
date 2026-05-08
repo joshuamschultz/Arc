@@ -92,11 +92,7 @@ def _maybe_build_gateway_config(args: argparse.Namespace, team_root: Path | None
         return None
 
     return GatewayConfig.from_toml_str(
-        '[gateway]\n'
-        'agent_did = "did:arc:agent:default"\n'
-        '\n'
-        '[platforms.web]\n'
-        'enabled = true\n'
+        '[gateway]\nagent_did = "did:arc:agent:default"\n\n[platforms.web]\nenabled = true\n'
     )
 
 

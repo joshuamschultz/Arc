@@ -250,9 +250,7 @@ def test_reconnect_preserves_session_key(app_with_chat: Any) -> None:
         since_seq: int | None = None,
     ) -> None:
         captured_chat_ids.append(chat_id)
-        return original_register(
-            ws, agent_did, user_did, chat_id, since_seq=since_seq
-        )
+        return original_register(ws, agent_did, user_did, chat_id, since_seq=since_seq)
 
     with patch.object(web_adapter, "register_socket", _capture):
         with TestClient(app_with_chat) as client:

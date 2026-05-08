@@ -79,9 +79,7 @@ async def test_mattermost_adapter_federal_error_does_not_echo_token() -> None:
                 tier="federal",
             )
         msg = str(exc_info.value)
-        assert _PAT not in msg, (
-            f"Federal validation error echoed the PAT: {msg!r}"
-        )
+        assert _PAT not in msg, f"Federal validation error echoed the PAT: {msg!r}"
 
 
 async def test_mattermost_adapter_logging_does_not_emit_token(
@@ -146,10 +144,7 @@ async def test_post_failure_does_not_echo_response_body(
 
     # Confirm at least one warning was emitted for the failure, and that
     # NONE of the records contain the bearer token bytes.
-    failure_records = [
-        r for r in caplog.records
-        if "POST /api/v4/posts failed" in r.getMessage()
-    ]
+    failure_records = [r for r in caplog.records if "POST /api/v4/posts failed" in r.getMessage()]
     assert len(failure_records) >= 1, "warning log should fire on POST failure"
     for record in caplog.records:
         assert bot_token not in record.getMessage(), (

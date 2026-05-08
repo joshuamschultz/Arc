@@ -111,16 +111,12 @@ def test_arc_ui_start_smoke() -> None:
         # 2. /api/health responds 200 with status ok (no agent attached).
         import urllib.request
 
-        with urllib.request.urlopen(
-            f"http://{_HOST}:{_PORT}/api/health", timeout=3
-        ) as resp:
+        with urllib.request.urlopen(f"http://{_HOST}:{_PORT}/api/health", timeout=3) as resp:
             body = json.loads(resp.read())
         assert body == {"status": "ok"}
 
         # 3. /ws first-message auth round-trips with the supplied token.
-        with websockets.sync.client.connect(
-            f"ws://{_HOST}:{_PORT}/ws", open_timeout=5
-        ) as ws:
+        with websockets.sync.client.connect(f"ws://{_HOST}:{_PORT}/ws", open_timeout=5) as ws:
             ws.send(json.dumps({"token": "test-viewer-tok"}))
             resp = json.loads(ws.recv(timeout=5))
             assert resp.get("type") == "auth_ok", f"expected auth_ok, got {resp}"

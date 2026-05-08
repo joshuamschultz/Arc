@@ -177,9 +177,7 @@ class TestPollingFallback:
             await mgr.shutdown()
 
     @pytest.mark.asyncio
-    async def test_policy_payload_empty_when_policy_md_missing(
-        self, agent_root: Path
-    ) -> None:
+    async def test_policy_payload_empty_when_policy_md_missing(self, agent_root: Path) -> None:
         # Remove policy.md so the bullets payload path takes the fallback.
         (agent_root / "workspace" / "policy.md").unlink()
         # Recreate it so the watcher has something to detect a change.
@@ -276,9 +274,7 @@ class TestShutdown:
 
 class TestPolicyPayloadRendering:
     @pytest.mark.asyncio
-    async def test_policy_event_includes_parsed_bullets_payload(
-        self, agent_root: Path
-    ) -> None:
+    async def test_policy_event_includes_parsed_bullets_payload(self, agent_root: Path) -> None:
         bus = FileEventBus()
         received: list[FileChangeEvent] = []
 

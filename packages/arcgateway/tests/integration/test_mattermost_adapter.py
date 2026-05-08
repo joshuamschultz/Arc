@@ -126,9 +126,7 @@ class FakeMattermostServer:
 
     # -- handlers --
 
-    async def _ws_handler(
-        self, request: aiohttp.web.Request
-    ) -> aiohttp.web.WebSocketResponse:
+    async def _ws_handler(self, request: aiohttp.web.Request) -> aiohttp.web.WebSocketResponse:
         ws = aiohttp.web.WebSocketResponse()
         await ws.prepare(request)
         self._ws_clients.append(ws)
@@ -140,9 +138,7 @@ class FakeMattermostServer:
                 self._ws_clients.remove(ws)
         return ws
 
-    async def _posts_handler(
-        self, request: aiohttp.web.Request
-    ) -> aiohttp.web.Response:
+    async def _posts_handler(self, request: aiohttp.web.Request) -> aiohttp.web.Response:
         body = await request.json()
         self.recorded_posts.append(body)
         fake_post = {"id": f"srv-post-{len(self.recorded_posts)}", **body}
@@ -269,9 +265,7 @@ async def test_audit_chain_carries_platform_mattermost(
 
     await adapter.disconnect()
 
-    delivered_events = [
-        (a, d) for a, d in audit_events if a == "gateway.message.delivered"
-    ]
+    delivered_events = [(a, d) for a, d in audit_events if a == "gateway.message.delivered"]
     assert len(delivered_events) >= 1
     _, data = delivered_events[0]
     assert data.get("platform") == "mattermost"
@@ -396,9 +390,7 @@ async def test_disconnect_stops_ws_task(
         _make_posted_envelope(channel_id="ch-stop", post_id="after-stop")
     )
     await asyncio.sleep(0.1)
-    assert len(received) == count_before, (
-        "Events must not be dispatched after disconnect()"
-    )
+    assert len(received) == count_before, "Events must not be dispatched after disconnect()"
 
 
 async def test_long_message_split_across_multiple_posts(

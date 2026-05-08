@@ -55,7 +55,7 @@ def _scan_skills_dir(
             continue
         # entry.path is relative to scope_root; subtract the rel_dir prefix
         # so we can reason about depth from the skills/ root.
-        sub = entry.path[len(rel_prefix):] if entry.path.startswith(rel_prefix) else entry.path
+        sub = entry.path[len(rel_prefix) :] if entry.path.startswith(rel_prefix) else entry.path
         depth = sub.count("/")
         is_skill_md = sub.endswith("/SKILL.md") and depth == 1
         is_flat_md = depth == 0
@@ -130,13 +130,9 @@ async def get_skills(request: Request) -> JSONResponse:
 
         spec = _ilu.find_spec("arcagent")
         if spec is not None and spec.origin is not None:
-            builtin_skills = (
-                Path(spec.origin).parent / "builtins" / "capabilities" / "skills"
-            )
+            builtin_skills = Path(spec.origin).parent / "builtins" / "capabilities" / "skills"
             if builtin_skills.is_dir():
-                _merge(_scan_skills_dir(
-                    agent_id, builtin_skills.parent, "skills", "builtin"
-                ))
+                _merge(_scan_skills_dir(agent_id, builtin_skills.parent, "skills", "builtin"))
     except Exception:  # reason: fail-open — log + continue
         logger.debug("builtin skills scan failed", exc_info=True)
 

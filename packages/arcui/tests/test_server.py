@@ -95,8 +95,7 @@ def test_app_state_roster_provider_overlays_online_status(tmp_path):
     a2 = tmp_path / "beta_agent"
     a2.mkdir()
     (a2 / "arcagent.toml").write_text(
-        '[agent]\nname = "beta"\n'
-        '[identity]\ndid = "did:arc:beta"\n',
+        '[agent]\nname = "beta"\n[identity]\ndid = "did:arc:beta"\n',
         encoding="utf-8",
     )
 

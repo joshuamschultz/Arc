@@ -68,19 +68,19 @@ def _build_team_dir(tmp_path: Path) -> Path:
     agent.mkdir()
 
     (agent / "arcagent.toml").write_text(
-        '[agent]\n'
+        "[agent]\n"
         'name = "alpha"\n'
         'org = "research"\n'
         'type = "scout"\n'
-        '[identity]\n'
+        "[identity]\n"
         'did = "did:arc:alpha"\n'
-        '[llm]\n'
+        "[llm]\n"
         'model = "openai/gpt-4o"\n'
-        'max_tokens = 4096\n'
-        'temperature = 0.7\n'
-        '[secrets]\n'
+        "max_tokens = 4096\n"
+        "temperature = 0.7\n"
+        "[secrets]\n"
         'api_key = "SHOULD_NEVER_LEAK"\n'
-        '[tools.policy]\n'
+        "[tools.policy]\n"
         'allow = ["fs.read", "search"]\n',
         encoding="utf-8",
     )
@@ -347,9 +347,7 @@ class TestFilesTreeRoute:
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/files/tree?root=workspace", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/files/tree?root=workspace", headers=_viewer(auth))
         assert resp.status_code == 200
         paths = {e["path"] for e in resp.json()["entries"]}
         assert "policy.md" in paths
@@ -360,9 +358,7 @@ class TestFilesTreeRoute:
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/files/tree?root=agent", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/files/tree?root=agent", headers=_viewer(auth))
         assert resp.status_code == 200
         paths = {e["path"] for e in resp.json()["entries"]}
         assert "arcagent.toml" in paths
@@ -372,9 +368,7 @@ class TestFilesTreeRoute:
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/files/tree?root=etc", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/files/tree?root=etc", headers=_viewer(auth))
         assert resp.status_code == 400
 
 
@@ -416,9 +410,7 @@ class TestFilesReadRoute:
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/files/read?root=workspace", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/files/read?root=workspace", headers=_viewer(auth))
         assert resp.status_code == 400
 
 
@@ -506,9 +498,7 @@ class TestSessionsRoute:
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
         # Reject any sid containing slashes / traversal characters.
-        resp = client.get(
-            "/api/agents/alpha/sessions/..%2Fetc%2Fpasswd", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/sessions/..%2Fetc%2Fpasswd", headers=_viewer(auth))
         assert resp.status_code in (400, 404)
 
 
@@ -665,9 +655,7 @@ class TestEdgeCases:
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
         # Invalid root values are 400, not 500/exposed paths.
-        resp = client.get(
-            "/api/agents/alpha/files/tree?root=../../etc", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/files/tree?root=../../etc", headers=_viewer(auth))
         assert resp.status_code == 400
 
     def test_files_read_invalid_root_400(self, tmp_path):
@@ -694,9 +682,7 @@ class TestEdgeCases:
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/sessions/nonexistent", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/sessions/nonexistent", headers=_viewer(auth))
         assert resp.status_code == 404
 
     def test_stats_invalid_window_400(self, tmp_path):
@@ -707,18 +693,14 @@ class TestEdgeCases:
 
         app.state.aggregator = RollingAggregator()
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/stats?window=evil", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/stats?window=evil", headers=_viewer(auth))
         assert resp.status_code == 400
 
     def test_audit_invalid_limit_400(self, tmp_path):
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/audit?limit=abc", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/audit?limit=abc", headers=_viewer(auth))
         assert resp.status_code == 400
 
     def test_tasks_malformed_json_returns_empty(self, tmp_path):
@@ -776,9 +758,7 @@ class TestEdgeCases:
 
         app.state.trace_store = _StubStore()
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/traces?limit=abc", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/traces?limit=abc", headers=_viewer(auth))
         assert resp.status_code == 400
 
     def test_config_invalid_toml_returns_500(self, tmp_path):
@@ -809,9 +789,7 @@ class TestEdgeCases:
         app.state.roster_provider = lambda: [stub_entry]
 
         # Corrupt arcagent.toml AFTER the roster snapshot has been bound.
-        (team / "alpha_agent" / "arcagent.toml").write_text(
-            "this is not [toml", encoding="utf-8"
-        )
+        (team / "alpha_agent" / "arcagent.toml").write_text("this is not [toml", encoding="utf-8")
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/config", headers=_viewer(auth))
         assert resp.status_code == 500
@@ -839,8 +817,9 @@ class TestEdgeCases:
         # Workspace skills: 0 (no workspace/skills dir).
         # Builtin skills: 4 known names from arcagent.builtins.capabilities.skills
         sources = {s.get("source") for s in skills}
-        assert sources == {"builtin"} or sources == set(), \
+        assert sources == {"builtin"} or sources == set(), (
             f"expected only builtin skills, got sources={sources}"
+        )
         # If arcagent is installed and has the canonical builtins, all 4 show up.
         if skills:
             names = {s["name"] for s in skills}
@@ -868,9 +847,7 @@ class TestEdgeCases:
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
         # space character is rejected by _VALID_SID
-        resp = client.get(
-            "/api/agents/alpha/sessions/bad%20id", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/sessions/bad%20id", headers=_viewer(auth))
         assert resp.status_code == 400
 
     def test_stats_with_aggregator_returns_200(self, tmp_path):
@@ -880,9 +857,7 @@ class TestEdgeCases:
 
         app.state.aggregator = RollingAggregator()
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/alpha/stats?window=1h", headers=_viewer(auth)
-        )
+        resp = client.get("/api/agents/alpha/stats?window=1h", headers=_viewer(auth))
         assert resp.status_code == 200
         assert resp.json()["window"] == "1h"
 
@@ -942,7 +917,5 @@ class TestNoRosterProvider:
         app.state.audit = UIAuditLogger(enabled=False)
         # NO roster_provider, NO team_root.
         client = TestClient(app)
-        resp = client.get(
-            "/api/agents/x/config", headers={"Authorization": "Bearer v"}
-        )
+        resp = client.get("/api/agents/x/config", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 404

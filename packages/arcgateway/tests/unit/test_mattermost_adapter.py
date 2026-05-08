@@ -164,27 +164,19 @@ class TestTokenNoLeak:
 class TestFederalAirgapGuard:
     def test_loopback_accepted_at_federal_tier(self) -> None:
         """localhost / 127.x.x.x are always valid for federal tier."""
-        adapter, _, _ = _make_adapter(
-            server_url="http://localhost:8065", tier="federal"
-        )
+        adapter, _, _ = _make_adapter(server_url="http://localhost:8065", tier="federal")
         assert adapter is not None
 
     def test_rfc1918_10_accepted_at_federal_tier(self) -> None:
-        adapter, _, _ = _make_adapter(
-            server_url="http://10.0.0.5:8065", tier="federal"
-        )
+        adapter, _, _ = _make_adapter(server_url="http://10.0.0.5:8065", tier="federal")
         assert adapter is not None
 
     def test_rfc1918_172_accepted_at_federal_tier(self) -> None:
-        adapter, _, _ = _make_adapter(
-            server_url="http://172.16.42.1:8065", tier="federal"
-        )
+        adapter, _, _ = _make_adapter(server_url="http://172.16.42.1:8065", tier="federal")
         assert adapter is not None
 
     def test_rfc1918_192_168_accepted_at_federal_tier(self) -> None:
-        adapter, _, _ = _make_adapter(
-            server_url="http://192.168.0.100:8065", tier="federal"
-        )
+        adapter, _, _ = _make_adapter(server_url="http://192.168.0.100:8065", tier="federal")
         assert adapter is not None
 
     def test_intranet_domain_accepted_at_federal_tier(self) -> None:
@@ -315,7 +307,10 @@ class TestFederalAirgapGuard:
         happens to end with an intranet suffix must not slip past the
         guard. Documented as exact match.
         """
-        def _resolve(host: str, *_args: Any, **_kw: Any) -> list[tuple[Any, Any, Any, Any, tuple[str, int]]]:
+
+        def _resolve(
+            host: str, *_args: Any, **_kw: Any
+        ) -> list[tuple[Any, Any, Any, Any, tuple[str, int]]]:
             # Allow-list entry resolves intranet (private 10/8), so the
             # entry-validation step passes. The attacker's hostname
             # resolves to a public IP, so the server_url step rejects.
@@ -362,18 +357,14 @@ class TestSessionKey:
     async def test_session_key_follows_mattermost_pattern(self) -> None:
         """Session key must be mattermost:{channel_id}:{user_id} per ADR-002."""
         adapter, received, _ = _make_adapter(allowed_channel_ids=["ch-abc"])
-        envelope = _make_posted_envelope(
-            channel_id="ch-abc", user_id="u-alice", post_id="p-1"
-        )
+        envelope = _make_posted_envelope(channel_id="ch-abc", user_id="u-alice", post_id="p-1")
         await adapter._handle_ws_message(envelope)
         assert len(received) == 1
         assert received[0].session_key == "mattermost:ch-abc:u-alice"
 
     async def test_user_did_includes_platform_prefix(self) -> None:
         adapter, received, _ = _make_adapter(allowed_channel_ids=["ch-abc"])
-        envelope = _make_posted_envelope(
-            channel_id="ch-abc", user_id="u-bob", post_id="p-2"
-        )
+        envelope = _make_posted_envelope(channel_id="ch-abc", user_id="u-bob", post_id="p-2")
         await adapter._handle_ws_message(envelope)
         assert received[0].user_did == "mattermost:u-bob"
 
@@ -393,17 +384,13 @@ class TestSessionKey:
 class TestInboundDispatching:
     async def test_posted_event_dispatched(self) -> None:
         adapter, received, _ = _make_adapter(allowed_channel_ids=["ch-1"])
-        await adapter._handle_ws_message(
-            _make_posted_envelope(channel_id="ch-1", post_id="p-10")
-        )
+        await adapter._handle_ws_message(_make_posted_envelope(channel_id="ch-1", post_id="p-10"))
         assert len(received) == 1
         assert received[0].message == "hello agent"
 
     async def test_non_posted_event_ignored(self) -> None:
         adapter, received, _ = _make_adapter()
-        await adapter._handle_ws_message(
-            json.dumps({"event": "reaction_added", "data": {}})
-        )
+        await adapter._handle_ws_message(json.dumps({"event": "reaction_added", "data": {}}))
         assert len(received) == 0
 
     async def test_own_post_skipped(self) -> None:
@@ -553,9 +540,7 @@ class TestConstructionAudit:
         async def _noop(e: InboundEvent) -> None:
             pass
 
-        with patch(
-            "arcgateway.adapters.mattermost.MattermostAdapter._audit"
-        ) as mock_audit:
+        with patch("arcgateway.adapters.mattermost.MattermostAdapter._audit") as mock_audit:
             MattermostAdapter(
                 server_url="http://localhost:8065",
                 bot_token=_PAT_CANARY,

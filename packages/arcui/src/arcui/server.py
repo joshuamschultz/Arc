@@ -204,10 +204,9 @@ def create_app(
     sw_path = _STATIC_DIR / "sw.js"
     if index_path.exists():
         import uuid as _uuid
+
         _build_id = _uuid.uuid4().hex[:12]
-        cached_index_html = index_path.read_text().replace(
-            "{{ARC_BUILD_ID}}", _build_id
-        )
+        cached_index_html = index_path.read_text().replace("{{ARC_BUILD_ID}}", _build_id)
         # SPEC-025 §TD-3 — sw.js gets the same template substitution so the
         # cache key bumps every process restart. Without this, browsers
         # serve the cached shell forever after asset changes.

@@ -64,9 +64,7 @@ async def export_traces(request: Request) -> Response:
             headers={"Content-Disposition": "attachment; filename=traces.csv"},
         )
 
-    return JSONResponse(
-        ExportTracesResponse(traces=rows, count=len(rows)).model_dump(mode="json")
-    )
+    return JSONResponse(ExportTracesResponse(traces=rows, count=len(rows)).model_dump(mode="json"))
 
 
 routes = [

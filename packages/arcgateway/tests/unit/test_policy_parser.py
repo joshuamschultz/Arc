@@ -40,7 +40,9 @@ class TestWellFormed:
         assert bullets[1].id == "P02"
 
     def test_returns_PolicyBullet_instances(self) -> None:
-        text = "- [P01] Text {score:5, uses:0, reviewed:2026-04-01, created:2026-04-01, source:s-X}"
+        text = (
+            "- [P01] Text {score:5, uses:0, reviewed:2026-04-01, created:2026-04-01, source:s-X}"
+        )
         bullets = parse_bullets(text)
         assert isinstance(bullets[0], PolicyBullet)
 

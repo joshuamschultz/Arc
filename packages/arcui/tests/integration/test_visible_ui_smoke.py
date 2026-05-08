@@ -18,6 +18,7 @@ The tests fail loudly if any of these regress:
 The user's exact complaint maps to the first three: "no menu options for
 agents, or details" + "blank, no data" + "this is not connected".
 """
+
 from __future__ import annotations
 
 import json
@@ -99,11 +100,24 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[str, Path
     log = log_dir / "ui.log"
     port = _free_port()
     proc = subprocess.Popen(
-        [arc, "ui", "start", "--no-browser",
-         "--viewer-token", VIEWER, "--operator-token", OPERATOR,
-         "--agent-token", AGENT, "--port", str(port),
-         "--team-root", str(team)],
-        stdout=open(log, "w"), stderr=subprocess.STDOUT,
+        [
+            arc,
+            "ui",
+            "start",
+            "--no-browser",
+            "--viewer-token",
+            VIEWER,
+            "--operator-token",
+            OPERATOR,
+            "--agent-token",
+            AGENT,
+            "--port",
+            str(port),
+            "--team-root",
+            str(team),
+        ],
+        stdout=open(log, "w"),
+        stderr=subprocess.STDOUT,
         env={**os.environ},
     )
     try:
@@ -154,7 +168,9 @@ def _fresh_page(browser: object, url: str) -> tuple[object, list[str]]:
         f"window.localStorage.setItem('arcui_viewer_token', {json.dumps(VIEWER)});"
     )
     page = ctx.new_page()
-    page.route("**/*", lambda r: r.continue_(headers={**r.request.headers, "Cache-Control": "no-cache"}))
+    page.route(
+        "**/*", lambda r: r.continue_(headers={**r.request.headers, "Cache-Control": "no-cache"})
+    )
     errs: list[str] = []
     page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto(url, wait_until="networkidle")
@@ -183,12 +199,10 @@ class TestCacheBustHygiene:
     def test_asset_urls_carry_version_param(self, server: tuple[str, Path]) -> None:
         url, _ = server
         html = urllib.request.urlopen(url + "/").read().decode("utf-8")
-        assert 'arc-shell.js?v=' in html, html[:600]
-        assert 'arc-platform.css?v=' in html
+        assert "arc-shell.js?v=" in html, html[:600]
+        assert "arc-platform.css?v=" in html
 
-    def test_static_assets_send_no_cache_header(
-        self, server: tuple[str, Path]
-    ) -> None:
+    def test_static_assets_send_no_cache_header(self, server: tuple[str, Path]) -> None:
         url, _ = server
         with urllib.request.urlopen(url + "/assets/arc-shell.js?v=test") as r:
             cc = r.headers.get("Cache-Control", "")
@@ -218,8 +232,15 @@ class TestSidebarVisible:
                 ".sidebar-item",
                 "els => els.map(e => e.getAttribute('data-page'))",
             )
-            for needed in ("agents", "telemetry", "security",
-                           "tools-skills", "tasks", "policy", "settings"):
+            for needed in (
+                "agents",
+                "telemetry",
+                "security",
+                "tools-skills",
+                "tasks",
+                "policy",
+                "settings",
+            ):
                 assert needed in ids, (
                     f"sidebar missing nav button {needed!r}. "
                     f"Got: {ids}. The user reported this exact bug — "
@@ -249,9 +270,7 @@ class TestDefaultLandingPageIsAgents:
                 f"default landing must show only the agents panel, got {visible}"
             )
             # Heading text — the most basic "do these words exist on the screen" check
-            heading = page.locator(
-                '[data-page-content="agents"] h1'
-            ).first.text_content()
+            heading = page.locator('[data-page-content="agents"] h1').first.text_content()
             assert heading == "Agent Fleet", repr(heading)
         finally:
             page.close()
@@ -271,8 +290,11 @@ class TestSidebarClickChangesVisiblePanel:
         ],
     )
     def test_clicking_sidebar_shows_expected_heading(
-        self, browser: object, server: tuple[str, Path],
-        page_id: str, expected_h1: str,
+        self,
+        browser: object,
+        server: tuple[str, Path],
+        page_id: str,
+        expected_h1: str,
     ) -> None:
         url, _ = server
         page, _ = _fresh_page(browser, url + "/")
@@ -280,14 +302,12 @@ class TestSidebarClickChangesVisiblePanel:
             page.wait_for_selector(f'.sidebar-item[data-page="{page_id}"]', timeout=8_000)
             page.click(f'.sidebar-item[data-page="{page_id}"]')
             page.wait_for_function(
-                f'document.querySelector(\'[data-page-content="{page_id}"]\')'
+                f"document.querySelector('[data-page-content=\"{page_id}\"]')"
                 "?.classList.contains('hidden') === false",
                 timeout=5_000,
             )
             page.wait_for_load_state("networkidle", timeout=4_000)
-            heading = page.locator(
-                f'[data-page-content="{page_id}"] h1'
-            ).first.text_content()
+            heading = page.locator(f'[data-page-content="{page_id}"] h1').first.text_content()
             assert heading == expected_h1, (
                 f"page={page_id}: expected H1 {expected_h1!r}, got {heading!r}"
             )
@@ -338,8 +358,17 @@ class TestAgentDetailDeepLinkRendersData:
                 ".ad-tabs .pill-nav-item",
                 "els => els.map(e => e.dataset.tab)",
             )
-            for needed in ("overview", "identity", "sessions", "skills",
-                           "memory", "policy", "tools", "telemetry", "files"):
+            for needed in (
+                "overview",
+                "identity",
+                "sessions",
+                "skills",
+                "memory",
+                "policy",
+                "tools",
+                "telemetry",
+                "files",
+            ):
                 assert needed in tabs, f"missing tab button {needed!r}; got {tabs}"
         finally:
             page.close()

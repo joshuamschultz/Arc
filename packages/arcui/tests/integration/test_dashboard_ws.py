@@ -219,7 +219,8 @@ class TestDashboardWSRoleGate:
         from arcui.routes.dashboard_ws import _filter_topics_by_role
 
         allowed, denied = _filter_topics_by_role(
-            ["queue", "budget", "stats", "cost_efficiency"], "viewer",
+            ["queue", "budget", "stats", "cost_efficiency"],
+            "viewer",
         )
         assert set(allowed) == {"queue", "stats"}
         assert set(denied) == {"budget", "cost_efficiency"}
@@ -295,7 +296,8 @@ class TestDashboardWSAuditCompleteness:
         from arcui.routes.dashboard_ws import _filter_topics_by_role
 
         allowed, denied = _filter_topics_by_role(
-            ["queue", "totally_unknown", "stats"], "viewer",
+            ["queue", "totally_unknown", "stats"],
+            "viewer",
         )
         # _filter_topics_by_role only enforces role-based denial; unknown
         # topics are filtered earlier in the route. This test pins that

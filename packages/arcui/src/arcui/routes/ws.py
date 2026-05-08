@@ -72,9 +72,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     subscription_manager = getattr(ws.app.state, "subscription_manager", None)
     audit = getattr(ws.app.state, "audit", None)
     watcher_manager = getattr(ws.app.state, "watcher_manager", None)
-    file_change_bridge: FileChangeBridge | None = getattr(
-        ws.app.state, "file_change_bridge", None
-    )
+    file_change_bridge: FileChangeBridge | None = getattr(ws.app.state, "file_change_bridge", None)
 
     # First-message auth — viewer and operator tokens accepted; agent tokens rejected.
     role, _msg = await authenticate_ws(ws, auth_config)

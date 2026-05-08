@@ -873,5 +873,3 @@ class PairingStore:
         if "missing" in event_type:
             return "deny"
         return "allow"
-
-

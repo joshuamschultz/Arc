@@ -57,6 +57,8 @@ def _agent_detail_bundle() -> str:
     for asset in sorted(_AGENT_DETAIL_ASSETS_DIR.glob("agent-detail*.js")):
         parts.append(asset.read_text())
     return "\n".join(parts)
+
+
 _PRISM_JS = _ROOT / "packages/arcui/src/arcui/static/assets/prism.min.js"
 _UI_PY = _ROOT / "packages/arccli/src/arccli/commands/ui.py"
 
@@ -90,6 +92,7 @@ def _build_app(team_root: Path | None) -> tuple[Starlette, AuthConfig, AgentRegi
     app.state.trace_store = None
 
     if team_root is not None:
+
         def _roster_provider() -> list[team_roster.RosterEntry]:
             online = {a.agent_id for a in registry.list_agents()}
             return team_roster.list_team(team_root=team_root, online_ids=online)
@@ -188,7 +191,7 @@ class TestR2UiStartTeamRoot:
         text = _UI_PY.read_text()
         # Default fallback discovers ./team if it exists; documented and
         # implemented as Path.cwd() / "team".
-        assert "Path.cwd() / \"team\"" in text or 'Path.cwd() / "team"' in text
+        assert 'Path.cwd() / "team"' in text or 'Path.cwd() / "team"' in text
 
 
 # ============================================================
@@ -206,8 +209,7 @@ class TestR3FmtNumberBinding:
 
     def test_fmt_number_bound(self) -> None:
         text = _agent_detail_bundle()
-        assert "Fmt.number.bind(window.Fmt)" in text or \
-               "Fmt.number).bind(" in text
+        assert "Fmt.number.bind(window.Fmt)" in text or "Fmt.number).bind(" in text
 
 
 class TestR4StatsResponseUnwrapped:
@@ -278,13 +280,22 @@ class TestR7FsReaderReadOnly:
         from arcgateway import fs_reader
 
         api = {n for n in dir(fs_reader) if not n.startswith("_")}
-        forbidden = {"write_file", "write_text", "write_bytes",
-                     "mkdir", "remove", "unlink", "rmtree", "save"}
+        forbidden = {
+            "write_file",
+            "write_text",
+            "write_bytes",
+            "mkdir",
+            "remove",
+            "unlink",
+            "rmtree",
+            "save",
+        }
         leaks = api & forbidden
         assert not leaks, f"fs_reader exposes write methods: {leaks}"
 
     def test_read_file_signature_takes_caller_did(self) -> None:
         from arcgateway.fs_reader import read_file
+
         sig = inspect.signature(read_file)
         # Audit trail correctness — `caller_did` is mandatory.
         assert "caller_did" in sig.parameters

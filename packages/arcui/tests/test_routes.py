@@ -758,5 +758,3 @@ class TestArcllmConfigUnit:
         assert "Unknown config section" in _validate_updates({"bad": {}})
         assert "Unknown key" in _validate_updates({"defaults": {"bad_key": 1}})
         assert "Unknown module" in _validate_updates({"modules": {"bad_mod": {}}})
-
-

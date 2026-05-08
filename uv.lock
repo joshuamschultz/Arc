@@ -474,6 +474,7 @@ version = "0.5.0"
 source = { editable = "packages/arcrun" }
 dependencies = [
     { name = "arcllm" },
+    { name = "arctrust" },
     { name = "jsonschema" },
 ]
 
@@ -485,6 +486,7 @@ container = [
 [package.metadata]
 requires-dist = [
     { name = "arcllm", editable = "packages/arcllm" },
+    { name = "arctrust", editable = "packages/arctrust" },
     { name = "docker", marker = "extra == 'container'", specifier = ">=7.0,<9" },
     { name = "jsonschema", specifier = ">=4.0" },
 ]

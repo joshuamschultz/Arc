@@ -122,9 +122,7 @@ def _viewer(auth: AuthConfig) -> dict[str, str]:
 
 
 class TestNoTeamWrites:
-    def test_exercising_all_read_endpoints_does_not_modify_team(
-        self, tmp_path: Path
-    ) -> None:
+    def test_exercising_all_read_endpoints_does_not_modify_team(self, tmp_path: Path) -> None:
         team_root = _build_team_dir(tmp_path)
         before = _snapshot(team_root)
         app, auth = _build_app(team_root)

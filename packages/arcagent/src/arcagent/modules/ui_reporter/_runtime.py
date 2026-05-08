@@ -99,12 +99,7 @@ def configure(
 
     import os as _os
 
-    token = (
-        cfg.token
-        or _os.environ.get("ARCUI_AGENT_TOKEN", "")
-        or file_token
-        or ""
-    )
+    token = cfg.token or _os.environ.get("ARCUI_AGENT_TOKEN", "") or file_token or ""
     if not token:
         _logger.warning("ui_reporter: probe ok but no token resolved")
         return
@@ -150,9 +145,7 @@ def configure(
     )
     new_transport.start()
     _state.transport = new_transport
-    _logger.info(
-        "ui_reporter: connected to %s as agent_name=%s", cfg.url, agent_name
-    )
+    _logger.info("ui_reporter: connected to %s as agent_name=%s", cfg.url, agent_name)
 
 
 def state() -> _State:

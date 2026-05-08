@@ -134,16 +134,12 @@ class WatcherManager:
             entry = self._entries.get(agent_id)
             if entry is None:
                 if len(self._entries) >= self._max_watchers:
-                    raise RuntimeError(
-                        f"max watchers reached: {self._max_watchers}"
-                    )
+                    raise RuntimeError(f"max watchers reached: {self._max_watchers}")
                 entry = _WatcherEntry(agent_id=agent_id, agent_root=agent_root.resolve())
                 self._entries[agent_id] = entry
             entry.refcount += 1
             if entry.task is None:
-                entry.task = asyncio.create_task(
-                    self._run(entry), name=f"fs_watcher:{agent_id}"
-                )
+                entry.task = asyncio.create_task(self._run(entry), name=f"fs_watcher:{agent_id}")
 
     async def unsubscribe(self, agent_id: str) -> None:
         """Decrement the refcount; tear down on 0."""
@@ -199,9 +195,7 @@ class WatcherManager:
         except asyncio.CancelledError:
             return
         except Exception as exc:  # reason: fail-open — log + continue
-            logger.warning(
-                "fs_watcher[%s]: watchfiles loop error: %s", entry.agent_id, exc
-            )
+            logger.warning("fs_watcher[%s]: watchfiles loop error: %s", entry.agent_id, exc)
 
     async def _poll_loop(self, entry: _WatcherEntry) -> None:
         # Seed mtimes once so the first delta after subscribe is a real change.
@@ -292,9 +286,7 @@ class WatcherManager:
                 caller_did="did:arc:gateway:fs_watcher",
             )
         except (FileNotFoundError, FileTooLargeError, PathTraversalError) as exc:
-            logger.warning(
-                "fs_watcher[%s]: policy.md unavailable: %s", entry.agent_id, exc
-            )
+            logger.warning("fs_watcher[%s]: policy.md unavailable: %s", entry.agent_id, exc)
             return []
         bullets = parse_bullets(content.content)
         return [

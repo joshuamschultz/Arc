@@ -173,9 +173,7 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
 
 
 @pytest.mark.parametrize(("model_cls", "payload"), _CASES)
-def test_roundtrip_bytes_equal_direct(
-    model_cls: type[schemas.BaseModel], payload: dict
-) -> None:
+def test_roundtrip_bytes_equal_direct(model_cls: type[schemas.BaseModel], payload: dict) -> None:
     """``JSONResponse(Model(**d).model_dump(mode="json"))`` must produce
     body bytes identical to ``JSONResponse(d)`` for the same *d*.
     """

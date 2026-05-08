@@ -221,9 +221,7 @@ class TestSpec025OsUserBinding:
     real OS user, not just a numeric uid.
     """
 
-    def test_session_start_includes_username_field(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_session_start_includes_username_field(self, caplog: pytest.LogCaptureFixture) -> None:
         auth = AuthConfig()
         audit = UIAuditLogger(enabled=False)
         tracker = SessionTracker()

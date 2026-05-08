@@ -23,10 +23,7 @@ def calculate_cost(
     cache_write_per_1m: float = 0.0,
 ) -> float:
     """Calculate USD cost from token counts and per-1M pricing."""
-    cost = (
-        usage.input_tokens * input_per_1m
-        + usage.output_tokens * output_per_1m
-    ) / 1_000_000
+    cost = (usage.input_tokens * input_per_1m + usage.output_tokens * output_per_1m) / 1_000_000
 
     if usage.cache_read_tokens:
         cost += usage.cache_read_tokens * cache_read_per_1m / 1_000_000

@@ -91,11 +91,7 @@ class WebSocketLike(Protocol):
 
 def _utcnow_iso() -> str:
     """Return an ISO-8601 UTC timestamp, millisecond precision, ``Z`` suffix."""
-    return (
-        datetime.now(tz=UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _audit_hash(turn_id: str, message: str) -> str:
@@ -183,9 +179,9 @@ class WebPlatformAdapter:
         event per call. Drop-oldest under backpressure preserves liveness.
         """
         sockets = list(self._sockets.get(target.chat_id, set()))
-        turn_id = reply_to or hashlib.sha256(
-            f"{target.chat_id}:{message}".encode()
-        ).hexdigest()[:16]
+        turn_id = (
+            reply_to or hashlib.sha256(f"{target.chat_id}:{message}".encode()).hexdigest()[:16]
+        )
         audit_hash = _audit_hash(turn_id, message)
 
         if not sockets:
@@ -251,9 +247,7 @@ class WebPlatformAdapter:
             WebAdapterFull: When ``max_connections`` has been reached.
         """
         if self._n_connections >= self.max_connections:
-            raise WebAdapterFull(
-                f"max_connections ({self.max_connections}) reached"
-            )
+            raise WebAdapterFull(f"max_connections ({self.max_connections}) reached")
 
         # Cancel any pending TTL eviction for this chat_id — a reconnect
         # within the grace window must preserve the replay state.
@@ -355,9 +349,7 @@ class WebPlatformAdapter:
             return  # socket already unregistered — drop silently
         agent_did, user_did = meta
 
-        raw_payload: dict[str, Any] = (
-            {"client_seq": client_seq} if client_seq is not None else {}
-        )
+        raw_payload: dict[str, Any] = {"client_seq": client_seq} if client_seq is not None else {}
         event = InboundEvent(
             platform="web",
             chat_id=chat_id,
@@ -446,9 +438,7 @@ class WebPlatformAdapter:
         seq = self._outbound_seq.get(chat_id, 0)
         payload["seq"] = seq
         self._outbound_seq[chat_id] = seq + 1
-        ring = self._replay_buffers.setdefault(
-            chat_id, deque(maxlen=_REPLAY_RING_MAXLEN)
-        )
+        ring = self._replay_buffers.setdefault(chat_id, deque(maxlen=_REPLAY_RING_MAXLEN))
         ring.append(payload)
 
     def _replay_to_socket(

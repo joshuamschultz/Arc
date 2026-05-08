@@ -48,9 +48,7 @@ def app(tmp_path: Path) -> Iterator[Any]:
     team_root.mkdir()
     _make_agent_dir(team_root, "concierge")
 
-    auth = AuthConfig(
-        {"viewer_token": VIEWER_TOKEN, "operator_token": "op", "agent_token": "ag"}
-    )
+    auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": "op", "agent_token": "ag"})
     app = create_app(team_root=team_root, auth_config=auth)
     app.state.roster_provider = lambda: [
         RosterEntry(

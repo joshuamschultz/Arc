@@ -182,9 +182,7 @@ class PlatformsSection(BaseModel):
 
     telegram: TelegramPlatformConfig = Field(default_factory=TelegramPlatformConfig)
     slack: SlackPlatformConfig = Field(default_factory=SlackPlatformConfig)
-    mattermost: MattermostPlatformConfig = Field(
-        default_factory=MattermostPlatformConfig
-    )
+    mattermost: MattermostPlatformConfig = Field(default_factory=MattermostPlatformConfig)
     web: WebPlatformConfig = Field(default_factory=WebPlatformConfig)
 
 

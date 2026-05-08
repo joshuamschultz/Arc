@@ -196,11 +196,7 @@ async def get_policy_stats(request: Request) -> JSONResponse:
         bullets = _read_agent_policy(entry)
         a_active = sum(1 for b in bullets if not b.retired)
         a_retired = sum(1 for b in bullets if b.retired)
-        a_avg = (
-            sum(b.score for b in bullets if not b.retired) / a_active
-            if a_active
-            else 0.0
-        )
+        a_avg = sum(b.score for b in bullets if not b.retired) / a_active if a_active else 0.0
         per_agent.append(
             {
                 "agent_id": entry.agent_id,
@@ -312,9 +308,7 @@ async def get_tools_skills(request: Request) -> JSONResponse:
         if live is None:
             continue
         for tool in live.registration.tools:
-            existing = tools_by_name.setdefault(
-                tool, {"name": tool, "agents": []}
-            )
+            existing = tools_by_name.setdefault(tool, {"name": tool, "agents": []})
             if entry.agent_id not in existing["agents"]:
                 existing["agents"].append(entry.agent_id)
 

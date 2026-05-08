@@ -45,9 +45,7 @@ async def _publish(request: Request, topic: str, payload: Any) -> None:
     try:
         await bus.publish(topic, payload)
     except Exception:  # reason: fail-open — log + continue
-        logger.debug(
-            "schedules: dashboard_bus publish failed for topic=%s", topic, exc_info=True
-        )
+        logger.debug("schedules: dashboard_bus publish failed for topic=%s", topic, exc_info=True)
 
 
 async def schedule_history(request: Request) -> JSONResponse:

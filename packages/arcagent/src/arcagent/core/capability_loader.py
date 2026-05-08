@@ -414,18 +414,28 @@ def _load_module(path: Path) -> Any:
 
     The module name is derived from the path so duplicate ``echo.py``
     files at different scan roots produce distinct module objects.
+
+    Reads source + compile + exec directly instead of going through
+    ``spec.loader.exec_module``. The latter consults importlib's .pyc
+    bytecode cache, which is keyed by source mtime — and HFS+ / older
+    APFS / some CI runners report 1-second mtime resolution. Two
+    writes inside the same second produce identical mtimes, and the
+    second reload silently serves the first version's bytecode. The
+    explicit ``compile()`` path bypasses ``__pycache__`` entirely so
+    reload is always honest about file content.
     """
-    spec = importlib.util.spec_from_file_location(
-        f"_arc_cap_{path.stem}_{abs(hash(str(path))):x}", path
-    )
-    if spec is None or spec.loader is None:
+    source = path.read_text(encoding="utf-8")
+    module_name = f"_arc_cap_{path.stem}_{abs(hash(str(path))):x}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None:
         raise ImportError(f"could not build spec for {path}")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
+    sys.modules[module_name] = module
     try:
-        spec.loader.exec_module(module)
+        code = compile(source, str(path), "exec")
+        exec(code, module.__dict__)  # noqa: S102 — capability loader executes user code by design
     except Exception:  # reason: re-raise after log
-        sys.modules.pop(spec.name, None)
+        sys.modules.pop(module_name, None)
         raise
     return module
 

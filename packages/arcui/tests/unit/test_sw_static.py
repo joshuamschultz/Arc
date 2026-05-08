@@ -13,9 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_STATIC = (
-    Path(__file__).resolve().parents[2] / "src" / "arcui" / "static"
-)
+_STATIC = Path(__file__).resolve().parents[2] / "src" / "arcui" / "static"
 _SW = _STATIC / "sw.js"
 _INDEX = _STATIC / "index.html"
 
@@ -59,9 +57,7 @@ def test_sw_has_activate_handler() -> None:
 def test_sw_has_fetch_handler() -> None:
     """sw.js must register a 'fetch' event listener."""
     text = _sw_text()
-    assert "addEventListener('fetch'," in text, (
-        "sw.js must contain addEventListener('fetch', …)"
-    )
+    assert "addEventListener('fetch'," in text, "sw.js must contain addEventListener('fetch', …)"
 
 
 def test_sw_excludes_api_paths() -> None:
@@ -78,9 +74,7 @@ def test_sw_excludes_api_paths() -> None:
     # Confirm it appears before any cache.put call (exclusion is checked first)
     api_pos = text.index("/api/")
     cache_put_pos = text.find("cache.put") if "cache.put" in text else len(text)
-    assert api_pos < cache_put_pos, (
-        "/api/ exclusion must appear before any cache.put logic"
-    )
+    assert api_pos < cache_put_pos, "/api/ exclusion must appear before any cache.put logic"
 
 
 def test_sw_excludes_ws_paths() -> None:
@@ -95,9 +89,7 @@ def test_sw_excludes_artifacts_paths() -> None:
     AC-3.2: /artifacts/digest_*.pdf requests must never hit the cache.
     """
     text = _sw_text()
-    assert "/artifacts/" in text, (
-        "sw.js must reference /artifacts/ for network-only exclusion"
-    )
+    assert "/artifacts/" in text, "sw.js must reference /artifacts/ for network-only exclusion"
 
 
 def test_sw_caches_assets() -> None:
@@ -148,9 +140,7 @@ def test_main_registers_sw_only_with_disable_check() -> None:
     assert "serviceWorker" in text, (
         "index.html must contain a serviceWorker reference for SW registration"
     )
-    assert "__SW_DISABLE__" in text, (
-        "SW registration must be guarded by a __SW_DISABLE__ check"
-    )
+    assert "__SW_DISABLE__" in text, "SW registration must be guarded by a __SW_DISABLE__ check"
     # __SW_DISABLE__ must appear before .register(
     disable_pos = text.index("__SW_DISABLE__")
     register_pos = text.find(".register(")
@@ -212,6 +202,4 @@ def test_sw_always_live_regex_matches_paths_with_query_strings() -> None:
         )
     # Negative cases — paths that should NOT be network-only
     for case in ("/assets/foo.js", "/index.html", "/sw.js"):
-        assert not api_pattern.match(case), (
-            f"/api/ regex incorrectly matches {case!r}"
-        )
+        assert not api_pattern.match(case), f"/api/ regex incorrectly matches {case!r}"

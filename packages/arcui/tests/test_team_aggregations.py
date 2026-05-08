@@ -23,7 +23,9 @@ from arcui.routes.team_pages import routes as team_routes
 from arcui.types import AgentRegistration
 
 
-def _make_app(team_root: Path | None = None, agent_state_file: Path | None = None) -> tuple[Starlette, AuthConfig, AgentRegistry]:
+def _make_app(
+    team_root: Path | None = None, agent_state_file: Path | None = None
+) -> tuple[Starlette, AuthConfig, AgentRegistry]:
     auth = AuthConfig(
         {
             "viewer_token": "viewer",
@@ -301,9 +303,7 @@ class TestEdgeCases:
     def test_tasks_skips_malformed_json(self, tmp_path):
         team = _build_team(tmp_path, [("alpha", "")])
         # Corrupt one tasks.json — fleet endpoint should still answer with what it can.
-        (team / "alpha_agent" / "workspace" / "tasks.json").write_text(
-            "garbage", encoding="utf-8"
-        )
+        (team / "alpha_agent" / "workspace" / "tasks.json").write_text("garbage", encoding="utf-8")
         app, auth, _ = _make_app(team_root=team)
         client = TestClient(app)
         resp = client.get("/api/team/tasks", headers=_viewer(auth))
@@ -450,7 +450,6 @@ class TestRosterDegradedState:
         # ghost and the path-traversal entry are NOT in the response at all.
         assert "ghost" not in agents
         assert "../../../etc" not in agents
-
 
     def test_stale_state_file_is_ignored(self, tmp_path: Path) -> None:
         """SPEC-025 §TD-5 — state files older than max-age fall through to defaults.

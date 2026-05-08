@@ -104,35 +104,53 @@ class TestSpawnResultModel:
 class TestDIDDerivation:
     def test_derives_did_from_parent_sk_and_nonce(self) -> None:
         sk = b"\x42" * 32
-        identity = derive_child_identity(parent_sk_bytes=sk, spawn_id="nonce-abc", wallclock_timeout_s=300)
+        identity = derive_child_identity(
+            parent_sk_bytes=sk, spawn_id="nonce-abc", wallclock_timeout_s=300
+        )
         assert identity.did.startswith("did:arc:delegate:child/")
         assert len(identity.did) > len("did:arc:delegate:child/")
 
     def test_different_nonce_different_did(self) -> None:
         sk = b"\x42" * 32
-        id1 = derive_child_identity(parent_sk_bytes=sk, spawn_id="nonce-1", wallclock_timeout_s=300)
-        id2 = derive_child_identity(parent_sk_bytes=sk, spawn_id="nonce-2", wallclock_timeout_s=300)
+        id1 = derive_child_identity(
+            parent_sk_bytes=sk, spawn_id="nonce-1", wallclock_timeout_s=300
+        )
+        id2 = derive_child_identity(
+            parent_sk_bytes=sk, spawn_id="nonce-2", wallclock_timeout_s=300
+        )
         assert id1.did != id2.did
         assert id1.sk_bytes != id2.sk_bytes
 
     def test_same_nonce_same_did(self) -> None:
         sk = b"\x42" * 32
-        id1 = derive_child_identity(parent_sk_bytes=sk, spawn_id="nonce-x", wallclock_timeout_s=300)
-        id2 = derive_child_identity(parent_sk_bytes=sk, spawn_id="nonce-x", wallclock_timeout_s=300)
+        id1 = derive_child_identity(
+            parent_sk_bytes=sk, spawn_id="nonce-x", wallclock_timeout_s=300
+        )
+        id2 = derive_child_identity(
+            parent_sk_bytes=sk, spawn_id="nonce-x", wallclock_timeout_s=300
+        )
         assert id1.did == id2.did
         assert id1.sk_bytes == id2.sk_bytes
 
     def test_different_parent_sk_different_did(self) -> None:
-        id1 = derive_child_identity(parent_sk_bytes=b"\x01" * 32, spawn_id="nonce-same", wallclock_timeout_s=300)
-        id2 = derive_child_identity(parent_sk_bytes=b"\x02" * 32, spawn_id="nonce-same", wallclock_timeout_s=300)
+        id1 = derive_child_identity(
+            parent_sk_bytes=b"\x01" * 32, spawn_id="nonce-same", wallclock_timeout_s=300
+        )
+        id2 = derive_child_identity(
+            parent_sk_bytes=b"\x02" * 32, spawn_id="nonce-same", wallclock_timeout_s=300
+        )
         assert id1.did != id2.did
 
     def test_ttl_stored_in_identity(self) -> None:
-        identity = derive_child_identity(parent_sk_bytes=b"\x00" * 32, spawn_id="n", wallclock_timeout_s=600)
+        identity = derive_child_identity(
+            parent_sk_bytes=b"\x00" * 32, spawn_id="n", wallclock_timeout_s=600
+        )
         assert identity.ttl_s == 600
 
     def test_sk_bytes_length(self) -> None:
-        identity = derive_child_identity(parent_sk_bytes=b"\x99" * 32, spawn_id="n", wallclock_timeout_s=300)
+        identity = derive_child_identity(
+            parent_sk_bytes=b"\x99" * 32, spawn_id="n", wallclock_timeout_s=300
+        )
         assert len(identity.sk_bytes) == 32
 
     def test_child_identity_model_fields(self) -> None:

@@ -45,9 +45,7 @@ async def test_slack_adapter_repr_does_not_include_tokens(tmp_path: Path) -> Non
     assert _BOT_TOKEN not in rendered, (
         "SlackAdapter repr leaked the bot token — secrets must never appear in repr"
     )
-    assert _APP_TOKEN not in rendered, (
-        "SlackAdapter repr leaked the app token"
-    )
+    assert _APP_TOKEN not in rendered, "SlackAdapter repr leaked the app token"
 
 
 async def test_slack_adapter_str_does_not_include_tokens(tmp_path: Path) -> None:
@@ -97,9 +95,7 @@ async def test_slack_adapter_constructor_validation_error_does_not_echo_token(
             dedup_db_path=tmp_path / "dedup.sqlite",
         )
     msg = str(exc_info.value)
-    assert bad_token not in msg, (
-        f"Validation error echoed the token: {msg!r}"
-    )
+    assert bad_token not in msg, f"Validation error echoed the token: {msg!r}"
 
 
 async def test_slack_adapter_logging_handlers_do_not_emit_tokens(

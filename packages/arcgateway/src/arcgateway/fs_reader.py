@@ -45,10 +45,27 @@ MAX_TREE_ENTRIES: int = 5_000
 
 # Filename suffixes treated as plain text. Anything not in here AND not JSON
 # falls through to base64 binary handling.
-_TEXT_SUFFIXES: frozenset[str] = frozenset({
-    ".md", ".txt", ".py", ".toml", ".jsonl", ".log", ".yaml", ".yml",
-    ".html", ".css", ".js", ".ts", ".sh", ".rst", ".ini", ".cfg", "",
-})
+_TEXT_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".md",
+        ".txt",
+        ".py",
+        ".toml",
+        ".jsonl",
+        ".log",
+        ".yaml",
+        ".yml",
+        ".html",
+        ".css",
+        ".js",
+        ".ts",
+        ".sh",
+        ".rst",
+        ".ini",
+        ".cfg",
+        "",
+    }
+)
 _JSON_SUFFIXES: frozenset[str] = frozenset({".json"})
 
 

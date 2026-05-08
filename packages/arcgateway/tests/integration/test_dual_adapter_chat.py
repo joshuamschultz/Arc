@@ -343,9 +343,7 @@ async def test_audit_chain_shows_interleaved_platform_events(
     # Ordering: web arrived before slack (arrival order preserved in routed_events).
     web_idx = next(i for i, e in enumerate(spy_router.routed_events) if e.platform == "web")
     slack_idx = next(i for i, e in enumerate(spy_router.routed_events) if e.platform == "slack")
-    assert web_idx < slack_idx, (
-        "Web event should precede the slack event in the audit chain"
-    )
+    assert web_idx < slack_idx, "Web event should precede the slack event in the audit chain"
 
     # Both events reference the shared agent for the web path; audit is attributable.
     web_events = [e for e in spy_router.routed_events if e.platform == "web"]
@@ -377,7 +375,9 @@ async def test_session_keys_intentionally_diverge_across_platforms(
     """
     # Send the same logical message from both surfaces.
     await web_adapter.simulate_inbound(
-        user_did=_USER_DID, agent_did=_AGENT_DID, text="from web",
+        user_did=_USER_DID,
+        agent_did=_AGENT_DID,
+        text="from web",
     )
     await slack_adapter._handle_inbound(
         {

@@ -34,13 +34,13 @@ async def get_stats(request: Request) -> JSONResponse:
 
     registry = request.app.state.agent_registry
     entry = registry.get(agent_id)
-    aggregator = entry.aggregator if entry and entry.aggregator else getattr(
-        request.app.state, "aggregator", None
+    aggregator = (
+        entry.aggregator
+        if entry and entry.aggregator
+        else getattr(request.app.state, "aggregator", None)
     )
     if aggregator is None:
-        return JSONResponse(
-            StatsResponse(stats={}, window="24h").model_dump(mode="json")
-        )
+        return JSONResponse(StatsResponse(stats={}, window="24h").model_dump(mode="json"))
     window, err = safe_choice(
         request.query_params.get("window", "24h"),
         {"1h", "24h", "7d"},
@@ -67,9 +67,7 @@ async def get_traces(request: Request) -> JSONResponse:
 
     store = request.app.state.trace_store
     if store is None:
-        return JSONResponse(
-            TracesResponse(traces=[], cursor=None).model_dump(mode="json")
-        )
+        return JSONResponse(TracesResponse(traces=[], cursor=None).model_dump(mode="json"))
 
     limit, err = safe_int(
         request.query_params.get("limit"),
@@ -111,6 +109,4 @@ async def get_audit(request: Request) -> JSONResponse:
         return err
 
     events = [e for e in buffer if e.get("agent_id") == agent_id][-limit:]
-    return JSONResponse(
-        AuditEventsResponse(events=events).model_dump(mode="json")
-    )
+    return JSONResponse(AuditEventsResponse(events=events).model_dump(mode="json"))

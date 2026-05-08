@@ -114,11 +114,7 @@ def _filter_topics_by_role(topics: list[str], role: str) -> tuple[list[str], lis
 
 def _utcnow_iso() -> str:
     """ISO-8601 UTC timestamp, millisecond precision."""
-    return (
-        datetime.now(tz=UTC)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(tz=UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 async def _drain(ws: WebSocket, queue: asyncio.Queue[dict[str, object]]) -> None:
@@ -201,9 +197,7 @@ async def dashboard_ws_endpoint(ws: WebSocket) -> None:
     # Accept only known topics; silently drop unknown ones to avoid
     # information-leakage via error enumeration (SPEC-025 §Security).
     known_topics = [t for t in raw_topics if isinstance(t, str) and t in _VALID_TOPICS]
-    unknown_topics = [
-        t for t in raw_topics if isinstance(t, str) and t not in _VALID_TOPICS
-    ]
+    unknown_topics = [t for t in raw_topics if isinstance(t, str) and t not in _VALID_TOPICS]
 
     # SPEC-025 §H-3 — viewer cannot subscribe to operator-tier topics.
     topics, role_denied = _filter_topics_by_role(known_topics, role)

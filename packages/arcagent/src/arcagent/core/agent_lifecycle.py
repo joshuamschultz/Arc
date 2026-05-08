@@ -68,9 +68,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     # to read/write/edit/bash; loader reference patched in below.
     from arcagent.builtins.capabilities import _runtime as builtin_runtime
 
-    allowed_paths = [
-        Path(p).resolve() for p in agent._config.tools.policy.allowed_paths
-    ] or None
+    allowed_paths = [Path(p).resolve() for p in agent._config.tools.policy.allowed_paths] or None
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,

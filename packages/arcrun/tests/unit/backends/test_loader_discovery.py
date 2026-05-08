@@ -118,5 +118,3 @@ class TestFederalPolicyGate:
                 allowed_backends={"otherpackage": "other:Other"},
                 manifest_path=None,
             )
-
-
