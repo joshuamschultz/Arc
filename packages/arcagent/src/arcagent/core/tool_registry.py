@@ -327,9 +327,11 @@ class ToolRegistry:
 
     When constructed with a :class:`PolicyPipeline`, every dispatch
     runs through it — first-DENY-wins, fail-closed. ``policy_pipeline``
-    defaults to ``None`` for backward compatibility with existing
-    deployments; call sites that rely on enforcement are expected to
-    pass one explicitly (see ``ArcAgent`` wiring).
+    defaults to ``None`` so tests and bootstrap code can register tools
+    without standing up a full pipeline; production wiring in
+    ``ArcAgent`` always passes one explicitly. The transport-layer
+    ``_bind_caller_did`` defence (ASI-03) runs regardless of whether a
+    policy pipeline is configured.
     """
 
     def __init__(

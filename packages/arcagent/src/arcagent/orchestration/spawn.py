@@ -201,7 +201,6 @@ def make_spawn_tool(
     model: Any,
     tools: list[Tool],
     system_prompt: str,
-    state: RunState | None = None,
     sandbox: SandboxConfig | None = None,
     allowed_strategies: list[str] | None = None,
     spawn_timeout_seconds: int = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
@@ -210,19 +209,14 @@ def make_spawn_tool(
 ) -> Tool:
     """Create a spawn_task tool that starts a child run().
 
-    State is read from ``ctx.parent_state`` at execute time (set by the
-    arcrun executor). The legacy ``state`` parameter is retained for
-    callers that already have a live RunState, but is not required —
-    pass None and it will be picked up from the tool context.
+    State is read from ``ctx.parent_state`` at execute time, set by the
+    arcrun executor.
     """
     # Semaphore limits concurrent child runs (ASI-08, LLM10)
     spawn_semaphore = asyncio.Semaphore(max_concurrent_spawns)
-    static_state = state  # captured for callers that pre-bind
 
     async def _execute(params: dict[str, Any], ctx: ToolContext) -> str:
-        # Resolve live state. Prefer ctx.parent_state (set by executor);
-        # fall back to a state passed at construction (legacy path).
-        run_state: RunState | None = ctx.parent_state or static_state
+        run_state: RunState | None = ctx.parent_state
         if run_state is None:
             return "Error: spawn_task invoked outside an arcrun loop"
 

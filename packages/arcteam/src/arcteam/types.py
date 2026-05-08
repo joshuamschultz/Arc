@@ -109,9 +109,10 @@ class Entity(BaseModel):
     """Registered agent or user.
 
     workspace_path (SPEC-019 FR-2): absolute filesystem path to the agent's
-    workspace directory. None for legacy records or non-agent entities;
-    populated by `arc team register --workspace` or
-    `arc team backfill-workspaces`.
+    workspace directory. None for ``EntityType.USER`` records, which have
+    no on-disk workspace. Agent records get this populated by
+    ``arc team register --workspace`` (new agents) or
+    ``arc team backfill-workspaces`` (existing agents predating SPEC-019).
     """
 
     id: str

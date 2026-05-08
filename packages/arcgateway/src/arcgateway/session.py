@@ -44,8 +44,9 @@ Queue management (T1.8 / SPEC-018):
 =====================================
 Per-session queues are managed by the composed QueueManager, which enforces
 a bounded depth (max 100) and idle TTL eviction (1h) to prevent unbounded
-growth. Test-hook counters (agent_tasks_spawned, queued_events) are retained
-for backward-compatibility with existing tests.
+growth. Test-instrumentation counters (agent_tasks_spawned, queued_events)
+are exposed for tests that assert on per-session task and queue behaviour;
+production code must not gate logic on them.
 """
 
 from __future__ import annotations
@@ -208,8 +209,8 @@ class SessionRouter:
         # Composed queue manager with bounded depth + idle eviction.
         self._queue_mgr = QueueManager()
 
-        # Test-hook counters (preserved for backward-compat with existing tests).
-        # Production code must NOT gate logic on these.
+        # Test instrumentation. Tests assert on per-session task spawn counts
+        # and queued-event snapshots; production code must NOT gate logic on these.
         self.agent_tasks_spawned: dict[str, int] = {}
         self.queued_events: dict[str, list[InboundEvent]] = {}
 
@@ -245,9 +246,8 @@ class SessionRouter:
             user_did: The DID of the newly approved user.
         """
         self._pairing.add_approved_user(user_did)
-        # Also emit via the session logger for backward-compat with existing tests
-        # that capture arcgateway.session. PairingInterceptor emits the same event
-        # via arcgateway.session_pairing.
+        # Dual-emit: both arcgateway.session and arcgateway.session_pairing log
+        # the same approval event so tests can capture from either logger name.
         _logger.info("Pairing: user uid_h=%s added to allowlist", hash_user_did(user_did))
 
     def remove_approved_user(self, user_did: str) -> None:

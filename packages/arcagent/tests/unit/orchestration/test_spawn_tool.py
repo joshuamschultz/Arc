@@ -51,19 +51,19 @@ def _make_parent_state(*, depth: int = 0, max_depth: int = 3) -> RunState:
     )
 
 
-def _make_ctx() -> ToolContext:
+def _make_ctx(parent_state: RunState | None = None) -> ToolContext:
     return ToolContext(
         run_id="parent-run",
         tool_call_id="tc1",
         turn_number=1,
         event_bus=EventBus(run_id="parent-run"),
         cancelled=asyncio.Event(),
+        parent_state=parent_state,
     )
 
 
 class TestMakeSpawnTool:
     def test_factory_returns_tool(self):
-        state = _make_parent_state()
         model = MockModel([])
         tools = [
             Tool(
@@ -77,12 +77,10 @@ class TestMakeSpawnTool:
             model=model,
             tools=tools,
             system_prompt="test",
-            state=state,
         )
         assert isinstance(tool, Tool)
 
     def test_tool_name_is_spawn_task(self):
-        state = _make_parent_state()
         model = MockModel([])
         tools = [
             Tool(
@@ -96,54 +94,45 @@ class TestMakeSpawnTool:
             model=model,
             tools=tools,
             system_prompt="test",
-            state=state,
         )
         assert tool.name == "spawn_task"
 
     def test_schema_has_task_required(self):
-        state = _make_parent_state()
         model = MockModel([])
         tool = make_spawn_tool(
             model=model,
             tools=[],
             system_prompt="test",
-            state=state,
         )
         assert "task" in tool.input_schema["properties"]
         assert "task" in tool.input_schema["required"]
 
     def test_schema_has_optional_system_prompt(self):
-        state = _make_parent_state()
         model = MockModel([])
         tool = make_spawn_tool(
             model=model,
             tools=[],
             system_prompt="test",
-            state=state,
         )
         assert "system_prompt" in tool.input_schema["properties"]
         assert "system_prompt" not in tool.input_schema["required"]
 
     def test_schema_has_optional_tools(self):
-        state = _make_parent_state()
         model = MockModel([])
         tool = make_spawn_tool(
             model=model,
             tools=[],
             system_prompt="test",
-            state=state,
         )
         assert "tools" in tool.input_schema["properties"]
         assert "tools" not in tool.input_schema["required"]
 
     def test_tool_timeout_is_none(self):
-        state = _make_parent_state()
         model = MockModel([])
         tool = make_spawn_tool(
             model=model,
             tools=[],
             system_prompt="test",
-            state=state,
         )
         assert tool.timeout_seconds == 300  # default spawn timeout (C4 fix)
 
@@ -165,9 +154,8 @@ class TestDepthLimitRejection:
             model=model,
             tools=tools,
             system_prompt="test",
-            state=state,
         )
-        ctx = _make_ctx()
+        ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do something"}, ctx)
         assert "Error" in result
         assert "max spawn depth" in result
@@ -180,9 +168,8 @@ class TestDepthLimitRejection:
             model=model,
             tools=[],
             system_prompt="test",
-            state=state,
         )
-        ctx = _make_ctx()
+        ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do something"}, ctx)
         assert "Error" in result
 
@@ -204,9 +191,8 @@ class TestToolSubsetting:
             model=model,
             tools=tools,
             system_prompt="test",
-            state=state,
         )
-        ctx = _make_ctx()
+        ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do X", "tools": ["nonexistent"]}, ctx)
         assert "Error" in result
         assert "unknown tool" in result
@@ -234,9 +220,8 @@ class TestToolSubsetting:
             model=child_model,
             tools=tools,
             system_prompt="test",
-            state=state,
         )
-        ctx = _make_ctx()
+        ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do X", "tools": ["echo"]}, ctx)
         assert result == "Child done."
 
