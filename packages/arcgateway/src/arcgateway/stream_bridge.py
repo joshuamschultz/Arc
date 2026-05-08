@@ -124,7 +124,7 @@ class StreamBridge:
     @staticmethod
     async def _send_placeholder(adapter: object, target: DeliveryTarget) -> str | None:
         try:
-            message_id: str | None = await adapter.send_with_id(  # type: ignore[attr-defined]
+            message_id: str | None = await adapter.send_with_id(  # type: ignore[attr-defined]  # reason: adapter is a duck-typed platform adapter (Telegram/Slack); send_with_id is opt-in per platform
                 target, THINKING_PLACEHOLDER
             )
             _audit(
@@ -150,7 +150,7 @@ class StreamBridge:
         Per-edit audit events removed in SPEC-018 Wave B1.
         """
         try:
-            await adapter.edit_message(target, message_id, text)  # type: ignore[attr-defined]
+            await adapter.edit_message(target, message_id, text)  # type: ignore[attr-defined]  # reason: adapter is a duck-typed platform adapter; edit_message is opt-in per platform
             return True
         except Exception as exc:
             _logger.debug(
@@ -164,7 +164,7 @@ class StreamBridge:
     @staticmethod
     async def _send_final(adapter: object, target: DeliveryTarget, text: str) -> None:
         try:
-            await adapter.send(target, text)  # type: ignore[attr-defined]
+            await adapter.send(target, text)  # type: ignore[attr-defined]  # reason: adapter is a duck-typed platform adapter; send is part of the minimum adapter contract
             _audit(
                 "gateway.message.final_sent",
                 {"target": str(target), "text_len": len(text)},

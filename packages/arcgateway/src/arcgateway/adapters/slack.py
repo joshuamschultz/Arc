@@ -187,25 +187,27 @@ class SlackAdapter:
         try:
             # slack_bolt ships no type stubs; ignore-import keeps mypy --strict
             # green while the lazy import path stays optional.
-            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]
+            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]  # reason: optional dep — see comment above; slack-bolt ships no type stubs
                 AsyncSocketModeHandler,
             )
-            from slack_bolt.async_app import AsyncApp  # type: ignore[import-not-found]
+            from slack_bolt.async_app import (
+                AsyncApp,  # type: ignore[import-not-found]  # reason: same — slack-bolt has no type stubs
+            )
         except ImportError as exc:
             msg = "slack-bolt is not installed. Install with: pip install 'arcgateway[slack]'"
             raise ImportError(msg) from exc
 
         self._app = AsyncApp(token=self._bot_token)
 
-        @self._app.event("message")  # type: ignore[untyped-decorator]
+        @self._app.event("message")  # type: ignore[untyped-decorator]  # reason: slack_bolt's @app.event decorator is untyped; mypy treats it as decorating away the function signature
         async def _handle_message(event: dict[str, Any]) -> None:
             await self._handle_inbound(event)
 
-        @self._app.event("message_changed")  # type: ignore[untyped-decorator]
+        @self._app.event("message_changed")  # type: ignore[untyped-decorator]  # reason: slack_bolt's @app.event decorator is untyped; mypy treats it as decorating away the function signature
         async def _handle_changed(event: dict[str, Any]) -> None:
             pass
 
-        @self._app.event("message_deleted")  # type: ignore[untyped-decorator]
+        @self._app.event("message_deleted")  # type: ignore[untyped-decorator]  # reason: slack_bolt's @app.event decorator is untyped; mypy treats it as decorating away the function signature
         async def _handle_deleted(event: dict[str, Any]) -> None:
             pass
 

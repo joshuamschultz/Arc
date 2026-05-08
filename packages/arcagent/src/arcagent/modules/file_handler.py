@@ -260,7 +260,7 @@ class FileHandler:
         """Extract text from PDF using pdfplumber or PyPDF2."""
         # Try pdfplumber first (better extraction quality)
         try:
-            import pdfplumber  # type: ignore[import-not-found]  # optional dep: arcagent[files]
+            import pdfplumber  # type: ignore[import-not-found]  # reason: optional dep: arcagent[files]
 
             with pdfplumber.open(path) as pdf:
                 pages = []
@@ -276,7 +276,7 @@ class FileHandler:
 
         # Fallback to PyPDF2
         try:
-            from PyPDF2 import (  # type: ignore[import-not-found]  # optional dep: arcagent[files]
+            from PyPDF2 import (  # type: ignore[import-not-found]  # reason: optional dep: arcagent[files]
                 PdfReader,
             )
 
@@ -297,7 +297,7 @@ class FileHandler:
     def _extract_docx(self, path: Path) -> str | None:
         """Extract text from Word documents."""
         try:
-            from docx import (  # type: ignore[import-not-found]  # optional dep: arcagent[files]
+            from docx import (  # type: ignore[import-not-found]  # reason: optional dep: arcagent[files]
                 Document,
             )
 
@@ -314,7 +314,7 @@ class FileHandler:
     def _extract_xlsx(self, path: Path) -> str | None:
         """Extract text from Excel spreadsheets."""
         try:
-            from openpyxl import (  # type: ignore[import-untyped]  # no type stubs available for openpyxl
+            from openpyxl import (  # type: ignore[import-untyped]  # reason: no type stubs available for openpyxl
                 load_workbook,
             )
 

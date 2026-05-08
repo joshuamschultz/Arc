@@ -105,7 +105,7 @@ class BaseAdapter(LLMProvider):
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
-            self._client = None  # type: ignore[assignment]
+            self._client = None  # type: ignore[assignment]  # reason: _client is typed httpx.AsyncClient (non-Optional) so it can be used unguarded after init; we set None on close to release the pool — pre-close use is forbidden by contract
 
     async def __aenter__(self) -> "BaseAdapter":
         return self

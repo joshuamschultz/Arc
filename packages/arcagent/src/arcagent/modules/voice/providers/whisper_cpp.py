@@ -380,9 +380,9 @@ class WhisperCppProvider:
         duration_s = 0.0
         if segments:
             last = segments[-1]
-            offsets: dict[str, object] = last.get("offsets", {})  # type: ignore[assignment]
+            offsets: dict[str, object] = last.get("offsets", {})  # type: ignore[assignment]  # reason: whisper.cpp JSON shape is dict[str, object]; .get() returns object, narrowed by runtime contract
             to_ms = offsets.get("to", 0)
-            duration_s = float(to_ms) / 1000.0 if to_ms else 0.0  # type: ignore[arg-type]
+            duration_s = float(to_ms) / 1000.0 if to_ms else 0.0  # type: ignore[arg-type]  # reason: to_ms is object from the dict above; whisper.cpp emits int ms — float() accepts it at runtime
 
         # Average per-token confidence when tokens carry probability scores
         confidence: float | None = self._extract_avg_confidence(segments)
@@ -406,11 +406,11 @@ class WhisperCppProvider:
         """
         probs: list[float] = []
         for seg in segments:
-            tokens: list[dict[str, object]] = seg.get("tokens", [])  # type: ignore[assignment]
+            tokens: list[dict[str, object]] = seg.get("tokens", [])  # type: ignore[assignment]  # reason: whisper.cpp JSON shape; .get() returns object, narrowed by runtime contract
             for tok in tokens:
                 p = tok.get("p")
                 if p is not None:
-                    probs.append(float(p))  # type: ignore[arg-type]
+                    probs.append(float(p))  # type: ignore[arg-type]  # reason: p is object from the dict above; whisper.cpp emits float 0..1 — float() accepts at runtime
         if not probs:
             return None
         return sum(probs) / len(probs)

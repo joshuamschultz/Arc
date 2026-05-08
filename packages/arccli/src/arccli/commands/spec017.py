@@ -41,7 +41,7 @@ def policy_layers(tier: str) -> None:
     """List layers active for the given tier."""
     from arcagent.core.tool_policy import build_pipeline
 
-    pipeline = build_pipeline(tier=tier)  # type: ignore[arg-type]
+    pipeline = build_pipeline(tier=tier)  # type: ignore[arg-type]  # reason: tier is `str` validated by Click's Choice above; build_pipeline takes Literal["federal","enterprise","personal"]
     names = [layer.name for layer in pipeline.layers]
     click_echo(json.dumps({"tier": tier, "layers": names}, indent=2))
 
@@ -69,7 +69,7 @@ def policy_evaluate(tier: str, tool_name: str, agent_did: str, classification: s
         build_pipeline,
     )
 
-    pipeline = build_pipeline(tier=tier)  # type: ignore[arg-type]
+    pipeline = build_pipeline(tier=tier)  # type: ignore[arg-type]  # reason: tier is `str` validated by Click's Choice above; build_pipeline takes Literal["federal","enterprise","personal"]
     call = ToolCall(
         tool_name=tool_name,
         arguments={},
@@ -77,7 +77,7 @@ def policy_evaluate(tier: str, tool_name: str, agent_did: str, classification: s
         session_id="cli",
         classification=classification,
     )
-    ctx = PolicyContext(tier=tier, policy_version="v1", bundle_age_seconds=0.0)  # type: ignore[arg-type]
+    ctx = PolicyContext(tier=tier, policy_version="v1", bundle_age_seconds=0.0)  # type: ignore[arg-type]  # reason: tier is `str` validated by Click's Choice above; PolicyContext takes Literal[...]
     decision = _asyncio.run(pipeline.evaluate(call, ctx))
     click_echo(json.dumps(decision.model_dump(), indent=2))
 

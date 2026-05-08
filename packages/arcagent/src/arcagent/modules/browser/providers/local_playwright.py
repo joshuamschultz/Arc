@@ -63,7 +63,7 @@ class LocalPlaywrightProvider:
             BrowserNotAvailableError: If Playwright is not installed.
         """
         try:
-            from playwright.async_api import (  # type: ignore[import-not-found]  # optional dep
+            from playwright.async_api import (  # type: ignore[import-not-found]  # reason: optional dep
                 async_playwright,
             )
         except ImportError as exc:

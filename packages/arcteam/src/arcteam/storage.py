@@ -120,7 +120,7 @@ class FileBackend:
     def _sync_read(self, path: Path) -> dict[str, Any] | None:
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]  # reason: json.loads returns Any; the file contractually holds a dict[str, Any] (validated by writers)
 
     def _sync_write(self, path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -262,7 +262,7 @@ class FileBackend:
         if not last_line:
             return None
         try:
-            return json.loads(last_line)  # type: ignore[no-any-return]
+            return json.loads(last_line)  # type: ignore[no-any-return]  # reason: json.loads returns Any; tail-line of NDJSON file contractually decodes to a dict[str, Any]
         except json.JSONDecodeError:
             return None
 

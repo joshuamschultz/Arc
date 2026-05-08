@@ -91,14 +91,14 @@ def _run_repl() -> None:
         from prompt_toolkit.history import InMemoryHistory
 
         completer = _build_completer()
-        session: PromptSession = PromptSession(  # type: ignore[type-arg]
+        session: PromptSession = PromptSession(  # type: ignore[type-arg]  # reason: prompt_toolkit's PromptSession is generic but its parameter doesn't matter to us — we use it as-is
             history=InMemoryHistory(),
             completer=completer,
             complete_while_typing=False,
         )
 
         def _prompt() -> str:
-            return session.prompt("arc> ")  # type: ignore[no-any-return]
+            return session.prompt("arc> ")  # type: ignore[no-any-return]  # reason: PromptSession.prompt is typed Any in our pinned prompt_toolkit; runtime always returns str
 
     except ImportError:
 

@@ -58,7 +58,7 @@ def _attr_name(node: ast.Attribute | ast.Name) -> str:
     if isinstance(node, ast.Name):
         return node.id
     if isinstance(node, ast.Attribute):
-        return f"{_attr_name(node.value)}.{node.attr}"  # type: ignore[arg-type]
+        return f"{_attr_name(node.value)}.{node.attr}"  # type: ignore[arg-type]  # reason: node.value is ast.expr; we recurse and rely on the fallthrough return for unhandled subtypes
     return "<unknown>"
 
 

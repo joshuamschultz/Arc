@@ -672,7 +672,7 @@ class Consolidator:
             sort_keys=False,
         ).strip()
 
-        raw_facts: list[Any] = entity.get("facts", [])  # type: ignore[assignment]
+        raw_facts: list[Any] = entity.get("facts", [])  # type: ignore[assignment]  # reason: entity is dict from JSON; .get returns object — narrowed by isinstance check below
         if not isinstance(raw_facts, list):
             raw_facts = []
         fact_lines = self._format_initial_facts(raw_facts, today)

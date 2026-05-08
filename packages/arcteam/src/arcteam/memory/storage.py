@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import frontmatter  # type: ignore[import-untyped]
+import frontmatter  # type: ignore[import-untyped]  # reason: python-frontmatter ships no type stubs; we use only .load/.dumps with documented signatures
 
 from arcteam.memory.errors import EntityValidationError, LockTimeoutError
 from arcteam.memory.types import EntityFile, EntityMetadata, IndexEntry

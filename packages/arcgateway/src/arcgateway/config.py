@@ -268,7 +268,7 @@ class GatewayConfig(BaseModel):
             import tomllib  # stdlib Python 3.11+
         except ImportError:
             try:
-                import tomli as tomllib  # type: ignore[no-redef]
+                import tomli as tomllib  # type: ignore[no-redef]  # reason: Python <3.11 fallback — tomli is the same API as stdlib tomllib
             except ImportError as exc:
                 raise ImportError(
                     "tomllib (Python 3.11+) or tomli is required to load TOML config. "
@@ -293,7 +293,7 @@ class GatewayConfig(BaseModel):
         try:
             import tomllib
         except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
+            import tomli as tomllib  # type: ignore[no-redef]  # reason: Python <3.11 fallback — tomli is the same API as stdlib tomllib
 
         raw = tomllib.loads(toml_text)
         return cls.model_validate(raw)

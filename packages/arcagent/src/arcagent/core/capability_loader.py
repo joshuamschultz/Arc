@@ -309,7 +309,7 @@ class CapabilityLoader:
             if name in seen:
                 continue
             # Cast kind to the registry's Literal at the call boundary.
-            await self._registry.unregister(kind, name)  # type: ignore[arg-type]
+            await self._registry.unregister(kind, name)  # type: ignore[arg-type]  # reason: kind is a runtime str narrowed by the caller's switch; registry expects Literal[...] and mypy can't see the narrowing
             delta.removed.append(name)
             del known[name]
 
@@ -326,14 +326,14 @@ class CapabilityLoader:
         set_up: list[LifecycleEntry] = []
         for entry in ordered:
             try:
-                await entry.instance.setup(None)  # type: ignore[attr-defined]
+                await entry.instance.setup(None)  # type: ignore[attr-defined]  # reason: setup() is a duck-typed lifecycle hook; the @capability decorator attaches it but mypy sees instance as `object`
                 entry.setup_done = True
                 set_up.append(entry)
             except Exception as exc:
                 await self._emit_setup_failed(entry, exc)
                 for done in reversed(set_up):
                     try:
-                        await done.instance.teardown()  # type: ignore[attr-defined]
+                        await done.instance.teardown()  # type: ignore[attr-defined]  # reason: teardown() is a duck-typed lifecycle hook attached by @capability; mypy sees instance as `object`
                     except Exception:
                         _logger.exception(
                             "teardown raised during rollback for %s",
@@ -348,7 +348,7 @@ class CapabilityLoader:
             if not entry.setup_done:
                 continue
             try:
-                await entry.instance.teardown()  # type: ignore[attr-defined]
+                await entry.instance.teardown()  # type: ignore[attr-defined]  # reason: teardown() is a duck-typed lifecycle hook attached by @capability; mypy sees instance as `object`
             except Exception:
                 _logger.exception("teardown raised during shutdown for %s", entry.meta.name)
 

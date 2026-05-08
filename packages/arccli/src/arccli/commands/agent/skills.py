@@ -28,7 +28,7 @@ def _skills(args: argparse.Namespace) -> None:
     try:
         from arcagent.core.skill_validator import validate_skill_folder
     except ImportError:
-        validate_skill_folder = None  # type: ignore[assignment]
+        validate_skill_folder = None  # type: ignore[assignment]  # reason: optional import — when arcagent isn't on the path the function falls back to None and the caller skips validation
 
     rows: list[list[str]] = []
     for root_name, folder in folders:

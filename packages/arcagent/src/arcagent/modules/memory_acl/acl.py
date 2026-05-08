@@ -139,7 +139,7 @@ class SessionACL(BaseModel):
             visibility = config.default_for_tier()
         else:
             # Safe: visibility_raw has been validated against the literal set
-            visibility = visibility_raw  # type: ignore[assignment]
+            visibility = visibility_raw  # type: ignore[assignment]  # reason: visibility_raw is `str` validated against valid_values above; mypy can't narrow str to Literal
 
         classification_raw: str = parsed.get("classification", "unclassified")
         valid_cls = {"unclassified", "cui", "secret"}
@@ -149,7 +149,7 @@ class SessionACL(BaseModel):
         parsed_owner: str = parsed.get("owner_did", owner_did) or owner_did
 
         # classification_raw is validated above; cast is safe
-        classification: Literal["unclassified", "cui", "secret"] = classification_raw  # type: ignore[assignment]
+        classification: Literal["unclassified", "cui", "secret"] = classification_raw  # type: ignore[assignment]  # reason: classification_raw is `str` validated against valid_cls above; mypy can't narrow str to Literal
 
         return cls(
             owner_did=parsed_owner,

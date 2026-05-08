@@ -54,7 +54,7 @@ async def find(
     file_mtimes.sort(key=lambda x: x[1], reverse=True)
     truncated = len(file_mtimes) > max_results
     file_mtimes = file_mtimes[:max_results]
-    lines = [str(p.relative_to(ws)) for p, _ in file_mtimes]  # type: ignore[attr-defined]
+    lines = [str(p.relative_to(ws)) for p, _ in file_mtimes]  # type: ignore[attr-defined]  # reason: ws is narrowed to Path by the runtime check above; mypy doesn't propagate the narrowing into this comprehension
     result = "\n".join(lines)
     if truncated:
         result += f"\n(truncated at {max_results} results)"

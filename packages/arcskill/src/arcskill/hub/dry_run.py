@@ -243,7 +243,7 @@ def _find_fixture_command(skill_dir: Path) -> str:
     module_yaml = skill_dir / "MODULE.yaml"
     if module_yaml.exists():
         try:
-            import yaml  # type: ignore[import-untyped]
+            import yaml  # type: ignore[import-untyped]  # reason: PyYAML ships no type stubs; only safe_load is called and its return type is Any by design
 
             data = yaml.safe_load(module_yaml.read_text(encoding="utf-8"))
             if isinstance(data, dict) and "test_fixture" in data:

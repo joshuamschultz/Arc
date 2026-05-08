@@ -57,7 +57,7 @@ class InputComposer(Static):
         to handle unknown commands (e.g. show an error message).
     """
 
-    BINDINGS: ClassVar[list[Binding]] = [  # type: ignore[assignment]
+    BINDINGS: ClassVar[list[Binding]] = [  # type: ignore[assignment]  # reason: Textual's Widget.BINDINGS is typed list[BindingType] but accepts list[Binding] at runtime; mypy's variance is too strict here
         Binding("ctrl+j", "submit", "Submit", priority=True),
         Binding("up", "history_prev", "Previous", show=False),
         Binding("down", "history_next", "Next", show=False),

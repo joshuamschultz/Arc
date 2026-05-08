@@ -105,7 +105,7 @@ class RetryModule(BaseModule):
 
             logger.error("All %d retries exhausted: %s", effective_max, last_error)
             retry_span.set_status(StatusCode.ERROR)
-            raise last_error  # type: ignore[misc]
+            raise last_error  # type: ignore[misc]  # reason: last_error is Exception | None but the loop above guarantees it's set when we reach here (effective_max > 0)
 
     def _effective_max_retries(self, error: Exception) -> int:
         """Return retry budget based on error type.

@@ -464,7 +464,9 @@ class TelegramAdapter:
         network_attempts = 0
 
         try:
-            from telegram.ext import Update  # type: ignore[attr-defined]
+            from telegram.ext import (
+                Update,  # type: ignore[attr-defined]  # reason: python-telegram-bot re-exports Update under .ext at runtime; the stubs we use don't expose this re-export
+            )
         except ImportError:
             _logger.error("TelegramAdapter: python-telegram-bot not available in polling loop")
             return

@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 try:
     from arcrun.backends.docker import DockerBackend as _DockerBackend
 except ImportError:
-    _DockerBackend = None  # type: ignore[assignment,misc]
+    _DockerBackend = None  # type: ignore[assignment,misc]  # reason: optional import — _run_docker checks for None and returns a skipped result when arcrun isn't installed
 
 
 _DRY_RUN_TIMEOUT_SECONDS = 10

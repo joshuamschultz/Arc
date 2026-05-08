@@ -39,7 +39,7 @@ def _load_tasks() -> list[dict[str, Any]]:
     if not tasks_path.exists():
         return []
     try:
-        return json.loads(tasks_path.read_text(encoding="utf-8"))  # type: ignore[return-value]
+        return json.loads(tasks_path.read_text(encoding="utf-8"))  # type: ignore[return-value]  # reason: json.loads returns Any; tasks.json is contractually a list of task dicts (validated upstream)
     except (json.JSONDecodeError, OSError):
         return []
 

@@ -212,10 +212,12 @@ class SlackBot:
             return
 
         try:
-            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]
+            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]  # reason: optional dep — module dormant unless arc-agent[slack] is installed
                 AsyncSocketModeHandler,
             )
-            from slack_bolt.async_app import AsyncApp  # type: ignore[import-not-found]
+            from slack_bolt.async_app import (
+                AsyncApp,  # type: ignore[import-not-found]  # reason: optional dep — see above
+            )
         except ImportError:
             _logger.warning(
                 "slack-bolt not installed; slack module dormant. "
@@ -226,16 +228,16 @@ class SlackBot:
         self._app = AsyncApp(token=bot_token)
 
         # Register message event handler (catches all DM subtypes)
-        @self._app.event("message")  # type: ignore[untyped-decorator]  # slack_bolt has no type stubs
+        @self._app.event("message")  # type: ignore[untyped-decorator]  # reason: slack_bolt has no type stubs
         async def handle_message_event(event: dict[str, Any], say: Any) -> None:
             await self._handle_message(event)
 
         # Register no-op handlers to suppress WARNING logs
-        @self._app.event("message_changed")  # type: ignore[untyped-decorator]  # slack_bolt has no type stubs
+        @self._app.event("message_changed")  # type: ignore[untyped-decorator]  # reason: slack_bolt has no type stubs
         async def handle_message_changed(event: dict[str, Any]) -> None:
             pass  # Suppress warning logs for message edits
 
-        @self._app.event("message_deleted")  # type: ignore[untyped-decorator]  # slack_bolt has no type stubs
+        @self._app.event("message_deleted")  # type: ignore[untyped-decorator]  # reason: slack_bolt has no type stubs
         async def handle_message_deleted(event: dict[str, Any]) -> None:
             pass  # Suppress warning logs for message deletions
 

@@ -130,7 +130,10 @@ class KubernetesLeaseElection:
     def _build_client(self) -> Any:
         """Late-import the kubernetes client; raises if unavailable."""
         try:
-            from kubernetes import client, config  # type: ignore[import-not-found]  # optional dep
+            from kubernetes import (  # type: ignore[import-not-found]  # reason: optional dep
+                client,
+                config,
+            )
         except ImportError as err:
             msg = (
                 "KubernetesLeaseElection requires the 'kubernetes' package. "
@@ -157,7 +160,7 @@ class KubernetesLeaseElection:
         """Blocking acquire logic — runs in a thread."""
         try:
             from kubernetes import client
-            from kubernetes.client.rest import (  # type: ignore[import-not-found]  # optional dep
+            from kubernetes.client.rest import (  # type: ignore[import-not-found]  # reason: optional dep
                 ApiException,
             )
         except ImportError:

@@ -154,7 +154,7 @@ class PairingInterceptor:
 
         try:
             # Duck-typed call: works with PairingStore or any compatible mock.
-            pairing_code = await self._pairing_store.mint_code(  # type: ignore[attr-defined]
+            pairing_code = await self._pairing_store.mint_code(  # type: ignore[attr-defined]  # reason: _pairing_store is duck-typed (PairingStore or test mock); the `# Duck-typed` comment above is the design contract
                 platform=event.platform,
                 platform_user_id=event.user_did,
             )

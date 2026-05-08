@@ -88,7 +88,7 @@ class UIEventReporter:
             msg = f"Invalid layer: {layer!r}. Must be one of {valid}"
             raise ValueError(msg)
         ui_event = UIEvent(
-            layer=layer,  # type: ignore[arg-type]
+            layer=layer,  # type: ignore[arg-type]  # reason: layer is `str` validated against `valid` set above; UIEvent.layer is Literal[...] and mypy can't narrow str to Literal
             event_type=event_type,
             agent_id=self._agent_id,
             agent_name=self._agent_name,

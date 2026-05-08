@@ -420,7 +420,7 @@ def _scan_manifest_description(root: Path) -> list[Finding]:
 
     for path in root.rglob("*.yaml"):
         try:
-            import yaml  # type: ignore[import-untyped]
+            import yaml  # type: ignore[import-untyped]  # reason: PyYAML ships no type stubs; only safe_load is called and its return type is Any by design
 
             data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace"))
         except Exception:  # noqa: S112

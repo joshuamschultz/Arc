@@ -50,7 +50,7 @@ class Event:
     type: str
     timestamp: float
     run_id: str
-    data: MappingProxyType  # type: ignore[type-arg]  # Generic arg omitted: MappingProxyType[str, Any] unsupported
+    data: MappingProxyType  # type: ignore[type-arg]  # reason: Generic arg omitted: MappingProxyType[str, Any] unsupported
     sequence: int = 0
     prev_hash: str = ""
     event_hash: str = ""

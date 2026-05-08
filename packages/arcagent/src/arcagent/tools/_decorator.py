@@ -156,7 +156,7 @@ def tool(
         # unchanged. The opaque underscore-prefixed name avoids
         # collision with user-authored attributes; ``_arc_capability_``
         # prefix is reserved for the loader.
-        fn._arc_capability_meta = meta  # type: ignore[attr-defined]
+        fn._arc_capability_meta = meta  # type: ignore[attr-defined]  # reason: decorator stashes metadata on the wrapped Callable; mypy can't model dynamic attrs
         return fn
 
     return decorator
@@ -200,7 +200,7 @@ def hook(
             tryfirst=tryfirst,
             trylast=trylast,
         )
-        fn._arc_capability_meta = meta  # type: ignore[attr-defined]
+        fn._arc_capability_meta = meta  # type: ignore[attr-defined]  # reason: decorator stashes metadata on the wrapped Callable; mypy can't model dynamic attrs
         return fn
 
     return decorator
@@ -224,7 +224,7 @@ def background_task(
             name=name or fn.__name__,
             interval=float(interval),
         )
-        fn._arc_capability_meta = meta  # type: ignore[attr-defined]
+        fn._arc_capability_meta = meta  # type: ignore[attr-defined]  # reason: decorator stashes metadata on the wrapped Callable; mypy can't model dynamic attrs
         return fn
 
     return decorator
@@ -249,7 +249,7 @@ def capability(
             name=name or cls.__name__,
             depends_on=tuple(depends_on or ()),
         )
-        cls._arc_capability_meta = meta  # type: ignore[attr-defined]
+        cls._arc_capability_meta = meta  # type: ignore[attr-defined]  # reason: decorator stashes metadata on the wrapped class; mypy can't model dynamic attrs
         return cls
 
     return decorator

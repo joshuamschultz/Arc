@@ -88,7 +88,7 @@ class BrowserbaseProvider:
             RemoteProviderError: If the connection to the remote endpoint fails.
         """
         try:
-            from playwright.async_api import (  # type: ignore[import-not-found]  # optional dep
+            from playwright.async_api import (  # type: ignore[import-not-found]  # reason: optional dep
                 async_playwright,
             )
         except ImportError as exc:

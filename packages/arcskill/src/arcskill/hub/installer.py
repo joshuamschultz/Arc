@@ -324,7 +324,7 @@ def _stage_fetch(ctx: InstallContext) -> None:
     """
     logger.info("[hub] Fetching skill %r from source %r", ctx.name, ctx.source_name)
     source = ctx.config.source_by_name(ctx.source_name)
-    adapter = make_adapter(source)  # type: ignore[arg-type]
+    adapter = make_adapter(source)  # type: ignore[arg-type]  # reason: source_by_name returns Source | None; the call site contractually rejects None upstream (raised in load_config)
     ctx.fetch = adapter.fetch(ctx.name, ctx.quarantine_dir)
     logger.info("[hub] Fetch complete: %s", ctx.fetch.local_path.name)
 
@@ -344,7 +344,7 @@ def _stage_verify_signature(ctx: InstallContext) -> None:
     source = ctx.config.source_by_name(ctx.source_name)
     ctx.verify = verify_bundle(
         bundle_path=ctx.fetch.local_path,
-        source=source,  # type: ignore[arg-type]
+        source=source,  # type: ignore[arg-type]  # reason: source_by_name returns Source | None; the call site contractually rejects None upstream
         config=ctx.config,
         content_hash=ctx.fetch.content_hash,
     )

@@ -68,7 +68,7 @@ def _load_did_index(team_root: Path) -> dict[str, Path]:
     try:
         import tomllib
     except ImportError:  # pragma: no cover — Python <3.11 fallback
-        import tomli as tomllib  # type: ignore[no-redef]
+        import tomli as tomllib  # type: ignore[no-redef]  # reason: Python <3.11 fallback — tomli is the same API as stdlib tomllib
 
     index: dict[str, Path] = {}
     for agent_dir in sorted(team_root.glob("*_agent")):

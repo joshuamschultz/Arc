@@ -159,7 +159,7 @@ def native_tool(
             example=example,
             category=category,
         )
-        fn.tool = tool  # type: ignore[attr-defined]
+        fn.tool = tool  # type: ignore[attr-defined]  # reason: decorator attaches RegisteredTool to wrapped Callable; mypy can't model dynamic attrs
         return fn
 
     return decorator

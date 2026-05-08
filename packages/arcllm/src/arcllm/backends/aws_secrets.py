@@ -77,8 +77,8 @@ class AwsSecretsManagerBackend:
             # nothing at module-import time. boto3 stubs aren't a project
             # dep, so type-checking treats this as untyped — that's fine,
             # we only call two well-documented methods.
-            import boto3  # type: ignore[import-untyped]
-            from botocore.exceptions import (  # type: ignore[import-untyped]
+            import boto3  # type: ignore[import-untyped]  # reason: optional dep — boto3 stubs aren't a project dep; we only call two well-documented methods (see comment above)
+            from botocore.exceptions import (  # type: ignore[import-untyped]  # reason: same — botocore has no project-pinned stubs
                 BotoCoreError,
                 ClientError,
             )
