@@ -1,13 +1,12 @@
 """PairingInterceptor — pairing gate before session routing.
 
-Extracts all pairing-check and DM-delivery logic from SessionRouter so that
-the router core (race-guard + task spawn) remains free of pairing concerns.
+Holds the pairing-check and DM-delivery logic so SessionRouter's core
+(race-guard + task spawn) stays free of pairing concerns.
 
 Design (SDD §3.1 DM Pairing / T1.8):
     - Checks whether a user is in the approved allowlist.
     - When not approved: mints a pairing code and DMs the user via the adapter.
-    - Wires up to 5 closed TODO(M1 T1.7 integration) items by receiving the
-      adapter_map at construction time and calling adapter.send() directly.
+    - Receives the adapter_map at construction time and calls adapter.send() directly.
     - No-op (all users approved) when user_allowlist is None.
     - Duck-typed for testability: pairing_store only needs .mint_code() coroutine.
 """
@@ -128,9 +127,6 @@ class PairingInterceptor:
         Mints a new pairing code (or handles rate-limit / platform-full /
         platform-locked cases) and delivers the result via the platform adapter.
 
-        Closes 5 TODO(M1 T1.7 integration) comments from the original SessionRouter
-        implementation by calling adapter.send() with the pairing code DM.
-
         Uses duck-typing for the pairing store: any object with a ``mint_code()``
         coroutine is accepted (no isinstance guard).
 
@@ -167,7 +163,7 @@ class PairingInterceptor:
                 uid_h,
                 event.platform,
             )
-            # Deliver the pairing code via adapter DM (closes TODO M1 T1.7).
+            # Deliver the pairing code via adapter DM.
             if adapter is not None:
                 await adapter.send(
                     event.chat_id,
@@ -185,7 +181,7 @@ class PairingInterceptor:
                 uid_h,
                 event.platform,
             )
-            # Re-send reminder (closes TODO M1 T1.7 rate-limited branch).
+            # Re-send reminder.
             if adapter is not None:
                 await adapter.send(
                     event.chat_id,
@@ -199,7 +195,7 @@ class PairingInterceptor:
                 event.platform,
                 uid_h,
             )
-            # Notify user that pairing is at capacity (closes TODO M1 T1.7 full branch).
+            # Notify user that pairing is at capacity.
             if adapter is not None:
                 await adapter.send(
                     event.chat_id,
@@ -212,7 +208,7 @@ class PairingInterceptor:
                 event.platform,
                 uid_h,
             )
-            # Notify user that pairing is locked (closes TODO M1 T1.7 locked branch).
+            # Notify user that pairing is locked.
             if adapter is not None:
                 await adapter.send(
                     event.chat_id,

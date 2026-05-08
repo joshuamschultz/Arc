@@ -11,8 +11,7 @@ Mirrors the pattern in :mod:`arcagent.modules.policy._runtime` and
 model).
 
 Tier enforcement runs at :func:`configure` time so misconfiguration
-is caught before any audio is processed — fail fast, fail loud
-(matches legacy ``VoiceModule.__init__`` behaviour).
+is caught before any audio is processed — fail fast, fail loud.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ def configure(
     """Bind module state. Called once at agent startup.
 
     Validates federal-tier air-gap policy and emits provider-selection
-    audit events, matching legacy :class:`VoiceModule.__init__`.
+    audit events.
     """
     global _state
     cfg = VoiceConfig(**(config or {}))

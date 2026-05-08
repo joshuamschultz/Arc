@@ -1,12 +1,4 @@
-"""Plain CommandDef handlers for the `arc llm` subcommand group.
-
-T1.1.5 migration: replaces the legacy Click-based dispatch in registry.py.
-Each function is a direct translation of the corresponding Click command body
-in arccli.llm, with Click-specific calls replaced with stdlib equivalents.
-
-Layer contract: this module may import from arcllm.
-It MUST NOT import click or arccli.main_legacy.
-"""
+"""Plain CommandDef handlers for the `arc llm` subcommand group."""
 
 from __future__ import annotations
 

@@ -1,15 +1,7 @@
 """Plain CommandDef handlers for the `arc init` wizard.
 
-T1.1.5 migration: replaces the legacy Click-based dispatch in registry.py.
-This module provides the non-interactive path for `arc init` — the
-interactive prompts are only required when no flags are passed, which is
-a terminal use case not exercised by CI tests.
-
-For non-interactive use (--tier, --provider, --dir): fully self-contained.
-For interactive use: prompts via input() since we have no click dependency.
-
-Layer contract: this module may import from arcllm, arcagent.
-It MUST NOT import click or arccli.main_legacy.
+Non-interactive path runs from --tier / --provider / --dir flags.
+The interactive path prompts via stdlib `input()` when no flags are passed.
 """
 
 from __future__ import annotations

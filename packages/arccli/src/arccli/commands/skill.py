@@ -4,9 +4,6 @@ A skill is a folder containing `SKILL.md` (frontmatter + 7 required
 sections) plus optional `references/`, `scripts/`, `templates/`, and
 `assets/` sub-folders. The unified `CapabilityLoader` discovers them
 from the same four scan roots used for capability `.py` files.
-
-Layer contract: this module may import from arcagent. It MUST NOT
-import click or arccli.main_legacy.
 """
 
 from __future__ import annotations

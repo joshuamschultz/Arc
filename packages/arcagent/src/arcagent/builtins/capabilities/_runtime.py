@@ -81,10 +81,9 @@ def loader() -> CapabilityLoader:
 
 
 def get_secret(name: str) -> str | None:
-    """Resolve a secret by name. Vault first, env var fallback.
+    """Resolve a secret by name.
 
-    Mirrors the legacy ``ExtensionAPI.get_secret`` resolution order so
-    migrated extensions keep working unchanged:
+    Lookup order:
 
       1. Vault backend (if configured in [vault] of arcagent.toml)
       2. Environment variable (name uppercased, hyphens → underscores)

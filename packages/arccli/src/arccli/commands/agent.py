@@ -1,13 +1,7 @@
-"""Pure argparse handlers for the `arc agent` subcommand group.
+"""Argparse handlers for the `arc agent` subcommand group.
 
-All handlers are plain functions: argparse for CLI parsing, stdlib for I/O,
-asyncio for the ArcAgent integration layer. No Click, no CliRunner.
-
-Subcommand dispatch uses a simple argparse-based dispatcher so the top-level
+Subcommand dispatch is argparse-based so the top-level
 `arc agent <sub> [args]` contract is preserved exactly.
-
-Layer contract: this module may import from arcagent, arcrun, arcllm.
-It MUST NOT import click or arccli.main_legacy.
 """
 
 from __future__ import annotations

@@ -9,9 +9,6 @@ scan roots:
   2. `~/.arc/capabilities/`              (global, this command's --global target)
   3. `<agent>/capabilities/`             (per-agent, trusted)
   4. `<agent>/workspace/.capabilities/`  (agent-authored, untrusted, AST-validated)
-
-Layer contract: this module may import from arcagent. It MUST NOT
-import click or arccli.main_legacy.
 """
 
 from __future__ import annotations

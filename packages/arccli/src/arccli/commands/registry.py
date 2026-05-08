@@ -67,56 +67,56 @@ class CommandDef:
 
 
 def _agent_handler(args: list[str]) -> None:
-    """Dispatch to arc agent subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.agent import agent_handler
 
     agent_handler(args)
 
 
 def _llm_handler(args: list[str]) -> None:
-    """Dispatch to arc llm subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.llm import llm_handler
 
     llm_handler(args)
 
 
 def _run_handler(args: list[str]) -> None:
-    """Dispatch to arc run subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.run import run_handler
 
     run_handler(args)
 
 
 def _skill_handler(args: list[str]) -> None:
-    """Dispatch to arc skill subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.skill import skill_handler
 
     skill_handler(args)
 
 
 def _team_handler(args: list[str]) -> None:
-    """Dispatch to arc team subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.team import team_handler
 
     team_handler(args)
 
 
 def _ui_handler(args: list[str]) -> None:
-    """Dispatch to arc ui subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.ui import ui_handler
 
     ui_handler(args)
 
 
 def _ext_handler(args: list[str]) -> None:
-    """Dispatch to arc ext subcommands — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.ext import ext_handler
 
     ext_handler(args)
 
 
 def _init_handler(args: list[str]) -> None:
-    """Dispatch to arc init wizard — T1.1.5 plain handler."""
+    """Dispatch wrapper."""
     from arccli.commands.init import init_handler
 
     init_handler(args)

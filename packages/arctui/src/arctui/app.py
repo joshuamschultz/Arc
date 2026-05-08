@@ -322,9 +322,8 @@ class ArcTUI(App[None]):
         """Route a parsed slash command to its handler.
 
         Commands are executed synchronously in the UI thread for simple
-        built-ins (help, clear, quit).  For commands with blocking
-        handlers (e.g. legacy CLI dispatch), they run in a worker thread
-        via Textual's run_worker.
+        built-ins (help, clear, quit). Synchronous handlers run in a
+        worker thread via Textual's run_worker.
 
         Shows an "Unknown command" message in the transcript for any
         command not found in the registry.

@@ -51,8 +51,7 @@ def configure(
 ) -> None:
     """Bind module state. Called once at agent startup.
 
-    Validates federal-tier URL allowlist policy and logs provider selection,
-    matching legacy :class:`WebModule.__init__` behaviour.
+    Validates federal-tier URL allowlist policy and logs provider selection.
     """
     global _state
     cfg = WebConfig(**(config or {}))
