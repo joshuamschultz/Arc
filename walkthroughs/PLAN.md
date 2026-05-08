@@ -608,15 +608,15 @@ Each chunk is 3 notebooks dispatched in parallel. **Chunks must run in order** b
 | 5.2.2 | arcllm/15-queue-circuit-breaker | CREATE | C08 | done | 62 cells, 54KB, 11 sections |
 | 5.2.3 | arcllm/16-config-controller | CREATE | C08 | done | 64 cells, 47KB, 10 sections |
 | 5.1.13 | arcllm/13-open-providers | REWRITE | C08 | done | 46 cells, 57KB, 12 sections |
-| 5.1.1 | arcllm/01-core-types | REWRITE | C09 | pending | Low-risk |
-| 5.1.2 | arcllm/02-config-loading | REWRITE | C09 | pending | |
-| 5.1.3 | arcllm/03-anthropic-adapter | REWRITE | C09 | pending | |
-| 5.1.5 | arcllm/05-openai-adapter | REWRITE | C10 | pending | |
-| 5.1.8 | arcllm/08-rate-limiter | REWRITE | C10 | pending | Low-risk |
-| 5.1.9 | arcllm/09-telemetry-module | REWRITE | C10 | pending | |
-| 5.1.11 | arcllm/11-otel-export | REWRITE | C11 | pending | |
-| 5.1.12 | arcllm/12-security-layer | REWRITE | C11 | pending | |
-| 5.2.17 | arcteam/01-team-formation | CREATE | C11 | pending | |
+| 5.1.1 | arcllm/01-core-types | REWRITE | C09 | done | 82 cells, 52KB, 12 sections |
+| 5.1.2 | arcllm/02-config-loading | REWRITE | C09 | done | 60 cells, 43KB, 9 sections |
+| 5.1.3 | arcllm/03-anthropic-adapter | REWRITE | C09 | done | 69 cells, 54KB, 10 sections |
+| 5.1.5 | arcllm/05-openai-adapter | REWRITE | C10 | done | 66 cells, 59KB, 9 sections |
+| 5.1.8 | arcllm/08-rate-limiter | REWRITE | C10 | done | 43 cells, 37KB, 10 sections |
+| 5.1.9 | arcllm/09-telemetry-module | REWRITE | C10 | done | 60 cells, 51KB, 10 sections |
+| 5.1.11 | arcllm/11-otel-export | REWRITE | C11 | done | 52 cells, 42KB, 9 sections |
+| 5.1.12 | arcllm/12-security-layer | REWRITE | C11 | done | 66 cells, 43KB, 9 sections |
+| 5.2.17 | arcteam/01-team-formation | CREATE | C11 | done | 58 cells, 48KB, 9 sections |
 | 5.2.18 | arcteam/02-task-distribution | CREATE | C12 | pending | |
 | 5.2.19 | arcteam/03-messaging-channels | CREATE | C12 | pending | |
 | 5.2.20 | arcteam/04-team-persistence | CREATE | C12 | pending | |
