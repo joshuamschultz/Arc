@@ -605,9 +605,9 @@ Each chunk is 3 notebooks dispatched in parallel. **Chunks must run in order** b
 | 5.1.6 | arcllm/06-provider-registry | REWRITE | C07 | done | 68 cells, 55KB, 10 sections |
 | 5.1.7 | arcllm/07-module-system | REWRITE | C07 | done | 52 cells, 51KB, 10 sections |
 | 5.2.4 | arcllm/17-routing-module | CREATE | C07 | done | 64 cells, 52KB, 10 sections |
-| 5.2.2 | arcllm/15-queue-circuit-breaker | CREATE | C08 | pending | |
-| 5.2.3 | arcllm/16-config-controller | CREATE | C08 | pending | |
-| 5.1.13 | arcllm/13-open-providers | REWRITE | C08 | pending | High-risk |
+| 5.2.2 | arcllm/15-queue-circuit-breaker | CREATE | C08 | done | 62 cells, 54KB, 11 sections |
+| 5.2.3 | arcllm/16-config-controller | CREATE | C08 | done | 64 cells, 47KB, 10 sections |
+| 5.1.13 | arcllm/13-open-providers | REWRITE | C08 | done | 46 cells, 57KB, 12 sections |
 | 5.1.1 | arcllm/01-core-types | REWRITE | C09 | pending | Low-risk |
 | 5.1.2 | arcllm/02-config-loading | REWRITE | C09 | pending | |
 | 5.1.3 | arcllm/03-anthropic-adapter | REWRITE | C09 | pending | |
