@@ -48,6 +48,15 @@ from arcui.routes.agents import routes as agent_routes
 _ROOT = Path(__file__).resolve().parents[3]
 _INDEX = _ROOT / "packages/arcui/src/arcui/static/index.html"
 _AGENT_DETAIL_JS = _ROOT / "packages/arcui/src/arcui/static/assets/agent-detail.js"
+_AGENT_DETAIL_ASSETS_DIR = _ROOT / "packages/arcui/src/arcui/static/assets"
+
+
+def _agent_detail_bundle() -> str:
+    """Concatenate every agent-detail*.js sibling (post §8.7 split)."""
+    parts = []
+    for asset in sorted(_AGENT_DETAIL_ASSETS_DIR.glob("agent-detail*.js")):
+        parts.append(asset.read_text())
+    return "\n".join(parts)
 _PRISM_JS = _ROOT / "packages/arcui/src/arcui/static/assets/prism.min.js"
 _UI_PY = _ROOT / "packages/arccli/src/arccli/commands/ui.py"
 
@@ -196,7 +205,7 @@ class TestR3FmtNumberBinding:
     """
 
     def test_fmt_number_bound(self) -> None:
-        text = _AGENT_DETAIL_JS.read_text()
+        text = _agent_detail_bundle()
         assert "Fmt.number.bind(window.Fmt)" in text or \
                "Fmt.number).bind(" in text
 
@@ -207,7 +216,7 @@ class TestR4StatsResponseUnwrapped:
     """
 
     def test_stats_unwrap_in_overview(self) -> None:
-        text = _AGENT_DETAIL_JS.read_text()
+        text = _agent_detail_bundle()
         # Must read from results[2].stats, not directly from results[2]
         assert "statsRaw" in text or ".stats" in text
 

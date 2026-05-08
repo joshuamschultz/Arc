@@ -23,6 +23,21 @@ def _read(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _read_agent_detail_bundle() -> str:
+    """Concatenate every agent-detail*.js sibling for substring assertions.
+
+    The original 1408-LOC ``agent-detail.js`` was split into 7 IIFE
+    siblings (shared, timeline, modules, files, audit, policy, slim
+    entry). The static-contract checks below need to see content from
+    any of them — the entry alone no longer contains tab strings or
+    endpoint paths since those moved into the renderer modules.
+    """
+    parts = []
+    for asset in sorted(_ASSETS.glob("agent-detail*.js")):
+        parts.append(asset.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 # -------------------- Phase 5: pages --------------------
 
 
@@ -49,12 +64,12 @@ class TestAgentDetail:
         "memory", "policy", "tools", "telemetry", "files",
     ])
     def test_all_nine_tabs_declared(self, tab_id: str) -> None:
-        text = _read("agent-detail.js")
+        text = _read_agent_detail_bundle()
         # Each tab must be referenced — either as a key in TABS map or
         # as a `data-tab="<id>"` literal in the template.
         assert (
             f"'{tab_id}'" in text or f'"{tab_id}"' in text
-        ), f"agent-detail.js missing tab: {tab_id}"
+        ), f"agent-detail.js bundle missing tab: {tab_id}"
 
     def test_lazy_fetch_per_tab(self) -> None:
         text = _read("agent-detail.js")
@@ -62,7 +77,7 @@ class TestAgentDetail:
         assert "init" in text and "dispose" in text
 
     def test_routes_into_existing_endpoints(self) -> None:
-        text = _read("agent-detail.js")
+        text = _read_agent_detail_bundle()
         # Hits the read endpoints registered in agent_detail.py. Per-agent
         # `/policy` returns bullets+raw inline; bullets are no longer
         # fetched from `/policy/bullets` separately. Same with the bullet

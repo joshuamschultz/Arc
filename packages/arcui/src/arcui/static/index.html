@@ -808,6 +808,15 @@
   <script src="assets/messages-page.js?v={{ARC_BUILD_ID}}"></script>
   <script src="assets/knowledge-page.js?v={{ARC_BUILD_ID}}"></script>
   <script src="assets/agent-controls.js?v={{ARC_BUILD_ID}}"></script>
+  <!-- Agent Detail subpackage: shared first, then specialty modules,
+       then the slim agent-detail.js entry. Each is an IIFE that
+       registers on ARC.AgentDetail._<name>; load order matters. -->
+  <script src="assets/agent-detail-shared.js?v={{ARC_BUILD_ID}}"></script>
+  <script src="assets/agent-detail-timeline.js?v={{ARC_BUILD_ID}}"></script>
+  <script src="assets/agent-detail-modules.js?v={{ARC_BUILD_ID}}"></script>
+  <script src="assets/agent-detail-files.js?v={{ARC_BUILD_ID}}"></script>
+  <script src="assets/agent-detail-audit.js?v={{ARC_BUILD_ID}}"></script>
+  <script src="assets/agent-detail-policy.js?v={{ARC_BUILD_ID}}"></script>
   <script src="assets/agent-detail.js?v={{ARC_BUILD_ID}}"></script>
   <!-- SPEC-022 Phase 6: sidebar pages -->
   <script src="assets/tasks-page.js?v={{ARC_BUILD_ID}}"></script>
