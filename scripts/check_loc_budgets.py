@@ -164,9 +164,7 @@ def check_arcgateway_core(root: Path) -> tuple[int, list[tuple[str, int]], bool]
     gw_base = root / "packages" / "arcgateway" / "src" / "arcgateway"
 
     if not gw_base.exists():
-        print(
-            f"WARNING: arcgateway source not found: {gw_base}", file=sys.stderr
-        )
+        print(f"WARNING: arcgateway source not found: {gw_base}", file=sys.stderr)
         return 0, [], True
 
     rows: list[tuple[str, int]] = []
@@ -249,17 +247,17 @@ def main() -> int:
         )
     else:
         margin = _ARCAGENT_CORE_BUDGET - a_total
-        print(f"  PASS: arcagent core budget OK ({a_total} / {_ARCAGENT_CORE_BUDGET}, "
-              f"{margin} lines remaining).")
+        print(
+            f"  PASS: arcagent core budget OK ({a_total} / {_ARCAGENT_CORE_BUDGET}, "
+            f"{margin} lines remaining)."
+        )
         print()
 
     # ------------------------------------------------------------------
     # Budget B — arcgateway core ≤ 1,200
     # ------------------------------------------------------------------
     print()
-    print(
-        f"Budget B — arcgateway core files  (limit: {_ARCGATEWAY_CORE_BUDGET:,} NCLOC)  [G1.6]"
-    )
+    print(f"Budget B — arcgateway core files  (limit: {_ARCGATEWAY_CORE_BUDGET:,} NCLOC)  [G1.6]")
     print(_separator())
 
     b_total, b_rows, b_passed = check_arcgateway_core(root)
@@ -282,8 +280,10 @@ def main() -> int:
         )
     else:
         margin = _ARCGATEWAY_CORE_BUDGET - b_total
-        print(f"  PASS: arcgateway core budget OK ({b_total} / {_ARCGATEWAY_CORE_BUDGET}, "
-              f"{margin} lines remaining).")
+        print(
+            f"  PASS: arcgateway core budget OK ({b_total} / {_ARCGATEWAY_CORE_BUDGET}, "
+            f"{margin} lines remaining)."
+        )
         print()
 
     # ------------------------------------------------------------------

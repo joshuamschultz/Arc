@@ -28,7 +28,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _ARC = Path(__file__).parent.parent.parent.parent / ".venv" / "bin" / "arc"
-_JOSH_AGENT = Path(__file__).parent.parent.parent.parent / "team" / "josh_agent"
 
 
 def _arc(

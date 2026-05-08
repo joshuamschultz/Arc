@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from arcui._constants import LOOPBACK_HOSTS
 from pydantic import BaseModel, Field
 
 from arcagent.core.module_bus import EventContext, ModuleContext
@@ -23,8 +22,9 @@ _logger = logging.getLogger("arcagent.ui_reporter")
 
 # SR-1: token file MUST be 0600, owned by current UID. SR-6 / H-4: probe URL
 # host MUST be loopback — autoconnect over a non-loopback URL is a config-
-# poisoning exfiltration vector. Loopback set is shared with arccli via
-# arcui._constants so the two callers can never disagree.
+# poisoning exfiltration vector. Inlined (mirrors arcui._constants.LOOPBACK_HOSTS)
+# so arcagent doesn't take a hard dependency on arcui per the layering invariant.
+LOOPBACK_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # Events from arcrun bridged as agent:pre_tool/post_tool etc.
 # These map to UIEvent layer="run", not "agent".

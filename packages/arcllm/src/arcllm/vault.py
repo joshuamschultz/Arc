@@ -196,7 +196,7 @@ class VaultResolver:
         if entry is None:
             return None
         value, expiry = entry
-        if time.monotonic() > expiry:
+        if time.monotonic() >= expiry:
             del self._cache[path]
             return None
         return value

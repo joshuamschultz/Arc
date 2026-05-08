@@ -50,7 +50,7 @@ from pathlib import Path
 # Threshold configuration
 # ---------------------------------------------------------------------------
 
-_LINE_THRESHOLD = 80   # %
+_LINE_THRESHOLD = 80  # %
 _BRANCH_THRESHOLD = 75  # %
 
 # Packages/modules to measure coverage for.
@@ -88,16 +88,16 @@ def _run_coverage(
     for _, module in targets:
         cov_args.extend([f"--cov={module}"])
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".json", prefix="arc_coverage_", delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".json", prefix="arc_coverage_", delete=False) as tmp:
         json_path = Path(tmp.name)
 
     # Use "uv run pytest" to ensure the correct virtualenv is used.
     # This avoids sys.executable pointing at the wrong Python when
     # the script is invoked via "python scripts/coverage_report.py".
     cmd = [
-        "uv", "run", "pytest",
+        "uv",
+        "run",
+        "pytest",
         "--cov-branch",
         f"--cov-report=json:{json_path}",
         "--cov-report=term-missing",
@@ -131,8 +131,7 @@ def _run_coverage(
     # Parse JSON coverage report
     if not json_path.exists():
         print(
-            "WARNING: coverage JSON not generated. "
-            "Possibly no tests found or pytest crashed.",
+            "WARNING: coverage JSON not generated. Possibly no tests found or pytest crashed.",
             file=sys.stderr,
         )
         return {}
@@ -203,14 +202,8 @@ def _parse_coverage_json(
             total_branches += summary.get("num_branches", 0)
             covered_branches += summary.get("covered_branches", 0)
 
-        line_pct = (
-            (covered_stmts / total_stmts * 100.0) if total_stmts > 0 else 0.0
-        )
-        branch_pct = (
-            (covered_branches / total_branches * 100.0)
-            if total_branches > 0
-            else 0.0
-        )
+        line_pct = (covered_stmts / total_stmts * 100.0) if total_stmts > 0 else 0.0
+        branch_pct = (covered_branches / total_branches * 100.0) if total_branches > 0 else 0.0
 
         results[display_name] = {"line": line_pct, "branch": branch_pct}
 
@@ -325,8 +318,7 @@ def main() -> int:
     for name, pct in sorted(results.items()):
         if pct["line"] < _LINE_THRESHOLD:
             failures.append(
-                f"  {name}: line coverage {pct['line']:.1f}% "
-                f"(below {_LINE_THRESHOLD}% threshold)"
+                f"  {name}: line coverage {pct['line']:.1f}% (below {_LINE_THRESHOLD}% threshold)"
             )
         if pct["branch"] < _BRANCH_THRESHOLD:
             failures.append(
