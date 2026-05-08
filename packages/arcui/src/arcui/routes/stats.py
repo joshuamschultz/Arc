@@ -16,21 +16,6 @@ logger = logging.getLogger(__name__)
 # NIST SI-10: Allowlist valid window values at the API boundary
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
 
-_GONE_RESPONSE = JSONResponse(
-    {"error": "Polling deprecated. Use /ws/dashboard."},
-    status_code=410,
-)
-
-
-# TODO(SPEC-025 Track E cleanup): when ARCUI_LEGACY_POLLING flips off
-# in the next release, every `_legacy_polling_enabled(request)` call
-# below — and this helper — gets removed in a single mechanical pass.
-# The 6 routes in this file plus `cost_efficiency.py` and `schedules.py`
-# are the call sites; grep `_legacy_polling_enabled` to find them all.
-def _legacy_polling_enabled(request: Request) -> bool:
-    """Return True when polling endpoints should serve data (default)."""
-    return bool(getattr(request.app.state, "legacy_polling", True))
-
 
 def _validated_window(request: Request) -> str | None:
     """Extract and validate the window query param. Returns None if invalid."""
@@ -87,9 +72,6 @@ async def get_stats(request: Request) -> JSONResponse:
 
     Supports ``?agent_id=`` for per-agent drill-down.
     """
-    if not _legacy_polling_enabled(request):
-        return _GONE_RESPONSE
-
     aggregator, err = _get_aggregator_for_request(request)
     if err is not None:
         return err
@@ -109,9 +91,6 @@ async def get_timeseries(request: Request) -> JSONResponse:
 
     Supports ``?agent_id=`` for per-agent drill-down.
     """
-    if not _legacy_polling_enabled(request):
-        return _GONE_RESPONSE
-
     aggregator, err = _get_aggregator_for_request(request)
     if err is not None:
         return err
@@ -128,9 +107,6 @@ async def get_timeseries(request: Request) -> JSONResponse:
 
 async def get_circuit_breakers(request: Request) -> JSONResponse:
     """GET /api/circuit-breakers — list circuit breaker states."""
-    if not _legacy_polling_enabled(request):
-        return _GONE_RESPONSE
-
     breakers = request.app.state.circuit_breakers or []
     states = [cb.get_state() for cb in breakers]
     data = {"circuit_breakers": states}
@@ -140,9 +116,6 @@ async def get_circuit_breakers(request: Request) -> JSONResponse:
 
 async def get_budget(request: Request) -> JSONResponse:
     """GET /api/budget — list budget states from telemetry modules."""
-    if not _legacy_polling_enabled(request):
-        return _GONE_RESPONSE
-
     telemetry_modules = request.app.state.telemetry_modules or []
     budgets = []
     for tm in telemetry_modules:
@@ -159,9 +132,6 @@ async def get_performance(request: Request) -> JSONResponse:
 
     Supports ``?agent_id=`` for per-agent drill-down.
     """
-    if not _legacy_polling_enabled(request):
-        return _GONE_RESPONSE
-
     aggregator, err = _get_aggregator_for_request(request)
     if err is not None:
         return err
@@ -178,9 +148,6 @@ async def get_performance(request: Request) -> JSONResponse:
 
 async def get_queue_stats(request: Request) -> JSONResponse:
     """GET /api/queue — queue module stats (depth, wait times, rejections)."""
-    if not _legacy_polling_enabled(request):
-        return _GONE_RESPONSE
-
     queue_modules = getattr(request.app.state, "queue_modules", []) or []
     queues = [qm.queue_stats() for qm in queue_modules]
     data = {"queues": queues}

@@ -13,11 +13,6 @@ logger = logging.getLogger(__name__)
 
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d"})
 
-_GONE_RESPONSE = JSONResponse(
-    {"error": "Polling deprecated. Use /ws/dashboard."},
-    status_code=410,
-)
-
 
 async def _publish(request: Request, topic: str, payload: Any) -> None:
     """Publish to the dashboard bus if wired (best-effort).
@@ -38,9 +33,6 @@ async def _publish(request: Request, topic: str, payload: Any) -> None:
 
 async def get_cost_efficiency(request: Request) -> JSONResponse:
     """GET /api/cost-efficiency — per-model cost efficiency ranking."""
-    if not bool(getattr(request.app.state, "legacy_polling", True)):
-        return _GONE_RESPONSE
-
     aggregator = request.app.state.aggregator
     if aggregator is None:
         return JSONResponse({"error": "No aggregator configured"}, status_code=404)

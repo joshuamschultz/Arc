@@ -31,7 +31,6 @@ AGENT_TOKEN = "agent-dash-test"
 def _make_app(
     *,
     bus: DashboardEventBus | None,
-    legacy_polling: bool = True,
 ) -> Starlette:
     """Build a minimal Starlette app with only the dashboard WS route."""
     auth = AuthConfig(
@@ -45,7 +44,6 @@ def _make_app(
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.dashboard_bus = bus
-    app.state.legacy_polling = legacy_polling
     return app
 
 

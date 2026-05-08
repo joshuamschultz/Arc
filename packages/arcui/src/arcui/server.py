@@ -7,7 +7,6 @@ serve() is the one-liner entry point for developers.
 from __future__ import annotations
 
 import logging
-import os
 from collections import deque as _deque
 from pathlib import Path
 from typing import Any
@@ -48,16 +47,6 @@ from arcui.subscription import SubscriptionManager
 logger = logging.getLogger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
-
-# SPEC-025 Track E — legacy polling feature flag.
-# When ARCUI_LEGACY_POLLING=false the 9 dashboard polling endpoints return
-# 410 Gone so external consumers (CLI, MCP) know to migrate to /ws/dashboard.
-# Default is "true" so existing deployments are unaffected until they opt out.
-_LEGACY_POLLING: bool = os.environ.get("ARCUI_LEGACY_POLLING", "true").lower() not in (
-    "false",
-    "0",
-    "no",
-)
 
 
 async def _health(request: Request) -> JSONResponse:
@@ -367,9 +356,6 @@ def create_app(
     file_change_bridge = FileChangeBridge()
     file_change_bridge.attach(_default_file_bus)
     app.state.file_change_bridge = file_change_bridge
-    # SPEC-025 Track E — legacy polling flag exposed on state so route
-    # handlers can check it without importing os themselves.
-    app.state.legacy_polling = _LEGACY_POLLING
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:

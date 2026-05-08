@@ -20,11 +20,6 @@ logger = logging.getLogger(__name__)
 _DEFAULT_LIMIT = 5
 _MAX_LIMIT = 50
 
-_GONE_RESPONSE = JSONResponse(
-    {"error": "Polling deprecated. Use /ws/dashboard."},
-    status_code=410,
-)
-
 
 def _parse_limit(raw: str | None) -> int:
     """Parse an optional ?limit= query param. Clamped to [1, _MAX_LIMIT]."""
@@ -59,9 +54,6 @@ async def schedule_history(request: Request) -> JSONResponse:
     Returns the last N (default 5) scheduler-layer events from the server-side
     ring buffer in newest-first order.
     """
-    if not bool(getattr(request.app.state, "legacy_polling", True)):
-        return _GONE_RESPONSE
-
     history = getattr(request.app.state, "schedule_history", None)
     if history is None:
         return JSONResponse({"events": []})
