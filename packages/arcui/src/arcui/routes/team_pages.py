@@ -31,6 +31,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.query_validators import safe_int
+
 logger = logging.getLogger(__name__)
 
 _CALLER_DID = "did:arc:ui:viewer"
@@ -374,10 +376,15 @@ def _parse_skill_frontmatter(rel_path: str, text: str) -> dict[str, Any]:
 async def get_audit(request: Request) -> JSONResponse:
     """GET /api/team/audit — fleet audit ring buffer (last N)."""
     buffer: deque[dict[str, Any]] = getattr(request.app.state, "audit_buffer", None) or deque()
-    try:
-        limit = max(1, min(1000, int(request.query_params.get("limit", "100"))))
-    except ValueError:
-        return JSONResponse({"error": "Invalid limit"}, status_code=400)
+    limit, err = safe_int(
+        request.query_params.get("limit"),
+        default=100,
+        min_=1,
+        max_=1000,
+        error_label="Invalid limit",
+    )
+    if err is not None:
+        return err
     events = list(buffer)[-limit:]
     return JSONResponse({"events": events})
 

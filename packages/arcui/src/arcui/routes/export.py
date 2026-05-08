@@ -10,18 +10,29 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from arcui.query_validators import safe_choice, safe_int
+
 _MAX_EXPORT_LIMIT = 10000
 
 
 async def export_traces(request: Request) -> Response:
     """GET /api/export — export traces as CSV or JSON."""
-    fmt = request.query_params.get("format", "json")
-    if fmt not in ("json", "csv"):
-        return JSONResponse({"error": "Invalid format. Use json or csv."}, status_code=400)
-    try:
-        limit = max(1, min(_MAX_EXPORT_LIMIT, int(request.query_params.get("limit", "500"))))
-    except (ValueError, TypeError):
-        return JSONResponse({"error": "Invalid limit parameter"}, status_code=400)
+    fmt, err = safe_choice(
+        request.query_params.get("format", "json"),
+        ("json", "csv"),
+        error_label="Invalid format. Use json or csv.",
+    )
+    if err is not None:
+        return err
+    limit, err = safe_int(
+        request.query_params.get("limit"),
+        default=500,
+        min_=1,
+        max_=_MAX_EXPORT_LIMIT,
+        error_label="Invalid limit parameter",
+    )
+    if err is not None:
+        return err
 
     store = request.app.state.trace_store
     if store is None:

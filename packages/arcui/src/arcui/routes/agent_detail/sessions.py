@@ -10,6 +10,7 @@ from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.query_validators import parse_pagination
 from arcui.routes.agent_detail._common import _CALLER_DID, _VALID_SID, _agent_root
 
 
@@ -59,7 +60,7 @@ async def get_session_replay(request: Request) -> JSONResponse:
     if agent_root is None:
         return JSONResponse({"error": "Agent not found"}, status_code=404)
 
-    page, page_size, err = _parse_pagination(request)
+    page, page_size, err = parse_pagination(request.query_params)
     if err is not None:
         return err
 
@@ -90,17 +91,6 @@ async def get_session_replay(request: Request) -> JSONResponse:
             "messages": messages[start:end],
         }
     )
-
-
-def _parse_pagination(request: Request) -> tuple[int, int, JSONResponse | None]:
-    raw_page = request.query_params.get("page", "1")
-    raw_size = request.query_params.get("page_size", "50")
-    try:
-        page = max(1, int(raw_page))
-        page_size = max(1, min(200, int(raw_size)))
-    except ValueError:
-        return 0, 0, JSONResponse({"error": "Invalid pagination"}, status_code=400)
-    return page, page_size, None
 
 
 def _parse_jsonl(text: str) -> list[dict[str, Any]]:

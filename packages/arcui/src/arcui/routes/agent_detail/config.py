@@ -16,6 +16,7 @@ from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.query_validators import safe_choice
 from arcui.routes.agent_detail._common import (
     _CALLER_DID,
     _CONFIG_WHITELIST,
@@ -77,9 +78,13 @@ async def get_files_tree(request: Request) -> JSONResponse:
     if agent_root is None:
         return JSONResponse({"error": "Agent not found"}, status_code=404)
 
-    root_arg = request.query_params.get("root", "workspace")
-    if root_arg not in _VALID_ROOTS:
-        return JSONResponse({"error": "Invalid root"}, status_code=400)
+    root_arg, err = safe_choice(
+        request.query_params.get("root", "workspace"),
+        _VALID_ROOTS,
+        error_label="Invalid root",
+    )
+    if err is not None:
+        return err
 
     base = _resolve_root_path(agent_root, root_arg)
     try:
@@ -114,9 +119,13 @@ async def get_file_read(request: Request) -> JSONResponse:
     if not rel:
         return JSONResponse({"error": "Missing path"}, status_code=400)
 
-    root_arg = request.query_params.get("root", "workspace")
-    if root_arg not in _VALID_ROOTS:
-        return JSONResponse({"error": "Invalid root"}, status_code=400)
+    root_arg, err = safe_choice(
+        request.query_params.get("root", "workspace"),
+        _VALID_ROOTS,
+        error_label="Invalid root",
+    )
+    if err is not None:
+        return err
 
     base = _resolve_root_path(agent_root, root_arg)
 

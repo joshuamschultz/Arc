@@ -8,6 +8,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.query_validators import safe_choice, safe_int
 from arcui.routes.agent_detail._common import _agent_root
 
 
@@ -29,9 +30,13 @@ async def get_stats(request: Request) -> JSONResponse:
     )
     if aggregator is None:
         return JSONResponse({"stats": {}, "window": "24h"})
-    window = request.query_params.get("window", "24h")
-    if window not in {"1h", "24h", "7d"}:
-        return JSONResponse({"error": "Invalid window"}, status_code=400)
+    window, err = safe_choice(
+        request.query_params.get("window", "24h"),
+        {"1h", "24h", "7d"},
+        error_label="Invalid window",
+    )
+    if err is not None:
+        return err
     return JSONResponse({"stats": aggregator.stats(window), "window": window})
 
 
@@ -45,10 +50,15 @@ async def get_traces(request: Request) -> JSONResponse:
     if store is None:
         return JSONResponse({"traces": [], "cursor": None})
 
-    try:
-        limit = max(1, min(500, int(request.query_params.get("limit", "50"))))
-    except ValueError:
-        return JSONResponse({"error": "Invalid limit"}, status_code=400)
+    limit, err = safe_int(
+        request.query_params.get("limit"),
+        default=50,
+        min_=1,
+        max_=500,
+        error_label="Invalid limit",
+    )
+    if err is not None:
+        return err
 
     records, cursor = await store.query(limit=limit, agent=agent_id)
     return JSONResponse(
@@ -66,10 +76,15 @@ async def get_audit(request: Request) -> JSONResponse:
         return JSONResponse({"error": "Agent not found"}, status_code=404)
 
     buffer: deque[dict[str, Any]] = getattr(request.app.state, "audit_buffer", None) or deque()
-    try:
-        limit = max(1, min(1000, int(request.query_params.get("limit", "100"))))
-    except ValueError:
-        return JSONResponse({"error": "Invalid limit"}, status_code=400)
+    limit, err = safe_int(
+        request.query_params.get("limit"),
+        default=100,
+        min_=1,
+        max_=1000,
+        error_label="Invalid limit",
+    )
+    if err is not None:
+        return err
 
     events = [e for e in buffer if e.get("agent_id") == agent_id][-limit:]
     return JSONResponse({"events": events})

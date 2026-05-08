@@ -9,6 +9,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.query_validators import safe_choice
+
 logger = logging.getLogger(__name__)
 
 _VALID_WINDOWS = frozenset({"1h", "24h", "7d"})
@@ -37,9 +39,13 @@ async def get_cost_efficiency(request: Request) -> JSONResponse:
     if aggregator is None:
         return JSONResponse({"error": "No aggregator configured"}, status_code=404)
 
-    window = request.query_params.get("window", "24h")
-    if window not in _VALID_WINDOWS:
-        return JSONResponse({"error": "Invalid window. Use 1h, 24h, or 7d."}, status_code=400)
+    window, err = safe_choice(
+        request.query_params.get("window", "24h"),
+        _VALID_WINDOWS,
+        error_label="Invalid window. Use 1h, 24h, or 7d.",
+    )
+    if err is not None:
+        return err
     data = aggregator.cost_efficiency(window)
     await _publish(request, "cost_efficiency", data)
     return JSONResponse(data)
