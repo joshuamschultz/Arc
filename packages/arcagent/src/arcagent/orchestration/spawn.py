@@ -8,6 +8,17 @@ Security considerations (ASI-01, ASI-08, LLM10, NIST AU-2/AU-3):
 - Concurrency: max_concurrent_spawns limits parallel child runs
 - Token budget: RootTokenBudget prevents children from silently overrunning the
   caller's allocation (Hermes implicit-token-pool bug fix).
+
+Sibling modules
+---------------
+- ``arcagent.orchestration.token_budget``  — RootTokenBudget + TokenUsage.
+- ``arcagent.orchestration.spawn_handle``  — SpawnResult + SpawnSpec
+  dataclasses + the _SpawnStatus literal.
+
+Names from the siblings are re-exported through this module so existing
+imports
+(``from arcagent.orchestration.spawn import RootTokenBudget,
+   SpawnResult, SpawnSpec, TokenUsage``) keep working unchanged.
 """
 
 from __future__ import annotations
@@ -17,166 +28,33 @@ import hashlib
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from arcrun.events import Event, EventBus
 from arcrun.state import RunState
 from arcrun.types import SandboxConfig, Tool, ToolContext
 from arctrust import ChildIdentity
-from pydantic import BaseModel
+
+from arcagent.orchestration.spawn_handle import (
+    _DEFAULT_SPAWN_TIMEOUT_SECONDS,
+    SpawnResult,
+    SpawnSpec,
+    _SpawnStatus,
+)
+from arcagent.orchestration.token_budget import RootTokenBudget, TokenUsage
 
 _logger = logging.getLogger("arcagent.orchestration.spawn")
 
-# Sensible defaults for resource limits
-_DEFAULT_SPAWN_TIMEOUT_SECONDS = 300
 
-
-# ---------------------------------------------------------------------------
-# RootTokenBudget — atomic shared token pool for parent+children
-#
-# Fixes the Hermes implicit-token-pool bug: children that debit no shared
-# budget silently spend multiple times the caller's allocation with no
-# warning. RootTokenBudget uses asyncio.Lock to make debit operations
-# atomic under concurrent awaits from parallel child tasks.
-# ---------------------------------------------------------------------------
-
-
-class RootTokenBudget:
-    """Shared token budget for a root run and all its spawned children.
-
-    Thread-safety: asyncio-only. Uses asyncio.Lock for atomic debit.
-    Not safe to use across multiple event loops.
-
-    Args:
-        total: Maximum tokens the root run and all children may consume.
-               Must be positive.
-    """
-
-    def __init__(self, total: int) -> None:
-        if total <= 0:
-            raise ValueError(f"RootTokenBudget total must be positive, got {total}")
-        self._total = total
-        self._used = 0
-        self._lock = asyncio.Lock()
-
-    @property
-    def total(self) -> int:
-        """Total token budget."""
-        return self._total
-
-    @property
-    def used(self) -> int:
-        """Tokens consumed so far (pre-debits + record_actual overages)."""
-        return self._used
-
-    @property
-    def remaining(self) -> int:
-        """Tokens remaining; never goes negative."""
-        return max(0, self._total - self._used)
-
-    def is_exhausted(self) -> bool:
-        """True when used >= total."""
-        return self._used >= self._total
-
-    async def try_debit(self, amount: int) -> bool:
-        """Atomically debit *amount* from the budget.
-
-        Returns True if the debit succeeded; False if the budget would be
-        exceeded. On False, the budget is not modified.
-        """
-        async with self._lock:
-            if self._used + amount > self._total:
-                return False
-            self._used += amount
-            return True
-
-    async def record_actual(self, amount: int) -> None:
-        """Record actual token usage after a call completes.
-
-        This may push used past total — that is intentional. In-flight children
-        may return more tokens than the pre-debit estimate. record_actual
-        corrects the accounting for audit purposes without blocking the child.
-        """
-        async with self._lock:
-            self._used += amount
-
-
-# ---------------------------------------------------------------------------
-# TokenUsage / SpawnResult — structured return type for spawn_task
-#
-# Replaces the bare string return so callers get structured accounting data
-# alongside the child's natural-language summary.
-# ---------------------------------------------------------------------------
-
-_SpawnStatus = Literal[
-    "completed",
-    "max_iterations",
-    "timeout",
-    "interrupted",
-    "error",
-    "budget_exhausted",
+__all__ = [
+    "RootTokenBudget",
+    "SpawnResult",
+    "SpawnSpec",
+    "TokenUsage",
+    "make_spawn_tool",
+    "spawn",
+    "spawn_many",
 ]
-
-
-class TokenUsage(BaseModel):
-    """Token usage counters for a single run."""
-
-    input: int = 0
-    output: int = 0
-    total: int = 0
-
-
-class SpawnResult(BaseModel):
-    """Structured result returned by a spawned child run.
-
-    Attributes:
-        child_run_id: UUID of the child run (for audit correlation).
-        child_did: DID of the child identity used.
-        status: Terminal status of the child run.
-        summary: Natural-language summary (passed back to the LLM).
-        tokens: Token usage for the child run.
-        tool_trace: Ordered list of tool names the child invoked.
-        audit_chain_tip: SHA-256 hex of the last audit log entry (tamper-evidence).
-        duration_s: Wall-clock seconds the child ran.
-        error: Error message if status is not "completed". None otherwise.
-    """
-
-    child_run_id: str
-    child_did: str
-    status: _SpawnStatus
-    summary: str
-    tokens: TokenUsage
-    tool_trace: list[str]
-    audit_chain_tip: str
-    duration_s: float
-    error: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# SpawnSpec — declarative spec for spawn_many()
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class SpawnSpec:
-    """Declarative specification for a single child spawn.
-
-    Used with spawn_many() to spawn multiple children in parallel.
-    """
-
-    task: str
-    tools: list[Tool]
-    system_prompt: str
-    parent_state: RunState
-    child_did: str
-    child_sk_bytes: bytes
-    wallclock_timeout_s: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS
-    model: Any = None
-    token_budget: int | None = None
-    context: str | None = None
-    max_turns: int = 25
-    sandbox: SandboxConfig | None = None
 
 
 _DEFAULT_MAX_CONCURRENT_SPAWNS = 5
