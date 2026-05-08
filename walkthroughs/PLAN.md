@@ -11,7 +11,7 @@
 - **As of:** 2026-05-07
 - **Total notebooks:** 16 to rewrite + 24 to create = **40 notebooks**
 - **Strategy:** 3 parallel agents per chunk. ~14 chunks total.
-- **Phase:** Pre-flight (§9) complete. C01 (arctrust 01–03) verified `done`. Ready to dispatch C02.
+- **Phase:** All 14 chunks complete. 40/40 notebooks delivered. ✓
 
 ---
 
@@ -623,7 +623,7 @@ Each chunk is 3 notebooks dispatched in parallel. **Chunks must run in order** b
 | 5.2.21 | arcui/01-dashboard-bringup | CREATE | C13 | done | 65 cells, 45KB, 9 sections |
 | 5.2.22 | arcui/02-live-telemetry-attach | CREATE | C13 | done | 65 cells, 46KB, 9 sections |
 | 5.2.23 | arcgateway/01-session-routing | CREATE | C13 | done | 87 cells, 64KB, 10 sections |
-| 5.2.24 | arcgateway/02-platform-adapters | CREATE | C14 | pending | |
+| 5.2.24 | arcgateway/02-platform-adapters | CREATE | C14 | done | 71 cells, 64KB, 10 sections |
 
 **Status legend:** `pending` → `in-progress` → `verified` → `done`. Use `failed` if a notebook needs redo and queue it for the next available slot.
 
