@@ -185,8 +185,8 @@ class TestBudgetCostClamping:
 
 
 class TestBudgetPeriodBoundary:
-    @patch("arcllm.modules.telemetry._utc_month_key")
-    @patch("arcllm.modules.telemetry._utc_day_key")
+    @patch("arcllm.modules.telemetry_budget.utc_month_key")
+    @patch("arcllm.modules.telemetry_budget.utc_day_key")
     def test_monthly_reset_on_new_month(self, mock_day, mock_month):
         """Accumulator resets monthly spend when month changes."""
         mock_month.return_value = 202601
@@ -201,8 +201,8 @@ class TestBudgetPeriodBoundary:
         acc.deduct(1.0)
         assert acc.monthly_spend == pytest.approx(1.0)
 
-    @patch("arcllm.modules.telemetry._utc_month_key")
-    @patch("arcllm.modules.telemetry._utc_day_key")
+    @patch("arcllm.modules.telemetry_budget.utc_month_key")
+    @patch("arcllm.modules.telemetry_budget.utc_day_key")
     def test_daily_reset_on_new_day(self, mock_day, mock_month):
         """Accumulator resets daily spend when day changes (month unchanged)."""
         mock_month.return_value = 202601

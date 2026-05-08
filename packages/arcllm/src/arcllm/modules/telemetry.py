@@ -1,16 +1,14 @@
 """TelemetryModule — structured logging of timing, tokens, and cost per invoke().
 
-Includes BudgetAccumulator for per-scope spend tracking with calendar period
-resets. Budget enforcement is integrated into the telemetry invoke() flow:
-pre-check before the LLM call, post-deduct after response.
+Budget enforcement (when configured) integrates pre-check before the LLM call
+and post-deduct after response. Per-scope accumulators live in
+``telemetry_budget``; cost arithmetic lives in ``telemetry_cost``; this module
+wires both into the OTel-instrumented ``invoke()`` flow.
 """
 
 import logging
-import re
 import threading
 import time
-import unicodedata
-from datetime import UTC, datetime
 from typing import Any, Literal
 
 from opentelemetry import trace
@@ -18,6 +16,13 @@ from opentelemetry import trace
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
 from arcllm.modules._logging import log_structured, validate_log_level
 from arcllm.modules.base import BaseModule, validate_config_keys
+from arcllm.modules.telemetry_budget import (
+    BudgetAccumulator,
+    clear_budgets,  # noqa: F401  re-exported for callers
+    get_or_create_accumulator,
+    validate_budget_scope,
+)
+from arcllm.modules.telemetry_cost import DEFAULT_MAX_TOKENS, calculate_cost, estimate_cost
 from arcllm.trace_store import TraceRecord
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool, Usage
 
@@ -45,11 +50,6 @@ _VALID_CONFIG_KEYS = {
     "agent_did",
     "store_raw_bodies",
 }
-
-# Fallback for pre-flight cost estimation when max_tokens not passed by caller
-_DEFAULT_MAX_TOKENS = 4096
-
-_BUDGET_SCOPE_RE = re.compile(r"^[a-z][a-z0-9_:.\-]{0,127}$")
 
 
 # ---------------------------------------------------------------------------
@@ -93,136 +93,6 @@ def clear_global_defaults() -> None:
     """Clear all global defaults. Use in tests for isolation."""
     with _global_defaults_lock:
         _global_defaults.clear()
-
-
-# ---------------------------------------------------------------------------
-# UTC period helpers (module-level for testability via mock)
-# ---------------------------------------------------------------------------
-
-
-def _utc_month_key() -> int:
-    """Return current UTC month as YYYYMM integer."""
-    now = datetime.now(UTC)
-    return now.year * 100 + now.month
-
-
-def _utc_day_key() -> int:
-    """Return current UTC day as YYYYMMDD integer."""
-    now = datetime.now(UTC)
-    return now.year * 10000 + now.month * 100 + now.day
-
-
-# ---------------------------------------------------------------------------
-# Budget scope validation
-# ---------------------------------------------------------------------------
-
-
-def _validate_budget_scope(scope: str) -> None:
-    """Validate budget scope string for safety.
-
-    NFKC normalization prevents Unicode homoglyph attacks.
-    Regex restricts to lowercase alphanumeric + colons, dots, hyphens.
-    Max 128 characters.
-
-    Raises:
-        ArcLLMConfigError: On invalid scope string.
-    """
-    if not scope:
-        raise ArcLLMConfigError("budget_scope cannot be empty")
-    normalized = unicodedata.normalize("NFKC", scope)
-    if normalized != scope or not _BUDGET_SCOPE_RE.match(scope):
-        raise ArcLLMConfigError(
-            f"Invalid budget_scope '{scope}'. Must be lowercase alphanumeric "
-            "with underscores, colons, dots, or hyphens, max 128 characters."
-        )
-
-
-# ---------------------------------------------------------------------------
-# BudgetAccumulator — per-scope spend tracker
-# ---------------------------------------------------------------------------
-
-
-class BudgetAccumulator:
-    """Per-scope spend tracker with calendar period resets.
-
-    Tracks monthly and daily spend. Automatically resets when the UTC
-    calendar period changes. Costs are clamped to max(0.0, cost) to
-    prevent negative cost injection.
-    """
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.monthly_spend: float = 0.0
-        self.daily_spend: float = 0.0
-        self._current_month: int = _utc_month_key()
-        self._current_day: int = _utc_day_key()
-
-    def _maybe_reset(self) -> None:
-        """Reset accumulators if the calendar period has changed.
-
-        Caller must hold ``self._lock``.
-        """
-        month = _utc_month_key()
-        day = _utc_day_key()
-        if month != self._current_month:
-            self.monthly_spend = 0.0
-            self.daily_spend = 0.0
-            self._current_month = month
-            self._current_day = day
-        elif day != self._current_day:
-            self.daily_spend = 0.0
-            self._current_day = day
-
-    def deduct(self, cost: float) -> None:
-        """Add clamped cost to both accumulators after period check."""
-        with self._lock:
-            self._maybe_reset()
-            safe_cost = max(0.0, cost)
-            self.monthly_spend += safe_cost
-            self.daily_spend += safe_cost
-
-    def check_limits(self, monthly_limit: float, daily_limit: float) -> str | None:
-        """Return exceeded limit type or None if within bounds.
-
-        Checks monthly first (takes priority).
-        """
-        with self._lock:
-            self._maybe_reset()
-            if self.monthly_spend >= monthly_limit:
-                return "monthly"
-            if self.daily_spend >= daily_limit:
-                return "daily"
-            return None
-
-    def check_pre_flight(self, estimated: float, per_call_max: float) -> bool:
-        """Return True if estimated cost exceeds per-call max."""
-        return estimated > per_call_max
-
-
-# ---------------------------------------------------------------------------
-# Per-scope budget registry (shared state, like _bucket_registry)
-# ---------------------------------------------------------------------------
-
-_budget_lock = threading.Lock()
-_budget_registry: dict[str, BudgetAccumulator] = {}
-
-
-def _get_or_create_accumulator(scope: str) -> BudgetAccumulator:
-    """Return the shared accumulator for *scope*, creating one if needed.
-
-    Uses double-check locking for PEP 703 (free-threading) readiness.
-    """
-    if scope not in _budget_registry:
-        with _budget_lock:
-            if scope not in _budget_registry:
-                _budget_registry[scope] = BudgetAccumulator()
-    return _budget_registry[scope]
-
-
-def clear_budgets() -> None:
-    """Remove all shared accumulators (for test isolation and cache resets)."""
-    with _budget_lock:
-        _budget_registry.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +148,7 @@ class TelemetryModule(BaseModule):
         self._alert_pct: float = config.get("alert_threshold_pct", 80)
         self._enforcement: str = config.get("enforcement", "block")
         self._budget_scope: str | None = config.get("budget_scope")
-        self._default_max_tokens: int = config.get("default_max_tokens", _DEFAULT_MAX_TOKENS)
+        self._default_max_tokens: int = config.get("default_max_tokens", DEFAULT_MAX_TOKENS)
 
         # Trace recording config (explicit config > global defaults)
         self._on_event: Any | None = config.get("on_event") or _global_defaults.get("on_event")
@@ -310,25 +180,22 @@ class TelemetryModule(BaseModule):
                 raise ArcLLMConfigError(
                     "budget_scope is required when budget limits are configured"
                 )
-            _validate_budget_scope(self._budget_scope)
-            self._accumulator: BudgetAccumulator = _get_or_create_accumulator(self._budget_scope)
+            validate_budget_scope(self._budget_scope)
+            self._accumulator: BudgetAccumulator = get_or_create_accumulator(self._budget_scope)
 
     def _calculate_cost(self, usage: Usage) -> float:
         """Calculate USD cost from token counts and per-1M pricing."""
-        cost = (
-            usage.input_tokens * self._cost_input + usage.output_tokens * self._cost_output
-        ) / 1_000_000
-
-        if usage.cache_read_tokens:
-            cost += usage.cache_read_tokens * self._cost_cache_read / 1_000_000
-        if usage.cache_write_tokens:
-            cost += usage.cache_write_tokens * self._cost_cache_write / 1_000_000
-
-        return cost
+        return calculate_cost(
+            usage,
+            input_per_1m=self._cost_input,
+            output_per_1m=self._cost_output,
+            cache_read_per_1m=self._cost_cache_read,
+            cache_write_per_1m=self._cost_cache_write,
+        )
 
     def _estimate_cost(self, max_tokens: int) -> float:
         """Estimate worst-case cost using max_tokens * output price."""
-        return max_tokens * self._cost_output / 1_000_000
+        return estimate_cost(max_tokens, output_per_1m=self._cost_output)
 
     def _enforce_limit(
         self,
@@ -573,7 +440,6 @@ class TelemetryModule(BaseModule):
 
             t_post = time.monotonic()
 
-            # Phase timings
             prompt_assembly_ms = round((t_pre - t0) * 1000, 1)
             llm_call_ms = round((t_llm - t_pre) * 1000, 1)
             post_processing_ms = round((t_post - t_llm) * 1000, 1)
@@ -618,3 +484,9 @@ class TelemetryModule(BaseModule):
                 await self._emit_trace(record)
 
             return response
+
+
+# Test/legacy import aliases for callers that imported the budget helpers
+# from this module before the Phase 5 §8.11 split.
+_validate_budget_scope = validate_budget_scope
+_get_or_create_accumulator = get_or_create_accumulator
