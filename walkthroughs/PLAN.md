@@ -602,9 +602,9 @@ Each chunk is 3 notebooks dispatched in parallel. **Chunks must run in order** b
 | 5.1.16 | arcrun/03-codeexec | REWRITE | C06 | done | 77 cells, 64KB, 11 sections |
 | 5.2.8 | arcrun/07-event-chain-verification | CREATE | C06 | done | 52 cells, 45KB, 11 sections |
 | 5.1.4 | arcllm/04-agentic-loop | REWRITE | C06 | done | 71 cells, 63KB, 15 sections |
-| 5.1.6 | arcllm/06-provider-registry | REWRITE | C07 | pending | High-risk |
-| 5.1.7 | arcllm/07-module-system | REWRITE | C07 | pending | High-risk |
-| 5.2.4 | arcllm/17-routing-module | CREATE | C07 | pending | |
+| 5.1.6 | arcllm/06-provider-registry | REWRITE | C07 | done | 68 cells, 55KB, 10 sections |
+| 5.1.7 | arcllm/07-module-system | REWRITE | C07 | done | 52 cells, 51KB, 10 sections |
+| 5.2.4 | arcllm/17-routing-module | CREATE | C07 | done | 64 cells, 52KB, 10 sections |
 | 5.2.2 | arcllm/15-queue-circuit-breaker | CREATE | C08 | pending | |
 | 5.2.3 | arcllm/16-config-controller | CREATE | C08 | pending | |
 | 5.1.13 | arcllm/13-open-providers | REWRITE | C08 | pending | High-risk |
