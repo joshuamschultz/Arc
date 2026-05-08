@@ -104,7 +104,7 @@ class UIBridgeSink:
         """
         try:
             self._push(event)
-        except Exception:
+        except Exception:  # reason: best-effort — record + continue
             # Never let bridge errors reach the caller (AU-5 equivalent for UI path).
             # The canonical arctrust sink (e.g. JsonlSink) still gets the event.
             import logging

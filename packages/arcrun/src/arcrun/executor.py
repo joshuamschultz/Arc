@@ -65,7 +65,7 @@ async def execute_tool_call(
     except TimeoutError:
         bus.emit("tool.error", {"name": tc.name, "error": f"timeout after {timeout}s"})
         return tool_result(tc.id, f"Error: tool timed out after {timeout}s"), False
-    except Exception as exc:
+    except Exception as exc:  # reason: best-effort — record + continue
         error_detail = str(exc)
         bus.emit("tool.error", {"name": tc.name, "error": error_detail})
         truncated = error_detail[:_MAX_ERROR_LEN]

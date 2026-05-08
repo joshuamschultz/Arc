@@ -142,7 +142,7 @@ class AwsSecretsManagerBackend:
             del session  # only here to confirm the meta attr exists
             creds = self._client._request_signer._credentials
             method = getattr(creds, "method", None)
-        except Exception:
+        except Exception:  # reason: fail-open — continue
             method = None
         logger.info(
             "arcllm.vault.backend_ready",

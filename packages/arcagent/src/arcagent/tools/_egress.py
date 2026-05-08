@@ -93,7 +93,7 @@ class EgressProxy:
 
         try:
             response = await self._send_fn(url, method, **kwargs)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             self._emit(
                 "egress.error",
                 {"url": url, "origin": origin, "method": method, "error": str(exc)},
@@ -116,7 +116,7 @@ class EgressProxy:
             return
         try:
             self._audit_sink(event, payload)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Egress audit sink raised; continuing")
 
 

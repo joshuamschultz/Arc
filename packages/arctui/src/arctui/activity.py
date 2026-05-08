@@ -158,7 +158,7 @@ class ActivityView(Static):
             oldest_label = self._labels[0]  # peek before deque mutates
             try:
                 oldest_label.remove()
-            except Exception as exc:  # widget may already be detached
+            except Exception as exc:  # reason: widget may already be detached
                 _logger.debug("Failed to remove evicted activity label: %s", exc)
 
         self._entries.append(entry)
@@ -172,7 +172,7 @@ class ActivityView(Static):
         for label in list(self._labels):
             try:
                 label.remove()
-            except Exception as exc:  # widget may already be detached
+            except Exception as exc:  # reason: widget may already be detached
                 _logger.debug("Failed to remove activity label during clear: %s", exc)
         self._entries.clear()
         self._labels.clear()

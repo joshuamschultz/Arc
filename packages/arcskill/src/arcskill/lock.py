@@ -177,7 +177,7 @@ class HubLockFile(BaseModel):
             os.replace(tmp_path, target)
             # Restrict permissions: readable by owner only (no group/world).
             target.chmod(0o600)
-        except Exception:
+        except Exception:  # reason: re-raise after log
             # Cleanup the temp file on any error.
             try:
                 os.unlink(tmp_path)

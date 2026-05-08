@@ -229,7 +229,7 @@ def verify_bundle(
             source_name=source.name,
         )
         raise
-    except Exception:
+    except Exception:  # reason: re-raise after log
         _emit_audit(
             audit_sink=audit_sink,
             action="skill.signature.verify",
@@ -297,7 +297,7 @@ def _emit_audit(
             ),
             audit_sink,
         )
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.warning("Failed to emit audit event for %s %s", action, target)
 
 
@@ -489,7 +489,7 @@ def _sigstore_verify(
 
     except VerificationError as exc:
         raise SignatureInvalid(f"Sigstore verification failed: {exc}") from exc
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         # Catch-all: InvalidBundle, TUF errors, network errors, etc.
         raise SignatureInvalid(f"Sigstore verification failed (unexpected error): {exc}") from exc
 
@@ -615,7 +615,7 @@ def _extract_rekor_uuid_from_bundle(bundle: Any) -> str:
     try:
         log_index = bundle.log_entry._inner.log_index
         return str(log_index) if log_index is not None else ""
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         return ""
 
 

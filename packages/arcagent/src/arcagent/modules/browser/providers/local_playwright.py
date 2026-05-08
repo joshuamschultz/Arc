@@ -89,14 +89,14 @@ class LocalPlaywrightProvider:
         if self._browser is not None:
             try:
                 await self._browser.close()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("Error closing Playwright browser", exc_info=True)
             self._browser = None
 
         if self._playwright is not None:
             try:
                 await self._playwright.stop()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("Error stopping Playwright", exc_info=True)
             self._playwright = None
 

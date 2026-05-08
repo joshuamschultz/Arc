@@ -263,7 +263,7 @@ class MattermostAdapter:
         if self._http_session is not None and not self._http_session.closed:
             try:
                 await self._http_session.close()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("MattermostAdapter: http session close failed")
         self._http_session = None
         self._ws_task = None
@@ -348,7 +348,7 @@ class MattermostAdapter:
                 await self._post_message(channel_id, message)
         except asyncio.CancelledError:
             return
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception(
                 "MattermostAdapter: drain_loop error channel=%r", channel_id
             )
@@ -399,7 +399,7 @@ class MattermostAdapter:
                         channel_id, resp.status,
                     )
                     self._audit_drop(channel_id, f"http_{resp.status}")
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.warning(
                 "MattermostAdapter: _post_message error channel=%r: %s",
                 channel_id, exc,
@@ -439,7 +439,7 @@ class MattermostAdapter:
             except asyncio.CancelledError:
                 self._connected = False
                 return
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 _logger.warning(
                     "MattermostAdapter: WS error -- reconnecting in %.0fms: %s",
                     backoff_ms, exc,
@@ -510,7 +510,7 @@ class MattermostAdapter:
                 outcome=data.get("outcome", "allow"),
                 extra=data,
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("MattermostAdapter: audit emission failed")
 
     def __repr__(self) -> str:

@@ -282,7 +282,7 @@ class LocalBackend:
             await _send_to_pgroup(pgid, signal.SIGKILL)
             try:
                 await proc.wait()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.debug("proc.wait() raised during SIGKILL cleanup", exc_info=True)
 
         self._procs.pop(handle.handle_id, None)
@@ -329,7 +329,7 @@ async def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
         await _send_to_pgroup(pgid, signal.SIGKILL)
         try:
             await proc.wait()
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             logger.debug("proc.wait() raised during SIGKILL after timeout", exc_info=True)
 
 

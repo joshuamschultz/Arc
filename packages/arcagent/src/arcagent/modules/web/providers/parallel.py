@@ -158,7 +158,7 @@ def _parse_search_results(data: dict[str, Any]) -> list[SearchHit]:
                     score=item.get("score"),
                 )
             )
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.warning("Skipping malformed Parallel search result: %s", exc)
     return hits
 

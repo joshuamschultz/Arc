@@ -317,7 +317,7 @@ def _register_web_search_tool(tool_registry: Any, module: WebModule) -> None:
             execute=_web_search,
         )
         tool_registry.register(tool)
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         _logger.warning("Could not register web_search tool: %s", exc)
 
 
@@ -350,7 +350,7 @@ def _register_web_extract_tool(tool_registry: Any, module: WebModule) -> None:
             execute=_web_extract,
         )
         tool_registry.register(tool)
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         _logger.warning("Could not register web_extract tool: %s", exc)
 
 
@@ -385,7 +385,7 @@ async def _resolve_api_key(provider_name: str, ctx: Any, tier: str) -> str:
             env_fallback_var=env_var,
         )
         return resolved
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         from arcagent.modules.web.errors import ProviderConfigMissing
 
         raise ProviderConfigMissing(provider_name, secret_name) from exc

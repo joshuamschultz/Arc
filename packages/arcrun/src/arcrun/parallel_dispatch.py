@@ -174,7 +174,7 @@ class SequentialDispatcher:
         for call in calls:
             try:
                 results.append(await runner(call))
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — continue
                 results.append((call, exc))
         return results
 

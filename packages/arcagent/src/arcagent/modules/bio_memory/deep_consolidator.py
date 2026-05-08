@@ -106,7 +106,7 @@ class DeepConsolidator:
                 try:
                     await team_svc.rebuild_index()
                     audit["index_rebuilt"] = True
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.debug("Team index rebuild failed", exc_info=True)
 
         # 7. Save state + clear manifest
@@ -352,7 +352,7 @@ class DeepConsolidator:
         except TimeoutError:
             _logger.warning("Entity rewrite LLM call timed out")
             return None
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("Entity rewrite LLM call failed", exc_info=True)
             return None
 
@@ -477,7 +477,7 @@ class DeepConsolidator:
                 try:
                     pair_added = self._add_bidirectional_link(from_id, to_id)
                     added += pair_added
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.warning(
                         "Failed to add link %s <-> %s",
                         from_id,

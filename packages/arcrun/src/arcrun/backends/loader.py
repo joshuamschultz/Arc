@@ -215,7 +215,7 @@ def _load_dotted(path: str) -> ExecutorBackend:
 
     try:
         instance = cls()
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise ValueError(f"Could not instantiate backend class '{class_name}': {exc}") from exc
 
     if not isinstance(instance, ExecutorBackend):

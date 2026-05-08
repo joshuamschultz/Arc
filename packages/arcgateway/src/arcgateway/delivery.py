@@ -197,7 +197,7 @@ class DeliverySenderImpl:
                 outcome="allow",
                 extra={"platform": delivery_target.platform, "chat_id": delivery_target.chat_id},
             )
-        except Exception:
+        except Exception:  # reason: re-raise after log
             _arc_emit(
                 action="gateway.delivery.failed",
                 target=str(delivery_target),

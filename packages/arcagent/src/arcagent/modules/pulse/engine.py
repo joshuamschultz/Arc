@@ -150,7 +150,7 @@ class PulseEngine:
             try:
                 await self._pulse()
                 self._consecutive_errors = 0
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 self._consecutive_errors += 1
                 _logger.exception(
                     "Pulse error (consecutive: %d)",
@@ -233,7 +233,7 @@ class PulseEngine:
                     "error": "timeout",
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             self._update_state(check.name, "error")
             _logger.error("Pulse: '%s' failed: %s", check.name, exc)
             self._emit_event(
@@ -290,7 +290,7 @@ class PulseEngine:
             return PulseState()
         try:
             return PulseState(**json.loads(self._state_file.read_text(encoding="utf-8")))
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("Failed to parse %s, using empty state", self._state_file)
             return PulseState()
 
@@ -312,7 +312,7 @@ class PulseEngine:
                 os.fsync(f.fileno())
             os.chmod(tmp, 0o600)
             os.replace(tmp, str(self._state_file))
-        except Exception:
+        except Exception:  # reason: re-raise after log
             try:
                 os.unlink(tmp)
             except OSError:

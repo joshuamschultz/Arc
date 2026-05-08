@@ -220,7 +220,7 @@ def _emit_sandbox_audit(
             ),
             audit_sink,
         )
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.warning("Failed to emit sandbox audit event for target=%s", target)
 
 
@@ -248,7 +248,7 @@ def _find_fixture_command(skill_dir: Path) -> str:
             data = yaml.safe_load(module_yaml.read_text(encoding="utf-8"))
             if isinstance(data, dict) and "test_fixture" in data:
                 return str(data["test_fixture"])
-        except Exception as exc:  # MODULE.yaml parse failure is non-fatal
+        except Exception as exc:  # reason: MODULE.yaml parse failure is non-fatal
             logger.debug("Failed to parse MODULE.yaml test_fixture: %s", exc)
 
     for candidate in ("skill.py", "__init__.py", "main.py"):

@@ -174,7 +174,7 @@ class DashboardEventBus:
         if self._audit_emitter is not None:
             try:
                 self._audit_emitter(action, data)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("dashboard_bus: test audit emitter raised")
             return
         try:
@@ -186,7 +186,7 @@ class DashboardEventBus:
                 outcome="dropped",
                 extra=data,
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("dashboard_bus: audit emission failed", exc_info=True)
 
     def last_value(self, topic: str) -> Any:

@@ -119,7 +119,7 @@ class EntityExtractor:
         except (json.JSONDecodeError, TypeError, KeyError):
             _logger.warning("Invalid extraction response, skipping")
             return
-        except Exception:
+        except Exception:  # reason: re-raise after log
             if self._eval_config.fallback_behavior == "error":
                 raise
             _logger.warning("Extraction model error, skipping", exc_info=True)

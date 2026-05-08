@@ -119,7 +119,7 @@ class EventBus:
         if self._on_event is not None:
             try:
                 self._on_event(event)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.warning("Observer callback failed", exc_info=True)
         return event
 

@@ -120,7 +120,7 @@ class RoutingModule(LLMProvider):
         for name, adapter in self._adapters.items():
             try:
                 await adapter.close()
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 logger.error("Failed to close adapter '%s': %s", name, exc)
                 errors.append(exc)
         if errors:

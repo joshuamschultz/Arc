@@ -235,7 +235,7 @@ def install(
             install_path=ctx.install_path,
         )
 
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         logger.error("[hub] Install failed for %r: %s", name, exc)
         _cleanup_quarantine(quarantine_dir)
         return InstallResult(

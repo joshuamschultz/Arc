@@ -854,7 +854,7 @@ class PairingStore:
         if telemetry is not None:
             try:
                 telemetry.audit_event(event_type, details)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 # Telemetry failure must not break the pairing path; the
                 # stdlib-logged audit above is the tamper-resistant fallback.
                 _logger.warning(

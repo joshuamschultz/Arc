@@ -85,7 +85,7 @@ def _load_agent() -> object | None:
     except ImportError:
         _logger.debug("arcagent not installed; starting in no-agent mode.")
         return None
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         _logger.warning("Failed to load ArcAgent: %s; starting in no-agent mode.", exc)
         return None
 
@@ -97,7 +97,7 @@ async def _run_tui(agent: object | None) -> None:
         if callable(startup):
             try:
                 await startup()
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 _logger.error("ArcAgent startup failed: %s", exc)
                 agent = None
 
@@ -119,7 +119,7 @@ def main() -> None:
         sys.exit(0)
     except KeyboardInterrupt:
         sys.exit(0)
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         _logger.error("ArcTUI failed: %s", exc)
         sys.exit(1)
 

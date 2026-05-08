@@ -139,7 +139,7 @@ async def _transcribe(
         result: TranscriptionResult = await stt.transcribe(audio_path, language=language)
     except STTFailed:
         raise
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise STTFailed(
             f"Unexpected error during transcription: {type(exc).__name__}",
             details={"error": str(exc)[:_MAX_ERROR_MSG_LEN]},
@@ -191,7 +191,7 @@ async def _synthesize(
         out_path = await tts.synthesize(synthesis_text, voice_id=voice_id, output_path=output_path)
     except TTSFailed:
         raise
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise TTSFailed(
             f"Unexpected error during synthesis: {type(exc).__name__}",
             details={"error": str(exc)[:_MAX_ERROR_MSG_LEN]},

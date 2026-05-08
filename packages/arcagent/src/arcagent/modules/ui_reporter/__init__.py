@@ -323,7 +323,7 @@ class UIReporterModule:
         if self._transport is not None:
             try:
                 await self._transport.close()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("Error closing transport", exc_info=True)
         _logger.info("UI reporter shut down")
 
@@ -372,7 +372,7 @@ class UIReporterModule:
 
                 event = UIEvent(**payload)
                 await self._transport.send_event(self._agent_id, event)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("Failed to send event via transport", exc_info=True)
 
     def _wrap_event(self, event: str, data: dict[str, Any]) -> dict[str, Any]:

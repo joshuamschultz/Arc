@@ -189,14 +189,14 @@ class CapabilityLoader:
         if root_name in _UNTRUSTED_ROOTS:
             try:
                 self._ast_cache.validate(path)
-            except Exception as exc:
+            except Exception as exc:  # reason: best-effort — record + continue
                 detail = _short_error(exc)
                 delta.errors.append((str(path), detail))
                 await self._emit_registration_failed(path, "python", detail)
                 return
         try:
             module = _load_module(path)
-        except Exception as exc:
+        except Exception as exc:  # reason: best-effort — record + continue
             detail = _short_error(exc)
             delta.errors.append((str(path), detail))
             await self._emit_registration_failed(path, "python", detail)
@@ -329,12 +329,12 @@ class CapabilityLoader:
                 await entry.instance.setup(None)  # type: ignore[attr-defined]  # reason: setup() is a duck-typed lifecycle hook; the @capability decorator attaches it but mypy sees instance as `object`
                 entry.setup_done = True
                 set_up.append(entry)
-            except Exception as exc:
+            except Exception as exc:  # reason: re-raise after log
                 await self._emit_setup_failed(entry, exc)
                 for done in reversed(set_up):
                     try:
                         await done.instance.teardown()  # type: ignore[attr-defined]  # reason: teardown() is a duck-typed lifecycle hook attached by @capability; mypy sees instance as `object`
-                    except Exception:
+                    except Exception:  # reason: fail-open — log + continue
                         _logger.exception(
                             "teardown raised during rollback for %s",
                             done.meta.name,
@@ -349,7 +349,7 @@ class CapabilityLoader:
                 continue
             try:
                 await entry.instance.teardown()  # type: ignore[attr-defined]  # reason: teardown() is a duck-typed lifecycle hook attached by @capability; mypy sees instance as `object`
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("teardown raised during shutdown for %s", entry.meta.name)
 
     # --- Bus + audit emission ---------------------------------------------
@@ -393,7 +393,7 @@ class CapabilityLoader:
                 extra=payload,
             )
             self._audit_sink.emit(event)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("loader audit sink raised; continuing")
 
     async def _topological_order(self) -> list[LifecycleEntry]:
@@ -424,7 +424,7 @@ def _load_module(path: Path) -> Any:
     sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
-    except Exception:
+    except Exception:  # reason: re-raise after log
         sys.modules.pop(spec.name, None)
         raise
     return module

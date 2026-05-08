@@ -124,7 +124,7 @@ async def _safe_evaluate(
     st = _runtime.state()
     try:
         await st.engine.evaluate(messages, model, session_id=session_id)
-    except Exception:
+    except Exception:  # reason: re-raise after log
         if st.eval_config.fallback_behavior == "error":
             raise
         _logger.warning("Policy evaluation error, skipping", exc_info=True)

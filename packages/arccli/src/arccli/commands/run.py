@@ -219,7 +219,7 @@ async def _execute_task(
                 return "Error: disallowed characters"
             try:
                 return str(eval(expr))  # noqa: S307
-            except Exception as e:
+            except Exception as e:  # reason: fail-open — continue
                 return f"Error: {e}"
 
         tools.append(

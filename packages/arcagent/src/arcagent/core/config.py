@@ -407,7 +407,7 @@ def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
 
     try:
         return ArcAgentConfig(**raw_data)
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise ConfigError(
             code="CONFIG_VALIDATION",
             message=f"Config validation failed: {exc}",

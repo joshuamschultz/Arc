@@ -63,6 +63,6 @@ def create_vault_resolver(config: ArcAgentConfig) -> Any:
         module = importlib.import_module(module_path)
         backend_cls = getattr(module, class_name)
         return backend_cls(cache_ttl_seconds=config.vault.cache_ttl_seconds)
-    except Exception:
+    except Exception:  # reason: re-raise after log
         _logger.exception("Failed to create vault resolver: %s", backend_ref)
         raise

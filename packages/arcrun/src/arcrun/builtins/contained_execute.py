@@ -74,15 +74,15 @@ def _cleanup_container(container: Any, client: Any) -> None:
     """Stop container, remove it, close client. Logs failures."""
     try:
         container.stop(timeout=2)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.warning("Container cleanup failed: stop", exc_info=True)
     try:
         container.remove(force=True)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.warning("Container cleanup failed: remove", exc_info=True)
     try:
         client.close()
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.warning("Container cleanup failed: close", exc_info=True)
 
 

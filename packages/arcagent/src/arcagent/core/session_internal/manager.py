@@ -236,7 +236,7 @@ class SessionManager:
                 if existing:
                     f.write(existing.rstrip() + "\n\n")
                 f.write(f"## Compaction Flush\n\n{sanitized}\n")
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("Pre-compaction flush failed, continuing without flush")
 
     @staticmethod
@@ -285,7 +285,7 @@ class SessionManager:
             )
             summary: str = response.content or ""
             return summary[: self._config.compaction_summary_max_chars]
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("Summarization failed, using truncated messages")
             return f"[Compacted {len(messages)} messages]"
 

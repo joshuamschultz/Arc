@@ -42,7 +42,7 @@ class Sandbox:
         if self._config.check is not None:
             try:
                 allowed, reason = await self._config.check(tool_name, params)
-            except Exception:
+            except Exception:  # reason: best-effort — record + continue
                 return self._deny(tool_name, "check callback error")
             if not allowed:
                 return self._deny(tool_name, reason)

@@ -240,7 +240,7 @@ class FirecrackerSandbox:
                 )
             finally:
                 await self._kill_vm(proc)
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             logger.error("[firecracker] VM execution error vm_id=%s: %s", vm_id, exc)
             duration = time.monotonic() - start
             return DryRunResult(

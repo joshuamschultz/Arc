@@ -176,7 +176,7 @@ class CDPClientManager:
         if self._ws:
             try:
                 await self._ws.close()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("WebSocket close error (ignored)", exc_info=True)
             self._ws = None
 
@@ -189,7 +189,7 @@ class CDPClientManager:
                 _logger.warning("Chrome did not exit after SIGTERM, sending SIGKILL")
                 self._process.kill()
                 await self._process.wait()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("Chrome cleanup error (ignored)", exc_info=True)
             self._process = None
             # Remove from atexit tracking
@@ -330,7 +330,7 @@ class CDPClientManager:
                             ws_url: str = target.get("webSocketDebuggerUrl", "")
                             if ws_url:
                                 return ws_url
-                except Exception as exc:
+                except Exception as exc:  # reason: fail-open — continue
                     last_error = exc
                     await asyncio.sleep(0.2)
 
@@ -352,7 +352,7 @@ class CDPClientManager:
             raise CDPConnectionError(
                 message="websockets package not installed. Add 'websockets' to dependencies."
             ) from err
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise CDPConnectionError(
                 message=f"WebSocket connection failed: {exc}",
                 details={"url": self._ws_url},

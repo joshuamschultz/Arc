@@ -99,7 +99,7 @@ class AzureKeyVaultBackend:
         try:
             secret = client.get_secret(path)
             return str(secret.value) if secret.value is not None else None
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             # Distinguish "secret not found" (404) from connectivity issues.
             exc_name = type(exc).__name__
             if "ResourceNotFoundError" in exc_name or "NotFound" in exc_name:

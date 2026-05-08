@@ -90,7 +90,7 @@ class FileEventBus:
         for listener in list(self._listeners):
             try:
                 await listener(event)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.warning(
                     "FileEventBus: listener %r raised on event %s; swallowing",
                     listener,

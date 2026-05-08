@@ -87,7 +87,7 @@ class SessionACL(BaseModel):
         """
         try:
             return cls._parse_frontmatter(content, config, owner_did)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning(
                 "Failed to parse ACL frontmatter; using tier default",
                 exc_info=True,
@@ -180,7 +180,7 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         import yaml
 
         return yaml.safe_load(text) or {}
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.debug("YAML parse failed, returning empty dict", exc_info=True)
         return {}
 

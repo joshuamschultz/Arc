@@ -191,7 +191,7 @@ async def run_stream(
                 on_event=_on_event,
             )
             loop_future.set_result(result)
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — continue
             loop_future.set_exception(exc)
         finally:
             # Signal the consumer that the run is done
@@ -308,7 +308,7 @@ def _emit_ui_run_event(
         return
     try:
         reporter.emit_run_event(event_type=event_type, data=data)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.warning(
             "UIReporter.emit_run_event failed event_type=%s — swallowing",
             event_type,
@@ -347,7 +347,7 @@ def _emit_stream_audit(
             },
         )
         emit(event, sink)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.warning(
             "Failed to emit AuditEvent action=%s run_id=%s — swallowing (AU-5)",
             action,

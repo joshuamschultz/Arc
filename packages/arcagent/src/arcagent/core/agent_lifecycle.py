@@ -182,7 +182,7 @@ def configure_module_runtimes(agent: ArcAgent, workspace: Path) -> None:
         kwargs = {name: value for name, value in available.items() if name in sig.parameters}
         try:
             configure_fn(**kwargs)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Module %s _runtime.configure failed", mod_name)
 
 

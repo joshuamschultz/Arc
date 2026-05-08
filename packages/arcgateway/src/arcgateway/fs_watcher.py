@@ -171,7 +171,7 @@ class WatcherManager:
                 await task
             except asyncio.CancelledError:
                 pass
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.warning(
                     "fs_watcher: exception during shutdown of task %r",
                     task,
@@ -198,7 +198,7 @@ class WatcherManager:
                     await self._dispatch(entry, Path(path_str))
         except asyncio.CancelledError:
             return
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             logger.warning(
                 "fs_watcher[%s]: watchfiles loop error: %s", entry.agent_id, exc
             )

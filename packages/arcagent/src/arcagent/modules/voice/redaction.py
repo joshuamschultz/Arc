@@ -101,5 +101,5 @@ def redact_transcript(text: str) -> tuple[str, bool]:
 
         return current, applied
 
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         return text, False

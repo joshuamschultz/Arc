@@ -200,7 +200,7 @@ async def _chat_interactive(
                         f"${result.cost_usd:.4f}, strategy={result.strategy_used}]\n"
                     )
                 sys.stdout.flush()
-            except Exception as e:
+            except Exception as e:  # reason: fail-open — continue
                 sys.stdout.write(f"\nError: {e}\n")
 
     finally:

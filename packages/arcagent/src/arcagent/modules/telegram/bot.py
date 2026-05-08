@@ -156,7 +156,7 @@ class TelegramBot:
                 max_file_size=max_bytes,
             )
             _logger.debug("FileHandler initialized (max %dMB)", self._config.max_file_size_mb)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("FileHandler not available; file uploads will be ignored")
             self._file_handler = None
 
@@ -231,7 +231,7 @@ class TelegramBot:
                 await self._application.initialize()
                 bot_info = await self._application.bot.get_me()
                 break
-            except Exception as init_err:
+            except Exception as init_err:  # reason: re-raise after log
                 if attempt == max_retries:
                     _logger.error(
                         "Telegram init failed after %d attempts: %s",
@@ -609,7 +609,7 @@ class TelegramBot:
 
             return context
 
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to download Telegram file: %s", filename)
             return None
 
@@ -627,7 +627,7 @@ class TelegramBot:
 
             try:
                 await self._process_message(item)
-            except Exception as exc:  # Broad catch intentional — queue worker must not crash
+            except Exception as exc:  # reason: queue worker must not crash per-message
                 _logger.exception("Error processing telegram message")
                 self._emit_event(
                     "telegram:error",
@@ -643,7 +643,7 @@ class TelegramBot:
                         await update.message.reply_text(
                             _user_facing_error(exc),
                         )
-                    except Exception:  # Best-effort notification must not crash queue
+                    except Exception:  # reason: Best-effort notification must not crash queue
                         _logger.exception("Failed to send error reply")
             finally:
                 self._message_queue.task_done()

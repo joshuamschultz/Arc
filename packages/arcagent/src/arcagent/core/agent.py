@@ -393,7 +393,7 @@ class ArcAgent:
         if self._model is not None:
             try:
                 await self._model.close()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Error closing LLM model on shutdown")
         self._model = None
 

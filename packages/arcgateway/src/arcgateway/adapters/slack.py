@@ -214,7 +214,7 @@ class SlackAdapter:
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
         try:
             await self._handler.connect_async()
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             _logger.exception("SlackAdapter: Socket Mode connection failed")
             raise RuntimeError("Slack Socket Mode connection failed") from exc
 
@@ -238,7 +238,7 @@ class SlackAdapter:
         if self._handler is not None:
             try:
                 await self._handler.close_async()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("SlackAdapter: error closing Socket Mode handler")
             self._handler = None
 
@@ -308,7 +308,7 @@ class SlackAdapter:
                 ts=message_id,
                 text=text,
             )
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             _logger.warning(
                 "SlackAdapter.edit_message: failed to edit ts=%r channel=%r: %s",
                 message_id,
@@ -397,5 +397,5 @@ class SlackAdapter:
                 deleted = self._dedup.sweep_expired()
                 if deleted:
                     _logger.debug("SlackAdapter: dedup sweep removed %d expired rows", deleted)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("SlackAdapter: dedup sweep error (non-fatal)")

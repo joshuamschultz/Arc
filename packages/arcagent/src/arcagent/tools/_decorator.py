@@ -284,7 +284,7 @@ def _schema_from_signature(fn: Callable[..., Any]) -> dict[str, Any]:
     sig = inspect.signature(fn)
     try:
         hints = get_type_hints(fn)
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         # If forward-refs can't be resolved we fall back to raw
         # signatures — better than crashing the decorator.
         hints = {}

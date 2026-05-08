@@ -446,7 +446,7 @@ class CapabilityRegistry:
                 extra=payload,
             )
             self._audit_sink.emit(event)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("audit sink raised; continuing")
 
     @staticmethod
@@ -468,7 +468,7 @@ async def _drain_task(task: asyncio.Task[None] | None) -> None:
         await task
     except asyncio.CancelledError:
         pass
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.exception("background task raised during drain; continuing")
 
 

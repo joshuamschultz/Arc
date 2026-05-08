@@ -65,7 +65,7 @@ class BaseModule(LLMProvider):
         with self._tracer.start_as_current_span(name, attributes=attributes) as span:
             try:
                 yield span
-            except Exception as exc:
+            except Exception as exc:  # reason: re-raise after log
                 span.record_exception(exc)
                 span.set_status(StatusCode.ERROR, str(exc))
                 raise

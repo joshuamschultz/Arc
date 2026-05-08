@@ -108,7 +108,7 @@ class BrowserbaseProvider:
         try:
             self._playwright = await async_playwright().start()
             self._browser = await self._playwright.chromium.connect_over_cdp(self._endpoint)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             await self._safe_stop_playwright()
             raise RemoteProviderError(
                 provider=self._provider_name,
@@ -127,7 +127,7 @@ class BrowserbaseProvider:
         if self._browser is not None:
             try:
                 await self._browser.close()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug(
                     "Error closing remote browser '%s'", self._provider_name, exc_info=True
                 )
@@ -141,6 +141,6 @@ class BrowserbaseProvider:
         if self._playwright is not None:
             try:
                 await self._playwright.stop()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.debug("Error stopping Playwright", exc_info=True)
             self._playwright = None

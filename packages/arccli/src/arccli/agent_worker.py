@@ -161,7 +161,7 @@ async def _run_with_arcagent(
             },
         ]
 
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         _logger.exception(
             "arc-agent-worker: agent error session=%s: %s",
             session_key,
@@ -290,7 +290,7 @@ async def _handle_line(line: str, agent_did: str) -> None:
 
     try:
         deltas = await _run_with_arcagent(agent_did, message, session_key)
-    except Exception as exc:  # worker must never crash on agent error
+    except Exception as exc:  # reason: worker must never crash on agent error
         _logger.exception(
             "arc-agent-worker: agent error for session=%s",
             session_key,

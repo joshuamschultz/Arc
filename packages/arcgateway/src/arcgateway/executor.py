@@ -268,7 +268,7 @@ class AsyncioExecutor:
                     is_final=False,
                     turn_id=turn_id,
                 )
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 _logger.exception(
                     "AsyncioExecutor: agent error session=%s: %s",
                     event.session_key,

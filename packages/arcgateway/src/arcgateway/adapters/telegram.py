@@ -262,7 +262,7 @@ class TelegramAdapter:
                 await self._polling_task
             except asyncio.CancelledError:
                 pass
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("TelegramAdapter: error awaiting polling task cancellation")
             self._polling_task = None
 
@@ -273,7 +273,7 @@ class TelegramAdapter:
                     await updater.stop()
                 await self._application.stop()
                 await self._application.shutdown()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("TelegramAdapter: error shutting down application")
             self._application = None
 
@@ -425,7 +425,7 @@ class TelegramAdapter:
                     bot_info.id,
                 )
                 return
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 if _is_network_error(exc):
                     backoff = _network_backoff(attempt)
                     _logger.warning(
@@ -495,7 +495,7 @@ class TelegramAdapter:
             # Clean shutdown — let it propagate.
             raise
 
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             if _is_conflict_error(exc):
                 conflict_attempts += 1
                 _logger.warning(
@@ -639,7 +639,7 @@ class TelegramAdapter:
 
         try:
             await self._on_message(event)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception(
                 "TelegramAdapter: error in on_message callback for user_did=%s",
                 user_did,

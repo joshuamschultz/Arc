@@ -230,7 +230,7 @@ async def emit_to_arcui(event: str, data: dict[str, Any]) -> None:
 
         ui_event = UIEvent(**payload)
         await st.transport.send_event(st.agent_id, ui_event)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.debug("ui_reporter: send_event failed", exc_info=True)
 
 

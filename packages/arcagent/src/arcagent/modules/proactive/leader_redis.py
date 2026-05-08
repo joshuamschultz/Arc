@@ -116,7 +116,7 @@ class RedisLockElection:
                     nx=True,
                     px=self._ttl_ms,
                 )
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Redis SET failed — treating as not leader")
                 return False
             if won:
@@ -138,7 +138,7 @@ class RedisLockElection:
             self._renewer = None
         try:
             await self._redis.eval(_RELEASE_SCRIPT, 1, self._key, self._fence_token)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Lock release failed (may have expired)", exc_info=True)
 
     def is_leader(self) -> bool:
@@ -161,7 +161,7 @@ class RedisLockElection:
                     return
             except asyncio.CancelledError:
                 return
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Redis lock renewal failed")
                 self._acquired = False
                 return

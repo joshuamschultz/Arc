@@ -138,7 +138,7 @@ class SchedulerEngine:
             )
             self.on_execution_failed(entry, TimeoutError(f"Timed out after {timeout}s"))
             return None
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             elapsed = time.monotonic() - start_time
             _logger.error(
                 "Schedule %s failed after %.1fs: %s",
@@ -366,7 +366,7 @@ class SchedulerEngine:
                     if self.should_fire(entry) and self.is_within_active_hours(entry):
                         await self.enqueue(entry)
                 self._timer_consecutive_errors = 0
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 self._timer_consecutive_errors += 1
                 _logger.exception(
                     "Error in timer loop (consecutive: %d)",

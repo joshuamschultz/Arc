@@ -96,7 +96,7 @@ def create_navigate_tools(
         # Wait for page load before reading title
         try:
             await cdp.send("Page", "loadEventFired")
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("loadEventFired not received (ignored)", exc_info=True)
 
         # Post-redirect URL validation

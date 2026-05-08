@@ -141,7 +141,7 @@ def _recent_memory_events(state: Any, agent_id: str, limit: int = 10) -> list[di
         return []
     try:
         events = history(agent_id, limit=limit)
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         return []
     out: list[dict[str, Any]] = []
     for ev in events:

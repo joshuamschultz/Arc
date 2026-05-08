@@ -180,7 +180,7 @@ def create_app(
             # the no-cache hint.
             try:
                 resp.headers["Cache-Control"] = "no-cache"
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.debug("could not set Cache-Control on static asset", exc_info=True)
             return resp
 
@@ -281,7 +281,7 @@ def create_app(
                         continue
                     try:
                         await adapter.disconnect()
-                    except Exception:
+                    except Exception:  # reason: fail-open — log + continue
                         logger.exception(
                             "lifespan: error disconnecting adapter %s",
                             getattr(adapter, "name", "unknown"),

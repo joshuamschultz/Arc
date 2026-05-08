@@ -215,7 +215,7 @@ def make_delegate_tool(
                 token_budget=token_budget,
                 wallclock_timeout_s=timeout_s,
             )
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             # Log the real exception type server-side for ops visibility;
             # return a stable vocabulary token to the LLM to prevent exception
             # class names from becoming an injection-probe surface (LLM02).

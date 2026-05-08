@@ -165,7 +165,7 @@ class CronRunner:
                 success=True,
                 ran_at=ran_at,
             )
-        except Exception as exc:  # intentional catch-all
+        except Exception as exc:  # reason: intentional catch-all
             _logger.error(
                 "CronRunner: job %r failed: %s",
                 job.name,
@@ -243,7 +243,7 @@ class CronRunner:
                 job.name,
                 job.deliver_to,
             )
-        except Exception as exc:  # delivery must not crash scheduler
+        except Exception as exc:  # reason: delivery must not crash scheduler
             self._telemetry.audit_event(
                 "cron.delivery_failed",
                 {

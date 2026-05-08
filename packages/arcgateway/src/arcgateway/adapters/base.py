@@ -233,7 +233,7 @@ async def reconnect_watcher(
                 _logger.info("reconnect_watcher: adapter %r reconnected successfully.", name)
                 # Remove from failed dict on success
                 failed_adapters.pop(name, None)
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 entry.last_error = exc
                 _logger.warning(
                     "reconnect_watcher: adapter %r reconnect failed (attempt %d): %s",

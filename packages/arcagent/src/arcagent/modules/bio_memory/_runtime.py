@@ -179,7 +179,7 @@ def _make_team_service_factory(
         except ImportError:
             _logger.debug("arcteam not installed, team memory disabled")
             return None
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("arcteam init failed, team memory disabled", exc_info=True)
             return None
 

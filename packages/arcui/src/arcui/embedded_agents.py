@@ -129,7 +129,7 @@ def install_embedded_agent_hooks(
             cache.put(agent_did, agent)
             try:
                 _register_in_fleet(app, agent_did, agent)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.exception(
                     "embedded_agents: failed to register %s in fleet",
                     agent_did,

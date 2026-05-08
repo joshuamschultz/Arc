@@ -180,7 +180,7 @@ class PolicyModule:
         """Evaluate with error handling respecting fallback_behavior."""
         try:
             await self._engine.evaluate(messages, model, session_id=session_id)
-        except Exception:
+        except Exception:  # reason: re-raise after log
             if self._eval_config.fallback_behavior == "error":
                 raise
             _logger.warning("Policy evaluation error, skipping", exc_info=True)

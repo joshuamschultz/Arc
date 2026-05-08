@@ -27,7 +27,7 @@ async def _publish(request: Request, topic: str, payload: Any) -> None:
         return
     try:
         await bus.publish(topic, payload)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.debug(
             "cost_efficiency: dashboard_bus publish failed for topic=%s", topic, exc_info=True
         )

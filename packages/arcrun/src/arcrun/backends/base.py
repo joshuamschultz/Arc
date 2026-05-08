@@ -205,7 +205,7 @@ class _ThreadedProcessHandle:
                 wf.write(truncated)
                 if len(result) > self._max_stdout_bytes:
                     wf.write(TRUNCATION_MARKER)
-            except Exception as exc:
+            except Exception as exc:  # reason: best-effort — record + continue
                 self._error = exc
             finally:
                 # Closing the write end signals EOF; reader loop terminates.
@@ -249,5 +249,5 @@ class _ThreadedProcessHandle:
         self._cancelled.set()
         try:
             self._cancel_fn()
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             logger.debug("cancel_fn raised; suppressed", exc_info=True)

@@ -573,7 +573,7 @@ class WebPlatformAdapter:
                     self._last_activity[ws] = time.monotonic()
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception:  # reason: best-effort — record + continue
                     self.unregister_socket(ws)
                     return
         except asyncio.CancelledError:
@@ -603,7 +603,7 @@ class WebPlatformAdapter:
         if self._audit_emitter is not None:
             try:
                 self._audit_emitter(action, data)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("WebPlatformAdapter: test audit emitter raised")
             return
         try:
@@ -615,5 +615,5 @@ class WebPlatformAdapter:
                 outcome=data.get("outcome", "allow"),
                 extra=data,
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("WebPlatformAdapter: audit emission failed")

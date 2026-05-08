@@ -134,7 +134,7 @@ async def browser_navigate(url: str) -> str:
     await cdp.send("Page", "navigate", {"url": url})
     try:
         await cdp.send("Page", "loadEventFired")
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.debug("loadEventFired not received (ignored)", exc_info=True)
 
     final_url = await _get_current_url(cdp)

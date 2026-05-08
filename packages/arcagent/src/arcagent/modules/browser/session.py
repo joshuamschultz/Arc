@@ -111,7 +111,7 @@ class BrowserSession:
         start = time.monotonic()
         try:
             await self._page.goto(url)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise NavigationFailedError(url=url, reason=str(exc)) from exc
         duration_ms = int((time.monotonic() - start) * 1000)
         await self._audit(
@@ -140,7 +140,7 @@ class BrowserSession:
         self._require_open()
         try:
             await self._page.click(selector)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise ElementNotFoundError(
                 message=f"Selector '{selector}' not found",
                 details={"selector": selector, "reason": str(exc)},
@@ -164,7 +164,7 @@ class BrowserSession:
         self._require_open()
         try:
             tree = await self._page.accessibility.snapshot()
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.warning("Accessibility snapshot failed: %s", exc)
             return ""
         return _format_ax_tree(tree)
@@ -184,7 +184,7 @@ class BrowserSession:
         self._require_open()
         try:
             text: str = await self._page.inner_text(selector)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise ElementNotFoundError(
                 message=f"Selector '{selector}' not found",
                 details={"selector": selector, "reason": str(exc)},
@@ -222,7 +222,7 @@ class BrowserSession:
         self._require_open()
         try:
             await self._page.fill(selector, text)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise ElementNotFoundError(
                 message=f"Selector '{selector}' not found",
                 details={"selector": selector, "reason": str(exc)},
@@ -239,7 +239,7 @@ class BrowserSession:
         self._closed = True
         try:
             await self._page.close()
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Error closing page for session %s", self._session_id, exc_info=True)
         await self._audit(
             "browser.session.closed",

@@ -141,7 +141,7 @@ async def _cancel_tick_task(tick_task: Any) -> None:
         await tick_task
     except asyncio.CancelledError:
         pass  # Expected: the task was cancelled on request.
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.exception("ProactiveEngine tick loop raised during shutdown")
 
 
@@ -173,7 +173,7 @@ def _make_event_sink(
     def _sink(event: str, payload: dict[str, Any]) -> None:
         try:
             telemetry.emit(event, payload)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("ProactiveEngine event sink raised for event=%r", event)
 
     return _sink

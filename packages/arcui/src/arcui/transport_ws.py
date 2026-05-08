@@ -72,7 +72,7 @@ class WebSocketTransport:
                     if fresh != self.token:
                         logger.info("Token refreshed from provider before reconnect")
                         self.token = fresh
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.debug("token_provider raised; using cached token", exc_info=True)
         return self.token
 
@@ -159,7 +159,7 @@ class WebSocketTransport:
                                 "payload": event.model_dump(),
                             }
                             await ws.send(json.dumps(payload))
-                        except Exception:
+                        except Exception:  # reason: fail-open — log + continue
                             logger.debug("Failed to drain buffered event")
 
                     # Keep alive — read server messages (pings, controls)
@@ -174,7 +174,7 @@ class WebSocketTransport:
             except (ConnectionError, OSError, TimeoutError) as exc:
                 logger.debug("WebSocket disconnected: %s", exc)
                 self._ws = None
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 logger.debug("WebSocket error", exc_info=True)
                 self._ws = None
 
@@ -248,7 +248,7 @@ class WebSocketTransport:
         payload = data.get("payload", {})
         try:
             msg = ControlMessage(**payload)
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise ValueError(f"Invalid ControlMessage payload: {payload}") from exc
         return agent_id, msg
 

@@ -359,7 +359,7 @@ class SessionRouter:
         """
         try:
             await self._run_turn(session_key, event)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Unhandled error in session %s turn", session_key)
         finally:
             done_event.set()
@@ -400,7 +400,7 @@ class SessionRouter:
                             delta.kind,
                             delta.content[:80] if delta.content else "",
                         )
-        except Exception:
+        except Exception:  # reason: re-raise after log
             _logger.exception("Executor error in session %s", session_key)
             raise
 
@@ -440,7 +440,7 @@ class SessionRouter:
 
             try:
                 await self._run_turn(session_key, next_event)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Unhandled error draining queue for session %s", session_key)
             finally:
                 done_event.set()
@@ -472,7 +472,7 @@ class SessionRouter:
             _graph = cast(Any, self._identity_graph)
             resolved: str = _graph.resolve_user_identity(platform, platform_user_id)
             return resolved
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception(
                 "SessionRouter: identity graph resolution failed for %s:%s",
                 platform,

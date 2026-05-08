@@ -82,7 +82,7 @@ def _quick_has_decorator(py_file: Path) -> bool:
     """Cheap text check for any of the SPEC-021 decorator names."""
     try:
         content = py_file.read_text(encoding="utf-8")
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         return False
     return any(token in content for token in ("@tool", "@hook", "@background_task", "@capability"))
 
@@ -209,7 +209,7 @@ def _validate(args: argparse.Namespace) -> None:
     try:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-    except Exception as exc:
+    except Exception as exc:  # reason: best-effort — record + continue
         _write(f"  [FAIL] Import error: {exc}")
         sys.exit(1)
 

@@ -244,7 +244,7 @@ def emit(event: AuditEvent, sink: AuditSink) -> None:
     """
     try:
         sink.write(event)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.warning(
             "Audit sink %r raised on event %r — swallowing (AU-5)",
             type(sink).__name__,

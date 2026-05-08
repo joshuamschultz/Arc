@@ -100,7 +100,7 @@ async def _search(query: str, *, limit: int = 10) -> list[dict[str, Any]]:
         hits = await st.search_provider.search(redacted_query, limit=limit)
     except SearchFailed:
         raise
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise SearchFailed(
             f"Unexpected error during web search: {type(exc).__name__}",
         ) from exc
@@ -141,7 +141,7 @@ async def _extract(url: str) -> dict[str, Any]:
         result = await st.extract_provider.extract(url)
     except ExtractFailed:
         raise
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise ExtractFailed(
             f"Unexpected error during web extraction: {type(exc).__name__}",
         ) from exc

@@ -204,7 +204,7 @@ class ModuleBus:
                 reg.event,
                 reg.timeout_seconds,
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception(
                 "Handler %s for event %s raised an exception",
                 reg.module_name or reg.handler.__name__,
@@ -226,7 +226,7 @@ class ModuleBus:
                 await module.startup(ctx)
                 _logger.info("Module %s started", module.name)
                 self._emit_lifecycle(module.name, "start", "allow")
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Module %s failed to start", module.name)
                 self._emit_lifecycle(module.name, "start", "error")
 
@@ -237,7 +237,7 @@ class ModuleBus:
                 await module.shutdown()
                 _logger.info("Module %s shut down", module.name)
                 self._emit_lifecycle(module.name, "stop", "allow")
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Module %s failed to shut down", module.name)
                 self._emit_lifecycle(module.name, "stop", "error")
 
@@ -257,7 +257,7 @@ class ModuleBus:
                     "outcome": outcome,
                 },
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug(
                 "ui_reporter.emit_agent_event failed for module_lifecycle", exc_info=True
             )

@@ -94,7 +94,7 @@ class KubernetesLeaseElection:
         """
         try:
             self._coord_v1 = await asyncio.to_thread(self._build_client)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to construct kubernetes coordination client")
             return False
 
@@ -119,7 +119,7 @@ class KubernetesLeaseElection:
             self._renewer = None
         try:
             await asyncio.to_thread(self._delete_lease)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Lease delete failed (may already be gone)", exc_info=True)
 
     def is_leader(self) -> bool:
@@ -143,7 +143,7 @@ class KubernetesLeaseElection:
 
         try:
             config.load_incluster_config()
-        except Exception:
+        except Exception:  # reason: fail-open — continue
             # Fallback for operator laptops: load ~/.kube/config
             config.load_kube_config()
         return client.CoordinationV1Api()
@@ -152,7 +152,7 @@ class KubernetesLeaseElection:
         """Attempt a single create-or-takeover cycle. Returns True on win."""
         try:
             return await asyncio.to_thread(self._sync_try_acquire)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Lease acquire attempt failed", exc_info=True)
             return False
 
@@ -218,7 +218,7 @@ class KubernetesLeaseElection:
                 await asyncio.to_thread(self._sync_renew)
             except asyncio.CancelledError:
                 return
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Lease renewal failed")
                 self._acquired = False
                 return
@@ -251,7 +251,7 @@ class KubernetesLeaseElection:
             self._coord_v1.delete_namespaced_lease(
                 name=self._lease_name, namespace=self._namespace
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Lease delete raised", exc_info=True)
 
 

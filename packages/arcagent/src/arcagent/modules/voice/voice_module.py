@@ -188,7 +188,7 @@ class VoiceModule:
             result: TranscriptionResult = await stt.transcribe(audio_path, language=language)
         except STTFailed:
             raise
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise STTFailed(
                 f"Unexpected error during transcription: {type(exc).__name__}",
                 details={"error": str(exc)[:_MAX_ERROR_MSG_LEN]},
@@ -248,7 +248,7 @@ class VoiceModule:
             )
         except TTSFailed:
             raise
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             raise TTSFailed(
                 f"Unexpected error during synthesis: {type(exc).__name__}",
                 details={"error": str(exc)[:_MAX_ERROR_MSG_LEN]},

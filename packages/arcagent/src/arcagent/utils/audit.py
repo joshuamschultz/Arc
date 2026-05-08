@@ -65,6 +65,6 @@ async def safe_audit(
 
     try:
         telemetry.audit_event(event, payload)
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         # Audit errors must never propagate and silently break the caller.
         log.warning("safe_audit: failed to emit audit event %s", event, exc_info=True)

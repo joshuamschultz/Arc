@@ -289,7 +289,7 @@ def _audit(st: _runtime._State, event_name: str, data: dict[str, Any]) -> None:
         return
     try:
         st.telemetry.emit_event(event_name, data)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.exception("Failed to emit audit event %s", event_name)
 
 

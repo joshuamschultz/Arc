@@ -88,7 +88,7 @@ def should_unload(name: str, lock_path: Path | None = None) -> bool:
     try:
         lock = HubLockFile.load(lock_path)
         return lock.is_quarantined(name)
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         # On any lock-file error, default to not unloading (safe).
         return False
 
@@ -166,7 +166,7 @@ async def _crl_refresh_loop(
                 )
         except CRLUnreachable as exc:
             logger.error("[hub] CRL refresh failed: %s", exc)
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             logger.error("[hub] Unexpected error in CRL refresh loop: %s", exc)
 
         await asyncio.sleep(interval)
@@ -222,7 +222,7 @@ def _quarantine_matching(
     base = install_base or Path.home() / ".arc" / "skills"
     try:
         lock = HubLockFile.load(lock_path)
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         logger.error("[hub] Cannot load lock file for CRL check: %s", exc)
         return []
 
@@ -265,6 +265,6 @@ def _quarantine_one(
         if updated:
             lock.save(lock_path)
         return updated
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         logger.error("[hub] Failed to update lock file for quarantine of %r: %s", name, exc)
         return False

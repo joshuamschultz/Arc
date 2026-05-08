@@ -41,7 +41,7 @@ def _emit_audit_event(
             extra=extra or {},
         )
         emit(event, sink)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.warning(
             "Failed to emit AuditEvent action=%s target=%s — swallowing (AU-5)",
             action,

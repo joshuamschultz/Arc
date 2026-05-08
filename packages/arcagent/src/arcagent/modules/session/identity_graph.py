@@ -116,7 +116,7 @@ class IdentityGraph:
         """Close the long-lived SQLite connection. Idempotent."""
         try:
             self._conn.close()
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             # Best-effort close on shutdown — connection may already be gone
             _logger.debug("Error closing identity_graph connection", exc_info=True)
 

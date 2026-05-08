@@ -368,7 +368,7 @@ class SubprocessExecutor:
 
             try:
                 delta = Delta.model_validate(data)
-            except Exception as exc:  # Pydantic validation error — don't crash
+            except Exception as exc:  # reason: Pydantic validation error — don't crash
                 _logger.warning(
                     "SubprocessExecutor: invalid Delta from worker pid=%d session=%s error=%s",
                     pid,

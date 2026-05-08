@@ -309,7 +309,7 @@ class Consolidator:
 
         try:
             analysis = await self._analyze_entities(conversation, model)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("Entity analysis failed, skipping entity updates", exc_info=True)
             return ops
 
@@ -443,7 +443,7 @@ class Consolidator:
                     "memory.entity_touched",
                     details={"entity": slug},
                 )
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.warning("Failed to update entity %s", slug, exc_info=True)
         return MutationResult(mutation_count=updated, mutated_slugs=mutated)
 
@@ -502,7 +502,7 @@ class Consolidator:
                     "memory.entity_facts_appended",
                     details={"entity": slug, "fact_count": len(new_lines)},
                 )
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.warning("Failed to append facts for %s", slug, exc_info=True)
 
         return MutationResult(mutation_count=appended, mutated_slugs=mutated)
@@ -543,7 +543,7 @@ class Consolidator:
                     "memory.entity_corrected",
                     details={"entity": slug, "correction": clean_correction[:100]},
                 )
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.warning("Failed to apply correction for %s", slug, exc_info=True)
         return MutationResult(mutation_count=applied, mutated_slugs=mutated)
 
@@ -591,7 +591,7 @@ class Consolidator:
                     "memory.entity_linked",
                     details={"from": slug_a, "to": slug_b},
                 )
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.warning("Failed to link %s <-> %s", slug_a, slug_b, exc_info=True)
         return MutationResult(mutation_count=added, mutated_slugs=mutated)
 
@@ -779,7 +779,7 @@ class Consolidator:
             async with sem:
                 try:
                     return await self._promote_single_entity(slug, team_svc, EntityMetadata)
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.warning("Team promote failed for %s", slug, exc_info=True)
                     return False
 

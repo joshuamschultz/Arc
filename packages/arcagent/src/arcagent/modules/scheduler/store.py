@@ -61,7 +61,7 @@ class ScheduleStore:
             fd_closed = True
             os.chmod(tmp_path, _FILE_MODE)
             os.replace(tmp_path, str(self._path))
-        except Exception:
+        except Exception:  # reason: re-raise after log
             if not fd_closed:
                 os.close(fd)
             if os.path.exists(tmp_path):

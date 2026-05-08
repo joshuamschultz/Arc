@@ -139,7 +139,7 @@ def apply_tombstone(
                     "ts": ts.isoformat(),
                 },
             )
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to emit tombstone audit event")
 
     return tombstone
@@ -239,7 +239,7 @@ def _emit_fts5_reindex(telemetry: Any | None, user_did_hash: str) -> None:
             {"user_did_hash": user_did_hash, "reason": "gdpr_tombstone"},
         )
         _logger.info("tombstone.fts5_reindex_requested user_did_hash=%s", user_did_hash)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.exception("Failed to emit fts5 reindex event")
 
 
@@ -288,7 +288,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
             fh.write(text)
         os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
         os.replace(tmp_path, path)
-    except Exception:
+    except Exception:  # reason: re-raise after log
         try:
             os.unlink(tmp_path)
         except OSError:

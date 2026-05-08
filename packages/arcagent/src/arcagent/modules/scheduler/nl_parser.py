@@ -210,7 +210,7 @@ def parse_cron_cronsim(text: str, user_tz: str) -> Schedule:
         next(probe)
     except (ValueError, StopIteration) as exc:
         raise ParseError(f"cronsim rejected expression '{text}': {exc}") from exc
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise ParseError(f"cronsim error for '{text}': {exc}") from exc
 
     return Schedule(
@@ -317,7 +317,7 @@ def validate(schedule: Schedule) -> Schedule:
             fires = _next_fires_once(schedule.cron_or_iso, _SANITY_FIRE_COUNT)
     except ParseError:
         raise
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise ParseError(f"Error computing fire times: {exc}") from exc
 
     if not fires:
@@ -454,7 +454,7 @@ async def _call_llm_fallback(
     ]
     try:
         response = await model.invoke(messages, tools=[tool])
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         raise ParseError(f"LLM fallback invocation failed: {exc}") from exc
 
     if not response.tool_calls:

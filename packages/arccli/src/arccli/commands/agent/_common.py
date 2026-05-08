@@ -187,7 +187,7 @@ async def calculate(expression: str) -> str:
     try:
         tree = ast.parse(expression, mode="eval")
         return str(_safe_eval(tree))
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — continue
         return f"Error: {exc}"
 '''
 
@@ -251,7 +251,7 @@ def _discover_tools(agent_dir: Path) -> list[Any]:
             mod = importlib.import_module(module_name)
             if hasattr(mod, "get_tools"):
                 all_tools.extend(mod.get_tools())
-        except Exception as e:
+        except Exception as e:  # reason: fail-open — continue
             sys.stdout.write(f"  Warning: could not load tools/{tf.name}: {e}\n")
     sys.path.pop(0)
     return all_tools

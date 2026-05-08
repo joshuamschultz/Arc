@@ -138,7 +138,7 @@ async def _drain(ws: WebSocket, queue: asyncio.Queue[dict[str, object]]) -> None
             }
             try:
                 await ws.send_json(envelope)
-            except Exception:
+            except Exception:  # reason: fail-open — continue
                 # Socket closed or errored — stop draining.
                 return
     except asyncio.CancelledError:
@@ -225,7 +225,7 @@ async def dashboard_ws_endpoint(ws: WebSocket) -> None:
                 "dropped_unknown": unknown_topics,
             },
         )
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.debug("dashboard_ws: audit emission failed", exc_info=True)
 
     queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)

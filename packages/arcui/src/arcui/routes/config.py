@@ -41,7 +41,7 @@ async def patch_config(request: Request) -> JSONResponse:
         new_snapshot = ctrl.patch(updates, actor=request.state.role)
     except (ValueError, KeyError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         logger.exception("Unexpected error during config patch")
         return JSONResponse({"error": "Internal error processing config update"}, status_code=500)
 

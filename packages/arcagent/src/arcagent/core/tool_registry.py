@@ -390,7 +390,7 @@ class ToolRegistry:
                             "tier": tier,
                         },
                     )
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.debug(
                         "ui_reporter.emit_agent_event failed for tool_call", exc_info=True
                     )

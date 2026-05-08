@@ -126,7 +126,7 @@ async def evaluate_heartbeat(
             [Message(role="user", content=prompt)],
             max_tokens=max_output_tokens,
         )
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.exception("Heartbeat model invocation failed; treating as IDLE")
         return False
 
@@ -246,7 +246,7 @@ class ProactiveEngine:
         while self._running:
             try:
                 await self.tick()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("ProactiveEngine tick failed — continuing")
             await asyncio.sleep(self._poll_interval)
 
@@ -303,7 +303,7 @@ class ProactiveEngine:
                 await self._handler(schedule)
                 if breaker is not None:
                     breaker.record_success()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Schedule %r handler failed", schedule.id)
                 if breaker is not None:
                     breaker.record_failure()
@@ -356,7 +356,7 @@ class ProactiveEngine:
             return
         try:
             self._event_sink(event, payload)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Event sink raised; continuing")
 
 

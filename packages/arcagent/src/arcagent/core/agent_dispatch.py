@@ -125,7 +125,7 @@ async def execute_loop(
                 transform_context=agent._context.transform_context if agent._context else None,
                 tool_choice=tool_choice,
             )
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         await bus.emit(
             "agent:error",
             {"task": task, "error": str(exc), "error_type": type(exc).__name__},
@@ -168,7 +168,7 @@ async def execute_loop_async(
             transform_context=context.transform_context if context else None,
             tool_choice=tool_choice,
         )
-    except Exception as exc:
+    except Exception as exc:  # reason: re-raise after log
         await bus.emit(
             "agent:error",
             {"task": task, "error": str(exc), "error_type": type(exc).__name__},

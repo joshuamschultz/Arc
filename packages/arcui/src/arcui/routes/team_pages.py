@@ -126,7 +126,7 @@ async def get_roster(request: Request) -> JSONResponse:
     if bus is not None:
         try:
             await bus.publish("roster", data)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             logger.debug("team_pages: dashboard_bus roster publish failed", exc_info=True)
     return JSONResponse(data)
 

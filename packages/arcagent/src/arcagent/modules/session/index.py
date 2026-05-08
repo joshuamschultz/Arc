@@ -186,7 +186,7 @@ class SessionIndex:
 
             try:
                 await asyncio.to_thread(self._scan_once)
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("SessionIndex._scan_once raised unexpectedly")
 
     # ------------------------------------------------------------------
@@ -212,7 +212,7 @@ class SessionIndex:
             for path in iter_session_files_from(self._sessions_dir):
                 try:
                     self._index_file(conn, path)
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.exception("Failed to index %s", path)
         finally:
             conn.close()
@@ -283,7 +283,7 @@ class SessionIndex:
             for path in iter_session_files_from(self._sessions_dir):
                 try:
                     self._index_file(conn, path)
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.exception("rebuild: failed to index %s", path)
 
         finally:
@@ -291,7 +291,7 @@ class SessionIndex:
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.commit()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("rebuild: failed to restore durable pragmas")
             conn.close()
 
@@ -363,7 +363,7 @@ def _entry_to_row(
     if not isinstance(content, str):
         try:
             content = _json.dumps(content)
-        except Exception:
+        except Exception:  # reason: fail-open — continue
             return None
 
     ts_raw = entry.get("timestamp", "")

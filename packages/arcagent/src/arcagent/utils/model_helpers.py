@@ -57,7 +57,7 @@ def get_eval_model(
 
     try:
         return load_eval_model(model_id, agent_label=agent_label)
-    except Exception:
+    except Exception:  # reason: re-raise after log
         if eval_config.fallback_behavior == "error":
             raise
         logger.exception("Failed to load eval model: %s", model_id)

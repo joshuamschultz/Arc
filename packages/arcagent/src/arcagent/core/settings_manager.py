@@ -136,7 +136,7 @@ class SettingsManager:
 
         try:
             data = tomllib.loads(self._config_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("Cannot parse TOML for settings overlay: %s", self._config_path)
             return
 

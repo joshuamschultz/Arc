@@ -109,7 +109,7 @@ def _run_validation(agent_dir: Path) -> None:
                         total_tools += len(discovered)
                         for t in discovered:
                             checks.append(("OK", f"  tool: {t.name}"))
-                except Exception as e:
+                except Exception as e:  # reason: fail-open — continue
                     checks.append(("WARN", f"tools/{tf.name}: {e}"))
             sys.path.pop(0)
             checks.append(("OK", f"tools: {total_tools} total"))
@@ -122,7 +122,7 @@ def _run_validation(agent_dir: Path) -> None:
         if not STRATEGIES:
             _load_strategies()
         checks.append(("OK", f"strategies: {', '.join(STRATEGIES.keys())}"))
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         checks.append(("WARN", "could not load strategies"))
 
     for status, desc in checks:

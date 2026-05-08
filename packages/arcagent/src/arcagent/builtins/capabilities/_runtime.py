@@ -93,7 +93,7 @@ def get_secret(name: str) -> str | None:
     if _vault_resolver is not None:
         try:
             raw_val = _vault_resolver.get_secret(name)
-        except Exception:
+        except Exception:  # reason: fail-open — continue
             raw_val = None
         if raw_val:
             return str(raw_val)

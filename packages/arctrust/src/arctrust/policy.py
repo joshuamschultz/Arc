@@ -373,7 +373,7 @@ class PolicyPipeline:
         for layer in self._layers:
             try:
                 decision = await layer.evaluate(call, ctx)
-            except Exception as exc:
+            except Exception as exc:  # reason: fail-open — log + continue
                 _logger.exception("Policy layer %r raised — failing closed (R-012)", layer.name)
                 decision = Decision.deny(
                     layer=layer.name,
@@ -477,7 +477,7 @@ class PolicyPipeline:
         }
         try:
             self._audit_sink("policy.evaluate", payload)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Audit sink raised; continuing")
 
 

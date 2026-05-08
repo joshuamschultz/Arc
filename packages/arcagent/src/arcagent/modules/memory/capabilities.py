@@ -345,7 +345,7 @@ async def entity_extraction_loop(_ctx: Any) -> None:
             await _drain_once()
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.warning("entity extraction loop iteration failed", exc_info=True)
         await asyncio.sleep(_ENTITY_EXTRACTION_INTERVAL)
 

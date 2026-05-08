@@ -145,7 +145,7 @@ def _providers(args: argparse.Namespace) -> None:
                     "default_model": cfg.provider.default_model,
                 }
             )
-        except Exception:
+        except Exception:  # reason: fail-open — continue
             rows.append(
                 {
                     "name": name,
@@ -287,7 +287,7 @@ def _validate(args: argparse.Namespace) -> None:
         load_global_config()
         global_ok = True
         global_error = ""
-    except Exception as e:
+    except Exception as e:  # reason: fail-open — continue
         global_ok = False
         global_error = str(e)
 
@@ -311,7 +311,7 @@ def _validate(args: argparse.Namespace) -> None:
             entry["api_key_set"] = bool(os.environ.get(env_var, ""))
             if not cfg.provider.api_key_required:
                 entry["api_key_set"] = True
-        except Exception as e:
+        except Exception as e:  # reason: fail-open — continue
             entry["error"] = str(e)
         results.append(entry)
 
@@ -379,7 +379,7 @@ def _prompt(args: argparse.Namespace) -> None:
 
     try:
         resp = asyncio.run(_run())
-    except Exception as e:
+    except Exception as e:  # reason: fail-open — continue
         sys.stderr.write(f"arc llm prompt: {e}\n")
         sys.exit(1)
 

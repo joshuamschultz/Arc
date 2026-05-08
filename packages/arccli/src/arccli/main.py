@@ -56,7 +56,7 @@ def _dispatch_oneshot(argv: list[str]) -> None:
         raise
     except KeyboardInterrupt:
         sys.exit(130)
-    except Exception as exc:
+    except Exception as exc:  # reason: best-effort — record + continue
         _err(f"arc: error in '{cmd.name}': {exc}")
         sys.exit(1)
 
@@ -145,7 +145,7 @@ def _run_repl() -> None:
             break
         except KeyboardInterrupt:
             _out("\n(interrupted)")
-        except Exception as exc:
+        except Exception as exc:  # reason: best-effort — record + continue
             _out(f"Error in '{cmd.name}': {exc}")
 
 

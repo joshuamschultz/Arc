@@ -132,7 +132,7 @@ class StreamBridge:
                 {"target": str(target), "placeholder": True},
             )
             return message_id
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.warning(
                 "StreamBridge: failed to send placeholder (target=%s): %s", target, exc
             )
@@ -152,7 +152,7 @@ class StreamBridge:
         try:
             await adapter.edit_message(target, message_id, text)  # type: ignore[attr-defined]  # reason: adapter is a duck-typed platform adapter; edit_message is opt-in per platform
             return True
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.debug(
                 "StreamBridge: edit_message failed (target=%s message_id=%s): %s",
                 target,
@@ -169,7 +169,7 @@ class StreamBridge:
                 "gateway.message.final_sent",
                 {"target": str(target), "text_len": len(text)},
             )
-        except Exception as exc:
+        except Exception as exc:  # reason: re-raise after log
             _logger.error("StreamBridge: final send failed (target=%s): %s", target, exc)
             raise
 

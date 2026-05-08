@@ -199,7 +199,7 @@ def make_spawn_tool(
             )
             return f"Error: child task timed out after {spawn_timeout_seconds}s"
 
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             # Log full details internally, return sanitized message to LLM
             _logger.warning(
                 "Child run %s failed: %s: %s",
@@ -629,7 +629,7 @@ async def spawn(
             error=f"timeout after {wallclock_timeout_s}s",
         )
 
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — log + continue
         duration_s = time.monotonic() - start
         _logger.warning("spawn() failed: %s: %s", type(exc).__name__, str(exc)[:_MAX_ERROR_LEN])
         parent_state.event_bus.emit(
@@ -695,7 +695,7 @@ def _emit_ui_spawn_event(
         return
     try:
         reporter.emit_run_event(event_type=event_type, data=data)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.warning(
             "UIReporter.emit_run_event failed event_type=%s — swallowing",
             event_type,
@@ -740,7 +740,7 @@ def _emit_spawn_audit(
             },
         )
         emit(event, sink)
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.warning(
             "Failed to emit AuditEvent action=%s child_run_id=%s — swallowing (AU-5)",
             action,

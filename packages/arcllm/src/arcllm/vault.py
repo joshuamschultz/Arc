@@ -178,7 +178,7 @@ class VaultResolver:
         # Fetch from vault
         try:
             value = backend.get_secret(path)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             logger.warning(
                 "Vault lookup failed for '%s', falling back to env var",
                 path,

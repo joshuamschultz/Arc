@@ -367,7 +367,7 @@ class GatewayRunner:
                         removed = 0
                     if removed:
                         _logger.debug("Pairing cleanup: removed %d expired codes", removed)
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.exception("GatewayRunner: pairing cleanup_expired raised")
         except asyncio.CancelledError:
             _logger.info("GatewayRunner: pairing cleanup scheduler stopped")
@@ -392,7 +392,7 @@ class GatewayRunner:
         except asyncio.CancelledError:
             _logger.info("Adapter %s cancelled (shutdown)", adapter.name)
             raise  # CancelledError must propagate to TaskGroup for clean exit
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.exception("Adapter %s failed: %s", adapter.name, exc)
             self._failed_adapters[adapter.name] = FailedAdapter(name=adapter.name, last_error=exc)
             # TODO (M1 integration): emit gateway.adapter.fail audit event
@@ -411,7 +411,7 @@ class GatewayRunner:
         for adapter in self._adapters:
             try:
                 await adapter.disconnect()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Error disconnecting adapter %s", adapter.name)
 
     def _install_signal_handlers(self) -> None:

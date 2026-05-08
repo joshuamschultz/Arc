@@ -581,7 +581,7 @@ class DynamicToolLoader:
             return
         try:
             self._audit_sink(event, payload)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _loader_logger.exception("dynamic_tool audit sink raised; continuing")
 
 

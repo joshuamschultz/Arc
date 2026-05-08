@@ -96,7 +96,7 @@ class ConfigController:
             # Validate by constructing new snapshot (Pydantic will validate)
             try:
                 new = old.model_copy(update=updates)
-            except Exception as e:
+            except Exception as e:  # reason: re-raise after log
                 raise ArcLLMConfigError(f"Invalid config update: {e}") from e
 
             # Atomic swap

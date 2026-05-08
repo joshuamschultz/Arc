@@ -170,7 +170,7 @@ class FileHandler:
 
                 return await self.download_from_bytes(data, filename)
 
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to download file from URL: %s", url[:100])
             return None
 
@@ -252,7 +252,7 @@ class FileHandler:
             if len(text) > _MAX_TEXT_EXTRACT_BYTES:
                 text = text[:_MAX_TEXT_EXTRACT_BYTES] + "\n... [truncated]"
             return text
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Failed to read text file: %s", path)
             return None
 
@@ -271,7 +271,7 @@ class FileHandler:
                 return "\n\n".join(pages) if pages else None
         except ImportError:
             pass
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("pdfplumber failed for %s", path)
 
         # Fallback to PyPDF2
@@ -290,7 +290,7 @@ class FileHandler:
         except ImportError:
             _logger.debug("No PDF library available (pdfplumber or PyPDF2)")
             return None
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("PyPDF2 failed for %s", path)
             return None
 
@@ -307,7 +307,7 @@ class FileHandler:
         except ImportError:
             _logger.debug("python-docx not installed; cannot extract .docx")
             return None
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Failed to extract docx: %s", path)
             return None
 
@@ -333,6 +333,6 @@ class FileHandler:
         except ImportError:
             _logger.debug("openpyxl not installed; cannot extract .xlsx")
             return None
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("Failed to extract xlsx: %s", path)
             return None

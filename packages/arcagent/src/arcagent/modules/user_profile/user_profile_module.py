@@ -259,5 +259,5 @@ class UserProfileModule:
             return
         try:
             self._telemetry.emit_event(event_name, data)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to emit audit event %s", event_name)

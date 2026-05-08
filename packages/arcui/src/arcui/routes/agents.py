@@ -120,7 +120,7 @@ async def control_agent(request: Request) -> JSONResponse:
     # Input validation
     try:
         body = await request.json()
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
     action = body.get("action")
@@ -139,7 +139,7 @@ async def control_agent(request: Request) -> JSONResponse:
             data=body.get("data", {}),
             request_id=request_id,
         )
-    except Exception:
+    except Exception:  # reason: fail-open — continue
         return JSONResponse({"error": "Invalid control message fields"}, status_code=400)
 
     # Create future for response correlation — store (target_id, future)

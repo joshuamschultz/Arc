@@ -116,7 +116,7 @@ class InMemoryElection:
         """
         try:
             acquired = await self._lock.acquire(self._identity, timeout)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Leader acquire failed — treating as not leader")
             return False
         return acquired

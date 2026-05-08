@@ -50,7 +50,7 @@ class FallbackModule(BaseModule):
         with self._span("arcllm.fallback") as fallback_span:
             try:
                 return await self._inner.invoke(messages, tools, **kwargs)
-            except Exception as primary_error:
+            except Exception as primary_error:  # reason: fail-open — log + continue
                 fallback_span.add_event("primary_failed", {"error": str(primary_error)})
                 logger.warning(
                     "Primary provider failed: %s. Trying %d fallback(s).",
@@ -66,7 +66,7 @@ class FallbackModule(BaseModule):
                             result = await fallback.invoke(messages, tools, **kwargs)
                             logger.info("Fallback to '%s' succeeded.", provider_name)
                             return result
-                        except Exception as fallback_error:
+                        except Exception as fallback_error:  # reason: fail-open — log + continue
                             logger.warning(
                                 "Fallback '%s' failed: %s",
                                 provider_name,

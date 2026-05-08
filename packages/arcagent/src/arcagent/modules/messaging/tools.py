@@ -35,7 +35,7 @@ async def _stream_end_byte_pos(svc: Any, stream: str) -> int:
         return 0
     try:
         return int(await get_end(_STREAMS_COLLECTION, stream))
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.debug("stream end byte_pos fetch failed; using 0", exc_info=True)
         return 0
 

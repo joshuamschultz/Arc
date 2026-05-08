@@ -41,7 +41,7 @@ async def _stream_end_byte_pos_or_zero(svc: Any, stream: str) -> int:
         return 0
     try:
         return int(await get_end(_STREAMS_COLLECTION, stream))
-    except Exception:
+    except Exception:  # reason: fail-open — log + continue
         _logger.debug("stream end byte_pos fetch failed; using 0", exc_info=True)
         return 0
 
@@ -379,7 +379,7 @@ class MessagingModule:
                 if self._agent_chat_fn is not None:
                     await self._process_inbox(inbox)
 
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Messaging poll error")
             await asyncio.sleep(interval)
 
@@ -461,7 +461,7 @@ class MessagingModule:
                                 byte_pos=byte_pos,
                             )
 
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Failed to process inbox messages via chat")
 
 

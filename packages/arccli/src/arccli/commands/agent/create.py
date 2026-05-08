@@ -86,7 +86,7 @@ def _try_auto_register(name: str, agent_dir: Path) -> None:
             )
 
         asyncio.run(_do())
-    except Exception as exc:
+    except Exception as exc:  # reason: fail-open — continue
         sys.stdout.write(
             f"Warning: arcteam auto-register failed: {exc}\n"
             f"  Run manually: arc team register {name} --type agent "

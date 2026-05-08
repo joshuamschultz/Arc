@@ -275,7 +275,7 @@ class ArcTUI(App[None]):
                     # tool_start / tool_end events are handled by ActivityView
                     # via the module bus bridge — no transcript update needed.
                 self._transcript.finish_streaming()
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.exception("Agent stream turn failed: %s", exc)
             self._transcript.finish_streaming()
             self._transcript.add_message(MessageRole.ERROR, f"Error: {exc}")
@@ -300,7 +300,7 @@ class ArcTUI(App[None]):
                 result = await self._agent.run(text)
 
             response_text: str = getattr(result, "content", None) or str(result)
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.exception("Agent turn failed: %s", exc)
             self._transcript.add_message(MessageRole.ERROR, f"Error: {exc}")
             return

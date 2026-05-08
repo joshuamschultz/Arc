@@ -167,7 +167,7 @@ class AgentIdentity:
         verify_key = VerifyKey(self.public_key)
         try:
             verify_key.verify(message, signature)
-        except Exception:
+        except Exception:  # reason: fail-open — continue
             return False
         return True
 
@@ -287,7 +287,7 @@ class AgentIdentity:
             if vault_resolver is not None and config.vault_path:
                 try:
                     return cls._load_from_vault(did_to_load, vault_resolver, config.vault_path)
-                except Exception:
+                except Exception:  # reason: fail-open — log + continue
                     _logger.warning(
                         "Vault lookup failed for %s, falling back to file",
                         did_to_load,

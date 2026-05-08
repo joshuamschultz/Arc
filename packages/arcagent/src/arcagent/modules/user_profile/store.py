@@ -344,7 +344,7 @@ class ProfileStore:
                         "episodic_pointer": pointer,
                     },
                 )
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Failed to emit user_profile.overflow event")
 
 
@@ -391,7 +391,7 @@ def _atomic_write(path: Path, text: str) -> None:
         # Secure permissions before making the file world-accessible via rename
         os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
         os.replace(tmp_path, path)
-    except Exception:
+    except Exception:  # reason: re-raise after log
         # Clean up the temp file so we don't leave garbage behind
         try:
             os.unlink(tmp_path)

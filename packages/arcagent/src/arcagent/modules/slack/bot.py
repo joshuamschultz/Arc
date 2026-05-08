@@ -170,7 +170,7 @@ class SlackBot:
                 max_file_size=max_bytes,
             )
             _logger.debug("FileHandler initialized (max %dMB)", self._config.max_file_size_mb)
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.debug("FileHandler not available; file uploads will be ignored")
             self._file_handler = None
 
@@ -245,7 +245,7 @@ class SlackBot:
         self._handler = AsyncSocketModeHandler(self._app, app_token)
         try:
             await self._handler.connect_async()  # Non-blocking — NOT start_async()
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to establish Socket Mode connection")
             self._emit_event("slack:error", {"error": "connection_failed"})
             return
@@ -261,7 +261,7 @@ class SlackBot:
         if self._handler is not None:
             try:
                 await self._handler.close_async()  # NOT disconnect_async()
-            except Exception:
+            except Exception:  # reason: fail-open — log + continue
                 _logger.exception("Error closing Socket Mode handler")
             self._handler = None
 
@@ -452,7 +452,7 @@ class SlackBot:
 
         try:
             result = await self._agent_chat_fn(text, session_id=self._current_session_id)
-        except Exception as exc:
+        except Exception as exc:  # reason: fail-open — log + continue
             _logger.exception("Error calling agent.chat()")
             error_msg = _user_facing_error(exc)
             await self._app.client.chat_postMessage(
@@ -546,7 +546,7 @@ class SlackBot:
             result = await self._app.client.conversations_open(users=user_id)
             self._dm_channel_id = result["channel"]["id"]
             return self._dm_channel_id
-        except Exception:
+        except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to open DM channel with user %s", user_id)
             self._emit_event(
                 "slack:error",
