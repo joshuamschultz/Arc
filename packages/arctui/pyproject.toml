@@ -4,16 +4,21 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arctui"
-version = "0.0.2"
-description = "Arc terminal UI — coming soon"
+version = "0.1.0"
+description = "Arc terminal UI — Textual-based chat transcript, tool-activity panel, and slash-command REPL"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Terminals",
+]
+dependencies = [
+    "textual>=0.80,<2",
+    "arccmd>=0.4",
 ]
 
 [project.urls]
