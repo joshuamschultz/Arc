@@ -28,9 +28,10 @@ The test asserts <= 5 false positives across 100 conversations.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from typing import Any
+
+import pytest
 
 from arcagent.core.module_bus import EventContext
 from arcagent.modules.skill_improver.config import SkillImproverConfig
@@ -252,35 +253,41 @@ def _make_ctx_from_fixture(
 # ---------------------------------------------------------------------------
 
 
-def test_synthetic_conversation_false_positive_rate_below_5pct() -> None:
+@pytest.mark.asyncio
+async def test_synthetic_conversation_false_positive_rate_below_5pct() -> None:
     """G2.4: Nudge false-positive rate < 5% on synthetic conversation suite.
 
     Runs 100 synthetic conversations, counts nudges on fixtures where
     expected_fires=False, and asserts false_positive_rate <= 5%.
+
+    Marked async so pytest-asyncio drives the event loop. The previous
+    sync-with-``asyncio.get_event_loop().run_until_complete()`` form was
+    flaky in full-suite runs because prior async tests left the event loop
+    in a state that ``get_event_loop()`` resolved differently than in
+    standalone runs.
     """
     fixtures = _build_fixtures()
     assert len(fixtures) == 100
 
-    # Create a fresh emitter per session (no shared cooldown state)
+    # Create a fresh emitter per session (no shared cooldown state).
     # Use trace_buffer_turns=0 and cooloff_turns=0 so cooldowns don't mask
-    # false positives — we want pure trigger conjunction testing here.
+    # false positives — we want pure trigger-conjunction testing here.
     config = SkillImproverConfig(
-        trace_buffer_turns=0,  # disable global cooldown for this test
-        cooloff_turns=0,  # disable shape suppression
+        trace_buffer_turns=0,
+        cooloff_turns=0,
     )
 
     false_positive_count = 0
     total_negative_fixtures = sum(1 for f in fixtures if not f.expected_fires)
 
     for idx, fixture in enumerate(fixtures):
-        # Each fixture gets its own emitter to avoid cross-fixture cooldown
         emitter = NudgeEmitter(
             config=config,
             session_id=f"test-session-{idx}",
         )
 
         ctx = _make_ctx_from_fixture(fixture, turn_number=idx * 1000)
-        asyncio.get_event_loop().run_until_complete(emitter.on_post_plan(ctx))
+        await emitter.on_post_plan(ctx)
 
         nudge_fired = emitter.session_nudge_count > 0
 

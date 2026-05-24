@@ -6,30 +6,24 @@ These tests verify that the full spawn pipeline works end-to-end:
 - Child result feeds back into the parent's context
 - Parent uses the child result in its final answer
 
-Requires ANTHROPIC_API_KEY in the environment (or .env file).
+Requires explicit opt-in via ``RUN_REAL_LLM_E2E=1`` AND a valid
+``ANTHROPIC_API_KEY``. The opt-in flag is required because ``arcllm`` calls
+``load_dotenv()`` on import, so the API key is present whenever any sibling
+test imports arcllm — without the flag, env leakage would silently trigger
+billable LLM calls during ordinary suite runs.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-from pathlib import Path
 
 import pytest
 
-# Load .env if present (for API keys)
-_env_file = Path(__file__).resolve().parents[3] / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip())
-
-# Skip entire module if no API key
+# Skip entire module unless the operator explicitly opts in to real-LLM E2E.
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="ANTHROPIC_API_KEY not set",
+    os.environ.get("RUN_REAL_LLM_E2E") != "1" or not os.environ.get("ANTHROPIC_API_KEY"),
+    reason="set RUN_REAL_LLM_E2E=1 and ANTHROPIC_API_KEY to run real-LLM E2E tests",
 )
 
 
