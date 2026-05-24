@@ -67,6 +67,20 @@ class MessagingService:
         self._known_streams: set[str] = set()
         self._cursor_cache: dict[str, Cursor] = {}
 
+    def set_ui_reporter(self, ui_reporter: Any | None) -> None:
+        """Attach (or detach) the duck-typed UI reporter post-construction.
+
+        Use case: arcui's lifespan builds a dashboard-bus bridge but the
+        ``MessagingService`` is constructed earlier (often by an external
+        CLI). Threading the reporter through the constructor would force
+        every caller to know about arcui; a setter keeps the
+        dependency direction clean.
+
+        Passing ``None`` detaches a previously-set reporter (useful in
+        tests and on graceful shutdown).
+        """
+        self._ui_reporter = ui_reporter
+
     async def _next_dlq_seq(self) -> int:
         """Get next DLQ sequence number (cached)."""
         if self._dlq_seq is None:

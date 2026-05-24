@@ -1,14 +1,20 @@
 """Streaming runtime API for arcrun.
 
-Provides run_stream() which wraps run() and yields typed StreamEvent objects
-for per-token streaming, tool lifecycle events, and turn completion.
+Two entry points:
 
-Design:
-- run_stream() runs the loop in a background task.
-- An on_event bridge converts EventBus events to StreamEvent subclasses.
-- Token text is derived from LoopResult.content split into words to simulate
-  per-token streaming without requiring model-level streaming support.
-- TurnEndEvent is always the final event in the stream.
+- ``run_stream(...)`` wraps the full ReAct loop and yields ``StreamEvent``
+  objects (token, tool start/end, turn end). Token text is derived from
+  the final ``LoopResult.content`` via word splitting — convenient when
+  the underlying model adapter doesn't expose a real streaming wire.
+
+- ``stream_llm_response(model, messages, ...)`` streams a single
+  ``model.invoke_stream`` call as ``TokenEvent`` then ``TurnEndEvent``.
+  When the wrapped adapter implements real streaming (OpenAI and the
+  family inheriting from it) the deltas land as they arrive — this is
+  the primitive demos use for the chat-typing-effect UX without
+  carrying loop overhead. Adapters that only ship the default
+  ``invoke_stream`` fallback still work; you just see one big
+  ``TokenEvent`` per call.
 
 This module is pure arcrun — no LLM calls, no agent state.
 """
@@ -278,11 +284,67 @@ async def _stream_generator(
     )
 
 
+_logger = logging.getLogger("arcrun.streams")
+
+
+# ---------------------------------------------------------------------------
+# stream_llm_response() — single-call streaming primitive
+# ---------------------------------------------------------------------------
+
+
+async def stream_llm_response(
+    *,
+    model: Any,
+    messages: list[Any],
+    tools: list[Tool] | None = None,
+    **invoke_kwargs: Any,
+) -> AsyncIterator[StreamEvent]:
+    """Stream one ``model.invoke_stream`` call as StreamEvents.
+
+    Yields one or more ``TokenEvent`` followed by exactly one
+    ``TurnEndEvent``. No loop, no tool execution — this is the
+    typing-effect primitive for demos that want to show a single
+    LLM response landing piece by piece. Tool calls in the stream
+    are ignored (the response is treated as text-only); callers that
+    need tool dispatch should use ``run_stream`` instead.
+
+    When the wrapped adapter overrides ``invoke_stream`` (OpenAI and
+    family), deltas arrive at wire speed. When it doesn't, the
+    default fallback wraps ``invoke()`` and yields the full content
+    as one big delta — still correct, just not progressive.
+    """
+    content_parts: list[str] = []
+    final_usage: Any = None
+    final_stop_reason: Any = None
+
+    async for delta in model.invoke_stream(messages, tools=tools, **invoke_kwargs):
+        if delta.text:
+            content_parts.append(delta.text)
+            yield TokenEvent(text=delta.text)
+        if delta.usage is not None:
+            final_usage = delta.usage
+        if delta.stop_reason is not None:
+            final_stop_reason = delta.stop_reason
+
+    final_text = "".join(content_parts)
+    yield TurnEndEvent(
+        final_text=final_text,
+        turns=1,
+        tool_calls_made=0,
+        cost_usd=0.0,
+    )
+
+    _logger.debug(
+        "stream_llm_response complete len=%d usage=%s stop_reason=%s",
+        len(final_text),
+        final_usage,
+        final_stop_reason,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Audit helper — emit AuditEvents via arctrust, fall back to logger
 # ---------------------------------------------------------------------------
-
-_logger = logging.getLogger("arcrun.streams")
 
 # Sentinel actor DID used when no per-request identity is available
 _STREAM_ACTOR = "did:arc:system:run-stream"

@@ -918,11 +918,13 @@
     });
 
     /* --- Team Chat tab — read-only viewer for arcteam channels.
-       Polls the two new REST endpoints; no WebSocket subscription yet
-       (Phase C in the Arc fixes PRD). Auto-refresh interval is modest
-       to keep the dashboard responsive during multi-stage workflows. */
+       Live updates come from the /ws/dashboard 'team_chat' topic (PRD
+       Fix 6 Phase C); the REST endpoints back the WS-less fallback
+       and the initial load. Polling kicks in only when the WS isn't
+       available — once a 'team_chat' frame arrives the loop is replaced
+       by event-driven refresh. */
     (function () {
-      const POLL_MS = 4000;
+      const POLL_MS = 15000;
       const VIEWER_HEADER = () => {
         const tok = window.localStorage.getItem('arcui_viewer_token') || '';
         return tok ? { 'Authorization': 'Bearer ' + tok } : {};
@@ -1025,6 +1027,34 @@
         active = true;
         refresh();
         startPolling();
+        ensureDashboardSocket();
+      }
+
+      // Single shared /ws/dashboard connection — opened lazily on first
+      // tab activation and held for the page lifetime. Subscribes to
+      // 'team_chat' so route events from arcteam trigger immediate
+      // refresh instead of waiting for the next poll tick.
+      let dashSocket = null;
+      function ensureDashboardSocket() {
+        if (dashSocket) return;
+        try {
+          const tok = window.localStorage.getItem('arcui_viewer_token') || '';
+          const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          dashSocket = new WebSocket(proto + '//' + location.host + '/ws/dashboard');
+          dashSocket.addEventListener('open', () => {
+            dashSocket.send(JSON.stringify({ token: tok }));
+            dashSocket.send(JSON.stringify({ type: 'subscribe', topics: ['team_chat'] }));
+          });
+          dashSocket.addEventListener('message', (ev) => {
+            try {
+              const msg = JSON.parse(ev.data);
+              if (msg && msg.topic === 'team_chat') {
+                refresh();
+              }
+            } catch (e) { /* noop */ }
+          });
+          dashSocket.addEventListener('close', () => { dashSocket = null; });
+        } catch (e) { dashSocket = null; }
       }
 
       window.addEventListener('beforeunload', stopPolling);

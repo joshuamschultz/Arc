@@ -65,6 +65,9 @@ _VALID_TOPICS = frozenset(
         "cost_efficiency",
         "roster",
         "schedule_history",
+        # ARC_FIXES_PRD Fix 6 Phase C — live inter-agent message routing.
+        # Bridged from arcteam MessagingService via arcui.team_chat_bridge.
+        "team_chat",
     }
 )
 

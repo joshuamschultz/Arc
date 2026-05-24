@@ -10,5 +10,6 @@ Usage::
 """
 
 from arcgateway.adapters.base import BasePlatformAdapter, FailedAdapter
+from arcgateway.adapters.in_process import DeltaStream, PythonAdapter
 
-__all__ = ["BasePlatformAdapter", "FailedAdapter"]
+__all__ = ["BasePlatformAdapter", "DeltaStream", "FailedAdapter", "PythonAdapter"]

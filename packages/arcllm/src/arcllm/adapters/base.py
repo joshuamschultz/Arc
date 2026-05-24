@@ -86,6 +86,78 @@ class BaseAdapter(LLMProvider):
         temperature = kwargs.get("temperature", self._config.provider.default_temperature)
         return max_tokens, temperature
 
+    def _check_tool_capability(self, tools: Any) -> None:
+        """Raise if the caller passed tools to a non-tool-capable model.
+
+        Provider TOML declares per-model ``supports_tools``. A model
+        marked ``False`` (or an unknown model with no metadata) silently
+        ignores tool-call requests in production — the wire response
+        carries a JSON-as-text content block instead of a tool_calls
+        array. That's the most expensive class of arcllm bug to debug.
+
+        Convert it to a loud failure at invoke time. Models with
+        ``supports_tools = true`` and models the operator hasn't
+        declared in TOML (no ``_model_meta``) are both allowed through
+        — the latter so brand-new models that are tool-capable but not
+        yet declared don't get blocked.
+        """
+        if not tools:
+            return
+        meta = self._model_meta
+        if meta is None:
+            # No declared metadata — trust the operator picked correctly.
+            # The wire layer will surface the real failure if the model
+            # truly can't carry tools.
+            return
+        if not meta.supports_tools:
+            raise ArcLLMConfigError(
+                f"Model {self._model_name!r} (provider {self.name!r}) is not "
+                "marked tool-capable in provider metadata; passing tools= "
+                "would silently fail. Use a different model or remove tools."
+            )
+
+    def _validate_response_format(self, rf: Any) -> dict[str, Any] | None:
+        """Validate the ``response_format`` kwarg shape.
+
+        Returns the validated dict ready to write into a provider
+        request body, or ``None`` when the caller didn't pass one.
+        Adapters that don't support a server-side JSON mode override
+        this to raise ``ArcLLMConfigError``.
+
+        Accepts these shapes:
+
+        - ``None`` or missing                           — no-op
+        - ``{"type": "text"}``                          — no-op (no enforcement)
+        - ``{"type": "json_object"}``                   — provider must emit a JSON object
+        - ``{"type": "json_schema", "json_schema": {...}}`` — schema-validated output
+
+        Anything else raises ``ArcLLMConfigError`` immediately rather
+        than silently degrading.
+        """
+        if rf is None:
+            return None
+        if not isinstance(rf, dict):
+            raise ArcLLMConfigError(
+                f"response_format must be a dict, got {type(rf).__name__}"
+            )
+        rf_type = rf.get("type", "text")
+        if rf_type not in {"text", "json_object", "json_schema"}:
+            raise ArcLLMConfigError(
+                f"response_format.type must be one of "
+                f"'text'|'json_object'|'json_schema', got {rf_type!r}"
+            )
+        if rf_type == "text":
+            return None
+        if rf_type == "json_schema" and not isinstance(rf.get("json_schema"), dict):
+            raise ArcLLMConfigError(
+                "response_format.type='json_schema' requires a 'json_schema' dict"
+            )
+        # Strip unknown keys to keep the wire payload clean.
+        clean: dict[str, Any] = {"type": rf_type}
+        if rf_type == "json_schema":
+            clean["json_schema"] = rf["json_schema"]
+        return clean
+
     @staticmethod
     def _parse_retry_after(response: httpx.Response) -> float | None:
         """Extract Retry-After header value as seconds, or None."""

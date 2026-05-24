@@ -371,6 +371,19 @@ class TestAnthropicRequestBuilding:
         assert body["max_tokens"] == 1000
         assert body["temperature"] == 0.2
 
+    def test_response_format_rejected(self):
+        """Anthropic has no server-side JSON mode — silent drop is a
+        confusing failure mode, so we raise instead."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+        from arcllm.exceptions import ArcLLMConfigError
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+        with pytest.raises(ArcLLMConfigError, match="response_format"):
+            adapter._build_request_body(
+                messages, response_format={"type": "json_object"}
+            )
+
 
 class TestAnthropicResponseParsing:
     def test_text_response(self):

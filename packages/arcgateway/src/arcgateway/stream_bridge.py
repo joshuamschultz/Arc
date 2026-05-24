@@ -36,7 +36,24 @@ THINKING_PLACEHOLDER: str = "..."
 
 
 class StreamBridge:
-    """Bridges an AsyncIterator[Delta] stream to platform adapter delivery."""
+    """Bridges an AsyncIterator[Delta] stream to platform adapter delivery.
+
+    ``buffer_threshold`` (default :data:`EDIT_TOKEN_BUFFER_SIZE`) controls
+    how many tokens accumulate before each progressive edit is flushed.
+    The default is tuned for Slack/Telegram where each edit is a separate
+    rate-limited API call — batching tokens avoids hitting flood limits.
+    Setting it to ``0`` switches to unbuffered mode: every token delta
+    triggers an immediate edit (and no time-based flush). Use this when
+    the adapter is a transport that doesn't rate-limit per edit (FastAPI
+    SSE writers, ``PythonAdapter``, the in-browser WebSocket bridge):
+    the visitor sees real-time token output instead of 1.5-second
+    batches.
+    """
+
+    def __init__(self, *, buffer_threshold: int = EDIT_TOKEN_BUFFER_SIZE) -> None:
+        if buffer_threshold < 0:
+            raise ValueError("buffer_threshold must be >= 0")
+        self._buffer_threshold = buffer_threshold
 
     async def consume(
         self,
@@ -66,7 +83,7 @@ class StreamBridge:
             buffer.append(delta.content)
             accumulated_parts.append(delta.content)
 
-            should_flush = self._should_flush(buffer, last_edit_at)
+            should_flush = self._should_flush_now(buffer, last_edit_at)
             if should_flush and not flood_disabled and message_id is not None:
                 accumulated = "".join(accumulated_parts)
                 success = await self._attempt_edit(adapter, target, message_id, accumulated)
@@ -112,11 +129,15 @@ class StreamBridge:
         else:
             _logger.debug("StreamBridge: no content to deliver (target=%s)", target)
 
-    @staticmethod
-    def _should_flush(buffer: list[str], last_edit_at: float) -> bool:
+    def _should_flush_now(self, buffer: list[str], last_edit_at: float) -> bool:
         if len(buffer) == 0:
             return False
-        if len(buffer) >= EDIT_TOKEN_BUFFER_SIZE:
+        # Unbuffered mode: every token gets its own edit. Skips the
+        # time-based flush entirely — the caller already gets per-delta
+        # delivery so there's no batching gap to close.
+        if self._buffer_threshold == 0:
+            return True
+        if len(buffer) >= self._buffer_threshold:
             return True
         elapsed_ms = (time.monotonic() - last_edit_at) * 1000
         return elapsed_ms >= EDIT_INTERVAL_MS

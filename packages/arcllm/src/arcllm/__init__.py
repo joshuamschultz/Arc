@@ -7,6 +7,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from arcllm.capabilities import supports_tools, tool_capable_models
 from arcllm.config import (
     DefaultsConfig,
     GlobalConfig,
@@ -29,14 +30,17 @@ from arcllm.exceptions import (
 from arcllm.registry import clear_cache, load_model
 from arcllm.types import (
     ContentBlock,
+    Delta,
     ImageBlock,
     LLMProvider,
     LLMResponse,
     Message,
+    ResponseFormat,
     StopReason,
     TextBlock,
     Tool,
     ToolCall,
+    ToolCallDelta,
     ToolResultBlock,
     ToolUseBlock,
     Usage,
@@ -105,6 +109,7 @@ __all__ = [
     "ContentBlock",
     "DeepseekAdapter",
     "DefaultsConfig",
+    "Delta",
     "FallbackModule",
     "FireworksAdapter",
     "GlobalConfig",
@@ -129,6 +134,7 @@ __all__ = [
     "QueueModule",
     "QueueTimeoutError",
     "RateLimitModule",
+    "ResponseFormat",
     "RetryModule",
     "SecurityModule",
     "StopReason",
@@ -137,6 +143,7 @@ __all__ = [
     "TogetherAdapter",
     "Tool",
     "ToolCall",
+    "ToolCallDelta",
     "ToolResultBlock",
     "ToolUseBlock",
     "Usage",
@@ -149,4 +156,6 @@ __all__ = [
     "load_global_config",
     "load_model",
     "load_provider_config",
+    "supports_tools",
+    "tool_capable_models",
 ]

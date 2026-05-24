@@ -80,6 +80,16 @@ class ContextManager:
 
         Final ordering: identity first, context last, rest alphabetically.
 
+        ``workspace/identity.md`` re-read every call (hot-reload contract):
+            The file content is read from disk on every invocation, so an
+            edit between turns shows up in the next turn's system prompt
+            without an agent restart. This is the public contract — see
+            ``tests/integration/test_identity_hot_reload.py``. Note this
+            is the *content* of identity.md only; the agent's DID and
+            keypair are loaded once from ``arcagent.toml [identity]`` at
+            ``agent.startup()`` and frozen for the agent's lifetime.
+            Changing the DID requires a restart.
+
         Args:
             workspace: Path to the agent workspace directory.
             extra_sections: Additional named sections to include.

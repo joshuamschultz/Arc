@@ -405,3 +405,58 @@ class TestFullConfig:
         assert cfg.telemetry.log_level == "DEBUG"
         assert cfg.context.max_tokens == 200000
         assert "memory" in cfg.modules
+
+
+class TestUIConfig:
+    """[ui] block carries ArcUI display metadata. Demo kits emit it; the
+    arcagent core ignores it. Declared (not extra=allow) so typos fail
+    loudly at config load."""
+
+    def test_ui_block_round_trips(self, tmp_path: Path) -> None:
+        config = tmp_path / "arcagent.toml"
+        config.write_text(
+            textwrap.dedent("""\
+            [agent]
+            name = "intake-agent"
+
+            [llm]
+            model = "openai/gpt-4o-mini"
+
+            [ui]
+            display_name = "Intake"
+            role_label = "intake"
+            color = "#3b82f6"
+            hidden = false
+        """)
+        )
+        cfg = load_config(config)
+        assert cfg.ui.display_name == "Intake"
+        assert cfg.ui.role_label == "intake"
+        assert cfg.ui.color == "#3b82f6"
+        assert cfg.ui.hidden is False
+
+    def test_ui_block_defaults_when_omitted(self, valid_toml: Path) -> None:
+        cfg = load_config(valid_toml)
+        assert cfg.ui.display_name == ""
+        assert cfg.ui.role_label == ""
+        assert cfg.ui.color == ""
+        assert cfg.ui.hidden is False
+
+    def test_ui_block_rejects_typos(self, tmp_path: Path) -> None:
+        """A misspelled UI key (``role_lable``) must fail validation — that's
+        the point of declaring the block over ``extra='allow'``."""
+        config = tmp_path / "arcagent.toml"
+        config.write_text(
+            textwrap.dedent("""\
+            [agent]
+            name = "a"
+
+            [llm]
+            model = "openai/gpt-4o-mini"
+
+            [ui]
+            role_lable = "intake"
+        """)
+        )
+        with pytest.raises(ConfigError):
+            load_config(config)

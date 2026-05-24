@@ -404,6 +404,65 @@ class SessionRouter:
             _logger.exception("Executor error in session %s", session_key)
             raise
 
+    async def dispatch_and_await(
+        self,
+        event: InboundEvent,
+        *,
+        timeout: float = 120.0,
+    ) -> AsyncIterator[Delta]:
+        """Request/response dispatch — push an event, stream deltas back.
+
+        Companion to ``handle()`` for programmatic callers (FastAPI hosts,
+        CLI demos, inter-agent orchestrators) that want the executor's
+        full delta stream returned, not delivered via an adapter's
+        ``send()``. Pairing and identity-graph resolution still run, so
+        the same allowlist that gates platform messages also gates
+        programmatic dispatch.
+
+        Per-session serialisation: this method does NOT enqueue. The
+        caller is responsible for not overlapping ``dispatch_and_await``
+        calls for the same session_key — two concurrent calls will both
+        invoke the executor and their delta streams will interleave.
+        Most callers either route through a single agent at a time or
+        wrap concurrent calls in their own ``asyncio.Lock``.
+
+        Args:
+            event: Inbound event (same shape ``handle()`` expects).
+            timeout: Per-delta read timeout in seconds.
+
+        Yields:
+            Delta: from the executor in arrival order. Iteration ends on
+            the executor's terminal ``Delta(kind="done", is_final=True)``.
+
+        Raises:
+            PermissionError: when the event's user_did is not on the
+                pairing allowlist. Programmatic callers must pre-pair
+                their user_dids (typically with ``add_approved_user``).
+            asyncio.TimeoutError: when no delta arrives within ``timeout``.
+        """
+        # Identity-graph resolution (same step as handle()).
+        if self._identity_graph is not None:
+            resolved_did = self._resolve_user_did(event.platform, event.user_did)
+            if resolved_did != event.user_did:
+                event = event.model_copy(
+                    update={
+                        "user_did": resolved_did,
+                        "session_key": build_session_key(event.agent_did, resolved_did),
+                    }
+                )
+
+        if not self._pairing.is_user_approved(event.user_did):
+            raise PermissionError(
+                f"User {event.user_did!r} is not on the pairing allowlist; "
+                "call add_approved_user() first for programmatic dispatch."
+            )
+
+        delta_stream = await self._executor.run(event)
+        async for delta in delta_stream:
+            yield delta
+            if delta.is_final:
+                return
+
     def _resolve_delivery_target(self, event: InboundEvent) -> DeliveryTarget:
         """Build a DeliveryTarget from an InboundEvent.
 

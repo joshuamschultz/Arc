@@ -40,8 +40,20 @@ _logger = logging.getLogger("arcgateway.delivery")
 
 # Supported platform identifiers. Adapters register here in T1.7.
 # Kept loose (str) so stubs work without importing platform SDKs.
+# "python" covers the in-process PythonAdapter (FastAPI hosts, CLI demos)
+# that drive the gateway programmatically rather than over a chat wire.
 _KNOWN_PLATFORMS: frozenset[str] = frozenset(
-    {"telegram", "slack", "discord", "whatsapp", "signal", "matrix", "email", "web"}
+    {
+        "telegram",
+        "slack",
+        "discord",
+        "whatsapp",
+        "signal",
+        "matrix",
+        "email",
+        "web",
+        "python",
+    }
 )
 
 

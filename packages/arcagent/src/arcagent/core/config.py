@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from arcagent.core.errors import ConfigError
 
@@ -47,6 +47,28 @@ class LLMConfig(BaseModel):
     model: str
     max_tokens: int = Field(default=4096, gt=0)
     temperature: float = 0.7
+
+
+class UIConfig(BaseModel):
+    """ArcUI display metadata — read by arcui's Fleet/Team Chat surfaces.
+
+    This block is metadata-only: nothing inside arcagent core reads it.
+    Declared here (instead of accepted via ``extra="allow"``) so a typo
+    like ``role_lable = "intake"`` fails loudly at config-load time
+    rather than silently vanishing. Demo kits (BlackArc's team_roster_writer,
+    AccessGuard's per-stage agent.toml) emit this block; arcui's Fleet
+    panel and Team Chat tab read it via the roster API.
+
+    All fields default to empty so existing arcagent.toml files that
+    omit ``[ui]`` keep validating unchanged.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = ""
+    role_label: str = ""
+    color: str = ""
+    hidden: bool = False
 
 
 class IdentityConfig(BaseModel):
@@ -302,6 +324,7 @@ class ArcAgentConfig(BaseModel):
     session: SessionConfig = SessionConfig()
     security: SecurityConfig = SecurityConfig()
     spawn: SpawnConfig = SpawnConfig()
+    ui: UIConfig = UIConfig()
 
 
 _ENV_PREFIX = "ARCAGENT_"

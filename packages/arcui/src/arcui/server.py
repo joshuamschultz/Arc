@@ -249,6 +249,18 @@ def create_app(
             # SPEC-025 Track E — expose the dashboard event bus so routes
             # and aggregators can publish without importing bootstrap.
             starlette_app.state.dashboard_bus = embedded_gateway.dashboard_bus
+            # ARC_FIXES_PRD Fix 6 Phase C — live Team Chat updates. When
+            # the deployment has both a messaging service and a dashboard
+            # bus, attach a bridge so arcteam route events publish onto
+            # the ``team_chat`` topic in real time. ``messaging_service``
+            # is None in tests / LLM-only deployments — degrade silently.
+            if messaging_service is not None:
+                from arcui.team_chat_bridge import TeamChatDashboardBridge
+
+                bridge = TeamChatDashboardBridge(embedded_gateway.dashboard_bus)
+                if hasattr(messaging_service, "set_ui_reporter"):
+                    messaging_service.set_ui_reporter(bridge)
+                starlette_app.state.team_chat_bridge = bridge
             # SPEC-023: cache loaded agents and register them in the
             # fleet so chat-loaded agents show as LIVE without a separate
             # /api/agent/connect WebSocket. One install_ call, idempotent.

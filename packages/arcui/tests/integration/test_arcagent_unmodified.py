@@ -81,6 +81,16 @@ _ALLOWED_ARCAGENT_PATHS = (
     "packages/arcagent/tests/unit/core/test_tool_transport.py",
     "packages/arcagent/tests/unit/core/test_tool_registry.py",
     "packages/arcagent/tests/unit/core/test_native_tool.py",
+    # ARC_GAPS_FOR_JOSH #7 — declared [ui] block on ArcAgentConfig.
+    "packages/arcagent/src/arcagent/core/config.py",
+    "packages/arcagent/tests/unit/core/test_config.py",
+    # ARC_GAPS_FOR_JOSH #9 — identity hot-reload contract documented +
+    # asserted on ContextManager.assemble_system_prompt.
+    "packages/arcagent/src/arcagent/core/session_internal/context.py",
+    "packages/arcagent/tests/unit/core/test_context_manager.py",
+    # ARC_GAPS_FOR_JOSH #8 — `python -m arcagent serve <dir>` daemon.
+    "packages/arcagent/src/arcagent/__main__.py",
+    "packages/arcagent/tests/unit/test_serve_cli.py",
 )
 
 

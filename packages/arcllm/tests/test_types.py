@@ -273,3 +273,39 @@ def test_stop_reason_invalid_value():
             model="test-model",
             stop_reason="stop",  # OpenAI-native value, should be rejected
         )
+
+
+class TestInvokeStreamDefault:
+    """The default ``LLMProvider.invoke_stream`` wraps ``invoke()`` and
+    yields a single Delta. This is the fallback for adapters that don't
+    implement real streaming (anthropic and friends). Consumers should
+    be able to use ``async for d in provider.invoke_stream(...)``
+    unconditionally regardless of which adapter is wrapped."""
+
+    async def test_default_yields_single_delta_with_full_response(self) -> None:
+        from arcllm.types import Delta
+
+        class FakeProvider(LLMProvider):
+            name = "fake"
+
+            async def invoke(self, messages, tools=None, **kwargs):
+                return LLMResponse(
+                    content="hello world",
+                    usage=Usage(input_tokens=4, output_tokens=2, total_tokens=6),
+                    model="fake-model",
+                    stop_reason="end_turn",
+                )
+
+            def validate_config(self) -> bool:
+                return True
+
+        provider = FakeProvider()
+        deltas: list[Delta] = []
+        async for d in provider.invoke_stream([Message(role="user", content="hi")]):
+            deltas.append(d)
+
+        assert len(deltas) == 1
+        assert deltas[0].text == "hello world"
+        assert deltas[0].stop_reason == "end_turn"
+        assert deltas[0].usage is not None
+        assert deltas[0].usage.total_tokens == 6

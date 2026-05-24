@@ -3,7 +3,7 @@
 from typing import Any
 
 from arcllm.adapters.base import BaseAdapter
-from arcllm.exceptions import ArcLLMAPIError
+from arcllm.exceptions import ArcLLMAPIError, ArcLLMConfigError
 from arcllm.types import (
     ImageBlock,
     LLMResponse,
@@ -133,6 +133,15 @@ class AnthropicAdapter(BaseAdapter):
             tool_choice = kwargs.get("tool_choice")
             if tool_choice is not None:
                 body["tool_choice"] = tool_choice
+        # Anthropic has no server-side JSON mode — the recommended path for
+        # structured output is tool_use with a signals_completion tool. Fail
+        # loudly rather than silently dropping the kwarg.
+        if kwargs.get("response_format") is not None:
+            self._validate_response_format(kwargs["response_format"])  # may raise on bad shape
+            raise ArcLLMConfigError(
+                "Anthropic adapter does not support response_format. "
+                "Use a tool with signals_completion=True for structured output."
+            )
         return body
 
     # -- Response parsing -----------------------------------------------------
@@ -190,6 +199,7 @@ class AnthropicAdapter(BaseAdapter):
         tools: list[Tool] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
+        self._check_tool_capability(tools)
         headers = self._build_headers()
         body = self._build_request_body(messages, tools, **kwargs)
         url = f"{self._config.provider.base_url}/v1/messages"

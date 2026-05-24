@@ -85,6 +85,27 @@ class TestAssembleSystemPrompt:
         prompt = await ctx_mgr.assemble_system_prompt(tmp_path)
         assert "I am agent" in prompt
 
+    async def test_identity_md_hot_reload_between_turns(
+        self, ctx_mgr: ContextManager, tmp_path: Path
+    ) -> None:
+        """``workspace/identity.md`` is re-read on every assembly.
+
+        This is the public hot-reload contract: an operator (or the
+        agent itself via a memory tool) can edit identity.md between
+        turns and the new content shows up in the next system prompt
+        without an agent restart. Documented on
+        ``ContextManager.assemble_system_prompt``.
+        """
+        (tmp_path / "identity.md").write_text("Identity v1: I am the intake agent.")
+        first = await ctx_mgr.assemble_system_prompt(tmp_path)
+        assert "v1" in first
+
+        # Operator edits identity.md between turns.
+        (tmp_path / "identity.md").write_text("Identity v2: I am the architect agent.")
+        second = await ctx_mgr.assemble_system_prompt(tmp_path)
+        assert "v2" in second
+        assert "v1" not in second
+
 
 class TestExtraSections:
     """Tests for extra_sections parameter on assemble_system_prompt."""

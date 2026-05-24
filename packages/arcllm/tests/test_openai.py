@@ -323,6 +323,207 @@ class TestOpenAIRequestBuilding:
         assert body["max_tokens"] == 1000
         assert body["temperature"] == 0.2
 
+    def test_tool_choice_forwarded(self):
+        """tool_choice was silently dropped before — verify it now reaches the wire."""
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+        body = adapter._build_request_body(
+            messages, tool_choice={"type": "required"}
+        )
+        assert body["tool_choice"] == {"type": "required"}
+
+    def test_response_format_json_object_forwarded(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+        body = adapter._build_request_body(
+            messages, response_format={"type": "json_object"}
+        )
+        assert body["response_format"] == {"type": "json_object"}
+
+    def test_response_format_json_schema_forwarded(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+        schema = {"name": "Reply", "schema": {"type": "object"}}
+        body = adapter._build_request_body(
+            messages, response_format={"type": "json_schema", "json_schema": schema}
+        )
+        assert body["response_format"]["type"] == "json_schema"
+        assert body["response_format"]["json_schema"] == schema
+
+    def test_response_format_text_is_noop(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+        body = adapter._build_request_body(
+            messages, response_format={"type": "text"}
+        )
+        assert "response_format" not in body
+
+    def test_response_format_bad_shape_raises(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+        from arcllm.exceptions import ArcLLMConfigError
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+        with pytest.raises(ArcLLMConfigError):
+            adapter._build_request_body(
+                messages, response_format={"type": "xml"}
+            )
+        with pytest.raises(ArcLLMConfigError):
+            adapter._build_request_body(
+                messages, response_format={"type": "json_schema"}  # missing json_schema
+            )
+
+    def test_parsed_content_populated_for_json_mode(self):
+        """When response_format asked for JSON, parsed_content is decoded."""
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        data = _make_openai_text_response(text='{"verdict": "approve", "n": 7}')
+        resp = adapter._parse_response(data, response_format={"type": "json_object"})
+        assert resp.parsed_content == {"verdict": "approve", "n": 7}
+
+    def test_parsed_content_none_for_plain_response(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        data = _make_openai_text_response(text="just text")
+        resp = adapter._parse_response(data)
+        assert resp.parsed_content is None
+
+
+class TestOpenAISSEParser:
+    """``_parse_openai_sse_line`` translates one SSE event into a Delta."""
+
+    def test_text_chunk(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        line = 'data: {"choices":[{"delta":{"content":"Hello"}}]}'
+        delta = _parse_openai_sse_line(line)
+        assert delta is not None
+        assert delta.text == "Hello"
+
+    def test_done_sentinel_returns_none(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        assert _parse_openai_sse_line("data: [DONE]") is None
+
+    def test_blank_line_returns_none(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        assert _parse_openai_sse_line("") is None
+        assert _parse_openai_sse_line("   ") is None
+
+    def test_event_line_returns_none(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        # Non-data: prefix (e.g. comment keepalive) is skipped.
+        assert _parse_openai_sse_line(": keepalive") is None
+
+    def test_malformed_json_returns_none(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        assert _parse_openai_sse_line("data: {not json}") is None
+
+    def test_finish_reason_yields_stop_reason(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        line = (
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+            '"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}'
+        )
+        delta = _parse_openai_sse_line(line)
+        assert delta is not None
+        assert delta.stop_reason == "end_turn"
+        assert delta.usage is not None
+        assert delta.usage.input_tokens == 10
+
+    def test_tool_call_delta(self):
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        line = (
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc1",'
+            '"function":{"name":"search","arguments":"{\\"q\\":"}}]}}]}'
+        )
+        delta = _parse_openai_sse_line(line)
+        assert delta is not None
+        assert delta.tool_call is not None
+        assert delta.tool_call.name == "search"
+        assert delta.tool_call.arguments == '{"q":'
+
+    def test_usage_only_frame(self):
+        """Final tick can carry usage with empty choices."""
+        from arcllm.adapters.openai import _parse_openai_sse_line
+
+        line = (
+            'data: {"choices":[],"usage":{"prompt_tokens":5,'
+            '"completion_tokens":2,"total_tokens":7}}'
+        )
+        delta = _parse_openai_sse_line(line)
+        assert delta is not None
+        assert delta.usage is not None
+        assert delta.usage.total_tokens == 7
+
+
+class TestOpenAIInvokeStream:
+    """End-to-end streaming: SSE response → Delta iterator."""
+
+    async def test_streams_text_chunks_in_order(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        sse_body = (
+            'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":" world"}}]}\n\n'
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],'
+            '"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n'
+            "data: [DONE]\n\n"
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                content=sse_body.encode("utf-8"),
+                headers={"content-type": "text/event-stream"},
+            )
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        # Swap the transport so our SSE body is what the adapter sees.
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        deltas = []
+        async for d in adapter.invoke_stream([Message(role="user", content="hi")]):
+            deltas.append(d)
+
+        texts = [d.text for d in deltas if d.text]
+        assert texts == ["Hello", " world"]
+        # A stop frame must arrive with a stop_reason; usage is also present.
+        last = deltas[-1]
+        assert last.stop_reason == "end_turn"
+        assert last.usage is not None
+        assert last.usage.total_tokens == 5
+
+    async def test_error_status_raises_arcllm_api_error(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, content=b"rate limited")
+
+        adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        with pytest.raises(ArcLLMAPIError):
+            async for _ in adapter.invoke_stream([Message(role="user", content="hi")]):
+                pass
+
 
 # ---------------------------------------------------------------------------
 # TestOpenAIResponseParsing

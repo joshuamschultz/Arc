@@ -22,6 +22,7 @@ from arcrun.streams import (
     ToolStartEvent,
     TurnEndEvent,
     run_stream,
+    stream_llm_response,
 )
 from arcrun.types import LoopResult, SandboxConfig, Tool, ToolContext
 
@@ -53,5 +54,6 @@ __all__ = [
     "run",
     "run_async",
     "run_stream",
+    "stream_llm_response",
     "verify_chain",
 ]
