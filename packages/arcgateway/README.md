@@ -45,9 +45,23 @@ Depends on `arcagent`, `arcrun`, `arcllm`, `arctrust`. **No other Arc package de
 
 ## 🚀 Install
 
+For end-users, install the meta package:
+
 ```bash
 pip install arcmas              # arcgateway is included in the meta package
 ```
+
+For Arc monorepo development, install all sibling packages in editable mode together — installing only `arcgateway` leaves `arcagent`, `arcllm`, `arcrun`, `arccli` un-linked and import errors surface as cryptic "module not found" failures during test runs:
+
+```bash
+uv pip install -e packages/arcgateway \
+               -e packages/arccli \
+               -e packages/arcagent \
+               -e packages/arcllm \
+               -e packages/arcrun
+```
+
+`make install` runs this canonical command from the repo root.
 
 ---
 
