@@ -64,6 +64,7 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import ContextManager, SessionManager
 from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 
@@ -159,11 +160,16 @@ class ArcAgent:
         # 4. Module Bus
         self._bus = ModuleBus()
 
-        # 5. Tool Registry
+        # 5. Tool Registry (with policy pipeline)
+        tier = self._config.security.tier
+        pipeline = build_pipeline(tier=tier)  # type: ignore[arg-type]  # str vs Literal
         self._tool_registry = ToolRegistry(
             config=self._config.tools,
             bus=self._bus,
             telemetry=self._telemetry,
+            policy_pipeline=pipeline,
+            agent_did=self._identity.did,
+            tier=tier,  # type: ignore[arg-type]  # str vs Literal
         )
 
         workspace = self._workspace
@@ -255,15 +261,25 @@ class ArcAgent:
             self._trace_store = trace_store
         return self._model
 
-    async def run(self, task: str, *, tool_choice: dict[str, Any] | None = None) -> Any:
+    async def run(
+        self,
+        task: str,
+        *,
+        tool_choice: dict[str, Any] | None = None,
+        automated: bool = False,
+    ) -> Any:
         """Execute a single task through the agent loop."""
-        return await execute_loop(self, task, tool_choice=tool_choice)
+        return await execute_loop(self, task, tool_choice=tool_choice, automated=automated)
 
     async def run_async(
-        self, task: str, *, tool_choice: dict[str, Any] | None = None
+        self,
+        task: str,
+        *,
+        tool_choice: dict[str, Any] | None = None,
+        automated: bool = False,
     ) -> AgentHandle:
         """Execute a task, returning a handle for steering/cancellation."""
-        return await execute_loop_async(self, task, tool_choice=tool_choice)
+        return await execute_loop_async(self, task, tool_choice=tool_choice, automated=automated)
 
     async def chat(
         self,

@@ -61,12 +61,13 @@ async def inject_policy_md(ctx: Any) -> None:
 async def periodic_policy_eval(ctx: Any) -> None:
     """Fire policy eval every ``eval_interval_turns`` turns.
 
-    Skips automated runs (no session_id) so transient tool errors
-    from pulse / scheduler don't pollute learned policies.
+    Skips automated runs (pulse, scheduler) so transient tool errors
+    don't pollute learned policies. Callers opt in by passing
+    ``automated=True`` in the ``agent:post_respond`` event data.
     """
-    session_id = ctx.data.get("session_id", "")
-    if not session_id:
+    if ctx.data.get("automated", False):
         return
+    session_id = ctx.data.get("session_id", "")
     model = _eval_model()
     if model is None:
         return

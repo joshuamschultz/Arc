@@ -80,6 +80,7 @@ class AgentHandle:
         task: str,
         messages: list[Message] | None,
         session: SessionManager | None = None,
+        automated: bool = False,
     ) -> None:
         self._handle = handle
         self._bus = bus
@@ -88,6 +89,7 @@ class AgentHandle:
         self._task = task
         self._messages = messages
         self._session = session
+        self._automated = automated
         self._result_consumed = False
         self._completed = False
 
@@ -139,7 +141,12 @@ class AgentHandle:
         messages_dict = _build_messages_dict(self._task, loop_result, self._messages)
         await self._bus.emit(
             "agent:post_respond",
-            {"result": loop_result, "messages": messages_dict, "session_id": self._session_id},
+            {
+                "result": loop_result,
+                "messages": messages_dict,
+                "session_id": self._session_id,
+                "automated": self._automated,
+            },
         )
 
         # Commit assistant response to session (mirrors chat() blocking path)

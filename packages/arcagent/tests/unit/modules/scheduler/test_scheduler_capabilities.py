@@ -174,9 +174,11 @@ class TestAgentReadyHook:
             await bind_agent_run_fn(ctx)
 
             st = _runtime.state()
-            assert st.agent_run_fn is new_fn
+            assert st.agent_run_fn is not None
             assert st.engine is not None
-            assert st.engine._agent_run_fn is new_fn
+            # Wrapper delegates to new_fn with automated=True
+            await st.agent_run_fn("test task")
+            new_fn.assert_awaited_once_with("test task", automated=True)
         finally:
             await cap.teardown()
 

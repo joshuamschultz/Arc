@@ -109,6 +109,7 @@ async def execute_loop(
     *,
     messages: list[Any] | None = None,
     tool_choice: dict[str, Any] | None = None,
+    automated: bool = False,
 ) -> Any:
     """Blocking execution: build tools, emit events, run loop."""
     telemetry, bus, model, tools, system_prompt, bridge = await build_run_context(agent, task)
@@ -136,7 +137,12 @@ async def execute_loop(
     messages_dict = _build_messages_dict(task, result, messages)
     await bus.emit(
         "agent:post_respond",
-        {"result": result, "messages": messages_dict, "session_id": session_id},
+        {
+            "result": result,
+            "messages": messages_dict,
+            "session_id": session_id,
+            "automated": automated,
+        },
     )
     return result
 
@@ -148,6 +154,7 @@ async def execute_loop_async(
     messages: list[Message] | None = None,
     tool_choice: dict[str, Any] | None = None,
     session: SessionManager | None = None,
+    automated: bool = False,
 ) -> AgentHandle:
     """Non-blocking execution: returns handle for steering.
 
@@ -182,6 +189,7 @@ async def execute_loop_async(
         task=task,
         messages=messages,
         session=session,
+        automated=automated,
     )
 
 
