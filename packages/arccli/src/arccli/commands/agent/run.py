@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ async def _agent_run_once(
     agent_dir: Path,
     task: str,
     model_override: str | None,
+    context: str | None,
     verbose: bool,
     as_json: bool,
 ) -> None:
@@ -30,6 +32,15 @@ async def _agent_run_once(
     if model_override:
         config.llm.model = model_override
 
+    if context is not None:
+        context_path = agent_dir / "workspace" / "context.md"
+        context_path.parent.mkdir(parents=True, exist_ok=True)
+        source = Path(context)
+        if source.is_file():
+            context_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            context_path.write_text(context, encoding="utf-8")
+
     await arc_agent.startup()
     try:
         result = await arc_agent.run(task)
@@ -37,7 +48,9 @@ async def _agent_run_once(
         if as_json:
             _print_result_json(result)
         else:
-            if result.content:
+            if result.completion_payload:
+                sys.stdout.write(json.dumps(result.completion_payload, indent=2) + "\n")
+            elif result.content:
                 sys.stdout.write(result.content + "\n")
             if verbose:
                 sys.stdout.write(
@@ -57,6 +70,7 @@ def _run(args: argparse.Namespace) -> None:
             agent_dir=agent_dir,
             task=args.task,
             model_override=getattr(args, "model", None),
+            context=getattr(args, "context", None),
             verbose=getattr(args, "verbose", False),
             as_json=getattr(args, "as_json", False),
         )

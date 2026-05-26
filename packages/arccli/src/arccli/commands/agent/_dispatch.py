@@ -97,6 +97,19 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("run", help="Run a task against an agent.")
     p.add_argument("path", help="Agent directory.")
     p.add_argument("task", help="Task to run.")
+    p.add_argument("--model", default=None, help="Override model (provider/model).")
+    p.add_argument(
+        "--context",
+        default=None,
+        help="Stage context: literal text or path to a file. "
+        "Written to workspace/context.md before the agent starts.",
+    )
+    p.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Output full result as JSON (includes completion_payload).",
+    )
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--max-turns", dest="max_turns", type=int, default=None)
 

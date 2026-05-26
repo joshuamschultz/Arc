@@ -428,6 +428,7 @@ def _print_result_json(result: Any) -> None:
     """Serialize a LoopResult to JSON and write to stdout."""
     data = {
         "content": result.content,
+        "completion_payload": result.completion_payload,
         "turns": result.turns,
         "tool_calls_made": result.tool_calls_made,
         "tokens_used": result.tokens_used,
