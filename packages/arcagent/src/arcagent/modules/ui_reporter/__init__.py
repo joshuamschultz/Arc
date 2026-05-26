@@ -40,6 +40,11 @@ _RUN_LAYER_SUFFIXES = frozenset(
     }
 )
 
+# Keys stripped from llm:call_complete before WebSocket emission.
+# These bodies can exceed the 64KB UIEvent limit; the trace detail
+# panel fetches the full record via GET /api/traces/{id} instead.
+_LLM_STRIP_KEYS = frozenset({"request_body", "response_body", "prev_hash", "record_hash"})
+
 # Known ModuleBus events to subscribe to.
 _LLM_EVENTS = (
     "llm:call_complete",
@@ -251,6 +256,7 @@ class UIReporterModule:
                     else "unknown",
                     "workspace": str(self._workspace),
                     "modules": list(ctx.config.modules.keys()),
+                    "tools": list(ctx.tool_registry.tools.keys()),
                 }
 
                 # Token provider re-reads the file on every reconnect so an
@@ -365,7 +371,13 @@ class UIReporterModule:
 
     async def _on_event(self, ctx: EventContext) -> None:
         """Handle any subscribed bus event — wrap and forward to UI."""
-        payload = self._wrap_event(ctx.event, ctx.data)
+        data = ctx.data
+        # LLM trace events carry request_body/response_body which can
+        # exceed the 64KB UIEvent limit. The detail panel fetches full
+        # data via REST, so strip bodies from the WebSocket stream.
+        if ctx.event == "llm:call_complete":
+            data = {k: v for k, v in data.items() if k not in _LLM_STRIP_KEYS}
+        payload = self._wrap_event(ctx.event, data)
         _logger.debug("UI event: %s → layer=%s", ctx.event, payload["layer"])
 
         # Send via transport if available

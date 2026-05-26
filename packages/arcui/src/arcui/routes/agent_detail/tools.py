@@ -30,6 +30,11 @@ _TOOL_BLOCK_RE = re.compile(
     r"@tool\s*\(\s*(?P<body2>[^@]*?)\)\s*\n\s*def",
     re.DOTALL,
 )
+# Capability tools use ToolMetadata(...) assignment instead of @tool().
+_TOOL_META_RE = re.compile(
+    r"ToolMetadata\s*\(\s*(?P<body>[^)]*(?:\([^)]*\)[^)]*)*)\)",
+    re.DOTALL,
+)
 _KW_NAME_RE = re.compile(r'name\s*=\s*["\']([^"\']+)["\']')
 _KW_CLASS_RE = re.compile(r'classification\s*=\s*["\']([^"\']+)["\']')
 _KW_DESC_RE = re.compile(r'description\s*=\s*(?P<q>["\']{1,3})(?P<text>.+?)(?P=q)', re.DOTALL)
@@ -56,24 +61,35 @@ def _arcagent_modules_dir() -> Path:
 
 
 def _parse_tool_blocks(text: str) -> list[dict[str, str]]:
-    """Pull (name, classification, description) from every @tool(...) in a
-    capabilities.py source. Robust to single/double/triple quotes and
-    line wraps inside the description. Missing fields surface as ''."""
+    """Pull (name, classification, description) from @tool(...) and
+    ToolMetadata(...) blocks in a Python source file. Robust to
+    single/double/triple quotes and line wraps inside the description.
+    Missing fields surface as ''."""
     rows: list[dict[str, str]] = []
-    for m in _TOOL_BLOCK_RE.finditer(text):
-        body = m.group("body") or m.group("body2") or ""
+    seen: set[str] = set()
+
+    def _extract(body: str) -> None:
         name_m = _KW_NAME_RE.search(body)
         if not name_m:
-            continue
+            return
+        name = name_m.group(1)
+        if name in seen:
+            return
+        seen.add(name)
         cls_m = _KW_CLASS_RE.search(body)
         desc_m = _KW_DESC_RE.search(body)
         rows.append(
             {
-                "name": name_m.group(1),
+                "name": name,
                 "classification": cls_m.group(1) if cls_m else "",
                 "description": desc_m.group("text").strip() if desc_m else "",
             }
         )
+
+    for m in _TOOL_BLOCK_RE.finditer(text):
+        _extract(m.group("body") or m.group("body2") or "")
+    for m in _TOOL_META_RE.finditer(text):
+        _extract(m.group("body"))
     return rows
 
 
@@ -130,6 +146,7 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
         (agent_root / "tools", "agent_dir"),
         (agent_root / "workspace" / "tools", "workspace"),
         (agent_root / "extensions", "extension"),
+        (agent_root / "capabilities", "capability"),
         (agent_root / ".capabilities", "capability"),
     ]
     for path, transport in candidates:

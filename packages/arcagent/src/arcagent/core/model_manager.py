@@ -35,30 +35,25 @@ def create_arcrun_bridge(
 ) -> Callable[[Event], None]:
     """Create on_event callback for arcrun.run().
 
-    Maps ArcRun events to Module Bus events:
+    Maps ArcRun lifecycle events to Module Bus events:
       tool.start  → agent:pre_tool
       tool.end    → agent:post_tool
       turn.start  → agent:pre_plan
       turn.end    → agent:post_plan
-      llm.call    → llm:call_complete
+
+    llm.call is NOT mapped — the arcllm bridge emits llm:call_complete
+    from TraceRecord with trace_id, bodies, and phase timings.
 
     ArcRun's on_event is synchronous (Callable[[Event], None]),
     so we schedule the async bus.emit via the running event loop.
-    Enriches llm.call events with the actual model name and agent label.
     """
     _event_map = {
         "tool.start": "agent:pre_tool",
         "tool.end": "agent:post_tool",
         "turn.start": "agent:pre_plan",
         "turn.end": "agent:post_plan",
-        "llm.call": "llm:call_complete",
     }
-    # Hold strong references to pending tasks so they aren't GC'd
     _pending: set[asyncio.Task[Any]] = set()
-
-    # Extract provider and model name from provider/model format
-    _provider = model_id.split("/", 1)[0] if "/" in model_id else "unknown"
-    _model_name = model_id.split("/", 1)[1] if "/" in model_id else model_id
 
     def bridge(event: Event) -> None:
         bus_event = _event_map.get(event.type)
@@ -67,12 +62,6 @@ def create_arcrun_bridge(
             # MappingProxyType[Any, Any] (read-only) by arcrun; ModuleBus.emit
             # requires dict[str, Any]. Shallow copy is intentional here.
             data: dict[str, Any] = dict(event.data)
-            # Enrich llm.call events with actual model/provider/agent
-            if event.type == "llm.call":
-                data["model"] = _model_name
-                data["provider"] = _provider
-                if agent_label:
-                    data["agent_label"] = agent_label
             try:
                 loop = asyncio.get_running_loop()
                 task = loop.create_task(bus.emit(bus_event, data))
