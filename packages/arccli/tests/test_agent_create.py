@@ -140,10 +140,10 @@ class TestCreate:
         assert "async def calculate" in content
         assert "def extension(api)" not in content
 
-    def test_create_tools_init(self, tmp_path):
+    def test_create_capabilities_dir(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
-        init_file = tmp_path / "my-agent" / "tools" / "__init__.py"
-        assert init_file.exists()
+        caps_dir = tmp_path / "my-agent" / "capabilities"
+        assert caps_dir.is_dir()
 
     def test_create_fails_if_exists(self, tmp_path):
         (tmp_path / "my-agent").mkdir()

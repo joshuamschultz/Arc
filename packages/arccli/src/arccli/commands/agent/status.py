@@ -49,7 +49,7 @@ def _status(args: argparse.Namespace) -> None:
             ("Name", agent_name),
             ("DID", did or "(not set)"),
             ("Model", model_id),
-            ("Tools (./tools/)", str(tool_count)),
+            ("Tools (./capabilities/)", str(tool_count)),
             ("Capability files", str(cap_file_count)),
             ("Skills", str(skill_count)),
             ("Sessions", str(session_count)),

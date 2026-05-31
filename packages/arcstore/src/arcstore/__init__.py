@@ -20,11 +20,12 @@ resolve_data_dir — env > default Arc data dir resolution (shared by all entry 
 
 from __future__ import annotations
 
-from arcstore.config import resolve_data_dir
+from arcstore.config import ArcStoreConfig, resolve_data_dir
 from arcstore.records import SpoolRecord
 from arcstore.spool import read, record, spool_path
 
 __all__ = [
+    "ArcStoreConfig",
     "SpoolRecord",
     "read",
     "record",

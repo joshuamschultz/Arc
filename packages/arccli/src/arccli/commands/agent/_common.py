@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import importlib.util
 import json
 import sys
 import tomllib
@@ -236,24 +237,35 @@ def _load_agent_config(agent_dir: Path) -> dict[str, Any]:
         return tomllib.load(f)
 
 
+def _import_capability_file(path: Path) -> Any:
+    """Import a capability `.py` by file path (no package required)."""
+    module_name = f"arccli_cap_{path.stem}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"could not create import spec for {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _discover_tools(agent_dir: Path) -> list[Any]:
-    """Import all tools from agent's tools/ directory."""
-    tools_dir = agent_dir / "tools"
-    if not tools_dir.is_dir():
+    """Discover @tool-decorated capabilities in the agent's capabilities/ dir."""
+    caps_dir = agent_dir / "capabilities"
+    if not caps_dir.is_dir():
         return []
-    sys.path.insert(0, str(agent_dir))
     all_tools: list[Any] = []
-    for tf in sorted(tools_dir.glob("*.py")):
-        if tf.name == "__init__.py":
+    for cf in sorted(caps_dir.glob("*.py")):
+        if cf.name.startswith("_"):
             continue
-        module_name = f"tools.{tf.stem}"
         try:
-            mod = importlib.import_module(module_name)
-            if hasattr(mod, "get_tools"):
-                all_tools.extend(mod.get_tools())
+            mod = _import_capability_file(cf)
         except Exception as e:  # reason: fail-open — continue
-            sys.stdout.write(f"  Warning: could not load tools/{tf.name}: {e}\n")
-    sys.path.pop(0)
+            sys.stdout.write(f"  Warning: could not load capabilities/{cf.name}: {e}\n")
+            continue
+        for value in vars(mod).values():
+            meta = getattr(value, "_arc_capability_meta", None)
+            if meta is not None and getattr(meta, "kind", None) == "tool":
+                all_tools.append(meta)
     return all_tools
 
 
@@ -298,12 +310,6 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     ]:
         (workspace / subdir).mkdir(parents=True, exist_ok=True)
 
-    tools_dir = agent_dir / "tools"
-    tools_dir.mkdir(exist_ok=True)
-    init_file = tools_dir / "__init__.py"
-    if not init_file.exists():
-        init_file.write_text("")
-
 
 def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
     """Print directory structure and next-steps after scaffold."""
@@ -319,7 +325,6 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
     sys.stdout.write("      notes/, entities/\n")
     sys.stdout.write("      sessions/, archive/\n")
     sys.stdout.write("      library/scripts/, templates/, prompts/, data/, snippets/\n")
-    sys.stdout.write("    tools/\n")
     sys.stdout.write("\n")
     sys.stdout.write("Next steps:\n")
     sys.stdout.write(f"  arc agent build {agent_dir}\n")

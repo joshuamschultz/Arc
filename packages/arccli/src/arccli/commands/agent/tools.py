@@ -25,7 +25,7 @@ def _tools(args: argparse.Namespace) -> None:
                 "name": t.name,
                 "description": t.description,
                 "input_schema": t.input_schema,
-                "timeout_seconds": t.timeout_seconds,
+                "timeout_seconds": getattr(t, "timeout_seconds", None),
             }
             for t in tools
         ]
@@ -46,6 +46,7 @@ def _tools(args: argparse.Namespace) -> None:
                 ptype = pdef.get("type", "?")
                 pdesc = pdef.get("description", "")
                 sys.stdout.write(f"    - {pname}: {ptype}{req} — {pdesc}\n")
-        if t.timeout_seconds:
-            sys.stdout.write(f"    timeout: {t.timeout_seconds}s\n")
+        timeout = getattr(t, "timeout_seconds", None)
+        if timeout:
+            sys.stdout.write(f"    timeout: {timeout}s\n")
         sys.stdout.write("\n")
