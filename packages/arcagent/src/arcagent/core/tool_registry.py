@@ -99,7 +99,6 @@ class ToolRegistry:
         agent_did: str = "did:arc:unknown",
         tier: Literal["federal", "enterprise", "personal"] = "personal",
         policy_version: str = "v0",
-        ui_reporter: Any | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
@@ -108,8 +107,6 @@ class ToolRegistry:
         self._agent_did = agent_did
         self._tier = tier
         self._policy_version = policy_version
-        # Duck-typed UIEventReporter — no import of arcui; None = disabled.
-        self._ui_reporter: Any | None = ui_reporter
         self._tools: dict[str, RegisteredTool] = {}
         self._prompt_cache: str | None = None
         self._preamble: str = config.preamble or _DEFAULT_PREAMBLE
@@ -291,7 +288,6 @@ class ToolRegistry:
         agent_did = self._agent_did
         tier = self._tier
         policy_version = self._policy_version
-        ui_reporter = self._ui_reporter
 
         async def wrapped_execute(args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
             if args is None:
@@ -332,7 +328,7 @@ class ToolRegistry:
                     details={"tool": tool.name, "reason": ctx.veto_reason},
                 )
 
-            # 2. Execute with timeout and telemetry span
+            # 3. Execute with timeout and telemetry span
             start = time.monotonic()
             try:
                 async with telemetry.tool_span(tool.name, args):
@@ -348,13 +344,13 @@ class ToolRegistry:
                 ) from exc
             elapsed = time.monotonic() - start
 
-            # 3. Post-tool event
+            # 4. Post-tool event
             await bus.emit(
                 "agent:post_tool",
                 {"tool": tool.name, "result": result, "duration": elapsed},
             )
 
-            # 4. Audit — actor_did and tier are mandatory for every tool
+            # 5. Audit — actor_did and tier are mandatory for every tool
             # dispatch so the audit trail answers ASI03: who called what.
             # Unknown DID ("did:arc:unknown") is flagged as a security event.
             if agent_did == "did:arc:unknown":
@@ -377,24 +373,6 @@ class ToolRegistry:
                     "tier": tier,
                 },
             )
-
-            # Bridge to arcui agent layer — duck-typed, no import of arcui.
-            if ui_reporter is not None:
-                try:
-                    ui_reporter.emit_agent_event(
-                        event_type="tool_call",
-                        data={
-                            "tool_name": tool.name,
-                            "actor_did": agent_did,
-                            "outcome": "allow",
-                            "duration_ms": round(elapsed * 1000),
-                            "tier": tier,
-                        },
-                    )
-                except Exception:  # reason: fail-open — log + continue
-                    _logger.debug(
-                        "ui_reporter.emit_agent_event failed for tool_call", exc_info=True
-                    )
 
             return result
 

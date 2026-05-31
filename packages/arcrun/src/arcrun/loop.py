@@ -29,13 +29,14 @@ def _build_state(
     depth: int = 0,
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     if not tools:
         raise ValueError("tools must not be empty")
 
     run_id = str(uuid.uuid4())
-    bus = EventBus(run_id=run_id, on_event=on_event)
+    bus = EventBus(run_id=run_id, on_event=on_event, spool_actor_did=actor_did)
     registry = ToolRegistry(tools=tools, event_bus=bus)
     sandbox_obj = Sandbox(config=sandbox, event_bus=bus)
 
@@ -89,6 +90,7 @@ async def run(
     depth: int = 0,
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
@@ -103,6 +105,7 @@ async def run(
         depth=depth,
         max_depth=max_depth,
         tool_choice=tool_choice,
+        actor_did=actor_did,
     )
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)
@@ -125,6 +128,7 @@ async def run_async(
     depth: int = 0,
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -139,6 +143,7 @@ async def run_async(
         depth=depth,
         max_depth=max_depth,
         tool_choice=tool_choice,
+        actor_did=actor_did,
     )
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)

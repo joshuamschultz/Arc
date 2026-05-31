@@ -60,25 +60,13 @@ async def list_traces(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    store = request.app.state.trace_store
-    if store is None:
-        return JSONResponse(TracesResponse(traces=[], cursor=None).model_dump(mode="json"))
-
-    records, cursor = await store.query(
-        limit=limit,
-        cursor=cursor_raw,
-        provider=_validate_filter(params.get("provider")),
+    # SPEC-026 FR-5: read LLM-call history from the arcstore mirror (durable),
+    # not a live trace store. Reads are on-demand request/response.
+    traces = await request.app.state.observe.traces(
         agent=_validate_filter(params.get("agent")),
-        status=_validate_filter(params.get("status")),
-        start=_validate_filter(params.get("start")),
-        end=_validate_filter(params.get("end")),
+        limit=limit,
     )
-    return JSONResponse(
-        TracesResponse(
-            traces=[r.model_dump() for r in records],
-            cursor=cursor,
-        ).model_dump(mode="json")
-    )
+    return JSONResponse(TracesResponse(traces=traces, cursor=None).model_dump(mode="json"))
 
 
 async def get_trace(request: Request) -> JSONResponse:
@@ -98,21 +86,14 @@ async def get_trace(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    store = request.app.state.trace_store
-    if store is None:
-        return JSONResponse(
-            ErrorResponse(error="No trace store configured").model_dump(mode="json"),
-            status_code=404,
-        )
-
-    record = await store.get(trace_id)
+    record = await request.app.state.observe.trace(trace_id)
     if record is None:
         return JSONResponse(
             ErrorResponse(error="Trace not found").model_dump(mode="json"),
             status_code=404,
         )
 
-    return JSONResponse(record.model_dump())
+    return JSONResponse(record)
 
 
 routes = [

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import { Topbar } from './topbar'
 import { Sidebar } from './sidebar'
-import { ConnectionBanner } from './connection-banner'
 
 const COLLAPSE_KEY = 'arcui:sidebar:collapsed'
 
@@ -24,12 +23,9 @@ export function AppShell() {
       <Topbar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar collapsed={collapsed} onToggle={toggle} />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <ConnectionBanner />
-          <main className="flex-1 overflow-auto">
-            <Outlet />
-          </main>
-        </div>
+        <main className="flex flex-1 flex-col overflow-auto">
+          <Outlet />
+        </main>
       </div>
     </div>
   )

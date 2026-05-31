@@ -6,8 +6,8 @@ modules share a single sink configuration rather than each managing their own.
 Design:
     A module-level ``_sink`` is initialized to ``NullSink`` (safe default so the
     gateway never crashes if no sink is configured). Operators call
-    ``configure_sink(sink)`` at startup to wire a real sink (JsonlSink for
-    local compliance, SignedChainSink for tamper-evident federal deployments).
+    ``configure_sink(sink)`` at startup to wire a real sink (``WormSink`` —
+    the durable, Ed25519-signed, tamper-evident hash chain).
 
     All arcgateway modules call ``emit_event(actor, action, target, outcome, **extra)``
     rather than constructing AuditEvent directly. This keeps event construction
@@ -44,7 +44,7 @@ def configure_sink(sink: AuditSink, *, actor_did: str | None = None) -> None:
     for initial configuration; do not reconfigure after startup.
 
     Args:
-        sink: Audit sink implementation (JsonlSink, SignedChainSink, etc.).
+        sink: Audit sink implementation (``WormSink`` for durable compliance).
         actor_did: DID of this gateway daemon. Defaults to
                    ``did:arc:gateway:daemon``.
     """

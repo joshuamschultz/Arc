@@ -8,7 +8,6 @@ import { SeverityBadge } from '@/components/status-badge'
 import { EventDrawer } from '@/components/event-drawer'
 import { QueryState } from '@/components/states'
 import { useTeamAudit } from '@/lib/queries'
-import { useConnectionStore } from '@/store/connection'
 import { relativeTime } from '@/lib/format'
 import type { AuditEvent } from '@/lib/types'
 
@@ -51,8 +50,6 @@ const columns: ColumnDef<AuditEvent, unknown>[] = [
 export function SecurityPage() {
   const [filter, setFilter] = useState('all')
   const query = useTeamAudit(filter === 'all' ? undefined : filter, 100)
-  const role = useConnectionStore((s) => s.role)
-  const status = useConnectionStore((s) => s.status)
   const [active, setActive] = useState<AuditEvent | null>(null)
 
   const events = useMemo(() => query.data?.events ?? [], [query.data])
@@ -63,13 +60,8 @@ export function SecurityPage() {
       <div className="flex-1 space-y-5 overflow-auto p-6">
         <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-card p-4 shadow-xs">
           <Shield className="size-5 text-primary" />
-          <div className="text-sm">
-            <span className="text-muted-foreground">Session role: </span>
-            <span className="font-medium capitalize text-foreground">{role ?? 'unknown'}</span>
-          </div>
-          <div className="text-sm">
-            <span className="text-muted-foreground">Connection: </span>
-            <span className="font-medium capitalize text-foreground">{status}</span>
+          <div className="text-sm text-muted-foreground">
+            Audit events are fetched on demand from the REST API.
           </div>
         </div>
 

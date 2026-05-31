@@ -1,0 +1,106 @@
+"""Store-backed stats computation (SPEC-026 FR-5).
+
+The RollingAggregator push pipeline is gone; ``/api/stats``,
+``/api/stats/timeseries``, ``/api/performance`` and ``/api/cost-efficiency``
+are now computed on read from arcstore ``llm_calls`` rows. These tests pin the
+JSON contract the front-end consumes so the cutover preserves it.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+from arcui.observe_stats import (
+    compute_cost_efficiency,
+    compute_performance,
+    compute_stats,
+    compute_timeseries,
+)
+
+
+def _row(**kw: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "record_id": "r",
+        "ts": datetime.now(UTC).isoformat(),
+        "model": "gpt-4",
+        "provider": "openai",
+        "agent_label": "alice",
+        "actor_did": "did:arc:alice",
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "cost_usd": 0.01,
+        "latency_ms": 200.0,
+        "outcome": "ok",
+    }
+    base.update(kw)
+    return base
+
+
+class TestComputeStats:
+    def test_totals_and_groupings(self) -> None:
+        rows = [
+            _row(model="gpt-4", provider="openai", agent_label="alice", cost_usd=0.02),
+            _row(model="haiku", provider="anthropic", agent_label="bob", cost_usd=0.001),
+        ]
+        stats = compute_stats(rows, window="24h")
+        assert stats["window"] == "24h"
+        assert stats["request_count"] == 2
+        assert stats["total_tokens"] == 300  # (100+50) * 2
+        assert round(stats["total_cost"], 6) == 0.021
+        assert stats["model_stats"]["gpt-4"]["request_count"] == 1
+        assert stats["provider_counts"] == {"openai": 1, "anthropic": 1}
+        assert stats["agent_counts"] == {"alice": 1, "bob": 1}
+
+    def test_error_outcome_counts_as_error(self) -> None:
+        rows = [_row(outcome="ok"), _row(outcome="error")]
+        stats = compute_stats(rows, window="24h")
+        assert stats["error_count"] == 1
+
+    def test_latency_percentiles_present(self) -> None:
+        rows = [_row(latency_ms=float(x)) for x in range(1, 101)]
+        stats = compute_stats(rows, window="24h")
+        assert stats["latency_p95"] >= stats["latency_p50"]
+        assert stats["latency_avg"] > 0
+
+    def test_empty_rows_are_well_formed(self) -> None:
+        stats = compute_stats([], window="1h")
+        assert stats["request_count"] == 0
+        assert stats["total_cost"] == 0.0
+        assert stats["model_stats"] == {}
+
+
+class TestCostEfficiency:
+    def test_ranks_cheapest_first(self) -> None:
+        rows = [
+            _row(model="expensive", cost_usd=1.0, prompt_tokens=10, completion_tokens=0),
+            _row(model="cheap", cost_usd=0.001, prompt_tokens=10, completion_tokens=0),
+        ]
+        eff = compute_cost_efficiency(rows, window="24h")
+        assert eff["cheapest_model"] == "cheap"
+        assert eff["models"][0]["model"] == "cheap"
+        assert eff["potential_savings_usd"] >= 0.0
+
+
+class TestPerformance:
+    def test_success_rate_and_percentiles(self) -> None:
+        rows = [_row(outcome="ok", latency_ms=10.0) for _ in range(9)]
+        rows.append(_row(outcome="error", latency_ms=10.0))
+        perf = compute_performance(rows, window="24h")
+        model_row = next(m for m in perf["models"] if m["name"] == "gpt-4")
+        assert model_row["request_count"] == 10
+        assert model_row["error_count"] == 1
+        assert model_row["success_rate"] == 90.0
+        assert "latency_p95" in model_row
+
+
+class TestTimeseries:
+    def test_buckets_count_matches_window(self) -> None:
+        ts = compute_timeseries([_row()], window="24h")
+        assert ts["window"] == "24h"
+        assert len(ts["buckets"]) == 24  # 24 x 1h buckets
+
+    def test_old_rows_fall_outside_recent_buckets(self) -> None:
+        old = _row(ts=(datetime.now(UTC) - timedelta(days=2)).isoformat())
+        ts = compute_timeseries([old], window="24h")
+        # A 2-day-old row contributes to no 24h bucket.
+        assert sum(b["request_count"] for b in ts["buckets"]) == 0

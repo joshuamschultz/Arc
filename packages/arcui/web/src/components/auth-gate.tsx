@@ -3,26 +3,21 @@ import { ArcLogo } from '@/components/arc-logo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { hasToken, setToken } from '@/lib/auth'
-import { arcSocket } from '@/lib/arc-socket'
-import { useConnectionStore } from '@/store/connection'
 
 /**
- * Blocks the app until a token is present. Mirrors the old "auth required"
- * banner but as a centered card. A bad token surfaces via `authError` from
- * the WS `auth_ok`/error handshake, which re-shows this gate.
+ * Blocks the app until a token is present. The CLI prints a viewer or operator
+ * token on `arc ui start`; paste it here to unlock the dashboard.
  */
 export function AuthGate({ children }: { children: ReactNode }) {
-  const authError = useConnectionStore((s) => s.authError)
-  const [value, setValue] = useState('')
   const [token, setLocalToken] = useState(hasToken())
+  const [value, setValue] = useState('')
 
-  if (token && !authError) return <>{children}</>
+  if (token) return <>{children}</>
 
   const submit = () => {
     const v = value.trim()
     if (!v) return
     setToken(v)
-    arcSocket.reauth(v)
     setLocalToken(true)
   }
 
@@ -33,9 +28,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
           <ArcLogo />
           <span className="text-lg font-bold tracking-wide text-foreground">ARC</span>
         </div>
-        <h1 className="text-base font-semibold text-foreground">
-          {authError ? 'Token rejected' : 'Authentication required'}
-        </h1>
+        <h1 className="text-base font-semibold text-foreground">Authentication required</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Paste a viewer or operator token to connect. The CLI prints these on
           <code className="mx-1 rounded bg-muted px-1 py-0.5 text-xs">arc ui start</code>.

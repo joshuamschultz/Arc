@@ -2,6 +2,12 @@
 
 create_app() builds the Starlette application with all routes and middleware.
 serve() is the one-liner entry point for developers.
+
+SPEC-026 FR-5: arcui is a read-only consumer of the durable operational record.
+The live push pipeline (``/ws`` feed, EventBuffer, SubscriptionManager,
+RollingAggregator, the agent telemetry socket and the dashboard bus) is gone —
+reads come from ``app.state.observe`` (an arcstore mirror) on demand. The only
+WebSocket left is ``/ws/chat`` (interactive chat), which is bidirectional.
 """
 
 from __future__ import annotations
@@ -12,38 +18,28 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
-from arcgateway.file_events import default_bus as _default_file_bus
-from arcgateway.fs_watcher import WatcherManager
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from arcui.aggregator import RollingAggregator
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
-from arcui.connection import ConnectionManager
-from arcui.event_buffer import EventBuffer
-from arcui.file_change_bridge import FileChangeBridge
+from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.routes import agent_detail as agent_detail_routes
-from arcui.routes import agent_ws as agent_ws_routes
 from arcui.routes import agents as agents_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
-from arcui.routes import dashboard_ws as dashboard_ws_routes
 from arcui.routes import export as export_routes
 from arcui.routes import knowledge as knowledge_routes
-from arcui.routes import schedules as schedules_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import team_chat as team_chat_routes
 from arcui.routes import team_pages as team_pages_routes
 from arcui.routes import traces as traces_routes
-from arcui.routes import ws as ws_routes
-from arcui.subscription import SubscriptionManager
 
 logger = logging.getLogger(__name__)
 
@@ -112,19 +108,18 @@ async def _service_worker(request: Request) -> Response:
 def create_app(
     *,
     auth_config: AuthConfig | None = None,
-    trace_store: Any | None = None,
     config_controller: Any | None = None,
     agent_info: dict[str, str] | None = None,
     max_agents: int = 100,
     team_root: Path | None = None,
     gateway_config: Any | None = None,
     messaging_service: Any | None = None,
+    data_dir: Path | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
     Args:
         auth_config: Token/role configuration. Auto-generated if None.
-        trace_store: ArcLLM JSONLTraceStore instance for trace queries.
         config_controller: ArcLLM ConfigController instance.
         agent_info: Agent metadata (name, did, model, provider) for UI display.
         max_agents: Maximum concurrent agent connections (default 100).
@@ -137,6 +132,8 @@ def create_app(
             non-None and ``team_root`` is set, the lifespan composes an
             in-process gateway runtime (executor, session router, web/slack/
             telegram adapters) and exposes it via ``app.state``. SPEC-023.
+        data_dir: Arc data directory for the Observe mirror (spool + WORM +
+            store). Defaults to ``arcstore.config.resolve_data_dir()``.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -149,16 +146,12 @@ def create_app(
         Route("/api/health", _health),
         Route("/api/info", _agent_info),
         *traces_routes.routes,
-        *schedules_routes.routes,
         *config_routes.routes,
         *arcllm_config_routes.routes,
         *stats_routes.routes,
         *export_routes.routes,
         *cost_efficiency_routes.routes,
-        *ws_routes.routes,
-        *agent_ws_routes.routes,
         *chat_ws_routes.routes,
-        *dashboard_ws_routes.routes,
         *knowledge_routes.routes,
         *agents_routes.routes,
         *agent_detail_routes.routes,
@@ -223,15 +216,16 @@ def create_app(
         cached_sw_js = None
 
     # Starlette lifespan replaces the deprecated `on_startup=` parameter.
-    # The async context manager runs the startup half before the server
-    # accepts requests and the shutdown half during graceful shutdown.
-    # Wave 2 review fix TD-04 — `on_startup=` produces deprecation
-    # warnings in test runs and is a hard break on Starlette major bumps.
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def lifespan(starlette_app: Starlette) -> Any:
-        starlette_app.state.event_buffer.start()
+        # Observe plane: backfill the mirror from the durable spool + WORM, then
+        # tail them. Fail-open — a store problem must never block the dashboard.
+        try:
+            await starlette_app.state.observe.start()
+        except Exception:  # reason: fail-open — dashboard still serves
+            logger.exception("lifespan: arcstore Observe failed to start; reads will be empty")
         # SPEC-023: when a gateway_config is supplied, compose the in-process
         # gateway runtime and expose its components on app.state. Routes that
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
@@ -246,21 +240,6 @@ def create_app(
             starlette_app.state.session_router = embedded_gateway.session_router
             starlette_app.state.web_adapter = embedded_gateway.web_adapter
             starlette_app.state.stream_bridge = embedded_gateway.stream_bridge
-            # SPEC-025 Track E — expose the dashboard event bus so routes
-            # and aggregators can publish without importing bootstrap.
-            starlette_app.state.dashboard_bus = embedded_gateway.dashboard_bus
-            # ARC_FIXES_PRD Fix 6 Phase C — live Team Chat updates. When
-            # the deployment has both a messaging service and a dashboard
-            # bus, attach a bridge so arcteam route events publish onto
-            # the ``team_chat`` topic in real time. ``messaging_service``
-            # is None in tests / LLM-only deployments — degrade silently.
-            if messaging_service is not None:
-                from arcui.team_chat_bridge import TeamChatDashboardBridge
-
-                bridge = TeamChatDashboardBridge(embedded_gateway.dashboard_bus)
-                if hasattr(messaging_service, "set_ui_reporter"):
-                    messaging_service.set_ui_reporter(bridge)
-                starlette_app.state.team_chat_bridge = bridge
             # SPEC-023: cache loaded agents and register them in the
             # fleet so chat-loaded agents show as LIVE without a separate
             # /api/agent/connect WebSocket. One install_ call, idempotent.
@@ -283,6 +262,10 @@ def create_app(
         try:
             yield
         finally:
+            try:
+                await starlette_app.state.observe.stop()
+            except Exception:  # reason: fail-open — continue shutdown
+                logger.exception("lifespan: error stopping arcstore Observe")
             # SPEC-023: shut adapters down in reverse — disconnect cancels
             # all per-socket tasks and closes the WebSockets cleanly.
             if embedded_gateway is not None:
@@ -300,26 +283,12 @@ def create_app(
                             "lifespan: error disconnecting adapter %s",
                             getattr(adapter, "name", "unknown"),
                         )
-            # SPEC-022 Phase 3: tear down all per-agent watchers cleanly.
-            # The bridge listener is best-effort detached; FileEventBus
-            # tolerates a stale handler for the duration of an emit.
-            wm = getattr(starlette_app.state, "watcher_manager", None)
-            if wm is not None:
-                await wm.shutdown()
-            file_bridge = getattr(starlette_app.state, "file_change_bridge", None)
-            bus = getattr(starlette_app.state, "file_event_bus", None)
-            if file_bridge is not None and bus is not None:
-                file_bridge.detach(bus)
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(AuthMiddleware, auth_config=auth)
 
     # Shared state accessible from routes via request.app.state
-    connection_manager = ConnectionManager()
-    aggregator = RollingAggregator()
-    subscription_manager = SubscriptionManager()
     agent_registry = AgentRegistry(max_agents=max_agents)
-    event_buffer = EventBuffer(connection_manager, subscription_manager=subscription_manager)
 
     app.state.index_html = cached_index_html
     app.state.sw_js = cached_sw_js
@@ -329,30 +298,20 @@ def create_app(
     # `ui.session_start` exactly once per (token, remote_addr).
     app.state.session_tracker = SessionTracker()
     app.state.auth_config = auth
-    app.state.trace_store = trace_store
+    # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
+    # operational record. Reads come from here, not a live push wire.
+    app.state.observe = Observe(data_dir=data_dir)
     app.state.config_controller = config_controller
     # arcteam MessagingService used by the Team Chat routes. ``None`` is
     # a supported state — the routes degrade to empty payloads so the
     # Team Chat tab never throws when the deployment lacks a team_root.
     app.state.messaging_service = messaging_service
-    app.state.connection_manager = connection_manager
-    app.state.aggregator = aggregator
-    app.state.event_buffer = event_buffer
-    app.state.subscription_manager = subscription_manager
     app.state.agent_registry = agent_registry
     app.state.pending_controls = {}
     app.state.circuit_breakers = []
     app.state.telemetry_modules = []
     app.state.queue_modules = []
-    # Bounded ring buffer of recent scheduler-layer UIEvents for warm-start
-    # of the Schedule History card. Append-on-receive in agent_ws._receive.
-    app.state.schedule_history = _deque(maxlen=50)
-    app.state.on_event_callbacks = []
     app.state.agent_info = agent_info or {}
-    # SPEC-025 Track E — dashboard bus; populated by the embedded gateway
-    # lifespan when gateway_config is supplied. Routes read from here; the
-    # bus itself is None in plain LLM-provider mode (no gateway wiring).
-    app.state.dashboard_bus = None
     # SPEC-022 Phase 2: arcgateway data plane wiring. team_root scopes
     # all gateway fs reads; roster_provider walks it on each call so the
     # online overlay reflects the current AgentRegistry state. Routes
@@ -360,28 +319,14 @@ def create_app(
     # team_root directly.
     app.state.team_root = team_root
     # Bounded ring of recent gateway/UI audit events surfaced through the
-    # /api/agents/{id}/audit and fleet /api/team/audit endpoints. Phase 3
-    # populates this from the gateway audit sink; Phase 2 leaves it empty
-    # so route handlers have a stable contract from day one.
+    # /api/agents/{id}/audit and fleet /api/team/audit endpoints.
     app.state.audit_buffer = _deque(maxlen=1000)
-    # SPEC-022 Phase 3: live-update plumbing. WatcherManager owns per-agent
-    # filesystem watchers (ref-counted so an agent stops being watched the
-    # moment the last browser stops looking). FileChangeBridge is the
-    # arcgateway.file_events → /ws fan-out — it attaches to the gateway's
-    # default bus so watcher emissions reach subscribed browser clients.
-    app.state.file_event_bus = _default_file_bus
-    app.state.watcher_manager = WatcherManager()
-    file_change_bridge = FileChangeBridge()
-    file_change_bridge.attach(_default_file_bus)
-    app.state.file_change_bridge = file_change_bridge
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:
             return []
         # Registry and roster both key agents by `agent_name` (== the
         # arcagent.toml [agent].name == the directory name minus _agent).
-        # Single identifier across both views — list_agents()[i].agent_id ==
-        # arcagent.toml [agent].name == r.agent_id from team_roster.
         agents = app.state.agent_registry.list_agents()
         online = {a.agent_id for a in agents}
         return team_roster.list_team(team_root=app.state.team_root, online_ids=online)
@@ -392,30 +337,19 @@ def create_app(
 
 
 def attach_llm(app: Starlette, instance: Any, label: str | None = None) -> None:
-    """Wire an LLM provider's events into the ArcUI pipeline.
+    """Register an LLM provider's modules for REST introspection.
 
-    Creates an on_event callback that feeds:
-      1. EventBuffer → ConnectionManager → WebSocket clients
-      2. RollingAggregator → stats windows
-
-    Also registers circuit breakers and telemetry modules for REST queries.
+    SPEC-026 FR-5: there is no event push anymore — telemetry is recorded to
+    the arcstore spool by the arcllm client hook and read back through the
+    Observe plane. This still walks the module stack so ``/api/circuit-breakers``
+    / ``/api/budget`` / ``/api/queue`` can report live module state.
 
     Args:
         app: The Starlette app from create_app().
         instance: An LLMProvider (may be wrapped in module stack).
-        label: Human-readable label for this LLM instance.
+        label: Human-readable label for this LLM instance (unused; kept for
+            call-site compatibility with the agent label passed by the CLI).
     """
-    event_buffer: EventBuffer = app.state.event_buffer
-    aggregator: RollingAggregator = app.state.aggregator
-
-    def on_event(record: Any) -> None:
-        data = record.model_dump() if hasattr(record, "model_dump") else record
-        if label and "agent_label" not in data:
-            data["agent_label"] = label
-        event_buffer.push(data)
-        aggregator.ingest(data)
-
-    # Walk the module stack to find circuit breakers, telemetry, and queue modules
     try:
         from arcllm.modules.circuit_breaker import CircuitBreakerModule
         from arcllm.modules.queue import QueueModule
@@ -433,15 +367,12 @@ def attach_llm(app: Starlette, instance: Any, label: str | None = None) -> None:
     except ImportError:
         logger.debug("arcllm not available, skipping module stack discovery")
 
-    app.state.on_event_callbacks.append(on_event)
-
 
 def serve(
     llm: Any = None,
     *,
     host: str = "127.0.0.1",
     port: int = 8420,
-    trace_store: Any | None = None,
     config_controller: Any | None = None,
     auth_config: AuthConfig | None = None,
 ) -> None:
@@ -450,13 +381,12 @@ def serve(
     Usage::
 
         from arcui import serve
-        serve(llm=model, trace_store=store)
+        serve(llm=model)
 
     Args:
         llm: Optional LLMProvider to attach immediately.
         host: Bind address (default localhost).
         port: Port number (default 8420).
-        trace_store: ArcLLM JSONLTraceStore for trace queries.
         config_controller: ArcLLM ConfigController for config management.
         auth_config: Auth configuration. Auto-generated if None.
     """
@@ -464,17 +394,10 @@ def serve(
 
     app = create_app(
         auth_config=auth_config,
-        trace_store=trace_store,
         config_controller=config_controller,
     )
 
     if llm is not None:
         attach_llm(app, llm)
-
-    # Warm-start aggregator from existing trace data
-    if trace_store is not None:
-        import asyncio
-
-        asyncio.run(app.state.aggregator.warm_start(trace_store))
 
     uvicorn.run(app, host=host, port=port, log_level="info")

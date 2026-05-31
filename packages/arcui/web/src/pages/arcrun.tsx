@@ -1,15 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Workflow, Activity, Users } from 'lucide-react'
+import { Workflow, Users } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { StatCard } from '@/components/stat-card'
 import { DataTable } from '@/components/data-table'
 import { RunReplayDrawer } from '@/components/run-replay-drawer'
-import { EmptyState, LoadingRows } from '@/components/states'
+import { LoadingRows } from '@/components/states'
 import { apiGet } from '@/lib/api'
 import { useRoster } from '@/lib/queries'
-import { useLiveStore } from '@/store/live'
 import { fmtBytes, relativeTime, shortId } from '@/lib/format'
 import type { SessionsListResponse } from '@/lib/types'
 
@@ -70,7 +69,6 @@ export function ArcRunPage() {
     return out.sort((a, b) => b.mtime - a.mtime)
   }, [sessionQueries, agents])
 
-  const runEvents = useLiveStore((s) => s.runEvents)
   const [active, setActive] = useState<RunRow | null>(null)
 
   const agentsWithRuns = new Set(rows.map((r) => r.agent_id)).size
@@ -78,54 +76,30 @@ export function ArcRunPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="ArcRun" description="Agentic-loop runs, traces, and live activity." />
+      <PageHeader title="ArcRun" description="Agentic-loop runs and traces." />
       <div className="flex-1 space-y-5 overflow-auto p-6">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-2">
           <StatCard label="Runs" value={rows.length} icon={<Workflow className="size-4" />} />
           <StatCard label="Agents with runs" value={agentsWithRuns} icon={<Users className="size-4" />} />
-          <StatCard label="Live run events" value={runEvents.length} icon={<Activity className="size-4" />} />
         </div>
 
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-foreground">Runs</h3>
-            {loading ? (
-              <LoadingRows />
-            ) : (
-              <DataTable
-                columns={columns}
-                data={rows}
-                searchable
-                searchPlaceholder="Search runs…"
-                onRowClick={setActive}
-                isRowActive={(r) => r.sid === active?.sid}
-                emptyTitle="No runs recorded"
-                emptyDescription="Agentic runs (sessions) appear here as agents execute."
-              />
-            )}
-          </section>
-
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-foreground">Live activity</h3>
-            <div className="rounded-xl border border-border bg-card p-2 shadow-xs">
-              {runEvents.length === 0 ? (
-                <EmptyState title="No live run events" />
-              ) : (
-                <ul className="divide-y divide-border/60">
-                  {runEvents.slice(0, 25).map((e, i) => (
-                    <li key={i} className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs">
-                      <span className="truncate">
-                        <span className="font-mono text-primary">{e.event_type}</span>
-                        <span className="ml-2 text-muted-foreground">{e.agent_name || e.agent_id}</span>
-                      </span>
-                      <span className="shrink-0 text-muted-foreground">{relativeTime(e.timestamp)}</span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </section>
-        </div>
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-foreground">Runs</h3>
+          {loading ? (
+            <LoadingRows />
+          ) : (
+            <DataTable
+              columns={columns}
+              data={rows}
+              searchable
+              searchPlaceholder="Search runs…"
+              onRowClick={setActive}
+              isRowActive={(r) => r.sid === active?.sid}
+              emptyTitle="No runs recorded"
+              emptyDescription="Agentic runs (sessions) appear here as agents execute."
+            />
+          )}
+        </section>
       </div>
 
       <RunReplayDrawer

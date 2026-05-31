@@ -87,8 +87,6 @@ def test_arc_ui_start_smoke() -> None:
             f"before re-running this test"
         )
 
-    import websockets.sync.client  # type: ignore[import-untyped]
-
     proc = subprocess.Popen(
         [
             str(_arc_bin()),
@@ -115,12 +113,17 @@ def test_arc_ui_start_smoke() -> None:
             body = json.loads(resp.read())
         assert body == {"status": "ok"}
 
-        # 3. /ws first-message auth round-trips with the supplied token.
-        with websockets.sync.client.connect(f"ws://{_HOST}:{_PORT}/ws", open_timeout=5) as ws:
-            ws.send(json.dumps({"token": "test-viewer-tok"}))
-            resp = json.loads(ws.recv(timeout=5))
-            assert resp.get("type") == "auth_ok", f"expected auth_ok, got {resp}"
-            assert resp.get("role") == "viewer"
+        # 3. /api/stats returns 200 with the viewer token (push /ws endpoint
+        #    deleted in SPEC-026 FR-5; HTTP auth boundary verified here instead).
+        import urllib.error
+
+        req = urllib.request.Request(
+            f"http://{_HOST}:{_PORT}/api/stats",
+            headers={"Authorization": "Bearer test-viewer-tok"},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            stats = json.loads(resp.read())
+        assert "request_count" in stats, f"unexpected stats body: {stats}"
 
         # 4. SIGTERM exits cleanly within the shutdown budget.
         proc.send_signal(signal.SIGTERM)

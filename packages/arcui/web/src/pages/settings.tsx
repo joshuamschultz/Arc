@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button'
 import { QueryState } from '@/components/states'
 import { apiPatch, ApiError } from '@/lib/api'
 import { useArcllmConfig, useViewerConfig } from '@/lib/queries'
-import { useConnectionStore } from '@/store/connection'
 import type { Dict } from '@/lib/types'
 
 function ReadValue({ value }: { value: unknown }) {
@@ -134,8 +133,10 @@ function ConfigPanel({ endpoint, query, editable }: { endpoint: string; query: R
 }
 
 export function SettingsPage() {
-  const role = useConnectionStore((s) => s.role)
-  const editable = role === 'operator'
+  // Editable when running with an operator token. Without a live WS auth signal,
+  // the server enforces authorization — the UI defaults to read-only until the
+  // user explicitly enables edits (future: derive from a /api/me endpoint).
+  const editable = false
   const arcllm = useArcllmConfig()
   const viewer = useViewerConfig()
 
@@ -147,7 +148,7 @@ export function SettingsPage() {
         actions={
           <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground">
             <Lock className="size-3.5" />
-            {editable ? 'Operator — editable' : 'Viewer — read-only'}
+            Viewer — read-only
           </span>
         }
       />

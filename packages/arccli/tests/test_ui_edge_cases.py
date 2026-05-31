@@ -1,12 +1,12 @@
 """Edge case coverage for `arc ui start` (review BLOCKER #14).
 
-The QA reviewer flagged three HIGH-likelihood edge cases that prior tests
-missed:
-  1. Registry corruption (malformed entity record on disk)
-  2. webbrowser.open() returns False (headless / no DISPLAY)
-  3. Multiple agents with same name (backfill collision)
+The QA reviewer flagged HIGH-likelihood edge cases that prior tests missed:
+  1. webbrowser.open() returns False (headless / no DISPLAY)
+  2. Multiple agents with same name (backfill collision)
 
-These are real failure modes a federal SCIF deployment will hit.
+These are real failure modes a federal SCIF deployment will hit. (Registry
+corruption of the per-agent trace store is no longer relevant — SPEC-026 FR-5
+removed trace-store discovery; arcui reads from the shared arcstore mirror.)
 """
 
 from __future__ import annotations
@@ -18,55 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from arccli.commands.team import _backfill_workspaces, _init_cmd, _register
-from arccli.commands.ui import (
-    _maybe_open_browser,
-    _print_browser_open_fallback,
-    _resolve_trace_stores,
-)
-
-
-class TestRegistryCorruption:
-    """`_resolve_trace_stores` must survive a corrupt entity record on disk."""
-
-    def test_malformed_json_in_entity_file(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _init_cmd(argparse.Namespace(root_path=str(tmp_path)))
-        ws = tmp_path / "ws_a"
-        ws.mkdir()
-        _register(
-            argparse.Namespace(
-                root=str(tmp_path),
-                entity_id="agent://a1",
-                name="A1",
-                entity_type="agent",
-                roles="",
-                workspace=str(ws),
-            )
-        )
-        # Locate the persisted entity record via the arcteam-public
-        # `REGISTRY_COLLECTION` constant rather than hardcoding the
-        # `messages/registry/` filesystem layout — Wave 2 review TD-LOW
-        # decouples this test from FileBackend internals so a backend
-        # refactor doesn't break unrelated tests.
-        from arcteam.registry import REGISTRY_COLLECTION
-
-        entity_files = list((tmp_path / REGISTRY_COLLECTION).glob("*.json"))
-        assert entity_files, "expected at least one entity file after register"
-        entity_files[0].write_text("{not valid json")
-
-        # The launcher MUST NOT crash — at worst it prints a warning and
-        # returns whatever stores it could resolve. A federal deployment
-        # cannot have its UI brought down by one corrupt record on disk.
-        args = argparse.Namespace(root=str(tmp_path))
-        try:
-            stores = _resolve_trace_stores(args)
-        except Exception as exc:  # pragma: no cover — crashes here are the bug
-            pytest.fail(f"_resolve_trace_stores crashed on corrupt registry: {exc}")
-        # Either zero stores (registry list errored) or it skipped the bad
-        # one. The contract is "didn't crash" — the dashboard surfaces an
-        # empty state, not a stack trace.
-        assert isinstance(stores, list)
+from arccli.commands.ui import _maybe_open_browser, _print_browser_open_fallback
 
 
 class TestWebbrowserOpenReturnsFalse:

@@ -369,7 +369,6 @@ async def spawn(
     wallclock_timeout_s: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
     sandbox: SandboxConfig | None = None,
     audit_sink: Any | None = None,
-    ui_reporter: Any | None = None,
 ) -> SpawnResult:
     """Spawn a child run and return a structured SpawnResult.
 
@@ -394,9 +393,6 @@ async def spawn(
         audit_sink: Optional arctrust.AuditSink. AuditEvents for spawn lifecycle
             are emitted to this sink in addition to EventBus events. When None,
             falls back to logger-only (backwards compatible).
-        ui_reporter: Optional duck-typed UIEventReporter. When provided,
-            emit_run_event() is called for spawn lifecycle events. No arcui
-            import occurs — caller injects; if None, zero overhead.
 
     Returns:
         SpawnResult with status, summary, token counts, and audit chain tip.
@@ -434,15 +430,6 @@ async def spawn(
             outcome="deny",
             extra={"reason": error_msg},
             sink=audit_sink,
-        )
-        _emit_ui_spawn_event(
-            reporter=ui_reporter,
-            event_type="spawn_denied",
-            data={
-                "child_run_id": child_run_id,
-                "parent_run_id": parent_state.run_id,
-                "reason": error_msg,
-            },
         )
         return _make_error_result(
             child_run_id=child_run_id,
@@ -486,16 +473,6 @@ async def spawn(
         outcome="allow",
         extra={"parent_depth": parent_state.depth, "parent_chain_tip": parent_chain_tip},
         sink=audit_sink,
-    )
-    _emit_ui_spawn_event(
-        reporter=ui_reporter,
-        event_type="spawn_start",
-        data={
-            "child_run_id": child_run_id,
-            "child_did": child_did,
-            "parent_run_id": parent_state.run_id,
-            "parent_depth": parent_state.depth,
-        },
     )
 
     otel_ctx = _get_otel_context()
@@ -559,17 +536,6 @@ async def spawn(
             extra={"tokens": tokens.total, "duration_s": duration_s},
             sink=audit_sink,
         )
-        _emit_ui_spawn_event(
-            reporter=ui_reporter,
-            event_type="spawn_complete",
-            data={
-                "child_run_id": child_run_id,
-                "parent_run_id": parent_state.run_id,
-                "status": result_status,
-                "tokens": tokens.total,
-                "duration_s": duration_s,
-            },
-        )
 
         _end_child_span(span, otel_token, result_status)
         audit_tip = hashlib.sha256(child_run_id.encode()).hexdigest()
@@ -604,16 +570,6 @@ async def spawn(
             outcome="timeout",
             extra={"duration_s": duration_s},
             sink=audit_sink,
-        )
-        _emit_ui_spawn_event(
-            reporter=ui_reporter,
-            event_type="spawn_complete",
-            data={
-                "child_run_id": child_run_id,
-                "parent_run_id": parent_state.run_id,
-                "status": "timeout",
-                "duration_s": duration_s,
-            },
         )
         _end_child_span(span, otel_token, "timeout")
         audit_tip = hashlib.sha256(child_run_id.encode()).hexdigest()
@@ -650,16 +606,6 @@ async def spawn(
             extra={"duration_s": duration_s, "error": type(exc).__name__},
             sink=audit_sink,
         )
-        _emit_ui_spawn_event(
-            reporter=ui_reporter,
-            event_type="spawn_complete",
-            data={
-                "child_run_id": child_run_id,
-                "parent_run_id": parent_state.run_id,
-                "status": "error",
-                "duration_s": duration_s,
-            },
-        )
         _end_child_span(span, otel_token, "error")
         audit_tip = hashlib.sha256(child_run_id.encode()).hexdigest()
         return SpawnResult(
@@ -672,34 +618,6 @@ async def spawn(
             audit_chain_tip=audit_tip,
             duration_s=duration_s,
             error=f"{type(exc).__name__}: {str(exc)[:_MAX_ERROR_LEN]}",
-        )
-
-
-# ---------------------------------------------------------------------------
-# UI reporter helper — duck-typed call, no arcui import (layer purity)
-# ---------------------------------------------------------------------------
-
-
-def _emit_ui_spawn_event(
-    *,
-    reporter: Any | None,
-    event_type: str,
-    data: dict[str, Any],
-) -> None:
-    """Call reporter.emit_run_event() if a reporter is injected.
-
-    Failures are swallowed so UI errors never interrupt spawn delivery.
-    Duck-typed: no arcui import. Zero overhead when reporter is None.
-    """
-    if reporter is None:
-        return
-    try:
-        reporter.emit_run_event(event_type=event_type, data=data)
-    except Exception:  # reason: fail-open — log + continue
-        _logger.warning(
-            "UIReporter.emit_run_event failed event_type=%s — swallowing",
-            event_type,
-            exc_info=True,
         )
 
 
@@ -781,11 +699,6 @@ async def spawn_many(
     async def _run_one(idx: int, spec: SpawnSpec) -> None:
         # Respect fail_fast cancellation before acquiring semaphore
         if fail_fast and cancelled.is_set():
-            identity = ChildIdentity(
-                did=spec.child_did,
-                sk_bytes=spec.child_sk_bytes,
-                ttl_s=int(spec.wallclock_timeout_s),
-            )
             audit_tip = hashlib.sha256(spec.child_did.encode()).hexdigest()
             results[idx] = SpawnResult(
                 child_run_id=str(uuid.uuid4()),

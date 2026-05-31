@@ -133,32 +133,6 @@ def _graph_stats() -> dict[str, Any]:
     return {"available": False}
 
 
-def _recent_memory_events(state: Any, agent_id: str, limit: int = 10) -> list[dict[str, Any]]:
-    """Pull the most recent memory FileChangeEvents for this agent (best-effort)."""
-    bridge = getattr(state, "file_change_bridge", None)
-    if bridge is None:
-        return []
-    history = getattr(bridge, "recent_events", None)
-    if not callable(history):
-        return []
-    try:
-        events = history(agent_id, limit=limit)
-    except Exception:  # reason: fail-open — continue
-        return []
-    out: list[dict[str, Any]] = []
-    for ev in events:
-        out.append(
-            {
-                "timestamp": getattr(ev, "timestamp", ""),
-                "event_type": getattr(ev, "event_type", ""),
-                "filename": getattr(ev, "filename", ""),
-                "size_bytes": getattr(ev, "size_bytes", 0),
-                "by_agent": agent_id,
-            }
-        )
-    return out
-
-
 async def get_knowledge(request: Request) -> JSONResponse:
     """GET /api/knowledge/{agent_id}.
 
@@ -203,7 +177,9 @@ async def get_knowledge(request: Request) -> JSONResponse:
         "memory": {
             "entries": memory_entries,
             "total_bytes": memory_total_bytes,
-            "recent_events": _recent_memory_events(state, agent_id),
+            # SPEC-026 FR-5: the live memory-change feed (file_change_bridge) is
+            # gone; memory entries are read from disk on demand instead.
+            "recent_events": [],
         },
         "workspace": {
             "tree": workspace_tree,

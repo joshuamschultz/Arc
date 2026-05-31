@@ -9,34 +9,6 @@
 
 export type Dict = Record<string, unknown>
 
-// --- Live events (types.py: UIEvent) ---------------------------------------
-
-export type EventLayer = 'llm' | 'run' | 'agent' | 'team' | 'scheduler'
-
-export interface UIEvent {
-  layer: EventLayer
-  event_type: string
-  agent_id: string
-  agent_name: string
-  source_id: string
-  timestamp: string
-  data: Dict
-  sequence: number
-}
-
-export interface EventBatch {
-  type: 'event_batch'
-  events: UIEvent[]
-}
-
-export interface FileChangeMessage {
-  type: 'file_change'
-  agent_id: string
-  event_type: string
-  path: string
-  payload?: Dict
-}
-
 // --- Domain shapes (permissive: known fields typed, rest passthrough) -------
 
 export interface Trace {

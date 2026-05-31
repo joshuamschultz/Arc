@@ -21,7 +21,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from arcgateway.dashboard_events import DashboardEventBus
 from arcgateway.executor import AsyncioExecutor, Executor
 from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
@@ -41,8 +40,6 @@ class EmbeddedGateway(NamedTuple):
 
     Slack, Telegram, and Mattermost adapter slots are populated only when
     their ``[platforms.X]`` blocks are enabled; otherwise they are None.
-    ``dashboard_bus`` is always present — aggregators publish into it
-    and ``/ws/dashboard`` drains it to browser sockets (SPEC-025 Track E).
     """
 
     executor: Executor
@@ -51,7 +48,6 @@ class EmbeddedGateway(NamedTuple):
     stream_bridge: StreamBridge
     slack_adapter: SlackAdapter | None = None
     telegram_adapter: TelegramAdapter | None = None
-    dashboard_bus: DashboardEventBus | None = None
     mattermost_adapter: MattermostAdapter | None = None
 
 
@@ -280,10 +276,10 @@ async def build_for_embedded(
             disables adapters, and supplies per-adapter limits.
 
     Returns:
-        EmbeddedGateway with executor, session_router, stream_bridge,
-        dashboard_bus, and any enabled adapters. The arcui lifespan stores
-        the named tuple on ``app.state`` and is responsible for
-        ``await connect()`` / ``await disconnect()`` on each adapter.
+        EmbeddedGateway with executor, session_router, stream_bridge, and any
+        enabled adapters. The arcui lifespan stores the named tuple on
+        ``app.state`` and is responsible for ``await connect()`` /
+        ``await disconnect()`` on each adapter.
     """
     if not team_root.exists():
         _logger.warning(
@@ -295,7 +291,6 @@ async def build_for_embedded(
     executor = _build_executor(gateway_config.gateway.tier, agent_factory)
     session_router = SessionRouter(executor=executor)
     stream_bridge = StreamBridge()
-    dashboard_bus = DashboardEventBus()
 
     web_adapter = _build_web_adapter(gateway_config, session_router)
     slack_adapter = _build_slack_adapter(gateway_config, session_router)
@@ -327,7 +322,6 @@ async def build_for_embedded(
         stream_bridge=stream_bridge,
         slack_adapter=slack_adapter,
         telegram_adapter=telegram_adapter,
-        dashboard_bus=dashboard_bus,
         mattermost_adapter=mattermost_adapter,
     )
 

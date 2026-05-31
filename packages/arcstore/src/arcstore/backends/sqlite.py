@@ -1,0 +1,305 @@
+"""SqliteBackend — the default StorageBackend (WAL, shared-nothing per instance).
+
+Clones the proven ``arcagent.modules.session.index.SessionIndex`` pattern
+(research §11.3): WAL journal, ``busy_timeout`` (closes defect C5), per-operation
+connections (never shared across threads), ``executemany`` batching, and
+``INSERT OR IGNORE`` idempotency keyed on the content-derived ``record_id`` —
+never a byte offset or rowid. The blocking ``sqlite3`` work is bridged off the
+event loop with ``asyncio.to_thread`` so the Protocol stays async.
+
+Each instance owns its **own** DB file (NFR-8 shared-nothing) — a shared file
+across instances produces ``SQLITE_BUSY`` storms above ~2-3 concurrent writers.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+from arcstore.backends.base import AUDIT_TABLE, OPERATIONAL_TABLES
+
+_BUSY_TIMEOUT_MS = 5000
+_BATCH_SIZE = 500
+
+_OPERATIONAL_COLUMNS = (
+    "record_id",
+    "kind",
+    "actor_did",
+    "ts",
+    "request_id",
+    "model",
+    "provider",
+    "agent_label",
+    "prompt_tokens",
+    "completion_tokens",
+    "cost_usd",
+    "latency_ms",
+    "outcome",
+    "name",
+    "extra",
+)
+_AUDIT_COLUMNS = (
+    "record_id",
+    "seq",
+    "ts",
+    "actor_did",
+    "action",
+    "target",
+    "outcome",
+    "event_hash",
+    "prev_hash",
+    "signature",
+    "verified",
+)
+
+# Columns that carry structured JSON (stored as TEXT, decoded on read).
+_JSON_COLUMNS = frozenset({"extra"})
+# Columns stored as INTEGER but exposed as bool.
+_BOOL_COLUMNS = frozenset({"verified"})
+
+_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
+    **{t: _OPERATIONAL_COLUMNS for t in OPERATIONAL_TABLES},
+    AUDIT_TABLE: _AUDIT_COLUMNS,
+}
+
+
+def _operational_ddl(table: str) -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS {table}(
+        record_id TEXT PRIMARY KEY,
+        kind TEXT,
+        actor_did TEXT,
+        ts TEXT,
+        request_id TEXT,
+        model TEXT,
+        provider TEXT,
+        agent_label TEXT,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        cost_usd REAL,
+        latency_ms REAL,
+        outcome TEXT,
+        name TEXT,
+        extra TEXT
+    );
+    """
+
+
+_SCHEMA_SQL = (
+    "".join(_operational_ddl(t) for t in OPERATIONAL_TABLES)
+    + f"""
+    CREATE TABLE IF NOT EXISTS {AUDIT_TABLE}(
+        record_id TEXT PRIMARY KEY,
+        seq INTEGER,
+        ts TEXT,
+        actor_did TEXT,
+        action TEXT,
+        target TEXT,
+        outcome TEXT,
+        event_hash TEXT,
+        prev_hash TEXT,
+        signature TEXT,
+        verified INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS sync_state(
+        source TEXT PRIMARY KEY,
+        offset INTEGER NOT NULL DEFAULT 0
+    );
+    """
+)
+
+
+class SqliteBackend:
+    """SQLite-backed StorageBackend. One file per instance (shared-nothing)."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = Path(db_path)
+
+    async def start(self) -> None:
+        await asyncio.to_thread(self._init_schema)
+
+    async def stop(self) -> None:
+        # Connections are opened and closed per operation; nothing to release.
+        return None
+
+    # -- write path --------------------------------------------------------
+
+    async def upsert(self, table: str, key: str, row: dict[str, Any]) -> None:
+        await self.upsert_many(table, [(key, row)])
+
+    async def upsert_many(self, table: str, rows: list[tuple[str, dict[str, Any]]]) -> None:
+        if not rows:
+            return
+        columns = _columns_for(table)
+        tuples = [_row_tuple(columns, key, row) for key, row in rows]
+        await asyncio.to_thread(self._write_batch, table, columns, tuples)
+
+    # -- read path ---------------------------------------------------------
+
+    async def query(
+        self,
+        table: str,
+        *,
+        where: dict[str, Any] | None = None,
+        order_by: str | None = None,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        columns = _columns_for(table)
+        return await asyncio.to_thread(self._read, table, columns, where, order_by, limit)
+
+    # -- cursor ------------------------------------------------------------
+
+    async def get_cursor(self, name: str) -> int:
+        return await asyncio.to_thread(self._get_cursor, name)
+
+    async def set_cursor(self, name: str, value: int) -> None:
+        await asyncio.to_thread(self._set_cursor, name, value)
+
+    # -- blocking implementations (run via asyncio.to_thread) --------------
+
+    def _connect(self) -> sqlite3.Connection:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self._db_path), check_same_thread=True, timeout=5.0)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        conn.execute("PRAGMA journal_size_limit=67108864")  # 64 MB
+        return conn
+
+    def _init_schema(self) -> None:
+        conn = self._connect()
+        try:
+            conn.executescript(_SCHEMA_SQL)
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _write_batch(
+        self, table: str, columns: tuple[str, ...], tuples: list[tuple[Any, ...]]
+    ) -> None:
+        placeholders = ",".join("?" * len(columns))
+        cols = ",".join(columns)
+        # table + columns are allowlisted constants (_columns_for raises on any
+        # unknown table); values are bound parameters — no injection vector.
+        sql = f"INSERT OR IGNORE INTO {table}({cols}) VALUES ({placeholders})"  # noqa: S608
+        conn = self._connect()
+        try:
+            # BEGIN IMMEDIATE acquires the write lock up front, avoiding the
+            # lock-upgrade SQLITE_BUSY that ignores busy_timeout.
+            conn.execute("BEGIN IMMEDIATE")
+            for i in range(0, len(tuples), _BATCH_SIZE):
+                conn.executemany(sql, tuples[i : i + _BATCH_SIZE])
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _read(
+        self,
+        table: str,
+        columns: tuple[str, ...],
+        where: dict[str, Any] | None,
+        order_by: str | None,
+        limit: int | None,
+    ) -> list[dict[str, Any]]:
+        sql = f"SELECT {','.join(columns)} FROM {table}"  # noqa: S608 — table/columns are allowlisted
+        params: list[Any] = []
+        if where:
+            clauses = []
+            for col, val in where.items():
+                _require_column(table, columns, col)
+                clauses.append(f"{col}=?")
+                params.append(_encode(col, val))
+            sql += " WHERE " + " AND ".join(clauses)
+        if order_by:
+            sql += " ORDER BY " + _safe_order_by(table, columns, order_by)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(sql, params)
+            return [_decode_row(columns, r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def _get_cursor(self, name: str) -> int:
+        conn = self._connect()
+        try:
+            cur = conn.execute("SELECT offset FROM sync_state WHERE source=?", (name,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            conn.close()
+
+    def _set_cursor(self, name: str, value: int) -> None:
+        conn = self._connect()
+        try:
+            conn.execute(
+                "INSERT INTO sync_state(source, offset) VALUES (?, ?) "
+                "ON CONFLICT(source) DO UPDATE SET offset=excluded.offset",
+                (name, value),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Row encode/decode helpers
+# ---------------------------------------------------------------------------
+
+
+def _columns_for(table: str) -> tuple[str, ...]:
+    try:
+        return _TABLE_COLUMNS[table]
+    except KeyError as exc:
+        raise ValueError(f"unknown table: {table!r}") from exc
+
+
+def _row_tuple(columns: tuple[str, ...], key: str, row: dict[str, Any]) -> tuple[Any, ...]:
+    values: list[Any] = []
+    for col in columns:
+        raw = key if col == "record_id" else row.get(col)
+        values.append(_encode(col, raw))
+    return tuple(values)
+
+
+def _encode(col: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if col in _JSON_COLUMNS:
+        return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    if col in _BOOL_COLUMNS:
+        return 1 if value else 0
+    return value
+
+
+def _decode_row(columns: tuple[str, ...], row: sqlite3.Row) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for col in columns:
+        value = row[col]
+        if value is not None and col in _JSON_COLUMNS:
+            value = json.loads(value)
+        elif col in _BOOL_COLUMNS:
+            value = bool(value)
+        out[col] = value
+    return out
+
+
+def _require_column(table: str, columns: tuple[str, ...], col: str) -> None:
+    if col not in columns:
+        raise ValueError(f"unknown column {col!r} for table {table!r}")
+
+
+def _safe_order_by(table: str, columns: tuple[str, ...], order_by: str) -> str:
+    parts = order_by.split()
+    column = parts[0]
+    _require_column(table, columns, column)
+    direction = "ASC"
+    if len(parts) > 1 and parts[1].upper() == "DESC":
+        direction = "DESC"
+    return f"{column} {direction}"

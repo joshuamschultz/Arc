@@ -22,6 +22,28 @@ def _make_app(
     return app, client, auth
 
 
+def _seed_spool(data_dir: Path, *, model: str = "claude", outcome: str = "ok") -> str:
+    """Write one llm_call to the durable spool; return its trace_id (record_id)."""
+    from arcstore.records import SpoolRecord
+    from arcstore.spool import record as spool_record
+
+    spool = data_dir / "spool"
+    spool.mkdir(parents=True, exist_ok=True)
+    rec = SpoolRecord(
+        kind="llm_call",
+        actor_did="did:arc:test:exec/aabbccdd",
+        request_id="req-1",
+        model=model,
+        prompt_tokens=100,
+        completion_tokens=50,
+        cost_usd=0.0015,
+        latency_ms=42.0,
+        outcome=outcome,
+    )
+    spool_record(rec, path=spool / "operational-2026-05-31.jsonl")
+    return rec.record_id
+
+
 class TestHealthRoute:
     def test_health_no_auth_needed(self):
         _, client, _ = _make_app()
@@ -70,35 +92,29 @@ class TestTracesRoute:
         assert data["traces"] == []
         assert data["cursor"] is None
 
-    async def test_list_traces_with_store(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        rec = TraceRecord(provider="anthropic", model="claude-sonnet-4")
-        await store.append(rec)
+    def test_list_traces_with_store(self, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: arcui reads the durable spool via the Observe plane.
+        # Seed a spool record, then let the lifespan backfill it into the mirror.
+        _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get("/api/traces", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/traces", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert len(resp.json()["traces"]) == 1
 
-    async def test_get_trace_by_id(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        rec = TraceRecord(provider="anthropic", model="claude-sonnet-4")
-        await store.append(rec)
+    def test_get_trace_by_id(self, _isolated_arc_data_dir: Path):
+        trace_id = _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get(f"/api/traces/{rec.trace_id}", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get(
+                f"/api/traces/{trace_id}", headers={"Authorization": "Bearer v"}
+            )
         assert resp.status_code == 200
-        assert resp.json()["trace_id"] == rec.trace_id
+        assert resp.json()["trace_id"] == trace_id
 
     def test_get_trace_invalid_format(self):
         # _VALID_TRACE_ID_RE rejects disallowed chars (whitespace, `;<>`,
@@ -253,31 +269,25 @@ class TestStatsRoute:
 
 
 class TestExportRoute:
-    async def test_export_json(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        await store.append(TraceRecord(provider="anthropic", model="claude-sonnet-4"))
+    def test_export_json(self, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: export reads from the arcstore Observe mirror.
+        _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get("/api/export?format=json", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/export?format=json", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
 
-    async def test_export_csv(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        await store.append(TraceRecord(provider="anthropic", model="claude-sonnet-4"))
+    def test_export_csv(self, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: export reads from the arcstore Observe mirror.
+        _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get("/api/export?format=csv", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/export?format=csv", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert "trace_id" in resp.text  # CSV header
 

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { BookOpen } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { StatCard } from '@/components/stat-card'
@@ -14,8 +13,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useKnowledge, useRoster } from '@/lib/queries'
-import { useActiveAgent, useFileChange } from '@/hooks/use-arc-socket'
-import type { FileChangeMessage } from '@/lib/types'
 
 /** Render a flat dict of scalars as stat tiles; fall back to JSON. */
 function ScalarStats({ data }: { data?: Record<string, unknown> }) {
@@ -36,22 +33,11 @@ function ScalarStats({ data }: { data?: Record<string, unknown> }) {
 export function KnowledgePage() {
   const roster = useRoster()
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
-  // `null` until the user picks; fall back to the first agent for display.
   const [picked, setPicked] = useState<string | null>(null)
   const agentId = picked ?? agents[0]?.agent_id ?? null
   const setAgentId = setPicked
 
-  useActiveAgent(agentId)
   const query = useKnowledge(agentId)
-  const queryClient = useQueryClient()
-
-  // Live seam: refetch this agent's knowledge when its workspace mutates.
-  // Swaps cleanly for a DB "row changed" signal later (plan §storage-evolution).
-  useFileChange((msg: FileChangeMessage) => {
-    if (msg.agent_id === agentId) {
-      queryClient.invalidateQueries({ queryKey: ['knowledge', agentId] })
-    }
-  })
 
   return (
     <div className="flex h-full flex-col">

@@ -50,20 +50,6 @@ class TestLoopbackHostsSingleSource:
         # No locally-defined frozenset of loopback addrs.
         assert 'frozenset({"127.0.0.1"' not in text
 
-    def test_ui_reporter_imports_from_constants(self) -> None:
-        ur_py = (
-            self._packages_root()
-            / "arcagent"
-            / "src"
-            / "arcagent"
-            / "modules"
-            / "ui_reporter"
-            / "__init__.py"
-        )
-        text = ur_py.read_text()
-        assert "from arcui._constants import LOOPBACK_HOSTS" in text
-        assert 'frozenset({"127.0.0.1"' not in text
-
     def test_loopback_hosts_contents(self) -> None:
         """Sanity check: the canonical set covers IPv4 + name + IPv6 loopback."""
         assert "127.0.0.1" in LOOPBACK_HOSTS

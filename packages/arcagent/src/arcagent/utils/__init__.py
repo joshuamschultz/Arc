@@ -36,7 +36,7 @@ def load_eval_model(
         on_event: Optional callback fired after every invoke() with a
             TraceRecord. Enables arcagent to bridge ArcLLM events
             (llm_call, config_change, circuit_change) onto the ModuleBus
-            so modules (ui_reporter, memory) observe LLM activity.
+            so modules like memory observe LLM activity.
     """
     _logger.info("Loading model: %s (label=%s)", model_id, agent_label)
     provider, _, model_name = model_id.partition("/")

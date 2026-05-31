@@ -70,8 +70,8 @@ pip install arcmas            # full Arc stack
 ## 🧪 Quick Example
 
 ```python
-from arctrust import AgentIdentity, emit, AuditEvent, JsonlSink
-import time
+from arctrust import AgentIdentity, emit, AuditEvent, WormSink, generate_keypair
+from pathlib import Path
 
 # 1. Generate a fresh agent identity
 identity = AgentIdentity.generate(org="acme", agent_type="analyst")
@@ -83,19 +83,21 @@ msg = b"tool_call:read_file:/workspace/report.txt"
 signature = identity.sign(msg)
 assert identity.verify(msg, signature)
 
-# 3. Emit a tamper-evident audit event
-sink = JsonlSink("/var/log/arc/audit.jsonl")
+# 3. Emit to the durable, tamper-evident audit log (signed hash chain on disk)
+operator = generate_keypair()
+sink = WormSink(Path("/var/log/arc/audit-chain.jsonl"), operator.private_key)
 emit(
     AuditEvent(
-        event_type="tool.call",
         actor_did=identity.did,
-        action="read_file",
+        action="tool.call",
         target="/workspace/report.txt",
-        outcome="allowed",
-        ts=time.time(),
+        outcome="allow",
     ),
     sink,
 )
+
+# 4. Later — verify the chain survived restart and was not tampered with
+assert sink.verify_chain()
 ```
 
 ---
@@ -130,8 +132,8 @@ Powered by **PyNaCl → libsodium**. Same primitive you'd find in WireGuard, age
 |---|---|
 | `AuditEvent` | Structured event: `event_type`, `actor_did`, `action`, `target`, `outcome`, `ts`, `metadata` |
 | `AuditSink` (Protocol) | Anything that knows how to write events |
-| `JsonlSink` | Append-only newline-delimited JSON. Compliance-friendly, grep-friendly |
-| `SignedChainSink` | Each event includes a hash of the previous event, signed with Ed25519. Makes the log **tamper-evident** — flipping one bit anywhere invalidates the whole chain from that point forward |
+| `WormSink` | The durable system of record: an append-only, Ed25519-signed SHA-256 hash chain on a `0600` file. **Tamper-evident** (flip one byte → verify fails), **restart-safe** (tip restored from the file tail), **single-writer** (`flock`), **crash-recoverable** (torn-tail truncate + signed recovery record), and rotates to bounded segments. Replaces the old unchained `JsonlSink` and the in-memory-only `SignedChainSink` |
+| `verify_chain(path, public_key)` | Lock-free read-path verifier: streams every segment, checking hash links, Ed25519 signatures (AU-10), `seq` contiguity, and the genesis anchor. Powers `arc store verify` |
 | `NullSink` | For tests |
 | `emit(event, sink)` | Single emission point. Swallows sink failures (NIST AU-5) — a broken sink can never crash the agent |
 
@@ -172,7 +174,7 @@ Powered by **PyNaCl → libsodium**. Same primitive you'd find in WireGuard, age
 
 | Property | How |
 |---|---|
-| **Tamper-evident audit** | `SignedChainSink` chains each event with a hash of the previous one, signed with Ed25519. Flip a single byte anywhere → chain verification fails |
+| **Tamper-evident audit** | `WormSink` chains each event with a hash of the previous one (committing its `seq`), signs every record with Ed25519, and persists to disk. Flip a single byte, forge a signature, or drop a record anywhere → chain verification fails |
 | **No plaintext keys on disk** | Private keys live with `0600` permissions only. Group- or world-readable bits = hard error on load |
 | **Constant-time verification** | `verify()` is constant-time (libsodium). No timing side channel |
 | **Fail-closed policy** | Pipeline crashes → call denied. Exception in a layer → call denied. Default verdict on no match → DENY |
@@ -187,7 +189,7 @@ Powered by **PyNaCl → libsodium**. Same primitive you'd find in WireGuard, age
 |---|---|
 | AU-2, AU-3, AU-12 | `AuditEvent` schema + `emit()` single emission point |
 | AU-5 | Sink failure isolation in `emit()` |
-| AU-9 | `SignedChainSink` for tamper-evidence |
+| AU-9, AU-10 | `WormSink` durable signed hash chain for tamper-evidence + non-repudiation |
 | AU-8 | `ts` field on every `AuditEvent` |
 | IA-3 | `AgentIdentity` Ed25519 DID |
 | SC-12 | Ed25519 keys via libsodium; HKDF child derivation |

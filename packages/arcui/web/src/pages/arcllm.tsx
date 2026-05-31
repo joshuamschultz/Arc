@@ -16,9 +16,8 @@ import {
   useTimeseries,
   useTraces,
 } from '@/lib/queries'
-import { useLiveStore } from '@/store/live'
 import { fmtCost, fmtLatency, fmtNumber, fmtTokens } from '@/lib/format'
-import type { Dict, Trace } from '@/lib/types'
+import type { Dict } from '@/lib/types'
 
 const WINDOWS = [
   { value: '1h', label: '1h' },
@@ -190,22 +189,8 @@ function Overview() {
 
 function Calls() {
   const traceQuery = useTraces(200)
-  const liveTraces = useLiveStore((s) => s.traces)
-
-  const merged = useMemo(() => {
-    const rest = traceQuery.data?.traces ?? []
-    const seen = new Set<string>()
-    const out: Trace[] = []
-    for (const t of [...liveTraces, ...rest]) {
-      const id = t.trace_id ?? `${t.timestamp}-${t.model}`
-      if (seen.has(id)) continue
-      seen.add(id)
-      out.push(t)
-    }
-    return out
-  }, [traceQuery.data, liveTraces])
-
-  return <TraceTable traces={merged} />
+  const traces = traceQuery.data?.traces ?? []
+  return <TraceTable traces={traces} />
 }
 
 export function ArcLlmPage() {

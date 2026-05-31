@@ -14,9 +14,19 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
+from arcstore.records import SpoolRecord as _SpoolRecord
+from arcstore.spool import record as _spool_record
+
 logger = logging.getLogger(__name__)
 
 GENESIS_PREV_HASH = "0" * 64
+
+# Loop-lifecycle event types mirrored to the arcstore operational spool
+# (SPEC-026 FR-4: run start / step / finish). Other events (tool.*) stay in the
+# in-memory hash chain only — the spool captures run lifecycle, not every tick.
+_RUN_EVENT_TYPES = frozenset(
+    {"strategy.selected", "turn.start", "turn.end", "loop.completed"}
+)
 
 
 def _canonical_bytes(
@@ -108,9 +118,14 @@ class EventBus:
         self,
         run_id: str,
         on_event: Callable[[Event], Awaitable[None] | None] | None = None,
+        *,
+        spool_actor_did: str | None = None,
     ) -> None:
         self._run_id = run_id
         self._on_event = on_event
+        # When set, loop-lifecycle events are mirrored to the arcstore spool
+        # under this DID (SPEC-026 FR-4). None disables operational recording.
+        self._spool_actor_did = spool_actor_did
         self._events: list[Event] = []
         self._lock = threading.Lock()
         # Strong refs to pending async-observer tasks so the loop doesn't
@@ -144,7 +159,26 @@ class EventBus:
                     self._schedule_async_observer(result)
             except Exception:  # reason: fail-open — log + continue
                 logger.warning("Observer callback failed", exc_info=True)
+        self._record_run_event(event)
         return event
+
+    def _record_run_event(self, event: Event) -> None:
+        """Mirror a loop-lifecycle event to the arcstore operational spool.
+
+        Side-channel only (SPEC-026 FR-4): gated by an actor DID, scoped to
+        lifecycle event types, and itself fail-open (``record()`` swallows IO
+        errors) so it can never break the loop.
+        """
+        if self._spool_actor_did is None or event.type not in _RUN_EVENT_TYPES:
+            return
+        _spool_record(
+            _SpoolRecord(
+                kind="run_event",
+                actor_did=self._spool_actor_did,
+                request_id=self._run_id,
+                name=event.type,
+            )
+        )
 
     def _schedule_async_observer(self, coro: Any) -> None:
         """Schedule an async observer's coroutine on the running loop.

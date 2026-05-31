@@ -289,7 +289,7 @@ Provider adapters are lazy-imported — they're only loaded when you call `load_
 |---|---|
 | AC-4 (Information Flow) | Bidirectional PII redaction at the trust boundary |
 | AU-2, AU-12 | Audit module emits structured events on every call |
-| AU-9 | Audit module integrates with `arctrust.SignedChainSink` |
+| AU-9 | Audit module integrates with `arctrust.WormSink` (durable signed hash chain) |
 | IA-5 | Vault-backed API key resolution; TTL caching; no plaintext on disk |
 | SC-8 | HTTPS enforcement; HTTP only for loopback addresses |
 | SC-13 | HMAC-SHA256 request signing |

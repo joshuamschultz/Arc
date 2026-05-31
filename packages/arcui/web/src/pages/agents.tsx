@@ -5,7 +5,6 @@ import { StatCard } from '@/components/stat-card'
 import { StatusDot } from '@/components/status-badge'
 import { QueryState, EmptyState } from '@/components/states'
 import { useRoster } from '@/lib/queries'
-import { useRosterSubscription } from '@/hooks/use-arc-socket'
 import { initials } from '@/lib/format'
 import type { Agent } from '@/lib/types'
 
@@ -63,7 +62,6 @@ export function AgentsPage() {
   const navigate = useNavigate()
   const query = useRoster()
   const agents = (query.data?.agents ?? []).filter((a) => !a.hidden)
-  useRosterSubscription(agents.map((a) => a.agent_id ?? '').filter(Boolean))
 
   const online = agents.filter((a) => a.online).length
   const degraded = agents.filter((a) => a.degraded).length
@@ -71,7 +69,7 @@ export function AgentsPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Agents" description="The agent fleet and live status." />
+      <PageHeader title="Agents" description="The agent fleet and status." />
       <div className="flex-1 space-y-5 overflow-auto p-6">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />

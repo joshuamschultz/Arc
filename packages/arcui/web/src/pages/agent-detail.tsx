@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,8 +12,6 @@ import { JsonBlock } from '@/components/json-block'
 import { PolicyBulletCard } from '@/components/policy-bullet'
 import { RunReplayDrawer } from '@/components/run-replay-drawer'
 import { QueryState, EmptyState } from '@/components/states'
-import { useActiveAgent } from '@/hooks/use-arc-socket'
-import { useLiveStore } from '@/store/live'
 import {
   useAgent,
   useAgentConfig,
@@ -27,7 +25,7 @@ import {
 } from '@/lib/queries'
 import { fmtBytes, initials, relativeTime, shortId } from '@/lib/format'
 import type { ColumnDef } from '@tanstack/react-table'
-import type { Dict, Trace } from '@/lib/types'
+import type { Dict } from '@/lib/types'
 
 const TABS = [
   'overview', 'identity', 'runs', 'llm', 'skills', 'tools', 'policy', 'memory', 'files',
@@ -150,20 +148,7 @@ function RunsTab({ agentId }: { agentId: string }) {
 
 function LlmTab({ agentId }: { agentId: string }) {
   const q = useAgentTraces(agentId)
-  const live = useLiveStore((s) => s.traces)
-  const traces = useMemo(() => {
-    const rest = q.data?.traces ?? []
-    const mine = live.filter((t) => t.agent === agentId || t.agent_label === agentId)
-    const seen = new Set<string>()
-    const out: Trace[] = []
-    for (const t of [...mine, ...rest]) {
-      const id = t.trace_id ?? `${t.timestamp}-${t.model}`
-      if (seen.has(id)) continue
-      seen.add(id)
-      out.push(t)
-    }
-    return out
-  }, [q.data, live, agentId])
+  const traces = q.data?.traces ?? []
   return <TraceTable traces={traces} />
 }
 
@@ -270,7 +255,6 @@ export function AgentDetailPage() {
   const navigate = useNavigate()
   const current: TabId = (TABS.includes(tab as TabId) ? tab : 'overview') as TabId
   const agent = useAgent(id)
-  useActiveAgent(id)
 
   const a = agent.data ?? {}
   const label = String(a.display_name || a.name || id)

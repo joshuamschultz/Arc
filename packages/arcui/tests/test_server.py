@@ -14,13 +14,13 @@ def test_app_state_has_agent_registry():
     assert isinstance(app.state.agent_registry, AgentRegistry)
 
 
-def test_app_state_has_subscription_manager():
-    """create_app() should store a SubscriptionManager on app.state."""
+def test_app_state_has_observe():
+    """create_app() should store an Observe instance on app.state (SPEC-026 FR-5)."""
     app = create_app()
-    assert hasattr(app.state, "subscription_manager")
-    from arcui.subscription import SubscriptionManager
+    assert hasattr(app.state, "observe")
+    from arcui.observe import Observe
 
-    assert isinstance(app.state.subscription_manager, SubscriptionManager)
+    assert isinstance(app.state.observe, Observe)
 
 
 def test_app_state_has_pending_controls():
@@ -30,11 +30,11 @@ def test_app_state_has_pending_controls():
     assert isinstance(app.state.pending_controls, dict)
 
 
-def test_event_buffer_has_subscription_manager():
-    """EventBuffer should be wired with the SubscriptionManager."""
+def test_app_state_has_circuit_breakers_list():
+    """create_app() should store an empty circuit_breakers list on app.state."""
     app = create_app()
-    event_buffer = app.state.event_buffer
-    assert event_buffer._sub_mgr is app.state.subscription_manager
+    assert hasattr(app.state, "circuit_breakers")
+    assert isinstance(app.state.circuit_breakers, list)
 
 
 def test_max_agents_parameter():
@@ -45,10 +45,9 @@ def test_max_agents_parameter():
 
 
 def test_agent_routes_registered():
-    """Agent WS and REST routes should be present in the app."""
+    """Agent REST routes should be present in the app (SPEC-026 FR-5: /api/agent/connect WS deleted)."""
     app = create_app()
     paths = [r.path for r in app.routes if hasattr(r, "path")]
-    assert "/api/agent/connect" in paths
     assert "/api/agents" in paths
     assert "/api/agents/{id}" in paths
     assert "/api/agents/{id}/control" in paths

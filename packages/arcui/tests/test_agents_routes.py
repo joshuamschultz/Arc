@@ -17,6 +17,7 @@ from starlette.testclient import TestClient
 
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.routes.agent_detail import routes as agent_detail_routes
 from arcui.routes.agents import routes as agent_routes
@@ -128,7 +129,11 @@ def _build_team_dir(tmp_path: Path) -> Path:
     return root
 
 
-def _make_detail_app(team_root: Path | None = None) -> tuple[Starlette, AuthConfig, AgentRegistry]:
+def _make_detail_app(
+    team_root: Path | None = None,
+    *,
+    data_dir: Path | None = None,
+) -> tuple[Starlette, AuthConfig, AgentRegistry]:
     """Build a Starlette app wired with both list/control routes and detail routes."""
     auth = AuthConfig(
         {
@@ -147,6 +152,8 @@ def _make_detail_app(team_root: Path | None = None) -> tuple[Starlette, AuthConf
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.audit_buffer = deque(maxlen=1000)
     app.state.team_root = team_root
+    # SPEC-026 FR-5: stats and traces routes read from the Observe plane.
+    app.state.observe = Observe(data_dir=data_dir)
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:
@@ -688,10 +695,6 @@ class TestEdgeCases:
     def test_stats_invalid_window_400(self, tmp_path):
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
-        # Wire an aggregator so window check is reached
-        from arcui.aggregator import RollingAggregator
-
-        app.state.aggregator = RollingAggregator()
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/stats?window=evil", headers=_viewer(auth))
         assert resp.status_code == 400
@@ -725,38 +728,48 @@ class TestEdgeCases:
         resp = client.get("/api/agents/alpha/tasks", headers=_viewer(auth))
         assert resp.json() == {"tasks": []}
 
-    def test_traces_with_store_returns_records(self, tmp_path):
+    def test_traces_with_store_returns_records(self, tmp_path, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: traces come from the Observe plane (arcstore mirror).
+        # Seed a spool record, backfill via the full create_app lifespan.
+        from arcstore.records import SpoolRecord
+        from arcstore.spool import record as spool_record
+
+        from arcui.auth import AuthConfig
+        from arcui.server import create_app
+
+        spool = _isolated_arc_data_dir / "spool"
+        spool.mkdir(parents=True, exist_ok=True)
+        rec = SpoolRecord(
+            kind="llm_call",
+            actor_did="did:arc:test:alpha",
+            agent_label="alpha",
+            request_id="req-alpha-1",
+            model="claude",
+            prompt_tokens=100,
+            completion_tokens=50,
+            cost_usd=0.001,
+            latency_ms=10.0,
+            outcome="ok",
+        )
+        spool_record(rec, path=spool / "operational-2026-05-31.jsonl")
+
         team = _build_team_dir(tmp_path)
-        app, auth, _ = _make_detail_app(team_root=team)
-
-        class _StubRecord:
-            def __init__(self, agent: str) -> None:
-                self.agent = agent
-
-            def model_dump(self) -> dict:
-                return {"agent": self.agent}
-
-        class _StubStore:
-            async def query(self, *, limit: int, agent: str | None = None):
-                return ([_StubRecord(agent or "alpha")], "next-cursor")
-
-        app.state.trace_store = _StubStore()
-        client = TestClient(app)
-        resp = client.get("/api/agents/alpha/traces?limit=5", headers=_viewer(auth))
+        auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/agents/alpha/traces?limit=5",
+                headers=_viewer(auth),
+            )
         assert resp.status_code == 200
         body = resp.json()
-        assert body["cursor"] == "next-cursor"
-        assert body["traces"][0]["agent"] == "alpha"
+        assert body["cursor"] is None
+        assert len(body["traces"]) == 1
+        assert body["traces"][0]["agent_label"] == "alpha"
 
     def test_traces_invalid_limit_400(self, tmp_path):
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
-
-        class _StubStore:
-            async def query(self, **kwargs):
-                return ([], None)
-
-        app.state.trace_store = _StubStore()
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/traces?limit=abc", headers=_viewer(auth))
         assert resp.status_code == 400
@@ -850,22 +863,19 @@ class TestEdgeCases:
         resp = client.get("/api/agents/alpha/sessions/bad%20id", headers=_viewer(auth))
         assert resp.status_code == 400
 
-    def test_stats_with_aggregator_returns_200(self, tmp_path):
+    def test_stats_with_observe_returns_200(self, tmp_path):
+        # SPEC-026 FR-5: stats come from Observe (arcstore mirror), not a RollingAggregator.
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
-        from arcui.aggregator import RollingAggregator
-
-        app.state.aggregator = RollingAggregator()
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/stats?window=1h", headers=_viewer(auth))
         assert resp.status_code == 200
         assert resp.json()["window"] == "1h"
 
-    def test_traces_without_store_returns_empty(self, tmp_path):
+    def test_traces_without_data_returns_empty(self, tmp_path):
+        # SPEC-026 FR-5: with no spool data the Observe plane returns an empty list.
         team = _build_team_dir(tmp_path)
         app, auth, _ = _make_detail_app(team_root=team)
-        # No trace_store wired on the test app — endpoint returns empty.
-        app.state.trace_store = None
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/traces", headers=_viewer(auth))
         assert resp.status_code == 200

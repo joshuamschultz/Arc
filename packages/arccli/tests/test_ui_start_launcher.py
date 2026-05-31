@@ -1,7 +1,7 @@
 """Coverage tests for `arc ui start` launcher (review BLOCKER #11).
 
-The previous test suite covered helpers (`_resolve_trace_stores`,
-`_maybe_open_browser`, `_select_trace_store`) but not `_start()` itself.
+The previous test suite covered helpers (`_maybe_open_browser`) but not
+`_start()` itself.
 These tests exercise the launcher end-to-end with uvicorn replaced by a
 spy so we can assert: (1) atomic 0600 token persistence, (2) loopback
 gating of browser open, (3) `mark_bootstrap_issued` only on loopback,
@@ -157,7 +157,6 @@ class TestStartLoopback:
 
         with (
             patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("arccli.commands.ui._resolve_trace_stores", return_value=[]),
             patch("uvicorn.Server", _SpyServer),
             patch("arccli.commands.ui._maybe_open_browser") as mock_open,
         ):
@@ -187,7 +186,6 @@ class TestStartLoopback:
 
         with (
             patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("arccli.commands.ui._resolve_trace_stores", return_value=[]),
             patch("uvicorn.Server", _SpyServer),
         ):
             _start(_make_args(host="127.0.0.1"))
@@ -216,7 +214,6 @@ class TestStartNonLoopback:
 
         with (
             patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("arccli.commands.ui._resolve_trace_stores", return_value=[]),
             patch("uvicorn.Server", _SpyServer),
         ):
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
@@ -240,7 +237,6 @@ class TestStartNonLoopback:
 
         with (
             patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("arccli.commands.ui._resolve_trace_stores", return_value=[]),
             patch("uvicorn.Server", _SpyServer),
         ):
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
@@ -262,7 +258,6 @@ class TestStartNonLoopback:
 
         with (
             patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("arccli.commands.ui._resolve_trace_stores", return_value=[]),
             patch("uvicorn.Server", _SpyServer),
         ):
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
