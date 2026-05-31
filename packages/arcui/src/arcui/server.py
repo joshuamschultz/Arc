@@ -306,10 +306,10 @@ def create_app(
             wm = getattr(starlette_app.state, "watcher_manager", None)
             if wm is not None:
                 await wm.shutdown()
-            bridge = getattr(starlette_app.state, "file_change_bridge", None)
+            file_bridge = getattr(starlette_app.state, "file_change_bridge", None)
             bus = getattr(starlette_app.state, "file_event_bus", None)
-            if bridge is not None and bus is not None:
-                bridge.detach(bus)
+            if file_bridge is not None and bus is not None:
+                file_bridge.detach(bus)
 
     app = Starlette(routes=routes, lifespan=lifespan)
     app.add_middleware(AuthMiddleware, auth_config=auth)
