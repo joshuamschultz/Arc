@@ -224,11 +224,68 @@ packages/arcstore/src/arcstore/
     backends/base.py      # + tables, _KIND_TABLE entries
     backends/sqlite.py    # + table schemas
 packages/arcrun/src/arcrun/
+    executor.py           # compute args/result digest+size where the data lives (§11.1 C1)
     events.py             # EventBus._record_run_event: map tool.* → tool_event
 packages/arcagent/src/arcagent/orchestration/
     spawn.py              # child actor_did/label + spawn_event
+packages/arcllm/src/arcllm/modules/
+    telemetry.py          # read agent_did/agent_label from contextvars (§11.2)
 packages/arcui/src/arcui/
     observe.py            # tool_events / spawn_tree / llm_by_identity
     routes/…              # read routes
     web/…                 # timeline + lineage tree + identity cost view
 ```
+
+---
+
+## 11. Research Insights (from /deepen, 2026-05-31)
+
+Five parallel research agents (3 codebase, 2 web) enriched this design. Solutions
+archive: 4 security learnings, none directly applicable (they cover sandbox/AST
+and scheduler hardening, not telemetry). Findings filtered Simplicity > Modularity
+> Security > Scalability, each with the three mandatory callouts. **Two findings
+(C1, C2) change the build; the rest confirm or refine it.**
+
+### 11.0 CRITICAL — corrections to the Phase-1/2 design as drafted
+
+| # | Issue (verified in code) | Fix | Pillar |
+|---|---|---|---|
+| C1 | **The result body is NOT available where SDD §4.1 assumed.** `arcrun/executor.py:34` emits `tool.start{name, arguments}` (args present) but `tool.end` (`executor.py:75-82`) emits only `result_length` + `duration_ms` — **no result body**. Computing `result_digest` in `events.py` would digest a length, not content. | Compute `args_digest`/`args_size` **and** `result_digest`/`result_size` in `executor.py` where `tc.arguments` and `result` both exist; emit them on the `tool.start`/`tool.end`/`tool.error` events. `events.py` only maps the already-computed fields to a `SpoolRecord`. Bodies ride the event (and into `extra`) **only** when `store_raw_bodies=true`. | S, Sec |
+| C2 | **Child-LLM identity via `set_global_defaults` is concurrency-unsafe.** `telemetry.py:71-95` `_global_defaults` is a process-global dict; `spawn_many` (`spawn.py`) runs children via `asyncio.gather`, so concurrent children would overwrite each other's `agent_did` → cross-attributed `llm_call`s. | Use **`contextvars`** (task-local, asyncio-native, zero shared state). `telemetry.py` reads `agent_did`/`agent_label` from a `ContextVar` (falling back to config/global). `spawn.py` sets the contextvar around the child `run()` with capture-and-`try/finally`-reset. Industry-confirmed: LangSmith uses a `_PARENT_RUN_TREE` ContextVar for exactly this. | M, Sec, Sc |
+
+### 11.1 arcrun tool spooling (FR-1/FR-2)
+
+- **Schema: extend the shared `_OPERATIONAL_COLUMNS`, don't fork.** `backends/base.py:18` + `sqlite.py:27-66` already drive *all* operational tables from one column tuple via a template DDL. Add `tool_name`/`phase`/`args_digest`/`result_digest`/`args_size`/`result_size` once; `tool_events` and the new `spawn_events` reuse the same column set. One DDL, one ingest path, five kinds. **S.**
+- **`store_raw_bodies` flows like `actor_did`:** add a `store_raw_bodies: bool` param to `EventBus.__init__` and `run()`/`run_async()`; the *caller* (arcagent/arccli) passes it from `ArcStoreConfig`. arcrun never reads config — boundary held (`events.py:17-18` imports only `arcstore.spool`/`records`). **M.**
+- **Align field names to OTel GenAI semconv** (`gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.operation.name=execute_tool`, `error.type`) so the flat record is convention-compatible even though it is **not** OTLP-file format. OTel marks `gen_ai.tool.call.arguments`/`.result` as **Opt-In** ("may contain sensitive information") — independent validation of our metadata-only default. [OTel GenAI spans]. **Sec.**
+- **Callouts:** *(ceiling)* tool events are the volume driver — 10–1000+/run vs ~10–50 `llm_call`s; a heavy code-gen loop is the worst case. *(air-gapped)* spool is local `os.write`, no network; OTel's own air-gap answer is the file exporter — we already are one. *(module)* arcrun stays `arcstore.spool`-only; digest helper is stdlib `hashlib`.
+
+### 11.2 Child identity + lineage (FR-3)
+
+- **Child `run_event`s: the fix is one argument.** `arcrun.run()` already accepts `actor_did` → `EventBus(spool_actor_did=…)` → `_record_run_event`. Both spawn call sites omit it today (`spawn.py:156` in `make_spawn_tool`, `spawn.py:495` in `spawn()`). Passing `actor_did=child_did` (already derived as `ChildIdentity.did`) completes child run-event separation. **M.**
+- **Child `llm_call`s: contextvars (C2).** Ranked options — (D) `set_global_defaults` *rejected* (global race); (C) thread through `run()` *rejected* (arcrun→arcllm boundary breach); (A) wrapper TelemetryModule *viable* but adds a proxy layer; **(B) contextvars *chosen*** — task-local, zero overhead, asyncio-native, minimal coupling (telemetry identity stays an arcllm concern; arcagent only *sets* the context). **The asyncio trap:** `create_task` snapshots context at task-creation time — set the contextvar *before* spawning the child task, or capture+attach inside the child coroutine. **M, Sec, Sc.**
+- **Lineage = flat edge + parent pointer, reconstruct on read.** Every production system examined (Langfuse `parent_id`, LangSmith `parent_run`/`dotted_order`, Phoenix `parent_span_id`, MLflow DAG) stores flat rows and rebuilds the tree at query time — never nested storage. Our `spawn_event{parent_did, child_did, role, depth}` is exactly that. This is OTel "Pattern B" (new trace per child + a link back) materialized as a durable edge table — the right fit for async children that must stay independently queryable. **S, M.**
+- **`spawn.py` may import `arcstore.spool`** to emit the operational `spawn_event` (precedent: `arcrun/events.py:17`). `_emit_spawn_audit` (arctrust WORM) stays — compliance edge in the chain, operational edge in the spool. `parent_state.depth` is available at spawn time. **M.**
+- **Callouts:** *(ceiling)* `max_depth=3` (`arcrun/state.py`) bounds trees to ~125 nodes (≤5 concurrent × 3 levels) — trivial to render; deep/wide fan-out is structurally capped. *(air-gapped)* all identity flow is in-process, no network. *(module)* spawn stays arcagent, arcrun source unchanged, telemetry identity stays arcllm.
+
+### 11.3 Cost attribution + sampling
+
+- **Store cost at the `llm_call` leaf, aggregate up on read — never write parent totals.** Universal industry standard (ClickHouse names pre-aggregated parent totals an anti-pattern). Double-counting is impossible by construction: orchestrator/parent records carry no token fields. `observe_stats.compute_stats()` already groups `llm_calls` by `agent_label`, so once children carry a distinct label, parent-vs-child separation is **free** — no new aggregation code. Parent-subtree total = sum over the lineage subtree at read. **S, M.**
+- **`[arcstore].sample_rate` is defined but UNWIRED today** (`config.py:60`; zero refs in `spool.py`/`ingest.py`). Wire it at the **EventBus level** (caller passes effective rate, like `store_raw_bodies`) so only `tool_event` is thinned. **Never sample out errors, `run_event`, or `spawn_event`** — OTel tail-sampling's core rule (errors + lifecycle/parent spans are always kept; only routine spans are probabilistic). **Sc, Sec.**
+- **Callout (ceiling, quantified):** at single-operator scale a full-window timeline read (merge `llm_calls`+`run_events`+`tool_events` by `ts` in Python) is cheap to ~10k rows/run; beyond that a SQL `UNION ALL … ORDER BY ts` view is the escape hatch (deferred — YAGNI until measured).
+
+### 11.4 arcui surfaces (FR-4)
+
+- **Timeline = query-per-table + merge by `ts` in Python** (no union today; matches the existing `Observe` one-table-per-call shape). Correlation key is `request_id == run_id` — already set on `run_event`; **set it on `tool_event` too** so a run's three streams join. **S.**
+- **Read-on-demand React Query only.** Confirmed `server.py` keeps only `/ws/chat`; pages use `useQuery`/`useQueries` (`web/src/pages/arcllm.tsx`, `arcrun.tsx`). New routes must be synchronous read-response. `test_no_push_pipeline.py` forbids re-introducing any of `arcui.bridge/aggregator/event_buffer/subscription/transport*/routes.ws/dashboard_ws/agent_ws` or symbols `UIBridgeSink/RollingAggregator/EventBuffer/...` — new code must not import or name them. **M.**
+- **Minimal component set:** a timeline list (reuse trace-table row logic + a `ToolEventRow` variant), a recursive `SpawnTree` (`<details>/<summary>`, bounded by depth≤3), and an identity breakdown reusing the existing agent-stats table. **S.**
+
+### Source-of-truth precedents to clone (codebase)
+
+| Build target | Clone from |
+|---|---|
+| `tool_event` spool record + EventBus mapping | `arcllm/modules/telemetry.py` `llm_call` recorder; `arcrun/events.py:165-181` `_record_run_event` |
+| digest-at-source on tool I/O | `arcrun/executor.py:34,75-82` (where args/result exist) |
+| child `actor_did` threading | `arcrun/loop.py` `run(actor_did=…)` → `EventBus(spool_actor_did=…)` |
+| contextvar identity | LangSmith `_PARENT_RUN_TREE` pattern (external) |
+| timeline merge / cost-by-label | `arcui/observe.py`, `arcui/observe_stats.py compute_stats()` |
