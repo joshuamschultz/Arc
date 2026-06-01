@@ -155,6 +155,7 @@ async def run_stream(
     transform_context: Callable[..., Any] | None = None,
     tool_choice: dict[str, Any] | None = None,
     actor_did: str | None = None,
+    store_raw_bodies: bool = False,
     audit_sink: Any | None = None,
     ui_reporter: Any | None = None,
 ) -> AsyncIterator[StreamEvent]:
@@ -182,6 +183,8 @@ async def run_stream(
         transform_context: Optional context transformer forwarded to the loop.
         tool_choice: Optional forced tool-choice forwarded to the loop.
         actor_did: Optional caller DID forwarded to the loop's EventBus (spool).
+        store_raw_bodies: When True, tool argument + result bodies ride the spool
+            (so the observability surface can show tool in/out); off by default.
         audit_sink: Optional arctrust.AuditSink. AuditEvents for stream lifecycle
             (stream.start, stream.end) are emitted to this sink. When None,
             falls back to logger-only (backwards compatible).
@@ -263,6 +266,7 @@ async def run_stream(
                 transform_context=transform_context,
                 tool_choice=tool_choice,
                 actor_did=actor_did,
+                store_raw_bodies=store_raw_bodies,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue

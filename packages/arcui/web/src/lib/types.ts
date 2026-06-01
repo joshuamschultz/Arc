@@ -234,12 +234,16 @@ export interface TimelineEntry {
   args_size?: number | null
   result_digest?: string | null
   result_size?: number | null
+  // tool bodies (present only when raw capture is on): { args, result }
+  extra?: Record<string, unknown> | null
   // run_event
   name?: string | null
   // llm_call
   model?: string | null
   agent_label?: string | null
   cost_usd?: number | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
 }
 
 export interface RunTimelineResponse {
@@ -270,4 +274,27 @@ export interface IdentityCost {
 export interface IdentityCostResponse {
   window: string
   identities: IdentityCost[]
+}
+
+// A run = one user-question→final-response cycle (one arcrun run_id), folded
+// from its run/tool/llm spool rows on read.
+export interface RunSummary {
+  run_id: string
+  agent: string
+  actor_did?: string | null
+  started_at?: string | null
+  ended_at?: string | null
+  duration_ms?: number | null
+  turns: number
+  tool_calls: number
+  llm_calls: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  cost_usd: number
+  status: string // completed | running | error
+}
+
+export interface RunsResponse {
+  runs: RunSummary[]
 }

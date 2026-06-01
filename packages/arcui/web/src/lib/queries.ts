@@ -11,6 +11,7 @@ import type {
   PolicyBulletsResponse,
   PolicyResponse,
   PolicyStatsResponse,
+  RunsResponse,
   RunTimelineResponse,
   SchedulesResponse,
   SessionReplayResponse,
@@ -242,6 +243,8 @@ export const useAgentFileRead = (agentId: string, path: string | null) =>
   })
 
 // --- SPEC-028: tool/code timeline, spawn lineage, per-identity cost --------
+
+export const useRuns = () => useApiQuery<RunsResponse>(['runs'], '/api/runs')
 
 export const useRunTimeline = (runId: string | null) =>
   useQuery<RunTimelineResponse>({

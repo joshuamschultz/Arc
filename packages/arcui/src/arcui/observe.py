@@ -24,6 +24,7 @@ from arcui.observe_stats import (
     compute_cost_efficiency,
     compute_llm_by_identity,
     compute_performance,
+    compute_runs,
     compute_stats,
     compute_timeseries,
 )
@@ -235,6 +236,24 @@ class Observe:
         return await self._backend.query(
             "tool_events", where={"request_id": run_id}, order_by="ts", limit=limit
         )
+
+    async def runs(
+        self, *, agent: str | None = None, limit: int = 200, scan: int = 20_000
+    ) -> list[dict[str, Any]]:
+        """List real runs (one per ``request_id``), newest first.
+
+        Folds run/tool/llm rows into per-run summaries on read — the durable
+        record *is* the run list, so there is no session-file scanning. ``scan``
+        bounds how many recent rows per table are folded; ``limit`` caps runs.
+        """
+        await self._ensure()
+        where = {"actor_did": agent} if agent else None
+        rows: list[dict[str, Any]] = []
+        for kind in ("run_events", "tool_events", "llm_calls"):
+            rows.extend(
+                await self._backend.query(kind, where=where, order_by="ts DESC", limit=scan)
+            )
+        return compute_runs(rows, limit=limit)
 
     async def timeline(self, *, run_id: str, limit: int = 1000) -> list[dict[str, Any]]:
         """Merged per-run timeline: llm_call + run_event + tool_event by ``ts``.

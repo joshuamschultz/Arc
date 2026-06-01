@@ -32,10 +32,10 @@ def test_eventbus_records_lifecycle_run_events() -> None:
         bus.emit("turn.start", {"turn": 1})
         bus.emit("tool.start", {"name": "echo"})  # SPEC-028: now a tool_event
         bus.emit("turn.end", {"turn": 1})
-        bus.emit("loop.completed", {})
+        bus.emit("loop.complete", {})  # universal terminal (_build_result)
     # Lifecycle markers spool as run_events; tool.* spools as tool_events (FR-1).
     run_names = [r.name for r in recorded if r.kind == "run_event"]
-    assert run_names == ["turn.start", "turn.end", "loop.completed"]
+    assert run_names == ["turn.start", "turn.end", "loop.complete"]
     tool_phases = [r.phase for r in recorded if r.kind == "tool_event"]
     assert tool_phases == ["start"]
     assert all(r.actor_did == "did:arc:acme:analyst/aabbccdd" for r in recorded)
@@ -79,4 +79,6 @@ async def test_loop_emits_run_events() -> None:
     names = [r.name for r in recorded]
     assert "turn.start" in names
     assert "turn.end" in names
+    # Every run spools a terminal marker so observers know it finished (not stuck).
+    assert "loop.complete" in names
     assert all(r.kind == "run_event" for r in recorded)

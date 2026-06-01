@@ -4,6 +4,7 @@ Read-only, pull-based — mirrors the existing trace/stats routes (SPEC-026
 D-007). No push, no polling machinery: each endpoint is a synchronous
 request→response read from ``app.state.observe`` (the arcstore mirror).
 
+- ``GET /api/runs`` — list of real runs (one per request_id), newest first.
 - ``GET /api/runs/{run_id}/timeline`` — merged tool/code/llm/run timeline.
 - ``GET /api/spawn-tree?root=<did>`` — parent→child lineage tree.
 - ``GET /api/stats/by-identity?window=<w>`` — per-identity LLM cost (parent vs child).
@@ -26,6 +27,15 @@ _VALID_ID_RE = re.compile(r"^[a-zA-Z0-9._:/-]{1,128}$")
 
 def _invalid(msg: str) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=msg).model_dump(mode="json"), status_code=400)
+
+
+async def get_runs(request: Request) -> JSONResponse:
+    """GET /api/runs[?agent=<did>] — real runs (one per request_id), newest first."""
+    agent = request.query_params.get("agent")
+    if agent is not None and not _VALID_ID_RE.match(agent):
+        return _invalid("Invalid agent format")
+    runs = await request.app.state.observe.runs(agent=agent)
+    return JSONResponse({"runs": runs})
 
 
 async def get_run_timeline(request: Request) -> JSONResponse:
@@ -55,6 +65,7 @@ async def get_stats_by_identity(request: Request) -> JSONResponse:
 
 
 routes = [
+    Route("/api/runs", get_runs),
     Route("/api/runs/{run_id}/timeline", get_run_timeline),
     Route("/api/spawn-tree", get_spawn_tree),
     Route("/api/stats/by-identity", get_stats_by_identity),

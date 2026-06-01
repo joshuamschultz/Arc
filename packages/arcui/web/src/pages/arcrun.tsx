@@ -1,83 +1,85 @@
 import { useMemo, useState } from 'react'
-import { useQueries } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Workflow, Users } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { StatCard } from '@/components/stat-card'
 import { DataTable } from '@/components/data-table'
-import { RunReplayDrawer } from '@/components/run-replay-drawer'
-import { IdentityCostTable, RunTimeline, SpawnLineage } from '@/components/run-observability'
+import { StatusText } from '@/components/status-badge'
+import { RunDetailDrawer } from '@/components/run-detail-drawer'
+import { SpawnLineage } from '@/components/run-observability'
 import { LoadingRows } from '@/components/states'
-import { apiGet } from '@/lib/api'
-import { useRoster } from '@/lib/queries'
-import { fmtBytes, relativeTime, shortId } from '@/lib/format'
-import type { SessionsListResponse } from '@/lib/types'
+import { useRoster, useRuns } from '@/lib/queries'
+import { fmtLatency, fmtNumber, relativeTime, shortId } from '@/lib/format'
+import type { RunSummary } from '@/lib/types'
 
-interface RunRow {
-  agent_id: string
-  sid: string
-  size: number
-  mtime: number
+// The run spool carries the actor DID; the roster knows the human-facing name.
+function resolveAgent(r: RunSummary, nameByDid: Map<string, string>): string {
+  return (r.actor_did && nameByDid.get(r.actor_did)) || nameByDid.get(r.agent) || r.agent
 }
 
-const columns: ColumnDef<RunRow, unknown>[] = [
-  {
-    accessorKey: 'agent_id',
-    header: 'Agent',
-    cell: (c) => <span className="font-mono text-xs text-foreground">{String(c.getValue())}</span>,
-  },
-  {
-    accessorKey: 'sid',
-    header: 'Run',
-    cell: (c) => <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 18)}</span>,
-  },
-  {
-    accessorKey: 'size',
-    header: 'Size',
-    cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtBytes(c.getValue() as number)}</span>,
-  },
-  {
-    accessorKey: 'mtime',
-    header: 'Updated',
-    cell: (c) => <span className="whitespace-nowrap text-xs text-muted-foreground">{relativeTime(c.getValue() as number)}</span>,
-  },
-]
-
 export function ArcRunPage() {
+  const { data, isLoading } = useRuns()
   const roster = useRoster()
-  const agents = useMemo(
-    () => (roster.data?.agents ?? []).filter((a) => !a.hidden && a.agent_id),
-    [roster.data],
+
+  // Resolve actor DID → friendly agent name (the run spool carries the DID;
+  // the roster knows the human-facing name).
+  const nameByDid = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of roster.data?.agents ?? []) {
+      if (a.did) m.set(a.did, a.display_name || a.name || a.agent_id || a.did)
+    }
+    return m
+  }, [roster.data])
+
+  const columns = useMemo<ColumnDef<RunSummary, unknown>[]>(
+    () => [
+      {
+        id: 'agent',
+        header: 'Agent',
+        accessorFn: (r) => resolveAgent(r, nameByDid),
+        cell: (c) => <span className="font-medium text-xs text-foreground">{c.getValue() as string}</span>,
+      },
+      {
+        accessorKey: 'run_id',
+        header: 'Run',
+        cell: (c) => <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 14)}</span>,
+      },
+      {
+        accessorKey: 'status',
+        header: 'Status',
+        cell: (c) => <StatusText value={c.getValue() as string} />,
+      },
+      {
+        accessorKey: 'turns',
+        header: 'Turns',
+        cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtNumber(c.getValue() as number)}</span>,
+      },
+      {
+        accessorKey: 'tool_calls',
+        header: 'Tools',
+        cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtNumber(c.getValue() as number)}</span>,
+      },
+      {
+        accessorKey: 'duration_ms',
+        header: 'Duration',
+        cell: (c) => <span className="font-mono text-xs tabular-nums text-muted-foreground">{fmtLatency(c.getValue() as number | null)}</span>,
+      },
+      {
+        accessorKey: 'started_at',
+        header: 'Started',
+        cell: (c) => <span className="whitespace-nowrap text-xs text-muted-foreground">{relativeTime(c.getValue() as string)}</span>,
+      },
+    ],
+    [nameByDid],
   )
 
-  // Runs are per-agent sessions — fan out across the fleet and merge.
-  const sessionQueries = useQueries({
-    queries: agents.map((a) => ({
-      queryKey: ['agent', a.agent_id, 'sessions'],
-      queryFn: ({ signal }: { signal: AbortSignal }) =>
-        apiGet<SessionsListResponse>(`/api/agents/${a.agent_id}/sessions`, signal),
-    })),
-  })
-
-  const rows = useMemo<RunRow[]>(() => {
-    const out: RunRow[] = []
-    sessionQueries.forEach((q, i) => {
-      const agentId = agents[i]?.agent_id ?? ''
-      for (const s of q.data?.sessions ?? []) {
-        out.push({ agent_id: agentId, sid: s.sid, size: s.size, mtime: s.mtime })
-      }
-    })
-    return out.sort((a, b) => b.mtime - a.mtime)
-  }, [sessionQueries, agents])
-
-  const [active, setActive] = useState<RunRow | null>(null)
-
-  const agentsWithRuns = new Set(rows.map((r) => r.agent_id)).size
-  const loading = roster.isLoading || sessionQueries.some((q) => q.isLoading)
+  const rows = useMemo<RunSummary[]>(() => data?.runs ?? [], [data])
+  const [active, setActive] = useState<RunSummary | null>(null)
+  const agentsWithRuns = new Set(rows.map((r) => resolveAgent(r, nameByDid))).size
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="ArcRun" description="Agentic-loop runs and traces." />
+      <PageHeader title="ArcRun" description="Agentic-loop runs — one per user-question→final-response cycle. Click a run for its step-by-step timeline." />
       <div className="flex-1 space-y-5 overflow-auto p-6">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-2">
           <StatCard label="Runs" value={rows.length} icon={<Workflow className="size-4" />} />
@@ -86,7 +88,7 @@ export function ArcRunPage() {
 
         <section className="space-y-2">
           <h3 className="text-sm font-semibold text-foreground">Runs</h3>
-          {loading ? (
+          {isLoading ? (
             <LoadingRows />
           ) : (
             <DataTable
@@ -95,39 +97,21 @@ export function ArcRunPage() {
               searchable
               searchPlaceholder="Search runs…"
               onRowClick={setActive}
-              isRowActive={(r) => r.sid === active?.sid}
+              isRowActive={(r) => r.run_id === active?.run_id}
               emptyTitle="No runs recorded"
-              emptyDescription="Agentic runs (sessions) appear here as agents execute."
+              emptyDescription="Each user-question→final-response cycle appears here as agents execute."
             />
           )}
         </section>
 
-        {/* SPEC-028 — tool/code timeline for the selected run (UC-1/UC-4). */}
-        {active && (
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-foreground">
-              Tool / code timeline — {shortId(active.sid, 18)}
-            </h3>
-            <RunTimeline runId={active.sid} />
-          </section>
-        )}
-
-        {/* SPEC-028 — spawn lineage (UC-2) + per-identity cost (UC-3). */}
-        <section className="grid gap-5 lg:grid-cols-2">
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-foreground">Spawn lineage</h3>
-            <SpawnLineage root={null} />
-          </div>
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold text-foreground">LLM cost by identity</h3>
-            <IdentityCostTable window="24h" />
-          </div>
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold text-foreground">Spawn lineage</h3>
+          <SpawnLineage root={null} />
         </section>
       </div>
 
-      <RunReplayDrawer
-        agentId={active?.agent_id ?? null}
-        sid={active?.sid ?? null}
+      <RunDetailDrawer
+        run={active}
         open={!!active}
         onOpenChange={(o) => !o && setActive(null)}
       />

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import arcstore.spool as spool_mod
 from arcstore.records import SpoolRecord
-from arcstore.spool import read, record, spool_path
+from arcstore.spool import read, record, request_context, spool_path
 
 
 def test_record_appends_durable_line_without_store(tmp_path: Path) -> None:
@@ -75,3 +75,48 @@ def test_daily_rotation_path(tmp_path: Path) -> None:
     assert p1.parent == tmp_path / "spool"
     assert p1.name.startswith("operational-")
     assert p1.name.endswith(".jsonl")
+
+
+# --- request-id correlation context (run tracking) -------------------------
+
+
+def test_request_context_fills_missing_request_id(tmp_path: Path) -> None:
+    # A record with no request_id inherits the active run correlation id, so an
+    # llm_call emitted deep inside a run is attributable to that run.
+    target = tmp_path / "operational.jsonl"
+    with request_context("run-1"):
+        record(SpoolRecord(kind="llm_call", actor_did="did:a", model="m"), path=target)
+    out = list(read(target))
+    assert [r.request_id for r in out] == ["run-1"]
+
+
+def test_request_context_does_not_override_explicit_request_id(tmp_path: Path) -> None:
+    # An explicit request_id always wins — tool/run events set their own and must
+    # never be rewritten by an enclosing context.
+    target = tmp_path / "operational.jsonl"
+    with request_context("run-1"):
+        record(
+            SpoolRecord(kind="tool_event", actor_did="did:a", request_id="explicit"),
+            path=target,
+        )
+    assert [r.request_id for r in read(target)] == ["explicit"]
+
+
+def test_request_context_resets_on_exit(tmp_path: Path) -> None:
+    # Outside the context, records carry no correlation id (no leak across runs).
+    target = tmp_path / "operational.jsonl"
+    with request_context("run-1"):
+        pass
+    record(SpoolRecord(kind="llm_call", actor_did="did:a"), path=target)
+    assert [r.request_id for r in read(target)] == [None]
+
+
+def test_request_context_nests(tmp_path: Path) -> None:
+    # A nested run (spawned child) binds its own id, then restores the parent's.
+    target = tmp_path / "operational.jsonl"
+    with request_context("parent"):
+        record(SpoolRecord(kind="llm_call", actor_did="did:a"), path=target)
+        with request_context("child"):
+            record(SpoolRecord(kind="llm_call", actor_did="did:b"), path=target)
+        record(SpoolRecord(kind="llm_call", actor_did="did:c"), path=target)
+    assert [r.request_id for r in read(target)] == ["parent", "child", "parent"]

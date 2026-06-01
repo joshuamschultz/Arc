@@ -240,6 +240,99 @@ def compute_performance(rows: list[dict[str, Any]], *, window: str) -> dict[str,
     return {"window": window, "models": _rows(model_agg), "agents": _rows(agent_agg)}
 
 
+def _new_run(run_id: str) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "agent": None,
+        "actor_did": None,
+        "started_at": None,
+        "ended_at": None,
+        "turns": 0,
+        "tool_calls": 0,
+        "llm_calls": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "cost_usd": 0.0,
+        "_error": False,
+        "_completed": False,
+    }
+
+
+def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
+    """Accumulate one spool row (run/tool/llm) into its run summary."""
+    ts = row.get("ts")
+    if ts:
+        if run["started_at"] is None or ts < run["started_at"]:
+            run["started_at"] = ts
+        if run["ended_at"] is None or ts > run["ended_at"]:
+            run["ended_at"] = ts
+    if run["actor_did"] is None:
+        run["actor_did"] = row.get("actor_did")
+    if run["agent"] is None and row.get("agent_label"):
+        run["agent"] = row.get("agent_label")
+
+    kind = row.get("kind")
+    if kind == "run_event":
+        name = row.get("name")
+        if name == "turn.start":
+            run["turns"] += 1
+        elif name in ("loop.complete", "loop.completed"):
+            # loop.complete is the universal terminal (every run exit); loop.completed
+            # is the structured-completion variant. Either means the run finished.
+            run["_completed"] = True
+    elif kind == "tool_event":
+        # One invocation == one ``start`` (start/end/error share a tool call).
+        if row.get("phase") == "start":
+            run["tool_calls"] += 1
+    elif kind == "llm_call":
+        run["llm_calls"] += 1
+        run["prompt_tokens"] += row.get("prompt_tokens") or 0
+        run["completion_tokens"] += row.get("completion_tokens") or 0
+        run["cost_usd"] += row.get("cost_usd") or 0.0
+    if (row.get("outcome") or "ok") != "ok":
+        run["_error"] = True
+
+
+def _finalize_run(run: dict[str, Any]) -> dict[str, Any]:
+    start, end = _epoch(run["started_at"]), _epoch(run["ended_at"])
+    duration_ms = round((end - start) * 1000, 1) if start is not None and end is not None else None
+    status = "error" if run["_error"] else "completed" if run["_completed"] else "running"
+    return {
+        "run_id": run["run_id"],
+        "agent": run["agent"] or run["actor_did"] or "unknown",
+        "actor_did": run["actor_did"],
+        "started_at": run["started_at"],
+        "ended_at": run["ended_at"],
+        "duration_ms": duration_ms,
+        "turns": run["turns"],
+        "tool_calls": run["tool_calls"],
+        "llm_calls": run["llm_calls"],
+        "prompt_tokens": run["prompt_tokens"],
+        "completion_tokens": run["completion_tokens"],
+        "total_tokens": run["prompt_tokens"] + run["completion_tokens"],
+        "cost_usd": round(run["cost_usd"], 6),
+        "status": status,
+    }
+
+
+def compute_runs(rows: list[dict[str, Any]], *, limit: int | None = None) -> list[dict[str, Any]]:
+    """Fold run/tool/llm spool rows into per-run summaries, newest first.
+
+    A run is one ``request_id`` (one ``arcrun.run()`` = one user-question →
+    final-response cycle). Rows without a ``request_id`` cannot be attributed to
+    a run and are skipped.
+    """
+    runs: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        run_id = row.get("request_id")
+        if not run_id:
+            continue
+        _fold_run(runs.setdefault(run_id, _new_run(run_id)), row)
+    out = [_finalize_run(r) for r in runs.values()]
+    out.sort(key=lambda r: r["started_at"] or "", reverse=True)
+    return out[:limit] if limit is not None else out
+
+
 def _epoch(ts: str | None) -> float | None:
     if not ts:
         return None

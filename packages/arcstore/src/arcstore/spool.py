@@ -21,6 +21,8 @@ Design (SDD §4 + Research §11.2):
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -35,6 +37,30 @@ _logger = logging.getLogger("arcstore.spool")
 
 _FILE_MODE = 0o600
 """Owner-only — the spool may carry sensitive metadata (NFR-5)."""
+
+# Task-local run correlation id. arcrun binds this around a run so every record
+# emitted inside it (llm_call, tool_event, run_event) shares one ``request_id``
+# without each producer having to thread the run id through its call stack. A
+# ContextVar (not a global) keeps concurrent runs isolated — ``asyncio.Task``
+# snapshots the context at creation, so spawned children carry their own copy.
+_request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "arcstore_request_id", default=None
+)
+
+
+@contextlib.contextmanager
+def request_context(request_id: str) -> Iterator[None]:
+    """Bind the active run correlation id for spool records on this task.
+
+    Records appended within the ``with`` block that do not already carry a
+    ``request_id`` inherit ``request_id``. An explicit id on a record always
+    wins. The binding is restored on exit, so it never leaks across runs.
+    """
+    token = _request_id_var.set(request_id)
+    try:
+        yield
+    finally:
+        _request_id_var.reset(token)
 
 
 def spool_path(*, data_dir: Path | None = None) -> Path:
@@ -52,6 +78,10 @@ def record(rec: SpoolRecord, *, path: Path | None = None) -> None:
         path: Override the destination file (defaults to today's spool).
     """
     try:
+        if rec.request_id is None:
+            active = _request_id_var.get()
+            if active is not None:
+                rec = rec.model_copy(update={"request_id": active})
         target = path if path is not None else spool_path()
         target.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(rec.model_dump(mode="json"), ensure_ascii=True) + "\n"

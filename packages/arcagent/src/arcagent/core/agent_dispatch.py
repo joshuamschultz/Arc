@@ -183,6 +183,7 @@ async def dispatch_stream(
                 on_event=bridge,
                 transform_context=transform,
                 actor_did=agent._identity.did if agent._identity else None,
+                store_raw_bodies=agent._config.telemetry.capture_tool_io,
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):

@@ -7,6 +7,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from arcstore.spool import request_context
+
 from arcrun._messages import system_message, user_message
 from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.events import EventBus
@@ -123,8 +125,11 @@ async def run(
         sample_rate=sample_rate,
     )
 
-    strategy_fn = await _select_and_emit(allowed_strategies, model, state)
-    result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
+    # Bind the run id as the spool correlation id so every record emitted inside
+    # the run — including arcllm's llm_call, deep in the model call — inherits it.
+    with request_context(state.run_id):
+        strategy_fn = await _select_and_emit(allowed_strategies, model, state)
+        result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
     return result
 
 
@@ -166,8 +171,12 @@ async def run_async(
         sample_rate=sample_rate,
     )
 
-    strategy_fn = await _select_and_emit(allowed_strategies, model, state)
-    loop_task = asyncio.create_task(strategy_fn(model, state, sandbox_obj, max_turns))
+    # ``create_task`` snapshots the current context, so binding the correlation
+    # id here propagates it to the loop task (and any spawn it creates) even
+    # though this scope exits before the task completes.
+    with request_context(state.run_id):
+        strategy_fn = await _select_and_emit(allowed_strategies, model, state)
+        loop_task = asyncio.create_task(strategy_fn(model, state, sandbox_obj, max_turns))
     return RunHandle(state=state, task=loop_task)
 
 

@@ -148,6 +148,11 @@ class TelemetryConfig(BaseModel):
     log_level: str = "INFO"
     export_traces: bool = False
     exporter_endpoint: str = ""
+    # Persist raw tool arguments + results to the operational spool so the
+    # ArcRun observability surface can show each tool call's input/output. Bodies
+    # may carry sensitive data — federal/enterprise deployments set this False to
+    # keep only digests + sizes (NFR-2: raw capture is an explicit opt-in).
+    capture_tool_io: bool = True
 
 
 class ContextConfig(BaseModel):

@@ -23,9 +23,12 @@ logger = logging.getLogger(__name__)
 GENESIS_PREV_HASH = "0" * 64
 
 # Loop-lifecycle event types mirrored to the arcstore operational spool
-# (SPEC-026 FR-4: run start / step / finish).
+# (SPEC-026 FR-4: run start / step / finish). ``loop.complete`` is the universal
+# terminal — ``_build_result`` emits it on every loop exit, so it is the marker
+# that tells observers a run finished (vs ``loop.completed``, which fires only on
+# the structured-completion / max_turns / max_cost paths).
 _RUN_EVENT_TYPES = frozenset(
-    {"strategy.selected", "turn.start", "turn.end", "loop.completed"}
+    {"strategy.selected", "turn.start", "turn.end", "loop.complete", "loop.completed"}
 )
 
 # Tool-lifecycle event types mirrored as ``tool_event`` records (SPEC-028 FR-1).

@@ -92,6 +92,35 @@ async def test_run_streams_and_requires_session(
 
 @pytest.mark.asyncio
 @patch("arcagent.core.model_manager.load_eval_model")
+async def test_run_passes_tool_io_capture_to_arcrun(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+) -> None:
+    """capture_tool_io flows to arcrun as store_raw_bodies so tool in/out spools."""
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    agent_config.telemetry.capture_tool_io = True
+    agent = ArcAgent(config=agent_config)
+
+    captured: dict[str, Any] = {}
+
+    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
+        captured.update(kwargs)
+        return _fake_stream("ok")
+
+    with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory):
+        await agent.startup()
+        try:
+            session = await agent.session("unit:rawio")
+            async for _ in agent.run("hi", session=session):
+                pass
+        finally:
+            await agent.shutdown()
+
+    assert captured.get("store_raw_bodies") is True
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
 async def test_run_appends_user_and_assistant_to_session(
     mock_load_model: MagicMock,
     agent_config: ArcAgentConfig,

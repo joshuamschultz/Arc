@@ -131,6 +131,37 @@ async def test_timeline_joins_on_run_id(tmp_path: Path) -> None:
         await observe.stop()
 
 
+async def test_runs_lists_real_runs_grouped_by_request_id(tmp_path: Path) -> None:
+    """Observe.runs() returns one summary per run (request_id), newest first,
+    joining run/tool/llm spool rows — not session files."""
+    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-1",
+                                 agent_label="alice", ts="2026-05-31T00:00:01+00:00",
+                                 name="turn.start"))
+    _write(tmp_path, SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
+                                 ts="2026-05-31T00:00:02+00:00", tool_name="web.fetch", phase="start"))
+    _write(tmp_path, SpoolRecord(kind="llm_call", actor_did="did:c", request_id="run-1",
+                                 ts="2026-05-31T00:00:03+00:00", model="claude", outcome="ok",
+                                 prompt_tokens=100, completion_tokens=50, cost_usd=0.002))
+    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-1",
+                                 ts="2026-05-31T00:00:04+00:00", name="loop.completed"))
+    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-0",
+                                 ts="2026-05-30T00:00:01+00:00", name="turn.start"))
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        runs = await observe.runs()
+        assert [r["run_id"] for r in runs] == ["run-1", "run-0"]
+        r = runs[0]
+        assert r["agent"] == "alice"
+        assert r["turns"] == 1
+        assert r["tool_calls"] == 1
+        assert r["llm_calls"] == 1
+        assert r["total_tokens"] == 150
+        assert r["status"] == "completed"
+    finally:
+        await observe.stop()
+
+
 async def test_spawn_tree_query(tmp_path: Path) -> None:
     """Task 4.2 — Observe.spawn_tree assembles a parent→child tree from spawn_events."""
     _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:child1",

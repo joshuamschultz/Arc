@@ -770,3 +770,17 @@ class TestToolAndLineageRoutes:
             assert ident.status_code == 200
             labels = {r["identity"] for r in ident.json()["identities"]}
             assert "researcher:d1" in labels
+
+    def test_runs_route_lists_real_runs(self, _isolated_arc_data_dir: Path):
+        """GET /api/runs enumerates runs by request_id (not session files)."""
+        _seed_tool_and_spawn(_isolated_arc_data_dir)
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/runs", headers={"Authorization": "Bearer v"})
+            assert resp.status_code == 200
+            runs = resp.json()["runs"]
+            run = next(r for r in runs if r["run_id"] == "run-1")
+            assert run["tool_calls"] == 1
+            assert run["llm_calls"] == 1
+            assert run["total_tokens"] == 15

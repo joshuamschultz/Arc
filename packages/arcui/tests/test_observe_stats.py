@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 from arcui.observe_stats import (
     compute_cost_efficiency,
     compute_performance,
+    compute_runs,
     compute_stats,
     compute_timeseries,
 )
@@ -124,3 +125,93 @@ class TestLLMByIdentity:
         assert abs(by["researcher:d1"]["total_cost"] - 0.04) < 1e-9
         # Parent total does NOT absorb the child's spend (UC-3).
         assert abs(by["parent"]["total_cost"] - 0.02) < 1e-9
+
+
+class TestComputeRuns:
+    """A run = one user-question→final-response cycle, keyed by request_id.
+    compute_runs folds a run's run/tool/llm spool rows into one summary row."""
+
+    def _events(self) -> list[dict[str, object]]:
+        # One run with: 2 turns, 1 tool call, 2 llm calls; one stray other run.
+        return [
+            {"kind": "run_event", "request_id": "run-1", "actor_did": "did:a",
+             "agent_label": "alice", "name": "turn.start", "ts": "2026-05-31T00:00:01+00:00"},
+            {"kind": "llm_call", "request_id": "run-1", "actor_did": "did:a",
+             "agent_label": "alice", "model": "claude", "prompt_tokens": 100,
+             "completion_tokens": 50, "cost_usd": 0.002, "outcome": "ok",
+             "ts": "2026-05-31T00:00:02+00:00"},
+            {"kind": "tool_event", "request_id": "run-1", "actor_did": "did:a",
+             "tool_name": "web.fetch", "phase": "start", "ts": "2026-05-31T00:00:03+00:00"},
+            {"kind": "tool_event", "request_id": "run-1", "actor_did": "did:a",
+             "tool_name": "web.fetch", "phase": "end", "outcome": "ok",
+             "ts": "2026-05-31T00:00:04+00:00"},
+            {"kind": "run_event", "request_id": "run-1", "actor_did": "did:a",
+             "name": "turn.start", "ts": "2026-05-31T00:00:05+00:00"},
+            {"kind": "llm_call", "request_id": "run-1", "actor_did": "did:a",
+             "agent_label": "alice", "model": "claude", "prompt_tokens": 80,
+             "completion_tokens": 20, "cost_usd": 0.001, "outcome": "ok",
+             "ts": "2026-05-31T00:00:06+00:00"},
+            {"kind": "run_event", "request_id": "run-1", "actor_did": "did:a",
+             "name": "loop.complete", "ts": "2026-05-31T00:00:07+00:00"},
+            # Older, separate run.
+            {"kind": "run_event", "request_id": "run-0", "actor_did": "did:a",
+             "name": "turn.start", "ts": "2026-05-30T00:00:01+00:00"},
+        ]
+
+    def test_groups_and_summarizes(self) -> None:
+        runs = compute_runs(self._events())
+        assert [r["run_id"] for r in runs] == ["run-1", "run-0"]  # newest first
+        r = runs[0]
+        assert r["agent"] == "alice"
+        assert r["turns"] == 2
+        assert r["tool_calls"] == 1  # one tool invocation (counted at phase=start)
+        assert r["llm_calls"] == 2
+        assert r["total_tokens"] == 250
+        assert abs(r["cost_usd"] - 0.003) < 1e-9
+        assert r["status"] == "completed"
+        assert r["started_at"] == "2026-05-31T00:00:01+00:00"
+        assert r["ended_at"] == "2026-05-31T00:00:07+00:00"
+        assert round(r["duration_ms"]) == 6000
+
+    def test_status_error_when_any_failure(self) -> None:
+        events = self._events()
+        events.append({"kind": "tool_event", "request_id": "run-1", "actor_did": "did:a",
+                       "tool_name": "web.fetch", "phase": "error", "outcome": "error",
+                       "ts": "2026-05-31T00:00:08+00:00"})
+        runs = compute_runs(events)
+        assert runs[0]["status"] == "error"
+
+    def test_status_running_without_completion(self) -> None:
+        runs = compute_runs([
+            {"kind": "run_event", "request_id": "r", "actor_did": "did:a",
+             "name": "turn.start", "ts": "2026-05-31T00:00:01+00:00"},
+        ])
+        assert runs[0]["status"] == "running"
+
+    def test_agent_falls_back_to_did(self) -> None:
+        runs = compute_runs([
+            {"kind": "run_event", "request_id": "r", "actor_did": "did:x",
+             "name": "turn.start", "ts": "2026-05-31T00:00:01+00:00"},
+        ])
+        assert runs[0]["agent"] == "did:x"
+
+    def test_rows_without_request_id_ignored(self) -> None:
+        assert compute_runs([{"kind": "llm_call", "actor_did": "did:a"}]) == []
+
+    def test_limit_caps_run_count(self) -> None:
+        events = [
+            {"kind": "run_event", "request_id": f"run-{i}", "actor_did": "did:a",
+             "name": "turn.start", "ts": f"2026-05-31T00:00:0{i}+00:00"}
+            for i in range(5)
+        ]
+        assert len(compute_runs(events, limit=2)) == 2
+
+    def test_loop_complete_also_marks_done(self) -> None:
+        # The universal terminal `loop.complete` (every run exit) marks completion.
+        runs = compute_runs([
+            {"kind": "run_event", "request_id": "r", "actor_did": "did:a",
+             "name": "turn.start", "ts": "2026-05-31T00:00:01+00:00"},
+            {"kind": "run_event", "request_id": "r", "actor_did": "did:a",
+             "name": "loop.complete", "ts": "2026-05-31T00:00:02+00:00"},
+        ])
+        assert runs[0]["status"] == "completed"
