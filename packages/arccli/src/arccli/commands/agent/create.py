@@ -44,9 +44,9 @@ def _create(args: argparse.Namespace) -> None:
     calc_path = agent_dir / "capabilities" / "calculator.py"
     calc_path.write_text(_CALCULATOR_TOOL)
 
-    # SPEC-026 FR-6 (AC-6.1): the agent ships with an [arcstore] block (in the
-    # config above); create the operational store data dir + spool idempotently
-    # so the call-now-see-later guarantee holds from the very first run.
+    # SPEC-026 FR-6 (AC-6.1): the agent ships with an [arcstore] block; create
+    # the operational store data dir + spool idempotently so the call-now-see-later
+    # guarantee holds from the very first run.
     _ensure_arcstore_dirs(agent_dir)
 
     sys.stdout.write(f"Created agent: {agent_dir}\n")

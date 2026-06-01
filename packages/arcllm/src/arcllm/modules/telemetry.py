@@ -564,7 +564,3 @@ class TelemetryModule(BaseModule):
         )
 
 
-# Test/legacy import aliases for callers that imported the budget helpers
-# from this module before the Phase 5 §8.11 split.
-_validate_budget_scope = validate_budget_scope
-_get_or_create_accumulator = get_or_create_accumulator

@@ -523,6 +523,18 @@ class TestTelemetryTraceRecording:
         assert rec.request_body is None
         assert rec.response_body is None
 
+    def test_store_raw_bodies_true_logs_warning(self, caplog):
+        """SPEC-026 AC-4.5 — enabling raw capture must emit a security warning at init."""
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="arcllm.modules.telemetry"):
+            TelemetryModule(_make_config(store_raw_bodies=True), _make_inner())
+
+        assert any(
+            "store_raw_bodies=True" in record.message
+            for record in caplog.records
+        ), "Expected store_raw_bodies=True warning at module init"
+
     async def test_agent_label_set_on_record(self, messages):
         """agent_label from config appears on TraceRecord."""
         from arcllm.trace_store import TraceRecord

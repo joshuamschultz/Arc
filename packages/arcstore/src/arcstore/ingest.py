@@ -24,11 +24,12 @@ from typing import Any
 from arctrust.audit import verify_chain
 
 from arcstore.backends.base import AUDIT_TABLE, StorageBackend, table_for_kind
-from arcstore.spool import read_from_offset
+from arcstore.spool import read_complete_segments, read_from_offset
 
 _logger = logging.getLogger("arcstore.ingest")
 
-_WORM_ACTIVE = "audit-chain.jsonl"
+WORM_ACTIVE_FILENAME = "audit-chain.jsonl"
+"""Filename of the active (non-rotated) WORM chain — single source for arccli + arcstore."""
 
 
 class StoreIngest:
@@ -113,20 +114,22 @@ class StoreIngest:
                 await self._backend.set_cursor(cursor, new_offset)
 
     async def _scan_worm(self) -> None:
-        active = self._worm_dir / _WORM_ACTIVE
+        active = self._worm_dir / WORM_ACTIVE_FILENAME
         if not active.exists():
             return
-        verified = (
-            verify_chain(active, self._worm_public_key)
-            if self._worm_public_key is not None
-            else False
-        )
         for path in sorted(self._worm_dir.glob("audit-chain*.jsonl")):
+            # Verify each segment independently so the `verified` flag reflects
+            # that segment's own integrity, not just the active file's verdict.
+            seg_verified = (
+                verify_chain(path, self._worm_public_key)
+                if self._worm_public_key is not None
+                else False
+            )
             cursor = f"worm:{path.name}"
             offset = await self._backend.get_cursor(cursor)
             records, new_offset = _read_worm_from_offset(path, offset)
             if records:
-                rows = [(_worm_key(r), _worm_row(r, verified)) for r in records]
+                rows = [(_worm_key(r), _worm_row(r, seg_verified)) for r in records]
                 await self._backend.upsert_many(AUDIT_TABLE, rows)
             if new_offset != offset:
                 await self._backend.set_cursor(cursor, new_offset)
@@ -139,25 +142,14 @@ class StoreIngest:
 
 def _read_worm_from_offset(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
     """Read complete WORM records from ``offset``; leave a torn tail unconsumed."""
-    if not path.exists():
-        return [], offset
-    with path.open("rb") as fh:
-        fh.seek(offset)
-        data = fh.read()
-    if not data:
-        return [], offset
-    segments = data.split(b"\n")
-    complete = segments[:-1]
-    torn_len = len(segments[-1])
+    chunks, new_offset = read_complete_segments(path, offset)
     records: list[dict[str, Any]] = []
-    for chunk in complete:
-        if not chunk:
-            continue
+    for chunk in chunks:
         try:
             records.append(json.loads(chunk))
         except json.JSONDecodeError:
             _logger.warning("StoreIngest skipping corrupt WORM line in %s", path)
-    return records, offset + len(data) - torn_len
+    return records, new_offset
 
 
 def _worm_key(record: dict[str, Any]) -> str:

@@ -139,9 +139,9 @@ class TestBudgetRouterStack:
         )
 
         # Seed accumulator past limit
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:router-budget")
+        acc = get_or_create_accumulator("agent:router-budget")
         acc.deduct(0.01)
 
         with pytest.raises(ArcLLMBudgetError, match="monthly"):
@@ -170,9 +170,9 @@ class TestBudgetRouterStack:
 
         await telemetry.invoke(messages, classification="unclassified", max_tokens=100)
 
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:router-deduct")
+        acc = get_or_create_accumulator("agent:router-deduct")
         expected = (100 * 3.0 + 50 * 15.0) / 1_000_000
         assert acc.monthly_spend == pytest.approx(expected)
 

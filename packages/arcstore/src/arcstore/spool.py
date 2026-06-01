@@ -57,6 +57,7 @@ def record(rec: SpoolRecord, *, path: Path | None = None) -> None:
         line = json.dumps(rec.model_dump(mode="json"), ensure_ascii=True) + "\n"
         fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _FILE_MODE)
         try:
+            os.fchmod(fd, _FILE_MODE)  # tighten perms regardless of umask / pre-existing file
             os.write(fd, line.encode("utf-8"))
         finally:
             os.close(fd)
@@ -64,13 +65,11 @@ def record(rec: SpoolRecord, *, path: Path | None = None) -> None:
         _logger.warning("arcstore.spool.record failed — swallowing (AU-5)", exc_info=True)
 
 
-def read_from_offset(path: Path, offset: int) -> tuple[list[SpoolRecord], int]:
-    """Read complete records from ``offset`` to EOF; never consume a torn tail.
+def read_complete_segments(path: Path, offset: int) -> tuple[list[bytes], int]:
+    """Read all complete (newline-terminated) byte segments from ``offset``; leave torn tail.
 
-    Returns ``(records, new_offset)`` where ``new_offset`` advances only past
-    fully-newline-terminated lines, so the store can persist it as a resumable
-    byte cursor. A partial final line (writer mid-append) is left unconsumed for
-    the next scan. Corrupt complete lines are skipped (operational telemetry).
+    Shared torn-tail byte-cursor algorithm used by both the spool and WORM readers.
+    Returns ``(chunks, new_offset)`` — the caller parses chunks in its own format.
     """
     if not path.exists():
         return [], offset
@@ -80,19 +79,27 @@ def read_from_offset(path: Path, offset: int) -> tuple[list[SpoolRecord], int]:
     if not data:
         return [], offset
     segments = data.split(b"\n")
-    # The final element is either b"" (newline-terminated) or a torn partial
-    # line; in both cases it is excluded from the complete set.
-    complete = segments[:-1]
+    # The final element is either b"" (newline-terminated) or a torn partial line;
+    # in both cases it is excluded from the complete set.
+    complete = [s for s in segments[:-1] if s]
     torn_len = len(segments[-1])
+    return complete, offset + len(data) - torn_len
+
+
+def read_from_offset(path: Path, offset: int) -> tuple[list[SpoolRecord], int]:
+    """Read complete records from ``offset`` to EOF; never consume a torn tail.
+
+    Returns ``(records, new_offset)`` where ``new_offset`` advances only past
+    fully-newline-terminated lines, so the store can persist it as a resumable
+    byte cursor. Corrupt complete lines are skipped (operational telemetry).
+    """
+    chunks, new_offset = read_complete_segments(path, offset)
     records: list[SpoolRecord] = []
-    for chunk in complete:
-        if not chunk:
-            continue
+    for chunk in chunks:
         try:
             records.append(SpoolRecord.model_validate_json(chunk))
         except Exception:  # reason: corrupt complete line — skip + log, never abort ingest
             _logger.warning("arcstore.spool.read_from_offset skipping corrupt line in %s", path)
-    new_offset = offset + len(data) - torn_len
     return records, new_offset
 
 

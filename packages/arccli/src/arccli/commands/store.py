@@ -100,10 +100,11 @@ def _status(args: argparse.Namespace) -> None:
 
 
 def _verify(args: argparse.Namespace) -> None:
+    from arcstore.ingest import WORM_ACTIVE_FILENAME
     from arctrust.audit import verify_chain
 
     data_dir = _resolve_dir(args)
-    worm = data_dir / "worm" / "audit-chain.jsonl"
+    worm = data_dir / "worm" / WORM_ACTIVE_FILENAME
     if not worm.exists():
         _err(f"No WORM chain found at {worm}")
         sys.exit(1)

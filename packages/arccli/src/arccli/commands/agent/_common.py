@@ -134,6 +134,10 @@ enabled = true
 
 [modules.scheduler.config]
 check_interval_seconds = 30
+
+[arcstore]
+enabled = true
+store_raw_bodies = false
 """
 
 _CALCULATOR_TOOL = '''\

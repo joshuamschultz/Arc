@@ -39,7 +39,9 @@ def load_arcstore_config(agent_dir: Path) -> ArcStoreConfig:
         block = data.get("arcstore", {})
         return ArcStoreConfig(**block)
     except Exception:  # reason: fail-open — bad config must not block serving
-        _logger.warning("invalid [arcstore] config in %s; using defaults", toml_path, exc_info=True)
+        _logger.warning(
+            "invalid [arcstore] config in %s; using defaults", toml_path, exc_info=True
+        )
         return ArcStoreConfig()
 
 
