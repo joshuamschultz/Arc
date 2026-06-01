@@ -57,7 +57,14 @@ class CapabilityResult:
 
 @runtime_checkable
 class CapabilityProvider(Protocol):
-    """The contract arcrun's loop runs against (ADR-023)."""
+    """The contract arcrun's loop runs against (ADR-023).
+
+    Optional extension: a provider MAY also define ``raw_tools() -> list[Tool]``
+    for capabilities that must be dispatched with the loop's live ToolContext
+    (they read depth/budget/cancellation from it — e.g. spawn) rather than
+    through the context-free ``invoke``. ``provider_tools`` dispatches those
+    directly and routes everything else in ``advertise()`` through ``invoke``.
+    """
 
     def advertise(self) -> list[CapabilitySpec]:
         """Lean manifest for the model: name · kind · "use when" · schema."""
@@ -73,7 +80,7 @@ class CapabilityProvider(Protocol):
         ...
 
 
-def _detached_context() -> ToolContext:
+def detached_context() -> ToolContext:
     """A minimal ToolContext for providers that wrap plain ``args -> str`` tools.
 
     arcrun's executor already emits ``tool.start``/``tool.end`` and enforces
@@ -133,7 +140,7 @@ class StaticProvider:
         tool = self._tools.get(name)
         if tool is None:
             return CapabilityResult(content=f"tool '{name}' not found", is_error=True)
-        out = await tool.execute(args, _detached_context())
+        out = await tool.execute(args, detached_context())
         return CapabilityResult(content=out)
 
 

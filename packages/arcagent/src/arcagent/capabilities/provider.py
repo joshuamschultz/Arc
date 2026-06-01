@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arcrun import CapabilityResult, CapabilitySpec, Tool
+from arcrun import CapabilityResult, CapabilitySpec, Tool, detached_context
 
 _logger = logging.getLogger("arcagent.capability_provider")
 
@@ -124,9 +124,11 @@ class AgentCapabilityProvider:
         tool = self._tools.get(name)
         if tool is None:
             return CapabilityResult(content=f"unknown capability '{name}'", is_error=True)
-        from arcrun.capabilities import _detached_context
-
-        out = await tool.execute(dict(args), _detached_context())
+        try:
+            out = await tool.execute(dict(args), detached_context())
+        except Exception as exc:  # reason: surface as an error result, never crash the loop
+            _logger.exception("Capability '%s' raised during invoke", name)
+            return CapabilityResult(content=f"{type(exc).__name__}: {exc}", is_error=True)
         return CapabilityResult(content=out)
 
 

@@ -20,17 +20,15 @@ Architecture
 Event flow:
     User types → InputComposer submits → ArcTUI handlers
     Non-slash: _send_to_agent (Textual @work task)
-        → agent.run(task)  (same asyncio loop as ArcAgent)
+        → agent.run(text, session=agent.session("tui:main"))  (one entry)
         → ArcAgent bus events → ActivityView
-        → result appended to TranscriptView
+        → tokens appended to TranscriptView live
     Slash: _dispatch_command → registry handler or error message
 
 Streaming:
-    ArcAgent.chat_stream() now yields arcrun.StreamEvent objects per token.
-    _send_to_agent() detects chat_stream() availability and routes to
-    _stream_turn() which calls start_streaming/append_delta/finish_streaming
-    on the TranscriptView for live token rendering.  Falls back to the
-    blocking _blocking_turn() path for agents without chat_stream() (back-compat).
+    ``agent.run`` yields arcrun.StreamEvent objects; ``_run_stream_turn`` renders
+    each TokenEvent via start_streaming/append_delta/finish_streaming on the
+    TranscriptView for live token rendering.
 """
 
 from __future__ import annotations
@@ -224,12 +222,8 @@ class ArcTUI(App[None]):
         """Run one agent turn for *text* with per-token streaming.
 
         The ``@work(exclusive=True)`` decorator ensures only one turn
-        runs at a time — concurrent submits queue up.
-
-        When the agent exposes ``chat_stream()``, tokens are appended to
+        runs at a time — concurrent submits queue up. Tokens are appended to
         the transcript incrementally via ``TranscriptView.append_delta``.
-        Falls back to the blocking ``run()`` path when streaming is not
-        available (back-compat with agents that predate SPEC-018 M5).
         """
         if self._transcript is None:
             return
@@ -248,7 +242,7 @@ class ArcTUI(App[None]):
         await self._run_stream_turn(text)
 
     async def _run_stream_turn(self, text: str) -> None:
-        """Stream one agent turn using chat_stream().
+        """Stream one agent turn via ``agent.run(text, session=...)``.
 
         Displays tokens incrementally via TranscriptView.  The streaming
         cursor (▋) is shown while the assistant is still typing.  Called

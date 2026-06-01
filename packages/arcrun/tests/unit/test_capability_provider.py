@@ -85,9 +85,9 @@ async def test_provider_drives_advertise_and_invoke() -> None:
     assert "STEP 1" not in by_name["use_skill"].description
 
     # Invoking the tool routes to provider.invoke carrying caller_did.
-    from arcrun.capabilities import _detached_context
+    from arcrun.capabilities import detached_context
 
-    out = await by_name["echo"].execute({"text": "hi"}, _detached_context())
+    out = await by_name["echo"].execute({"text": "hi"}, detached_context())
     assert out == "echo: hi"
     assert provider.invoked == [("echo", {"text": "hi"}, "did:arc:user:alice")]
 
@@ -99,12 +99,12 @@ async def test_use_skill_loads_body_lazily() -> None:
     tools = provider_tools(provider, caller_did="did:arc:agent:x")
     use_skill = next(t for t in tools if t.name == "use_skill")
 
-    from arcrun.capabilities import _detached_context
+    from arcrun.capabilities import detached_context
 
     # Unused skill never loaded.
     assert provider.loaded == []
 
-    body = await use_skill.execute({"name": "deploy_runbook"}, _detached_context())
+    body = await use_skill.execute({"name": "deploy_runbook"}, detached_context())
     assert "STEP 1" in body
     assert provider.loaded == [("deploy_runbook", "did:arc:agent:x")]
 

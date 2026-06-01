@@ -84,7 +84,7 @@ async def _run_stdin_loop(agent: ArcAgent, shutdown_event: asyncio.Event) -> str
     """Read line-delimited prompts from stdin and stream replies to stdout.
 
     Returns the shutdown reason: ``"eof"`` when stdin closes,
-    ``"sigterm"`` / ``"sigint"`` when a signal fires.
+    ``"signal"`` when SIGINT/SIGTERM fires.
     """
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(loop=loop)

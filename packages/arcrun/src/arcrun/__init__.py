@@ -15,6 +15,7 @@ from arcrun.capabilities import (
     CapabilityResult,
     CapabilitySpec,
     StaticProvider,
+    detached_context,
     provider_tools,
 )
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
@@ -64,6 +65,7 @@ __all__ = [
     "TurnEndEvent",
     "__version__",
     "collect",
+    "detached_context",
     "get_strategy_prompts",
     "make_execute_tool",
     "provider_tools",

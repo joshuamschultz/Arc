@@ -172,3 +172,45 @@ async def test_old_entry_methods_are_gone(
     agent = ArcAgent(config=agent_config)
     for name in ("chat", "run_async", "run_stream", "chat_async", "chat_stream"):
         assert not hasattr(agent, name), f"{name} must be deleted"
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_distinct_keys_give_isolated_sessions(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+) -> None:
+    """Two distinct keys yield two SessionManagers with independent history."""
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    agent = ArcAgent(config=agent_config)
+    with _patch_stream("a"):
+        await agent.startup()
+        try:
+            alice = await agent.session("alice")
+            bob = await agent.session("bob")
+            assert alice is not bob
+            async for _ in agent.run("hi alice", session=alice):
+                pass
+            # bob's history is untouched by alice's turn.
+            assert all("alice" not in m.get("content", "") for m in bob.get_messages())
+            assert any("hi alice" in m.get("content", "") for m in alice.get_messages())
+        finally:
+            await agent.shutdown()
+
+
+@pytest.mark.asyncio
+@patch("arcagent.core.model_manager.load_eval_model")
+async def test_session_rejects_path_traversal_key(
+    mock_load_model: MagicMock,
+    agent_config: ArcAgentConfig,
+) -> None:
+    """A session key that would escape the sessions dir is rejected (security)."""
+    mock_load_model.return_value = MagicMock(close=AsyncMock())
+    agent = ArcAgent(config=agent_config)
+    await agent.startup()
+    try:
+        for bad in ("../evil", "a/b", "..", "x\x00y"):
+            with pytest.raises(ValueError, match="session key"):
+                await agent.session(bad)
+    finally:
+        await agent.shutdown()

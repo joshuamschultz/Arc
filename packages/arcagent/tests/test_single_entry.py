@@ -54,3 +54,26 @@ def test_agent_ready_emits_single_run_fn() -> None:
     assert '"run_fn": self.run_collected' in source
     assert '"chat_fn"' not in source
     assert '"run_async_fn"' not in source
+
+
+def test_no_deleted_agent_surface_in_sibling_packages() -> None:
+    """Other surfaces (gateway, CLI, TUI) reference no deleted agent method (AC-2.4).
+
+    Only the unambiguous deleted symbols are scanned — ``run_async``/``chat``
+    collide with Textual's ``app.run_async`` and Slack's ``chat_postMessage``.
+    """
+    repo_root = Path(__file__).resolve().parents[3]
+    unambiguous = ("agent.chat_stream", ".chat_stream(", "set_agent_chat_fn", "_agent_chat_fn")
+    offenders: list[str] = []
+    for pkg in ("arcgateway", "arccli", "arctui"):
+        pkg_src = repo_root / "packages" / pkg / "src"
+        if not pkg_src.is_dir():
+            continue
+        for py in pkg_src.rglob("*.py"):
+            text = py.read_text(encoding="utf-8")
+            for needle in unambiguous:
+                if needle in text:
+                    offenders.append(f"{py.relative_to(repo_root)} contains {needle!r}")
+    assert not offenders, "Deleted agent surface referenced in a sibling package:\n" + "\n".join(
+        offenders
+    )

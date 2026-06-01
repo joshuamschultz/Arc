@@ -92,6 +92,20 @@ async def test_invoke_routes_through_execute(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoke_catches_a_raising_tool(tmp_path: Path) -> None:
+    """A tool that raises mid-invoke is surfaced as an error result, not a crash."""
+    provider = AgentCapabilityProvider(
+        tools=[_tool("boom", raises=True)],
+        skills=[],
+        tier="personal",
+        caller_did="did:arc:agent",
+    )
+    result = await provider.invoke("boom", {}, caller_did="did:arc:agent")
+    assert result.is_error is True
+    assert "RuntimeError" in result.content
+
+
+@pytest.mark.asyncio
 async def test_denied_fails_closed(tmp_path: Path) -> None:
     """A policy-denied tool surfaces the denial; an unknown tool errors closed (AC-4.4)."""
     provider = AgentCapabilityProvider(

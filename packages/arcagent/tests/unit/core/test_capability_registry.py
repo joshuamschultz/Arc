@@ -374,50 +374,6 @@ class TestPromptManifestCache:
 
 
 @pytest.mark.asyncio
-class TestArcrunTools:
-    async def test_to_arcrun_tools_returns_arcrun_tool(self) -> None:
-        from arcrun.types import Tool as ArcRunTool
-
-        from arcagent.capabilities.capability_registry import (
-            CapabilityRegistry,
-            ToolEntry,
-        )
-
-        reg = CapabilityRegistry()
-        await reg.register_tool(
-            ToolEntry(
-                meta=_tool_meta("greet", classification="read_only"),
-                execute=_noop,
-                source_path=Path("/g.py"),
-                scan_root="builtins",
-            )
-        )
-        tools = await reg.to_arcrun_tools()
-        assert len(tools) == 1
-        assert isinstance(tools[0], ArcRunTool)
-        assert tools[0].name == "greet"
-        assert tools[0].parallel_safe is True  # read_only → parallel-safe
-
-    async def test_state_modifying_is_not_parallel_safe(self) -> None:
-        from arcagent.capabilities.capability_registry import (
-            CapabilityRegistry,
-            ToolEntry,
-        )
-
-        reg = CapabilityRegistry()
-        await reg.register_tool(
-            ToolEntry(
-                meta=_tool_meta("write", classification="state_modifying"),
-                execute=_noop,
-                source_path=Path("/w.py"),
-                scan_root="builtins",
-            )
-        )
-        tools = await reg.to_arcrun_tools()
-        assert tools[0].parallel_safe is False
-
-
-@pytest.mark.asyncio
 class TestUnregister:
     async def test_unregister_removes_tool(self) -> None:
         from arcagent.capabilities.capability_registry import (

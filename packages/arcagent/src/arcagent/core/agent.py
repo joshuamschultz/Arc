@@ -95,6 +95,7 @@ class ArcAgent:
         # concurrent sessions; turns through each still run sequentially
         # via arcrun. ``session(key)`` opens-or-resumes by key.
         self._sessions: dict[str, SessionManager] = {}
+        self._sessions_lock = asyncio.Lock()
         self._capability_registry: Any = None
         self._capability_loader: Any = None
         self._settings: SettingsManager | None = None
@@ -240,19 +241,23 @@ class ArcAgent:
         pass a deterministic key to get a stable local session.
         """
         self._ensure_started()
-        existing = self._sessions.get(key)
-        if existing is not None:
-            return existing
-        manager = SessionManager(
-            config=self._config.session,
-            context_config=self._config.context,
-            telemetry=self._telemetry,
-            workspace=self._workspace,
-            context_manager=self._context,
-        )
-        await manager.open_or_resume(key)
-        self._sessions[key] = manager
-        return manager
+        # Guard get-or-create: open_or_resume awaits, so two concurrent callers
+        # with the same key could otherwise both build a manager over the same
+        # jsonl and clobber each other (split-brain history).
+        async with self._sessions_lock:
+            existing = self._sessions.get(key)
+            if existing is not None:
+                return existing
+            manager = SessionManager(
+                config=self._config.session,
+                context_config=self._config.context,
+                telemetry=self._telemetry,
+                workspace=self._workspace,
+                context_manager=self._context,
+            )
+            await manager.open_or_resume(key)
+            self._sessions[key] = manager
+            return manager
 
     async def run(
         self,

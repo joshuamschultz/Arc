@@ -20,22 +20,17 @@ Lifecycle:
   4. EOF on stdin → worker exits 0.
   5. Malformed JSON → log warning on stderr, write error Delta, continue.
 
-arcagent.run() wiring (M1 final integration):
+arcagent wiring:
   _run_event() calls _run_with_arcagent() which:
     1. Locates arcagent.toml in the standard locations.
     2. Instantiates ArcAgent with the config.
-    3. Calls agent.run(message) and wraps the result in Delta objects.
+    3. Opens the event's session and drives the one streaming entry,
+       ``collect(agent.run(message, session=...))``, wrapping the final
+       result in Delta objects.
 
   If arcagent is not installed or no config file is found, the function
   falls back to the echo stub and logs a WARNING so operators can diagnose
   the issue without the subprocess crashing.
-
-  ArcAgent does not expose a streaming iterator today — run() returns a
-  complete result object.  A single token Delta carries the full response.
-  True streaming is a future M2 enhancement.
-
-TODO (M2): Replace single-token wrapping with ArcRun event-stream Iterator
-    once arcrun exposes an async event generator.
 
 Resource limits:
   Applied by SubprocessExecutor via preexec_fn before this process starts.
@@ -82,13 +77,9 @@ async def _run_with_arcagent(
     or arcagent is not installed, falls back to the echo stub with a logged
     WARNING so the operator knows the issue.
 
-    ArcAgent does not expose a streaming iterator — run() returns a complete
-    result object.  We wrap the full response in a single token Delta followed
-    by the done sentinel.  This is honest: the client receives the full reply
-    in one chunk.
-
-    TODO (M2): Replace with streaming once arcrun exposes an async event
-    generator from run_async() / AgentHandle.
+    Drives the one streaming entry and collects it to a final result
+    (``collect(agent.run(message, session=...))``), wrapping the reply in a
+    token Delta followed by the done sentinel.
 
     Args:
         agent_did: Agent DID passed via --did CLI arg.

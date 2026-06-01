@@ -270,9 +270,11 @@ class AsyncioExecutor:
                     event.session_key,
                     exc,
                 )
+                # Don't leak raw exception text (paths, URLs, secrets) to the
+                # channel — the detail is in the log above (LLM02/LLM07).
                 yield Delta(
                     kind="token",
-                    content=f"[agent-error] {exc}",
+                    content="[agent-error] the run failed; see server logs",
                     is_final=False,
                     turn_id=turn_id,
                 )

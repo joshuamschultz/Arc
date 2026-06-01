@@ -139,14 +139,15 @@ class CapabilityRegistry:
     """In-memory capability store guarded by an aiorwlock.
 
     A single :class:`CapabilityRegistry` is owned by an
-    :class:`Agent`; the loader (C-001) feeds entries; arcrun's tool
-    execution path queries it via :meth:`to_arcrun_tools`; the prompt
-    assembly subscriber pulls XML via :meth:`format_for_prompt`.
+    :class:`Agent`; the loader (C-001) feeds entries; the
+    :class:`AgentCapabilityProvider` reads its tools + skills to build the
+    arcrun capability surface; the prompt assembly subscriber pulls XML via
+    :meth:`format_for_prompt`.
 
     All public methods are async because the lock is async. Reader
-    methods (``get_*``, ``format_for_prompt``, ``to_arcrun_tools``)
-    take the reader lock — many can run concurrently. Writer methods
-    (``register_*``, ``unregister``) take the writer lock — exclusive.
+    methods (``get_*``, ``format_for_prompt``) take the reader lock — many
+    can run concurrently. Writer methods (``register_*``, ``unregister``)
+    take the writer lock — exclusive.
     """
 
     def __init__(
@@ -364,39 +365,6 @@ class CapabilityRegistry:
     def _invalidate_cache(self) -> None:
         self._prompt_cache = None
 
-    # --- ArcRun tool list -------------------------------------------------
-
-    async def to_arcrun_tools(self) -> list[Any]:
-        """Build a list of :class:`arcrun.types.Tool` for the runtime loop.
-
-        ``parallel_safe`` follows the tool's classification:
-        ``read_only`` → True, ``state_modifying`` → False (matches the
-        existing :class:`ToolRegistry` convention).
-
-        Execute is wrapped to forward kwargs and stringify the result —
-        the policy / audit layers wrap this further at agent glue time
-        (existing pattern — see C-008).
-        """
-        from arcrun.types import Tool as ArcRunTool
-
-        async with self._lock.reader:
-            entries = list(self._tools.values())
-
-        result: list[Any] = []
-        for entry in entries:
-            wrapped = _wrap_for_arcrun(entry.execute)
-            result.append(
-                ArcRunTool(
-                    name=entry.meta.name,
-                    description=entry.meta.description,
-                    input_schema=entry.meta.input_schema,
-                    execute=wrapped,
-                    timeout_seconds=None,
-                    parallel_safe=(entry.meta.classification == "read_only"),
-                )
-            )
-        return result
-
     # --- Lifecycle event emission ---------------------------------------
 
     async def _emit_lifecycle(
@@ -507,19 +475,6 @@ def _kind_of(entry: object) -> str:
     if isinstance(entry, LifecycleEntry):
         return "capability"
     return "unknown"
-
-
-def _wrap_for_arcrun(
-    execute: Callable[..., Awaitable[Any]],
-) -> Callable[[dict[str, Any], Any], Awaitable[str]]:
-    """Adapt a kwargs-style coroutine to arcrun's ``(args, ctx) -> str``."""
-
-    async def arcrun_execute(args: dict[str, Any], ctx: Any) -> str:
-        del ctx  # arcrun's tool ctx is unused at this layer
-        result = await execute(**args)
-        return str(result)
-
-    return arcrun_execute
 
 
 __all__ = [
