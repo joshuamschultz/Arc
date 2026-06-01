@@ -119,8 +119,8 @@ def verify(message: bytes, signature: bytes, public_key: bytes) -> bool:
         vk = VerifyKey(public_key)
         vk.verify(message, signature)
         return True
-    except (BadSignatureError, Exception):
-        # Catch-all is intentional: PyNaCl can raise ValueError for bad key material.
+    except (BadSignatureError, ValueError, TypeError):
+        # PyNaCl raises BadSignatureError on bad sigs, ValueError/TypeError on bad key material.
         # Every failure path is False — no exception semantics for callers.
         _logger.debug("verify() returning False due to signature check failure")
         return False

@@ -10,6 +10,7 @@ import asyncio
 
 import pytest
 
+from arcrun import StaticProvider
 from arcrun.events import EventBus, verify_chain
 from arcrun.types import Tool
 from security.conftest import LLMResponse, MockModel
@@ -36,7 +37,7 @@ class TestTimingAttacks:
 
         async def single_run(i: int):
             model = MockModel([LLMResponse(content=f"Run {i}", stop_reason="end_turn")])
-            return await run(model, [_make_tool()], "prompt", f"Task {i}")
+            return await run(model, StaticProvider([_make_tool()]), "prompt", f"Task {i}")
 
         results = await asyncio.gather(*[single_run(i) for i in range(10)])
         assert len(results) == 10
@@ -50,7 +51,7 @@ class TestTimingAttacks:
 
         async def single_run(i: int):
             model = MockModel([LLMResponse(content=f"Run {i}", stop_reason="end_turn")])
-            return await run(model, [_make_tool()], "prompt", f"Task {i}")
+            return await run(model, StaticProvider([_make_tool()]), "prompt", f"Task {i}")
 
         results = await asyncio.gather(*[single_run(i) for i in range(10)])
         run_ids = set()
@@ -67,7 +68,7 @@ class TestTimingAttacks:
 
         async def single_run(i: int):
             model = MockModel([LLMResponse(content=f"Run {i}", stop_reason="end_turn")])
-            return await run(model, [_make_tool()], "prompt", f"Task {i}")
+            return await run(model, StaticProvider([_make_tool()]), "prompt", f"Task {i}")
 
         results = await asyncio.gather(*[single_run(i) for i in range(10)])
         for r in results:
@@ -128,7 +129,7 @@ class TestTimingAttacks:
             ]
         )
 
-        handle = await run_async(model, [tool], "prompt", "task")
+        handle = await run_async(model, StaticProvider([tool]), "prompt", "task")
         await asyncio.sleep(0.1)  # Let run start
         await handle.cancel()
 

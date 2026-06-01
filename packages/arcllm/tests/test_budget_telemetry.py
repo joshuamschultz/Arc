@@ -74,9 +74,9 @@ class TestBudgetTelemetryIntegration:
         assert result.cost_usd == pytest.approx(expected_cost)
 
         # Accumulator should have been deducted
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:integration-test")
+        acc = get_or_create_accumulator("agent:integration-test")
         assert acc.monthly_spend == pytest.approx(expected_cost)
         assert acc.daily_spend == pytest.approx(expected_cost)
 
@@ -97,9 +97,9 @@ class TestBudgetTelemetryIntegration:
         await module.invoke(messages, max_tokens=100)
         await module.invoke(messages, max_tokens=100)
 
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:multi-call")
+        acc = get_or_create_accumulator("agent:multi-call")
         expected_per_call = (500 * 3.0 + 200 * 15.0) / 1_000_000
         assert acc.monthly_spend == pytest.approx(expected_per_call * 3)
 
@@ -201,8 +201,8 @@ class TestBudgetScopeInjection:
         await m1.invoke(messages, max_tokens=100)
         await m2.invoke(messages, max_tokens=100)
 
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:shared")
+        acc = get_or_create_accumulator("agent:shared")
         expected_per_call = (500 * 3.0 + 200 * 15.0) / 1_000_000
         assert acc.monthly_spend == pytest.approx(expected_per_call * 2)

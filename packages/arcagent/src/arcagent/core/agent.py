@@ -6,25 +6,18 @@ to the Module Bus, and manages the full lifecycle.
 
 Sibling modules
 ---------------
-- ``arcagent.core.agent_handle``       — ``AgentHandle`` control
-  interface for non-blocking runs (steer / follow_up / cancel /
-  result), plus ``_build_messages_dict`` and
-  ``_validate_steering_message``.
 - ``arcagent.core.agent_lifecycle``    — capability subsystem setup
   (``setup_capabilities`` and the bridge helpers it calls).
-- ``arcagent.core.agent_dispatch``     — per-call run/chat/stream
-  orchestration (``execute_loop``, ``execute_loop_async``,
-  ``build_run_context``, ``prepare_chat_session``, ``maybe_compact``,
-  ``chat_stream``).
+- ``arcagent.core.agent_dispatch``     — the single streaming ``run``
+  body (``dispatch_stream``, ``build_run_context``, ``maybe_compact``).
 - ``arcagent.core.vault_resolver``     — vault backend instantiation
   + reference validation.
 - ``arcagent.core.model_manager``      — lazy model loader and the
   ArcRun/ArcLLM event bridges.
 
-Names from the siblings are re-exported through this module so existing
-imports
-(``from arcagent.core.agent import AgentHandle, create_arcrun_bridge,
-   create_arcllm_bridge``) keep working unchanged.
+The bridge factories are re-exported through this module so existing
+imports (``from arcagent.core.agent import create_arcrun_bridge,
+create_arcllm_bridge``) keep working unchanged.
 """
 
 from __future__ import annotations
@@ -33,26 +26,13 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from arcllm import Message
+from arcrun import collect
 from arctrust import AgentIdentity
 
 from arcagent.capabilities.capability_registry import SkillEntry
-from arcagent.core.agent_dispatch import (
-    chat_stream as _dispatch_chat_stream,
-)
-from arcagent.core.agent_dispatch import (
-    execute_loop,
-    execute_loop_async,
-    maybe_compact,
-    prepare_chat_session,
-)
-from arcagent.core.agent_handle import (
-    AgentHandle,
-    _build_messages_dict,
-    _validate_steering_message,
-)
+from arcagent.core.agent_dispatch import dispatch_stream
 from arcagent.core.agent_lifecycle import setup_capabilities
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.model_manager import (
@@ -68,7 +48,7 @@ from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 
-if False:  # TYPE_CHECKING — imports above already cover names used at runtime
+if TYPE_CHECKING:
     from arcrun import StreamEvent
 
 
@@ -76,10 +56,7 @@ _logger = logging.getLogger("arcagent.agent")
 
 
 __all__ = [
-    "AgentHandle",
     "ArcAgent",
-    "_build_messages_dict",
-    "_validate_steering_message",
     "_validate_vault_backend",
     "create_arcllm_bridge",
     "create_arcrun_bridge",
@@ -112,7 +89,13 @@ class ArcAgent:
         self._bus: ModuleBus | None = None
         self._tool_registry: ToolRegistry | None = None
         self._context: ContextManager | None = None
-        self._session: SessionManager | None = None
+        # Keyed pool of sessions — one SessionManager per conversation
+        # (a Slack thread, a UI tab, an agent-to-agent channel, a CLI key).
+        # Different humans/agents talking to this agent are distinct,
+        # concurrent sessions; turns through each still run sequentially
+        # via arcrun. ``session(key)`` opens-or-resumes by key.
+        self._sessions: dict[str, SessionManager] = {}
+        self._sessions_lock = asyncio.Lock()
         self._capability_registry: Any = None
         self._capability_loader: Any = None
         self._settings: SettingsManager | None = None
@@ -182,14 +165,8 @@ class ArcAgent:
             bus=self._bus,
         )
 
-        # 7. Session Manager (owns context)
-        self._session = SessionManager(
-            config=self._config.session,
-            context_config=self._config.context,
-            telemetry=self._telemetry,
-            workspace=workspace,
-            context_manager=self._context,
-        )
+        # 7. Session pool starts empty; managers are built on demand by
+        # ``session(key)`` so concurrent conversations stay isolated.
 
         # 8. Settings Manager
         self._settings = SettingsManager(
@@ -209,18 +186,12 @@ class ArcAgent:
         # the _ensure_started() guard.
         self._started = True
 
-        # 11. Emit agent:ready with deferred-binding callbacks. Hooks
-        # subscribed to this event receive agent.run/chat callbacks
-        # without core knowing about them.
-        await self._bus.emit(
-            "agent:ready",
-            {
-                "run_fn": self.run,
-                "chat_fn": self.chat,
-                "run_async_fn": self.run_async,
-                "chat_async_fn": self.chat_async,
-            },
-        )
+        # 11. Emit agent:ready with the single deferred-binding callback.
+        # Every surface (scheduler, pulse, slack, telegram, messaging)
+        # drives the agent the same way: one ``run_fn(input, *, session_key)``
+        # that opens-or-resumes the keyed session, streams a turn, and
+        # collects it to a final result.
+        await self._bus.emit("agent:ready", {"run_fn": self.run_collected})
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
         _logger.info(
@@ -261,85 +232,61 @@ class ArcAgent:
             self._trace_store = trace_store
         return self._model
 
+    async def session(self, key: str) -> SessionManager:
+        """Open-or-resume the session for ``key`` from the agent's pool.
+
+        Each distinct ``key`` (a channel id, a CLI key, an agent-to-agent
+        thread) gets its own ``SessionManager`` with an isolated message log,
+        cached for the agent's lifetime. Sessionless surfaces (CLI, scheduler)
+        pass a deterministic key to get a stable local session.
+        """
+        self._ensure_started()
+        # Guard get-or-create: open_or_resume awaits, so two concurrent callers
+        # with the same key could otherwise both build a manager over the same
+        # jsonl and clobber each other (split-brain history).
+        async with self._sessions_lock:
+            existing = self._sessions.get(key)
+            if existing is not None:
+                return existing
+            manager = SessionManager(
+                config=self._config.session,
+                context_config=self._config.context,
+                telemetry=self._telemetry,
+                workspace=self._workspace,
+                context_manager=self._context,
+            )
+            await manager.open_or_resume(key)
+            self._sessions[key] = manager
+            return manager
+
     async def run(
         self,
-        task: str,
+        input_text: str,
         *,
-        tool_choice: dict[str, Any] | None = None,
-        automated: bool = False,
-    ) -> Any:
-        """Execute a single task through the agent loop."""
-        return await execute_loop(self, task, tool_choice=tool_choice, automated=automated)
-
-    async def run_async(
-        self,
-        task: str,
-        *,
-        tool_choice: dict[str, Any] | None = None,
-        automated: bool = False,
-    ) -> AgentHandle:
-        """Execute a task, returning a handle for steering/cancellation."""
-        return await execute_loop_async(self, task, tool_choice=tool_choice, automated=automated)
-
-    async def chat(
-        self,
-        message: str,
-        *,
-        session_id: str | None = None,
-        tool_choice: dict[str, Any] | None = None,
-    ) -> Any:
-        """Multi-turn conversation with persistent message history."""
-        session = await prepare_chat_session(self, message, session_id)
-
-        result = await execute_loop(
-            self,
-            message,
-            messages=[Message(**m) for m in session.get_messages()],
-            tool_choice=tool_choice,
-        )
-
-        response_text = getattr(result, "content", None) or ""
-        await session.append_message({"role": "assistant", "content": response_text})
-
-        # Check compaction threshold after each turn
-        await maybe_compact(self, session)
-        return result
-
-    async def chat_async(
-        self,
-        message: str,
-        *,
-        session_id: str | None = None,
-        tool_choice: dict[str, Any] | None = None,
-    ) -> AgentHandle:
-        """Multi-turn conversation returning a steerable handle.
-
-        Unlike chat(), result() automatically commits the assistant
-        response to the session. Compaction is caller-responsibility.
-        """
-        session = await prepare_chat_session(self, message, session_id)
-
-        return await execute_loop_async(
-            self,
-            message,
-            messages=[Message(**m) for m in session.get_messages()],
-            tool_choice=tool_choice,
-            session=session,
-        )
-
-    async def chat_stream(
-        self,
-        task: str,
-        *,
-        tool_choice: dict[str, Any] | None = None,
+        session: SessionManager,
     ) -> AsyncIterator[StreamEvent]:
-        """Stream a task through the agent loop, yielding incremental events.
+        """Drive one agent turn. The only execution entry — always
+        session-bound, always streaming.
 
-        Returns an async iterator of :class:`~arcrun.streams.StreamEvent`
-        objects. The caller must iterate to completion for the
-        post-respond event to fire. Use ``chat()`` for blocking callers.
+        Appends the input to ``session``'s history, streams arcrun
+        ``StreamEvent``s (token … turn-end), and commits the assistant
+        turn on completion (history/audit parity with the old ``chat``).
+        One-shot callers wrap this with ``collect()`` (or use
+        ``run_collected``) for a final result.
         """
-        return await _dispatch_chat_stream(self, task, tool_choice=tool_choice)
+        self._ensure_started()
+        async for event in dispatch_stream(self, input_text, session=session):
+            yield event
+
+    async def run_collected(self, input_text: str, *, session_key: str) -> Any:
+        """Run a turn on the ``session_key`` session and collect to a result.
+
+        The single callback every non-streaming surface binds (scheduler,
+        pulse, slack, telegram, messaging): open-or-resume the keyed session,
+        stream the turn, and return the final ``RunResult``.
+        """
+        session = await self.session(session_key)
+        return await collect(self.run(input_text, session=session))
 
     async def reload(self) -> str:
         """Re-scan capability roots; return R-005 diff string.
@@ -376,7 +323,7 @@ class ArcAgent:
             await bridge_capability_tools_to_registry(self)
             await bridge_capability_hooks_to_bus(self)
             await bus.emit("agent:tools_reloaded", {})
-            text = diff.render()
+            text: str = diff.render()
             _logger.info("Reload complete: %s", text)
             return text
 

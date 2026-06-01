@@ -1,9 +1,8 @@
-"""Integration test — ArcAgent with ArcLLM bridge + ArcUI event flow.
+"""Integration test — ArcAgent with ArcLLM bridge into the Module Bus.
 
 Verifies:
   1. create_arcllm_bridge() wires TraceRecord events into ModuleBus
   2. ModuleBus handlers receive llm:call_complete, llm:config_change, llm:circuit_change
-  3. attach_llm() feeds events to EventBuffer + RollingAggregator
 """
 
 from __future__ import annotations
@@ -161,98 +160,3 @@ class TestArcLLMBridgeIntegration:
         assert received[0]["trace_id"] == "test-trace-001"
 
         await agent.shutdown()
-
-
-class TestArcUIEventFlowIntegration:
-    """Integration: ArcLLM bridge → ArcUI EventBuffer + RollingAggregator."""
-
-    async def test_attach_llm_feeds_event_buffer_and_aggregator(self) -> None:
-        """attach_llm() wires on_event → EventBuffer.push + RollingAggregator.ingest."""
-        from arcui.server import attach_llm, create_app
-
-        app = create_app()
-        mock_llm = MagicMock()
-        mock_llm._inner = None  # No module stack to walk
-
-        attach_llm(app, mock_llm, label="test-model")
-
-        assert len(app.state.on_event_callbacks) == 1
-        on_event = app.state.on_event_callbacks[0]
-
-        # Simulate LLM call via the callback
-        record = MagicMock()
-        record.model_dump.return_value = {
-            "event_type": "llm_call",
-            "provider": "anthropic",
-            "model": "claude-sonnet-4",
-            "duration_ms": 200.0,
-            "cost_usd": 0.004,
-            "total_tokens": 800,
-            "input_tokens": 600,
-            "output_tokens": 200,
-        }
-        on_event(record)
-
-        # Verify EventBuffer received the event
-        assert len(app.state.event_buffer._buffer) == 1
-        pushed = app.state.event_buffer._buffer[0]
-        assert pushed["provider"] == "anthropic"
-        assert pushed["agent_label"] == "test-model"
-
-        # Verify RollingAggregator ingested the event
-        stats = app.state.aggregator.stats()
-        assert stats["request_count"] == 1
-        assert stats["total_cost"] == 0.004
-
-    async def test_full_bridge_to_arcui_pipeline(self) -> None:
-        """End-to-end: create_arcllm_bridge → on_event callback → ArcUI pipeline."""
-        from arcui.server import attach_llm, create_app
-
-        bus = ModuleBus()
-        app = create_app()
-        mock_llm = MagicMock()
-        mock_llm._inner = None
-
-        attach_llm(app, mock_llm, label="full-test")
-
-        # Wire bridge to both bus and ArcUI on_event callback
-        bridge = create_arcllm_bridge(bus)
-        arcui_callback = app.state.on_event_callbacks[0]
-
-        bus_events: list[dict[str, Any]] = []
-
-        async def on_bus(ctx: Any) -> None:
-            bus_events.append(ctx.data)
-
-        bus.subscribe("llm:call_complete", on_bus)
-
-        # Simulate: bridge fires → ModuleBus gets event
-        # AND: arcui_callback fires → EventBuffer + Aggregator get event
-        record_data = {
-            "event_type": "llm_call",
-            "trace_id": "e2e-trace-001",
-            "provider": "anthropic",
-            "model": "claude-sonnet-4",
-            "duration_ms": 300.0,
-            "cost_usd": 0.006,
-            "total_tokens": 1500,
-            "input_tokens": 1000,
-            "output_tokens": 500,
-        }
-
-        bridge(record_data)
-        arcui_callback(record_data)
-
-        for _ in range(10):
-            await asyncio.sleep(0)
-
-        # ModuleBus received the event
-        assert len(bus_events) == 1
-        assert bus_events[0]["trace_id"] == "e2e-trace-001"
-
-        # ArcUI EventBuffer received the event
-        assert len(app.state.event_buffer._buffer) == 1
-
-        # ArcUI Aggregator received the event
-        stats = app.state.aggregator.stats()
-        assert stats["request_count"] == 1

@@ -72,7 +72,7 @@ class MessagingModule:
     2. Registers this agent as an entity in the team registry
     3. Registers 5 LLM-callable tools (send, inbox, thread, entities, channels)
     4. Subscribes to agent:assemble_prompt to inject unread message counts
-    5. Starts a background polling loop that routes new messages through agent.chat()
+    5. Starts a background polling loop that routes new messages through agent.run_collected()
     """
 
     def __init__(
@@ -90,7 +90,7 @@ class MessagingModule:
         self._svc: Any = None  # MessagingService — set during startup
         self._registry: Any = None  # EntityRegistry — set during startup
         self._last_unread: dict[str, int] = {}  # stream -> unread count cache
-        self._agent_chat_fn: Any = None  # agent.chat() — bound via agent:ready
+        self._agent_run_fn: Any = None  # agent.run_collected() — bound via agent:ready
         self._processing_lock = asyncio.Lock()  # Serialize message processing
         self._roster_cache: str | None = None
         self._roster_cache_time: float = 0.0
@@ -208,12 +208,12 @@ class MessagingModule:
         _logger.info("Messaging module started (entity=%s, team_root=%s)", entity_id, team_root)
 
     async def _on_agent_ready(self, event: Any) -> None:
-        """Bind agent.chat() callback for message processing."""
+        """Bind agent.run_collected() callback for message processing."""
         data = event.data if hasattr(event, "data") else {}
-        chat_fn = data.get("chat_fn")
-        if chat_fn is not None:
-            self._agent_chat_fn = chat_fn
-            _logger.info("Bound agent_chat_fn for message processing")
+        run_fn = data.get("run_fn")
+        if run_fn is not None:
+            self._agent_run_fn = run_fn
+            _logger.info("Bound agent_run_fn for message processing")
 
     async def shutdown(self) -> None:
         """Stop polling loop. Safe to call multiple times."""
@@ -351,13 +351,13 @@ class MessagingModule:
         sections["teams"] = "\n".join(lines)
 
     async def _poll_loop(self) -> None:
-        """Background polling loop. Routes new messages through agent.chat().
+        """Background polling loop. Routes new messages through agent.run_collected().
 
         When new messages arrive, formats them as a prompt and sends through
-        agent.chat() so the agent can reason about them, respond, and trigger
-        memory consolidation (entity extraction, episodes, etc.).
+        agent.run_collected() so the agent can reason about them, respond, and
+        trigger memory consolidation (entity extraction, episodes, etc.).
 
-        Falls back to unread-count caching when agent_chat_fn is not yet bound.
+        Falls back to unread-count caching when agent_run_fn is not yet bound.
         """
         interval = self._config.poll_interval_seconds
         entity_id = self._config.entity_id
@@ -375,8 +375,8 @@ class MessagingModule:
                 # Update cached unread counts for prompt injection.
                 self._last_unread = {stream: len(msgs) for stream, msgs in inbox.items()}
 
-                # Route messages through agent.chat() for full processing.
-                if self._agent_chat_fn is not None:
+                # Route messages through agent.run_collected() for full processing.
+                if self._agent_run_fn is not None:
                     await self._process_inbox(inbox)
 
             except Exception:  # reason: fail-open — log + continue
@@ -384,7 +384,7 @@ class MessagingModule:
             await asyncio.sleep(interval)
 
     async def _process_inbox(self, inbox: dict[str, list[Any]]) -> None:
-        """Format inbox messages as a prompt and route through agent.chat().
+        """Format inbox messages as a prompt and route through agent.run_collected().
 
         Batches all unread messages into a single prompt to avoid excessive
         LLM calls. The agent sees the full context and can respond to each.
@@ -442,10 +442,10 @@ class MessagingModule:
 
             try:
                 _logger.info(
-                    "Processing %d inbox message(s) through agent.chat()",
+                    "Processing %d inbox message(s) through agent.run_collected()",
                     len(all_messages),
                 )
-                await self._agent_chat_fn(prompt)
+                await self._agent_run_fn(prompt, session_key="messaging:inbox")
 
                 # Ack after successful processing
                 if self._config.auto_ack:

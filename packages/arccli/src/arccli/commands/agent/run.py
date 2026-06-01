@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 from pathlib import Path
+
+from arcrun import collect
 
 from arccli.commands.agent._common import (
     _load_arcagent,
@@ -43,19 +44,20 @@ async def _agent_run_once(
 
     await arc_agent.startup()
     try:
-        result = await arc_agent.run(task)
+        # One streaming entry — open-or-resume a deterministic local session and
+        # collect the stream to a final result (SPEC-027 AC-2.2).
+        session = await arc_agent.session("cli:run")
+        result = await collect(arc_agent.run(task, session=session))
 
         if as_json:
             _print_result_json(result)
         else:
-            if result.completion_payload:
-                sys.stdout.write(json.dumps(result.completion_payload, indent=2) + "\n")
-            elif result.content:
+            if result.content:
                 sys.stdout.write(result.content + "\n")
             if verbose:
                 sys.stdout.write(
                     f"\n[{result.turns} turns, {result.tool_calls_made} tool calls, "
-                    f"${result.cost_usd:.4f}, strategy={result.strategy_used}]\n"
+                    f"${result.cost_usd:.4f}]\n"
                 )
     finally:
         await arc_agent.shutdown()

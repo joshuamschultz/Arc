@@ -8,7 +8,7 @@ the unified capability surface:
     ``teardown`` closes.
   * ``@tool slack_notify_user`` — agent-callable tool that sends a
     proactive DM to the stored user.
-  * ``@hook agent:ready``       — binds ``agent.chat()`` callback into
+  * ``@hook agent:ready``       — binds the agent run callback into
     the bot for deferred wiring.
   * ``@hook agent:shutdown``    — tears down the bot (parallel safety
     net to lifecycle teardown for module-only deployments).
@@ -99,16 +99,16 @@ async def slack_notify_user(message: str) -> str:
 
 
 @hook(event="agent:ready")
-async def bind_agent_chat_fn(ctx: Any) -> None:
-    """Bind ``agent.chat()`` callback into the bot for deferred wiring."""
+async def bind_agent_run_fn(ctx: Any) -> None:
+    """Bind the agent run callback into the bot for deferred wiring."""
     st = _runtime.state()
     if st.bot is None:
         return
     data = ctx.data if hasattr(ctx, "data") else {}
-    chat_fn = data.get("chat_fn")
-    if chat_fn is not None:
-        st.bot.set_agent_chat_fn(chat_fn)
-        _logger.info("Bound agent_chat_fn via agent:ready event")
+    run_fn = data.get("run_fn")
+    if run_fn is not None:
+        st.bot.set_agent_run_fn(run_fn)
+        _logger.info("Bound agent_run_fn via agent:ready event")
 
 
 @hook(event="agent:shutdown")
@@ -134,7 +134,7 @@ async def notify_schedule_failed(ctx: Any) -> None:
 
 __all__ = [
     "SlackCapability",
-    "bind_agent_chat_fn",
+    "bind_agent_run_fn",
     "notify_schedule_failed",
     "slack_notify_user",
     "stop_slack_bot",

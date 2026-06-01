@@ -67,6 +67,7 @@ class TestTraceIntegration:
             "trace_store": store,
             "on_event": events.append,
             "agent_label": "test-agent",
+            "store_raw_bodies": True,  # explicit opt-in (default is now False, SPEC-026 C2)
         }
         module = TelemetryModule(config, inner)
 
@@ -112,7 +113,7 @@ class TestTraceIntegration:
         agent_results, _ = await store.query(agent="test-agent")
         assert len(agent_results) == 3
 
-        # Request/response bodies stored (default store_raw_bodies=True)
+        # Request/response bodies stored (explicit store_raw_bodies=True)
         for rec in events:
             assert rec.request_body is not None
             assert rec.response_body is not None

@@ -1,8 +1,8 @@
 """Slack bot — Socket Mode connection, message handlers, and response delivery.
 
 Manages the Socket Mode WebSocket connection to Slack, routes
-inbound DMs to agent.chat(), and delivers responses with smart
-splitting at paragraph/sentence boundaries.
+inbound DMs to the agent run callback, and delivers responses with
+smart splitting at paragraph/sentence boundaries.
 """
 
 from __future__ import annotations
@@ -141,7 +141,7 @@ class SlackBot:
         self._config = config
         self._telemetry = telemetry
         self._workspace = workspace
-        self._agent_chat_fn: Callable[..., Awaitable[Any]] | None = None
+        self._agent_run_fn: Callable[..., Awaitable[Any]] | None = None
         self._lock = asyncio.Lock()
         self._app: Any | None = None
         self._handler: Any | None = None
@@ -174,9 +174,9 @@ class SlackBot:
             _logger.debug("FileHandler not available; file uploads will be ignored")
             self._file_handler = None
 
-    def set_agent_chat_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
-        """Bind the agent.chat() callback (deferred binding)."""
-        self._agent_chat_fn = fn
+    def set_agent_run_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
+        """Bind the agent run callback (deferred binding)."""
+        self._agent_run_fn = fn
 
     async def start(self) -> None:
         """Start Socket Mode connection in background.
@@ -355,7 +355,7 @@ class SlackBot:
         if not file_context and await self._dispatch_command(text, channel, user_id):
             return
 
-        # Process message through agent.chat()
+        # Process message through the agent run callback
         async with self._lock:
             await self._process_message(prompt, channel)
 
@@ -438,22 +438,22 @@ class SlackBot:
         return False
 
     async def _process_message(self, text: str, channel: str) -> None:
-        """Process a single message through agent.chat()."""
+        """Process a single message through the agent run callback."""
         if self._app is None:
             return
 
-        if self._agent_chat_fn is None:
-            _logger.warning("No agent_chat_fn bound; message skipped")
+        if self._agent_run_fn is None:
+            _logger.warning("No agent_run_fn bound; message skipped")
             await self._app.client.chat_postMessage(
                 channel=channel,
-                text="Agent not ready — chat function not bound.",
+                text="Agent not ready — run function not bound.",
             )
             return
 
         try:
-            result = await self._agent_chat_fn(text, session_id=self._current_session_id)
+            result = await self._agent_run_fn(text, session_key=self._current_session_id)
         except Exception as exc:  # reason: fail-open — log + continue
-            _logger.exception("Error calling agent.chat()")
+            _logger.exception("Error calling agent run callback")
             error_msg = _user_facing_error(exc)
             await self._app.client.chat_postMessage(
                 channel=channel,
@@ -462,7 +462,7 @@ class SlackBot:
             self._emit_event(
                 "slack:error",
                 {
-                    "error": "agent_chat_failed",
+                    "error": "agent_run_failed",
                     "error_type": type(exc).__name__,
                     "error_detail": str(exc)[:200],
                 },

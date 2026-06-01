@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from conftest import LLMResponse, MockModel, ToolCall
 
+from arcrun import StaticProvider
 from arcrun.types import Tool
 
 
@@ -38,7 +39,7 @@ class TestSteer:
                 LLMResponse(content="Steered!", stop_reason="end_turn"),
             ]
         )
-        handle = await run_async(model, _tools(), "prompt", "task")
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         # Give loop time to start, then steer
         await asyncio.sleep(0.005)
         await handle.steer("change direction")
@@ -62,7 +63,7 @@ class TestSteer:
                 LLMResponse(content="After steer.", stop_reason="end_turn"),
             ]
         )
-        handle = await run_async(model, _tools(), "prompt", "task")
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         # Inject steer immediately so it catches between tools
         handle._state.steer_queue.put_nowait("redirect")
         result = await handle.result()
@@ -80,7 +81,7 @@ class TestFollowUp:
                 LLMResponse(content="Also did X.", stop_reason="end_turn"),
             ]
         )
-        handle = await run_async(model, _tools(), "prompt", "task")
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         # Queue followup before loop starts
         handle._state.followup_queue.put_nowait("also do X")
         result = await handle.result()
@@ -92,7 +93,7 @@ class TestFollowUp:
         from arcrun.loop import run_async
 
         model = MockModel([LLMResponse(content="Done.", stop_reason="end_turn")])
-        handle = await run_async(model, _tools(), "prompt", "task")
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         result = await handle.result()
         assert result.content == "Done."
         assert result.turns == 1
@@ -112,7 +113,7 @@ class TestCancel:
                 for _ in range(10)
             ]
         )
-        handle = await run_async(model, _tools(), "prompt", "task", max_turns=10)
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task", max_turns=10)
         await asyncio.sleep(0.02)
         await handle.cancel()
         result = await handle.result()
@@ -132,7 +133,7 @@ class TestCancel:
                 for i in range(10)
             ]
         )
-        handle = await run_async(model, _tools(), "prompt", "task", max_turns=10)
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task", max_turns=10)
         await asyncio.sleep(0.02)
         await handle.cancel()
         result = await handle.result()

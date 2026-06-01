@@ -23,9 +23,9 @@ Keypair:
 Audit:
     AuditEvent          — Pydantic schema for structured audit events
     AuditSink           — Protocol for sink implementations
-    JsonlSink           — Append-only JSONL file sink
     NullSink            — No-op sink (tests, air-gapped evaluation)
-    SignedChainSink     — Ed25519 hash-chained tamper-evident sink
+    WormSink            — Durable, append-only, Ed25519-signed hash chain
+                          (the compliance system of record; survives restart)
     emit                — Safe dispatch (swallows sink failures per AU-5)
 
 Policy:
@@ -46,7 +46,7 @@ Trust store:
 
 __version__ = "0.2.0"
 
-from arctrust.audit import AuditEvent, AuditSink, JsonlSink, NullSink, SignedChainSink, emit
+from arctrust.audit import AuditEvent, AuditSink, NullSink, WormSink, emit, verify_chain
 from arctrust.identity import (
     AgentIdentity,
     ChildIdentity,
@@ -78,16 +78,15 @@ __all__ = [
     "AuditSink",
     "ChildIdentity",
     "Decision",
-    "JsonlSink",
     "KeyPair",
     "NullSink",
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
-    "SignedChainSink",
     "TierConfig",
     "ToolCall",
     "TrustStoreError",
+    "WormSink",
     "__version__",
     "build_pipeline",
     "derive_child_identity",
@@ -101,4 +100,5 @@ __all__ = [
     "sign",
     "validate_did",
     "verify",
+    "verify_chain",
 ]

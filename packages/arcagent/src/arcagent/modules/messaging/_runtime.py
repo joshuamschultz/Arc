@@ -1,7 +1,7 @@
 """Per-agent messaging module runtime context.
 
 The messaging module's hooks, tools, and background polling task share
-state (services, config, unread-count cache, agent chat callback, etc.).
+state (services, config, unread-count cache, agent run callback, etc.).
 Decorator-stamped functions can't carry that state in a closure, so it
 lives in a module-level :class:`_State` instance configured by the agent
 at startup.
@@ -40,8 +40,8 @@ class _State:
     # Latest unread counts per stream — updated by the poll loop and read
     # by the assemble_prompt hook for context injection.
     last_unread: dict[str, int] = field(default_factory=dict)
-    # agent.chat() callback — bound via agent:ready event.
-    agent_chat_fn: Any = None
+    # agent.run_collected() callback — bound via agent:ready event.
+    agent_run_fn: Any = None
     # Serialises message processing so only one inbox batch is in-flight.
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # TTL-cached team roster string; invalidated after roster_ttl_seconds.

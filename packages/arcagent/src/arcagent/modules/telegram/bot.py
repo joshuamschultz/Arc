@@ -1,8 +1,8 @@
 """Telegram bot — polling loop, message handlers, and response delivery.
 
 Manages the long-polling connection to Telegram Bot API, routes
-inbound messages to agent.chat(), and delivers responses with
-smart splitting at paragraph/sentence boundaries.
+inbound messages to the agent run callback, and delivers responses
+with smart splitting at paragraph/sentence boundaries.
 """
 
 from __future__ import annotations
@@ -127,7 +127,7 @@ class TelegramBot:
         self._config = config
         self._telemetry = telemetry
         self._workspace = workspace
-        self._agent_chat_fn: Callable[..., Awaitable[Any]] | None = None
+        self._agent_run_fn: Callable[..., Awaitable[Any]] | None = None
         self._message_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queue_task: asyncio.Task[None] | None = None
         self._application: Any | None = None
@@ -160,9 +160,9 @@ class TelegramBot:
             _logger.debug("FileHandler not available; file uploads will be ignored")
             self._file_handler = None
 
-    def set_agent_chat_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
-        """Bind the agent.chat() callback (deferred binding)."""
-        self._agent_chat_fn = fn
+    def set_agent_run_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
+        """Bind the agent run callback (deferred binding)."""
+        self._agent_run_fn = fn
 
     async def start(self) -> None:
         """Start long-polling in a background asyncio task.
@@ -389,7 +389,7 @@ class TelegramBot:
     # ── Message Handling ──────────────────────────────────────────
 
     async def _handle_message(self, update: Any, context: Any) -> None:
-        """Handle free-text messages — route to agent.chat()."""
+        """Handle free-text messages — route to the agent run callback."""
         if update.effective_chat is None or update.message is None:
             return
 
@@ -649,16 +649,16 @@ class TelegramBot:
                 self._message_queue.task_done()
 
     async def _process_message(self, item: dict[str, Any]) -> None:
-        """Process a single queued message through agent.chat()."""
+        """Process a single queued message through the agent run callback."""
         text = item["text"]
         update = item["update"]
 
-        if self._agent_chat_fn is None:
-            _logger.warning("No agent_chat_fn bound; message skipped")
-            await update.message.reply_text("Agent not ready — chat function not bound.")
+        if self._agent_run_fn is None:
+            _logger.warning("No agent_run_fn bound; message skipped")
+            await update.message.reply_text("Agent not ready — run function not bound.")
             return
 
-        result = await self._agent_chat_fn(text, session_id=self._current_session_id)
+        result = await self._agent_run_fn(text, session_key=self._current_session_id)
 
         # Extract response content
         content = getattr(result, "content", None) or str(result) if result else None

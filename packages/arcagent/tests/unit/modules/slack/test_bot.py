@@ -177,13 +177,13 @@ class TestHandleMessage:
         bot._current_session_id = "test-session"
         app = _attach_mock_app(bot)
 
-        mock_chat = AsyncMock(return_value=MagicMock(content="Hello back"))
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content="Hello back"))
+        bot.set_agent_run_fn(mock_run)
 
         event = {"user": "U123", "channel": "D12345", "text": "hello"}
         await bot._handle_message(event)
 
-        mock_chat.assert_called_once_with("hello", session_id="test-session")
+        mock_run.assert_called_once_with("hello", session_key="test-session")
         app.client.chat_postMessage.assert_called_once_with(channel="D12345", text="Hello back")
 
     @pytest.mark.asyncio
@@ -191,13 +191,13 @@ class TestHandleMessage:
         bot = _make_bot(tmp_path, allowed_user_ids=["U111"])
         app = _attach_mock_app(bot)
 
-        mock_chat = AsyncMock()
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock()
+        bot.set_agent_run_fn(mock_run)
 
         event = {"user": "U999", "channel": "D12345", "text": "sneaky"}
         await bot._handle_message(event)
 
-        mock_chat.assert_not_called()
+        mock_run.assert_not_called()
         app.client.chat_postMessage.assert_not_called()
 
     @pytest.mark.asyncio
@@ -215,21 +215,21 @@ class TestHandleMessage:
     async def test_bot_message_skipped(self, tmp_path: Path) -> None:
         """Messages with bot_id are skipped (prevent infinite loops)."""
         bot = _make_bot(tmp_path)
-        mock_chat = AsyncMock()
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock()
+        bot.set_agent_run_fn(mock_run)
 
         event = {"user": "U123", "channel": "D12345", "text": "hello", "bot_id": "B123"}
         await bot._handle_message(event)
 
-        mock_chat.assert_not_called()
+        mock_run.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_creates_session_if_none(self, tmp_path: Path) -> None:
         bot = _make_bot(tmp_path)
         _attach_mock_app(bot)
 
-        mock_chat = AsyncMock(return_value=MagicMock(content="hi"))
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content="hi"))
+        bot.set_agent_run_fn(mock_run)
 
         assert bot._current_session_id is None
         event = {"user": "U123", "channel": "D12345", "text": "hello"}
@@ -244,24 +244,24 @@ class TestHandleMessage:
         bot._current_session_id = "test-session"
         _attach_mock_app(bot)
 
-        mock_chat = AsyncMock(return_value=MagicMock(content="reply"))
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content="reply"))
+        bot.set_agent_run_fn(mock_run)
 
         event = {"user": "U123", "channel": "D12345", "text": "<@U999BOT> hello"}
         await bot._handle_message(event)
 
-        mock_chat.assert_called_once_with("hello", session_id="test-session")
+        mock_run.assert_called_once_with("hello", session_key="test-session")
 
     @pytest.mark.asyncio
     async def test_empty_text_skipped(self, tmp_path: Path) -> None:
         bot = _make_bot(tmp_path)
-        mock_chat = AsyncMock()
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock()
+        bot.set_agent_run_fn(mock_run)
 
         event = {"user": "U123", "channel": "D12345", "text": ""}
         await bot._handle_message(event)
 
-        mock_chat.assert_not_called()
+        mock_run.assert_not_called()
 
 
 # ── Text Command Handlers ──────────────────────────────────────
@@ -332,8 +332,8 @@ class TestProcessMessage:
         app = _attach_mock_app(bot)
 
         long_text = "a" * 50
-        mock_chat = AsyncMock(return_value=MagicMock(content=long_text))
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content=long_text))
+        bot.set_agent_run_fn(mock_run)
 
         await bot._process_message("hi", "D12345")
 
@@ -345,15 +345,15 @@ class TestProcessMessage:
         bot._current_session_id = "test-session"
         app = _attach_mock_app(bot)
 
-        mock_chat = AsyncMock(return_value=None)
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=None)
+        bot.set_agent_run_fn(mock_run)
 
         await bot._process_message("hi", "D12345")
 
         app.client.chat_postMessage.assert_called_once_with(channel="D12345", text="(No response)")
 
     @pytest.mark.asyncio
-    async def test_skips_if_no_chat_fn(self, tmp_path: Path) -> None:
+    async def test_skips_if_no_run_fn(self, tmp_path: Path) -> None:
         bot = _make_bot(tmp_path)
         app = _attach_mock_app(bot)
 
@@ -361,7 +361,7 @@ class TestProcessMessage:
 
         app.client.chat_postMessage.assert_called_once_with(
             channel="D12345",
-            text="Agent not ready — chat function not bound.",
+            text="Agent not ready — run function not bound.",
         )
 
     @pytest.mark.asyncio
@@ -370,8 +370,8 @@ class TestProcessMessage:
         bot._current_session_id = "test-session"
         _attach_mock_app(bot)
 
-        mock_chat = AsyncMock(return_value=MagicMock(content="reply"))
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content="reply"))
+        bot.set_agent_run_fn(mock_run)
 
         await bot._process_message("hi", "D12345")
 
@@ -386,8 +386,8 @@ class TestProcessMessage:
         bot._current_session_id = "test-session"
         app = _attach_mock_app(bot)
 
-        mock_chat = AsyncMock(side_effect=RuntimeError("LLM error"))
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(side_effect=RuntimeError("LLM error"))
+        bot.set_agent_run_fn(mock_run)
 
         await bot._process_message("hi", "D12345")
 
@@ -405,8 +405,8 @@ class TestProcessMessage:
         app = _attach_mock_app(bot)
 
         error = ArcLLMAPIError(status_code=429, body="rate limited", provider="azure")
-        mock_chat = AsyncMock(side_effect=error)
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(side_effect=error)
+        bot.set_agent_run_fn(mock_run)
 
         await bot._process_message("hi", "D12345")
 
@@ -424,8 +424,8 @@ class TestProcessMessage:
         app = _attach_mock_app(bot)
 
         error = ArcLLMAPIError(status_code=502, body="bad gateway", provider="azure")
-        mock_chat = AsyncMock(side_effect=error)
-        bot.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(side_effect=error)
+        bot.set_agent_run_fn(mock_run)
 
         await bot._process_message("hi", "D12345")
 

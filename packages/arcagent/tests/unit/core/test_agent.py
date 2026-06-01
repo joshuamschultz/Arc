@@ -1,17 +1,17 @@
-"""Tests for agent orchestrator — startup, run, shutdown, ArcRun bridge, chat, steering."""
+"""Tests for agent orchestrator — startup, run, shutdown, ArcRun/ArcLLM bridges."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from arcrun import RunHandle
+from arcrun import StreamEvent, TokenEvent, TurnEndEvent
 
 from arcagent.core.agent import (
-    AgentHandle,
     ArcAgent,
     create_arcllm_bridge,
     create_arcrun_bridge,
@@ -51,6 +51,26 @@ def agent(agent_config: ArcAgentConfig) -> ArcAgent:
     return ArcAgent(config=agent_config)
 
 
+async def _fake_stream(*tokens: str) -> AsyncIterator[StreamEvent]:
+    for t in tokens:
+        yield TokenEvent(text=t)
+    yield TurnEndEvent(final_text="".join(tokens))
+
+
+def _patch_stream(*tokens: str) -> Any:
+    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
+        return _fake_stream(*tokens)
+
+    return patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory)
+
+
+async def _drive(agent: ArcAgent, task: str, key: str = "unit:test") -> None:
+    """Consume a streaming run to completion against a keyed session."""
+    session = await agent.session(key)
+    async for _ in agent.run(task, session=session):
+        pass
+
+
 class TestInit:
     def test_creates_agent(self, agent: ArcAgent) -> None:
         assert agent._config.agent.name == "test-agent"
@@ -80,6 +100,7 @@ class TestStartup:
 
     async def test_startup_generates_identity(self, agent: ArcAgent) -> None:
         await agent.startup()
+        assert agent._identity is not None
         assert agent._identity.did.startswith("did:arc:testorg:executor/")
 
     async def test_startup_emits_init_event(self, agent: ArcAgent) -> None:
@@ -89,6 +110,7 @@ class TestStartup:
             events.append("init")
 
         await agent.startup()
+        assert agent._bus is not None
         agent._bus.subscribe("agent:init", on_init)
         # Re-emit for test (init already fired during startup)
         await agent._bus.emit("agent:init", {})
@@ -126,6 +148,7 @@ class TestShutdown:
         async def on_shutdown(ctx: Any) -> None:
             events.append("shutdown")
 
+        assert agent._bus is not None
         agent._bus.subscribe("agent:shutdown", on_shutdown)
         await agent.shutdown()
         assert "shutdown" in events
@@ -137,25 +160,9 @@ class TestShutdown:
 
 class TestRun:
     async def test_run_requires_startup(self, agent: ArcAgent) -> None:
+        # session() calls _ensure_started, so opening a session before startup raises.
         with pytest.raises(RuntimeError, match="not started"):
-            await agent.run("test task")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_run_calls_loop(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        mock_model = MagicMock()
-        mock_load_model.return_value = mock_model
-        mock_arcrun_run.return_value = MagicMock(content="result", tool_calls_made=0)
-
-        await agent.startup()
-        result = await agent.run("test task")
-        mock_arcrun_run.assert_called_once()
-        assert result is not None
+            await agent.session("k")
 
 
 class TestArcRunBridge:
@@ -325,10 +332,8 @@ class TestArcLLMBridge:
 
 class TestPreRespondEvent:
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_pre_respond_emitted_before_run(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent: ArcAgent,
     ) -> None:
@@ -338,20 +343,19 @@ class TestPreRespondEvent:
             events.append("pre_respond")
 
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="done")
 
-        await agent.startup()
-        agent._bus.subscribe("agent:pre_respond", on_pre)
-        await agent.run("test task")
+        with _patch_stream("done"):
+            await agent.startup()
+            assert agent._bus is not None
+            agent._bus.subscribe("agent:pre_respond", on_pre)
+            await _drive(agent, "test task")
         assert "pre_respond" in events
 
 
 class TestErrorEvent:
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_error_event_emitted_on_failure(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent: ArcAgent,
     ) -> None:
@@ -361,12 +365,18 @@ class TestErrorEvent:
             events.append(ctx.data)
 
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.side_effect = RuntimeError("LLM call failed")
 
-        await agent.startup()
-        agent._bus.subscribe("agent:error", on_error)
-        with pytest.raises(RuntimeError, match="LLM call failed"):
-            await agent.run("failing task")
+        async def _boom(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
+            raise RuntimeError("LLM call failed")
+
+        with patch(
+            "arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_boom
+        ):
+            await agent.startup()
+            assert agent._bus is not None
+            agent._bus.subscribe("agent:error", on_error)
+            with pytest.raises(RuntimeError, match="LLM call failed"):
+                await _drive(agent, "failing task")
         assert len(events) == 1
         assert events[0]["error_type"] == "RuntimeError"
 
@@ -405,20 +415,18 @@ class TestVaultValidation:
 
 class TestModelCaching:
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_model_loaded_once_across_runs(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent: ArcAgent,
     ) -> None:
         """Model is loaded once on first run and reused."""
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="done")
 
-        await agent.startup()
-        await agent.run("task 1")
-        await agent.run("task 2")
+        with _patch_stream("done"):
+            await agent.startup()
+            await _drive(agent, "task 1")
+            await _drive(agent, "task 2")
         # Model loaded only once (on first run)
         mock_load_model.assert_called_once()
 
@@ -443,149 +451,6 @@ class TestErrorHandling:
         # DID is set but key file doesn't exist — hard fail, no silent regen
         with pytest.raises(ValueError, match="Key file not found"):
             await agent.startup()
-
-
-class TestChat:
-    """Tests for multi-turn chat() method with SessionManager integration."""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_chat_creates_session(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat() creates a new session when no session_id provided."""
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="Hello!")
-
-        await agent.startup()
-        result = await agent.chat("Hello")
-        assert result is not None
-        # Session should have been created
-        assert agent._session is not None
-        assert agent._session.session_id != ""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_chat_appends_user_message(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat() appends user message to session before calling loop."""
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="Response")
-
-        await agent.startup()
-        await agent.chat("Hi there")
-
-        # Session should have messages (at least user + assistant)
-        msgs = agent._session.get_messages()
-        user_msgs = [m for m in msgs if m.get("role") == "user"]
-        assert len(user_msgs) >= 1
-        assert any(m.get("content") == "Hi there" for m in user_msgs)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_chat_passes_messages_to_run_loop(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat() passes session messages to arcrun.run via messages param."""
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="Done")
-
-        await agent.startup()
-        await agent.chat("First message")
-
-        # Verify arcrun_run was called with messages parameter
-        call_kwargs = mock_arcrun_run.call_args
-        assert "messages" in call_kwargs.kwargs
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_chat_resumes_session(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat() with session_id resumes existing session."""
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="Resumed!")
-
-        await agent.startup()
-
-        # Create a session first
-        await agent.chat("First")
-        session_id = agent._session.session_id
-
-        # Resume with same session_id
-        await agent.chat("Second", session_id=session_id)
-        assert agent._session.session_id == session_id
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_chat_persists_to_jsonl(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-        tmp_path: Path,
-    ) -> None:
-        """Messages are persisted to JSONL after chat."""
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="Saved!")
-
-        await agent.startup()
-        await agent.chat("Persist me")
-
-        session_id = agent._session.session_id
-        workspace = Path(agent._config.agent.workspace)
-        jsonl_path = workspace / "sessions" / f"{session_id}.jsonl"
-        assert jsonl_path.exists()
-        content = jsonl_path.read_text().strip()
-        assert len(content) > 0  # At least user message written
-
-    async def test_chat_requires_startup(self, agent: ArcAgent) -> None:
-        """chat() raises if agent not started."""
-        with pytest.raises(RuntimeError, match="not started"):
-            await agent.chat("Hello")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
-    async def test_chat_appends_assistant_response(
-        self,
-        mock_arcrun_run: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat() appends assistant response to session after loop."""
-        mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="I am helpful")
-
-        await agent.startup()
-        await agent.chat("Help me")
-
-        msgs = agent._session.get_messages()
-        assistant_msgs = [m for m in msgs if m.get("role") == "assistant"]
-        assert len(assistant_msgs) >= 1
-
-    async def test_startup_initializes_session_manager(self, agent: ArcAgent) -> None:
-        """SessionManager is initialized during startup."""
-        await agent.startup()
-        assert agent._session is not None
-
-    async def test_shutdown_with_session(self, agent: ArcAgent) -> None:
-        """Shutdown with session manager should not raise."""
-        await agent.startup()
-        await agent.shutdown()
-        assert not agent._started
 
 
 class TestBridgeNoRunningLoop:
@@ -615,26 +480,20 @@ class TestMaybeCompactEdgeCases:
     """Lines 343, 346-347: _maybe_compact edge cases."""
 
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_maybe_compact_returns_when_context_none(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent: ArcAgent,
     ) -> None:
-        """Line 343: return when context is None in _maybe_compact."""
+        """maybe_compact returns early when context is None."""
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="result")
 
         await agent.startup()
+        session_manager = await agent.session("unit:compact")
 
-        # Create a session with a token_ratio method that returns 1.0 (high ratio)
-        session_manager = agent._session
-
-        # Save the original context and temporarily set to None during _maybe_compact
+        # Save the original context and temporarily set to None during maybe_compact
         original_context = agent._context
 
-        # We can test this by directly calling maybe_compact with context=None
         from arcagent.core.agent_dispatch import maybe_compact
 
         agent._context = None
@@ -645,29 +504,27 @@ class TestMaybeCompactEdgeCases:
         agent._context = original_context
 
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_maybe_compact_triggers_when_threshold_exceeded(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
     ) -> None:
-        """Lines 346-347: compact_threshold check triggers compact."""
+        """compact_threshold check triggers compaction across runs."""
         from arcagent.core.config import ContextConfig
 
         # Set a very low compact_threshold to force compaction
         config = agent_config.model_copy(update={"context": ContextConfig(compact_threshold=0.01)})
         agent = ArcAgent(config=config)
 
-        mock_model = MagicMock()
-        mock_load_model.return_value = mock_model
-        mock_arcrun_run.return_value = MagicMock(content="result")
+        mock_load_model.return_value = MagicMock()
 
-        await agent.startup()
-
-        # Create a session with lots of tokens to exceed threshold
-        for _ in range(100):
-            await agent.chat("message " * 100)
+        with _patch_stream("result"):
+            await agent.startup()
+            session = await agent.session("unit:compact-threshold")
+            # Drive several turns to accumulate tokens and exceed the threshold.
+            for _ in range(5):
+                async for _ in agent.run("message " * 100, session=session):
+                    pass
 
         # Compaction should have been triggered
         # (hard to verify without introspection, but shouldn't crash)
@@ -761,533 +618,6 @@ class TestVaultResolverEdgeCases:
             await agent.startup()
 
 
-class TestAgentHandle:
-    """Tests for AgentHandle steering wrapper."""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_run_async_returns_agent_handle(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """run_async() returns an AgentHandle wrapping RunHandle."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="done"))
-        mock_handle.state = MagicMock()
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("test task")
-        assert isinstance(handle, AgentHandle)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_steer_delegates_to_run_handle(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """steer() delegates to underlying RunHandle."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.steer("new direction")
-        mock_handle.steer.assert_called_once_with("new direction")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_follow_up_delegates(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """follow_up() delegates to underlying RunHandle."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.follow_up("also do X")
-        mock_handle.follow_up.assert_called_once_with("also do X")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_cancel_delegates(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """cancel() delegates to underlying RunHandle."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.cancel()
-        mock_handle.cancel.assert_called_once()
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_result_emits_post_respond(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """result() awaits RunHandle.result() and emits agent:post_respond."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="answer"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        events: list[dict[str, Any]] = []
-        await agent.startup()
-
-        async def on_post_respond(ctx: Any) -> None:
-            events.append(ctx.data)
-
-        agent._bus.subscribe("agent:post_respond", on_post_respond)
-        handle = await agent.run_async("task")
-        result = await handle.result()
-        assert result.content == "answer"
-        await asyncio.sleep(0)
-        assert len(events) == 1
-        assert events[0]["session_id"] is not None
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_state_property_exposes_run_state(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """state property exposes RunHandle.state."""
-        mock_state = MagicMock()
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.state = mock_state
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        assert handle.state is mock_state
-
-    async def test_run_async_requires_startup(self, agent: ArcAgent) -> None:
-        """run_async() raises RuntimeError if agent not started."""
-        with pytest.raises(RuntimeError, match="not started"):
-            await agent.run_async("task")
-
-    async def test_chat_async_requires_startup(self, agent: ArcAgent) -> None:
-        """chat_async() raises RuntimeError if agent not started."""
-        with pytest.raises(RuntimeError, match="not started"):
-            await agent.chat_async("message")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_chat_async_returns_agent_handle(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat_async() returns AgentHandle with session messages."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="hi"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.chat_async("hello")
-        assert isinstance(handle, AgentHandle)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_ready_event_includes_async_fns(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """agent:ready event includes run_async_fn and chat_async_fn."""
-        mock_load_model.return_value = MagicMock()
-        await agent.startup()
-        assert callable(agent.run_async)
-        assert callable(agent.chat_async)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_result_with_messages_uses_model_dump(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """result() serializes session messages via model_dump when present."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="reply"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        events: list[dict[str, Any]] = []
-        await agent.startup()
-
-        async def on_post_respond(ctx: Any) -> None:
-            events.append(ctx.data)
-
-        agent._bus.subscribe("agent:post_respond", on_post_respond)
-
-        handle = await agent.chat_async("hello session")
-        await handle.result()
-        await asyncio.sleep(0)
-
-        assert len(events) == 1
-        msgs = events[0]["messages"]
-        assert any(m.get("role") == "user" for m in msgs)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_result_raises_on_double_call(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """result() raises RuntimeError when called a second time."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="ok"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.result()
-        with pytest.raises(RuntimeError, match="already been awaited"):
-            await handle.result()
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_execute_loop_async_emits_error_on_failure(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """_execute_loop_async emits agent:error when arcrun_run_async raises."""
-        errors: list[dict[str, Any]] = []
-
-        async def on_error(ctx: Any) -> None:
-            errors.append(ctx.data)
-
-        mock_load_model.return_value = MagicMock()
-        mock_run_async.side_effect = RuntimeError("run_async failed")
-
-        await agent.startup()
-        agent._bus.subscribe("agent:error", on_error)
-
-        with pytest.raises(RuntimeError, match="run_async failed"):
-            await agent.run_async("failing task")
-
-        assert len(errors) == 1
-        assert errors[0]["error_type"] == "RuntimeError"
-
-
-class TestSteeringValidation:
-    """SEC-001/SEC-010: Input validation on steer/follow_up messages."""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_steer_rejects_empty_string(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """Empty string rejected by steer()."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        with pytest.raises(ValueError, match="must not be empty"):
-            await handle.steer("")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_steer_rejects_whitespace_only(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """Whitespace-only string rejected by steer()."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        with pytest.raises(ValueError, match="must not be empty"):
-            await handle.steer("   \n  ")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_steer_rejects_oversized_message(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """Oversized message rejected by steer()."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        oversized = "x" * 40_000
-        with pytest.raises(ValueError, match="exceeds"):
-            await handle.steer(oversized)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_follow_up_rejects_empty_string(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """Empty string rejected by follow_up()."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        with pytest.raises(ValueError, match="must not be empty"):
-            await handle.follow_up("")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_follow_up_rejects_oversized_message(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """Oversized message rejected by follow_up()."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        oversized = "x" * 40_000
-        with pytest.raises(ValueError, match="exceeds"):
-            await handle.follow_up(oversized)
-
-
-class TestSteeringTerminalGuard:
-    """QA: Prevent steer/follow_up/cancel after result() has been awaited."""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_steer_after_result_raises(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """steer() raises RuntimeError after result() has completed."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="done"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.result()
-        with pytest.raises(RuntimeError, match="Cannot call steer"):
-            await handle.steer("too late")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_follow_up_after_result_raises(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """follow_up() raises RuntimeError after result() has completed."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="done"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.result()
-        with pytest.raises(RuntimeError, match="Cannot call follow_up"):
-            await handle.follow_up("too late")
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_cancel_after_result_raises(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """cancel() raises RuntimeError after result() has completed."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="done"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        await handle.result()
-        with pytest.raises(RuntimeError, match="Cannot call cancel"):
-            await handle.cancel()
-
-
-class TestSteeringAuditTrail:
-    """SEC-003: Audit events emitted for steering operations."""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_steer_emits_audit_event(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """steer() emits agent.steer audit event."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        # Spy on telemetry audit_event
-        handle._telemetry.audit_event = MagicMock()
-        await handle.steer("redirect")
-        handle._telemetry.audit_event.assert_called_once_with(
-            "agent.steer",
-            {"session_id": handle._session_id, "message_len": 8},
-        )
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_follow_up_emits_audit_event(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """follow_up() emits agent.follow_up audit event."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        handle._telemetry.audit_event = MagicMock()
-        await handle.follow_up("also X")
-        handle._telemetry.audit_event.assert_called_once_with(
-            "agent.follow_up",
-            {"session_id": handle._session_id, "message_len": 6},
-        )
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_cancel_emits_audit_event(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """cancel() emits agent.cancel audit event."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.run_async("task")
-        handle._telemetry.audit_event = MagicMock()
-        await handle.cancel()
-        handle._telemetry.audit_event.assert_called_once_with(
-            "agent.cancel",
-            {"session_id": handle._session_id},
-        )
-
-
-class TestChatAsyncSession:
-    """SEC-005/COV: chat_async session integration."""
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_result_commits_assistant_message_to_session(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """result() appends assistant message to session when attached."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="AI response"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-        handle = await agent.chat_async("user question")
-        await handle.result()
-
-        # Session should have assistant response
-        msgs = agent._session.get_messages()
-        assistant_msgs = [m for m in msgs if m.get("role") == "assistant"]
-        assert len(assistant_msgs) >= 1
-        assert any(m.get("content") == "AI response" for m in assistant_msgs)
-
-    @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run_async")
-    async def test_chat_async_resume_session(
-        self,
-        mock_run_async: AsyncMock,
-        mock_load_model: MagicMock,
-        agent: ArcAgent,
-    ) -> None:
-        """chat_async() with session_id resumes existing session."""
-        mock_handle = AsyncMock(spec=RunHandle)
-        mock_handle.result = AsyncMock(return_value=MagicMock(content="resumed"))
-        mock_run_async.return_value = mock_handle
-        mock_load_model.return_value = MagicMock()
-
-        await agent.startup()
-
-        # First message creates a session
-        handle1 = await agent.chat_async("first")
-        await handle1.result()
-        session_id = agent._session.session_id
-
-        # Resume with explicit session_id
-        handle2 = await agent.chat_async("second", session_id=session_id)
-        assert isinstance(handle2, AgentHandle)
-        assert agent._session.session_id == session_id
-
-
 class TestLLMBridgeWiring:
     """SPEC-017 R-001: LLM bridge on_event must reach load_eval_model.
 
@@ -1329,6 +659,7 @@ class TestLLMBridgeWiring:
             events.append(ctx.data)
 
         await agent.startup()
+        assert agent._bus is not None
         agent._bus.subscribe("llm:call_complete", on_llm_call)
 
         agent._ensure_model()

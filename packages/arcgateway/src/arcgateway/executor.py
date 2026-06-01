@@ -35,6 +35,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from arcrun import TokenEvent
 from pydantic import BaseModel, Field
 
 _logger = logging.getLogger("arcgateway.executor")
@@ -137,7 +138,9 @@ class Executor(Protocol):
 # ---------------------------------------------------------------------------
 
 # Type alias for the agent factory callable.
-# Signature: async (agent_did: str) -> agent_object_with_run_method
+# Signature: async (agent_did: str) -> agent. The agent must expose
+# ``async session(key) -> session`` and the streaming
+# ``run(input, *, session) -> AsyncIterator[StreamEvent]`` (ArcAgent satisfies both).
 AgentFactory = Callable[[str], Any]
 
 
@@ -148,10 +151,13 @@ class AsyncioExecutor:
     is not a federal compliance requirement. Runs ArcAgent directly in
     the gateway's event loop.
 
-    Agent integration (M1 final integration):
+    Agent integration:
         Accepts an optional ``agent_factory`` async callable with signature
-        ``async (agent_did: str) -> agent``.  The returned object must
-        have ``async run(prompt: str) -> Any`` (ArcAgent.run satisfies this).
+        ``async (agent_did: str) -> agent``.  The returned object must expose
+        ``async session(key)`` and the streaming
+        ``run(input, *, session) -> AsyncIterator[StreamEvent]`` (ArcAgent
+        satisfies both). The executor consumes the stream and adapts each
+        ``TokenEvent`` into a token ``Delta``.
 
         When ``agent_factory`` is None the executor falls back to the
         echo stub so all existing tests continue to pass without an
@@ -169,8 +175,8 @@ class AsyncioExecutor:
 
         Args:
             agent_factory: Optional async callable ``(agent_did: str) -> agent``.
-                When provided, the executor calls ``await agent.run(event.message)``
-                and wraps the result in Delta objects.
+                When provided, the executor opens the agent's session and
+                streams ``agent.run(...)``, adapting each token into a Delta.
                 When None, the echo stub is used (for tests and dev without
                 a real ArcAgent config).
         """
@@ -221,19 +227,20 @@ class AsyncioExecutor:
         """Internal async generator; separated so run() stays a regular coroutine.
 
         When ``_agent_factory`` is set:
-          1. Calls ``await _agent_factory(event.agent_did)`` to obtain an agent.
-          2. Calls ``await agent.chat(event.message, session_id=event.session_key)``
-             so every turn is appended to the agent's persistent session log
-             at ``<workspace>/sessions/<session_key>.jsonl``. This is what
-             surfaces in arcui's Sessions tab and provides chat history on
-             reconnect (Slack/Telegram/Web all share the same path).
-          3. Extracts text from ``result.content`` (ArcRun result) or str(result).
-          4. Yields one token Delta with the full response, then the done sentinel.
+          1. ``await _agent_factory(event.agent_did)`` obtains the agent.
+          2. ``await agent.session(event.session_key)`` opens-or-resumes the
+             agent's session for this channel — every turn appends to the
+             persistent SessionManager log at ``<workspace>/sessions/
+             <session_key>.jsonl``, which is what surfaces in arcui and gives
+             reconnect history (Slack/Telegram/Web share the same path).
+          3. ``async for ev in agent.run(message, session=session)`` consumes the
+             real arcrun StreamEvent iterator and emits a Delta per token —
+             ``is_final`` only on the terminal done sentinel (SPEC-027 finishes
+             the M2 fake-streaming TODO; there is no longer a chat/run fork).
 
-        ArcAgent does not expose a true streaming iterator today — it returns
-        a complete result from chat().  The single-token wrapping is honest:
-        the whole response arrives as one chunk.  Streaming will be possible
-        once ArcRun exposes an async event stream (tracked as M2 work).
+        An error mid-stream fails closed: the iterator is abandoned, a single
+        fail-closed token Delta is emitted, the done sentinel closes the turn,
+        and no partial-success claim is made (AC-3.2).
 
         When ``_agent_factory`` is None the echo stub is used instead so that
         all existing tests continue to pass without a real agent configured.
@@ -245,36 +252,29 @@ class AsyncioExecutor:
             turn_id = str(uuid.uuid4())
             try:
                 agent = await self._agent_factory(event.agent_did)
-                # Prefer ``agent.chat(message, session_id=...)`` — appends the
-                # turn to the agent's persistent SessionManager log so the
-                # arcui Sessions tab and Messages page reconnect history
-                # work out of the box. Fall back to ``agent.run(message)``
-                # for stateless agent factories (test fakes, simple
-                # one-shot agents) that don't expose ``chat``.
-                # session_key is deterministic per (agent_did, user_did) — same
-                # browser tab, slack DM, or telegram chat resumes the same
-                # session across reconnects.
-                if hasattr(agent, "chat"):
-                    result = await agent.chat(event.message, session_id=event.session_key)
-                else:
-                    result = await agent.run(event.message)
-                # ArcRun returns a result object; .content holds the text reply.
-                content: str = getattr(result, "content", None) or str(result)
-                yield Delta(
-                    kind="token",
-                    content=content,
-                    is_final=False,
-                    turn_id=turn_id,
-                )
-            except Exception as exc:  # reason: fail-open — log + continue
+                session = await agent.session(event.session_key)
+                async for stream_event in agent.run(event.message, session=session):
+                    if isinstance(stream_event, TokenEvent):
+                        yield Delta(
+                            kind="token",
+                            content=stream_event.text,
+                            is_final=False,
+                            turn_id=turn_id,
+                        )
+                    # TurnEndEvent is the terminator; the done sentinel below
+                    # carries is_final. Tool events are not surfaced to the
+                    # channel as tokens.
+            except Exception as exc:  # reason: fail-closed — log + close turn
                 _logger.exception(
                     "AsyncioExecutor: agent error session=%s: %s",
                     event.session_key,
                     exc,
                 )
+                # Don't leak raw exception text (paths, URLs, secrets) to the
+                # channel — the detail is in the log above (LLM02/LLM07).
                 yield Delta(
                     kind="token",
-                    content=f"[agent-error] {exc}",
+                    content="[agent-error] the run failed; see server logs",
                     is_final=False,
                     turn_id=turn_id,
                 )

@@ -8,9 +8,9 @@ from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError, ArcLLMError
 from arcllm.modules.telemetry import (
     BudgetAccumulator,
     TelemetryModule,
-    _validate_budget_scope,
     clear_budgets,
 )
+from arcllm.modules.telemetry_budget import validate_budget_scope
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage
 
 _OK_RESPONSE = LLMResponse(
@@ -226,48 +226,48 @@ class TestBudgetPeriodBoundary:
 
 class TestBudgetScopeValidation:
     def test_valid_simple_scope(self):
-        _validate_budget_scope("agent:agent-007")
+        validate_budget_scope("agent:agent-007")
 
     def test_valid_dot_scope(self):
-        _validate_budget_scope("agent:test.scope")
+        validate_budget_scope("agent:test.scope")
 
     def test_valid_single_char(self):
-        _validate_budget_scope("a")
+        validate_budget_scope("a")
 
     def test_valid_with_colons_and_hyphens(self):
-        _validate_budget_scope("org:team:agent-id")
+        validate_budget_scope("org:team:agent-id")
 
     def test_empty_scope_rejected(self):
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("")
+            validate_budget_scope("")
 
     def test_uppercase_rejected(self):
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("Agent:Test")
+            validate_budget_scope("Agent:Test")
 
     def test_spaces_rejected(self):
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("agent test")
+            validate_budget_scope("agent test")
 
     def test_unicode_homoglyph_rejected(self):
         """Unicode lookalike characters must be rejected after NFKC normalization."""
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("agent:\u0430gent")  # Cyrillic U+0430
+            validate_budget_scope("agent:\u0430gent")  # Cyrillic U+0430
 
     def test_path_traversal_rejected(self):
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("../etc/passwd")
+            validate_budget_scope("../etc/passwd")
 
     def test_sql_injection_rejected(self):
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("agent'; DROP TABLE--")
+            validate_budget_scope("agent'; DROP TABLE--")
 
     def test_over_128_chars_rejected(self):
         with pytest.raises(ArcLLMConfigError, match="budget_scope"):
-            _validate_budget_scope("a" * 129)
+            validate_budget_scope("a" * 129)
 
     def test_exactly_128_chars_accepted(self):
-        _validate_budget_scope("a" * 128)
+        validate_budget_scope("a" * 128)
 
 
 # ---------------------------------------------------------------------------
@@ -280,26 +280,26 @@ class TestBudgetRegistry:
         clear_budgets()
 
     def test_clear_budgets_empties_registry(self):
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        _get_or_create_accumulator("scope-a")
+        get_or_create_accumulator("scope-a")
         clear_budgets()
         # After clear, a new get should create a fresh accumulator
-        acc = _get_or_create_accumulator("scope-a")
+        acc = get_or_create_accumulator("scope-a")
         assert acc.monthly_spend == 0.0
 
     def test_same_scope_returns_same_accumulator(self):
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        a1 = _get_or_create_accumulator("agent:test")
-        a2 = _get_or_create_accumulator("agent:test")
+        a1 = get_or_create_accumulator("agent:test")
+        a2 = get_or_create_accumulator("agent:test")
         assert a1 is a2
 
     def test_different_scopes_are_isolated(self):
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        a1 = _get_or_create_accumulator("agent:one")
-        a2 = _get_or_create_accumulator("agent:two")
+        a1 = get_or_create_accumulator("agent:one")
+        a2 = get_or_create_accumulator("agent:two")
         a1.deduct(100.0)
         assert a2.monthly_spend == 0.0
 
@@ -318,9 +318,9 @@ class TestBudgetEnforcement:
         config = _make_budget_config(monthly_limit_usd=1.0, enforcement="block")
         module = TelemetryModule(config, inner)
         # Seed the accumulator past the limit
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         acc.deduct(1.01)
         with pytest.raises(ArcLLMBudgetError, match="monthly"):
             await module.invoke(messages)
@@ -331,9 +331,9 @@ class TestBudgetEnforcement:
         inner = _make_inner()
         config = _make_budget_config(monthly_limit_usd=1.0, enforcement="warn")
         module = TelemetryModule(config, inner)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         acc.deduct(1.01)
         result = await module.invoke(messages)
         assert result.metadata is not None
@@ -348,9 +348,9 @@ class TestBudgetEnforcement:
             enforcement="block",
         )
         module = TelemetryModule(config, inner)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         acc.deduct(1.01)
         with pytest.raises(ArcLLMBudgetError, match="daily"):
             await module.invoke(messages)
@@ -369,9 +369,9 @@ class TestBudgetEnforcement:
         inner = _make_inner()
         config = _make_budget_config(per_call_max_usd=100.0)
         module = TelemetryModule(config, inner)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         assert acc.monthly_spend == 0.0
         await module.invoke(messages, max_tokens=100)
         assert acc.monthly_spend > 0.0
@@ -471,9 +471,9 @@ class TestBudgetWarnMode:
             enforcement="warn",
         )
         module = TelemetryModule(config, inner)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         acc.deduct(0.01)
         result = await module.invoke(messages)
         assert result.metadata is not None
@@ -539,9 +539,9 @@ class TestBudgetAllThreeLimits:
             enforcement="block",
         )
         module = TelemetryModule(config, inner)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         acc.deduct(2.0)  # Exceeds both monthly (1.0) and daily (0.5)
         with pytest.raises(ArcLLMBudgetError, match="monthly"):
             await module.invoke(messages)

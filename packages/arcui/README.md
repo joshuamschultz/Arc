@@ -187,20 +187,23 @@ The dashboard surfaces:
 
 `arc ui tail` gives you the same data as JSONL on stdout — pipe it into `jq`, `grep`, or any structured-log tool.
 
-### SPEC-022 Pages (`?page=...`)
+### Pages (path-routed)
 
-The dashboard is a single-page app driven by `?page=&agent=` on the URL bar. Bookmark a tab and the deep-link reopens to it.
+The dashboard is a React single-page app with path-based routing. Bookmark a route and the deep-link reopens to it. The navigation mirrors the package boundary — LLM-call data lives under **ArcLLM**, agentic-loop data under **ArcRun**.
 
 | Page | Path | Source |
 |------|------|--------|
-| Agent Fleet | `?page=agents` | `/api/team/roster` — total + live count, card grid, online/offline filter |
-| Agent Detail | `?page=agent-detail&agent=<id>` | 9 lazy-loaded tabs: Overview · Identity · Sessions · Skills · Memory · Policy · Tools · Telemetry · Files |
-| Tasks | `?page=tasks` | `/api/team/tasks` — across all agents, filter by status |
-| Tools & Skills | `?page=tools-skills` | `/api/team/tools-skills` — tools matrix + skills directory |
-| Security & Audit | `?page=security` | `/api/team/audit` + control actions log + policy denials + connection security panel |
-| Policy Engine | `?page=policy` | `/api/team/policy/{bullets,stats}` — fleet-wide ACE bullets with score-tiered rendering |
-| LLM Telemetry | `?page=telemetry` | original SPEC-015 surface — overview, traces, cost |
-| Settings | `?page=settings` | arcllm config (PATCH `/api/arcllm-config`) |
+| Agents | `/agents` | `/api/team/roster` — total + live count, card grid |
+| Agent Detail | `/agents/:id/:tab` | 9 tabs: Overview · Identity · Runs · LLM · Skills · Tools · Policy · Memory · Files |
+| ArcLLM | `/arcllm` | LLM telemetry — overview charts + live Calls table with raw/structured per-call drawer (`/api/stats`, `/api/traces`) |
+| ArcRun | `/arcrun` | Agentic-loop runs — fleet sessions table + run-replay drawer + live run activity |
+| Messages | `/messages` | Agent chat (`/ws/chat/{id}`) + team channels (`/api/team/channels`) |
+| Knowledge | `/knowledge` | `/api/knowledge/{id}` — context budget, memory, workspace tree, graph |
+| Tasks | `/tasks` | `/api/team/tasks` — across all agents, filter by status |
+| Tools & Skills | `/tools-skills` | `/api/team/tools-skills` — tools matrix + skills directory |
+| Security | `/security` | `/api/team/audit` + control actions + policy denials + connection panel |
+| Policy | `/policy` | `/api/team/policy/{bullets,stats}` — fleet-wide ACE bullets |
+| Settings | `/settings` | arcllm config (PATCH `/api/arcllm-config`), operator-gated |
 
 ### WS Subscribe Protocol (SPEC-022)
 
@@ -231,16 +234,23 @@ Page-specific event mapping:
 
 Reconnect handler re-fires `subscribe:agent` for every tracked agent automatically.
 
-### Vendored Frontend Infrastructure
+### Frontend (`web/`)
 
-Air-gap-friendly: no CDN dependency, all assets vendored under `static/assets/`.
+The frontend is a **React 19 + shadcn/ui + Tailwind v4** SPA (Sage Green theme) under `packages/arcui/web/`. It's built with Vite straight into `src/arcui/static/`, which the Starlette server serves unchanged (`Route("/", index)` + `Mount("/assets")`). The built output is committed, so `pip install` / `arc ui start` need no Node toolchain.
 
-- `prism.min.js` (15.6 KB, MIT — concatenation of prism-core + python + toml + json + javascript) and `prism.css` (okaidia theme)
-- `markdown.js` — minimal renderer (~115 LOC). HTML-escapes input. Supports h1-h6, paragraphs, ul/ol, code fences (lang-class for Prism), blockquote, inline code, bold, italic, links.
-- `file-tree.js` — `ARC.FileTree.mount(rootEl, {agentId, fetchTree, fetchFile})`. Folder expand/collapse persisted under `arcui:tree:<agent_id>:<path>` localStorage key.
-- `policy-bullet.js` — `ARC.PolicyBullet.{render, renderList, scoreTier, sortBy, filterBy}`. Pure helpers; one component for both detail Policy tab and fleet Policy Engine page.
-- `event-drawer.js` — singleton right-side drawer for inspecting any event payload. ESC-to-close.
-- `audit-viewer.js` — paginated table over a fetchPage callback; row click opens EventDrawer.
+Air-gap-friendly: **no CDN dependency**. Fonts (Plus Jakarta Sans, IBM Plex Mono) are self-hosted via `@fontsource` and bundled by Vite. `sw.js` is a one-time kill-switch service worker that unregisters any previously-installed caching SW (Vite content-hashing handles cache-busting).
+
+```bash
+cd packages/arcui/web
+npm install
+npm run build      # → ../src/arcui/static/  (commit the output)
+
+# Dev loop: HMR against a running backend
+arc ui start --no-browser --show-tokens   # terminal 1 (note the viewer token)
+npm run dev                                # terminal 2 — proxies /api + /ws to :8420
+```
+
+Key modules: `lib/api.ts` (bearer client), `lib/ws.ts` + `lib/arc-socket.ts` (RobustWebSocket + subscribe protocol), `store/live.ts` (zustand live store, `llm`/`run` layer routing), `hooks/use-chat.ts` (chat session with seq-gap reconnect), and reusable components `DataTable` / `FileTree` / `TraceDrawer` / `RunReplayDrawer` / `PolicyBulletCard`.
 
 ---
 

@@ -86,13 +86,32 @@ class SessionManager:
         _logger.info("Created session: %s", self._session_id)
         return self._session_id
 
+    def _session_jsonl_path(self, key: str) -> Path:
+        """Resolve ``<sessions>/<key>.jsonl``, rejecting keys that escape the dir.
+
+        Session keys are caller-supplied (channel ids, CLI keys, and crucially
+        workspace-authored scheduler/pulse job names) and become a filename, so
+        an unvalidated key like ``../../etc/x`` would be an out-of-tree write.
+        Reject path separators / traversal / NUL and assert containment under
+        ``sessions_dir`` (fail-closed).
+        """
+        if not key or "/" in key or "\\" in key or "\x00" in key or key in (".", ".."):
+            msg = f"invalid session key: {key!r}"
+            raise ValueError(msg)
+        candidate = self._sessions_dir / f"{key}.jsonl"
+        sessions_root = self._sessions_dir.resolve()
+        if sessions_root != candidate.resolve().parent:
+            msg = f"session key escapes the sessions directory: {key!r}"
+            raise ValueError(msg)
+        return candidate
+
     async def resume_session(self, session_id: str) -> list[dict[str, Any]]:
         """Load messages from an existing JSONL session file.
 
         Skips malformed lines gracefully. Returns loaded messages.
         """
         self._session_id = session_id
-        self._jsonl_path = self._sessions_dir / f"{session_id}.jsonl"
+        self._jsonl_path = self._session_jsonl_path(session_id)
         self._messages = []
 
         if not self._jsonl_path.exists():
@@ -123,6 +142,25 @@ class SessionManager:
             len(self._messages),
         )
         return list(self._messages)
+
+    async def open_or_resume(self, key: str) -> list[dict[str, Any]]:
+        """Bind this manager to ``key``, resuming history if it exists.
+
+        Deterministic by key: a returning conversation (same channel, same CLI
+        key) reloads its prior messages; a first-seen key starts an empty,
+        persisted session. This is how sessionless surfaces (CLI, scheduler) and
+        channel surfaces alike get a stable session from the agent's pool.
+        """
+        self._sessions_dir.mkdir(parents=True, exist_ok=True)
+        jsonl_path = self._session_jsonl_path(key)
+        if jsonl_path.exists():
+            return await self.resume_session(key)
+        self._session_id = key
+        self._jsonl_path = jsonl_path
+        self._jsonl_path.touch()
+        self._messages = []
+        _logger.info("Opened session: %s", key)
+        return []
 
     async def append_message(self, message: dict[str, Any]) -> None:
         """Thread-safe append to message list and JSONL file.

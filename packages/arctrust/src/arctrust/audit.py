@@ -4,10 +4,13 @@ Every security-relevant action in Arc emits an AuditEvent. This module
 provides the Pydantic schema, pluggable sinks, and a safe emit() function
 that swallows sink failures so auditing never breaks the calling path.
 
-NIST 800-53 AU-2 / AU-9 / AU-11 compliance:
+NIST 800-53 AU-2 / AU-9 / AU-10 / AU-11 compliance:
 - AuditEvent schema captures actor, action, target, outcome, timestamp.
-- JsonlSink provides append-only local log file storage.
-- SignedChainSink provides Ed25519-signed tamper-evident event chain.
+- WormSink is the single durable, append-only, Ed25519-signed hash-chained
+  audit log: one durable, tamper-evident write-once record (replaces the old
+  unchained JsonlSink and the in-memory-only SignedChainSink). It survives
+  process restarts, signs every record (AU-10 non-repudiation), and detects
+  any byte mutation, forged signature, or sequence gap on verify.
 - NullSink is used in tests and air-gapped evaluation where no sink is needed.
 - emit() swallows sink exceptions — AU-5 (audit failure response): log locally
   but never propagate to caller.
@@ -20,19 +23,24 @@ Extension pattern:
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import logging
+import os
 from datetime import UTC, datetime
-from io import IOBase
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from arctrust.keypair import sign
+from arctrust.keypair import KeyPair, sign, verify
 
 _logger = logging.getLogger("arctrust.audit")
+
+GENESIS_PREV_HASH = "0" * 64
+"""prev_hash of the first record in a chain — the genesis anchor."""
 
 
 # ---------------------------------------------------------------------------
@@ -129,101 +137,299 @@ class NullSink:
 
 
 # ---------------------------------------------------------------------------
-# JsonlSink — append-only JSONL file sink
+# WormSink — durable, append-only, Ed25519-signed hash chain (FR-1)
 # ---------------------------------------------------------------------------
 
 
-class JsonlSink:
-    """Append-only JSONL sink for audit events.
+def _canonical_event_hash(*, seq: int, prev_hash: str, event: dict[str, Any]) -> str:
+    """Deterministic SHA-256 over (seq, prev_hash, event).
 
-    Each call to ``write()`` serialises the event as a single JSON line
-    and appends it to the file. Suitable for compliance-grade local logs;
-    combine with ``SignedChainSink`` for tamper-evidence.
+    Uses ``sort_keys=True, ensure_ascii=True`` on a JSON-serialisable event dump
+    (``model_dump(mode="json")``) — RFC-8785-equivalent for the ASCII-only
+    AuditEvent schema, with no extra dependency. The hash commits the link
+    (prev_hash), the position (seq), and the content (event), so any of the
+    three changing is detectable.
+    """
+    payload = json.dumps(
+        {"seq": seq, "prev_hash": prev_hash, "event": event},
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class WormSink:
+    """Durable, append-only, Ed25519-signed hash-chained audit log.
+
+    The single compliance system of record. Each ``write()`` appends one JSON
+    line ``{seq, event, prev_hash, event_hash, signature}`` to an append-only
+    ``0600`` file. The hash chain links each entry to the previous and commits
+    its monotonic ``seq``; the entry hash is Ed25519-signed (AU-10). The chain
+    is restored from the file on construction, so it survives process restarts
+    (unlike the old in-memory-only chain).
+
+    Guarantees enforced:
+    - **Restart-safe** — ``chain_tip``/``seq`` are recovered from the file tail.
+    - **Tamper-evident** — ``verify_chain()`` checks hash links, the Ed25519
+      signature of every record, sequence contiguity, and the genesis anchor.
+    - **Single-writer** — an exclusive ``flock`` is held for the sink's lifetime;
+      a second writer on the same active file raises (forked chains are an
+      integrity hazard because the tip is held in memory).
+    - **Crash-recoverable** — a torn final line from a mid-append crash is
+      truncated and an explicit signed ``audit.worm.recovery`` record appended
+      (silent truncation is indistinguishable from adversarial truncation).
+    - **Fail-open** — ``write()`` swallows and logs IO errors (AU-5).
+    - **Bounded** — the active file rotates to ``<stem>.<NNN><suffix>`` segments
+      at ``max_records``/``max_bytes`` so verification streams rather than
+      holding the whole chain in RAM.
 
     Args:
-        destination: Path to the .jsonl file, or a file-like object. When a
-            Path is provided the file is opened (and created) in append mode
-            so multiple processes / restarts accumulate in the same file.
+        path: Active chain file. Rotated segments live beside it.
+        operator_private_key: 32-byte Ed25519 seed used to sign each record.
+        genesis_tip: Expected ``prev_hash`` of the very first record. Defaults
+            to the all-zero genesis anchor; supply an out-of-band value to
+            detect head replacement (anti-genesis-substitution).
+        max_records: Records per segment before rotation.
+        max_bytes: Active-file size before rotation.
     """
 
-    def __init__(self, destination: Path | IOBase) -> None:
-        self._dest = destination
+    _FILE_MODE = 0o600
+    _RECOVERY_ACTION = "audit.worm.recovery"
 
-    def write(self, event: AuditEvent) -> None:
-        """Append one JSON line to the destination."""
-        line = json.dumps(event.model_dump(), default=str) + "\n"
-        if isinstance(self._dest, Path):
-            with self._dest.open("a", encoding="utf-8") as fh:
-                fh.write(line)
-        else:
-            self._dest.write(line)
-
-
-# ---------------------------------------------------------------------------
-# SignedChainSink — tamper-evident Ed25519 hash chain
-# ---------------------------------------------------------------------------
-
-
-class SignedChainSink:
-    """Ed25519-signed audit event chain for tamper evidence.
-
-    Each event is hashed with the SHA-256 of the previous entry's hash
-    (hash chaining), and the hash is signed with the operator's private key.
-    Any modification to a stored record breaks the chain — ``verify_chain()``
-    returns False.
-
-    This meets NIST AU-9 (Protection of Audit Information): log entries are
-    signed so unauthorized modification is detectable.
-
-    Args:
-        operator_private_key: 32-byte Ed25519 private key. The corresponding
-            public key must be stored out-of-band for chain verification.
-    """
-
-    def __init__(self, operator_private_key: bytes) -> None:
+    def __init__(
+        self,
+        path: Path,
+        operator_private_key: bytes,
+        *,
+        genesis_tip: str = GENESIS_PREV_HASH,
+        max_records: int = 100_000,
+        max_bytes: int = 50 * 1024 * 1024,
+    ) -> None:
+        self._path = Path(path)
         self._private_key = operator_private_key
+        self._public_key = KeyPair.from_seed(operator_private_key).public_key
+        self._genesis_tip = genesis_tip
+        self._max_records = max_records
+        self._max_bytes = max_bytes
+
         self._chain_tip = ""
-        self._records: list[dict[str, Any]] = []
+        self._next_seq = 0
+        self._segment_first_seq = 0
+        self._active_count = 0
+        self._pending_recovery: Path | None = None
+
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, self._FILE_MODE)
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            os.close(self._fd)
+            raise RuntimeError(
+                f"WormSink: another writer holds {self._path} (single-writer invariant)"
+            ) from exc
+        os.fchmod(self._fd, self._FILE_MODE)
+        self._restore_tip()
+        if self._pending_recovery is not None:
+            # A torn tail was truncated during restore; record the recovery
+            # explicitly through the normal append path so it gets the next seq.
+            self._append(self._recovery_event(self._pending_recovery))
+            self._pending_recovery = None
 
     @property
     def chain_tip(self) -> str:
-        """SHA-256 hex of the most recently written record hash."""
+        """SHA-256 hex of the most recently written record's ``event_hash``."""
         return self._chain_tip
 
-    @property
-    def records(self) -> list[dict[str, Any]]:
-        """Ordered list of signed chain records (mutable for tamper tests)."""
-        return self._records
+    def close(self) -> None:
+        """Release the lock and close the file descriptor."""
+        if self._fd >= 0:
+            os.close(self._fd)
+            self._fd = -1
+
+    def __del__(self) -> None:
+        with contextlib.suppress(Exception):  # reason: never raise from a finaliser
+            self.close()
+
+    # -- write path --------------------------------------------------------
 
     def write(self, event: AuditEvent) -> None:
-        """Append a signed record to the chain."""
-        event_json = json.dumps(event.model_dump(), sort_keys=True, default=str)
-        event_hash = hashlib.sha256((self._chain_tip + event_json).encode("utf-8")).hexdigest()
-        sig = sign(event_hash.encode("utf-8"), self._private_key)
-        record: dict[str, Any] = {
-            "event": event.model_dump(),
-            "prev_hash": self._chain_tip,
+        """Append one signed, chained record. Fail-open (AU-5)."""
+        try:
+            self._append(event)
+        except Exception:  # reason: fail-open — auditing must never break the call (AU-5)
+            _logger.warning("WormSink.write failed — swallowing (AU-5)", exc_info=True)
+
+    def _append(self, event: AuditEvent) -> None:
+        seq = self._next_seq
+        prev_hash = self._chain_tip or self._genesis_tip
+        event_dump = event.model_dump(mode="json")
+        event_hash = _canonical_event_hash(seq=seq, prev_hash=prev_hash, event=event_dump)
+        signature = sign(event_hash.encode("utf-8"), self._private_key).hex()
+        record = {
+            "seq": seq,
+            "event": event_dump,
+            "prev_hash": prev_hash,
             "event_hash": event_hash,
-            "signature": sig.hex(),
+            "signature": signature,
         }
-        self._records.append(record)
+        line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
+        os.write(self._fd, line.encode("utf-8"))
         self._chain_tip = event_hash
+        self._next_seq = seq + 1
+        self._active_count += 1
+        self._maybe_rotate()
 
-    def verify_chain(self) -> bool:
-        """Verify the integrity of the entire chain.
+    def _maybe_rotate(self) -> None:
+        if self._active_count < self._max_records and os.fstat(self._fd).st_size < self._max_bytes:
+            return
+        segment = self._path.with_name(
+            f"{self._path.stem}.{self._segment_first_seq:012d}{self._path.suffix}"
+        )
+        os.close(self._fd)
+        self._path.rename(segment)
+        self._fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, self._FILE_MODE)
+        fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.fchmod(self._fd, self._FILE_MODE)
+        self._segment_first_seq = self._next_seq
+        self._active_count = 0
 
-        Returns True if every record's hash matches the computed value from
-        its event data and previous hash. Returns False if any record was
-        tampered with.
-        """
-        prev_hash = ""
-        for record in self._records:
-            event_json = json.dumps(record["event"], sort_keys=True, default=str)
-            expected_hash = hashlib.sha256((prev_hash + event_json).encode("utf-8")).hexdigest()
-            if record.get("event_hash") != expected_hash:
+    # -- startup recovery --------------------------------------------------
+
+    def _restore_tip(self) -> None:
+        """Restore tip/seq from existing segments + active file; recover torn tail."""
+        last: dict[str, Any] | None = None
+        active_records = 0
+        for path in self._chain_files():
+            is_active = path == self._path
+            for record in self._iter_file(path, recover_torn=is_active):
+                last = record
+                if is_active:
+                    active_records += 1
+        if last is None:
+            return
+        self._chain_tip = last["event_hash"]
+        self._next_seq = int(last["seq"]) + 1
+        self._active_count = active_records
+        # The first record currently in the active file started a segment.
+        self._segment_first_seq = self._next_seq - active_records
+
+    def _iter_file(self, path: Path, *, recover_torn: bool) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        raw = path.read_bytes()
+        if not raw:
+            return records
+        lines = raw.split(b"\n")
+        trailing_torn = raw[-1:] != b"\n"  # last element is a partial line, no newline
+        for idx, chunk in enumerate(lines):
+            if not chunk:
+                continue
+            try:
+                records.append(json.loads(chunk))
+            except json.JSONDecodeError:
+                is_last = idx == len(lines) - 1
+                if recover_torn and is_last and trailing_torn:
+                    self._truncate_torn(path, raw, chunk)
+                    self._pending_recovery = path
+                    break
+                _logger.warning("WormSink: skipping unparseable line in %s", path)
+        return records
+
+    def _truncate_torn(self, path: Path, raw: bytes, torn: bytes) -> None:
+        """Drop a torn final line in place; the recovery marker is appended later."""
+        with path.open("wb") as fh:
+            fh.write(raw[: len(raw) - len(torn)])
+        _logger.warning("WormSink: truncated torn final line in %s; recovery pending", path)
+
+    def _recovery_event(self, path: Path) -> AuditEvent:
+        return AuditEvent(
+            actor_did="did:arc:arctrust:worm",
+            action=self._RECOVERY_ACTION,
+            target=path.name,
+            outcome="recovered",
+        )
+
+    # -- verify path -------------------------------------------------------
+
+    def verify_chain(self, public_key: bytes | None = None) -> bool:
+        """Self-check this chain. Delegates to the lock-free module verifier."""
+        pub = public_key if public_key is not None else self._public_key
+        return verify_chain(self._path, pub, genesis_tip=self._genesis_tip)
+
+    def _chain_files(self) -> list[Path]:
+        return _segment_files(self._path)
+
+
+# ---------------------------------------------------------------------------
+# Lock-free chain verification (the `arc store verify` read path)
+# ---------------------------------------------------------------------------
+
+
+def _segment_files(path: Path) -> list[Path]:
+    """Rotated segments (seq-ordered) followed by the active file."""
+    segments = sorted(
+        path.parent.glob(f"{path.stem}.*{path.suffix}"),
+        key=lambda p: p.name,
+    )
+    return [*segments, path]
+
+
+def _iter_records(path: Path) -> list[dict[str, Any]]:
+    """Parse a chain file read-only, skipping any unparseable line."""
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for chunk in path.read_bytes().split(b"\n"):
+        if not chunk:
+            continue
+        try:
+            records.append(json.loads(chunk))
+        except json.JSONDecodeError:
+            _logger.warning("verify_chain: skipping unparseable line in %s", path)
+    return records
+
+
+def verify_chain(
+    path: Path,
+    public_key: bytes,
+    *,
+    genesis_tip: str = GENESIS_PREV_HASH,
+) -> bool:
+    """Validate a durable WORM chain on disk — no write lock required.
+
+    Streams records across all rotated segments + the active file (no
+    all-in-RAM list), checking for each record:
+    - ``event_hash`` recomputes from ``(seq, prev_hash, event)`` (AU-9 links),
+    - the Ed25519 ``signature`` verifies against ``public_key`` (AU-10),
+    - ``seq`` is contiguous from 0 (no gap / mid-deletion),
+    - ``prev_hash`` chains to the previous record's ``event_hash``,
+    - the first record's ``prev_hash`` equals the expected genesis tip.
+
+    Returns False on any violation. This is the read path used by
+    ``arc store verify`` and by store-ingest tamper flagging.
+    """
+    prev_hash = genesis_tip
+    expected_seq = 0
+    for segment in _segment_files(Path(path)):
+        for record in _iter_records(segment):
+            event_hash = _canonical_event_hash(
+                seq=record["seq"], prev_hash=record["prev_hash"], event=record["event"]
+            )
+            if record.get("event_hash") != event_hash:
                 return False
-            prev_hash = expected_hash
-        return True
+            if record.get("prev_hash") != prev_hash:
+                return False
+            if int(record.get("seq", -1)) != expected_seq:
+                return False
+            try:
+                sig = bytes.fromhex(record.get("signature", ""))
+            except ValueError:
+                return False
+            if not verify(event_hash.encode("utf-8"), sig, public_key):
+                return False
+            prev_hash = event_hash
+            expected_seq += 1
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -254,10 +460,11 @@ def emit(event: AuditEvent, sink: AuditSink) -> None:
 
 
 __all__ = [
+    "GENESIS_PREV_HASH",
     "AuditEvent",
     "AuditSink",
-    "JsonlSink",
     "NullSink",
-    "SignedChainSink",
+    "WormSink",
     "emit",
+    "verify_chain",
 ]

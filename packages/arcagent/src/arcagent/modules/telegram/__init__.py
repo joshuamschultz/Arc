@@ -77,7 +77,7 @@ class TelegramModule:
         # Subscribe to lifecycle events
         ctx.bus.subscribe("agent:shutdown", self._on_agent_shutdown)
 
-        # Subscribe to agent:ready for deferred binding of agent.chat().
+        # Subscribe to agent:ready for deferred binding of the agent run callback.
         ctx.bus.subscribe("agent:ready", self._on_agent_ready)
 
         # Subscribe to schedule failure notifications (failures are always worth knowing).
@@ -106,18 +106,18 @@ class TelegramModule:
         await self._emit_bus_event("telegram:module_stopped", {})
         _logger.info("Telegram module stopped")
 
-    def set_agent_chat_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
-        """Bind the agent.chat() callback after startup (deferred binding)."""
+    def set_agent_run_fn(self, fn: Callable[..., Awaitable[Any]]) -> None:
+        """Bind the agent run callback after startup (deferred binding)."""
         if self._bot is not None:
-            self._bot.set_agent_chat_fn(fn)
+            self._bot.set_agent_run_fn(fn)
 
     async def _on_agent_ready(self, event: Any) -> None:
-        """Handle agent:ready — bind agent.chat() callback."""
+        """Handle agent:ready — bind the agent run callback."""
         data = event.data if hasattr(event, "data") else {}
-        chat_fn = data.get("chat_fn")
-        if chat_fn is not None:
-            self.set_agent_chat_fn(chat_fn)
-            _logger.info("Bound agent_chat_fn via agent:ready event")
+        run_fn = data.get("run_fn")
+        if run_fn is not None:
+            self.set_agent_run_fn(run_fn)
+            _logger.info("Bound agent_run_fn via agent:ready event")
 
     async def _on_agent_shutdown(self, event: Any) -> None:
         """Handle agent:shutdown event."""

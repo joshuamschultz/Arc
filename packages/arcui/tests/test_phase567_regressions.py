@@ -46,20 +46,6 @@ from arcui.routes.agent_detail import routes as agent_detail_routes
 from arcui.routes.agents import routes as agent_routes
 
 _ROOT = Path(__file__).resolve().parents[3]
-_INDEX = _ROOT / "packages/arcui/src/arcui/static/index.html"
-_AGENT_DETAIL_JS = _ROOT / "packages/arcui/src/arcui/static/assets/agent-detail.js"
-_AGENT_DETAIL_ASSETS_DIR = _ROOT / "packages/arcui/src/arcui/static/assets"
-
-
-def _agent_detail_bundle() -> str:
-    """Concatenate every agent-detail*.js sibling (post §8.7 split)."""
-    parts = []
-    for asset in sorted(_AGENT_DETAIL_ASSETS_DIR.glob("agent-detail*.js")):
-        parts.append(asset.read_text())
-    return "\n".join(parts)
-
-
-_PRISM_JS = _ROOT / "packages/arcui/src/arcui/static/assets/prism.min.js"
 _UI_PY = _ROOT / "packages/arccli/src/arccli/commands/ui.py"
 
 
@@ -192,76 +178,6 @@ class TestR2UiStartTeamRoot:
         # Default fallback discovers ./team if it exists; documented and
         # implemented as Path.cwd() / "team".
         assert 'Path.cwd() / "team"' in text or 'Path.cwd() / "team"' in text
-
-
-# ============================================================
-# R3 & R4: agent-detail.js binds Fmt.number; unwraps /stats
-# ============================================================
-
-
-class TestR3FmtNumberBinding:
-    """Fmt.number is a method using `this._numberFmt`. A naive
-    `var fmt = Fmt.number; fmt(5)` loses the binding and throws.
-
-    The agent-detail.js helper must `.bind(window.Fmt)` before
-    extracting the function reference.
-    """
-
-    def test_fmt_number_bound(self) -> None:
-        text = _agent_detail_bundle()
-        assert "Fmt.number.bind(window.Fmt)" in text or "Fmt.number).bind(" in text
-
-
-class TestR4StatsResponseUnwrapped:
-    """`/api/agents/{id}/stats` returns `{stats: {...}, window: ...}`.
-    The renderer must unwrap to read fields like request_count.
-    """
-
-    def test_stats_unwrap_in_overview(self) -> None:
-        text = _agent_detail_bundle()
-        # Must read from results[2].stats, not directly from results[2]
-        assert "statsRaw" in text or ".stats" in text
-
-
-# ============================================================
-# R5: Agent-detail re-mounts on agent ID change within same page
-# ============================================================
-
-
-class TestR5DetailRemountOnAgentChange:
-    """When the user navigates from `?page=agent-detail&agent=A` to
-    `agent=B` (same page id, different agent), the previous mount must
-    be disposed and a new one started — otherwise agent A's data sticks.
-    """
-
-    def test_detail_mounted_agent_tracked(self) -> None:
-        text = _INDEX.read_text()
-        assert "_detailMountedAgent" in text
-
-    def test_dispose_on_agent_change_present(self) -> None:
-        text = _INDEX.read_text()
-        # The dispose-and-remount logic is the load-bearing line.
-        # Match for the comparison that triggers re-mount.
-        assert "_detailMountedAgent !== route.agent" in text
-
-
-# ============================================================
-# R6: Prism bundle includes `clike` (required by javascript grammar)
-# ============================================================
-
-
-class TestR6PrismCLikeIncluded:
-    """The javascript grammar component depends on `clike`. Without it,
-    the first call to highlight a JS code block throws "Cannot read
-    properties of undefined (reading 'class-name')".
-    """
-
-    def test_clike_present_before_javascript(self) -> None:
-        text = _PRISM_JS.read_text()
-        # Both grammars must be defined; tokens like 'class-name' come
-        # from clike.
-        assert "Prism.languages.clike" in text or "languages.clike" in text
-        assert "Prism.languages.javascript" in text or "languages.javascript" in text
 
 
 # ============================================================

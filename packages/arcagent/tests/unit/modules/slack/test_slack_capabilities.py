@@ -14,7 +14,7 @@ This file verifies:
   2. ``setup`` instantiates and starts a :class:`SlackBot`;
      ``teardown`` stops it. WebSocket I/O is mocked.
   3. ``slack_notify_user`` calls ``bot.send_notification``.
-  4. ``bind_agent_chat_fn`` propagates the chat fn into the bot.
+  4. ``bind_agent_run_fn`` propagates the run fn into the bot.
   5. ``notify_schedule_failed`` sends a failure notification.
 
 Legacy :class:`SlackModule` tests in ``test_module.py`` continue to
@@ -92,7 +92,7 @@ class TestLoaderRegistration:
         shutdown_hooks = await reg.get_hooks("agent:shutdown")
         failed_hooks = await reg.get_hooks("schedule:failed")
 
-        assert any(h.meta.name == "bind_agent_chat_fn" for h in ready_hooks)
+        assert any(h.meta.name == "bind_agent_run_fn" for h in ready_hooks)
         assert any(h.meta.name == "stop_slack_bot" for h in shutdown_hooks)
         assert any(h.meta.name == "notify_schedule_failed" for h in failed_hooks)
 
@@ -189,23 +189,23 @@ class TestNotifyUserTool:
 
 @pytest.mark.asyncio
 class TestHooks:
-    async def test_bind_agent_chat_fn_propagates(self, configured: Path) -> None:
-        from arcagent.modules.slack.capabilities import bind_agent_chat_fn
+    async def test_bind_agent_run_fn_propagates(self, configured: Path) -> None:
+        from arcagent.modules.slack.capabilities import bind_agent_run_fn
 
         mock_bot = MagicMock()
-        mock_bot.set_agent_chat_fn = MagicMock()
+        mock_bot.set_agent_run_fn = MagicMock()
         _runtime.state().bot = mock_bot
 
-        chat_fn = AsyncMock()
-        ctx = SimpleNamespace(data={"chat_fn": chat_fn})
-        await bind_agent_chat_fn(ctx)
-        mock_bot.set_agent_chat_fn.assert_called_once_with(chat_fn)
+        run_fn = AsyncMock()
+        ctx = SimpleNamespace(data={"run_fn": run_fn})
+        await bind_agent_run_fn(ctx)
+        mock_bot.set_agent_run_fn.assert_called_once_with(run_fn)
 
-    async def test_bind_agent_chat_fn_noop_when_no_bot(self, configured: Path) -> None:
-        from arcagent.modules.slack.capabilities import bind_agent_chat_fn
+    async def test_bind_agent_run_fn_noop_when_no_bot(self, configured: Path) -> None:
+        from arcagent.modules.slack.capabilities import bind_agent_run_fn
 
-        ctx = SimpleNamespace(data={"chat_fn": AsyncMock()})
-        await bind_agent_chat_fn(ctx)  # must not raise
+        ctx = SimpleNamespace(data={"run_fn": AsyncMock()})
+        await bind_agent_run_fn(ctx)  # must not raise
 
     async def test_stop_slack_bot_calls_stop(self, configured: Path) -> None:
         from arcagent.modules.slack.capabilities import stop_slack_bot

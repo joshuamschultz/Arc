@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from arcrun import StaticProvider
 from arcrun.types import SandboxConfig, Tool
 from security.conftest import LLMResponse, MockModel, ToolCall
 
@@ -54,7 +55,11 @@ class TestPromptInjection:
         # Sandbox only allows echo
         sandbox = SandboxConfig(allowed_tools=["echo"])
         result = await run(
-            model, [safe_tool, secret_tool], "Be helpful.", malicious_task, sandbox=sandbox
+            model,
+            StaticProvider([safe_tool, secret_tool]),
+            "Be helpful.",
+            malicious_task,
+            sandbox=sandbox,
         )
 
         # Verify: secret_tool was denied
@@ -83,7 +88,7 @@ class TestPromptInjection:
             execute=_record_execute,
         )
 
-        result = await run(model, [safe_tool], system_prompt, task)
+        result = await run(model, StaticProvider([safe_tool]), system_prompt, task)
         # arcrun itself doesn't filter output — but the system prompt should only
         # appear in the system message, not anywhere else in the pipeline
         assert result.content is not None
@@ -115,7 +120,7 @@ class TestPromptInjection:
             ]
         )
 
-        result = await run(model, [tool], "Be helpful.", "Fetch some data")
+        result = await run(model, StaticProvider([tool]), "Be helpful.", "Fetch some data")
         # Tool result goes into messages as tool role — model sees it but arcrun
         # doesn't interpret it as instructions. The loop continues normally.
         assert result.turns == 2

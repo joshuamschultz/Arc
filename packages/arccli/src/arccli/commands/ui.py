@@ -2,10 +2,9 @@
 
 Subcommands
 -----------
-arc ui start      — Launch the ArcUI dashboard server.
-                    Discovers all registered agents via the arcteam registry,
-                    warm-starts the aggregator from each agent's workspace, and
-                    on loopback bind opens the browser pre-authenticated.
+arc ui start      — Launch the ArcUI dashboard server. Reads operational history
+                    on demand from the shared arcstore data dir (spool + WORM)
+                    and on loopback bind opens the browser pre-authenticated.
 arc ui tail       — Connect to a running dashboard and stream events to stdout as JSONL.
                     Supports --layer, --agent, --group, and --viewer-token filters.
 """
@@ -96,85 +95,6 @@ def _maybe_build_gateway_config(args: argparse.Namespace, team_root: Path | None
     )
 
 
-def _resolve_trace_stores(args: argparse.Namespace) -> list[Any]:
-    """Build the list of TraceStores from the arcteam registry.
-
-    Composes `_load_entities` (registry I/O) and `_entities_to_stores`
-    (path validation + JSONLTraceStore construction). Wave 2 split:
-    each helper has one job and is independently testable.
-    """
-    entities = _load_entities(args)
-    return _entities_to_stores(entities)
-
-
-def _load_entities(args: argparse.Namespace) -> list[Any]:
-    """Read every Entity from the arcteam registry (read-only).
-
-    Wave 2 simplification: uses `arcteam.registry.list_entities_readonly`
-    so the CLI doesn't bootstrap an `AuditLogger` (HMAC key load,
-    initialize, etc.) just to enumerate agents. The audit chain is for
-    *write* paths; a read-only launcher doesn't belong on it.
-
-    Returns [] on registry I/O failure (with a warning) so the caller
-    can launch in zero-store mode rather than abort.
-    """
-    import asyncio
-
-    from arcteam.config import TeamConfig
-    from arcteam.registry import list_entities_readonly
-    from arcteam.storage import FileBackend
-
-    # Resolution order:
-    #   1. explicit --root            (test harnesses, advanced users)
-    #   2. <--team-root>/shared       (production: arc-stack.sh passes
-    #                                   --team-root <repo>/team and the
-    #                                   team backend lives at /shared per
-    #                                   `arc team init` convention)
-    #   3. TeamConfig().root default  (~/.arc/team/)
-    # Without step 2, `arc ui start --team-root .../team` would silently
-    # read trace-store entities from ~/.arc/team/ — empty in production —
-    # and every /api/traces and /api/agents/{id}/traces returns [].
-    root_arg: str | None = getattr(args, "root", None)
-    team_root_arg: str | None = getattr(args, "team_root", None)
-    if root_arg:
-        root = Path(root_arg)
-    elif team_root_arg:
-        root = Path(team_root_arg) / "shared"
-    else:
-        root = TeamConfig().root
-    backend = FileBackend(root)
-
-    try:
-        return asyncio.run(list_entities_readonly(backend))
-    except (FileNotFoundError, OSError) as exc:
-        _write(f"  registry unavailable: {exc}")
-        return []
-
-
-def _entities_to_stores(entities: list[Any]) -> list[Any]:
-    """Build one JSONLTraceStore per agent with a valid workspace_path.
-
-    Entities without `workspace_path` or whose stored path no longer
-    exists are skipped with a warning. Pure transform; no I/O outside
-    the path-existence check.
-    """
-    from arcllm.trace_store import JSONLTraceStore
-
-    stores: list[Any] = []
-    for entity in entities:
-        if entity.workspace_path is None:
-            _write(f"  skip {entity.id}: no workspace_path (run `arc team backfill-workspaces`)")
-            continue
-        wp = Path(entity.workspace_path)
-        if not wp.is_dir():
-            _write(f"  skip {entity.id}: workspace_path {wp} not found")
-            continue
-        # JSONLTraceStore takes the agent root; workspace_path points at the
-        # agent's workspace subdir (per `arc agent create` convention).
-        stores.append(JSONLTraceStore(wp.parent))
-    return stores
-
-
 class BrowserLauncher(Protocol):
     """How `arc ui start` opens the dashboard.
 
@@ -255,14 +175,13 @@ def _print_browser_open_fallback(
 def _start(args: argparse.Namespace) -> None:
     """Start the ArcUI dashboard server.
 
-    Discovers all registered agents via the arcteam registry, warm-starts
-    the aggregator from each agent's workspace, and on loopback bind opens
-    the browser pre-authenticated. Non-loopback prints tokens for manual
-    paste with a security warning.
+    The dashboard reads operational history on demand from the shared arcstore
+    data dir (the Observe plane), so there is no per-agent trace-store discovery
+    here. On loopback bind it opens the browser pre-authenticated; non-loopback
+    prints tokens for manual paste with a security warning.
     """
     from arcui import create_app
     from arcui.auth import AuthConfig
-    from arcui.federated_store import FederatedTraceStore
 
     port: int = getattr(args, "port", 8420)
     host: str = getattr(args, "host", "127.0.0.1")
@@ -285,13 +204,6 @@ def _start(args: argparse.Namespace) -> None:
 
     _persist_agent_token(auth.agent_token)
 
-    stores = _resolve_trace_stores(args)
-    # Wrap discovered stores in a federation. Zero stores → no trace
-    # backing for `/api/traces`; ≥1 stores → FederatedTraceStore so the
-    # routes see a uniform read surface regardless of how many workspaces
-    # are mounted (Wave 2 simplification: was a one-line helper).
-    trace_store = FederatedTraceStore(stores) if stores else None
-
     team_root_arg: str | None = getattr(args, "team_root", None)
     team_root: Path | None
     if team_root_arg:
@@ -310,7 +222,6 @@ def _start(args: argparse.Namespace) -> None:
     app = create_app(
         auth_config=auth,
         max_agents=max_agents,
-        trace_store=trace_store,
         team_root=team_root,
         gateway_config=gateway_config,
     )
@@ -325,7 +236,6 @@ def _start(args: argparse.Namespace) -> None:
     _write(f"  Agent token:    {fmt(app.state.auth_config.agent_token)}")
     _write(f"  Token file:     {_TOKEN_FILE}")
     _write(f"  Max agents:     {max_agents}")
-    _write(f"  Trace stores:   {len(stores)}")
 
     if not is_loopback:
         _write(
@@ -334,12 +244,7 @@ def _start(args: argparse.Namespace) -> None:
             "token and paste it into the dashboard's auth field."
         )
 
-    import asyncio
-
     import uvicorn
-
-    if trace_store is not None and stores:
-        asyncio.run(app.state.aggregator.warm_start_multi(stores))
 
     if is_loopback and not no_browser:
         viewer_token_value = app.state.auth_config.viewer_token

@@ -86,23 +86,20 @@ class Pulse:
 async def bind_agent_run_fn(ctx: Any) -> None:
     """Bind the agent's ``run`` callback into the engine on agent:ready.
 
-    The agent emits ``agent:ready`` with ``data={"run_fn": <coro>}``.
-    Wraps with ``automated=True`` so policy eval skips pulse runs.
-    Setting it on the engine unblocks the timer loop's readiness gate so
-    pulse checks can begin firing.
+    The agent emits ``agent:ready`` with ``data={"run_fn": <coro>}`` — the
+    unified ``run_collected(input, *, session_key)`` entry. Setting it on
+    the engine unblocks the timer loop's readiness gate so pulse checks
+    can begin firing.
     """
     data = ctx.data if hasattr(ctx, "data") else {}
     run_fn = data.get("run_fn")
     if run_fn is None:
         return
 
-    async def _automated_run(task: str, **kwargs: Any) -> Any:
-        return await run_fn(task, automated=True, **kwargs)
-
     st = _runtime.state()
-    st.agent_run_fn = _automated_run
+    st.agent_run_fn = run_fn
     if st.engine is not None:
-        st.engine.set_agent_run_fn(_automated_run)
+        st.engine.set_agent_run_fn(run_fn)
         _logger.info("Bound agent_run_fn via agent:ready hook")
 
 

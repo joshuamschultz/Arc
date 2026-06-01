@@ -7,12 +7,13 @@ Only ArcLLM/ArcRun (external dependencies) are stubbed.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from arcrun import ToolContext
+from arcrun import StreamEvent, TokenEvent, ToolContext, TurnEndEvent
 
 from arcagent.core.agent import ArcAgent
 from arcagent.core.config import (
@@ -130,10 +131,8 @@ class TestRunWithMockLLM:
     """T4.2.2: agent.run() with mock LLM and native tools."""
 
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_run_full_pipeline(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
         workspace: Path,
@@ -143,11 +142,24 @@ class TestRunWithMockLLM:
         (workspace / "context.md").write_text("Context: test-only")
 
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="task completed", tool_calls_made=1)
+        captured: dict[str, Any] = {}
+
+        async def _fake_run_stream(*args: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+
+            async def _gen() -> Any:
+                yield TokenEvent(text="task completed")
+                yield TurnEndEvent(final_text="task completed", tool_calls_made=1)
+
+            return _gen()
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()
-        result = await agent.run("test integration task")
+        with patch(
+            "arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream
+        ):
+            session = await agent.session("itest")
+            events = [ev async for ev in agent.run("test integration task", session=session)]
 
         # Model was loaded (SPEC-017 R-001: on_event now also passed)
         mock_load_model.assert_called_once()
@@ -156,21 +168,20 @@ class TestRunWithMockLLM:
         assert load_kwargs["agent_label"] == "integration-agent"
         assert callable(load_kwargs["on_event"])
 
-        # Run loop was called with correct args
-        call_kwargs = mock_arcrun_run.call_args
-        assert call_kwargs.kwargs["task"] == "test integration task"
-        assert call_kwargs.kwargs["model"] is not None
-        assert isinstance(call_kwargs.kwargs["tools"], list)
-        assert isinstance(call_kwargs.kwargs["system_prompt"], str)
-        assert callable(call_kwargs.kwargs["on_event"])
-        assert callable(call_kwargs.kwargs["transform_context"])
+        # The streaming loop was called with the full execution context.
+        assert captured["task"] == "test integration task"
+        assert captured["model"] is not None
+        # arcrun now receives a CapabilityProvider, not a flat tool list.
+        assert hasattr(captured["capabilities"], "advertise")
+        assert isinstance(captured["system_prompt"], str)
+        assert callable(captured["on_event"])
+        assert callable(captured["transform_context"])
 
         # System prompt includes workspace content
-        prompt = call_kwargs.kwargs["system_prompt"]
-        assert "integration-agent" in prompt
-        assert "test-only" in prompt
+        assert "integration-agent" in captured["system_prompt"]
+        assert "test-only" in captured["system_prompt"]
 
-        assert result is not None
+        assert isinstance(events[-1], TurnEndEvent)
         await agent.shutdown()
 
 
@@ -471,10 +482,8 @@ class TestPostRespondEvent:
     """Integration: agent.run() emits agent:post_respond with result."""
 
     @patch("arcagent.core.model_manager.load_eval_model")
-    @patch("arcagent.core.agent_dispatch.arcrun_run")
     async def test_post_respond_emitted(
         self,
-        mock_arcrun_run: AsyncMock,
         mock_load_model: MagicMock,
         agent_config: ArcAgentConfig,
     ) -> None:
@@ -484,13 +493,24 @@ class TestPostRespondEvent:
             events.append(ctx.data)
 
         mock_load_model.return_value = MagicMock()
-        mock_arcrun_run.return_value = MagicMock(content="done")
+
+        async def _fake_run_stream(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
+            async def _gen() -> AsyncIterator[StreamEvent]:
+                yield TurnEndEvent(final_text="done")
+
+            return _gen()
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()
+        assert agent._bus is not None
         agent._bus.subscribe("agent:post_respond", on_post_respond)
 
-        await agent.run("test task")
+        with patch(
+            "arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream
+        ):
+            session = await agent.session("itest")
+            async for _ in agent.run("test task", session=session):
+                pass
 
         assert len(events) == 1
         assert "result" in events[0]

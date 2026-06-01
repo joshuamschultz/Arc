@@ -1,14 +1,12 @@
-"""CronRunner — cron-session spawn with self-scheduling prevention and platform delivery.
+"""CronRunner — cron-session spawn and platform delivery.
 
 T1.12 + T1.13 (SPEC-018 §3.4).
 
 Responsibilities
 ----------------
 1. Strip the ``[SILENT]`` marker from the prompt before the agent sees it.
-2. Invoke the agent via ``agent_run_fn`` with ``CRON_AGENT_KWARGS`` so the
-   cronjob / messaging / clarify toolsets are removed at the tool-registry
-   layer for that session.  The model cannot emit ``schedule_create`` because
-   the tool does not exist in that session's manifest.
+2. Invoke the agent via ``agent_run_fn`` on a deterministic per-job session
+   key so the run is a normal turn through the one execution entry.
 3. Wrap the agent output in a header: ``[Scheduled task: {name} | ran at {ts}]``.
 4. Deliver the wrapped output via ``DeliverySender.send()`` when ``deliver_to``
    is set, respecting ``silent_on_success``.
@@ -16,10 +14,6 @@ Responsibilities
 
 Design notes
 ------------
-* ``CRON_AGENT_KWARGS`` is verbatim from SDD §3.4.  It is applied at the
-  **tool-registry layer**, not as a policy flag.  The agent callback receives
-  these kwargs and MUST honour them before building its tool manifest.
-  This is the Hermes pattern for self-scheduling prevention (ASI02).
 * ``CronRunner`` owns NO state beyond its constructor arguments.  It is safe
   to call ``run_job()`` concurrently from multiple cron ticks.
 * All exceptions are caught and converted to ``CronRunResult(success=False)``.
@@ -39,17 +33,6 @@ from arcagent.modules.scheduler.models import SILENT_MARKER, CronJob, CronRunRes
 
 _logger = logging.getLogger("arcagent.scheduler.cron_runner")
 
-# ---------------------------------------------------------------------------
-# Self-scheduling prevention kwargs (SDD §3.4 verbatim — tool-registry-layer
-# enforcement, NOT a policy flag).
-# ---------------------------------------------------------------------------
-CRON_AGENT_KWARGS: dict[str, Any] = {
-    "disabled_toolsets": ["cronjob", "messaging", "clarify"],
-    "quiet_mode": True,
-    "skip_context_files": True,
-    "skip_memory": True,
-}
-
 # Header template injected around the agent's output before delivery.
 _DELIVERY_HEADER = "[Scheduled task: {name} | ran at {ts}]\n{content}"
 
@@ -59,10 +42,9 @@ class CronRunner:
 
     Args:
         agent_run_fn: Async callable that drives the agent loop.  Must accept
-            a positional ``prompt: str`` argument and arbitrary keyword
-            arguments (passes ``CRON_AGENT_KWARGS`` as kwargs).  Returns an
-            object whose ``.content`` attribute (or ``str(result)``) is the
-            agent's output text.
+            a positional ``prompt: str`` argument and a ``session_key`` keyword.
+            Returns an object whose ``.content`` attribute (or ``str(result)``)
+            is the agent's output text.
         telemetry: Used for structured audit events.
         delivery_sender: Optional ``DeliverySender`` implementation.  When
             ``None``, delivery silently no-ops (useful when arcgateway is not
@@ -86,7 +68,7 @@ class CronRunner:
         Steps
         -----
         1. Strip ``[SILENT]`` marker → determine ``silent_for_run``.
-        2. Call agent with ``CRON_AGENT_KWARGS`` (toolsets removed at registry).
+        2. Call agent on the per-job session key.
         3. Wrap output in delivery header.
         4. Deliver if ``deliver_to`` is set and conditions are met.
         5. Return ``CronRunResult``.
@@ -97,10 +79,10 @@ class CronRunner:
         clean_prompt, silent_for_run = self._extract_silent_marker(job)
 
         self._telemetry.audit_event(
-            "cron.session.disabled_tools",
+            "cron.session.start",
             {
                 "job_name": job.name,
-                "disabled_toolsets": CRON_AGENT_KWARGS["disabled_toolsets"],
+                "session_key": f"scheduler:{job.name}",
                 "silent_for_run": silent_for_run,
                 "deliver_to": job.deliver_to,
             },
@@ -152,12 +134,12 @@ class CronRunner:
         clean_prompt: str,
         ran_at: str,
     ) -> CronRunResult:
-        """Call agent_run_fn with cron kwargs and capture output.
+        """Call agent_run_fn on the per-job session key and capture output.
 
         Returns a CronRunResult (success or failure).  Never raises.
         """
         try:
-            raw = await self._agent_run_fn(clean_prompt, **CRON_AGENT_KWARGS)
+            raw = await self._agent_run_fn(clean_prompt, session_key=f"scheduler:{job.name}")
             content = (getattr(raw, "content", None) or str(raw)) if raw is not None else ""
             return CronRunResult(
                 job_name=job.name,

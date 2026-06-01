@@ -3,7 +3,7 @@
 Coverage targets
 ----------------
 * [SILENT] marker stripping before agent invocation.
-* CRON_AGENT_KWARGS passed to agent_run_fn.
+* agent_run_fn invoked on a deterministic per-job session key.
 * Delivery happens when deliver_to is set.
 * Delivery suppressed on success when silent_on_success is True.
 * Delivery always happens on failure regardless of silent flag.
@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from arcagent.modules.scheduler.cron_runner import CRON_AGENT_KWARGS, CronRunner
+from arcagent.modules.scheduler.cron_runner import CronRunner
 from arcagent.modules.scheduler.delivery import DeliverySender
 from arcagent.modules.scheduler.models import SILENT_MARKER, CronJob
 
@@ -78,36 +78,6 @@ class TestDeliverySenderProtocol:
             pass
 
         assert not isinstance(_NoSend(), DeliverySender)
-
-
-# ---------------------------------------------------------------------------
-# CRON_AGENT_KWARGS — self-scheduling prevention
-# ---------------------------------------------------------------------------
-
-
-class TestCronAgentKwargs:
-    """CRON_AGENT_KWARGS must contain the SDD-mandated disabled toolsets."""
-
-    def test_disabled_toolsets_present(self) -> None:
-        assert "disabled_toolsets" in CRON_AGENT_KWARGS
-
-    def test_cronjob_toolset_disabled(self) -> None:
-        assert "cronjob" in CRON_AGENT_KWARGS["disabled_toolsets"]
-
-    def test_messaging_toolset_disabled(self) -> None:
-        assert "messaging" in CRON_AGENT_KWARGS["disabled_toolsets"]
-
-    def test_clarify_toolset_disabled(self) -> None:
-        assert "clarify" in CRON_AGENT_KWARGS["disabled_toolsets"]
-
-    def test_quiet_mode_enabled(self) -> None:
-        assert CRON_AGENT_KWARGS.get("quiet_mode") is True
-
-    def test_skip_context_files_enabled(self) -> None:
-        assert CRON_AGENT_KWARGS.get("skip_context_files") is True
-
-    def test_skip_memory_enabled(self) -> None:
-        assert CRON_AGENT_KWARGS.get("skip_memory") is True
 
 
 # ---------------------------------------------------------------------------
@@ -190,15 +160,15 @@ class TestSilentMarkerExtraction:
 
 
 # ---------------------------------------------------------------------------
-# Agent invocation — CRON_AGENT_KWARGS forwarded
+# Agent invocation — per-job session key
 # ---------------------------------------------------------------------------
 
 
 class TestAgentInvocation:
-    """CronRunner must forward CRON_AGENT_KWARGS to agent_run_fn."""
+    """CronRunner invokes agent_run_fn on a deterministic per-job session key."""
 
     @pytest.mark.asyncio
-    async def test_cron_agent_kwargs_passed(self) -> None:
+    async def test_session_key_passed(self) -> None:
         received_kwargs: dict[str, Any] = {}
 
         async def capture_kwargs(prompt: str, **kwargs: Any) -> _Result:
@@ -213,11 +183,7 @@ class TestAgentInvocation:
         runner = _make_runner(agent_run_fn=capture_kwargs)
         await runner.run_job(job)
 
-        for key, expected in CRON_AGENT_KWARGS.items():
-            assert received_kwargs.get(key) == expected, (
-                f"CRON_AGENT_KWARGS[{key!r}] not forwarded correctly; "
-                f"got {received_kwargs.get(key)!r}"
-            )
+        assert received_kwargs == {"session_key": "scheduler:test-job"}
 
     @pytest.mark.asyncio
     async def test_result_content_extracted(self) -> None:
@@ -370,7 +336,7 @@ class TestAuditEvents:
     """Structured audit events must be emitted for all transitions."""
 
     @pytest.mark.asyncio
-    async def test_disabled_tools_audit_event(self) -> None:
+    async def test_session_start_audit_event(self) -> None:
         telemetry = MagicMock()
         telemetry.audit_event = MagicMock()
 
@@ -379,7 +345,7 @@ class TestAuditEvents:
         await runner.run_job(job)
 
         event_types = [c.args[0] for c in telemetry.audit_event.call_args_list]
-        assert "cron.session.disabled_tools" in event_types
+        assert "cron.session.start" in event_types
 
     @pytest.mark.asyncio
     async def test_delivered_audit_event(self) -> None:

@@ -85,6 +85,8 @@ def setup_spawn_tools(
     Mirrors the production pattern from arcagent.core.agent: closure
     mutation lets children inherit spawn_task too.
     """
+    from arcrun import StaticProvider
+
     from arcagent.orchestration import make_spawn_tool
 
     tools = list(base_tools)
@@ -98,4 +100,6 @@ def setup_spawn_tools(
         max_concurrent_spawns=max_concurrent,
     )
     tools.append(spawn_tool)
-    return tools
+    # arcrun.run takes a CapabilityProvider; StaticProvider passes these tools
+    # through with the loop's live ToolContext so spawn reads depth/budget.
+    return StaticProvider(tools)

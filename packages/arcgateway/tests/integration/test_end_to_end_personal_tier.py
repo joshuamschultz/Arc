@@ -29,10 +29,11 @@ M1 Acceptance Gate coverage:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
 import pytest
+from arcrun import StreamEvent, TokenEvent, TurnEndEvent
 
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import AsyncioExecutor, InboundEvent
@@ -43,27 +44,22 @@ from arcgateway.session import SessionRouter, build_session_key
 # ---------------------------------------------------------------------------
 
 
-class _AgentResult:
-    """Minimal result object matching ArcRun result interface."""
-
-    def __init__(self, content: str) -> None:
-        self.content = content
-
-    def __str__(self) -> str:
-        return self.content
-
-
 class _EchoAgent:
-    """Minimal agent that echoes the message back.
+    """Minimal streaming agent that echoes the message back.
 
-    Satisfies the ArcAgent.run(task) -> result interface used by AsyncioExecutor.
+    Satisfies the SPEC-027 contract the AsyncioExecutor drives:
+    ``session(key)`` + streaming ``run(input, *, session)``.
     """
 
     def __init__(self, agent_did: str) -> None:
         self.agent_did = agent_did
 
-    async def run(self, task: str) -> _AgentResult:
-        return _AgentResult(f"echo: {task}")
+    async def session(self, key: str) -> str:
+        return key
+
+    async def run(self, input_text: str, *, session: Any) -> AsyncIterator[StreamEvent]:
+        yield TokenEvent(text=f"echo: {input_text}")
+        yield TurnEndEvent(final_text=f"echo: {input_text}")
 
 
 async def _echo_agent_factory(agent_did: str) -> _EchoAgent:

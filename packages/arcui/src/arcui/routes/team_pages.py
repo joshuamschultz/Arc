@@ -127,14 +127,6 @@ async def get_roster(request: Request) -> JSONResponse:
     known_ids = {entry.agent_id for entry in roster}
     agent_state = {k: v for k, v in raw_state.items() if k in known_ids}
     data = {"agents": [_roster_to_dict(r, agent_state) for r in roster]}
-    # SPEC-025 Track E — publish roster snapshot to dashboard bus so
-    # /ws/dashboard subscribers get a push without polling.
-    bus = getattr(request.app.state, "dashboard_bus", None)
-    if bus is not None:
-        try:
-            await bus.publish("roster", data)
-        except Exception:  # reason: fail-open — log + continue
-            logger.debug("team_pages: dashboard_bus roster publish failed", exc_info=True)
     return JSONResponse(data)
 
 

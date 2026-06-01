@@ -46,11 +46,11 @@ def _make_module_ctx(bus: ModuleBus, workspace: Path) -> ModuleContext:
 
 
 class TestFullMessageFlow:
-    """Full message flow: inbound DM → agent.chat() → response sent."""
+    """Full message flow: inbound DM → the agent run callback → response sent."""
 
     @pytest.mark.asyncio
     async def test_message_routed_to_agent_chat(self, tmp_path: Path) -> None:
-        """Message received → agent.chat() called → response sent back."""
+        """Message received → the agent run callback called → response sent back."""
         module = SlackModule(
             config={"enabled": True, "allowed_user_ids": ["U123"]},
             telemetry=_make_telemetry(),
@@ -63,8 +63,8 @@ class TestFullMessageFlow:
         await module.startup(ctx)
 
         # Manually wire chat fn and process a message
-        mock_chat = AsyncMock(return_value=MagicMock(content="Hello human!"))
-        module.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content="Hello human!"))
+        module.set_agent_run_fn(mock_run)
 
         bot = module._bot
         assert bot is not None
@@ -77,7 +77,7 @@ class TestFullMessageFlow:
 
         await bot._process_message("Hi agent", "D12345")
 
-        mock_chat.assert_called_once_with("Hi agent", session_id="test-session")
+        mock_run.assert_called_once_with("Hi agent", session_key="test-session")
         bot._app.client.chat_postMessage.assert_called_once_with(
             channel="D12345", text="Hello human!"
         )
@@ -191,15 +191,15 @@ class TestAuthorizationIntegration:
         assert bot is not None
 
         # Set up a mock chat fn that should NOT be called
-        mock_chat = AsyncMock()
-        module.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock()
+        module.set_agent_run_fn(mock_run)
 
         # Unauthorized user (U999 not in allowed_user_ids [U111])
         event = {"user": "U999", "channel": "D12345", "text": "sneaky message"}
         await bot._handle_message(event)
 
         # chat fn should not have been called
-        mock_chat.assert_not_called()
+        mock_run.assert_not_called()
 
         # Verify telemetry recorded auth rejection
         telemetry_calls = bot._telemetry.record_event.call_args_list
@@ -226,14 +226,14 @@ class TestAuthorizationIntegration:
         bot._app = MagicMock()
         bot._app.client = MagicMock()
         bot._app.client.chat_postMessage = AsyncMock()
-        mock_chat = AsyncMock(return_value=MagicMock(content="response"))
-        module.set_agent_chat_fn(mock_chat)
+        mock_run = AsyncMock(return_value=MagicMock(content="response"))
+        module.set_agent_run_fn(mock_run)
 
         # Authorized user
         event = {"user": "U111", "channel": "D12345", "text": "valid message"}
         await bot._handle_message(event)
 
-        mock_chat.assert_called_once()
+        mock_run.assert_called_once()
 
         await module.shutdown()
 

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from arccli.commands.agent._common import (
+    _discover_tools,
     _load_agent_config,
     _load_env,
     _resolve_agent_dir,
@@ -94,29 +94,14 @@ def _run_validation(agent_dir: Path) -> None:
         checks.append(("FAIL", "No model configured"))
         all_ok = False
 
-    tools_dir = agent_dir / "tools"
-    if tools_dir.is_dir():
-        tool_files = [f for f in tools_dir.glob("*.py") if f.name != "__init__.py"]
-        if tool_files:
-            sys.path.insert(0, str(agent_dir))
-            total_tools = 0
-            for tf in tool_files:
-                module_name = f"tools.{tf.stem}"
-                try:
-                    mod = importlib.import_module(module_name)
-                    if hasattr(mod, "get_tools"):
-                        discovered = mod.get_tools()
-                        total_tools += len(discovered)
-                        for t in discovered:
-                            checks.append(("OK", f"  tool: {t.name}"))
-                except Exception as e:  # reason: fail-open — continue
-                    checks.append(("WARN", f"tools/{tf.name}: {e}"))
-            sys.path.pop(0)
-            checks.append(("OK", f"tools: {total_tools} total"))
-        else:
-            checks.append(("WARN", "tools/ has no .py files"))
+    caps_dir = agent_dir / "capabilities"
+    if caps_dir.is_dir():
+        discovered = _discover_tools(agent_dir)
+        for t in discovered:
+            checks.append(("OK", f"  tool: {t.name}"))
+        checks.append(("OK", f"tools: {len(discovered)} total"))
     else:
-        checks.append(("WARN", "tools/ not found"))
+        checks.append(("WARN", "capabilities/ not found"))
 
     try:
         if not STRATEGIES:

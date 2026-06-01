@@ -54,6 +54,7 @@ class TestToolInjection:
     @pytest.mark.asyncio
     async def test_tool_name_validation_in_sandbox(self):
         """Sandbox checks tool names exactly — no fuzzy matching."""
+        from arcrun import StaticProvider
         from arcrun.loop import run
         from arcrun.types import SandboxConfig, Tool
         from security.conftest import LLMResponse, MockModel, ToolCall
@@ -80,7 +81,7 @@ class TestToolInjection:
 
         # Sandbox allows "safe_tool" but model calls "safe_tool\u200b" (with zero-width space)
         sandbox = SandboxConfig(allowed_tools=["safe_tool"])
-        await run(model, [tool], "prompt", "task", sandbox=sandbox)
+        await run(model, StaticProvider([tool]), "prompt", "task", sandbox=sandbox)
         # The tool call should be denied — "safe_tool\u200b" != "safe_tool"
         # Verify the model received an error message in the tool result
         messages = model.invoke_calls[1]["messages"]

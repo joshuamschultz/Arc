@@ -84,7 +84,7 @@ async def _run_stdin_loop(agent: ArcAgent, shutdown_event: asyncio.Event) -> str
     """Read line-delimited prompts from stdin and stream replies to stdout.
 
     Returns the shutdown reason: ``"eof"`` when stdin closes,
-    ``"sigterm"`` / ``"sigint"`` when a signal fires.
+    ``"signal"`` when SIGINT/SIGTERM fires.
     """
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(loop=loop)
@@ -108,9 +108,9 @@ async def _run_stdin_loop(agent: ArcAgent, shutdown_event: asyncio.Event) -> str
         if not prompt:
             continue
         try:
-            response = await agent.chat(prompt)
+            response = await agent.run_collected(prompt, session_key="serve:stdin")
         except Exception:  # reason: fail-open — log + continue serving
-            _logger.exception("agent.chat() failed; continuing serve loop")
+            _logger.exception("agent run failed; continuing serve loop")
             sys.stdout.write("[error] see log\n")
             sys.stdout.flush()
             continue
@@ -127,7 +127,7 @@ async def _run_none_loop(shutdown_event: asyncio.Event) -> str:
 
 
 def _stringify_response(response: Any) -> str:
-    """Coerce ``ArcAgent.chat`` return into a single line of text."""
+    """Coerce a ``RunResult`` (or text) into a single line of text."""
     if response is None:
         return ""
     if isinstance(response, str):

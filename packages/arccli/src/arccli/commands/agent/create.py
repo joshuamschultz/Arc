@@ -44,6 +44,11 @@ def _create(args: argparse.Namespace) -> None:
     calc_path = agent_dir / "capabilities" / "calculator.py"
     calc_path.write_text(_CALCULATOR_TOOL)
 
+    # SPEC-026 FR-6 (AC-6.1): the agent ships with an [arcstore] block; create
+    # the operational store data dir + spool idempotently so the call-now-see-later
+    # guarantee holds from the very first run.
+    _ensure_arcstore_dirs(agent_dir)
+
     sys.stdout.write(f"Created agent: {agent_dir}\n")
     _print_scaffold_summary(name, agent_dir)
 
@@ -54,6 +59,17 @@ def _create(args: argparse.Namespace) -> None:
     # failure logs a warning but does not fail the create.
     if not no_register:
         _try_auto_register(name, agent_dir)
+
+
+def _ensure_arcstore_dirs(agent_dir: Path) -> None:
+    """Create the resolved arcstore data dir + spool (idempotent, fail-open)."""
+    try:
+        from arccli.commands.agent._store_lifecycle import load_arcstore_config
+
+        data_dir = load_arcstore_config(agent_dir).resolve_data_dir()
+        (data_dir / "spool").mkdir(parents=True, exist_ok=True)
+    except Exception:  # reason: fail-open — store setup must never fail create
+        sys.stdout.write("Warning: could not pre-create arcstore data dir (non-fatal)\n")
 
 
 def _try_auto_register(name: str, agent_dir: Path) -> None:

@@ -1,6 +1,7 @@
 """Integration tests for REST routes using httpx AsyncClient."""
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +20,28 @@ def _make_app(
     app = create_app(auth_config=auth, config_controller=config_controller)
     client = TestClient(app)
     return app, client, auth
+
+
+def _seed_spool(data_dir: Path, *, model: str = "claude", outcome: str = "ok") -> str:
+    """Write one llm_call to the durable spool; return its trace_id (record_id)."""
+    from arcstore.records import SpoolRecord
+    from arcstore.spool import record as spool_record
+
+    spool = data_dir / "spool"
+    spool.mkdir(parents=True, exist_ok=True)
+    rec = SpoolRecord(
+        kind="llm_call",
+        actor_did="did:arc:test:exec/aabbccdd",
+        request_id="req-1",
+        model=model,
+        prompt_tokens=100,
+        completion_tokens=50,
+        cost_usd=0.0015,
+        latency_ms=42.0,
+        outcome=outcome,
+    )
+    spool_record(rec, path=spool / "operational-2026-05-31.jsonl")
+    return rec.record_id
 
 
 class TestHealthRoute:
@@ -69,35 +92,29 @@ class TestTracesRoute:
         assert data["traces"] == []
         assert data["cursor"] is None
 
-    async def test_list_traces_with_store(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        rec = TraceRecord(provider="anthropic", model="claude-sonnet-4")
-        await store.append(rec)
+    def test_list_traces_with_store(self, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: arcui reads the durable spool via the Observe plane.
+        # Seed a spool record, then let the lifespan backfill it into the mirror.
+        _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get("/api/traces", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/traces", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert len(resp.json()["traces"]) == 1
 
-    async def test_get_trace_by_id(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        rec = TraceRecord(provider="anthropic", model="claude-sonnet-4")
-        await store.append(rec)
+    def test_get_trace_by_id(self, _isolated_arc_data_dir: Path):
+        trace_id = _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get(f"/api/traces/{rec.trace_id}", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get(
+                f"/api/traces/{trace_id}", headers={"Authorization": "Bearer v"}
+            )
         assert resp.status_code == 200
-        assert resp.json()["trace_id"] == rec.trace_id
+        assert resp.json()["trace_id"] == trace_id
 
     def test_get_trace_invalid_format(self):
         # _VALID_TRACE_ID_RE rejects disallowed chars (whitespace, `;<>`,
@@ -252,31 +269,25 @@ class TestStatsRoute:
 
 
 class TestExportRoute:
-    async def test_export_json(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        await store.append(TraceRecord(provider="anthropic", model="claude-sonnet-4"))
+    def test_export_json(self, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: export reads from the arcstore Observe mirror.
+        _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get("/api/export?format=json", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/export?format=json", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
 
-    async def test_export_csv(self, tmp_path: Path):
-        from arcllm.trace_store import JSONLTraceStore, TraceRecord
-
-        store = JSONLTraceStore(tmp_path / "ws")
-        await store.append(TraceRecord(provider="anthropic", model="claude-sonnet-4"))
+    def test_export_csv(self, _isolated_arc_data_dir: Path):
+        # SPEC-026 FR-5: export reads from the arcstore Observe mirror.
+        _seed_spool(_isolated_arc_data_dir, model="claude-sonnet-4")
 
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
-        app = create_app(auth_config=auth, trace_store=store)
-        client = TestClient(app)
-
-        resp = client.get("/api/export?format=csv", headers={"Authorization": "Bearer v"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/export?format=csv", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert "trace_id" in resp.text  # CSV header
 
@@ -366,140 +377,77 @@ class TestInputValidation:
         assert "Invalid key" in resp.json()["error"]
 
 
+def _referenced_assets(html: str) -> list[str]:
+    """Every `/assets/...` URL the built index.html references (Vite emits
+    content-hashed filenames, so we read them from the HTML rather than
+    hardcoding names)."""
+    return re.findall(r'(?:src|href)="(/assets/[^"]+)"', html)
+
+
 class TestDashboardRoute:
     def test_serves_index_html(self):
         _, client, _ = _make_app()
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "LLM Telemetry" in resp.text
-        assert "arc-platform.css" in resp.text
+        assert '<div id="root">' in resp.text  # React mount point
+        assert "/assets/index-" in resp.text  # built bundle is referenced
 
-    def test_serves_static_css(self):
+    def test_serves_bundled_assets(self):
         _, client, _ = _make_app()
-        resp = client.get("/assets/arc-platform.css")
-        assert resp.status_code == 200
-        assert "ARC Platform UI" in resp.text
-
-    def test_serves_static_js(self):
-        _, client, _ = _make_app()
-        resp = client.get("/assets/ws-client.js")
-        assert resp.status_code == 200
-        assert "RobustWebSocket" in resp.text
+        assets = _referenced_assets(client.get("/").text)
+        assert assets, "index.html references no /assets bundles"
+        for path in assets:
+            resp = client.get(path)
+            assert resp.status_code == 200, f"{path} -> {resp.status_code}"
+            assert resp.content, f"{path} served empty"
 
 
 class TestStaticAssetsRegression:
-    """Pin the every-link-from-index-loads contract.
-
-    Regression guard: any future change that breaks the static mount, drops
-    the CSS link, blocks `/assets/*` behind auth, or returns the wrong
-    content type will fail these tests before reaching a browser.
+    """Every asset the built index.html references must load with the right
+    MIME and a non-empty body, served unauthenticated. Hash-proof: the asset
+    names are read from the served HTML, not hardcoded.
     """
 
-    # Every asset referenced from index.html. If you add a <link> or <script>
-    # to index.html, add it here too — the test will catch missing files
-    # before the browser does.
-    _LINKED_ASSETS: tuple[tuple[str, str, str], ...] = (
-        # path, content-type prefix, fingerprint string that must appear in body
-        ("/assets/arc-platform.css", "text/css", "ARC Platform UI"),
-        ("/assets/arc-shell.js", "text/javascript", ""),
-        ("/assets/formatters.js", "text/javascript", ""),
-        ("/assets/dom-batcher.js", "text/javascript", ""),
-        ("/assets/store.js", "text/javascript", ""),
-        ("/assets/ws-client.js", "text/javascript", "RobustWebSocket"),
-        ("/assets/connection-ui.js", "text/javascript", ""),
-        ("/assets/log-table.js", "text/javascript", ""),
-    )
+    def _assets(self, client) -> list[str]:
+        return _referenced_assets(client.get("/").text)
 
-    def test_index_links_every_referenced_asset(self):
-        """Each asset in _LINKED_ASSETS must appear by name in the served HTML.
-
-        Catches accidental rename of a CSS or JS file without updating
-        index.html.
-        """
+    def test_index_references_js_and_css_bundles(self):
         _, client, _ = _make_app()
-        html = client.get("/").text
-        for path, _, _ in self._LINKED_ASSETS:
-            asset_name = path.rsplit("/", 1)[-1]
-            assert asset_name in html, f"index.html does not reference {asset_name}"
+        assets = self._assets(client)
+        assert any(a.endswith(".js") for a in assets), "no JS bundle referenced"
+        assert any(a.endswith(".css") for a in assets), "no CSS bundle referenced"
 
-    def test_every_linked_asset_serves_200(self):
-        """Every asset referenced from index.html resolves with 200.
-
-        Catches a deleted/renamed file on disk that index.html still links.
-        """
+    def test_every_referenced_asset_serves_200(self):
         _, client, _ = _make_app()
-        for path, _, _ in self._LINKED_ASSETS:
+        for path in self._assets(client):
             resp = client.get(path)
             assert resp.status_code == 200, (
-                f"{path} returned {resp.status_code} — the static mount, "
-                "the file on disk, or auth middleware is broken"
+                f"{path} returned {resp.status_code} — the static mount or the "
+                "file on disk is broken"
             )
 
-    def test_every_linked_asset_has_correct_content_type(self):
-        """Wrong Content-Type breaks browser parsing even if status=200.
-
-        Browsers refuse to apply text/css when the Content-Type is text/plain,
-        and execute text/javascript only when the type is right. This is the
-        single most likely cause of a "stylesheet downloaded but not applied"
-        bug.
-        """
+    def test_bundles_have_correct_content_type(self):
+        """Wrong Content-Type breaks browser parsing even at status 200."""
         _, client, _ = _make_app()
-        for path, expected_prefix, _ in self._LINKED_ASSETS:
-            resp = client.get(path)
-            ctype = resp.headers.get("content-type", "")
-            assert ctype.startswith(expected_prefix), (
-                f"{path} served as {ctype!r}; browsers need {expected_prefix}"
-            )
-
-    def test_every_linked_asset_has_expected_fingerprint(self):
-        """Each asset's body contains a known fingerprint — no empty file.
-
-        Catches a partial-write or truncation bug where the file exists,
-        serves 200, but is empty or wrong content.
-        """
-        _, client, _ = _make_app()
-        for path, _, fingerprint in self._LINKED_ASSETS:
-            if not fingerprint:
-                continue
-            resp = client.get(path)
-            assert fingerprint in resp.text, (
-                f"{path} did not contain expected fingerprint {fingerprint!r}"
-            )
+        prefixes = {".js": "text/javascript", ".css": "text/css"}
+        for path in self._assets(client):
+            for ext, prefix in prefixes.items():
+                if path.endswith(ext):
+                    ctype = client.get(path).headers.get("content-type", "")
+                    assert ctype.startswith(prefix), (
+                        f"{path} served as {ctype!r}; browsers need {prefix}"
+                    )
 
     def test_assets_are_unauthenticated(self):
-        """`/assets/*` MUST pass through AuthMiddleware unchallenged.
-
-        The browser fetches CSS/JS BEFORE any JS runs to set the Authorization
-        header. If the middleware ever requires a bearer token on /assets/*,
-        the CSS will silently fail to apply and the page will look unstyled.
-        """
+        """`/assets/*` MUST pass AuthMiddleware unchallenged — the browser
+        fetches CSS/JS before any JS can set the Authorization header."""
         _, client, _ = _make_app()
-        # No Authorization header at all.
-        for path, _, _ in self._LINKED_ASSETS:
+        for path in self._assets(client):  # no Authorization header
             resp = client.get(path)
             assert resp.status_code == 200, (
                 f"{path} returned {resp.status_code} without auth — "
                 "AuthMiddleware should let static assets through"
             )
-
-    def test_auth_bootstrap_script_runs_before_css_link(self):
-        """SR-2: auth-token bootstrap script MUST be in <head> before any
-        analytics or telemetry that could leak the URL hash.
-
-        The CSS link comes after the bootstrap script — if their order is
-        ever reversed (e.g. someone inlines a stylesheet that runs JS via
-        @import url() side-effects), the token-strip race opens up.
-        """
-        _, client, _ = _make_app()
-        html = client.get("/").text
-        boot_idx = html.find("bootstrapAuth")
-        css_idx = html.find("arc-platform.css")
-        assert boot_idx > 0, "bootstrap script missing from index.html"
-        assert css_idx > 0, "arc-platform.css link missing from index.html"
-        assert boot_idx < css_idx, (
-            "bootstrap script must appear before any <link> or external "
-            "resource so it strips the URL hash first"
-        )
 
 
 class TestArcllmConfigRoute:

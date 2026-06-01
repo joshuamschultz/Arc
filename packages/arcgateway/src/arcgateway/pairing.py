@@ -826,7 +826,7 @@ class PairingStore:
 
         Routes through both the structured stdlib logger (for log-aggregator
         compatibility) and ``arcgateway.audit.emit_event`` (for the canonical
-        ``arctrust.audit`` sink pipeline — JsonlSink, SignedChainSink, etc.).
+        ``arctrust.audit`` sink pipeline — the durable ``WormSink``).
 
         When a telemetry instance has been attached via ``attach_telemetry``
         the event is also forwarded to ``telemetry.audit_event`` so that

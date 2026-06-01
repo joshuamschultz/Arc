@@ -122,7 +122,7 @@ class SchedulerEngine:
             result = await asyncio.wait_for(
                 self._agent_run_fn(
                     entry.prompt,
-                    tool_choice={"type": "any"},
+                    session_key=f"scheduler:{entry.id}",
                 ),
                 timeout=timeout,
             )

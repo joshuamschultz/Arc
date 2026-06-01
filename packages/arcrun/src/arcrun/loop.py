@@ -8,16 +8,19 @@ from collections.abc import Callable
 from typing import Any
 
 from arcrun._messages import system_message, user_message
+from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import STRATEGIES, select_strategy
-from arcrun.types import LoopResult, SandboxConfig, Tool
+from arcrun.types import LoopResult, SandboxConfig
+
+_DEFAULT_CALLER_DID = "did:arc:unknown"
 
 
 def _build_state(
-    tools: list[Tool],
+    capabilities: CapabilityProvider,
     system_prompt: str,
     task: str,
     *,
@@ -29,13 +32,14 @@ def _build_state(
     depth: int = 0,
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
-    if not tools:
-        raise ValueError("tools must not be empty")
-
     run_id = str(uuid.uuid4())
-    bus = EventBus(run_id=run_id, on_event=on_event)
+    bus = EventBus(run_id=run_id, on_event=on_event, spool_actor_did=actor_did)
+    tools = provider_tools(capabilities, caller_did=actor_did or _DEFAULT_CALLER_DID)
+    if not tools:
+        raise ValueError("capabilities must advertise at least one capability")
     registry = ToolRegistry(tools=tools, event_bus=bus)
     sandbox_obj = Sandbox(config=sandbox, event_bus=bus)
 
@@ -75,7 +79,7 @@ async def _select_and_emit(
 
 async def run(
     model: Any,
-    tools: list[Tool],
+    capabilities: CapabilityProvider,
     system_prompt: str,
     task: str,
     *,
@@ -89,10 +93,11 @@ async def run(
     depth: int = 0,
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
-        tools,
+        capabilities,
         system_prompt,
         task,
         messages=messages,
@@ -103,15 +108,17 @@ async def run(
         depth=depth,
         max_depth=max_depth,
         tool_choice=tool_choice,
+        actor_did=actor_did,
     )
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)
-    return await strategy_fn(model, state, sandbox_obj, max_turns)
+    result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
+    return result
 
 
 async def run_async(
     model: Any,
-    tools: list[Tool],
+    capabilities: CapabilityProvider,
     system_prompt: str,
     task: str,
     *,
@@ -125,10 +132,11 @@ async def run_async(
     depth: int = 0,
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
-        tools,
+        capabilities,
         system_prompt,
         task,
         messages=messages,
@@ -139,6 +147,7 @@ async def run_async(
         depth=depth,
         max_depth=max_depth,
         tool_choice=tool_choice,
+        actor_did=actor_did,
     )
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)

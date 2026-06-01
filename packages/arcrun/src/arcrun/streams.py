@@ -24,10 +24,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from arcrun.capabilities import CapabilityProvider
 from arcrun.events import Event
 from arcrun.types import LoopResult, SandboxConfig, Tool
 
@@ -93,6 +94,48 @@ class TurnEndEvent(StreamEvent):
     cost_usd: float = 0.0
 
 
+@dataclass
+class RunResult:
+    """Final result of a streamed run, reconstructed by ``collect()``.
+
+    The streaming entry (``agent.run``) is the single way to drive an agent;
+    one-shot callers (CLI, scheduler, module callbacks) that only want the
+    final answer drain the stream through ``collect()`` to get this. Carries
+    exactly what the terminal ``TurnEndEvent`` reports — no loop internals
+    (``tokens_used``/``strategy_used`` stay inside ``LoopResult``).
+    """
+
+    content: str
+    turns: int = 0
+    tool_calls_made: int = 0
+    cost_usd: float = 0.0
+
+
+async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
+    """Drain a StreamEvent iterator to a final RunResult.
+
+    Consumes the whole stream. The terminal ``TurnEndEvent`` carries the
+    authoritative totals; if a stream ends without one, the concatenated
+    ``TokenEvent`` text is used as the content fallback so callers always
+    get the response text.
+    """
+    token_text: list[str] = []
+    turn_end: TurnEndEvent | None = None
+    async for event in stream:
+        if isinstance(event, TurnEndEvent):
+            turn_end = event
+        elif isinstance(event, TokenEvent):
+            token_text.append(event.text)
+    if turn_end is not None:
+        return RunResult(
+            content=turn_end.final_text,
+            turns=turn_end.turns,
+            tool_calls_made=turn_end.tool_calls_made,
+            cost_usd=turn_end.cost_usd,
+        )
+    return RunResult(content="".join(token_text))
+
+
 # ---------------------------------------------------------------------------
 # run_stream() — async generator wrapping run()
 # ---------------------------------------------------------------------------
@@ -101,12 +144,17 @@ class TurnEndEvent(StreamEvent):
 async def run_stream(
     *,
     model: Any,
-    tools: list[Tool],
+    capabilities: CapabilityProvider,
     system_prompt: str,
     task: str,
+    messages: list[Any] | None = None,
     max_turns: int = 25,
     sandbox: SandboxConfig | None = None,
     allowed_strategies: list[str] | None = None,
+    on_event: Callable[[Event], None] | None = None,
+    transform_context: Callable[..., Any] | None = None,
+    tool_choice: dict[str, Any] | None = None,
+    actor_did: str | None = None,
     audit_sink: Any | None = None,
     ui_reporter: Any | None = None,
 ) -> AsyncIterator[StreamEvent]:
@@ -118,12 +166,22 @@ async def run_stream(
 
     Args:
         model: LLM model for the run.
-        tools: Tools available to the agent.
+        capabilities: CapabilityProvider whose advertised specs become the
+            model's tool list; calls route to ``provider.invoke``.
         system_prompt: System prompt.
         task: User task.
+        messages: Prior session history to seed the loop (history parity with
+            the blocking path). When None, a fresh single-turn run from ``task``.
         max_turns: Maximum turns before halting.
         sandbox: Optional sandbox config.
         allowed_strategies: Optional strategy allowlist.
+        on_event: Optional external EventBus bridge. Loop events are delivered
+            to it in addition to the internal stream bridge — this is the seam
+            SPEC-026 recording and module telemetry ride on, so the streaming
+            entry records exactly like the blocking one did.
+        transform_context: Optional context transformer forwarded to the loop.
+        tool_choice: Optional forced tool-choice forwarded to the loop.
+        actor_did: Optional caller DID forwarded to the loop's EventBus (spool).
         audit_sink: Optional arctrust.AuditSink. AuditEvents for stream lifecycle
             (stream.start, stream.end) are emitted to this sink. When None,
             falls back to logger-only (backwards compatible).
@@ -158,7 +216,13 @@ async def run_stream(
     queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
 
     def _on_event(event: Event) -> None:
-        """Bridge EventBus events to stream queue."""
+        """Bridge EventBus events to stream queue.
+
+        Also forwards every event to the caller-supplied ``on_event`` so the
+        recording/telemetry bridge sees the same events as the blocking path.
+        """
+        if on_event is not None:
+            on_event(event)
         if event.type == "tool.start":
             name = str(event.data.get("name", ""))
             args = dict(event.data.get("arguments", {}))
@@ -188,13 +252,17 @@ async def run_stream(
         try:
             result = await run(
                 model,
-                tools,
+                capabilities,
                 system_prompt,
                 task,
+                messages=messages,
                 max_turns=max_turns,
                 sandbox=sandbox,
                 allowed_strategies=allowed_strategies,
                 on_event=_on_event,
+                transform_context=transform_context,
+                tool_choice=tool_choice,
+                actor_did=actor_did,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue

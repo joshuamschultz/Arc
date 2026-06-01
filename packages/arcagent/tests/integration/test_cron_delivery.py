@@ -315,8 +315,8 @@ class TestDeliveryAuditEvents:
         assert "cron.delivery_failed" in event_types
 
     @pytest.mark.asyncio
-    async def test_cron_session_disabled_tools_audit_event_always_fired(self) -> None:
-        """cron.session.disabled_tools is the first event regardless of outcome."""
+    async def test_cron_session_start_audit_event_always_fired(self) -> None:
+        """cron.session.start is the first audit event regardless of outcome."""
         runner, telemetry = _make_runner()
 
         job = CronJob(name="j", schedule="* * * * *", prompt="p")
@@ -324,7 +324,7 @@ class TestDeliveryAuditEvents:
 
         calls = telemetry.audit_event.call_args_list
         assert calls, "No audit events emitted"
-        assert calls[0].args[0] == "cron.session.disabled_tools"
+        assert calls[0].args[0] == "cron.session.start"
 
 
 # ---------------------------------------------------------------------------

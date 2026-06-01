@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "arcllm",
     "arctrust",
+    "arcstore",
     "jsonschema>=4.0",
 ]
 

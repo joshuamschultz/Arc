@@ -3,7 +3,7 @@
 Seven capabilities mirror :class:`MessagingModule`'s startup registrations:
 
   * ``agent:assemble_prompt`` (priority 50)  — inject team context + roster.
-  * ``agent:ready``           (priority 100) — bind agent.chat() callback.
+  * ``agent:ready``           (priority 100) — bind agent.run_collected() callback.
   * ``agent:shutdown``        (priority 100) — cancel poll task, log stop.
   * ``messaging_send``        (@tool)        — send a message to entity/channel/role.
   * ``messaging_check_inbox`` (@tool)        — poll all streams for unread messages.
@@ -128,7 +128,7 @@ async def _build_roster() -> str:
 
 
 async def _process_inbox(inbox: dict[str, list[Any]]) -> None:
-    """Format inbox messages and route through agent.chat().
+    """Format inbox messages and route through agent.run_collected().
 
     Batches all unread messages into a single prompt. Serialised via lock
     to prevent concurrent processing. Acks after successful processing when
@@ -184,10 +184,10 @@ async def _process_inbox(inbox: dict[str, list[Any]]) -> None:
 
         try:
             _logger.info(
-                "Processing %d inbox message(s) through agent.chat()",
+                "Processing %d inbox message(s) through agent.run_collected()",
                 len(all_messages),
             )
-            await st.agent_chat_fn(prompt)
+            await st.agent_run_fn(prompt, session_key="messaging:inbox")
 
             if st.config.auto_ack:
                 for stream, msgs in inbox.items():
@@ -272,14 +272,14 @@ async def inject_messaging_sections(ctx: Any) -> None:
 
 
 @hook(event="agent:ready", priority=100)
-async def messaging_bind_chat(ctx: Any) -> None:
-    """Bind agent.chat() callback for inbox message processing."""
+async def messaging_bind_run_fn(ctx: Any) -> None:
+    """Bind agent.run_collected() callback for inbox message processing."""
     data = ctx.data if hasattr(ctx, "data") else {}
-    chat_fn = data.get("chat_fn")
-    if chat_fn is not None:
+    run_fn = data.get("run_fn")
+    if run_fn is not None:
         st = _runtime.state()
-        st.agent_chat_fn = chat_fn
-        _logger.info("Bound agent_chat_fn for message processing")
+        st.agent_run_fn = run_fn
+        _logger.info("Bound agent_run_fn for message processing")
 
 
 @hook(event="agent:shutdown", priority=100)
@@ -520,14 +520,14 @@ async def messaging_list_channels() -> str:
     interval=_POLL_TICK,
 )
 async def messaging_poll_loop(_ctx: Any) -> None:
-    """Background inbox poller — routes new messages through agent.chat().
+    """Background inbox poller — routes new messages through agent.run_collected().
 
     Ticks every ``_POLL_TICK`` second. The actual inter-poll delay is
     governed by ``config.poll_interval_seconds``; the task sleeps for the
     remainder of that interval after each cycle so the scheduler overhead
     stays constant.
 
-    Falls back to unread-count caching when ``agent_chat_fn`` is not yet
+    Falls back to unread-count caching when ``agent_run_fn`` is not yet
     bound (i.e. before ``agent:ready`` fires).
     """
     # Give services one second to initialise before the first poll.
@@ -542,7 +542,7 @@ async def messaging_poll_loop(_ctx: Any) -> None:
             )
             st.last_unread = {stream: len(msgs) for stream, msgs in inbox.items()}
 
-            if st.agent_chat_fn is not None:
+            if st.agent_run_fn is not None:
                 await _process_inbox(inbox)
 
         except asyncio.CancelledError:
@@ -560,7 +560,7 @@ async def messaging_poll_loop(_ctx: Any) -> None:
 
 __all__ = [
     "inject_messaging_sections",
-    "messaging_bind_chat",
+    "messaging_bind_run_fn",
     "messaging_check_inbox",
     "messaging_list_channels",
     "messaging_list_entities",

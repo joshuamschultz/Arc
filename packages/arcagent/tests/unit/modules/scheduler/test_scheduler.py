@@ -394,11 +394,11 @@ class TestExecution:
             telemetry=MagicMock(),
             agent_run_fn=agent_run_fn,
         )
-        entry = make_entry(prompt="Check inbox")
+        entry = make_entry(prompt="Check inbox", id="sched_inbox")
         result = await engine.execute(entry)
         agent_run_fn.assert_awaited_once_with(
             "Check inbox",
-            tool_choice={"type": "any"},
+            session_key="scheduler:sched_inbox",
         )
         assert result is not None
 
@@ -421,7 +421,7 @@ class TestExecution:
 
     @pytest.mark.asyncio
     async def test_execute_handles_timeout(self) -> None:
-        async def slow_run(prompt: str) -> str:
+        async def slow_run(prompt: str, *, session_key: str) -> str:
             await asyncio.sleep(10)
             return "done"
 

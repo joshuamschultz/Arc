@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from arcrun import StaticProvider
 from arcrun.types import Tool
 from security.conftest import LLMResponse, MockModel, ToolCall
 
@@ -40,7 +41,7 @@ class TestSteeringInjection:
             ]
         )
 
-        await run(model, [tool], "Be helpful.", "Fetch data")
+        await run(model, StaticProvider([tool]), "Be helpful.", "Fetch data")
         # Verify tool result was added as tool role, not system
         messages = model.invoke_calls[1]["messages"]
         tool_msgs = [m for m in messages if m.role == "tool"]
@@ -76,7 +77,7 @@ class TestSteeringInjection:
             ]
         )
 
-        result = await run(model, [tool], "Be helpful.", "Search for info")
+        result = await run(model, StaticProvider([tool]), "Be helpful.", "Search for info")
         # Loop completes normally — injection text treated as tool result data
         assert result.turns == 2
         assert result.content == "Search complete."
@@ -106,6 +107,6 @@ class TestSteeringInjection:
             ]
         )
 
-        result = await run(model, [tool], "prompt", "task")
+        result = await run(model, StaticProvider([tool]), "prompt", "task")
         tool_events = [e for e in result.events if e.type in ("tool.start", "tool.end")]
         assert len(tool_events) >= 2  # start + end

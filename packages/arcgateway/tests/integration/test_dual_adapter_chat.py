@@ -32,10 +32,12 @@ Design:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
+from arcrun import StreamEvent, TokenEvent, TurnEndEvent
 
 from arcgateway.adapters.slack import SlackAdapter
 from arcgateway.bootstrap import EmbeddedGateway, build_for_embedded
@@ -64,13 +66,17 @@ _APP_TOKEN = "xapp-test-dual-adapter-app"
 
 
 class _EchoAgent:
-    """Minimal agent that echoes the incoming message — satisfies ArcAgent.run()."""
+    """Minimal streaming agent — satisfies the SPEC-027 executor contract."""
 
     def __init__(self, agent_did: str) -> None:
         self.agent_did = agent_did
 
-    async def run(self, task: str) -> str:
-        return f"echo: {task}"
+    async def session(self, key: str) -> str:
+        return key
+
+    async def run(self, input_text: str, *, session: Any) -> AsyncIterator[StreamEvent]:
+        yield TokenEvent(text=f"echo: {input_text}")
+        yield TurnEndEvent(final_text=f"echo: {input_text}")
 
 
 async def _echo_factory(agent_did: str) -> _EchoAgent:

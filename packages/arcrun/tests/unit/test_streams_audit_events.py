@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from arctrust import AuditEvent, NullSink
 
+from arcrun import StaticProvider
 from arcrun.streams import TurnEndEvent, run_stream
 from arcrun.types import LoopResult
 
@@ -72,7 +73,7 @@ class TestStreamAuditEvents:
         with patch("arcrun.loop.run", new=AsyncMock(return_value=_fake_loop_result())):
             stream = await run_stream(
                 model=object(),
-                tools=[],
+                capabilities=StaticProvider([]),
                 system_prompt="sys",
                 task="task",
                 audit_sink=sink,
@@ -90,7 +91,7 @@ class TestStreamAuditEvents:
         with patch("arcrun.loop.run", new=AsyncMock(return_value=_fake_loop_result())):
             stream = await run_stream(
                 model=object(),
-                tools=[],
+                capabilities=StaticProvider([]),
                 system_prompt="sys",
                 task="task",
                 audit_sink=sink,
@@ -108,7 +109,7 @@ class TestStreamAuditEvents:
         with patch("arcrun.loop.run", new=AsyncMock(return_value=_fake_loop_result())):
             stream = await run_stream(
                 model=object(),
-                tools=[],
+                capabilities=StaticProvider([]),
                 system_prompt="sys",
                 task="task",
                 audit_sink=sink,
@@ -126,7 +127,7 @@ class TestStreamAuditEvents:
         with patch("arcrun.loop.run", new=AsyncMock(return_value=_fake_loop_result())):
             stream = await run_stream(
                 model=object(),
-                tools=[],
+                capabilities=StaticProvider([]),
                 system_prompt="sys",
                 task="task",
                 audit_sink=NullSink(),
@@ -143,7 +144,7 @@ class TestStreamAuditEvents:
         with patch("arcrun.loop.run", new=AsyncMock(return_value=_fake_loop_result())):
             stream = await run_stream(
                 model=object(),
-                tools=[],
+                capabilities=StaticProvider([]),
                 system_prompt="sys",
                 task="task",
             )
@@ -161,7 +162,7 @@ class TestStreamAuditEvents:
         with patch("arcrun.loop.run", new=AsyncMock(return_value=_fake_loop_result())):
             stream = await run_stream(
                 model=object(),
-                tools=[],
+                capabilities=StaticProvider([]),
                 system_prompt="sys",
                 task="the specific task",
                 audit_sink=sink,

@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from arcrun import (
+    StaticProvider,
     StreamEvent,
     TokenEvent,
     ToolEndEvent,
@@ -83,7 +84,7 @@ async def test_run_stream_yields_token_and_turn_end() -> None:
     ):
         stream = await run_stream(
             model=MagicMock(),
-            tools=[_fake_tool()],
+            capabilities=StaticProvider([_fake_tool()]),
             system_prompt="You are a helpful assistant.",
             task="Say hello",
         )
@@ -130,7 +131,7 @@ async def test_run_stream_token_text_matches_result() -> None:
     ):
         stream = await run_stream(
             model=MagicMock(),
-            tools=[_fake_tool()],
+            capabilities=StaticProvider([_fake_tool()]),
             system_prompt="sys",
             task="task",
         )
@@ -174,7 +175,7 @@ async def test_run_stream_tool_events_emitted() -> None:
     ):
         stream = await run_stream(
             model=MagicMock(),
-            tools=[_fake_tool()],
+            capabilities=StaticProvider([_fake_tool()]),
             system_prompt="sys",
             task="use the tool",
         )
@@ -214,7 +215,7 @@ async def test_run_stream_turn_end_is_last() -> None:
     ):
         stream = await run_stream(
             model=MagicMock(),
-            tools=[_fake_tool()],
+            capabilities=StaticProvider([_fake_tool()]),
             system_prompt="sys",
             task="task",
         )
@@ -249,7 +250,7 @@ async def test_run_stream_empty_content() -> None:
     ):
         stream = await run_stream(
             model=MagicMock(),
-            tools=[_fake_tool()],
+            capabilities=StaticProvider([_fake_tool()]),
             system_prompt="sys",
             task="task",
         )

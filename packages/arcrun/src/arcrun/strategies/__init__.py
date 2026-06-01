@@ -122,7 +122,7 @@ async def select_strategy(
                         "reasoning": reasoning,
                     },
                 )
-                return chosen
+                return str(chosen)
     except Exception as exc:  # reason: fail-open — continue
         bus.emit("strategy.selection.error", {"error": str(exc)})
 

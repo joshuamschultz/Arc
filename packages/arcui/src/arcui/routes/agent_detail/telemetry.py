@@ -19,10 +19,10 @@ from arcui.schemas import (
 
 
 async def get_stats(request: Request) -> JSONResponse:
-    """Per-agent stats — delegates to per-agent or global aggregator.
+    """Per-agent stats — computed on read from the arcstore mirror.
 
-    Mirrors the behaviour of the existing ``/api/stats?agent_id=`` route but
-    uses the path-param style for symmetry with the agent-detail screen.
+    Mirrors ``/api/stats?agent_id=`` but uses the path-param style for symmetry
+    with the agent-detail screen (SPEC-026 FR-5).
     """
     agent_id = request.path_params["id"]
     agent_root = _agent_root(request, agent_id)
@@ -32,15 +32,6 @@ async def get_stats(request: Request) -> JSONResponse:
             status_code=404,
         )
 
-    registry = request.app.state.agent_registry
-    entry = registry.get(agent_id)
-    aggregator = (
-        entry.aggregator
-        if entry and entry.aggregator
-        else getattr(request.app.state, "aggregator", None)
-    )
-    if aggregator is None:
-        return JSONResponse(StatsResponse(stats={}, window="24h").model_dump(mode="json"))
     window, err = safe_choice(
         request.query_params.get("window", "24h"),
         {"1h", "24h", "7d"},
@@ -48,12 +39,8 @@ async def get_stats(request: Request) -> JSONResponse:
     )
     if err is not None:
         return err
-    return JSONResponse(
-        StatsResponse(
-            stats=aggregator.stats(window),
-            window=window,
-        ).model_dump(mode="json")
-    )
+    stats = await request.app.state.observe.stats(window, agent=agent_id)
+    return JSONResponse(StatsResponse(stats=stats, window=window).model_dump(mode="json"))
 
 
 async def get_traces(request: Request) -> JSONResponse:
@@ -65,10 +52,6 @@ async def get_traces(request: Request) -> JSONResponse:
             status_code=404,
         )
 
-    store = request.app.state.trace_store
-    if store is None:
-        return JSONResponse(TracesResponse(traces=[], cursor=None).model_dump(mode="json"))
-
     limit, err = safe_int(
         request.query_params.get("limit"),
         default=50,
@@ -79,13 +62,8 @@ async def get_traces(request: Request) -> JSONResponse:
     if err is not None:
         return err
 
-    records, cursor = await store.query(limit=limit, agent=agent_id)
-    return JSONResponse(
-        TracesResponse(
-            traces=[r.model_dump() for r in records],
-            cursor=cursor,
-        ).model_dump(mode="json")
-    )
+    traces = await request.app.state.observe.traces(agent=agent_id, limit=limit)
+    return JSONResponse(TracesResponse(traces=traces, cursor=None).model_dump(mode="json"))
 
 
 async def get_audit(request: Request) -> JSONResponse:

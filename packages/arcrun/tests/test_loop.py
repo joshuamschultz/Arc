@@ -3,6 +3,7 @@
 import pytest
 from conftest import LLMResponse, MockModel, ToolCall
 
+from arcrun import StaticProvider
 from arcrun.types import Tool
 
 
@@ -27,7 +28,7 @@ class TestRun:
         from arcrun.loop import run
 
         model = MockModel([LLMResponse(content="Hello!", stop_reason="end_turn")])
-        result = await run(model, _tools(), "Be helpful.", "Say hello")
+        result = await run(model, StaticProvider(_tools()), "Be helpful.", "Say hello")
         assert result.content == "Hello!"
         assert result.turns == 1
         assert result.strategy_used == "react"
@@ -38,7 +39,7 @@ class TestRun:
 
         events_received = []
         model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
-        await run(model, _tools(), "prompt", "task", on_event=lambda e: events_received.append(e))
+        await run(model, StaticProvider(_tools()), "prompt", "task", on_event=lambda e: events_received.append(e))
         assert len(events_received) > 0
         assert any(e.type == "loop.start" for e in events_received)
 
@@ -47,7 +48,7 @@ class TestRun:
         from arcrun.loop import run
 
         model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
-        result = await run(model, _tools(), "prompt", "task")
+        result = await run(model, StaticProvider(_tools()), "prompt", "task")
         selected = [e for e in result.events if e.type == "strategy.selected"]
         assert len(selected) == 1
         assert selected[0].data["strategy"] == "react"
@@ -58,7 +59,7 @@ class TestRun:
 
         model = MockModel([])
         with pytest.raises(ValueError, match="unknown strategies"):
-            await run(model, _tools(), "prompt", "task", allowed_strategies=["nonexistent"])
+            await run(model, StaticProvider(_tools()), "prompt", "task", allowed_strategies=["nonexistent"])
 
     @pytest.mark.asyncio
     async def test_with_sandbox(self):
@@ -75,7 +76,7 @@ class TestRun:
             ]
         )
         cfg = SandboxConfig(allowed_tools=["other"])
-        result = await run(model, _tools(), "prompt", "task", sandbox=cfg)
+        result = await run(model, StaticProvider(_tools()), "prompt", "task", sandbox=cfg)
         denied = [e for e in result.events if e.type == "tool.denied"]
         assert len(denied) == 1
 
@@ -90,7 +91,7 @@ class TestRun:
             return msgs
 
         model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
-        await run(model, _tools(), "prompt", "task", transform_context=transform)
+        await run(model, StaticProvider(_tools()), "prompt", "task", transform_context=transform)
         assert len(calls) >= 1
 
     @pytest.mark.asyncio
@@ -98,8 +99,8 @@ class TestRun:
         from arcrun.loop import run
 
         model = MockModel([])
-        with pytest.raises(ValueError, match="tools"):
-            await run(model, [], "prompt", "task")
+        with pytest.raises(ValueError, match="capabilities must advertise at least one capability"):
+            await run(model, StaticProvider([]), "prompt", "task")
 
     @pytest.mark.asyncio
     async def test_model_error_bubbles(self):
@@ -110,7 +111,7 @@ class TestRun:
                 raise ConnectionError("API down")
 
         with pytest.raises(ConnectionError, match="API down"):
-            await run(BadModel(), _tools(), "prompt", "task")
+            await run(BadModel(), StaticProvider(_tools()), "prompt", "task")
 
 
 class TestRunWithMessages:
@@ -122,7 +123,7 @@ class TestRunWithMessages:
         from arcrun.loop import run
 
         model = MockModel([LLMResponse(content="Hi!", stop_reason="end_turn")])
-        result = await run(model, _tools(), "Be helpful.", "Say hello", messages=None)
+        result = await run(model, StaticProvider(_tools()), "Be helpful.", "Say hello", messages=None)
         assert result.content == "Hi!"
         # Model received [system, user] (list is mutated after invoke, so check first two)
         invoke_msgs = model.invoke_calls[0]["messages"]
@@ -146,7 +147,7 @@ class TestRunWithMessages:
         model = MockModel([LLMResponse(content="I'm good!", stop_reason="end_turn")])
         result = await run(
             model,
-            _tools(),
+            StaticProvider(_tools()),
             "Be helpful.",
             "how are you",
             messages=history,
@@ -180,7 +181,7 @@ class TestRunWithMessages:
         model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
         await run(
             model,
-            _tools(),
+            StaticProvider(_tools()),
             "NEW system prompt",
             "hello",
             messages=history,
@@ -198,7 +199,7 @@ class TestRunWithMessages:
         model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
         await run(
             model,
-            _tools(),
+            StaticProvider(_tools()),
             "System.",
             "task",
             messages=[],
@@ -221,7 +222,7 @@ class TestRunWithMessages:
         model = MockModel([LLMResponse(content="Done.", stop_reason="end_turn")])
         handle = await run_async(
             model,
-            _tools(),
+            StaticProvider(_tools()),
             "prompt",
             "task",
             messages=history,
@@ -236,7 +237,7 @@ class TestRunAsync:
         from arcrun.loop import RunHandle, run_async
 
         model = MockModel([LLMResponse(content="Done.", stop_reason="end_turn")])
-        handle = await run_async(model, _tools(), "prompt", "task")
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         assert isinstance(handle, RunHandle)
 
     @pytest.mark.asyncio
@@ -244,6 +245,6 @@ class TestRunAsync:
         from arcrun.loop import run_async
 
         model = MockModel([LLMResponse(content="Result.", stop_reason="end_turn")])
-        handle = await run_async(model, _tools(), "prompt", "task")
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         result = await handle.result()
         assert result.content == "Result."

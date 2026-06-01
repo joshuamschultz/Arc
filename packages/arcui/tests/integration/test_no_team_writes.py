@@ -42,6 +42,7 @@ from starlette.testclient import TestClient
 
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.routes.agent_detail import routes as agent_detail_routes
 from arcui.routes.agents import routes as agent_routes
@@ -107,7 +108,8 @@ def _build_app(team_root: Path) -> tuple[Starlette, AuthConfig]:
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.audit_buffer = deque(maxlen=1000)
     app.state.team_root = team_root
-    app.state.trace_store = None  # /traces gracefully returns [] when None
+    # SPEC-026 FR-5: stats and traces routes read from the Observe plane.
+    app.state.observe = Observe()
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         online = {a.agent_id for a in registry.list_agents()}

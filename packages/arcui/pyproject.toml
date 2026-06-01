@@ -21,6 +21,7 @@ dependencies = [
     "tomlkit>=0.12",
     "arcllm>=0.1",
     "arcgateway>=0.2",
+    "arcstore",
     "websockets>=12.0",
 ]
 

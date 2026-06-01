@@ -1,7 +1,8 @@
 """AgentRegistry — in-memory agent connection tracking.
 
-No persistence. Agents re-register on UI restart. Each agent gets a
-per-agent RollingAggregator for drill-down stats.
+No persistence. Agents re-register on UI restart. Per-agent telemetry is read
+on demand from the arcstore mirror (filtered by agent_label), not a per-agent
+aggregator (SPEC-026 FR-5).
 """
 
 from __future__ import annotations
@@ -17,11 +18,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentEntry:
-    """A connected agent with its WebSocket and per-agent aggregator."""
+    """A connected agent with its WebSocket handle."""
 
     registration: AgentRegistration
     ws: Any  # starlette.websockets.WebSocket at runtime
-    aggregator: Any | None = None  # RollingAggregator, injected by server
 
 
 class AgentRegistry:

@@ -318,18 +318,18 @@ class TestHandleMessage:
 
 class TestProcessMessage:
     @pytest.mark.asyncio
-    async def test_calls_agent_chat_fn(self, tmp_path: Path) -> None:
+    async def test_calls_agent_run_fn(self, tmp_path: Path) -> None:
         bot = _make_bot(tmp_path)
         bot._current_session_id = "test-session"
 
-        mock_chat_fn = AsyncMock(return_value=MagicMock(content="Hello back"))
-        bot.set_agent_chat_fn(mock_chat_fn)
+        mock_run_fn = AsyncMock(return_value=MagicMock(content="Hello back"))
+        bot.set_agent_run_fn(mock_run_fn)
 
         update = _make_update(chat_id=123, text="hi agent")
         item = {"text": "hi agent", "chat_id": 123, "update": update}
         await bot._process_message(item)
 
-        mock_chat_fn.assert_called_once_with("hi agent", session_id="test-session")
+        mock_run_fn.assert_called_once_with("hi agent", session_key="test-session")
         update.message.reply_text.assert_called_once_with("Hello back")
 
     @pytest.mark.asyncio
@@ -338,8 +338,8 @@ class TestProcessMessage:
         bot._current_session_id = "test-session"
 
         long_text = "a" * 50
-        mock_chat_fn = AsyncMock(return_value=MagicMock(content=long_text))
-        bot.set_agent_chat_fn(mock_chat_fn)
+        mock_run_fn = AsyncMock(return_value=MagicMock(content=long_text))
+        bot.set_agent_run_fn(mock_run_fn)
 
         update = _make_update(chat_id=123)
         item = {"text": "hi", "chat_id": 123, "update": update}
@@ -352,8 +352,8 @@ class TestProcessMessage:
         bot = _make_bot(tmp_path)
         bot._current_session_id = "test-session"
 
-        mock_chat_fn = AsyncMock(return_value=None)
-        bot.set_agent_chat_fn(mock_chat_fn)
+        mock_run_fn = AsyncMock(return_value=None)
+        bot.set_agent_run_fn(mock_run_fn)
 
         update = _make_update(chat_id=123)
         item = {"text": "hi", "chat_id": 123, "update": update}
@@ -362,14 +362,14 @@ class TestProcessMessage:
         update.message.reply_text.assert_called_once_with("(No response)")
 
     @pytest.mark.asyncio
-    async def test_skips_if_no_chat_fn(self, tmp_path: Path) -> None:
+    async def test_skips_if_no_run_fn(self, tmp_path: Path) -> None:
         bot = _make_bot(tmp_path)
         update = _make_update(chat_id=123)
         item = {"text": "hi", "chat_id": 123, "update": update}
         await bot._process_message(item)
 
         update.message.reply_text.assert_called_once_with(
-            "Agent not ready — chat function not bound."
+            "Agent not ready — run function not bound."
         )
 
     @pytest.mark.asyncio
@@ -377,8 +377,8 @@ class TestProcessMessage:
         bot = _make_bot(tmp_path)
         bot._current_session_id = "test-session"
 
-        mock_chat_fn = AsyncMock(return_value=MagicMock(content="reply"))
-        bot.set_agent_chat_fn(mock_chat_fn)
+        mock_run_fn = AsyncMock(return_value=MagicMock(content="reply"))
+        bot.set_agent_run_fn(mock_run_fn)
 
         update = _make_update(chat_id=123)
         item = {"text": "hi", "chat_id": 123, "update": update}

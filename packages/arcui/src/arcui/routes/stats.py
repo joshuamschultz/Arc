@@ -1,15 +1,20 @@
-"""Stats routes — /api/stats, /api/circuit-breakers, /api/budget."""
+"""Stats routes — /api/stats, /api/circuit-breakers, /api/budget.
+
+SPEC-026 FR-5: the rolling-aggregator push pipeline is gone. ``/api/stats``,
+``/api/stats/timeseries`` and ``/api/performance`` recompute on read from the
+arcstore mirror (``app.state.observe``). ``?agent_id=`` scopes to one agent's
+rows. Circuit-breaker / budget / queue endpoints read live arcllm module state
+directly (not telemetry history) and are unchanged.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.aggregator import RollingAggregator
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -26,161 +31,63 @@ def _validated_window(request: Request) -> str | None:
     return window
 
 
-def _get_aggregator_for_request(
-    request: Request,
-) -> tuple[RollingAggregator | None, JSONResponse | None]:
-    """Return the appropriate aggregator: per-agent or global.
-
-    If ``?agent_id=`` is provided, looks up the per-agent aggregator
-    from the agent registry. For an agent that's known on disk but not
-    currently connected, returns an empty aggregator (200 with zero
-    counts) — the agent-detail page renders "no activity yet" instead
-    of error-ing on a 404 just because the agent is offline.
-    """
-    agent_id = request.query_params.get("agent_id")
-    if agent_id is not None:
-        registry = getattr(request.app.state, "agent_registry", None)
-        if registry is None:
-            return None, JSONResponse(
-                ErrorResponse(error="Agent registry not available").model_dump(mode="json"),
-                status_code=404,
-            )
-        entry = registry.get(agent_id)
-        if entry is None or entry.aggregator is None:
-            # Offline agent (or one whose aggregator wasn't initialised
-            # yet): synthesise an empty per-call aggregator so callers
-            # get an empty-but-well-formed response.
-            return RollingAggregator(), None
-        return entry.aggregator, None
-    return request.app.state.aggregator, None
-
-
-async def _publish(request: Request, topic: str, payload: Any) -> None:
-    """Publish to the dashboard bus if wired (best-effort).
-
-    SPEC-025 Track E — each polling handler publishes its computed
-    payload so the bus always holds the latest known value, and
-    /ws/dashboard subscribers receive push updates without polling.
-    """
-    bus = getattr(request.app.state, "dashboard_bus", None)
-    if bus is None:
-        return
-    try:
-        await bus.publish(topic, payload)
-    except Exception:  # reason: fail-open — log + continue
-        logger.debug("stats: dashboard_bus publish failed for topic=%s", topic, exc_info=True)
+def _invalid_window_response() -> JSONResponse:
+    return JSONResponse(
+        ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(mode="json"),
+        status_code=400,
+    )
 
 
 async def get_stats(request: Request) -> JSONResponse:
-    """GET /api/stats — rolling aggregation stats.
+    """GET /api/stats — telemetry rollup over a window from the store.
 
-    Supports ``?agent_id=`` for per-agent drill-down.
+    Supports ``?agent_id=`` for per-agent drill-down (filters on agent_label).
     """
-    aggregator, err = _get_aggregator_for_request(request)
-    if err is not None:
-        return err
-    if aggregator is None:
-        return JSONResponse(
-            ErrorResponse(error="No aggregator configured").model_dump(mode="json"),
-            status_code=404,
-        )
-
     window = _validated_window(request)
     if window is None:
-        return JSONResponse(
-            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
-                mode="json"
-            ),
-            status_code=400,
-        )
-    data = aggregator.stats(window)
-    await _publish(request, "stats", data)
-    return JSONResponse(data)
+        return _invalid_window_response()
+    agent = request.query_params.get("agent_id")
+    return JSONResponse(await request.app.state.observe.stats(window, agent=agent))
 
 
 async def get_timeseries(request: Request) -> JSONResponse:
-    """GET /api/stats/timeseries — per-bucket data for chart rendering.
-
-    Supports ``?agent_id=`` for per-agent drill-down.
-    """
-    aggregator, err = _get_aggregator_for_request(request)
-    if err is not None:
-        return err
-    if aggregator is None:
-        return JSONResponse(
-            ErrorResponse(error="No aggregator configured").model_dump(mode="json"),
-            status_code=404,
-        )
-
+    """GET /api/stats/timeseries — per-bucket series for chart rendering."""
     window = _validated_window(request)
     if window is None:
-        return JSONResponse(
-            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
-                mode="json"
-            ),
-            status_code=400,
-        )
-    data = aggregator.timeseries(window)
-    await _publish(request, "stats.timeseries", data)
-    return JSONResponse(data)
+        return _invalid_window_response()
+    agent = request.query_params.get("agent_id")
+    return JSONResponse(await request.app.state.observe.timeseries(window, agent=agent))
 
 
 async def get_circuit_breakers(request: Request) -> JSONResponse:
     """GET /api/circuit-breakers — list circuit breaker states."""
     breakers = request.app.state.circuit_breakers or []
-    states = [cb.get_state() for cb in breakers]
-    data = {"circuit_breakers": states}
-    await _publish(request, "circuit_breakers", data)
-    return JSONResponse(data)
+    return JSONResponse({"circuit_breakers": [cb.get_state() for cb in breakers]})
 
 
 async def get_budget(request: Request) -> JSONResponse:
     """GET /api/budget — list budget states from telemetry modules."""
     telemetry_modules = request.app.state.telemetry_modules or []
-    budgets = []
-    for tm in telemetry_modules:
-        state = tm.get_budget_state()
-        if state is not None:
-            budgets.append(state)
-    data = {"budgets": budgets}
-    await _publish(request, "budget", data)
-    return JSONResponse(data)
+    budgets = [s for tm in telemetry_modules if (s := tm.get_budget_state()) is not None]
+    return JSONResponse({"budgets": budgets})
 
 
 async def get_performance(request: Request) -> JSONResponse:
-    """GET /api/performance — per-model and per-agent performance stats.
+    """GET /api/performance — per-model/per-agent performance from the store.
 
     Supports ``?agent_id=`` for per-agent drill-down.
     """
-    aggregator, err = _get_aggregator_for_request(request)
-    if err is not None:
-        return err
-    if aggregator is None:
-        return JSONResponse(
-            ErrorResponse(error="No aggregator configured").model_dump(mode="json"),
-            status_code=404,
-        )
-
     window = _validated_window(request)
     if window is None:
-        return JSONResponse(
-            ErrorResponse(error="Invalid window. Use 1h, 24h, 7d, or 30d.").model_dump(
-                mode="json"
-            ),
-            status_code=400,
-        )
-    data = aggregator.performance(window)
-    await _publish(request, "performance", data)
-    return JSONResponse(data)
+        return _invalid_window_response()
+    agent = request.query_params.get("agent_id")
+    return JSONResponse(await request.app.state.observe.performance(window, agent=agent))
 
 
 async def get_queue_stats(request: Request) -> JSONResponse:
     """GET /api/queue — queue module stats (depth, wait times, rejections)."""
     queue_modules = getattr(request.app.state, "queue_modules", []) or []
-    queues = [qm.queue_stats() for qm in queue_modules]
-    data = {"queues": queues}
-    await _publish(request, "queue", data)
-    return JSONResponse(data)
+    return JSONResponse({"queues": [qm.queue_stats() for qm in queue_modules]})
 
 
 routes = [

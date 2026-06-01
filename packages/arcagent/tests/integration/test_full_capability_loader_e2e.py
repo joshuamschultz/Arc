@@ -6,9 +6,9 @@ Validates that :class:`CapabilityLoader` can load:
      (7 file/exec tools + 5 self-mod tools)
   2. All 4 built-in skill folders under
      ``arcagent/builtins/capabilities/skills/``
-  3. All 8 migrated modules' ``capabilities.py`` files under
+  3. All 7 migrated modules' ``capabilities.py`` files under
      ``arcagent/modules/<name>/`` (memory, scheduler, browser, voice,
-     telegram, slack, policy, ui_reporter)
+     telegram, slack, policy)
 
 This is the wiring that ``ArcAgent.startup`` will adopt in the
 agent.py rewire. Each module's ``_runtime.configure(...)`` is called
@@ -64,7 +64,6 @@ def _configure_all_modules(workspace: Path, telemetry: AgentTelemetry) -> None:
     from arcagent.modules.scheduler import _runtime as scheduler_runtime
     from arcagent.modules.slack import _runtime as slack_runtime
     from arcagent.modules.telegram import _runtime as telegram_runtime
-    from arcagent.modules.ui_reporter import _runtime as ui_runtime
     from arcagent.modules.voice import _runtime as voice_runtime
 
     eval_config = EvalConfig()
@@ -86,7 +85,6 @@ def _configure_all_modules(workspace: Path, telemetry: AgentTelemetry) -> None:
     voice_runtime.configure(telemetry=telemetry)
     telegram_runtime.configure(workspace=workspace, telemetry=telemetry)
     slack_runtime.configure(workspace=workspace, telemetry=telemetry)
-    ui_runtime.configure(workspace=workspace, agent_name="test")
 
 
 def _reset_all_runtimes() -> None:
@@ -98,7 +96,6 @@ def _reset_all_runtimes() -> None:
     from arcagent.modules.scheduler import _runtime as scheduler_runtime
     from arcagent.modules.slack import _runtime as slack_runtime
     from arcagent.modules.telegram import _runtime as telegram_runtime
-    from arcagent.modules.ui_reporter import _runtime as ui_runtime
     from arcagent.modules.voice import _runtime as voice_runtime
 
     builtin_runtime.reset()
@@ -109,7 +106,6 @@ def _reset_all_runtimes() -> None:
     voice_runtime.reset()
     telegram_runtime.reset()
     slack_runtime.reset()
-    ui_runtime.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -149,7 +145,6 @@ async def test_full_loader_registers_builtins_and_modules(
         "telegram",
         "slack",
         "policy",
-        "ui_reporter",
     ]:
         scan_roots.append((f"module:{name}", _module_root(name)))
 
@@ -197,9 +192,6 @@ async def test_full_loader_registers_builtins_and_modules(
 
     memory_hooks = await reg.get_hooks("agent:pre_tool")
     assert len(memory_hooks) >= 1  # memory subscribes to pre_tool
-
-    capability_added_hooks = await reg.get_hooks("capability:added")
-    assert len(capability_added_hooks) >= 1  # ui_reporter subscribes
 
     # No registration failures expected on this clean wiring.
     assert not diff.errors, f"unexpected errors during full-loader scan: {diff.errors}"

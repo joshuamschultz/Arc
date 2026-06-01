@@ -210,7 +210,7 @@ class PulseEngine:
 
         try:
             await asyncio.wait_for(
-                self._agent_run_fn(prompt, tool_choice={"type": "any"}),
+                self._agent_run_fn(prompt, session_key=f"pulse:{check.name}"),
                 timeout=self._config.timeout_seconds,
             )
             duration = time.monotonic() - start

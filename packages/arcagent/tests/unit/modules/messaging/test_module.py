@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -477,10 +478,10 @@ class TestPromptSanitization:
         )
         captured: list[str] = []
 
-        async def capture(prompt: str) -> None:
+        async def capture(prompt: str, *, session_key: str) -> None:
             captured.append(prompt)
 
-        module._agent_chat_fn = capture
+        module._agent_run_fn = capture
 
         mock_msg = MagicMock()
         mock_msg.seq = 1
@@ -513,10 +514,10 @@ class TestPromptSanitization:
         )
         captured: list[str] = []
 
-        async def capture(prompt: str) -> None:
+        async def capture(prompt: str, *, session_key: str) -> None:
             captured.append(prompt)
 
-        module._agent_chat_fn = capture
+        module._agent_run_fn = capture
 
         mock_msg = MagicMock()
         mock_msg.seq = 1
@@ -537,3 +538,64 @@ class TestPromptSanitization:
         assert "\u200b" not in prompt
         assert "\x0b" not in prompt
         assert "\u200f" not in prompt
+
+
+class TestUnifiedRunCallback:
+    """SPEC-027: messaging routes inbox through the unified run_collected callback."""
+
+    @pytest.mark.asyncio
+    async def test_ready_binds_run_fn_from_event_data(self, tmp_path: Path) -> None:
+        """agent:ready reads ``run_fn`` (not ``chat_fn``) and stores it."""
+
+        async def run_fn(prompt: str, *, session_key: str) -> None:
+            del prompt, session_key
+
+        module = _make_module(tmp_path)
+        event = MagicMock()
+        event.data = {"run_fn": run_fn}
+        await module._on_agent_ready(event)
+        assert module._agent_run_fn is run_fn
+
+    @pytest.mark.asyncio
+    async def test_ready_ignores_missing_run_fn(self, tmp_path: Path) -> None:
+        """agent:ready without ``run_fn`` leaves the callback unbound."""
+        module = _make_module(tmp_path)
+        event = MagicMock()
+        event.data = {}
+        await module._on_agent_ready(event)
+        assert module._agent_run_fn is None
+
+    @pytest.mark.asyncio
+    async def test_process_inbox_passes_session_key(self, tmp_path: Path) -> None:
+        """Inbox processing invokes run_fn with the deterministic session key."""
+        config = make_config_dict(auto_ack=False)
+        team_config = make_team_config(str(tmp_path / "team"))
+        module = MessagingModule(
+            config=config,
+            team_config=team_config,
+            telemetry=MagicMock(),
+            workspace=tmp_path,
+        )
+        calls: list[dict[str, Any]] = []
+
+        async def capture(prompt: str, *, session_key: str) -> Any:
+            calls.append({"prompt": prompt, "session_key": session_key})
+            return MagicMock(content="ok")
+
+        module._agent_run_fn = capture
+
+        mock_msg = MagicMock()
+        mock_msg.seq = 1
+        mock_msg.id = "msg1"
+        mock_msg.sender = "agent://peer"
+        mock_msg.body = "hello"
+        mock_msg.msg_type = "dm"
+        mock_msg.priority = "normal"
+        mock_msg.action_required = False
+        mock_msg.thread_id = ""
+        mock_msg.ts = "2024-01-01"
+
+        await module._process_inbox({"stream1": [mock_msg]})
+
+        assert len(calls) == 1
+        assert calls[0]["session_key"] == "messaging:inbox"

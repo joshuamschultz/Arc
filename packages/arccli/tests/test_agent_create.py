@@ -74,11 +74,15 @@ class TestCreate:
             "modules",
             "session",
             "security",
+            "arcstore",
         ]
         for section in expected_sections:
             assert section in config, f"Missing config section: {section}"
         # Old SPEC-021-deprecated section must not reappear.
         assert "extensions" not in config, "[extensions] block should be gone (SPEC-021)"
+        # SPEC-026 AC-6.1: [arcstore] block must have secure defaults.
+        assert config["arcstore"]["store_raw_bodies"] is False, "store_raw_bodies must default False"
+        assert config["arcstore"]["enabled"] is True, "arcstore must be enabled by default"
 
     def test_create_config_uses_agent_name(self, tmp_path):
         _arc("agent", "create", "test-bot", "--dir", str(tmp_path))
@@ -140,10 +144,10 @@ class TestCreate:
         assert "async def calculate" in content
         assert "def extension(api)" not in content
 
-    def test_create_tools_init(self, tmp_path):
+    def test_create_capabilities_dir(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
-        init_file = tmp_path / "my-agent" / "tools" / "__init__.py"
-        assert init_file.exists()
+        caps_dir = tmp_path / "my-agent" / "capabilities"
+        assert caps_dir.is_dir()
 
     def test_create_fails_if_exists(self, tmp_path):
         (tmp_path / "my-agent").mkdir()

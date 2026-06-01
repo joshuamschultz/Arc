@@ -3,6 +3,7 @@
 import pytest
 from conftest import LLMResponse, MockModel, ToolCall
 
+from arcrun import StaticProvider
 from arcrun.types import SandboxConfig, Tool
 
 
@@ -68,7 +69,7 @@ class TestIntegration:
             ]
         )
 
-        result = await run(model, _tools(), "Be helpful.", "Find and calculate")
+        result = await run(model, StaticProvider(_tools()), "Be helpful.", "Find and calculate")
         assert result.content == "The answer is 4."
         assert result.turns == 3
         assert result.tool_calls_made == 2
@@ -97,7 +98,7 @@ class TestIntegration:
         cfg = SandboxConfig(allowed_tools=["search", "calculate"])
         await run(
             model,
-            _tools(),
+            StaticProvider(_tools()),
             "prompt",
             "task",
             sandbox=cfg,
@@ -122,7 +123,7 @@ class TestIntegration:
             ]
         )
 
-        result = await run(model, _tools(), "prompt", "task")
+        result = await run(model, StaticProvider(_tools()), "prompt", "task")
         types = [e.type for e in result.events]
 
         # Must have these event types
@@ -155,6 +156,6 @@ class TestIntegration:
             ]
         )
 
-        result = await run(model, _tools(), "prompt", "task")
+        result = await run(model, StaticProvider(_tools()), "prompt", "task")
         assert result.cost_usd == pytest.approx(0.003, abs=1e-9)
         assert result.tokens_used["total"] == 30  # 15 per call x 2 calls

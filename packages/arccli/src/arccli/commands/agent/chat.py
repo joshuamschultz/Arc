@@ -8,6 +8,8 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arcrun import collect
+
 from arccli.commands.agent._common import (
     _iter_capability_files,
     _load_arcagent,
@@ -58,7 +60,8 @@ async def _chat_interactive(
     total_cost = 0.0
     total_turns = 0
     total_tool_calls = 0
-    current_session_id = session_id
+    # A deterministic default key so the REPL has a stable session to resume.
+    current_session_id = session_id or "cli:chat"
 
     try:
         while True:
@@ -120,11 +123,12 @@ async def _chat_interactive(
                 continue
 
             if user_input == "/session":
-                if arc_agent._session is not None:
-                    sys.stdout.write(f"  Session ID: {arc_agent._session.session_id}\n")
-                    sys.stdout.write(f"  Messages:   {arc_agent._session.message_count}\n")
+                sm = arc_agent._sessions.get(current_session_id)
+                if sm is not None:
+                    sys.stdout.write(f"  Session ID: {sm.session_id}\n")
+                    sys.stdout.write(f"  Messages:   {sm.message_count}\n")
                 else:
-                    sys.stdout.write("  No active session.\n")
+                    sys.stdout.write(f"  Session '{current_session_id}' not started yet.\n")
                 continue
 
             if user_input == "/sessions":
@@ -182,9 +186,10 @@ async def _chat_interactive(
                 sys.stdout.write(f"  Unknown command: {user_input}\n")
                 continue
 
-            # Execute task via ArcAgent
+            # Execute task via the one streaming entry, collected to a result.
             try:
-                result = await arc_agent.chat(user_input, session_id=current_session_id)
+                session = await arc_agent.session(current_session_id)
+                result = await collect(arc_agent.run(user_input, session=session))
 
                 total_cost += result.cost_usd
                 total_turns += result.turns
@@ -197,7 +202,7 @@ async def _chat_interactive(
                 if verbose:
                     sys.stdout.write(
                         f"\n[{result.turns} turns, {result.tool_calls_made} tool calls, "
-                        f"${result.cost_usd:.4f}, strategy={result.strategy_used}]\n"
+                        f"${result.cost_usd:.4f}]\n"
                     )
                 sys.stdout.flush()
             except Exception as e:  # reason: fail-open — continue
@@ -227,6 +232,7 @@ def _chat(args: argparse.Namespace) -> None:
                 agent_dir=agent_dir,
                 task=task,
                 model_override=getattr(args, "model", None),
+                context=getattr(args, "context", None),
                 verbose=verbose,
                 as_json=False,
             )

@@ -36,10 +36,10 @@ class TestModuleProtocol:
         assert hasattr(module, "shutdown")
         assert callable(module.shutdown)
 
-    def test_has_set_agent_chat_fn(self, tmp_path: Path) -> None:
+    def test_has_set_agent_run_fn(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
-        assert hasattr(module, "set_agent_chat_fn")
-        assert callable(module.set_agent_chat_fn)
+        assert hasattr(module, "set_agent_run_fn")
+        assert callable(module.set_agent_run_fn)
 
 
 class TestModuleConstruction:
@@ -157,7 +157,7 @@ class TestModuleShutdown:
             assert module._bot is None
 
 
-class TestSetAgentChatFn:
+class TestSetAgentRunFn:
     @pytest.mark.asyncio
     async def test_propagates_to_bot(self, tmp_path: Path) -> None:
         module = _make_module(tmp_path)
@@ -166,18 +166,18 @@ class TestSetAgentChatFn:
         with patch("arcagent.modules.telegram.bot.TelegramBot") as MockBot:
             mock_bot = MagicMock()
             mock_bot.start = AsyncMock()
-            mock_bot.set_agent_chat_fn = MagicMock()
+            mock_bot.set_agent_run_fn = MagicMock()
             MockBot.return_value = mock_bot
 
             await module.startup(ctx)
             dummy_fn = AsyncMock()
-            module.set_agent_chat_fn(dummy_fn)
-            mock_bot.set_agent_chat_fn.assert_called_once_with(dummy_fn)
+            module.set_agent_run_fn(dummy_fn)
+            mock_bot.set_agent_run_fn.assert_called_once_with(dummy_fn)
 
     def test_noop_when_no_bot(self, tmp_path: Path) -> None:
-        """set_agent_chat_fn before startup is a no-op (no crash)."""
+        """set_agent_run_fn before startup is a no-op (no crash)."""
         module = _make_module(tmp_path)
-        module.set_agent_chat_fn(AsyncMock())  # should not raise
+        module.set_agent_run_fn(AsyncMock())  # should not raise
 
 
 class TestScheduleEventHandlers:

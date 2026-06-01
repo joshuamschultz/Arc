@@ -11,6 +11,8 @@ import threading
 import time
 from typing import Any, Literal
 
+from arcstore.records import SpoolRecord as _SpoolRecord
+from arcstore.spool import record as _spool_record
 from opentelemetry import trace
 
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
@@ -27,6 +29,8 @@ from arcllm.trace_store import TraceRecord
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool, Usage
 
 logger = logging.getLogger(__name__)
+
+_UNKNOWN_DID = "did:arc:unknown"
 
 _VALID_CONFIG_KEYS = {
     "cost_input_per_1m",
@@ -49,6 +53,8 @@ _VALID_CONFIG_KEYS = {
     "agent_label",
     "agent_did",
     "store_raw_bodies",
+    # arcstore operational spool (SPEC-026 FR-4) — on by default.
+    "arcstore_enabled",
 }
 
 
@@ -157,7 +163,17 @@ class TelemetryModule(BaseModule):
         )
         self._agent_label: str | None = config.get("agent_label")
         self._agent_did: str | None = config.get("agent_did") or _global_defaults.get("agent_did")
-        self._store_raw_bodies: bool = config.get("store_raw_bodies", True)
+        # Metadata-only by default (SPEC-026 FR-4 / C2): durable plaintext
+        # prompts/responses are an exfiltration target (LLM02) and leak system
+        # prompts (LLM07). Raw capture is an explicit, audited opt-in.
+        self._store_raw_bodies: bool = config.get("store_raw_bodies", False)
+        if self._store_raw_bodies:
+            logger.warning(
+                "store_raw_bodies=True: raw prompt/response bodies will be persisted — "
+                "not safe for federal/CUI sessions (SPEC-026 FR-4)"
+            )
+        # arcstore operational spool recording — on by default (SPEC-026 FR-4).
+        self._arcstore_enabled: bool = config.get("arcstore_enabled", True)
 
         self._budget_enabled = any(
             v is not None for v in (self._monthly_limit, self._daily_limit, self._per_call_max)
@@ -410,83 +426,141 @@ class TelemetryModule(BaseModule):
     ) -> LLMResponse:
         with self._span("arcllm.telemetry") as tel_span:
             t0 = time.monotonic()
-
-            # Budget pre-check (before calling inner provider)
-            budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
-
-            # Strip internal metadata keys before forwarding to inner provider
-            inner_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
-
-            t_pre = time.monotonic()
-            response = await self._inner.invoke(messages, tools, **inner_kwargs)
-            t_llm = time.monotonic()
-
-            usage = response.usage
-            cost = self._calculate_cost(usage)
-
-            # Budget post-deduct (after successful call)
-            if self._budget_enabled:
-                safe_cost = max(0.0, cost)
-                self._accumulator.deduct(safe_cost)
-                action = "warned" if budget_meta else "allowed"
-                self._set_budget_otel(tel_span, action)
-
-            # Merge budget metadata into response
-            updates: dict[str, Any] = {"cost_usd": cost}
-            if budget_meta:
-                existing_meta = response.metadata or {}
-                updates["metadata"] = {**existing_meta, **budget_meta}
-            response = response.model_copy(update=updates)
-
-            t_post = time.monotonic()
-
-            prompt_assembly_ms = round((t_pre - t0) * 1000, 1)
-            llm_call_ms = round((t_llm - t_pre) * 1000, 1)
-            post_processing_ms = round((t_post - t_llm) * 1000, 1)
-            total_ms = round((t_post - t0) * 1000, 1)
-
-            phase_timings = {
-                "prompt_assembly_ms": prompt_assembly_ms,
-                "llm_call_ms": llm_call_ms,
-                "post_processing_ms": post_processing_ms,
-                "total_ms": total_ms,
-            }
-
-            tel_span.set_attribute("arcllm.telemetry.duration_ms", total_ms)
-            tel_span.set_attribute("arcllm.telemetry.cost_usd", cost)
-
-            log_structured(
-                logger,
-                self._log_level,
-                "LLM call",
-                provider=self._inner.name,
-                model=response.model,
-                duration_ms=total_ms,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                total_tokens=usage.total_tokens,
-                cache_read_tokens=usage.cache_read_tokens,
-                cache_write_tokens=usage.cache_write_tokens,
-                cost_usd=cost,
-                stop_reason=response.stop_reason,
-            )
-
-            # Build and emit trace record (fire-and-forget for trace_store)
-            if self._trace_store is not None or self._on_event is not None:
-                record = self._build_trace_record(
-                    response,
-                    cost,
-                    phase_timings,
-                    messages,
-                    tools,
-                    kwargs,
+            try:
+                response, cost, total_ms = await self._invoke_inner(
+                    messages, tools, tel_span, t0, **kwargs
                 )
-                await self._emit_trace(record)
-
+            except Exception:
+                # FR-4 / C3 — a raising call still records an operational line.
+                self._record_spool(
+                    outcome="error",
+                    model=None,
+                    cost=None,
+                    latency_ms=round((time.monotonic() - t0) * 1000, 1),
+                )
+                raise
+            self._record_spool(
+                outcome="ok",
+                model=response.model,
+                cost=cost,
+                latency_ms=total_ms,
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+            )
             return response
 
+    async def _invoke_inner(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None,
+        tel_span: trace.Span,
+        t0: float,
+        **kwargs: Any,
+    ) -> tuple[LLMResponse, float, float]:
+        # Budget pre-check (before calling inner provider)
+        budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
 
-# Test/legacy import aliases for callers that imported the budget helpers
-# from this module before the Phase 5 §8.11 split.
-_validate_budget_scope = validate_budget_scope
-_get_or_create_accumulator = get_or_create_accumulator
+        # Strip internal metadata keys before forwarding to inner provider
+        inner_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+
+        t_pre = time.monotonic()
+        response = await self._inner.invoke(messages, tools, **inner_kwargs)
+        t_llm = time.monotonic()
+
+        usage = response.usage
+        cost = self._calculate_cost(usage)
+
+        # Budget post-deduct (after successful call)
+        if self._budget_enabled:
+            safe_cost = max(0.0, cost)
+            self._accumulator.deduct(safe_cost)
+            action = "warned" if budget_meta else "allowed"
+            self._set_budget_otel(tel_span, action)
+
+        # Merge budget metadata into response
+        updates: dict[str, Any] = {"cost_usd": cost}
+        if budget_meta:
+            existing_meta = response.metadata or {}
+            updates["metadata"] = {**existing_meta, **budget_meta}
+        response = response.model_copy(update=updates)
+
+        t_post = time.monotonic()
+
+        prompt_assembly_ms = round((t_pre - t0) * 1000, 1)
+        llm_call_ms = round((t_llm - t_pre) * 1000, 1)
+        post_processing_ms = round((t_post - t_llm) * 1000, 1)
+        total_ms = round((t_post - t0) * 1000, 1)
+
+        phase_timings = {
+            "prompt_assembly_ms": prompt_assembly_ms,
+            "llm_call_ms": llm_call_ms,
+            "post_processing_ms": post_processing_ms,
+            "total_ms": total_ms,
+        }
+
+        tel_span.set_attribute("arcllm.telemetry.duration_ms", total_ms)
+        tel_span.set_attribute("arcllm.telemetry.cost_usd", cost)
+
+        log_structured(
+            logger,
+            self._log_level,
+            "LLM call",
+            provider=self._inner.name,
+            model=response.model,
+            duration_ms=total_ms,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            cache_write_tokens=usage.cache_write_tokens,
+            cost_usd=cost,
+            stop_reason=response.stop_reason,
+        )
+
+        # Build and emit trace record (fire-and-forget for trace_store)
+        if self._trace_store is not None or self._on_event is not None:
+            record = self._build_trace_record(
+                response,
+                cost,
+                phase_timings,
+                messages,
+                tools,
+                kwargs,
+            )
+            await self._emit_trace(record)
+
+        return response, cost, total_ms
+
+    def _record_spool(
+        self,
+        *,
+        outcome: str,
+        model: str | None,
+        cost: float | None,
+        latency_ms: float,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+    ) -> None:
+        """Append one ``llm_call`` operational record to the arcstore spool.
+
+        On by default (``arcstore_enabled``); imports only ``arcstore.spool``.
+        ``record()`` is itself fail-open, so this never breaks the call.
+        """
+        if not self._arcstore_enabled:
+            return
+        _spool_record(
+            _SpoolRecord(
+                kind="llm_call",
+                actor_did=self._agent_did or _UNKNOWN_DID,
+                model=model,
+                provider=self._inner.name,
+                agent_label=self._agent_label,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost,
+                latency_ms=latency_ms,
+                outcome=outcome,
+            )
+        )
+
+

@@ -20,17 +20,15 @@ Architecture
 Event flow:
     User types → InputComposer submits → ArcTUI handlers
     Non-slash: _send_to_agent (Textual @work task)
-        → agent.run(task)  (same asyncio loop as ArcAgent)
+        → agent.run(text, session=agent.session("tui:main"))  (one entry)
         → ArcAgent bus events → ActivityView
-        → result appended to TranscriptView
+        → tokens appended to TranscriptView live
     Slash: _dispatch_command → registry handler or error message
 
 Streaming:
-    ArcAgent.chat_stream() now yields arcrun.StreamEvent objects per token.
-    _send_to_agent() detects chat_stream() availability and routes to
-    _stream_turn() which calls start_streaming/append_delta/finish_streaming
-    on the TranscriptView for live token rendering.  Falls back to the
-    blocking _blocking_turn() path for agents without chat_stream() (back-compat).
+    ``agent.run`` yields arcrun.StreamEvent objects; ``_run_stream_turn`` renders
+    each TokenEvent via start_streaming/append_delta/finish_streaming on the
+    TranscriptView for live token rendering.
 """
 
 from __future__ import annotations
@@ -224,12 +222,8 @@ class ArcTUI(App[None]):
         """Run one agent turn for *text* with per-token streaming.
 
         The ``@work(exclusive=True)`` decorator ensures only one turn
-        runs at a time — concurrent submits queue up.
-
-        When the agent exposes ``chat_stream()``, tokens are appended to
+        runs at a time — concurrent submits queue up. Tokens are appended to
         the transcript incrementally via ``TranscriptView.append_delta``.
-        Falls back to the blocking ``run()`` path when streaming is not
-        available (back-compat with agents that predate SPEC-018 M5).
         """
         if self._transcript is None:
             return
@@ -245,13 +239,10 @@ class ArcTUI(App[None]):
             )
             return
 
-        if hasattr(self._agent, "chat_stream"):
-            await self._run_stream_turn(text)
-        else:
-            await self._run_blocking_turn(text)
+        await self._run_stream_turn(text)
 
     async def _run_stream_turn(self, text: str) -> None:
-        """Stream one agent turn using chat_stream().
+        """Stream one agent turn via ``agent.run(text, session=...)``.
 
         Displays tokens incrementally via TranscriptView.  The streaming
         cursor (▋) is shown while the assistant is still typing.  Called
@@ -264,13 +255,14 @@ class ArcTUI(App[None]):
         if self._transcript is None:
             return
 
+        from arcrun import TokenEvent
+
         try:
             async with self._turn_lock:
                 self._transcript.start_streaming(MessageRole.ASSISTANT)
-                stream = await self._agent.chat_stream(text)
-                async for event in stream:
-                    event_type = getattr(event, "type", "")
-                    if event_type == "token":
+                session = await self._agent.session("tui:main")
+                async for event in self._agent.run(text, session=session):
+                    if isinstance(event, TokenEvent):
                         self._transcript.append_delta(event.text)
                     # tool_start / tool_end events are handled by ActivityView
                     # via the module bus bridge — no transcript update needed.
@@ -279,40 +271,6 @@ class ArcTUI(App[None]):
             _logger.exception("Agent stream turn failed: %s", exc)
             self._transcript.finish_streaming()
             self._transcript.add_message(MessageRole.ERROR, f"Error: {exc}")
-
-    async def _run_blocking_turn(self, text: str) -> None:
-        """Blocking fallback: call agent.run() and display complete response.
-
-        Used when the agent does not expose chat_stream() (back-compat).  Called
-        from the ``@work`` task in ``_send_to_agent`` — must NOT be decorated
-        with ``@work`` itself (Workers cannot be awaited).
-
-        Args:
-            text: User prompt text.
-        """
-        if self._transcript is None:
-            return
-
-        self._transcript.add_message(MessageRole.SYSTEM, "Thinking…")
-
-        try:
-            async with self._turn_lock:
-                result = await self._agent.run(text)
-
-            response_text: str = getattr(result, "content", None) or str(result)
-        except Exception as exc:  # reason: fail-open — log + continue
-            _logger.exception("Agent turn failed: %s", exc)
-            self._transcript.add_message(MessageRole.ERROR, f"Error: {exc}")
-            return
-
-        # Remove the "Thinking…" placeholder
-        if self._transcript._messages and self._transcript._messages[-1].content == "Thinking…":
-            last_label = self._transcript._labels[-1]
-            last_label.remove()
-            self._transcript._messages.pop()
-            self._transcript._labels.pop()
-
-        self._transcript.add_message(MessageRole.ASSISTANT, response_text)
 
     # ------------------------------------------------------------------
     # Slash command dispatch

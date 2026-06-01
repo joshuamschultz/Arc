@@ -63,11 +63,11 @@ def _make_update(chat_id: int = 123, text: str = "hello") -> MagicMock:
 
 
 class TestFullMessageFlow:
-    """5.1 — Full message flow: inbound → agent.chat() → response sent."""
+    """5.1 — Full message flow: inbound → agent run callback → response sent."""
 
     @pytest.mark.asyncio
-    async def test_message_routed_to_agent_chat(self, tmp_path: Path) -> None:
-        """Message received → agent.chat() called → response sent back."""
+    async def test_message_routed_to_agent_run(self, tmp_path: Path) -> None:
+        """Message received → agent run callback called → response sent back."""
         module = TelegramModule(
             config={"enabled": True, "allowed_chat_ids": [123]},
             telemetry=_make_telemetry(),
@@ -79,9 +79,9 @@ class TestFullMessageFlow:
         # Start module (bot stays dormant — no token env var)
         await module.startup(ctx)
 
-        # Manually wire chat fn and process a message
-        mock_chat = AsyncMock(return_value=MagicMock(content="Hello human!"))
-        module.set_agent_chat_fn(mock_chat)
+        # Manually wire run fn and process a message
+        mock_run = AsyncMock(return_value=MagicMock(content="Hello human!"))
+        module.set_agent_run_fn(mock_run)
 
         bot = module._bot
         assert bot is not None
@@ -93,7 +93,7 @@ class TestFullMessageFlow:
         item = {"text": "Hi agent", "chat_id": 123, "update": update}
         await bot._process_message(item)
 
-        mock_chat.assert_called_once_with("Hi agent", session_id="test-session")
+        mock_run.assert_called_once_with("Hi agent", session_key="test-session")
         update.message.reply_text.assert_called_once_with("Hello human!")
 
     @pytest.mark.asyncio
@@ -207,9 +207,9 @@ class TestAuthorizationIntegration:
         bot = module._bot
         assert bot is not None
 
-        # Set up a mock chat fn that should NOT be called
-        mock_chat = AsyncMock()
-        module.set_agent_chat_fn(mock_chat)
+        # Set up a mock run fn that should NOT be called
+        mock_run = AsyncMock()
+        module.set_agent_run_fn(mock_run)
 
         # Unauthorized chat_id (999 not in allowed_chat_ids [111])
         update = _make_update(chat_id=999, text="sneaky message")

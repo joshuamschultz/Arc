@@ -7,9 +7,9 @@ import pytest
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.telemetry import (
     TelemetryModule,
-    _validate_budget_scope,
     clear_budgets,
 )
+from arcllm.modules.telemetry_budget import validate_budget_scope
 from arcllm.types import LLMProvider, LLMResponse, Message, Usage
 
 
@@ -65,30 +65,30 @@ class TestScopeInjection:
 
     def test_sql_injection_in_scope(self):
         with pytest.raises(ArcLLMConfigError):
-            _validate_budget_scope("'; DROP TABLE agents; --")
+            validate_budget_scope("'; DROP TABLE agents; --")
 
     def test_path_traversal_in_scope(self):
         with pytest.raises(ArcLLMConfigError):
-            _validate_budget_scope("../../etc/passwd")
+            validate_budget_scope("../../etc/passwd")
 
     def test_null_byte_in_scope(self):
         with pytest.raises(ArcLLMConfigError):
-            _validate_budget_scope("agent\x00:evil")
+            validate_budget_scope("agent\x00:evil")
 
     def test_unicode_homoglyph_cyrillic(self):
         """Cyrillic U+0430 looks like Latin 'a' -- must be rejected."""
         with pytest.raises(ArcLLMConfigError):
-            _validate_budget_scope("\u0430gent:test")
+            validate_budget_scope("\u0430gent:test")
 
     def test_unicode_fullwidth_characters(self):
         """Fullwidth U+FF41 NFKC-normalizes to 'a' but the original
         string differs from the normalized form, so it's rejected."""
         with pytest.raises(ArcLLMConfigError):
-            _validate_budget_scope("\uff41gent:test")
+            validate_budget_scope("\uff41gent:test")
 
     def test_newline_injection(self):
         with pytest.raises(ArcLLMConfigError):
-            _validate_budget_scope("agent:test\nINJECTED_LINE")
+            validate_budget_scope("agent:test\nINJECTED_LINE")
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +113,9 @@ class TestNegativeCostInjection:
         config = _make_budget_config(per_call_max_usd=100.0)
         module = TelemetryModule(config, inner)
         await module.invoke(messages, max_tokens=100)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         # Spend should NOT decrease (cost clamped to 0.0)
         assert acc.monthly_spend >= 0.0
 
@@ -140,9 +140,9 @@ class TestNegativeCostInjection:
             stop_reason="end_turn",
         )
         await module.invoke(messages, max_tokens=100)
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc = _get_or_create_accumulator("agent:test")
+        acc = get_or_create_accumulator("agent:test")
         spend_after_real = acc.monthly_spend
         # Now negative tokens call
         inner.invoke.return_value = LLMResponse(
@@ -175,10 +175,10 @@ class TestAccumulatorIsolation:
         for _ in range(10):
             await module1.invoke(messages, max_tokens=100)
 
-        from arcllm.modules.telemetry import _get_or_create_accumulator
+        from arcllm.modules.telemetry_budget import get_or_create_accumulator
 
-        acc1 = _get_or_create_accumulator("agent:one")
-        acc2 = _get_or_create_accumulator("agent:two")
+        acc1 = get_or_create_accumulator("agent:one")
+        acc2 = get_or_create_accumulator("agent:two")
         assert acc1.monthly_spend > 0
         assert acc2.monthly_spend == 0.0
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from arcrun import StaticProvider
 from arcrun.types import Tool
 from security.conftest import LLMResponse, MockModel, ToolCall
 
@@ -42,7 +43,7 @@ class TestSpawnDepthBomb:
         # Run at max_depth — spawn should fail with error message
         result = await run(
             model,
-            [tool],
+            StaticProvider([tool]),
             "prompt",
             "task",
             depth=3,
@@ -80,7 +81,7 @@ class TestSpawnDepthBomb:
             execute=noop,
         )
 
-        result = await run(model, [tool], "prompt", "task")
+        result = await run(model, StaticProvider([tool]), "prompt", "task")
         assert result.turns == 2
         assert result.tool_calls_made == 5
 
@@ -105,6 +106,6 @@ class TestSpawnDepthBomb:
             execute=noop,
         )
 
-        result = await run(model, [tool], "prompt", "task", depth=0, max_depth=5)
+        result = await run(model, StaticProvider([tool]), "prompt", "task", depth=0, max_depth=5)
         # Depth is controlled by arcrun, not by model output
         assert result.turns == 1

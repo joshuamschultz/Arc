@@ -199,7 +199,7 @@ async def _execute_task(
 ) -> None:
     from arcagent.orchestration import make_spawn_tool
     from arcllm import load_model
-    from arcrun import Tool, ToolContext, make_execute_tool, run
+    from arcrun import StaticProvider, Tool, ToolContext, make_execute_tool, run
 
     if "/" in model_id:
         provider, _, model_name = model_id.partition("/")
@@ -294,7 +294,7 @@ async def _execute_task(
 
     result = await run(
         model=llm,
-        tools=tools,
+        capabilities=StaticProvider(tools),
         system_prompt=system_prompt,
         task=prompt,
         max_turns=max_turns,

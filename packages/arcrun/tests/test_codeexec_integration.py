@@ -3,6 +3,7 @@
 import pytest
 from conftest import LLMResponse, MockModel, ToolCall
 
+from arcrun import StaticProvider
 from arcrun.builtins import make_execute_tool
 from arcrun.types import SandboxConfig, Tool
 
@@ -47,7 +48,7 @@ class TestCodeExecIntegration:
         )
         result = await run(
             model,
-            _tools_with_execute(),
+            StaticProvider(_tools_with_execute()),
             "Be helpful.",
             "Compute 2+2",
             allowed_strategies=["react", "code"],
@@ -78,7 +79,7 @@ class TestCodeExecIntegration:
         )
         result = await run(
             model,
-            _tools_with_execute(),
+            StaticProvider(_tools_with_execute()),
             "Be helpful.",
             "What is 2+2?",
             allowed_strategies=["code"],
@@ -113,7 +114,7 @@ class TestCodeExecIntegration:
         cfg = SandboxConfig(allowed_tools=["echo"])
         result = await run(
             model,
-            _tools_with_execute(),
+            StaticProvider(_tools_with_execute()),
             "Be helpful.",
             "Run code",
             allowed_strategies=["code"],
@@ -144,7 +145,7 @@ class TestCodeExecIntegration:
         )
         result = await run(
             model,
-            _tools_with_execute(),
+            StaticProvider(_tools_with_execute()),
             "Be helpful.",
             "Task",
             allowed_strategies=["react", "code"],
@@ -164,7 +165,7 @@ class TestCodeExecIntegration:
         model = MockModel([LLMResponse(content="Hello!", stop_reason="end_turn")])
         result = await run(
             model,
-            _tools_with_execute(),
+            StaticProvider(_tools_with_execute()),
             "Be helpful.",
             "Say hello",
         )

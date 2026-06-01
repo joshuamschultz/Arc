@@ -108,6 +108,13 @@ def _ui_handler(args: list[str]) -> None:
     ui_handler(args)
 
 
+def _store_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.store import store_handler
+
+    store_handler(args)
+
+
 def _ext_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.ext import ext_handler
@@ -343,6 +350,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         category="Tools & Skills",
         args_hint="<subcommand>",
         handler=_ui_handler,
+    ),
+    CommandDef(
+        name="store",
+        description="Operational store lifecycle — init, status, verify, backfill",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_store_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.

@@ -1,4 +1,7 @@
-"""Export route — /api/export (CSV/JSON)."""
+"""Export route — /api/export (CSV/JSON).
+
+SPEC-026 FR-5: traces are exported from the arcstore mirror (``app.state.observe``).
+"""
 
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from arcui.query_validators import safe_choice, safe_int
-from arcui.schemas import ErrorResponse, ExportTracesResponse
+from arcui.schemas import ExportTracesResponse
 
 _MAX_EXPORT_LIMIT = 10000
 
@@ -35,15 +38,7 @@ async def export_traces(request: Request) -> Response:
     if err is not None:
         return err
 
-    store = request.app.state.trace_store
-    if store is None:
-        return JSONResponse(
-            ErrorResponse(error="No trace store configured").model_dump(mode="json"),
-            status_code=404,
-        )
-
-    records, _ = await store.query(limit=limit)
-    rows = [r.model_dump() for r in records]
+    rows = await request.app.state.observe.traces(limit=limit)
 
     if fmt == "csv":
         if not rows:

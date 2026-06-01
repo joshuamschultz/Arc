@@ -1,0 +1,27 @@
+"""Module-boundary test — arcllm imports only arcstore.spool (SPEC-026 AC-4.3).
+
+Importing the telemetry module (the spool producer) must not transitively pull
+the store backends or a DB driver. Run in a fresh subprocess so the assertion
+is against a clean ``sys.modules``.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+
+_PROBE = (
+    "import arcllm.modules.telemetry, sys; "
+    "banned = [m for m in ('sqlite3', 'asyncpg', 'psycopg', 'boto3', "
+    "'arcstore.backends', 'arcstore.ingest') if m in sys.modules]; "
+    "assert not banned, banned; "
+    "print('clean')"
+)
+
+
+def test_producers_import_spool_only() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", _PROBE], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "clean" in result.stdout
