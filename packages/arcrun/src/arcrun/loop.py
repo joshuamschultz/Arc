@@ -33,10 +33,18 @@ def _build_state(
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
     actor_did: str | None = None,
+    store_raw_bodies: bool = False,
+    sample_rate: float = 1.0,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     run_id = str(uuid.uuid4())
-    bus = EventBus(run_id=run_id, on_event=on_event, spool_actor_did=actor_did)
+    bus = EventBus(
+        run_id=run_id,
+        on_event=on_event,
+        spool_actor_did=actor_did,
+        store_raw_bodies=store_raw_bodies,
+        sample_rate=sample_rate,
+    )
     tools = provider_tools(capabilities, caller_did=actor_did or _DEFAULT_CALLER_DID)
     if not tools:
         raise ValueError("capabilities must advertise at least one capability")
@@ -94,6 +102,8 @@ async def run(
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
     actor_did: str | None = None,
+    store_raw_bodies: bool = False,
+    sample_rate: float = 1.0,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
@@ -109,6 +119,8 @@ async def run(
         max_depth=max_depth,
         tool_choice=tool_choice,
         actor_did=actor_did,
+        store_raw_bodies=store_raw_bodies,
+        sample_rate=sample_rate,
     )
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)
@@ -133,6 +145,8 @@ async def run_async(
     max_depth: int = 3,
     tool_choice: dict[str, Any] | None = None,
     actor_did: str | None = None,
+    store_raw_bodies: bool = False,
+    sample_rate: float = 1.0,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -148,6 +162,8 @@ async def run_async(
         max_depth=max_depth,
         tool_choice=tool_choice,
         actor_did=actor_did,
+        store_raw_bodies=store_raw_bodies,
+        sample_rate=sample_rate,
     )
 
     strategy_fn = await _select_and_emit(allowed_strategies, model, state)

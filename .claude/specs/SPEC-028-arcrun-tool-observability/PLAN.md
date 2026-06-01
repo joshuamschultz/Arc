@@ -34,15 +34,15 @@
 
 | # | Task | Module | Pillar | Test | Done |
 |---|---|---|---|---|---|
-| 2.1 | Failing test: a run with a tool call spools `tool_event` start + end (name/outcome/latency) | `arcrun` | S | `tests/test_tool_spool.py::test_tool_events_spooled` | [ ] |
-| 2.2 | Failing test: `store_raw_bodies=false` → digests/sizes only, no args/result body | `arcrun` | Sec | `tests/test_tool_spool.py::test_tool_event_metadata_only_default` | [ ] |
-| 2.3 | Failing test: a raising tool spools `phase="error"`, `outcome="error"` | `arcrun` | Sec | `tests/test_tool_spool.py::test_tool_error_spooled` | [ ] |
-| 2.4a | **(C1)** Implement digest-at-source in `executor.py`: compute `args_digest`/`args_size` on `tool.start` and `result_digest`/`result_size` on `tool.end` (where `tc.arguments`/`result` exist), emit on the events; bodies added only when `store_raw_bodies` | `arcrun` | Sec, S | `tests/test_tool_spool.py::test_result_digest_is_content_not_length` | [ ] |
-| 2.4 | Implement `EventBus` tool→spool mapping in `_record_run_event` (consume the executor-computed digest/size fields; `store_raw_bodies` flag on EventBus ctor + `run()`/`run_async()`) | `arcrun` | S, Sec | 2.1–2.4a pass | [ ] |
-| 2.5 | Failing test: code-exec tool produces a `tool_event` identifiable as code-exec with `code_digest`/`code_size` always present; body only under flag | `arcrun` | S, Sec | `tests/test_tool_spool.py::test_code_exec_event` | [ ] |
-| 2.6 | Failing test + impl: wire `sample_rate` (currently UNWIRED) at EventBus level via caller-passed rate; `<1` thins `tool_event` but never `run_event`/`spawn_event`/errors | `arcrun` | Sc, Sec | `tests/test_tool_spool.py::test_tool_events_sampled_lifecycle_and_errors_kept` | [ ] |
-| 2.7 | Architecture test: arcrun still imports only `arcstore.spool` (no backend, no config) | `arcrun` | M, Sc | `tests/test_import_isolation.py::test_arcrun_spool_only` | [ ] |
-| 2.8 | `tool_event` field names align to OTel GenAI semconv (`gen_ai.tool.name` etc.); record stays flat (doc note in SDD §11.1) | `arcrun`,`arcstore` | M | doc-only; assert column names in `test_records.py` | [ ] |
+| 2.1 | Failing test: a run with a tool call spools `tool_event` start + end (name/outcome/latency) | `arcrun` | S | `tests/test_tool_spool.py::test_tool_events_spooled` | [x] |
+| 2.2 | Failing test: `store_raw_bodies=false` → digests/sizes only, no args/result body | `arcrun` | Sec | `tests/test_tool_spool.py::test_tool_event_metadata_only_default` | [x] |
+| 2.3 | Failing test: a raising tool spools `phase="error"`, `outcome="error"` | `arcrun` | Sec | `tests/test_tool_spool.py::test_tool_error_spooled` | [x] |
+| 2.4a | **(C1)** Implement digest-at-source in `executor.py`: compute `args_digest`/`args_size` on `tool.start` and `result_digest`/`result_size` on `tool.end` (where `tc.arguments`/`result` exist), emit on the events; bodies added only when `store_raw_bodies` | `arcrun` | Sec, S | `tests/test_tool_spool.py::test_result_digest_is_content_not_length` | [x] |
+| 2.4 | Implement `EventBus` tool→spool mapping in `_record_run_event` (consume the executor-computed digest/size fields; `store_raw_bodies` flag on EventBus ctor + `run()`/`run_async()`) | `arcrun` | S, Sec | 2.1–2.4a pass | [x] |
+| 2.5 | Failing test: code-exec tool produces a `tool_event` identifiable as code-exec with `code_digest`/`code_size` always present; body only under flag | `arcrun` | S, Sec | `tests/test_tool_spool.py::test_code_exec_event` | [x] |
+| 2.6 | Failing test + impl: wire `sample_rate` (currently UNWIRED) at EventBus level via caller-passed rate; `<1` thins `tool_event` but never `run_event`/`spawn_event`/errors | `arcrun` | Sc, Sec | `tests/test_tool_spool.py::test_tool_events_sampled_lifecycle_and_errors_kept` | [x] |
+| 2.7 | Architecture test: arcrun still imports only `arcstore.spool` (no backend, no config) | `arcrun` | M, Sc | `tests/test_import_isolation.py::test_arcrun_spool_only` | [x] |
+| 2.8 | `tool_event` field names align to OTel GenAI semconv (`gen_ai.tool.name` etc.); record stays flat (doc note in SDD §11.1) | `arcrun`,`arcstore` | M | doc-only; assert column names in `test_records.py` | [x] |
 
 **Phase 2 acceptance:** AC-1.1–1.4, AC-2.1–2.2 pass; gates clean.
 

@@ -45,6 +45,13 @@ testpaths = ["tests"]
 strict = true
 warn_return_any = true
 
+# Third-party libs that ship no type stubs (matches the sibling-package
+# convention, e.g. arcteam/arcgateway). jsonschema validates tool params in
+# executor.py; docker backs the optional container execute backend.
+[[tool.mypy.overrides]]
+module = ["jsonschema", "jsonschema.*", "docker", "docker.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100

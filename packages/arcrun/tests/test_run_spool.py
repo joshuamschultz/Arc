@@ -30,13 +30,14 @@ def test_eventbus_records_lifecycle_run_events() -> None:
     bus = EventBus(run_id="r1", spool_actor_did="did:arc:acme:analyst/aabbccdd")
     with patch.object(events_mod, "_spool_record", recorded.append):
         bus.emit("turn.start", {"turn": 1})
-        bus.emit("tool.start", {"tool": "echo"})  # not a lifecycle event
+        bus.emit("tool.start", {"name": "echo"})  # SPEC-028: now a tool_event
         bus.emit("turn.end", {"turn": 1})
         bus.emit("loop.completed", {})
-    kinds = {r.kind for r in recorded}
-    names = [r.name for r in recorded]
-    assert kinds == {"run_event"}
-    assert names == ["turn.start", "turn.end", "loop.completed"]  # tool.start excluded
+    # Lifecycle markers spool as run_events; tool.* spools as tool_events (FR-1).
+    run_names = [r.name for r in recorded if r.kind == "run_event"]
+    assert run_names == ["turn.start", "turn.end", "loop.completed"]
+    tool_phases = [r.phase for r in recorded if r.kind == "tool_event"]
+    assert tool_phases == ["start"]
     assert all(r.actor_did == "did:arc:acme:analyst/aabbccdd" for r in recorded)
     assert all(r.request_id == "r1" for r in recorded)
 
