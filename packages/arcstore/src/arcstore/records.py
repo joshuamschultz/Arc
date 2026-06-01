@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SpoolKind = Literal["llm_call", "run_event", "agent_event"]
+SpoolKind = Literal["llm_call", "run_event", "agent_event", "tool_event", "spawn_event"]
 
 
 class SpoolRecord(BaseModel):
@@ -58,6 +58,27 @@ class SpoolRecord(BaseModel):
     name: str | None = None
     """Step/phase/event name for run and agent events."""
 
+    # tool_event fields (SPEC-028 FR-1/FR-2) — names align to OTel GenAI semconv
+    # (gen_ai.tool.name, gen_ai.operation.name=execute_tool). Digests are of the
+    # canonical args/result content (computed at source in arcrun.executor, C1);
+    # bodies ride ``extra`` only when store_raw_bodies=true (NFR-2).
+    tool_name: str | None = None
+    """Tool name for tool_event — code-exec is recognized by this name."""
+    phase: str | None = None
+    """``start`` | ``end`` | ``error`` for tool_event lifecycle."""
+    args_digest: str | None = None
+    """sha256 of the canonical tool arguments (content, not length)."""
+    args_size: int | None = None
+    result_digest: str | None = None
+    """sha256 of the canonical tool result (content, not length — C1)."""
+    result_size: int | None = None
+
+    # spawn_event fields (SPEC-028 FR-3) — the operational parent→child edge.
+    parent_did: str | None = None
+    child_did: str | None = None
+    role: str | None = None
+    depth: int | None = None
+
     extra: dict[str, Any] = Field(default_factory=dict)
     """Flat key/value extension (str/int/float/bool/None values only)."""
 
@@ -71,6 +92,12 @@ class SpoolRecord(BaseModel):
 
     @property
     def record_id(self) -> str:
-        """Stable, content-derived identity for idempotent ingest (FR-3)."""
-        raw = f"{self.kind}|{self.actor_did}|{self.ts}|{self.request_id}"
+        """Stable, content-derived identity for idempotent ingest (FR-3).
+
+        Includes the event discriminators ``phase`` (tool start/end/error) and
+        ``name`` (run/agent step) so two distinct events of one run under one
+        actor at the same ``ts`` do not collide and silently drop on
+        ``INSERT OR IGNORE`` (SPEC-028 review EDGE-3).
+        """
+        raw = f"{self.kind}|{self.actor_did}|{self.ts}|{self.request_id}|{self.phase}|{self.name}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]

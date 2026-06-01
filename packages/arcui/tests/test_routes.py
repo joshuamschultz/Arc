@@ -728,3 +728,45 @@ class TestArcllmConfigUnit:
         assert "Unknown config section" in _validate_updates({"bad": {}})
         assert "Unknown key" in _validate_updates({"defaults": {"bad_key": 1}})
         assert "Unknown module" in _validate_updates({"modules": {"bad_mod": {}}})
+
+
+def _seed_tool_and_spawn(data_dir: Path) -> None:
+    """Write a tool_event + spawn_event + a child llm_call to the durable spool."""
+    from arcstore.records import SpoolRecord
+    from arcstore.spool import record as spool_record
+
+    spool = data_dir / "spool"
+    spool.mkdir(parents=True, exist_ok=True)
+    p = spool / "operational-2026-05-31.jsonl"
+    spool_record(SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
+                             tool_name="web.fetch", phase="start", args_digest="a" * 64), path=p)
+    spool_record(SpoolRecord(kind="spawn_event", actor_did="did:child",
+                             parent_did="did:parent", child_did="did:child",
+                             role="researcher", depth=1, outcome="allow"), path=p)
+    spool_record(SpoolRecord(kind="llm_call", actor_did="did:child", request_id="run-1",
+                             model="claude", agent_label="researcher:d1", cost_usd=0.01,
+                             prompt_tokens=10, completion_tokens=5, outcome="ok"), path=p)
+
+
+class TestToolAndLineageRoutes:
+    def test_tool_and_lineage_routes(self, _isolated_arc_data_dir: Path):
+        """Task 4.5 — read routes return tool timeline + spawn tree + identity cost JSON."""
+        _seed_tool_and_spawn(_isolated_arc_data_dir)
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            tl = client.get("/api/runs/run-1/timeline", headers={"Authorization": "Bearer v"})
+            assert tl.status_code == 200
+            kinds = {e["kind"] for e in tl.json()["timeline"]}
+            assert {"tool_event", "llm_call"} <= kinds
+
+            tree = client.get("/api/spawn-tree?root=did:parent",
+                              headers={"Authorization": "Bearer v"})
+            assert tree.status_code == 200
+            assert tree.json()["tree"]["did"] == "did:parent"
+
+            ident = client.get("/api/stats/by-identity?window=24h",
+                               headers={"Authorization": "Bearer v"})
+            assert ident.status_code == 200
+            labels = {r["identity"] for r in ident.json()["identities"]}
+            assert "researcher:d1" in labels

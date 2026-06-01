@@ -57,3 +57,65 @@ def test_record_id_is_stable_and_content_derived() -> None:
     assert SpoolRecord(**kwargs).record_id == SpoolRecord(**kwargs).record_id
     other = SpoolRecord(kind="llm_call", actor_did="did:a", request_id="r2", ts="2026-05-31T00:00:00+00:00")
     assert SpoolRecord(**kwargs).record_id != other.record_id
+
+
+# SPEC-028 — tool_event + spawn_event kinds (Tasks 1.1, 1.2)
+
+
+def test_tool_event_fields() -> None:
+    """Task 1.1 — a tool_event validates its flat metadata fields + auto ts."""
+    rec = SpoolRecord(
+        kind="tool_event",
+        actor_did="did:arc:acme:agent:abc123",
+        request_id="run-1",
+        tool_name="web.fetch",
+        phase="end",
+        outcome="ok",
+        latency_ms=42.0,
+        args_digest="a" * 64,
+        args_size=128,
+        result_digest="b" * 64,
+        result_size=4096,
+    )
+
+    assert rec.kind == "tool_event"
+    assert rec.tool_name == "web.fetch"
+    assert rec.phase == "end"
+    assert rec.args_digest == "a" * 64
+    assert rec.args_size == 128
+    assert rec.result_digest == "b" * 64
+    assert rec.result_size == 4096
+    # request_id == run_id so a run's streams join on one key (SDD §11.4).
+    assert rec.request_id == "run-1"
+    # Metadata-only by default — no body fields populated unless caller opts in.
+    assert rec.extra == {}
+    assert rec.ts is not None
+
+
+def test_spawn_event_fields() -> None:
+    """Task 1.2 — a spawn_event validates the parent→child lineage edge."""
+    rec = SpoolRecord(
+        kind="spawn_event",
+        actor_did="did:arc:acme:agent:child",
+        parent_did="did:arc:acme:agent:parent",
+        child_did="did:arc:acme:agent:child",
+        role="researcher",
+        depth=1,
+        outcome="ok",
+    )
+
+    assert rec.kind == "spawn_event"
+    assert rec.parent_did == "did:arc:acme:agent:parent"
+    assert rec.child_did == "did:arc:acme:agent:child"
+    assert rec.role == "researcher"
+    assert rec.depth == 1
+    assert rec.outcome == "ok"
+
+
+def test_record_id_distinguishes_phase_at_same_ts() -> None:
+    """EDGE-3 — tool start+end of one run at the same ts must not collide (no silent drop)."""
+    ts = "2026-05-31T00:00:00+00:00"
+    common = dict(kind="tool_event", actor_did="did:c", request_id="run-1", ts=ts, tool_name="t")
+    start = SpoolRecord(phase="start", **common)
+    end = SpoolRecord(phase="end", **common)
+    assert start.record_id != end.record_id

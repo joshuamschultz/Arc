@@ -7,6 +7,7 @@ import hashlib
 import inspect
 import json
 import logging
+import secrets
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -22,11 +23,14 @@ logger = logging.getLogger(__name__)
 GENESIS_PREV_HASH = "0" * 64
 
 # Loop-lifecycle event types mirrored to the arcstore operational spool
-# (SPEC-026 FR-4: run start / step / finish). Other events (tool.*) stay in the
-# in-memory hash chain only — the spool captures run lifecycle, not every tick.
+# (SPEC-026 FR-4: run start / step / finish).
 _RUN_EVENT_TYPES = frozenset(
     {"strategy.selected", "turn.start", "turn.end", "loop.completed"}
 )
+
+# Tool-lifecycle event types mirrored as ``tool_event`` records (SPEC-028 FR-1).
+# Code execution (``execute_python``) rides these like any other tool (FR-2).
+_TOOL_EVENT_TYPES = frozenset({"tool.start", "tool.end", "tool.error"})
 
 
 def _canonical_bytes(
@@ -120,12 +124,20 @@ class EventBus:
         on_event: Callable[[Event], Awaitable[None] | None] | None = None,
         *,
         spool_actor_did: str | None = None,
+        store_raw_bodies: bool = False,
+        sample_rate: float = 1.0,
     ) -> None:
         self._run_id = run_id
         self._on_event = on_event
         # When set, loop-lifecycle events are mirrored to the arcstore spool
         # under this DID (SPEC-026 FR-4). None disables operational recording.
         self._spool_actor_did = spool_actor_did
+        # Raw-capture posture flows in from the caller (arcagent/arccli), never
+        # read from config here — arcrun stays config-free (SPEC-028 NFR-4).
+        self.store_raw_bodies = store_raw_bodies
+        # Probabilistic thinning of high-frequency tool_events only; lifecycle
+        # and errors are never sampled out (SPEC-028 NFR-5 / task 2.6).
+        self._sample_rate = sample_rate
         self._events: list[Event] = []
         self._lock = threading.Lock()
         # Strong refs to pending async-observer tasks so the loop doesn't
@@ -163,22 +175,82 @@ class EventBus:
         return event
 
     def _record_run_event(self, event: Event) -> None:
-        """Mirror a loop-lifecycle event to the arcstore operational spool.
+        """Mirror a lifecycle or tool event to the arcstore operational spool.
 
-        Side-channel only (SPEC-026 FR-4): gated by an actor DID, scoped to
-        lifecycle event types, and itself fail-open (``record()`` swallows IO
-        errors) so it can never break the loop.
+        Side-channel only (SPEC-026 FR-4 / SPEC-028 FR-1): gated by an actor DID
+        and fully fail-open (NFR-3) — record *construction* as well as the IO is
+        wrapped, so a malformed payload can never break the loop it observes.
+        ``run_event`` lifecycle markers are always recorded; ``tool_event``s
+        carry the executor-computed digests and may be sampled.
         """
-        if self._spool_actor_did is None or event.type not in _RUN_EVENT_TYPES:
+        actor_did = self._spool_actor_did
+        if actor_did is None:
             return
+        try:
+            if event.type in _RUN_EVENT_TYPES:
+                _spool_record(
+                    _SpoolRecord(
+                        kind="run_event",
+                        actor_did=actor_did,
+                        request_id=self._run_id,
+                        name=event.type,
+                    )
+                )
+            elif event.type in _TOOL_EVENT_TYPES:
+                self._record_tool_event(event, actor_did)
+        except Exception as exc:  # reason: fail-open (NFR-3) — telemetry never breaks the run
+            # Log the exception *type* only — never exc_info/message, which can echo
+            # a record field value (e.g. a body under store_raw_bodies) into the log
+            # (LLM02/LLM07). Type name is enough to debug a construction fault.
+            logger.warning(
+                "spool record failed for %s (%s) — swallowing (NFR-3)",
+                event.type,
+                type(exc).__name__,
+            )
+
+    def _record_tool_event(self, event: Event, actor_did: str) -> None:
+        """Map a ``tool.*`` event to a ``tool_event`` spool record (SPEC-028 FR-1).
+
+        Consumes the digest/size fields the executor computed at source (C1).
+        Bodies (args, result/code) ride ``extra`` only when raw capture is on
+        (NFR-2). Routine start/end may be sampled out; errors never are.
+        """
+        is_error = event.type == "tool.error"
+        if not is_error and not self._should_sample():
+            return
+        data = event.data
+        extra: dict[str, Any] = {}
+        if self.store_raw_bodies:
+            if "arguments" in data:
+                extra["args"] = dict(data["arguments"])
+            if "result" in data:
+                extra["result"] = data["result"]
         _spool_record(
             _SpoolRecord(
-                kind="run_event",
-                actor_did=self._spool_actor_did,
+                kind="tool_event",
+                actor_did=actor_did,
                 request_id=self._run_id,
-                name=event.type,
+                tool_name=data.get("name"),
+                phase=event.type.split(".", 1)[1],
+                outcome="error" if is_error else "ok",
+                latency_ms=data.get("duration_ms"),
+                args_digest=data.get("args_digest"),
+                args_size=data.get("args_size"),
+                result_digest=data.get("result_digest"),
+                result_size=data.get("result_size"),
+                extra=extra,
             )
         )
+
+    def _should_sample(self) -> bool:
+        """Keep a routine tool_event with probability ``sample_rate``."""
+        if self._sample_rate >= 1.0:
+            return True
+        if self._sample_rate <= 0.0:
+            return False
+        # secrets.randbelow gives a uniform draw without a separate PRNG import;
+        # sampling here is not security-sensitive, but it avoids a global RNG.
+        return secrets.randbelow(1_000_000) < int(self._sample_rate * 1_000_000)
 
     def _schedule_async_observer(self, coro: Any) -> None:
         """Schedule an async observer's coroutine on the running loop.
@@ -206,3 +278,12 @@ class EventBus:
     def events(self) -> list[Event]:
         with self._lock:
             return list(self._events)
+
+    @property
+    def spool_actor_did(self) -> str | None:
+        """The DID this run spools under (None when operational recording is off).
+
+        Read-only accessor so a layer above (arcagent spawn) can derive lineage
+        without reaching into a private attribute.
+        """
+        return self._spool_actor_did

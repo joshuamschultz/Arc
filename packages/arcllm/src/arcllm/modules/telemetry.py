@@ -6,9 +6,12 @@ and post-deduct after response. Per-scope accumulators live in
 wires both into the OTel-instrumented ``invoke()`` flow.
 """
 
+import contextlib
+import contextvars
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from typing import Any, Literal
 
 from arcstore.records import SpoolRecord as _SpoolRecord
@@ -99,6 +102,42 @@ def clear_global_defaults() -> None:
     """Clear all global defaults. Use in tests for isolation."""
     with _global_defaults_lock:
         _global_defaults.clear()
+
+
+# ---------------------------------------------------------------------------
+# Task-local agent identity (SPEC-028 C2) — contextvars, not a process global.
+#
+# A spawned child reuses its parent's model (and therefore its parent's
+# TelemetryModule). To attribute the child's llm_call records to the *child*
+# without rebuilding the provider chain, the child binds its identity on its own
+# asyncio task via a ContextVar. ``asyncio.Task`` snapshots the context at
+# creation, so concurrent ``spawn_many`` children each carry an independent copy
+# — no cross-attribution (the race that ``set_global_defaults`` would cause).
+# Resolution priority: ContextVar > module config > global defaults.
+# ---------------------------------------------------------------------------
+
+_agent_did_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "arcllm_agent_did", default=None
+)
+_agent_label_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "arcllm_agent_label", default=None
+)
+
+
+@contextlib.contextmanager
+def agent_identity(agent_did: str | None, agent_label: str | None = None) -> Iterator[None]:
+    """Bind the operational identity for llm_call records on this asyncio task.
+
+    Task-local: set the binding *before* awaiting the child run so the child's
+    LLM calls (same task) resolve to this identity, then reset on exit.
+    """
+    did_token = _agent_did_var.set(agent_did)
+    label_token = _agent_label_var.set(agent_label)
+    try:
+        yield
+    finally:
+        _agent_did_var.reset(did_token)
+        _agent_label_var.reset(label_token)
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +237,14 @@ class TelemetryModule(BaseModule):
                 )
             validate_budget_scope(self._budget_scope)
             self._accumulator: BudgetAccumulator = get_or_create_accumulator(self._budget_scope)
+
+    def _resolve_agent_did(self) -> str | None:
+        """ContextVar identity (a spawned child) > config/global (C2). May be None."""
+        return _agent_did_var.get() or self._agent_did
+
+    def _resolve_agent_label(self) -> str | None:
+        """ContextVar label (a spawned child) > config/global."""
+        return _agent_label_var.get() or self._agent_label
 
     def _calculate_cost(self, usage: Usage) -> float:
         """Calculate USD cost from token counts and per-1M pricing."""
@@ -391,8 +438,8 @@ class TelemetryModule(BaseModule):
         return TraceRecord(
             provider=self._inner.name,
             model=response.model,
-            agent_label=self._agent_label,
-            agent_did=self._agent_did,
+            agent_label=self._resolve_agent_label(),
+            agent_did=self._resolve_agent_did(),
             budget_scope=self._budget_scope,
             request_body=request_body,
             response_body=response_body,
@@ -551,10 +598,10 @@ class TelemetryModule(BaseModule):
         _spool_record(
             _SpoolRecord(
                 kind="llm_call",
-                actor_did=self._agent_did or _UNKNOWN_DID,
+                actor_did=self._resolve_agent_did() or _UNKNOWN_DID,
                 model=model,
                 provider=self._inner.name,
-                agent_label=self._agent_label,
+                agent_label=self._resolve_agent_label(),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 cost_usd=cost,

@@ -26,13 +26,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from typing import Any
 
+from arcllm.modules.telemetry import agent_identity
 from arcrun.events import Event, EventBus
 from arcrun.state import RunState
 from arcrun.types import SandboxConfig, Tool, ToolContext
+from arcstore.records import SpoolRecord as _SpoolRecord
+from arcstore.spool import record as _spool_record
 from arctrust import ChildIdentity
 
 from arcagent.orchestration.spawn_handle import (
@@ -72,6 +76,47 @@ def _make_bubble_handler(child_run_id: str, parent_bus: EventBus) -> Callable[[E
         )
 
     return handler
+
+
+# ---------------------------------------------------------------------------
+# Spawn observability (SPEC-028 FR-3) — operational identity + lineage edge.
+# arcrun stays a pure loop; this is all arcagent. The arctrust WORM keeps the
+# compliance edge (``_emit_spawn_audit``); the spool carries the operational
+# edge the UI renders, and child run/llm records spool under the child identity.
+# ---------------------------------------------------------------------------
+
+
+def _parent_did(state: RunState) -> str | None:
+    """The DID the parent run is spooling under (set via ``run(actor_did=...)``).
+
+    None when the parent isn't recording operationally (arcstore off) — in which
+    case the child stays silent too, preserving the parent's posture. Reads the
+    public ``EventBus`` accessor so a rename surfaces loudly, not silently.
+    """
+    return state.event_bus.spool_actor_did
+
+
+def _child_label(child_did: str, role: str | None, depth: int) -> str:
+    """Human-readable child label for the cost/identity view (UI groups on this)."""
+    suffix = child_did.rsplit("/", 1)[-1]
+    return f"{role or 'child'}:{suffix}:d{depth}"
+
+
+def _spool_spawn_event(
+    *, parent_did: str, child_did: str, role: str | None, depth: int, outcome: str
+) -> None:
+    """Record the operational parent→child lineage edge (fail-open like all spool)."""
+    _spool_record(
+        _SpoolRecord(
+            kind="spawn_event",
+            actor_did=child_did,
+            parent_did=parent_did,
+            child_did=child_did,
+            role=role,
+            depth=depth,
+            outcome=outcome,
+        )
+    )
 
 
 def make_spawn_tool(
@@ -151,23 +196,45 @@ def make_spawn_tool(
         from arcrun.capabilities import StaticProvider
         from arcrun.loop import run
 
+        # Operational identity + lineage (SPEC-028 FR-3), only when the parent
+        # is recording. The child spools its run_events/llm_calls under its own
+        # DID and a spawn_event captures the parent→child edge for the UI.
+        parent_did = _parent_did(run_state)
+        child_did = f"did:arc:spawn:child/{child_run_id[:8]}"
+        child_depth = run_state.depth + 1
+        child_actor = child_did if parent_did is not None else None
+        child_label = _child_label(child_did, None, child_depth) if child_actor else None
+        if parent_did is not None:
+            _spool_spawn_event(
+                parent_did=parent_did,
+                child_did=child_did,
+                role=None,
+                depth=child_depth,
+                outcome="allow",
+            )
+
         try:
             async with spawn_semaphore:
-                result = await asyncio.wait_for(
-                    run(
-                        model,
-                        StaticProvider(child_tools),
-                        child_system_prompt,
-                        child_task,
-                        max_turns=max_child_turns,
-                        depth=run_state.depth + 1,
-                        max_depth=run_state.max_depth,
-                        on_event=bubble_handler,
-                        sandbox=sandbox,
-                        allowed_strategies=allowed_strategies,
-                    ),
-                    timeout=spawn_timeout_seconds,
-                )
+                # agent_identity is a sync contextmanager (task-local identity);
+                # bind it around the awaited child run, not as an async CM.
+                with agent_identity(child_actor, child_label):
+                    result = await asyncio.wait_for(
+                        run(
+                            model,
+                            StaticProvider(child_tools),
+                            child_system_prompt,
+                            child_task,
+                            max_turns=max_child_turns,
+                            depth=run_state.depth + 1,
+                            max_depth=run_state.max_depth,
+                            on_event=bubble_handler,
+                            sandbox=sandbox,
+                            allowed_strategies=allowed_strategies,
+                            actor_did=child_actor,
+                            store_raw_bodies=run_state.event_bus.store_raw_bodies,
+                        ),
+                        timeout=spawn_timeout_seconds,
+                    )
 
             # Audit event: spawn complete
             run_state.event_bus.emit(
@@ -365,6 +432,7 @@ async def spawn(
     identity: ChildIdentity | None = None,
     model: Any = None,
     context: str | None = None,
+    role: str | None = None,
     max_turns: int = _DEFAULT_MAX_CHILD_TURNS,
     token_budget: int | None = None,
     wallclock_timeout_s: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
@@ -398,8 +466,8 @@ async def spawn(
     Returns:
         SpawnResult with status, summary, token counts, and audit chain tip.
     """
-    import time
-
+    # arcrun imports are local to avoid a circular import at module load; time is
+    # stdlib (module-top).
     from arcrun.capabilities import StaticProvider
     from arcrun.loop import run
 
@@ -477,6 +545,22 @@ async def spawn(
         sink=audit_sink,
     )
 
+    # Operational identity + lineage (SPEC-028 FR-3). The child spools under its
+    # own DID only when the parent is recording (posture preserved); the spool
+    # edge mirrors the audit edge for the UI lineage tree.
+    parent_did = _parent_did(parent_state)
+    child_depth = parent_state.depth + 1
+    child_actor = child_did if parent_did is not None else None
+    child_label = _child_label(child_did, role, child_depth)
+    if parent_did is not None:
+        _spool_spawn_event(
+            parent_did=parent_did,
+            child_did=child_did,
+            role=role,
+            depth=child_depth,
+            outcome="allow",
+        )
+
     otel_ctx = _get_otel_context()
     span, otel_token = _start_child_span(
         f"arcagent.orchestration.spawn.{child_run_id[:8]}",
@@ -494,20 +578,26 @@ async def spawn(
                 tool_trace.append(str(name))
 
     try:
-        loop_result = await asyncio.wait_for(
-            run(
-                model,
-                StaticProvider(tools),
-                system_prompt,
-                full_task,
-                max_turns=max_turns,
-                depth=parent_state.depth + 1,
-                max_depth=parent_state.max_depth,
-                on_event=_trace_handler,
-                sandbox=sandbox,
-            ),
-            timeout=wallclock_timeout_s,
-        )
+        # Bind the child identity on this task so the child's llm_calls (which
+        # reuse the parent's model/telemetry) attribute to the child, not the
+        # parent (C2). Set before the await; reset on exit.
+        with agent_identity(child_actor, child_label if child_actor else None):
+            loop_result = await asyncio.wait_for(
+                run(
+                    model,
+                    StaticProvider(tools),
+                    system_prompt,
+                    full_task,
+                    max_turns=max_turns,
+                    depth=parent_state.depth + 1,
+                    max_depth=parent_state.max_depth,
+                    on_event=_trace_handler,
+                    sandbox=sandbox,
+                    actor_did=child_actor,
+                    store_raw_bodies=parent_state.event_bus.store_raw_bodies,
+                ),
+                timeout=wallclock_timeout_s,
+            )
 
         duration_s = time.monotonic() - start
         tokens = TokenUsage(

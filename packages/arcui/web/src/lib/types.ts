@@ -215,3 +215,56 @@ export interface AggregateStats {
   provider_counts?: Dict
   agent_counts?: Dict
 }
+
+// --- SPEC-028: tool/code timeline, spawn lineage, per-identity cost --------
+
+export interface TimelineEntry {
+  kind: string // run_event | tool_event | llm_call
+  ts?: string | null
+  request_id?: string | null
+  // tool_event
+  tool_name?: string | null
+  phase?: string | null
+  outcome?: string | null
+  latency_ms?: number | null
+  args_digest?: string | null
+  args_size?: number | null
+  result_digest?: string | null
+  result_size?: number | null
+  // run_event
+  name?: string | null
+  // llm_call
+  model?: string | null
+  agent_label?: string | null
+  cost_usd?: number | null
+}
+
+export interface RunTimelineResponse {
+  run_id: string
+  timeline: TimelineEntry[]
+}
+
+export interface SpawnNode {
+  did: string
+  role?: string | null
+  depth?: number | null
+  outcome?: string | null
+  children: SpawnNode[]
+}
+
+export interface SpawnTreeResponse {
+  tree: SpawnNode
+}
+
+export interface IdentityCost {
+  identity: string
+  request_count: number
+  error_count: number
+  total_tokens: number
+  total_cost: number
+}
+
+export interface IdentityCostResponse {
+  window: string
+  identities: IdentityCost[]
+}

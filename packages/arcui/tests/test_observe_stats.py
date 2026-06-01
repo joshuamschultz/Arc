@@ -104,3 +104,23 @@ class TestTimeseries:
         ts = compute_timeseries([old], window="24h")
         # A 2-day-old row contributes to no 24h bucket.
         assert sum(b["request_count"] for b in ts["buckets"]) == 0
+
+
+class TestLLMByIdentity:
+    def test_llm_by_identity(self) -> None:
+        """Task 4.3 — separate parent vs child LLM spend by agent_label."""
+        from arcui.observe_stats import compute_llm_by_identity
+
+        rows = [
+            _row(agent_label="parent", cost_usd=0.02, prompt_tokens=100, completion_tokens=50),
+            _row(agent_label="researcher:d1", cost_usd=0.01, prompt_tokens=40, completion_tokens=10),
+            _row(agent_label="researcher:d1", cost_usd=0.03, prompt_tokens=60, completion_tokens=20),
+        ]
+        result = compute_llm_by_identity(rows, window="24h")
+        by = {r["identity"]: r for r in result["identities"]}
+        assert set(by) == {"parent", "researcher:d1"}
+        assert by["parent"]["request_count"] == 1
+        assert by["researcher:d1"]["request_count"] == 2
+        assert abs(by["researcher:d1"]["total_cost"] - 0.04) < 1e-9
+        # Parent total does NOT absorb the child's spend (UC-3).
+        assert abs(by["parent"]["total_cost"] - 0.02) < 1e-9

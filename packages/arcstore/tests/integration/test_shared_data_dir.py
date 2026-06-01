@@ -16,6 +16,7 @@ def test_producers_import_the_one_resolver() -> None:
     """arcllm + arcrun reach the spool through the same arcstore.config resolver."""
     import arcllm.modules.telemetry as telemetry
     import arcrun.events as events
+
     from arcstore.config import resolve_data_dir
     from arcstore.spool import resolve_data_dir as spool_resolver
 
@@ -32,10 +33,11 @@ def test_all_entry_points_agree_on_data_dir(
     """Identical env → identical resolved data dir across every caller (AC-7.1)."""
     monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "shared"))
 
-    from arccli.commands.store import _resolve_dir  # arccli entry point
-    from arcstore import ArcStoreConfig, resolve_data_dir  # producers + lib
-
     import argparse
+
+    from arccli.commands.store import _resolve_dir  # arccli entry point
+
+    from arcstore import ArcStoreConfig, resolve_data_dir  # producers + lib
 
     ns = argparse.Namespace(data_dir=None)
     cli_dir = _resolve_dir(ns)

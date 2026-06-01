@@ -12,9 +12,21 @@ from pathlib import Path
 
 import pytest
 
-from arcstore.backends.base import StorageBackend
+from arcstore.backends.base import (
+    OPERATIONAL_TABLES,
+    StorageBackend,
+    table_for_kind,
+)
 from arcstore.backends.memory import FakeBackend
 from arcstore.backends.sqlite import SqliteBackend
+
+
+def test_new_kinds_mapped() -> None:
+    """Task 1.4 — tool_event/spawn_event map to their tables (SPEC-028 FR-1/FR-3)."""
+    assert table_for_kind("tool_event") == "tool_events"
+    assert table_for_kind("spawn_event") == "spawn_events"
+    assert "tool_events" in OPERATIONAL_TABLES
+    assert "spawn_events" in OPERATIONAL_TABLES
 
 
 @pytest.fixture(params=["memory", "sqlite"])

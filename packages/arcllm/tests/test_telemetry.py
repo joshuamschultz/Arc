@@ -678,3 +678,35 @@ class TestGetBudgetState:
         assert state["per_call_max"] is None
         assert state["enforcement"] == "block"
         assert state["alert_threshold_pct"] == 80
+
+
+# ---------------------------------------------------------------------------
+# SPEC-028 C2 — task-local agent identity via contextvars
+# ---------------------------------------------------------------------------
+
+
+class TestAgentIdentityContextVar:
+    @pytest.mark.asyncio
+    @patch("arcllm.modules.telemetry.time.monotonic")
+    async def test_agent_identity_from_contextvar(self, mock_mono, messages):
+        """Task 3.2a — contextvar identity overrides config on the llm_call record."""
+        from arcllm.modules.telemetry import agent_identity
+
+        mock_mono.return_value = 0.0
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(agent_did="did:parent", agent_label="parent"), inner
+        )
+
+        recorded: list = []
+        with patch("arcllm.modules.telemetry._spool_record", recorded.append):
+            # No contextvar → config identity.
+            await module.invoke(messages)
+            # Contextvar bound → child identity wins over config.
+            with agent_identity("did:child", "child"):
+                await module.invoke(messages)
+            # After exit → back to config identity.
+            await module.invoke(messages)
+
+        assert [r.actor_did for r in recorded] == ["did:parent", "did:child", "did:parent"]
+        assert [r.agent_label for r in recorded] == ["parent", "child", "parent"]

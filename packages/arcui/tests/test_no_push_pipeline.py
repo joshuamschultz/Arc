@@ -78,6 +78,19 @@ def test_no_push_symbol_references_in_src() -> None:
     assert not offenders, f"deleted push primitives still referenced in arcui src: {offenders}"
 
 
+def test_observe_run_routes_are_pull_only() -> None:
+    """SPEC-028 task 4.9 — the new tool/lineage/identity routes are synchronous
+    reads (``Route``), never a ``WebSocketRoute`` or any push wire."""
+    from starlette.routing import Route
+
+    from arcui.routes import observe_run
+
+    assert observe_run.routes, "observe_run must register read routes"
+    assert all(isinstance(r, Route) for r in observe_run.routes), (
+        "SPEC-028 surfaces must be pull-only Route handlers (D-007)"
+    )
+
+
 def test_arcui_is_not_an_emit_subscriber() -> None:
     """arcui must not register itself as a sink/subscriber of arctrust.emit().
 

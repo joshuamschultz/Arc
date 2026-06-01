@@ -22,6 +22,7 @@ from arcstore.ingest import StoreIngest
 
 from arcui.observe_stats import (
     compute_cost_efficiency,
+    compute_llm_by_identity,
     compute_performance,
     compute_stats,
     compute_timeseries,
@@ -62,6 +63,44 @@ def _row_to_trace(row: dict[str, Any]) -> dict[str, Any]:
         "total_tokens": prompt + completion,
         "request_id": row.get("request_id"),
     }
+
+
+def _spawn_node(
+    did: str, edge: dict[str, Any] | None, children: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "did": did,
+        "role": edge.get("role") if edge else None,
+        "depth": edge.get("depth") if edge else 0,
+        "outcome": edge.get("outcome") if edge else None,
+        "children": children,
+    }
+
+
+def _build_spawn_tree(edges: list[dict[str, Any]], root_did: str | None) -> dict[str, Any]:
+    """Rebuild a parent→child tree from flat spawn_event rows (depth-bounded)."""
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    edge_for: dict[str, dict[str, Any]] = {}
+    children_dids: set[str] = set()
+    for e in edges:
+        parent, child = e.get("parent_did"), e.get("child_did")
+        if not parent or not child:
+            continue
+        by_parent.setdefault(parent, []).append(e)
+        edge_for[child] = e
+        children_dids.add(child)
+
+    if root_did is None:
+        roots = [p for p in by_parent if p not in children_dids]
+        root_did = roots[0] if roots else ""
+
+    # max_depth=3 caps recursion; ``seen`` guards against any cyclic edge.
+    def _node(did: str, seen: frozenset[str]) -> dict[str, Any]:
+        kids = [] if did in seen else by_parent.get(did, [])
+        children = [_node(e["child_did"], seen | {did}) for e in kids]
+        return _spawn_node(did, edge_for.get(did), children)
+
+    return _node(root_did, frozenset())
 
 
 class Observe:
@@ -186,3 +225,47 @@ class Observe:
     ) -> dict[str, Any]:
         rows = await self._llm_rows_in_window(window, agent=agent)
         return compute_cost_efficiency(rows, window=window)
+
+    # -- SPEC-028 tool / code / spawn surfaces (FR-4) ----------------------
+
+    async def tool_events(self, *, run_id: str, limit: int = 500) -> list[dict[str, Any]]:
+        """Ordered tool/code events for a run (FR-1/FR-2). Code-exec is identified
+        by ``tool_name`` (e.g. ``execute_python``) on the client."""
+        await self._ensure()
+        return await self._backend.query(
+            "tool_events", where={"request_id": run_id}, order_by="ts", limit=limit
+        )
+
+    async def timeline(self, *, run_id: str, limit: int = 1000) -> list[dict[str, Any]]:
+        """Merged per-run timeline: llm_call + run_event + tool_event by ``ts``.
+
+        The three streams join on ``request_id == run_id`` (§11.4); merge happens
+        in Python (one query per table) — no SQL UNION, matching the Observe shape.
+        """
+        await self._ensure()
+        merged: list[dict[str, Any]] = []
+        for kind in ("run_events", "tool_events", "llm_calls"):
+            rows = await self._backend.query(
+                kind, where={"request_id": run_id}, order_by="ts", limit=limit
+            )
+            merged.extend(rows)
+        merged.sort(key=lambda r: (r.get("ts") or "", r.get("kind") or ""))
+        return merged
+
+    async def spawn_tree(
+        self, *, root_did: str | None = None, limit: int = 100_000
+    ) -> dict[str, Any]:
+        """Assemble the parent→child lineage tree from ``spawn_events`` (FR-3).
+
+        Flat edges rebuilt into a tree on read (the universal pattern, §11.2);
+        bounded by ``max_depth`` so trees are tiny. When ``root_did`` is omitted,
+        the root is any parent that never appears as a child.
+        """
+        await self._ensure()
+        edges = await self._backend.query("spawn_events", order_by="ts", limit=limit)
+        return _build_spawn_tree(edges, root_did)
+
+    async def llm_by_identity(self, window: str = "24h") -> dict[str, Any]:
+        """Per-identity LLM cost/count — parent vs each child (FR-4 / UC-3)."""
+        rows = await self._llm_rows_in_window(window)
+        return compute_llm_by_identity(rows, window=window)

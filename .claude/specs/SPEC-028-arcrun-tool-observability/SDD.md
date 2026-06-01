@@ -289,3 +289,52 @@ and scheduler hardening, not telemetry). Findings filtered Simplicity > Modulari
 | child `actor_did` threading | `arcrun/loop.py` `run(actor_did=…)` → `EventBus(spool_actor_did=…)` |
 | contextvar identity | LangSmith `_PARENT_RUN_TREE` pattern (external) |
 | timeline merge / cost-by-label | `arcui/observe.py`, `arcui/observe_stats.py compute_stats()` |
+
+---
+
+## 12. Architecture Decisions (recorded at /review, 2026-05-31)
+
+### ADR-028-1 — Cross-layer read of run identity goes through a public accessor
+**Context.** arcagent's `spawn()` needs the parent's operational DID to record the
+`spawn_event` lineage edge. That DID lives on arcrun's `EventBus`.
+**Decision.** arcrun exposes a read-only `EventBus.spool_actor_did` property;
+arcagent reads it via `_parent_did(state)`. We do **not** reach into the private
+`_spool_actor_did`. arcagent → arcrun is a legal DAG edge; the public surface
+makes the contract explicit so a future rename fails loudly (AttributeError /
+mypy) instead of silently returning `None` and dropping child lineage.
+**Consequences.** One small, generic accessor added to arcrun (not spawn logic —
+`test_spawn_owned_by_arcagent` still holds). Posture-preservation ("child silent
+when parent isn't recording") rides the same accessor.
+
+### ADR-028-2 — Spawned-child LLM identity via an arcllm-owned ContextVar (C2)
+**Context.** A spawned child reuses the parent's model/TelemetryModule; attributing
+the child's `llm_call`s to the child must not rebuild the provider chain and must
+be safe under concurrent `spawn_many`.
+**Decision.** arcllm defines `agent_identity` over task-local `ContextVar`s
+(resolution: contextvar > config > global). arcagent only *sets* it around the
+child `run()`. Rejected: `set_global_defaults` (process-global race corrupts
+concurrent children) and threading identity through `run()` (arcrun→arcllm
+boundary breach).
+**Consequences.** `asyncio.Task` snapshots context at creation, so concurrent
+children are isolated by construction. Proven with a `Barrier(2)`-gated test that
+forces both children in-flight simultaneously (a sequential mock could not catch
+a regression to the global race).
+
+### ADR-028-3 — EventBus-level sampling never drops errors or lifecycle/lineage
+**Context.** Tool events are the volume driver (10–1000+/run). `[arcstore].sample_rate`
+thins them, but observability of failures and structure must be preserved.
+**Decision.** `sample_rate` is applied only to routine `tool_event`s at the
+EventBus; `tool.error`, `run_event`, and `spawn_event` are never sampled out
+(OTel tail-sampling rule). The caller passes the effective rate; the spool stays
+dumb.
+**Consequences.** A high-frequency tool loop can be thinned without losing the
+failure/lifecycle/lineage skeleton an operator needs.
+
+### Known ceilings (documented, not fixed — fine at the single-operator target)
+- **Spool I/O is synchronous** on the tool hot path (same pattern as the existing
+  `llm_call`/`run_event` spooling). At the documented 1000s-of-agents goal this
+  becomes a loop-stall; the fix (offload to a writer task / held-open fd) is a
+  cross-cutting arcstore change, out of scope for SPEC-028.
+- **arcui windowed reads** scan up to 100k rows and filter in Python on an
+  unindexed mirror — cheap at single-operator scale; push `ts >= cutoff` into SQL
+  + add `(ts)`/`(request_id)` indexes when scale demands it.

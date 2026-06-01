@@ -25,3 +25,23 @@ def test_producers_import_spool_only() -> None:
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "clean" in result.stdout
+
+
+# SPEC-028 task 2.7 — adding tool_event recording must not pull a backend in,
+# and the executor (which now computes digests) must stay backend-free too.
+_PROBE_028 = (
+    "import arcrun.events, arcrun.executor, sys; "
+    "banned = [m for m in ('sqlite3', 'asyncpg', 'psycopg', 'boto3', "
+    "'arcstore.backends', 'arcstore.ingest') if m in sys.modules]; "
+    "assert not banned, banned; "
+    "print('clean')"
+)
+
+
+def test_arcrun_spool_only() -> None:
+    """arcrun (events + executor) imports only arcstore.spool — no backend, no DB driver."""
+    result = subprocess.run(  # noqa: S603 — fixed trusted command, _PROBE_028 is a constant
+        [sys.executable, "-c", _PROBE_028], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "clean" in result.stdout

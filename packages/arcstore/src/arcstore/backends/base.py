@@ -15,7 +15,13 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 # Operational tables — one per SpoolRecord.kind, all sharing the flat columns.
-OPERATIONAL_TABLES: tuple[str, ...] = ("llm_calls", "run_events", "agent_events")
+OPERATIONAL_TABLES: tuple[str, ...] = (
+    "llm_calls",
+    "run_events",
+    "agent_events",
+    "tool_events",
+    "spawn_events",
+)
 
 # The arctrust WORM mirror (with a per-row ``verified`` flag set on ingest).
 AUDIT_TABLE = "audit_chain"
@@ -24,6 +30,8 @@ _KIND_TABLE = {
     "llm_call": "llm_calls",
     "run_event": "run_events",
     "agent_event": "agent_events",
+    "tool_event": "tool_events",
+    "spawn_event": "spawn_events",
 }
 
 

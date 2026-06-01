@@ -146,6 +146,60 @@ class TestQueryApi:
             await backend.stop()
 
 
+class TestToolAndSpawnIngest:
+    async def test_tool_and_spawn_ingest(self, tmp_path: Path) -> None:
+        """Task 1.6 — tool_event + spawn_event round-trip spool → query, idempotent on replay."""
+        ingest, backend, spool = await _make_ingest(tmp_path)
+        f = spool / "operational-2026-05-31.jsonl"
+        try:
+            spool_record(
+                SpoolRecord(
+                    kind="tool_event",
+                    actor_did="did:arc:test:exec/aabbccdd",
+                    request_id="run-1",
+                    tool_name="web.fetch",
+                    phase="end",
+                    outcome="ok",
+                    latency_ms=42.0,
+                    args_digest="a" * 64,
+                    args_size=12,
+                    result_digest="b" * 64,
+                    result_size=99,
+                ),
+                path=f,
+            )
+            spool_record(
+                SpoolRecord(
+                    kind="spawn_event",
+                    actor_did="did:arc:test:agent:child",
+                    request_id="run-1",
+                    parent_did="did:arc:test:agent:parent",
+                    child_did="did:arc:test:agent:child",
+                    role="researcher",
+                    depth=1,
+                    outcome="ok",
+                ),
+                path=f,
+            )
+            await ingest.backfill()
+            await ingest.backfill()  # replay must not duplicate (idempotent)
+
+            tool_rows = await backend.query("tool_events")
+            assert len(tool_rows) == 1
+            assert tool_rows[0]["tool_name"] == "web.fetch"
+            assert tool_rows[0]["result_digest"] == "b" * 64
+            assert tool_rows[0]["result_size"] == 99
+
+            spawn_rows = await backend.query("spawn_events")
+            assert len(spawn_rows) == 1
+            assert spawn_rows[0]["parent_did"] == "did:arc:test:agent:parent"
+            assert spawn_rows[0]["child_did"] == "did:arc:test:agent:child"
+            assert spawn_rows[0]["role"] == "researcher"
+            assert spawn_rows[0]["depth"] == 1
+        finally:
+            await backend.stop()
+
+
 class TestWormIngest:
     async def test_worm_ingest_flags_tamper(self, tmp_path: Path) -> None:
         """AC — a verifiable WORM ingests as verified; a tampered one flags rows unverified."""

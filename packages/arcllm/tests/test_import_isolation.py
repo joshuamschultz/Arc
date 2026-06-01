@@ -20,7 +20,7 @@ _PROBE = (
 
 
 def test_producers_import_spool_only() -> None:
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603 — fixed trusted command, _PROBE is a constant
         [sys.executable, "-c", _PROBE], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stdout + result.stderr

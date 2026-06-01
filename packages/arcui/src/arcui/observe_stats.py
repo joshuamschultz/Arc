@@ -137,6 +137,33 @@ def compute_stats(rows: list[dict[str, Any]], *, window: str) -> dict[str, Any]:
     }
 
 
+def compute_llm_by_identity(rows: list[dict[str, Any]], *, window: str) -> dict[str, Any]:
+    """Per-identity LLM rollup (SPEC-028 FR-4 / UC-3) — parent vs each child.
+
+    Groups ``llm_calls`` by ``agent_label`` (falling back to ``actor_did``), so a
+    spawned child carrying a distinct label separates cleanly from its parent.
+    Cost lives at the leaf and is summed per identity on read — a parent total
+    never absorbs its children's spend (no double-count by construction).
+    """
+    identities: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        entry = identities.setdefault(_agent_of(row), _perf_entry())
+        _accumulate(entry, row)
+    return {
+        "window": window,
+        "identities": [
+            {
+                "identity": name,
+                "request_count": int(e["request_count"]),
+                "error_count": int(e["error_count"]),
+                "total_tokens": int(e["total_tokens"]),
+                "total_cost": round(e["total_cost"], 6),
+            }
+            for name, e in sorted(identities.items(), key=lambda kv: -kv[1]["total_cost"])
+        ],
+    }
+
+
 def compute_cost_efficiency(rows: list[dict[str, Any]], *, window: str) -> dict[str, Any]:
     """Per-model cost-efficiency ranking + potential single-model savings."""
     stats = compute_stats(rows, window=window)

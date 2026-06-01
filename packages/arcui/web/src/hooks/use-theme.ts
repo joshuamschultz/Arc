@@ -6,7 +6,9 @@ function getInitialDark(): boolean {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored !== null) return stored === 'dark'
-  } catch {}
+  } catch {
+    // localStorage unavailable (private mode / sandboxed iframe) — use default.
+  }
   return false // default: light
 }
 
@@ -22,7 +24,9 @@ export function useTheme() {
     }
     try {
       localStorage.setItem(STORAGE_KEY, dark ? 'dark' : 'light')
-    } catch {}
+    } catch {
+      // localStorage unavailable — theme still applies for this session.
+    }
   }, [dark])
 
   const toggle = useCallback(() => setDark(d => !d), [])

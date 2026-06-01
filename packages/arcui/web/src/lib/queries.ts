@@ -7,12 +7,15 @@ import type {
   Dict,
   FileReadResponse,
   FilesTreeResponse,
+  IdentityCostResponse,
   PolicyBulletsResponse,
   PolicyResponse,
   PolicyStatsResponse,
+  RunTimelineResponse,
   SessionReplayResponse,
   SessionsListResponse,
   SkillsResponse,
+  SpawnTreeResponse,
   TasksResponse,
   TeamPolicyStatsResponse,
   TeamToolsSkillsResponse,
@@ -217,3 +220,21 @@ export const useAgentFileRead = (agentId: string, path: string | null) =>
       apiGet(`/api/agents/${agentId}/files/read?path=${encodeURIComponent(path!)}`, signal),
     enabled: !!path,
   })
+
+// --- SPEC-028: tool/code timeline, spawn lineage, per-identity cost --------
+
+export const useRunTimeline = (runId: string | null) =>
+  useQuery<RunTimelineResponse>({
+    queryKey: ['run', runId, 'timeline'],
+    queryFn: ({ signal }) => apiGet(`/api/runs/${encodeURIComponent(runId!)}/timeline`, signal),
+    enabled: !!runId,
+  })
+
+export const useSpawnTree = (root: string | null) =>
+  useApiQuery<SpawnTreeResponse>(
+    ['spawn-tree', root],
+    `/api/spawn-tree${root ? `?root=${encodeURIComponent(root)}` : ''}`,
+  )
+
+export const useIdentityCost = (window = '24h') =>
+  useApiQuery<IdentityCostResponse>(['stats', 'by-identity', window], `/api/stats/by-identity?window=${window}`)

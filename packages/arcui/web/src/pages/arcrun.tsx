@@ -6,6 +6,7 @@ import { PageHeader } from '@/components/page-header'
 import { StatCard } from '@/components/stat-card'
 import { DataTable } from '@/components/data-table'
 import { RunReplayDrawer } from '@/components/run-replay-drawer'
+import { IdentityCostTable, RunTimeline, SpawnLineage } from '@/components/run-observability'
 import { LoadingRows } from '@/components/states'
 import { apiGet } from '@/lib/api'
 import { useRoster } from '@/lib/queries'
@@ -99,6 +100,28 @@ export function ArcRunPage() {
               emptyDescription="Agentic runs (sessions) appear here as agents execute."
             />
           )}
+        </section>
+
+        {/* SPEC-028 — tool/code timeline for the selected run (UC-1/UC-4). */}
+        {active && (
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">
+              Tool / code timeline — {shortId(active.sid, 18)}
+            </h3>
+            <RunTimeline runId={active.sid} />
+          </section>
+        )}
+
+        {/* SPEC-028 — spawn lineage (UC-2) + per-identity cost (UC-3). */}
+        <section className="grid gap-5 lg:grid-cols-2">
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">Spawn lineage</h3>
+            <SpawnLineage root={null} />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-foreground">LLM cost by identity</h3>
+            <IdentityCostTable window="24h" />
+          </div>
         </section>
       </div>
 

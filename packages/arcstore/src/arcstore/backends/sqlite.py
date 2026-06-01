@@ -39,6 +39,18 @@ _OPERATIONAL_COLUMNS = (
     "latency_ms",
     "outcome",
     "name",
+    # tool_event columns (SPEC-028 FR-1/FR-2)
+    "tool_name",
+    "phase",
+    "args_digest",
+    "args_size",
+    "result_digest",
+    "result_size",
+    # spawn_event columns (SPEC-028 FR-3)
+    "parent_did",
+    "child_did",
+    "role",
+    "depth",
     "extra",
 )
 _AUDIT_COLUMNS = (
@@ -83,6 +95,16 @@ def _operational_ddl(table: str) -> str:
         latency_ms REAL,
         outcome TEXT,
         name TEXT,
+        tool_name TEXT,
+        phase TEXT,
+        args_digest TEXT,
+        args_size INTEGER,
+        result_digest TEXT,
+        result_size INTEGER,
+        parent_did TEXT,
+        child_did TEXT,
+        role TEXT,
+        depth INTEGER,
         extra TEXT
     );
     """
