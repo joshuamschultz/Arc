@@ -46,11 +46,10 @@ Design:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _logger = logging.getLogger("arcgateway.config")
 
@@ -79,83 +78,6 @@ class SecuritySection(BaseModel):
     require_pairing: bool = False
 
 
-class TelegramPlatformConfig(BaseModel):
-    """[platforms.telegram] section."""
-
-    enabled: bool = False
-    token_env: str = "TELEGRAM_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
-    allowed_user_ids: list[int] = Field(default_factory=list)
-    agent_did: str = ""  # Overrides [gateway].agent_did for this platform
-
-    def resolve_token(self) -> str | None:
-        """Read bot token from the configured env var.
-
-        Returns None if the env var is not set (so caller can handle
-        the tier-appropriate error: hard fail at federal, warn at enterprise,
-        skip at personal).
-        """
-        return os.environ.get(self.token_env)
-
-
-class SlackPlatformConfig(BaseModel):
-    """[platforms.slack] section."""
-
-    enabled: bool = False
-    bot_token_env: str = "SLACK_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
-    app_token_env: str = "SLACK_APP_TOKEN"  # noqa: S105 — env var name, not a secret
-    allowed_user_ids: list[str] = Field(default_factory=list)
-    agent_did: str = ""  # Overrides [gateway].agent_did for this platform
-
-    def resolve_bot_token(self) -> str | None:
-        """Read bot token from env var."""
-        return os.environ.get(self.bot_token_env)
-
-    def resolve_app_token(self) -> str | None:
-        """Read app token from env var."""
-        return os.environ.get(self.app_token_env)
-
-
-class MattermostPlatformConfig(BaseModel):
-    """[platforms.mattermost] section.
-
-    Mattermost adapter for air-gapped DOE/National Lab deployments
-    (FedRAMP High / IL5 / JWICS). Authenticates via a Personal Access
-    Token (PAT); the token value is read from an environment variable at
-    runtime — never stored inline.
-
-    Fields:
-        enabled: Whether the adapter is active.
-        server_url: Base HTTPS URL of the Mattermost server, e.g.
-            ``https://mattermost.internal.doe.gov``.  No trailing slash.
-        bot_token_env: Name of the env var holding the PAT.
-        allowed_channel_ids: Channel IDs the bot accepts messages from.
-            Empty list = DMs only (conservative default).
-        bot_user_id: Mattermost user ID of the bot; used to skip own posts.
-            Leave empty to disable self-filtering.
-        intranet_domains: Additional hostnames treated as private for the
-            federal-tier air-gap guard even if they don't resolve to RFC 1918
-            addresses (e.g. ``mattermost.internal.doe.gov``).
-        agent_did: Overrides [gateway].agent_did for this platform.
-    """
-
-    enabled: bool = False
-    server_url: str = ""
-    bot_token_env: str = "MM_BOT_TOKEN"  # noqa: S105 — env var name, not a secret
-    allowed_channel_ids: list[str] = Field(default_factory=list)
-    bot_user_id: str = ""
-    intranet_domains: list[str] = Field(default_factory=list)
-    agent_did: str = ""  # Overrides [gateway].agent_did for this platform
-
-    def resolve_bot_token(self) -> str | None:
-        """Read the PAT from the configured env var.
-
-        Returns None if unset so the caller can apply tier-appropriate
-        error handling (hard fail at federal, warn at enterprise, skip at
-        personal).
-        """
-        return os.environ.get(self.bot_token_env)
-
-
 class WebPlatformConfig(BaseModel):
     """[platforms.web] section.
 
@@ -178,12 +100,31 @@ class WebPlatformConfig(BaseModel):
 
 
 class PlatformsSection(BaseModel):
-    """[platforms] section containing per-platform configs."""
+    """[platforms] section.
 
-    telegram: TelegramPlatformConfig = Field(default_factory=TelegramPlatformConfig)
-    slack: SlackPlatformConfig = Field(default_factory=SlackPlatformConfig)
-    mattermost: MattermostPlatformConfig = Field(default_factory=MattermostPlatformConfig)
+    ``web`` is the only platform the gateway core knows about — it's the
+    in-process browser-chat adapter arcui hosts, not a remote platform with
+    a credential and an extension package.
+
+    Every other ``[platforms.<name>]`` block (telegram, slack, mattermost, …)
+    is captured generically via ``extra="allow"`` and handed, as a raw dict,
+    to the matching adapter plugin (``arcgateway.adapters.registry``). The
+    plugin validates the block against its own Pydantic model. This keeps the
+    gateway core free of any platform-specific config schema.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
     web: WebPlatformConfig = Field(default_factory=WebPlatformConfig)
+
+    def remote_blocks(self) -> dict[str, dict[str, Any]]:
+        """Return raw ``[platforms.<name>]`` blocks for every non-web platform.
+
+        These are the blocks the adapter registry iterates: each dict-shaped
+        extra field is a remote platform whose plugin owns its config schema.
+        """
+        extra = self.__pydantic_extra__ or {}
+        return {name: block for name, block in extra.items() if isinstance(block, dict)}
 
 
 class PairingSection(BaseModel):
@@ -299,24 +240,21 @@ class GatewayConfig(BaseModel):
     def effective_agent_did(self, platform: str) -> str:
         """Return the agent DID for the given platform.
 
-        Platform-level agent_did overrides the gateway-level default.
-        Falls back to the [gateway].agent_did if the platform config
-        has an empty agent_did.
+        A platform-level ``agent_did`` overrides the gateway-level default;
+        an empty/absent platform value falls back to ``[gateway].agent_did``.
+        Works for both the core ``web`` adapter and any remote platform block,
+        without the gateway knowing platform-specific schemas.
 
         Args:
-            platform: Platform name ("telegram", "slack", "mattermost", etc.).
+            platform: Platform name ("web", "telegram", "slack", …).
 
         Returns:
             Agent DID string.
         """
-        if platform == "telegram":
-            plat_did = self.platforms.telegram.agent_did
-        elif platform == "slack":
-            plat_did = self.platforms.slack.agent_did
-        elif platform == "mattermost":
-            plat_did = self.platforms.mattermost.agent_did
-        elif platform == "web":
+        if platform == "web":
             plat_did = self.platforms.web.agent_did
         else:
-            plat_did = ""
+            block = self.platforms.remote_blocks().get(platform, {})
+            raw = block.get("agent_did", "")
+            plat_did = raw if isinstance(raw, str) else ""
         return plat_did or self.gateway.agent_did

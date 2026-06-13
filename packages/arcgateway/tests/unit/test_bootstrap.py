@@ -1,8 +1,10 @@
 """Tests for arcgateway.bootstrap.build_for_embedded.
 
-The composition root is a thin wiring layer — these tests focus on
-which adapter slots are populated for which config combinations and on
-the executor selection by tier.
+The composition root is a thin wiring layer. The gateway core knows only the
+core ``web`` adapter; every remote platform loads through the generic
+adapter-plugin registry into the ``adapters`` tuple. These tests focus on that
+delegation and on executor selection by tier — they never assert
+platform-specific slots, because the core names no platform.
 """
 
 from __future__ import annotations
@@ -24,9 +26,6 @@ def empty_team_root(tmp_path: Path) -> Path:
     return tmp_path / "team"
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
 def _config(toml: str) -> GatewayConfig:
     return GatewayConfig.from_toml_str(toml)
 
@@ -36,7 +35,7 @@ def _config(toml: str) -> GatewayConfig:
 
 @pytest.mark.asyncio
 async def test_build_for_embedded_web_only(empty_team_root: Path) -> None:
-    """With only [platforms.web].enabled, only the web slot is populated."""
+    """With only [platforms.web].enabled, web is set and no remote adapters load."""
     cfg = _config(
         """
 [gateway]
@@ -49,10 +48,9 @@ enabled = true
     bundle = await build_for_embedded(empty_team_root, cfg)
     assert isinstance(bundle, EmbeddedGateway)
     assert bundle.web_adapter is not None
-    assert bundle.slack_adapter is None
-    assert bundle.telegram_adapter is None
-    assert isinstance(bundle.executor, AsyncioExecutor)
     assert bundle.web_adapter.name == "web"
+    assert bundle.adapters == ()
+    assert isinstance(bundle.executor, AsyncioExecutor)
 
 
 @pytest.mark.asyncio
@@ -61,8 +59,7 @@ async def test_build_for_embedded_no_platforms(empty_team_root: Path) -> None:
     cfg = _config("")
     bundle = await build_for_embedded(empty_team_root, cfg)
     assert bundle.web_adapter is None
-    assert bundle.slack_adapter is None
-    assert bundle.telegram_adapter is None
+    assert bundle.adapters == ()
     assert isinstance(bundle.executor, AsyncioExecutor)
 
 
@@ -78,36 +75,20 @@ tier = "federal"
 """
     )
     bundle = await build_for_embedded(empty_team_root, cfg)
-    # SubprocessExecutor is the federal-tier choice — type name match is
-    # sufficient (avoids importing the class here, which would couple the
-    # test to internal subprocess plumbing).
     assert type(bundle.executor).__name__ == "SubprocessExecutor"
 
 
 @pytest.mark.asyncio
-async def test_build_for_embedded_slack_skipped_without_tokens(
+async def test_build_for_embedded_remote_skipped_without_credentials(
     empty_team_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Slack enabled but no env tokens → adapter is silently skipped."""
-    monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("SLACK_APP_TOKEN", raising=False)
-    cfg = _config(
-        """
-[platforms.slack]
-enabled = true
-"""
-    )
-    bundle = await build_for_embedded(empty_team_root, cfg)
-    assert bundle.slack_adapter is None
+    """An enabled remote platform whose token is absent is skipped at personal tier.
 
-
-@pytest.mark.asyncio
-async def test_build_for_embedded_telegram_skipped_without_token(
-    empty_team_root: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Telegram enabled but no token env var → adapter is silently skipped."""
+    Uses telegram as a concrete installed plugin; the registry-skip path is the
+    same for any platform whose build() raises AdapterUnavailableError.
+    """
+    pytest.importorskip("arcgateway_telegram")
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     cfg = _config(
         """
@@ -116,23 +97,16 @@ enabled = true
 """
     )
     bundle = await build_for_embedded(empty_team_root, cfg)
-    assert bundle.telegram_adapter is None
+    assert not any(a.name == "telegram" for a in bundle.adapters)
 
 
 @pytest.mark.asyncio
-async def test_build_for_embedded_web_slack_telegram_together(
+async def test_build_for_embedded_remote_loads_into_adapters_tuple(
     empty_team_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """All three platforms enabled with mock tokens → all three slots populated.
-
-    Skips when the optional adapter packages are not installed (kept lean
-    in the test environment).
-    """
-    pytest.importorskip("slack_bolt")
-    pytest.importorskip("telegram")
-    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-1234")
-    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-1234")
+    """An enabled remote platform with credentials lands in the adapters tuple."""
+    pytest.importorskip("arcgateway_telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234:test-token")
     cfg = _config(
         """
@@ -142,14 +116,10 @@ agent_did = "did:arc:agent:default"
 [platforms.web]
 enabled = true
 
-[platforms.slack]
-enabled = true
-
 [platforms.telegram]
 enabled = true
 """
     )
     bundle = await build_for_embedded(empty_team_root, cfg)
     assert bundle.web_adapter is not None
-    assert bundle.slack_adapter is not None
-    assert bundle.telegram_adapter is not None
+    assert [a.name for a in bundle.adapters] == ["telegram"]

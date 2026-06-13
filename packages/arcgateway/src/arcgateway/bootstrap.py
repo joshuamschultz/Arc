@@ -26,9 +26,7 @@ from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
 
 if TYPE_CHECKING:
-    from arcgateway.adapters.mattermost import MattermostAdapter
-    from arcgateway.adapters.slack import SlackAdapter
-    from arcgateway.adapters.telegram import TelegramAdapter
+    from arcgateway.adapters.base import BasePlatformAdapter
     from arcgateway.adapters.web import WebPlatformAdapter
     from arcgateway.config import GatewayConfig
 
@@ -38,17 +36,17 @@ _logger = logging.getLogger("arcgateway.bootstrap")
 class EmbeddedGateway(NamedTuple):
     """Bundle of components arcui needs to host the gateway runtime.
 
-    Slack, Telegram, and Mattermost adapter slots are populated only when
-    their ``[platforms.X]`` blocks are enabled; otherwise they are None.
+    ``web_adapter`` is the core in-process browser adapter (``None`` when the
+    ``[platforms.web]`` block is disabled). ``adapters`` holds every enabled
+    remote-platform adapter (telegram, slack, …) built through the generic
+    adapter-plugin registry — the gateway core names none of them.
     """
 
     executor: Executor
     session_router: SessionRouter
     web_adapter: WebPlatformAdapter | None
     stream_bridge: StreamBridge
-    slack_adapter: SlackAdapter | None = None
-    telegram_adapter: TelegramAdapter | None = None
-    mattermost_adapter: MattermostAdapter | None = None
+    adapters: tuple[BasePlatformAdapter, ...] = ()
 
 
 def _load_did_index(team_root: Path) -> dict[str, Path]:
@@ -177,92 +175,6 @@ def _build_web_adapter(
     )
 
 
-def _build_slack_adapter(
-    cfg: GatewayConfig,
-    session_router: SessionRouter,
-) -> SlackAdapter | None:
-    """Build a SlackAdapter when enabled and tokens are present."""
-    if not cfg.platforms.slack.enabled:
-        return None
-    bot_token = cfg.platforms.slack.resolve_bot_token()
-    app_token = cfg.platforms.slack.resolve_app_token()
-    if bot_token is None or app_token is None:
-        _logger.warning(
-            "bootstrap: Slack enabled but tokens are missing (env=%s/%s); skipping",
-            cfg.platforms.slack.bot_token_env,
-            cfg.platforms.slack.app_token_env,
-        )
-        return None
-    from arcgateway.adapters.slack import SlackAdapter
-
-    return SlackAdapter(
-        bot_token=bot_token,
-        app_token=app_token,
-        allowed_user_ids=cfg.platforms.slack.allowed_user_ids,
-        on_message=session_router.handle,
-    )
-
-
-def _build_telegram_adapter(
-    cfg: GatewayConfig,
-    session_router: SessionRouter,
-) -> TelegramAdapter | None:
-    """Build a TelegramAdapter when enabled and the token is present."""
-    if not cfg.platforms.telegram.enabled:
-        return None
-    token = cfg.platforms.telegram.resolve_token()
-    if token is None:
-        _logger.warning(
-            "bootstrap: Telegram enabled but token missing (env=%s); skipping",
-            cfg.platforms.telegram.token_env,
-        )
-        return None
-    from arcgateway.adapters.telegram import TelegramAdapter
-
-    return TelegramAdapter(
-        bot_token=token,
-        allowed_user_ids=cfg.platforms.telegram.allowed_user_ids,
-        on_message=session_router.handle,
-        agent_did=cfg.effective_agent_did("telegram"),
-    )
-
-
-def _build_mattermost_adapter(
-    cfg: GatewayConfig,
-    session_router: SessionRouter,
-) -> MattermostAdapter | None:
-    """Build a MattermostAdapter when enabled and the PAT is present.
-
-    The federal-tier air-gap guard runs inside MattermostAdapter.__init__:
-    a public-DNS server_url at tier=federal raises ValueError, which
-    propagates as a hard startup failure (correct: misconfigured federal
-    deployments should refuse to start rather than silently phone home).
-    """
-    if not cfg.platforms.mattermost.enabled:
-        return None
-    if not cfg.platforms.mattermost.server_url:
-        _logger.warning("bootstrap: Mattermost enabled but server_url is empty; skipping")
-        return None
-    bot_token = cfg.platforms.mattermost.resolve_bot_token()
-    if bot_token is None:
-        _logger.warning(
-            "bootstrap: Mattermost enabled but token missing (env=%s); skipping",
-            cfg.platforms.mattermost.bot_token_env,
-        )
-        return None
-    from arcgateway.adapters.mattermost import MattermostAdapter
-
-    return MattermostAdapter(
-        server_url=cfg.platforms.mattermost.server_url,
-        bot_token=bot_token,
-        on_message=session_router.handle,
-        allowed_channel_ids=cfg.platforms.mattermost.allowed_channel_ids or None,
-        bot_user_id=cfg.platforms.mattermost.bot_user_id,
-        tier=cfg.gateway.tier,
-        intranet_domains=cfg.platforms.mattermost.intranet_domains,
-    )
-
-
 async def build_for_embedded(
     team_root: Path,
     gateway_config: GatewayConfig,
@@ -292,27 +204,38 @@ async def build_for_embedded(
     session_router = SessionRouter(executor=executor)
     stream_bridge = StreamBridge()
 
+    from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters
+
     web_adapter = _build_web_adapter(gateway_config, session_router)
-    slack_adapter = _build_slack_adapter(gateway_config, session_router)
-    telegram_adapter = _build_telegram_adapter(gateway_config, session_router)
-    mattermost_adapter = _build_mattermost_adapter(gateway_config, session_router)
+
+    # Remote platforms load through the generic adapter-plugin registry.
+    # Federal tier fails closed (AdapterUnavailableError) so a misconfigured
+    # deployment refuses to start rather than serve a silent subset.
+    try:
+        remote_adapters = build_adapters(
+            platforms=gateway_config.platforms.remote_blocks(),
+            on_message=session_router.handle,
+            default_agent_did=gateway_config.gateway.agent_did,
+            tier=gateway_config.gateway.tier,
+        )
+    except AdapterUnavailableError:
+        _logger.exception("bootstrap: refusing to start — enabled adapter unavailable")
+        raise
 
     # Wire the primary delivery adapter via the public setter.
     # SessionRouter needs an adapter for outbound delivery; each adapter
     # needs ``session_router.handle`` for inbound — two-step construction
     # breaks the cycle. Web is primary when present; else the first
     # available platform.
-    primary = web_adapter or slack_adapter or telegram_adapter or mattermost_adapter
+    primary = web_adapter or (remote_adapters[0] if remote_adapters else None)
     if primary is not None:
         session_router.set_adapter(primary)
 
     _logger.info(
-        "bootstrap: embedded gateway built (tier=%s web=%s slack=%s telegram=%s mattermost=%s)",
+        "bootstrap: embedded gateway built (tier=%s web=%s remote=%s)",
         gateway_config.gateway.tier,
         bool(web_adapter),
-        bool(slack_adapter),
-        bool(telegram_adapter),
-        bool(mattermost_adapter),
+        [a.name for a in remote_adapters],
     )
 
     return EmbeddedGateway(
@@ -320,9 +243,7 @@ async def build_for_embedded(
         session_router=session_router,
         web_adapter=web_adapter,
         stream_bridge=stream_bridge,
-        slack_adapter=slack_adapter,
-        telegram_adapter=telegram_adapter,
-        mattermost_adapter=mattermost_adapter,
+        adapters=tuple(remote_adapters),
     )
 
 

@@ -1,4 +1,4 @@
-"""Unit tests for arcgateway.adapters.telegram.TelegramAdapter.
+"""Unit tests for arcgateway_telegram.adapter.TelegramAdapter.
 
 All python-telegram-bot calls are mocked so tests run without the library
 installed (simulates an environment where only the base arcgateway dep is
@@ -22,18 +22,18 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from arcgateway.delivery import DeliveryTarget
+from arcgateway.executor import InboundEvent
 
 # We import the module under test regardless of whether python-telegram-bot is
 # installed — the adapter's connect() guards that import internally.
-from arcgateway.adapters.telegram import (
+from arcgateway_telegram.adapter import (
     TelegramAdapter,
     _is_conflict_error,
     _is_network_error,
     _network_backoff,
     split_message,
 )
-from arcgateway.delivery import DeliveryTarget
-from arcgateway.executor import InboundEvent
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

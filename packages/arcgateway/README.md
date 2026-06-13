@@ -55,6 +55,9 @@ For Arc monorepo development, install all sibling packages in editable mode toge
 
 ```bash
 uv pip install -e packages/arcgateway \
+               -e packages/arcgateway-telegram \
+               -e packages/arcgateway-slack \
+               -e packages/arcgateway-mattermost \
                -e packages/arccli \
                -e packages/arcagent \
                -e packages/arcllm \
@@ -77,27 +80,27 @@ runner = GatewayRunner(executor=executor)
 await runner.run()              # blocks; SIGINT/SIGTERM handled gracefully
 ```
 
-Configure platform adapters in `arcagent.toml`:
+Configure platform adapters in `gateway.toml` (enable a block **and** install
+its extension package):
 
 ```toml
 [gateway]
-enabled = true
+agent_did = "did:arc:agent:default"
 
-[gateway.pairing]
-enabled = true
-code_ttl_minutes = 15
-allowlist_path = "~/.arcagent/gateway/allowlist.jsonl"
+[security]
+require_pairing = true
 
-[gateway.platforms.telegram]
+# pip install arcgateway-telegram
+[platforms.telegram]
 enabled = true
-bot_token_env = "TELEGRAM_BOT_TOKEN"
+token_env = "TELEGRAM_BOT_TOKEN"
+allowed_user_ids = [123456789]
 
-[gateway.platforms.slack]
-enabled = true
-bot_token_env = "SLACK_BOT_TOKEN"
-
-[gateway.platforms.discord]
+# pip install arcgateway-slack
+[platforms.slack]
 enabled = false
+bot_token_env = "SLACK_BOT_TOKEN"
+app_token_env = "SLACK_APP_TOKEN"
 ```
 
 ---
@@ -196,17 +199,48 @@ Audit events emitted on every fs op: `gateway.fs.read`, `gateway.fs.tree`, `gate
 
 ---
 
-## 🔌 Platform Adapters
+## 🔌 Platform Adapters — a plugin system
 
-Each adapter is independently togglable. They follow a common Protocol and can be replaced if you want to write your own.
+The gateway core contains **zero** platform-specific code. The only built-in
+adapter is `web` (the in-process browser chat surface arcui hosts). Every remote
+platform ships as a **separate extension package** that registers an
+`AdapterPlugin` under the `arcgateway.adapters` entry-point group:
 
-| Platform | Adapter | Bot Token Source |
+| Platform | Package | Bot Token Source |
 |---|---|---|
-| **Telegram** | `TelegramAdapter` | `TELEGRAM_BOT_TOKEN` env or vault |
-| **Slack** | `SlackAdapter` | `SLACK_BOT_TOKEN` env or vault |
-| **Discord** | `DiscordAdapter` | `DISCORD_BOT_TOKEN` env or vault |
+| **Telegram** | [`arcgateway-telegram`](../arcgateway-telegram) | `TELEGRAM_BOT_TOKEN` env or vault |
+| **Slack** | [`arcgateway-slack`](../arcgateway-slack) | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` |
+| **Mattermost** | [`arcgateway-mattermost`](../arcgateway-mattermost) | `MM_BOT_TOKEN` env or vault |
 
-Adding a new platform is one Python class implementing the adapter Protocol — `inbound`, `outbound`, `lifecycle`. No core changes needed.
+Install a platform from the CLI (pip/uv under the hood, official names only):
+
+```bash
+arc gateway adapter list                # show official adapters + install status
+arc gateway adapter install telegram    # installs arcgateway-telegram
+# standalone daemon equivalent:
+arcgateway adapter install telegram
+```
+
+…or install the package directly:
+
+```bash
+pip install arcgateway arcgateway-telegram     # install only the platforms you need
+```
+
+At startup `arcgateway.adapters.registry`:
+1. **Discovers** every installed plugin via `importlib.metadata.entry_points`.
+2. **Authorizes** it — validates the name and applies a tier-aware allowlist
+   (official plugins always allowed; unofficial ones load with an audit warning
+   at personal/enterprise and are **blocked** at federal).
+3. **Builds** an adapter for each enabled `[platforms.<name>]` block, gating on
+   credential presence (a missing token skips at personal, fails closed at federal).
+4. **Audits** every load / skip / block (`gateway.adapter.*`).
+
+**Writing a new platform** = one package: an adapter class implementing
+`BasePlatformAdapter` (`connect` / `disconnect` / `send`), a Pydantic config
+model, and a `PLUGIN = AdapterPlugin(name, build)` registered via the entry
+point. No changes to the gateway core. See `arcgateway-telegram` as the
+reference implementation.
 
 ---
 

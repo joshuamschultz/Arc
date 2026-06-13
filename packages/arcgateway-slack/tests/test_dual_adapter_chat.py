@@ -37,14 +37,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcrun import StreamEvent, TokenEvent, TurnEndEvent
-
-from arcgateway.adapters.slack import SlackAdapter
 from arcgateway.bootstrap import EmbeddedGateway, build_for_embedded
 from arcgateway.config import GatewayConfig
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import AsyncioExecutor, InboundEvent
 from arcgateway.session import SessionRouter, build_session_key
+from arcrun import StreamEvent, TokenEvent, TurnEndEvent
+
+from arcgateway_slack.adapter import SlackAdapter
 
 pytestmark = pytest.mark.asyncio
 
@@ -227,9 +227,11 @@ app_token_env = "SLACK_APP_TOKEN"
 
     assert isinstance(bundle, EmbeddedGateway)
     assert bundle.web_adapter is not None, "web_adapter slot must be populated"
-    assert bundle.slack_adapter is not None, "slack_adapter slot must be populated"
     assert bundle.web_adapter.name == "web"
-    assert bundle.slack_adapter.name == "slack"
+    # Slack now loads through the generic adapter-plugin registry (entry point
+    # arcgateway-slack), landing in the generic ``adapters`` tuple.
+    slack = next((a for a in bundle.adapters if a.name == "slack"), None)
+    assert slack is not None, "slack adapter must register via the plugin registry"
     # Both adapters share the same SessionRouter — confirmed by the single
     # session_router slot in EmbeddedGateway.
     assert bundle.session_router is not None

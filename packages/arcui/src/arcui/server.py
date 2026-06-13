@@ -249,11 +249,9 @@ def create_app(
 
             install_embedded_agent_hooks(starlette_app)
             # Connect each adapter once so it's ready for inbound traffic.
-            for adapter in (
-                embedded_gateway.web_adapter,
-                embedded_gateway.slack_adapter,
-                embedded_gateway.telegram_adapter,
-            ):
+            # web_adapter is the core in-process adapter; embedded_gateway.adapters
+            # holds every remote-platform adapter built by the plugin registry.
+            for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                 if adapter is not None:
                     await adapter.connect()
         # Browser-open callback (registered by `arc ui start` on
@@ -271,11 +269,7 @@ def create_app(
             # SPEC-023: shut adapters down in reverse — disconnect cancels
             # all per-socket tasks and closes the WebSockets cleanly.
             if embedded_gateway is not None:
-                for adapter in (
-                    embedded_gateway.web_adapter,
-                    embedded_gateway.slack_adapter,
-                    embedded_gateway.telegram_adapter,
-                ):
+                for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                     if adapter is None:
                         continue
                     try:

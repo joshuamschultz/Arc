@@ -37,7 +37,7 @@ from typing import Any
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
 
-_logger = logging.getLogger("arcgateway.adapters.mattermost")
+_logger = logging.getLogger("arcgateway_mattermost.adapter")
 
 _QUEUE_MAXSIZE = 100
 _BACKOFF_INITIAL_MS: float = 800
@@ -224,7 +224,7 @@ class MattermostAdapter:
             import aiohttp  # noqa: F401
         except ImportError as exc:
             raise ImportError(
-                "aiohttp is not installed. Install with: pip install 'arcgateway[mattermost]'"
+                "aiohttp is not installed. Install with: pip install 'arcgateway-mattermost'"
             ) from exc
         _logger.info(
             "MattermostAdapter: connecting to %s (tier=%s)",

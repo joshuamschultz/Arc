@@ -13,9 +13,9 @@ import logging
 from pathlib import Path
 
 import pytest
-
-from arcgateway.adapters.slack import SlackAdapter
 from arcgateway.executor import InboundEvent
+
+from arcgateway_slack.adapter import SlackAdapter
 
 pytestmark = pytest.mark.asyncio
 
@@ -103,7 +103,7 @@ async def test_slack_adapter_logging_handlers_do_not_emit_tokens(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Any log records emitted at construction must not contain tokens."""
-    caplog.set_level(logging.DEBUG, logger="arcgateway.adapters.slack")
+    caplog.set_level(logging.DEBUG, logger="arcgateway_slack.adapter")
     _ = _make_adapter(tmp_path)
     for record in caplog.records:
         assert _BOT_TOKEN not in record.getMessage(), (

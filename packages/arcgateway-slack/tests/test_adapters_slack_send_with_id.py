@@ -23,13 +23,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from arcgateway.delivery import DeliveryTarget
 
-from arcgateway.adapters.slack import (
+from arcgateway_slack.adapter import (
     SlackAdapter,
     _classify_prefix,
     _DedupStore,
 )
-from arcgateway.delivery import DeliveryTarget
 
 # ---------------------------------------------------------------------------
 # Test helpers (mirrored from test_adapters_slack.py)

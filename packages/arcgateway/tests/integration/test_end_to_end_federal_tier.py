@@ -280,20 +280,14 @@ agent_did = "did:arc:agent:telegram_specific"
         assert config.effective_agent_did("telegram") == "did:arc:agent:telegram_specific"
         assert config.effective_agent_did("slack") == "did:arc:agent:default"
 
-    def test_telegram_token_reads_from_env(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """TelegramPlatformConfig.resolve_token reads from env var."""
-        monkeypatch.setenv("MY_BOT_TOKEN", "test-token-abc123")
-        config = GatewayConfig.from_toml_str("""
-[platforms.telegram]
-enabled = true
-token_env = "MY_BOT_TOKEN"
-""")
-        assert config.platforms.telegram.resolve_token() == "test-token-abc123"
+    def test_unconfigured_platform_falls_back_to_gateway_did(self) -> None:
+        """A platform with no block at all resolves to the gateway-level DID.
 
-    def test_telegram_token_missing_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """resolve_token returns None when env var is not set."""
-        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-        config = GatewayConfig()
-        assert config.platforms.telegram.resolve_token() is None
+        Per-platform token schemas now live in each adapter's extension
+        package; the gateway only resolves the effective agent DID generically.
+        """
+        config = GatewayConfig.from_toml_str("""
+[gateway]
+agent_did = "did:arc:agent:default"
+""")
+        assert config.effective_agent_did("telegram") == "did:arc:agent:default"

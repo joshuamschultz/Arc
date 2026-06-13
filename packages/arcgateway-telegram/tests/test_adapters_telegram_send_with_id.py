@@ -19,11 +19,11 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from arcgateway.delivery import DeliveryTarget
 
-from arcgateway.adapters.telegram import (
+from arcgateway_telegram.adapter import (
     TelegramAdapter,
 )
-from arcgateway.delivery import DeliveryTarget
 
 
 def _make_adapter(

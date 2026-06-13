@@ -31,10 +31,11 @@ Message splitting:
     Telegram limits messages to 4096 characters. split_message() is ported
     directly from arcagent.modules.telegram.bot to keep the proven behaviour.
 
-python-telegram-bot is an OPTIONAL dependency:
-    arcgateway[telegram]. The import is guarded with try/except inside connect()
-    so the arcgateway package remains importable without it installed. mypy
-    suppresses missing-import errors for telegram.* via pyproject.toml overrides.
+python-telegram-bot is a dependency of the arcgateway-telegram package:
+    Installing this extension package pulls in python-telegram-bot. The import
+    is still guarded with try/except inside connect() so a clear error is
+    raised if the runtime environment is somehow missing it. mypy suppresses
+    missing-import errors for telegram.* via this package's pyproject overrides.
 """
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ from typing import Any
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
 
-_logger = logging.getLogger("arcgateway.adapters.telegram")
+_logger = logging.getLogger("arcgateway_telegram.adapter")
 
 # Sentence-ending punctuation for boundary detection (from arcagent.modules.telegram.bot)
 _SENTENCE_END = re.compile(r"[.!?]\s")
@@ -220,7 +221,7 @@ class TelegramAdapter:
         except ImportError as exc:
             msg = (
                 "python-telegram-bot is not installed. "
-                "Install with: pip install 'arcgateway[telegram]'"
+                "Install with: pip install 'arcgateway-telegram'"
             )
             raise ImportError(msg) from exc
 
@@ -464,9 +465,7 @@ class TelegramAdapter:
         network_attempts = 0
 
         try:
-            from telegram.ext import (
-                Update,  # type: ignore[attr-defined]  # reason: python-telegram-bot re-exports Update under .ext at runtime; the stubs we use don't expose this re-export
-            )
+            from telegram import Update
         except ImportError:
             _logger.error("TelegramAdapter: python-telegram-bot not available in polling loop")
             return

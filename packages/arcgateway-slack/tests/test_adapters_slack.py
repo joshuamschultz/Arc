@@ -1,4 +1,4 @@
-"""Unit tests for arcgateway.adapters.slack.SlackAdapter.
+"""Unit tests for arcgateway_slack.adapter.SlackAdapter.
 
 All slack-bolt interactions are mocked — no real Slack connection needed.
 
@@ -30,10 +30,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from arcgateway.adapters.slack import SlackAdapter, split_message
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
+
+from arcgateway_slack.adapter import SlackAdapter, split_message
 
 # ---------------------------------------------------------------------------
 # Patch paths: slack-bolt uses lazy imports inside connect(), so we patch
