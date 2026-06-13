@@ -227,9 +227,7 @@ async def react_loop(
         # callers with a payload that doesn't match their declared
         # schema. Generic mechanism — the loop has no knowledge of
         # specific terminator tool names.
-        completion = _extract_completion_payload(
-            response.tool_calls, state.registry, succeeded_ids
-        )
+        completion = _extract_completion_payload(response.tool_calls, state.registry, succeeded_ids)
         if completion is not None:
             payload, tool_name = completion
             state.completion_payload = payload

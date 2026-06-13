@@ -530,10 +530,9 @@ class TestTelemetryTraceRecording:
         with caplog.at_level(logging.WARNING, logger="arcllm.modules.telemetry"):
             TelemetryModule(_make_config(store_raw_bodies=True), _make_inner())
 
-        assert any(
-            "store_raw_bodies=True" in record.message
-            for record in caplog.records
-        ), "Expected store_raw_bodies=True warning at module init"
+        assert any("store_raw_bodies=True" in record.message for record in caplog.records), (
+            "Expected store_raw_bodies=True warning at module init"
+        )
 
     async def test_agent_label_set_on_record(self, messages):
         """agent_label from config appears on TraceRecord."""
@@ -694,9 +693,7 @@ class TestAgentIdentityContextVar:
 
         mock_mono.return_value = 0.0
         inner = _make_inner()
-        module = TelemetryModule(
-            _make_config(agent_did="did:parent", agent_label="parent"), inner
-        )
+        module = TelemetryModule(_make_config(agent_did="did:parent", agent_label="parent"), inner)
 
         recorded: list = []
         with patch("arcllm.modules.telemetry._spool_record", recorded.append):

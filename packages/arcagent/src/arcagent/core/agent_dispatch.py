@@ -133,15 +133,9 @@ def _workspace_authored(agent: ArcAgent) -> frozenset[str]:
     registry = agent._capability_registry
     if registry is None:
         return frozenset()
-    names = {
-        name
-        for name, entry in registry._tools.items()
-        if entry.scan_root == WORKSPACE_ROOT
-    }
+    names = {name for name, entry in registry._tools.items() if entry.scan_root == WORKSPACE_ROOT}
     names |= {
-        name
-        for name, entry in registry._skills.items()
-        if entry.scan_root == WORKSPACE_ROOT
+        name for name, entry in registry._skills.items() if entry.scan_root == WORKSPACE_ROOT
     }
     return frozenset(names)
 

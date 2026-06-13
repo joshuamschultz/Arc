@@ -55,9 +55,7 @@ class _FakeProvider:
             return "STEP 1: drain traffic. STEP 2: ship. STEP 3: verify."
         return None
 
-    async def invoke(
-        self, name: str, args: dict[str, Any], *, caller_did: str
-    ) -> CapabilityResult:
+    async def invoke(self, name: str, args: dict[str, Any], *, caller_did: str) -> CapabilityResult:
         self.invoked.append((name, args, caller_did))
         if name == "echo":
             return CapabilityResult(content=f"echo: {args.get('text', '')}")

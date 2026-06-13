@@ -352,9 +352,7 @@ class OpenaiAdapter(BaseAdapter):
         body["stream_options"] = {"include_usage": True}
         url = f"{self._config.provider.base_url}/v1/chat/completions"
 
-        async with self._client.stream(
-            "POST", url, headers=headers, json=body
-        ) as response:
+        async with self._client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 error_body = await response.aread()
                 raise ArcLLMAPIError(

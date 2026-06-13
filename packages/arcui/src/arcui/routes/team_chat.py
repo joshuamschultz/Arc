@@ -83,9 +83,7 @@ async def list_channels(request: Request) -> JSONResponse:
         logger.exception("team_chat: list_channels failed")
         return JSONResponse({"channels": []})
 
-    return JSONResponse(
-        {"channels": [ch.model_dump(mode="json") for ch in channels]}
-    )
+    return JSONResponse({"channels": [ch.model_dump(mode="json") for ch in channels]})
 
 
 async def channel_messages(request: Request) -> JSONResponse:
@@ -99,9 +97,7 @@ async def channel_messages(request: Request) -> JSONResponse:
 
     svc = _service_or_none(request)
     if svc is None:
-        return JSONResponse(
-            {"channel": channel_name, "messages": [], "next_after_seq": None}
-        )
+        return JSONResponse({"channel": channel_name, "messages": [], "next_after_seq": None})
 
     limit = _parse_limit(
         request.query_params.get("limit"),
@@ -117,12 +113,8 @@ async def channel_messages(request: Request) -> JSONResponse:
             limit=limit,
         )
     except Exception:  # reason: fail-open — log + degrade
-        logger.exception(
-            "team_chat: list_channel_messages failed for %s", channel_name
-        )
-        return JSONResponse(
-            {"channel": channel_name, "messages": [], "next_after_seq": None}
-        )
+        logger.exception("team_chat: list_channel_messages failed for %s", channel_name)
+        return JSONResponse({"channel": channel_name, "messages": [], "next_after_seq": None})
 
     # ``next_after_seq`` is set only when we filled the page; an empty or
     # short result means we hit the end of the stream so the SPA can stop

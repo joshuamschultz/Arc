@@ -81,7 +81,9 @@ class TestCreate:
         # Old SPEC-021-deprecated section must not reappear.
         assert "extensions" not in config, "[extensions] block should be gone (SPEC-021)"
         # SPEC-026 AC-6.1: [arcstore] block must have secure defaults.
-        assert config["arcstore"]["store_raw_bodies"] is False, "store_raw_bodies must default False"
+        assert config["arcstore"]["store_raw_bodies"] is False, (
+            "store_raw_bodies must default False"
+        )
         assert config["arcstore"]["enabled"] is True, "arcstore must be enabled by default"
 
     def test_create_config_uses_agent_name(self, tmp_path):

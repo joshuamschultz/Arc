@@ -113,8 +113,7 @@ def compute_stats(rows: list[dict[str, Any]], *, window: str) -> dict[str, Any]:
 
     def _strip(d: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         return {
-            k: {kk: vv for kk, vv in v.items() if kk != "latency_samples"}
-            for k, v in d.items()
+            k: {kk: vv for kk, vv in v.items() if kk != "latency_samples"} for k, v in d.items()
         }
 
     return {

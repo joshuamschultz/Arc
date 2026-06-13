@@ -91,16 +91,46 @@ def _write(data_dir: Path, rec: SpoolRecord) -> None:
 
 async def test_tool_events_query(tmp_path: Path) -> None:
     """Task 4.1 — Observe.tool_events(run_id) returns ordered tool/code events."""
-    _write(tmp_path, SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:01+00:00", tool_name="web.fetch",
-                                 phase="start", args_digest="a" * 64, args_size=10))
-    _write(tmp_path, SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:02+00:00", tool_name="web.fetch",
-                                 phase="end", outcome="ok", latency_ms=12.0,
-                                 result_digest="b" * 64, result_size=99))
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:01+00:00",
+            tool_name="web.fetch",
+            phase="start",
+            args_digest="a" * 64,
+            args_size=10,
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:02+00:00",
+            tool_name="web.fetch",
+            phase="end",
+            outcome="ok",
+            latency_ms=12.0,
+            result_digest="b" * 64,
+            result_size=99,
+        ),
+    )
     # A different run's event must not leak in.
-    _write(tmp_path, SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-2",
-                                 ts="2026-05-31T00:00:03+00:00", tool_name="other", phase="start"))
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-2",
+            ts="2026-05-31T00:00:03+00:00",
+            tool_name="other",
+            phase="start",
+        ),
+    )
     observe = Observe(data_dir=tmp_path)
     await observe.start()
     try:
@@ -114,12 +144,38 @@ async def test_tool_events_query(tmp_path: Path) -> None:
 
 async def test_timeline_joins_on_run_id(tmp_path: Path) -> None:
     """Task 4.0 — a run's llm_call + run_event + tool_event join on request_id==run_id."""
-    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:01+00:00", name="turn.start"))
-    _write(tmp_path, SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:02+00:00", tool_name="web.fetch", phase="start"))
-    _write(tmp_path, SpoolRecord(kind="llm_call", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:03+00:00", model="claude", outcome="ok"))
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:01+00:00",
+            name="turn.start",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:02+00:00",
+            tool_name="web.fetch",
+            phase="start",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="llm_call",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:03+00:00",
+            model="claude",
+            outcome="ok",
+        ),
+    )
     observe = Observe(data_dir=tmp_path)
     await observe.start()
     try:
@@ -134,18 +190,62 @@ async def test_timeline_joins_on_run_id(tmp_path: Path) -> None:
 async def test_runs_lists_real_runs_grouped_by_request_id(tmp_path: Path) -> None:
     """Observe.runs() returns one summary per run (request_id), newest first,
     joining run/tool/llm spool rows — not session files."""
-    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-1",
-                                 agent_label="alice", ts="2026-05-31T00:00:01+00:00",
-                                 name="turn.start"))
-    _write(tmp_path, SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:02+00:00", tool_name="web.fetch", phase="start"))
-    _write(tmp_path, SpoolRecord(kind="llm_call", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:03+00:00", model="claude", outcome="ok",
-                                 prompt_tokens=100, completion_tokens=50, cost_usd=0.002))
-    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-1",
-                                 ts="2026-05-31T00:00:04+00:00", name="loop.completed"))
-    _write(tmp_path, SpoolRecord(kind="run_event", actor_did="did:c", request_id="run-0",
-                                 ts="2026-05-30T00:00:01+00:00", name="turn.start"))
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-1",
+            agent_label="alice",
+            ts="2026-05-31T00:00:01+00:00",
+            name="turn.start",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:02+00:00",
+            tool_name="web.fetch",
+            phase="start",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="llm_call",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:03+00:00",
+            model="claude",
+            outcome="ok",
+            prompt_tokens=100,
+            completion_tokens=50,
+            cost_usd=0.002,
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-1",
+            ts="2026-05-31T00:00:04+00:00",
+            name="loop.completed",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="run_event",
+            actor_did="did:c",
+            request_id="run-0",
+            ts="2026-05-30T00:00:01+00:00",
+            name="turn.start",
+        ),
+    )
     observe = Observe(data_dir=tmp_path)
     await observe.start()
     try:
@@ -164,15 +264,42 @@ async def test_runs_lists_real_runs_grouped_by_request_id(tmp_path: Path) -> Non
 
 async def test_spawn_tree_query(tmp_path: Path) -> None:
     """Task 4.2 — Observe.spawn_tree assembles a parent→child tree from spawn_events."""
-    _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:child1",
-                                 parent_did="did:parent", child_did="did:child1",
-                                 role="researcher", depth=1, outcome="allow"))
-    _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:child2",
-                                 parent_did="did:parent", child_did="did:child2",
-                                 role="writer", depth=1, outcome="allow"))
-    _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:gc",
-                                 parent_did="did:child1", child_did="did:gc",
-                                 role="helper", depth=2, outcome="allow"))
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:child1",
+            parent_did="did:parent",
+            child_did="did:child1",
+            role="researcher",
+            depth=1,
+            outcome="allow",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:child2",
+            parent_did="did:parent",
+            child_did="did:child2",
+            role="writer",
+            depth=1,
+            outcome="allow",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:gc",
+            parent_did="did:child1",
+            child_did="did:gc",
+            role="helper",
+            depth=2,
+            outcome="allow",
+        ),
+    )
     observe = Observe(data_dir=tmp_path)
     await observe.start()
     try:
@@ -191,12 +318,39 @@ async def test_spawn_tree_auto_root_and_cycle_guard(tmp_path: Path) -> None:
     """EDGE-7 — root auto-detect (no root_did) + a mid-tree back-edge terminates."""
     # root → a → b, plus a malformed back-edge b → a (cycle). root never appears
     # as a child, so auto-detect resolves it; the b→a back-edge must not loop.
-    _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:a",
-                                 parent_did="did:root", child_did="did:a", depth=1, outcome="allow"))
-    _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:b",
-                                 parent_did="did:a", child_did="did:b", depth=2, outcome="allow"))
-    _write(tmp_path, SpoolRecord(kind="spawn_event", actor_did="did:a",
-                                 parent_did="did:b", child_did="did:a", depth=3, outcome="allow"))
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:a",
+            parent_did="did:root",
+            child_did="did:a",
+            depth=1,
+            outcome="allow",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:b",
+            parent_did="did:a",
+            child_did="did:b",
+            depth=2,
+            outcome="allow",
+        ),
+    )
+    _write(
+        tmp_path,
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:a",
+            parent_did="did:b",
+            child_did="did:a",
+            depth=3,
+            outcome="allow",
+        ),
+    )
     observe = Observe(data_dir=tmp_path)
     await observe.start()
     try:

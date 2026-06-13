@@ -53,7 +53,9 @@ def _parent_state(*, actor_did: str | None = _PARENT_DID, depth: int = 0) -> Run
 
 
 def _identity(n: int = 0):
-    return derive_child_identity(parent_sk_bytes=b"\xcd" * 32, spawn_id=f"obs-{n}", wallclock_timeout_s=30)
+    return derive_child_identity(
+        parent_sk_bytes=b"\xcd" * 32, spawn_id=f"obs-{n}", wallclock_timeout_s=30
+    )
 
 
 def _telemetry_model(rendezvous: object | None = None) -> object:
@@ -107,8 +109,14 @@ async def test_child_run_events_tagged() -> None:
     records, patches = _capture()
     model = MockModel([LLMResponse(content="ok", stop_reason="end_turn")])
     with patches[0], patches[1], patches[2]:
-        await spawn(parent_state=state, task="t", tools=[ECHO_TOOL], system_prompt="s",
-                    identity=identity, model=model)
+        await spawn(
+            parent_state=state,
+            task="t",
+            tools=[ECHO_TOOL],
+            system_prompt="s",
+            identity=identity,
+            model=model,
+        )
     child_run_events = [r for r in records if r.kind == "run_event"]
     assert child_run_events, "child run_events must spool"
     assert all(r.actor_did == identity.did for r in child_run_events)
@@ -122,8 +130,15 @@ async def test_child_llm_calls_separated() -> None:
     identity = _identity(2)
     records, patches = _capture()
     with patches[0], patches[1], patches[2]:
-        await spawn(parent_state=state, task="t", tools=[ECHO_TOOL], system_prompt="s",
-                    identity=identity, model=_telemetry_model(), role="researcher")
+        await spawn(
+            parent_state=state,
+            task="t",
+            tools=[ECHO_TOOL],
+            system_prompt="s",
+            identity=identity,
+            model=_telemetry_model(),
+            role="researcher",
+        )
     llm_calls = [r for r in records if r.kind == "llm_call"]
     assert llm_calls, "child llm_call must spool"
     assert all(r.actor_did == identity.did for r in llm_calls)
@@ -147,9 +162,14 @@ async def test_concurrent_children_not_cross_attributed() -> None:
     model = _telemetry_model(rendezvous)  # shared model; both children rendezvous in invoke
     specs = [
         SpawnSpec(
-            task=f"t{i}", tools=[ECHO_TOOL], system_prompt="s", parent_state=parent,
-            child_did=_identity(10 + i).did, child_sk_bytes=_identity(10 + i).sk_bytes,
-            wallclock_timeout_s=30, model=model,
+            task=f"t{i}",
+            tools=[ECHO_TOOL],
+            system_prompt="s",
+            parent_state=parent,
+            child_did=_identity(10 + i).did,
+            child_sk_bytes=_identity(10 + i).sk_bytes,
+            wallclock_timeout_s=30,
+            model=model,
         )
         for i in range(2)
     ]
@@ -175,8 +195,15 @@ async def test_spawn_lineage_recorded() -> None:
     records, patches = _capture()
     model = MockModel([LLMResponse(content="ok", stop_reason="end_turn")])
     with patches[0], patches[1], patches[2]:
-        await spawn(parent_state=state, task="t", tools=[ECHO_TOOL], system_prompt="s",
-                    identity=identity, model=model, role="researcher")
+        await spawn(
+            parent_state=state,
+            task="t",
+            tools=[ECHO_TOOL],
+            system_prompt="s",
+            identity=identity,
+            model=model,
+            role="researcher",
+        )
     spawn_events = [r for r in records if r.kind == "spawn_event"]
     assert len(spawn_events) == 1
     ev = spawn_events[0]
@@ -194,8 +221,14 @@ async def test_child_identity_degrades_safely() -> None:
     records, patches = _capture()
     model = MockModel([LLMResponse(content="ok", stop_reason="end_turn")])  # no telemetry
     with patches[0], patches[1], patches[2]:
-        result = await spawn(parent_state=state, task="t", tools=[ECHO_TOOL], system_prompt="s",
-                             identity=identity, model=model)
+        result = await spawn(
+            parent_state=state,
+            task="t",
+            tools=[ECHO_TOOL],
+            system_prompt="s",
+            identity=identity,
+            model=model,
+        )
     assert result.status in ("completed", "max_iterations")
     # run_events still spool under the child identity even with no llm_call separation.
     run_events = [r for r in records if r.kind == "run_event"]
@@ -210,12 +243,19 @@ async def test_make_spawn_tool_records_lineage_and_child_identity() -> None:
 
     from arcagent.orchestration.spawn import make_spawn_tool
 
-    tool = make_spawn_tool(model=MockModel([LLMResponse(content="ok", stop_reason="end_turn")]),
-                           tools=[ECHO_TOOL], system_prompt="sys")
+    tool = make_spawn_tool(
+        model=MockModel([LLMResponse(content="ok", stop_reason="end_turn")]),
+        tools=[ECHO_TOOL],
+        system_prompt="sys",
+    )
     parent = _parent_state()
     ctx = ToolContext(
-        run_id=parent.run_id, tool_call_id="tc1", turn_number=1,
-        event_bus=parent.event_bus, cancelled=parent.cancel_event, parent_state=parent,
+        run_id=parent.run_id,
+        tool_call_id="tc1",
+        turn_number=1,
+        event_bus=parent.event_bus,
+        cancelled=parent.cancel_event,
+        parent_state=parent,
     )
     records, patches = _capture()
     with patches[0], patches[1], patches[2]:
@@ -241,8 +281,14 @@ def test_arcstore_off_silences_child() -> None:
         records, patches = _capture()
         model = MockModel([LLMResponse(content="ok", stop_reason="end_turn")])
         with patches[0], patches[1], patches[2]:
-            await spawn(parent_state=state, task="t", tools=[ECHO_TOOL], system_prompt="s",
-                        identity=_identity(5), model=model)
+            await spawn(
+                parent_state=state,
+                task="t",
+                tools=[ECHO_TOOL],
+                system_prompt="s",
+                identity=_identity(5),
+                model=model,
+            )
         return records
 
     import asyncio

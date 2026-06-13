@@ -30,9 +30,7 @@ def test_new_kinds_mapped() -> None:
 
 
 @pytest.fixture(params=["memory", "sqlite"])
-async def backend(
-    request: pytest.FixtureRequest, tmp_path: Path
-) -> AsyncIterator[StorageBackend]:
+async def backend(request: pytest.FixtureRequest, tmp_path: Path) -> AsyncIterator[StorageBackend]:
     if request.param == "memory":
         be: StorageBackend = FakeBackend()
         await be.start()
@@ -45,7 +43,9 @@ async def backend(
         await be.stop()
 
 
-def _row(rid: str, *, model: str = "claude", outcome: str = "ok", ts: str = "2026-05-31T00:00:00") -> dict:
+def _row(
+    rid: str, *, model: str = "claude", outcome: str = "ok", ts: str = "2026-05-31T00:00:00"
+) -> dict:
     return {
         "record_id": rid,
         "kind": "llm_call",

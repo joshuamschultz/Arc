@@ -380,9 +380,7 @@ class TestAnthropicRequestBuilding:
         adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
         messages = [Message(role="user", content="Hi")]
         with pytest.raises(ArcLLMConfigError, match="response_format"):
-            adapter._build_request_body(
-                messages, response_format={"type": "json_object"}
-            )
+            adapter._build_request_body(messages, response_format={"type": "json_object"})
 
 
 class TestAnthropicResponseParsing:

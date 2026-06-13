@@ -24,9 +24,7 @@ async def recent(
 ) -> list[dict[str, Any]]:
     """Most-recent operational records of ``kind`` (newest first)."""
     where = {"actor_did": actor_did} if actor_did else None
-    return await backend.query(
-        table_for_kind(kind), where=where, order_by="ts DESC", limit=limit
-    )
+    return await backend.query(table_for_kind(kind), where=where, order_by="ts DESC", limit=limit)
 
 
 async def audit_records(

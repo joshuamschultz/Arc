@@ -56,9 +56,7 @@ def test_emit_single_default_sink_no_ui_coupling() -> None:
     sink_names = {
         name
         for name in audit.__all__
-        if name.endswith("Sink")
-        and isinstance(getattr(audit, name), type)
-        and name != "AuditSink"
+        if name.endswith("Sink") and isinstance(getattr(audit, name), type) and name != "AuditSink"
     }
     assert sink_names == {"WormSink", "NullSink"}, (
         f"arctrust must expose exactly the WORM sink (+ NullSink no-op); found {sink_names}"

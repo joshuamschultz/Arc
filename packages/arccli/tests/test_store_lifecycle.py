@@ -10,9 +10,9 @@ import asyncio
 from pathlib import Path
 
 import pytest
+from arcstore import ArcStoreConfig
 
 from arccli.commands.agent import _store_lifecycle as sl
-from arcstore import ArcStoreConfig
 
 
 def _cfg(tmp_path: Path, **kw: object) -> ArcStoreConfig:
@@ -21,6 +21,7 @@ def _cfg(tmp_path: Path, **kw: object) -> ArcStoreConfig:
 
 # -- load_arcstore_config -----------------------------------------------------
 
+
 def test_load_config_defaults_when_no_toml(tmp_path: Path) -> None:
     cfg = sl.load_arcstore_config(tmp_path)
     assert cfg.enabled is True
@@ -28,9 +29,7 @@ def test_load_config_defaults_when_no_toml(tmp_path: Path) -> None:
 
 
 def test_load_config_reads_arcstore_block(tmp_path: Path) -> None:
-    (tmp_path / "arcagent.toml").write_text(
-        '[arcstore]\nenabled = false\nbackend = "sqlite"\n'
-    )
+    (tmp_path / "arcagent.toml").write_text('[arcstore]\nenabled = false\nbackend = "sqlite"\n')
     cfg = sl.load_arcstore_config(tmp_path)
     assert cfg.enabled is False
 
@@ -43,10 +42,12 @@ def test_load_config_falls_back_on_malformed_block(tmp_path: Path) -> None:
 
 # -- managed_store_ingest -----------------------------------------------------
 
+
 def test_spool_dir_always_created_even_when_disabled(tmp_path: Path) -> None:
     async def _go() -> None:
         async with sl.managed_store_ingest(_cfg(tmp_path, enabled=False)) as ingest:
             assert ingest is None
+
     asyncio.run(_go())
     assert (tmp_path / "spool").is_dir()
 
@@ -57,9 +58,7 @@ def test_enabled_starts_and_stops_ingest_no_orphan(tmp_path: Path) -> None:
             assert ingest is not None
         # After exit, no arcstore ingest task should be left running.
         return sum(
-            1
-            for t in asyncio.all_tasks()
-            if t is not asyncio.current_task() and not t.done()
+            1 for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()
         )
 
     leftover = asyncio.run(_go())
@@ -67,9 +66,7 @@ def test_enabled_starts_and_stops_ingest_no_orphan(tmp_path: Path) -> None:
     assert (tmp_path / "store").is_dir()
 
 
-def test_broken_backend_is_fail_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_broken_backend_is_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A backend that cannot start must not stop the agent; spool still works."""
     import arcstore.backends as backends
 

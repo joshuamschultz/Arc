@@ -155,9 +155,7 @@ class TestRunWithMockLLM:
 
         agent = ArcAgent(config=agent_config)
         await agent.startup()
-        with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream
-        ):
+        with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream):
             session = await agent.session("itest")
             events = [ev async for ev in agent.run("test integration task", session=session)]
 
@@ -505,9 +503,7 @@ class TestPostRespondEvent:
         assert agent._bus is not None
         agent._bus.subscribe("agent:post_respond", on_post_respond)
 
-        with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream
-        ):
+        with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_fake_run_stream):
             session = await agent.session("itest")
             async for _ in agent.run("test task", session=session):
                 pass

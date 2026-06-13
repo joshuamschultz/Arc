@@ -234,8 +234,12 @@ def _build_parser() -> argparse.ArgumentParser:
     subs = parser.add_subparsers(dest="subcmd", metavar="<subcommand>")
 
     def _common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--data-dir", dest="data_dir", default=None,
-                       help="Arc data dir (default: env ARCSTORE_DATA_DIR or ~/.arc/store).")
+        p.add_argument(
+            "--data-dir",
+            dest="data_dir",
+            default=None,
+            help="Arc data dir (default: env ARCSTORE_DATA_DIR or ~/.arc/store).",
+        )
 
     init_p = subs.add_parser("init", help="Create the data-dir layout.")
     _common(init_p)

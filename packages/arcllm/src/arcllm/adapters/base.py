@@ -137,9 +137,7 @@ class BaseAdapter(LLMProvider):
         if rf is None:
             return None
         if not isinstance(rf, dict):
-            raise ArcLLMConfigError(
-                f"response_format must be a dict, got {type(rf).__name__}"
-            )
+            raise ArcLLMConfigError(f"response_format must be a dict, got {type(rf).__name__}")
         rf_type = rf.get("type", "text")
         if rf_type not in {"text", "json_object", "json_schema"}:
             raise ArcLLMConfigError(

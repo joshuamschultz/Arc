@@ -60,8 +60,6 @@ def tool_capable_models(provider: str) -> list[str]:
     try:
         config = load_provider_config(provider)
     except Exception:  # reason: fail-closed — log + return empty
-        _logger.debug(
-            "tool_capable_models: could not load provider %r", provider, exc_info=True
-        )
+        _logger.debug("tool_capable_models: could not load provider %r", provider, exc_info=True)
         return []
     return sorted(name for name, meta in config.models.items() if meta.supports_tools)

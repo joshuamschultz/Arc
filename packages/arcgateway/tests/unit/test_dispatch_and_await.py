@@ -61,9 +61,7 @@ async def test_dispatch_and_await_yields_executor_deltas_in_order() -> None:
 @pytest.mark.asyncio
 async def test_dispatch_and_await_blocks_unpaired_user() -> None:
     """When the pairing allowlist is restrictive, dispatch must refuse."""
-    executor = _ScriptedExecutor(
-        [Delta(kind="done", content="", is_final=True)]
-    )
+    executor = _ScriptedExecutor([Delta(kind="done", content="", is_final=True)])
     # Restrict to a user that is NOT our event's user.
     router = SessionRouter(
         executor=executor,
@@ -71,9 +69,7 @@ async def test_dispatch_and_await_blocks_unpaired_user() -> None:
     )
 
     with pytest.raises(PermissionError, match="pairing allowlist"):
-        async for _ in router.dispatch_and_await(
-            _make_event(user_did="did:arc:user:alice")
-        ):
+        async for _ in router.dispatch_and_await(_make_event(user_did="did:arc:user:alice")):
             pass
 
 

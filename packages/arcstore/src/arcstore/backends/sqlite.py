@@ -85,6 +85,7 @@ def _column_sql_type(col: str) -> str:
         return "REAL"
     return "TEXT"
 
+
 _TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     **{t: _OPERATIONAL_COLUMNS for t in OPERATIONAL_TABLES},
     AUDIT_TABLE: _AUDIT_COLUMNS,
@@ -227,9 +228,7 @@ class SqliteBackend:
             existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
             for col in columns:
                 if col not in existing:
-                    conn.execute(
-                        f"ALTER TABLE {table} ADD COLUMN {col} {_column_sql_type(col)}"
-                    )
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {_column_sql_type(col)}")
 
     def _write_batch(
         self, table: str, columns: tuple[str, ...], tuples: list[tuple[Any, ...]]

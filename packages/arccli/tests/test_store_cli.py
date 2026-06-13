@@ -29,15 +29,16 @@ def _seed_valid_worm(data_dir: Path) -> bytes:
     worm_dir = data_dir / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
     sink = WormSink(_worm_file(data_dir), kp.private_key)
-    sink.write(AuditEvent(actor_did="did:arc:1", action="tool_call",
-                          target="fs", outcome="allow"))
-    sink.write(AuditEvent(actor_did="did:arc:1", action="tool_call",
-                          target="net", outcome="allow"))
+    sink.write(AuditEvent(actor_did="did:arc:1", action="tool_call", target="fs", outcome="allow"))
+    sink.write(
+        AuditEvent(actor_did="did:arc:1", action="tool_call", target="net", outcome="allow")
+    )
     sink.close()
     return kp.public_key
 
 
 # -- init ---------------------------------------------------------------------
+
 
 def test_init_creates_layout(tmp_path: Path) -> None:
     store_handler(["init", "--data-dir", str(tmp_path)])
@@ -54,6 +55,7 @@ def test_init_is_idempotent(tmp_path: Path) -> None:
 
 # -- status -------------------------------------------------------------------
 
+
 def test_status_reports_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     store_handler(["status", "--data-dir", str(tmp_path)])
     out = capsys.readouterr().out
@@ -63,6 +65,7 @@ def test_status_reports_paths(tmp_path: Path, capsys: pytest.CaptureFixture[str]
 
 
 # -- verify -------------------------------------------------------------------
+
 
 def test_verify_passes_on_intact_chain(tmp_path: Path) -> None:
     pub = _seed_valid_worm(tmp_path)
@@ -92,14 +95,21 @@ def test_verify_exit_nonzero_when_worm_missing(tmp_path: Path) -> None:
 
 # -- backfill -----------------------------------------------------------------
 
+
 def _seed_spool(data_dir: Path) -> None:
     """Write one llm_call spool record directly (no running store)."""
     from arcstore.records import SpoolRecord
     from arcstore.spool import record, spool_path
 
     record(
-        SpoolRecord(kind="llm_call", actor_did="did:arc:1", model="gpt",
-                    prompt_tokens=10, completion_tokens=5, cost_usd=0.01),
+        SpoolRecord(
+            kind="llm_call",
+            actor_did="did:arc:1",
+            model="gpt",
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=0.01,
+        ),
         path=spool_path(data_dir=data_dir),
     )
 
@@ -140,6 +150,7 @@ def test_backfill_then_query_roundtrip(tmp_path: Path) -> None:
 
 
 # -- dispatch -----------------------------------------------------------------
+
 
 def test_unknown_subcommand_exits_nonzero(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exc:

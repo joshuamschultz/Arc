@@ -73,9 +73,7 @@ class TestAdapterToolCheck:
             cost_cache_read_per_1m=0.0,
             cost_cache_write_per_1m=0.0,
         )
-        adapter = OpenaiAdapter(
-            ProviderConfig(provider=provider, models={"m": meta}), "m"
-        )
+        adapter = OpenaiAdapter(ProviderConfig(provider=provider, models={"m": meta}), "m")
         # No tools → check is a no-op.
         adapter._check_tool_capability(None)
         adapter._check_tool_capability([])
@@ -105,9 +103,7 @@ class TestAdapterToolCheck:
             cost_cache_read_per_1m=0.0,
             cost_cache_write_per_1m=0.0,
         )
-        adapter = OpenaiAdapter(
-            ProviderConfig(provider=provider, models={"m": meta}), "m"
-        )
+        adapter = OpenaiAdapter(ProviderConfig(provider=provider, models={"m": meta}), "m")
         with pytest.raises(ArcLLMConfigError, match="not marked tool-capable"):
             adapter._check_tool_capability([{"name": "search"}])
 
@@ -125,8 +121,6 @@ class TestAdapterToolCheck:
             default_model="brand-new",
             default_temperature=0.5,
         )
-        adapter = OpenaiAdapter(
-            ProviderConfig(provider=provider, models={}), "brand-new"
-        )
+        adapter = OpenaiAdapter(ProviderConfig(provider=provider, models={}), "brand-new")
         # Should not raise.
         adapter._check_tool_capability([{"name": "search"}])

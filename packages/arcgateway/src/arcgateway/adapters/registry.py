@@ -169,9 +169,7 @@ def discover_plugins() -> dict[str, AdapterPlugin]:
             continue
         if not isinstance(plugin, AdapterPlugin):
             _audit("gateway.adapter.blocked", ep.name, "deny", reason="not_a_plugin")
-            _logger.warning(
-                "registry: entry point %r did not export an AdapterPlugin", ep.name
-            )
+            _logger.warning("registry: entry point %r did not export an AdapterPlugin", ep.name)
             continue
         found[ep.name] = plugin
     return found
@@ -225,9 +223,7 @@ def build_adapters(
             # Unofficial plugin: blocked at federal, allowed-with-warning otherwise.
             if is_federal:
                 _audit("gateway.adapter.blocked", name, "deny", reason="not_official")
-                raise AdapterUnavailableError(
-                    f"adapter {name!r} is not in the federal allowlist"
-                )
+                raise AdapterUnavailableError(f"adapter {name!r} is not in the federal allowlist")
             _audit("gateway.adapter.unverified", name, "allow", reason="not_official")
             _logger.warning(
                 "registry: loading unofficial adapter %r (personal/enterprise only)", name

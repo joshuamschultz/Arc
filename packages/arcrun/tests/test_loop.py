@@ -39,7 +39,13 @@ class TestRun:
 
         events_received = []
         model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
-        await run(model, StaticProvider(_tools()), "prompt", "task", on_event=lambda e: events_received.append(e))
+        await run(
+            model,
+            StaticProvider(_tools()),
+            "prompt",
+            "task",
+            on_event=lambda e: events_received.append(e),
+        )
         assert len(events_received) > 0
         assert any(e.type == "loop.start" for e in events_received)
 
@@ -59,7 +65,13 @@ class TestRun:
 
         model = MockModel([])
         with pytest.raises(ValueError, match="unknown strategies"):
-            await run(model, StaticProvider(_tools()), "prompt", "task", allowed_strategies=["nonexistent"])
+            await run(
+                model,
+                StaticProvider(_tools()),
+                "prompt",
+                "task",
+                allowed_strategies=["nonexistent"],
+            )
 
     @pytest.mark.asyncio
     async def test_with_sandbox(self):
@@ -123,7 +135,9 @@ class TestRunWithMessages:
         from arcrun.loop import run
 
         model = MockModel([LLMResponse(content="Hi!", stop_reason="end_turn")])
-        result = await run(model, StaticProvider(_tools()), "Be helpful.", "Say hello", messages=None)
+        result = await run(
+            model, StaticProvider(_tools()), "Be helpful.", "Say hello", messages=None
+        )
         assert result.content == "Hi!"
         # Model received [system, user] (list is mutated after invoke, so check first two)
         invoke_msgs = model.invoke_calls[0]["messages"]

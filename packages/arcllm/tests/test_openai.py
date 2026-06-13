@@ -329,9 +329,7 @@ class TestOpenAIRequestBuilding:
 
         adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
         messages = [Message(role="user", content="Hi")]
-        body = adapter._build_request_body(
-            messages, tool_choice={"type": "required"}
-        )
+        body = adapter._build_request_body(messages, tool_choice={"type": "required"})
         assert body["tool_choice"] == {"type": "required"}
 
     def test_response_format_json_object_forwarded(self):
@@ -339,9 +337,7 @@ class TestOpenAIRequestBuilding:
 
         adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
         messages = [Message(role="user", content="Hi")]
-        body = adapter._build_request_body(
-            messages, response_format={"type": "json_object"}
-        )
+        body = adapter._build_request_body(messages, response_format={"type": "json_object"})
         assert body["response_format"] == {"type": "json_object"}
 
     def test_response_format_json_schema_forwarded(self):
@@ -361,9 +357,7 @@ class TestOpenAIRequestBuilding:
 
         adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
         messages = [Message(role="user", content="Hi")]
-        body = adapter._build_request_body(
-            messages, response_format={"type": "text"}
-        )
+        body = adapter._build_request_body(messages, response_format={"type": "text"})
         assert "response_format" not in body
 
     def test_response_format_bad_shape_raises(self):
@@ -373,12 +367,11 @@ class TestOpenAIRequestBuilding:
         adapter = OpenaiAdapter(FAKE_CONFIG, FAKE_MODEL)
         messages = [Message(role="user", content="Hi")]
         with pytest.raises(ArcLLMConfigError):
-            adapter._build_request_body(
-                messages, response_format={"type": "xml"}
-            )
+            adapter._build_request_body(messages, response_format={"type": "xml"})
         with pytest.raises(ArcLLMConfigError):
             adapter._build_request_body(
-                messages, response_format={"type": "json_schema"}  # missing json_schema
+                messages,
+                response_format={"type": "json_schema"},  # missing json_schema
             )
 
     def test_parsed_content_populated_for_json_mode(self):

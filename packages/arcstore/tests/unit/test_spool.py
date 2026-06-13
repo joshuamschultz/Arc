@@ -12,7 +12,9 @@ from arcstore.spool import read, record, request_context, spool_path
 def test_record_appends_durable_line_without_store(tmp_path: Path) -> None:
     # Task 1.4 — a durable line is written with only the spool imported (no backend/store).
     target = tmp_path / "operational.jsonl"
-    rec = SpoolRecord(kind="llm_call", actor_did="did:a", request_id="r1", model="m", prompt_tokens=3)
+    rec = SpoolRecord(
+        kind="llm_call", actor_did="did:a", request_id="r1", model="m", prompt_tokens=3
+    )
     record(rec, path=target)
 
     assert target.exists()

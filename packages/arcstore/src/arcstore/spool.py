@@ -87,7 +87,11 @@ def record(rec: SpoolRecord, *, path: Path | None = None) -> None:
         line = json.dumps(rec.model_dump(mode="json"), ensure_ascii=True) + "\n"
         fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _FILE_MODE)
         try:
-            os.fchmod(fd, _FILE_MODE)  # tighten perms regardless of umask / pre-existing file
+            # os.fchmod is POSIX-only — tighten perms regardless of umask /
+            # pre-existing file. On Windows it doesn't exist and POSIX perms
+            # don't apply, so the mode passed to os.open above is all we can do.
+            if hasattr(os, "fchmod"):
+                os.fchmod(fd, _FILE_MODE)
             os.write(fd, line.encode("utf-8"))
         finally:
             os.close(fd)

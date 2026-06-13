@@ -65,6 +65,7 @@ class _CountingAgent:
 @pytest.mark.asyncio
 async def test_error_midstream_fails_closed() -> None:
     """A raise mid-stream yields a fail-closed Delta + done sentinel; nothing escapes."""
+
     async def _factory(agent_did: str) -> _FailingAgent:
         return _FailingAgent(agent_did)
 

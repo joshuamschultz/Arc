@@ -110,9 +110,7 @@ class TestTracesRoute:
         auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
         app = create_app(auth_config=auth)
         with TestClient(app) as client:
-            resp = client.get(
-                f"/api/traces/{trace_id}", headers={"Authorization": "Bearer v"}
-            )
+            resp = client.get(f"/api/traces/{trace_id}", headers={"Authorization": "Bearer v"})
         assert resp.status_code == 200
         assert resp.json()["trace_id"] == trace_id
 
@@ -738,14 +736,43 @@ def _seed_tool_and_spawn(data_dir: Path) -> None:
     spool = data_dir / "spool"
     spool.mkdir(parents=True, exist_ok=True)
     p = spool / "operational-2026-05-31.jsonl"
-    spool_record(SpoolRecord(kind="tool_event", actor_did="did:c", request_id="run-1",
-                             tool_name="web.fetch", phase="start", args_digest="a" * 64), path=p)
-    spool_record(SpoolRecord(kind="spawn_event", actor_did="did:child",
-                             parent_did="did:parent", child_did="did:child",
-                             role="researcher", depth=1, outcome="allow"), path=p)
-    spool_record(SpoolRecord(kind="llm_call", actor_did="did:child", request_id="run-1",
-                             model="claude", agent_label="researcher:d1", cost_usd=0.01,
-                             prompt_tokens=10, completion_tokens=5, outcome="ok"), path=p)
+    spool_record(
+        SpoolRecord(
+            kind="tool_event",
+            actor_did="did:c",
+            request_id="run-1",
+            tool_name="web.fetch",
+            phase="start",
+            args_digest="a" * 64,
+        ),
+        path=p,
+    )
+    spool_record(
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did="did:child",
+            parent_did="did:parent",
+            child_did="did:child",
+            role="researcher",
+            depth=1,
+            outcome="allow",
+        ),
+        path=p,
+    )
+    spool_record(
+        SpoolRecord(
+            kind="llm_call",
+            actor_did="did:child",
+            request_id="run-1",
+            model="claude",
+            agent_label="researcher:d1",
+            cost_usd=0.01,
+            prompt_tokens=10,
+            completion_tokens=5,
+            outcome="ok",
+        ),
+        path=p,
+    )
 
 
 class TestToolAndLineageRoutes:
@@ -760,13 +787,15 @@ class TestToolAndLineageRoutes:
             kinds = {e["kind"] for e in tl.json()["timeline"]}
             assert {"tool_event", "llm_call"} <= kinds
 
-            tree = client.get("/api/spawn-tree?root=did:parent",
-                              headers={"Authorization": "Bearer v"})
+            tree = client.get(
+                "/api/spawn-tree?root=did:parent", headers={"Authorization": "Bearer v"}
+            )
             assert tree.status_code == 200
             assert tree.json()["tree"]["did"] == "did:parent"
 
-            ident = client.get("/api/stats/by-identity?window=24h",
-                               headers={"Authorization": "Bearer v"})
+            ident = client.get(
+                "/api/stats/by-identity?window=24h", headers={"Authorization": "Bearer v"}
+            )
             assert ident.status_code == 200
             labels = {r["identity"] for r in ident.json()["identities"]}
             assert "researcher:d1" in labels

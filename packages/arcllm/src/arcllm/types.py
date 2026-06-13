@@ -217,9 +217,7 @@ class LLMProvider(ABC):
         cases identically; the only observable difference is latency
         between the first token and the last.
         """
-        response = await self.invoke(
-            messages, tools, response_format=response_format, **kwargs
-        )
+        response = await self.invoke(messages, tools, response_format=response_format, **kwargs)
         yield Delta(
             text=response.content,
             usage=response.usage,

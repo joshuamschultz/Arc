@@ -101,9 +101,7 @@ async def test_tool_event_metadata_only_default() -> None:
 @pytest.mark.asyncio
 async def test_tool_event_bodies_under_flag() -> None:
     """store_raw_bodies=true → args + result bodies ride extra (explicit opt-in)."""
-    recorded = await _run_tool(
-        _bus(store_raw_bodies=True), _tool("echo", _echo), {"input": "hi"}
-    )
+    recorded = await _run_tool(_bus(store_raw_bodies=True), _tool("echo", _echo), {"input": "hi"})
     tool_events = [r for r in recorded if r.kind == "tool_event"]
     start, end = tool_events
     assert start.extra["args"] == {"input": "hi"}

@@ -36,9 +36,7 @@ def test_config_resolves_token(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_build_returns_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MM_BOT_TOKEN", "pat-abc")
-    adapter = build(
-        _ctx({"enabled": True, "server_url": "https://mm.example.com"})
-    )
+    adapter = build(_ctx({"enabled": True, "server_url": "https://mm.example.com"}))
     assert isinstance(adapter, MattermostAdapter)
     assert adapter.name == "mattermost"
 

@@ -162,9 +162,7 @@ class Observe:
         # The UI's "agent" identifier is the human agent label (arcagent name),
         # not the full DID; filter on that.
         where = {"agent_label": agent} if agent else None
-        rows = await self._backend.query(
-            "llm_calls", where=where, order_by="ts DESC", limit=limit
-        )
+        rows = await self._backend.query("llm_calls", where=where, order_by="ts DESC", limit=limit)
         return [_row_to_trace(r) for r in rows]
 
     async def trace(self, trace_id: str) -> dict[str, Any] | None:
@@ -209,9 +207,7 @@ class Observe:
         rows = await self._llm_rows_in_window(window, agent=agent)
         return compute_stats(rows, window=window)
 
-    async def timeseries(
-        self, window: str = "24h", *, agent: str | None = None
-    ) -> dict[str, Any]:
+    async def timeseries(self, window: str = "24h", *, agent: str | None = None) -> dict[str, Any]:
         rows = await self._llm_rows_in_window(window, agent=agent)
         return compute_timeseries(rows, window=window)
 

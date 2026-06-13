@@ -134,9 +134,7 @@ class StaticProvider:
     async def load(self, name: str, *, caller_did: str) -> str | None:
         return None
 
-    async def invoke(
-        self, name: str, args: dict[str, Any], *, caller_did: str
-    ) -> CapabilityResult:
+    async def invoke(self, name: str, args: dict[str, Any], *, caller_did: str) -> CapabilityResult:
         tool = self._tools.get(name)
         if tool is None:
             return CapabilityResult(content=f"tool '{name}' not found", is_error=True)
@@ -217,9 +215,7 @@ def _use_skill_tool(
         description=_skill_menu(skills),
         input_schema={
             "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Name of the skill to load."}
-            },
+            "properties": {"name": {"type": "string", "description": "Name of the skill to load."}},
             "required": ["name"],
         },
         execute=_execute,

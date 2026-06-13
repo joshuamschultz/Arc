@@ -369,9 +369,7 @@ class TestErrorEvent:
         async def _boom(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
             raise RuntimeError("LLM call failed")
 
-        with patch(
-            "arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_boom
-        ):
+        with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_boom):
             await agent.startup()
             assert agent._bus is not None
             agent._bus.subscribe("agent:error", on_error)

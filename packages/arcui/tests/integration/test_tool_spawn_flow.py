@@ -27,23 +27,76 @@ def _seed(data_dir: Path) -> None:
     p = spool / "operational-2026-05-31.jsonl"
     # Parent makes an llm_call, then spawns a child. (llm_calls use auto-ts=now so
     # they fall inside the cost window regardless of when the suite runs.)
-    spool_record(SpoolRecord(kind="llm_call", actor_did=_PARENT, request_id="parent-run",
-                             model="claude", agent_label="parent",
-                             cost_usd=0.05, prompt_tokens=200, completion_tokens=100, outcome="ok"), path=p)
-    spool_record(SpoolRecord(kind="spawn_event", actor_did=_CHILD, parent_did=_PARENT,
-                             child_did=_CHILD, role="researcher", depth=1, outcome="allow",
-                             ts="2026-05-31T00:00:02+00:00"), path=p)
+    spool_record(
+        SpoolRecord(
+            kind="llm_call",
+            actor_did=_PARENT,
+            request_id="parent-run",
+            model="claude",
+            agent_label="parent",
+            cost_usd=0.05,
+            prompt_tokens=200,
+            completion_tokens=100,
+            outcome="ok",
+        ),
+        path=p,
+    )
+    spool_record(
+        SpoolRecord(
+            kind="spawn_event",
+            actor_did=_CHILD,
+            parent_did=_PARENT,
+            child_did=_CHILD,
+            role="researcher",
+            depth=1,
+            outcome="allow",
+            ts="2026-05-31T00:00:02+00:00",
+        ),
+        path=p,
+    )
     # Child runs code, then makes its own (cheaper) llm_call under its own identity.
-    spool_record(SpoolRecord(kind="tool_event", actor_did=_CHILD, request_id="child-run",
-                             ts="2026-05-31T00:00:03+00:00", tool_name="execute_python",
-                             phase="start", args_digest="c" * 64, args_size=42), path=p)
-    spool_record(SpoolRecord(kind="tool_event", actor_did=_CHILD, request_id="child-run",
-                             ts="2026-05-31T00:00:04+00:00", tool_name="execute_python",
-                             phase="end", outcome="ok", latency_ms=15.0,
-                             result_digest="d" * 64, result_size=8), path=p)
-    spool_record(SpoolRecord(kind="llm_call", actor_did=_CHILD, request_id="child-run",
-                             model="claude", agent_label="researcher:d1",
-                             cost_usd=0.01, prompt_tokens=50, completion_tokens=20, outcome="ok"), path=p)
+    spool_record(
+        SpoolRecord(
+            kind="tool_event",
+            actor_did=_CHILD,
+            request_id="child-run",
+            ts="2026-05-31T00:00:03+00:00",
+            tool_name="execute_python",
+            phase="start",
+            args_digest="c" * 64,
+            args_size=42,
+        ),
+        path=p,
+    )
+    spool_record(
+        SpoolRecord(
+            kind="tool_event",
+            actor_did=_CHILD,
+            request_id="child-run",
+            ts="2026-05-31T00:00:04+00:00",
+            tool_name="execute_python",
+            phase="end",
+            outcome="ok",
+            latency_ms=15.0,
+            result_digest="d" * 64,
+            result_size=8,
+        ),
+        path=p,
+    )
+    spool_record(
+        SpoolRecord(
+            kind="llm_call",
+            actor_did=_CHILD,
+            request_id="child-run",
+            model="claude",
+            agent_label="researcher:d1",
+            cost_usd=0.01,
+            prompt_tokens=50,
+            completion_tokens=20,
+            outcome="ok",
+        ),
+        path=p,
+    )
 
 
 async def _assert_surfaces(observe: Observe) -> None:

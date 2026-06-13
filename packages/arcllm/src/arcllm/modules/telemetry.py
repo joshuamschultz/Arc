@@ -609,5 +609,3 @@ class TelemetryModule(BaseModule):
                 outcome=outcome,
             )
         )
-
-

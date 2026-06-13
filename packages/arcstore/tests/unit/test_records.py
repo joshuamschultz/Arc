@@ -53,9 +53,13 @@ def test_explicit_ts_is_preserved() -> None:
 
 
 def test_record_id_is_stable_and_content_derived() -> None:
-    kwargs = dict(kind="llm_call", actor_did="did:a", request_id="r1", ts="2026-05-31T00:00:00+00:00")
+    kwargs = dict(
+        kind="llm_call", actor_did="did:a", request_id="r1", ts="2026-05-31T00:00:00+00:00"
+    )
     assert SpoolRecord(**kwargs).record_id == SpoolRecord(**kwargs).record_id
-    other = SpoolRecord(kind="llm_call", actor_did="did:a", request_id="r2", ts="2026-05-31T00:00:00+00:00")
+    other = SpoolRecord(
+        kind="llm_call", actor_did="did:a", request_id="r2", ts="2026-05-31T00:00:00+00:00"
+    )
     assert SpoolRecord(**kwargs).record_id != other.record_id
 
 

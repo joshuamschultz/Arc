@@ -172,9 +172,7 @@ class PythonAdapter:
         except Exception:
             # Ensure the consumer sees a clean termination even when
             # routing fails before the executor produced a final delta.
-            queue.put_nowait(
-                Delta(kind="done", is_final=True, turn_id=event.chat_id)
-            )
+            queue.put_nowait(Delta(kind="done", is_final=True, turn_id=event.chat_id))
             self._streams.pop(event.chat_id, None)
             raise
         return DeltaStream(queue, session_key=event.session_key, timeout=timeout)
@@ -187,9 +185,7 @@ class PythonAdapter:
         if queue is not None:
             queue.put_nowait(delta)
 
-    def _stream_iterator(
-        self, chat_id: str, *, timeout: float | None
-    ) -> AsyncIterator[Delta]:
+    def _stream_iterator(self, chat_id: str, *, timeout: float | None) -> AsyncIterator[Delta]:
         """Adopt an existing queue without sending an event through the router.
 
         Used by ``SessionRouter.dispatch_and_await`` to set up the

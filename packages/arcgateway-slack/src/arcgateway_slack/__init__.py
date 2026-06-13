@@ -1,6 +1,6 @@
 """arcgateway-slack — Slack (Socket Mode) platform adapter plugin for arcgateway.
 
-    from arcgateway_slack import PLUGIN, SlackAdapter, SlackPlatformConfig
+from arcgateway_slack import PLUGIN, SlackAdapter, SlackPlatformConfig
 """
 
 from arcgateway_slack.adapter import SlackAdapter, split_message

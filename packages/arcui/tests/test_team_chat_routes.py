@@ -31,9 +31,7 @@ async def svc_with_channel() -> MessagingService:
     svc = MessagingService(backend, registry, audit)
 
     for entity_id, name in (("agent://intake", "Intake"), ("agent://architect", "Architect")):
-        await registry.register(
-            Entity(id=entity_id, name=name, type=EntityType.AGENT)
-        )
+        await registry.register(Entity(id=entity_id, name=name, type=EntityType.AGENT))
 
     await svc.create_channel(
         Channel(
