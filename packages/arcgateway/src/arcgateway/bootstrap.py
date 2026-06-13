@@ -222,14 +222,13 @@ async def build_for_embedded(
         _logger.exception("bootstrap: refusing to start — enabled adapter unavailable")
         raise
 
-    # Wire the primary delivery adapter via the public setter.
-    # SessionRouter needs an adapter for outbound delivery; each adapter
-    # needs ``session_router.handle`` for inbound — two-step construction
-    # breaks the cycle. Web is primary when present; else the first
-    # available platform.
-    primary = web_adapter or (remote_adapters[0] if remote_adapters else None)
-    if primary is not None:
-        session_router.set_adapter(primary)
+    # Register EVERY adapter with the session router so each platform's
+    # replies stream back to that platform (per-platform routing). Two-step
+    # construction breaks the inbound/outbound cycle: build the router first,
+    # build adapters with a closure over ``router.handle``, then register each.
+    for outbound in (web_adapter, *remote_adapters):
+        if outbound is not None:
+            session_router.register_adapter(outbound)
 
     _logger.info(
         "bootstrap: embedded gateway built (tier=%s web=%s remote=%s)",

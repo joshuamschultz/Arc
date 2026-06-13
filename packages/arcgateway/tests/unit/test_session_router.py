@@ -133,6 +133,128 @@ class TestBuildSessionKey:
 
 
 # ---------------------------------------------------------------------------
+# Canonical session key — core owns key policy, adapters never hand-roll it
+# ---------------------------------------------------------------------------
+
+
+class _CapturingExecutor:
+    """Records the event it was handed so tests can assert on it."""
+
+    def __init__(self) -> None:
+        self.events: list[InboundEvent] = []
+
+    async def run(self, event: InboundEvent) -> AsyncIterator[Delta]:
+        self.events.append(event)
+        return self._stream(event)
+
+    async def _stream(self, event: InboundEvent) -> AsyncIterator[Delta]:
+        yield Delta(kind="done", content="", is_final=True, turn_id=event.session_key)
+
+
+class TestCanonicalSessionKey:
+    @pytest.mark.asyncio
+    async def test_router_overrides_adapter_session_key_with_canonical(self) -> None:
+        """A raw adapter-built key is replaced by the filename-safe canonical key.
+
+        Regression: the Telegram adapter built
+        ``"{agent_did}:telegram:private:{user}"``; with an agent DID like
+        ``did:arc:local:executor/abc`` the '/' made it an unsafe filename and
+        the executor's key validator raised ``ValueError`` on every message.
+        """
+        executor = _CapturingExecutor()
+        router = SessionRouter(executor=executor)
+        agent_did = "did:arc:local:executor/c659df43"
+        event = _make_event(
+            session_key=f"{agent_did}:telegram:private:8293394811",
+            agent_did=agent_did,
+            user_did="did:arc:telegram:8293394811",
+        )
+
+        await router.handle(event)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        assert len(executor.events) == 1
+        key = executor.events[0].session_key
+        # Filename-safe: no path separators, NUL, or dot-only.
+        assert "/" not in key and "\\" not in key and ":" not in key
+        assert key == build_session_key(agent_did, "did:arc:telegram:8293394811")
+
+
+# ---------------------------------------------------------------------------
+# Per-platform reply routing — reply returns to the originating platform
+# ---------------------------------------------------------------------------
+
+
+class _RecordingAdapter:
+    """Outbound channel that records what it was asked to deliver."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.sent: list[tuple[object, str]] = []
+        self.placeholders: list[str] = []
+
+    async def send(self, target: object, message: str, *, reply_to: str | None = None) -> None:
+        self.sent.append((target, message))
+
+    async def send_with_id(self, target: object, message: str) -> str | None:
+        self.placeholders.append(message)
+        return "mid-1"
+
+
+class _EchoExecutor:
+    async def run(self, event: InboundEvent) -> AsyncIterator[Delta]:
+        return self._stream(event)
+
+    async def _stream(self, event: InboundEvent) -> AsyncIterator[Delta]:
+        yield Delta(kind="token", content="hi", is_final=False, turn_id=event.session_key)
+        yield Delta(kind="done", content="", is_final=True, turn_id=event.session_key)
+
+
+class TestPerPlatformRouting:
+    @pytest.mark.asyncio
+    async def test_reply_routes_to_originating_platform(self) -> None:
+        """A Telegram message's reply is delivered through the Telegram adapter only."""
+        web = _RecordingAdapter("web")
+        telegram = _RecordingAdapter("telegram")
+        router = SessionRouter(executor=_EchoExecutor())
+        router.register_adapter(web)
+        router.register_adapter(telegram)
+
+        await router.handle(_make_event(platform="telegram", user_did="did:arc:telegram:42"))
+        await asyncio.sleep(0.05)
+
+        assert telegram.sent, "telegram adapter should deliver the reply"
+        assert not web.sent, "web adapter must NOT receive a telegram reply"
+
+    @pytest.mark.asyncio
+    async def test_single_adapter_fallback_delivers(self) -> None:
+        """With one registered channel, any platform's reply goes through it."""
+        only = _RecordingAdapter("web")
+        router = SessionRouter(executor=_EchoExecutor())
+        router.register_adapter(only)
+
+        await router.handle(_make_event(platform="telegram"))
+        await asyncio.sleep(0.05)
+
+        assert only.sent, "single registered adapter should receive the reply"
+
+    @pytest.mark.asyncio
+    async def test_no_matching_adapter_does_not_misroute(self) -> None:
+        """With several channels and no name match, nothing is misdelivered."""
+        web = _RecordingAdapter("web")
+        slack = _RecordingAdapter("slack")
+        router = SessionRouter(executor=_EchoExecutor())
+        router.register_adapter(web)
+        router.register_adapter(slack)
+
+        await router.handle(_make_event(platform="telegram"))
+        await asyncio.sleep(0.05)
+
+        assert not web.sent and not slack.sent, "unknown platform must not misroute"
+
+
+# ---------------------------------------------------------------------------
 # SessionRouter.handle() basic routing
 # ---------------------------------------------------------------------------
 
@@ -140,64 +262,62 @@ class TestBuildSessionKey:
 class TestSessionRouterHandle:
     @pytest.mark.asyncio
     async def test_new_session_spawns_task(self) -> None:
-        """handle() for a new session key spawns exactly one agent task."""
+        """handle() for a new session spawns exactly one agent task.
+
+        The session is keyed by the canonical (agent, user) key the core
+        derives — not the raw label an adapter happens to attach.
+        """
         router = SessionRouter(executor=_ImmediateExecutor())
-        event = _make_event(session_key="key1")
+        event = _make_event()
+        key = build_session_key(event.agent_did, event.user_did)
 
         await router.handle(event)
-        # Allow the spawned task to run
         await asyncio.sleep(0)
 
-        assert router.agent_tasks_spawned.get("key1", 0) == 1
+        assert router.agent_tasks_spawned.get(key, 0) == 1
 
     @pytest.mark.asyncio
     async def test_second_message_to_busy_session_is_queued(self) -> None:
-        """handle() queues a message if the session is already active."""
+        """A second message from the same (agent, user) queues behind the active turn."""
         slow_exec = _SlowExecutor()
         router = SessionRouter(executor=slow_exec)
 
-        key = "busy_session"
-        event1 = _make_event(session_key=key, message="first")
-        event2 = _make_event(session_key=key, message="second")
+        event1 = _make_event(message="first")
+        event2 = _make_event(message="second")
+        key = build_session_key(event1.agent_did, event1.user_did)
 
-        # Start first turn (will block at gate)
         await router.handle(event1)
-        # Session is now active; second message should queue
         await router.handle(event2)
 
-        # Exactly 1 task spawned so far
         assert router.agent_tasks_spawned.get(key, 0) == 1
-        # Second message is in the queue
         assert len(router.queued_events.get(key, [])) == 1
 
-        # Let the first turn complete
         slow_exec.open_gate(key)
-        # Give the event loop a chance to drain the queue
         await asyncio.sleep(0.05)
 
     @pytest.mark.asyncio
     async def test_active_session_count(self) -> None:
-        """active_session_count() reflects currently running sessions."""
+        """active_session_count() reflects currently running sessions.
+
+        Distinct users → distinct canonical keys → distinct sessions.
+        """
         slow_exec = _SlowExecutor()
         router = SessionRouter(executor=slow_exec)
+        agent = "did:arc:agent:assistant"
+        alice = build_session_key(agent, "did:arc:user:alice")
+        bob = build_session_key(agent, "did:arc:user:bob")
 
         assert router.active_session_count() == 0
 
-        await router.handle(_make_event(session_key="s1"))
+        await router.handle(_make_event(user_did="did:arc:user:alice"))
         assert router.active_session_count() == 1
 
-        await router.handle(_make_event(session_key="s2"))
+        await router.handle(_make_event(user_did="did:arc:user:bob"))
         assert router.active_session_count() == 2
 
-        # Yield to event loop so tasks reach their first await (gate.wait())
-        # before we open the gates. Without this, open_gate would be called
-        # before _stream has started waiting, and the gate set would be missed.
         await asyncio.sleep(0)
-
-        # Let both complete
-        slow_exec.open_gate("s1")
-        slow_exec.open_gate("s2")
-        # Give the event loop enough time to run both tasks to completion
+        slow_exec.open_gate(alice)
+        slow_exec.open_gate(bob)
         await asyncio.sleep(0.1)
 
         assert router.active_session_count() == 0
@@ -208,10 +328,11 @@ class TestSessionRouterHandle:
         slow_exec = _SlowExecutor()
         router = SessionRouter(executor=slow_exec)
 
-        key = "qtest"
-        await router.handle(_make_event(session_key=key, message="m1"))
-        await router.handle(_make_event(session_key=key, message="m2"))
-        await router.handle(_make_event(session_key=key, message="m3"))
+        event = _make_event(message="m1")
+        key = build_session_key(event.agent_did, event.user_did)
+        await router.handle(event)
+        await router.handle(_make_event(message="m2"))
+        await router.handle(_make_event(message="m3"))
 
         assert router.queue_depth(key) == 2  # m1 running, m2+m3 queued
 
@@ -220,17 +341,20 @@ class TestSessionRouterHandle:
 
     @pytest.mark.asyncio
     async def test_independent_sessions_run_concurrently(self) -> None:
-        """Different session keys spawn independent tasks concurrently."""
+        """Different users spawn independent sessions concurrently."""
         slow_exec = _SlowExecutor()
         router = SessionRouter(executor=slow_exec)
+        agent = "did:arc:agent:assistant"
+        alice = build_session_key(agent, "did:arc:user:alice")
+        bob = build_session_key(agent, "did:arc:user:bob")
 
-        await router.handle(_make_event(session_key="s_alice"))
-        await router.handle(_make_event(session_key="s_bob"))
+        await router.handle(_make_event(user_did="did:arc:user:alice"))
+        await router.handle(_make_event(user_did="did:arc:user:bob"))
 
         assert router.active_session_count() == 2
-        assert router.agent_tasks_spawned.get("s_alice", 0) == 1
-        assert router.agent_tasks_spawned.get("s_bob", 0) == 1
+        assert router.agent_tasks_spawned.get(alice, 0) == 1
+        assert router.agent_tasks_spawned.get(bob, 0) == 1
 
-        slow_exec.open_gate("s_alice")
-        slow_exec.open_gate("s_bob")
+        slow_exec.open_gate(alice)
+        slow_exec.open_gate(bob)
         await asyncio.sleep(0.05)

@@ -380,6 +380,55 @@ class TelegramAdapter:
         )
         return str(sent.message_id)
 
+    async def edit_message(
+        self,
+        target: DeliveryTarget,
+        message_id: str,
+        new_text: str,
+    ) -> None:
+        """Edit a previously-sent message — the streaming-update primitive.
+
+        StreamBridge calls this to progressively replace the placeholder with
+        accumulated tokens, so the reply "types out" in place like Slack.
+        Telegram caps edit text at 4096 chars; longer turns are finalized by
+        ``send()`` which splits at natural boundaries.
+
+        Raises:
+            RuntimeError: If the application is not connected.
+        """
+        if self._application is None:
+            msg = "TelegramAdapter.edit_message: not connected"
+            raise RuntimeError(msg)
+        await self._application.bot.edit_message_text(
+            chat_id=self._resolve_chat_id(target.chat_id),
+            message_id=int(message_id),
+            text=new_text[:_TELEGRAM_MAX_MESSAGE_LENGTH],
+        )
+
+    async def send_typing(self, target: DeliveryTarget) -> None:
+        """Show the "typing…" indicator in the chat. Cosmetic; never raises hard.
+
+        Telegram clears the indicator automatically after ~5s or when the next
+        message arrives, so a single call at turn start is enough for the
+        common case.
+        """
+        if self._application is None:
+            return
+        from telegram.constants import ChatAction
+
+        await self._application.bot.send_chat_action(
+            chat_id=self._resolve_chat_id(target.chat_id),
+            action=ChatAction.TYPING,
+        )
+
+    @staticmethod
+    def _resolve_chat_id(chat_id_str: str) -> int | str:
+        """Telegram chat ids are numeric; fall back to the raw string (@channel)."""
+        try:
+            return int(chat_id_str)
+        except ValueError:
+            return chat_id_str
+
     # ── Internal: Bot Setup ───────────────────────────────────────────────────
 
     def _register_handlers(self) -> None:

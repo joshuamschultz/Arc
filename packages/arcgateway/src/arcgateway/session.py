@@ -193,17 +193,26 @@ class SessionRouter:
         # Strong references to spawned tasks — prevents GC before completion.
         self._pending_tasks: set[asyncio.Task[None]] = set()
 
-        # StreamBridge adapter wiring (optional — no-op when None).
-        self._adapter: _AdapterProtocol | None = adapter
+        # Outbound channel registry — adapter.name → adapter. A reply is
+        # delivered through the adapter that owns the event's source channel,
+        # resolved generically by name (see _resolve_outbound). The router
+        # never references a specific platform; all send/edit/typing specifics
+        # live in the adapter packages. Seeded from the legacy single `adapter`
+        # arg and `adapter_map`; this same registry also serves pairing DMs.
+        self._adapters: dict[str, _AdapterProtocol] = {}
+        if adapter is not None:
+            self._adapters[adapter.name] = adapter
+        if adapter_map:
+            self._adapters.update(adapter_map)
         self._delivery_target_factory = delivery_target_factory
         self._stream_bridge = StreamBridge()
 
-        # Composed pairing interceptor (T1.8).
+        # Composed pairing interceptor (T1.8) — shares the same channel registry.
         self._pairing = PairingInterceptor(
             user_allowlist=user_allowlist,
             pairing_store=pairing_store,
             pairing_db_path=pairing_db_path,
-            adapter_map=adapter_map,
+            adapter_map=self._adapters,
         )
 
         # Composed queue manager with bounded depth + idle eviction.
@@ -218,26 +227,24 @@ class SessionRouter:
     # Allowlist delegation (public API — callers reference SessionRouter)
     # -----------------------------------------------------------------------
 
-    def set_adapter(self, adapter: BasePlatformAdapter) -> None:
-        """Register the primary adapter for outbound delivery.
+    def register_adapter(self, adapter: BasePlatformAdapter) -> None:
+        """Register an adapter as the outbound channel for its platform.
 
-        Resolves the constructor-time circular dependency: SessionRouter
-        needs the adapter to deliver agent replies via StreamBridge, but
-        each adapter needs ``session_router.handle`` for ``on_message``.
-        Two-step construction breaks the cycle — build the router first,
-        then the adapters with a closure over ``router.handle``, then
-        call ``router.set_adapter(adapter)``.
+        The router delivers a reply through the adapter whose ``name`` matches
+        the inbound event's source (``event.platform``). Register every adapter
+        the gateway runs (web, telegram, slack, …) so each platform's replies
+        return to that platform — never another. Resolves the construction
+        cycle: build the router first, build adapters with a closure over
+        ``router.handle``, then ``router.register_adapter(adapter)`` for each.
 
-        Idempotent: replacing an existing adapter is permitted and is
-        the supported pattern for runtime adapter swaps (e.g. hot
-        reload during development).
-
-        Args:
-            adapter: A ``BasePlatformAdapter`` instance. Must be the
-                same type the router was originally configured for, or
-                a compatible peer.
+        Idempotent: re-registering the same name replaces it (runtime swaps).
         """
-        self._adapter = adapter
+        self._adapters[adapter.name] = adapter
+        self._pairing.register_adapter(adapter.name, adapter)
+
+    def set_adapter(self, adapter: BasePlatformAdapter) -> None:
+        """Backwards-compatible alias for :meth:`register_adapter`."""
+        self.register_adapter(adapter)
 
     def add_approved_user(self, user_did: str) -> None:
         """Add a user DID to the allowlist (called after pairing approval).
@@ -279,17 +286,23 @@ class SessionRouter:
         Args:
             event: Normalised inbound event from a platform adapter.
         """
-        # --- Identity graph resolution (T1.3 / SDD §3.3) ---
+        # --- Identity + canonical session key (T1.3 / SDD §3.3, D-06) ---
+        # The gateway core owns session-key policy: a filename-safe,
+        # cross-platform-stable key derived from (agent, user). Adapters supply
+        # platform identity only — they must NOT hand-craft the session key.
+        # A raw "{agent_did}:{platform}:{chat_type}:{user}" string breaks the
+        # executor's filename-safe key validator whenever the agent DID
+        # contains '/' or ':' (e.g. did:arc:local:executor/abc). Deriving the
+        # canonical key here makes every platform consistent and safe.
         # Synchronous (SQLite read) — no await before the race guard.
+        resolved_did = event.user_did
         if self._identity_graph is not None:
             resolved_did = self._resolve_user_did(event.platform, event.user_did)
-            if resolved_did != event.user_did:
-                event = event.model_copy(
-                    update={
-                        "user_did": resolved_did,
-                        "session_key": build_session_key(event.agent_did, resolved_did),
-                    }
-                )
+        canonical_key = build_session_key(event.agent_did, resolved_did)
+        if resolved_did != event.user_did or event.session_key != canonical_key:
+            event = event.model_copy(
+                update={"user_did": resolved_did, "session_key": canonical_key}
+            )
 
         # --- Pairing interceptor (T1.8) ---
         if not self._pairing.is_user_approved(event.user_did):
@@ -386,9 +399,10 @@ class SessionRouter:
         try:
             delta_stream: AsyncIterator[Delta] = await self._executor.run(event)
 
-            if self._adapter is not None:
+            adapter = self._resolve_outbound(event)
+            if adapter is not None:
                 target = self._resolve_delivery_target(event)
-                await self._stream_bridge.consume(delta_stream, target, self._adapter)
+                await self._stream_bridge.consume(delta_stream, target, adapter)
             else:
                 async for delta in delta_stream:
                     if delta.is_final:
@@ -462,6 +476,25 @@ class SessionRouter:
             yield delta
             if delta.is_final:
                 return
+
+    def _resolve_outbound(self, event: InboundEvent) -> _AdapterProtocol | None:
+        """Resolve the outbound channel a reply should go to.
+
+        Generic by design: the router matches the adapter's self-declared
+        ``name`` to the event's source id (``event.platform``) so a reply
+        returns to the platform it came from — Telegram answers on Telegram,
+        Slack on Slack, web on web. The router holds NO platform-specific
+        logic; every send/edit/typing detail lives in the adapter package.
+
+        When exactly one channel is registered, deliver through it regardless
+        of name (single-platform deployments and tests). When several are
+        registered and none matches, there is no safe channel — the caller
+        logs the turn instead of guessing.
+        """
+        adapter = self._adapters.get(event.platform)
+        if adapter is None and len(self._adapters) == 1:
+            return next(iter(self._adapters.values()))
+        return adapter
 
     def _resolve_delivery_target(self, event: InboundEvent) -> DeliveryTarget:
         """Build a DeliveryTarget from an InboundEvent.

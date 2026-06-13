@@ -168,7 +168,8 @@ async def test_race_regression_various_concurrency_levels(n_messages: int) -> No
     executor = _GatedExecutor()
     router = SessionRouter(executor=executor)
 
-    session_key = "fixed_session_key_for_race_test"
+    # Same (agent, user) → one canonical session key the core derives.
+    session_key = build_session_key("did:arc:agent:racetest", "did:arc:user:racetest")
 
     events = [
         InboundEvent(
@@ -214,7 +215,10 @@ async def test_different_sessions_all_spawn_tasks() -> None:
     router = SessionRouter(executor=executor)
 
     n_sessions = 20
-    sessions = [f"session_{i:04d}" for i in range(n_sessions)]
+    # Distinct users → distinct canonical keys (the core derives them).
+    sessions = [
+        build_session_key("did:arc:agent:bot", f"did:arc:user:u{i}") for i in range(n_sessions)
+    ]
 
     events = [
         InboundEvent(
@@ -257,7 +261,7 @@ async def test_queued_events_not_dropped_after_gate_release() -> None:
     executor = _GatedExecutor()
     router = SessionRouter(executor=executor)
 
-    session_key = "drain_test_session"
+    session_key = build_session_key("did:arc:agent:bot", "did:arc:user:alice")
     n_queued = 3
 
     # First message starts the session

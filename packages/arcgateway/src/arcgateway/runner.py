@@ -250,15 +250,19 @@ class GatewayRunner:
     def add_adapter(self, adapter: BasePlatformAdapter) -> None:
         """Register a platform adapter before run() is called.
 
-        Also registers the adapter with DeliverySenderImpl so cron job
-        output can be routed to this platform.
+        Wires the adapter into both outbound paths:
+        - the SessionRouter, so live chat replies stream back to the platform
+          the message came from (per-platform routing);
+        - the DeliverySenderImpl, so cron/proactive output can reach it.
 
         Args:
             adapter: Adapter instance to add.
         """
         self._adapters.append(adapter)
         self._adapter_index[adapter.name] = adapter
-        # Register with delivery sender for outbound routing.
+        # Live chat replies — route back to the originating platform.
+        self._session_router.register_adapter(adapter)
+        # Cron / proactive delivery routing.
         self._delivery_sender.register_adapter(adapter.name, adapter)
 
     async def run(self) -> None:

@@ -70,6 +70,7 @@ class StreamBridge:
         message_id: str | None = None
         edit_count: int = 0
 
+        await self._maybe_send_typing(adapter, target)
         message_id = await self._send_placeholder(adapter, target)
 
         async for delta in deltas:
@@ -141,6 +142,21 @@ class StreamBridge:
             return True
         elapsed_ms = (time.monotonic() - last_edit_at) * 1000
         return elapsed_ms >= EDIT_INTERVAL_MS
+
+    @staticmethod
+    async def _maybe_send_typing(adapter: object, target: DeliveryTarget) -> None:
+        """Show a typing indicator before the first content, if the adapter supports it.
+
+        Optional capability — probed via ``hasattr`` so adapters without a
+        platform typing API (web, Slack bots) are simply skipped. Never raises.
+        """
+        send_typing = getattr(adapter, "send_typing", None)
+        if send_typing is None:
+            return
+        try:
+            await send_typing(target)
+        except Exception as exc:  # reason: fail-open — typing is cosmetic
+            _logger.debug("StreamBridge: send_typing failed (target=%s): %s", target, exc)
 
     @staticmethod
     async def _send_placeholder(adapter: object, target: DeliveryTarget) -> str | None:
