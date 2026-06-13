@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import time
 
-from arcgateway.adapters.slack import SlackAdapter, _DedupStore
 from arcgateway.executor import InboundEvent
+
+from arcgateway_slack.adapter import SlackAdapter, _DedupStore
 
 # ---------------------------------------------------------------------------
 # Helpers

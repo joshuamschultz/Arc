@@ -21,11 +21,11 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from arcgateway.adapters.base import BasePlatformAdapter
-from arcgateway.adapters.mattermost import MattermostAdapter, _split_message
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
+
+from arcgateway_mattermost.adapter import MattermostAdapter, _split_message
 
 # NOTE: avoid a module-level `pytestmark = pytest.mark.asyncio`. The file
 # mixes sync (contract checks, federal-tier guard validation, repr safety,
@@ -195,7 +195,7 @@ class TestFederalAirgapGuard:
         addresses; we mock getaddrinfo to return a routable public IP.
         """
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             return_value=[(None, None, None, None, ("1.2.3.4", 0))],
         ):
             with pytest.raises(ValueError, match="federal tier requires an intranet"):
@@ -225,7 +225,7 @@ class TestFederalAirgapGuard:
         import socket as _socket
 
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             side_effect=_socket.gaierror("temporary failure"),
         ):
             with pytest.raises(ValueError, match="federal tier requires"):
@@ -246,7 +246,7 @@ class TestFederalAirgapGuard:
         import socket as _socket
 
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             side_effect=_socket.gaierror("temporary failure"),
         ):
             adapter, _, _ = _make_adapter(
@@ -263,7 +263,7 @@ class TestFederalAirgapGuard:
         bypasses the entire guard. Construction must fail loud.
         """
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             return_value=[(None, None, None, None, ("93.184.216.34", 0))],
         ):
             with pytest.raises(ValueError, match="resolves to a public address"):
@@ -287,7 +287,7 @@ class TestFederalAirgapGuard:
         import socket as _socket
 
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             side_effect=_socket.gaierror("temporary failure"),
         ):
             # First call resolves the entry, second call resolves server_url.
@@ -319,7 +319,7 @@ class TestFederalAirgapGuard:
             return [(None, None, None, None, ("93.184.216.34", 0))]
 
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             side_effect=_resolve,
         ):
             with pytest.raises(ValueError, match="federal tier requires"):
@@ -334,7 +334,7 @@ class TestFederalAirgapGuard:
     def test_error_message_does_not_contain_token(self) -> None:
         """The ValueError message must not echo the PAT."""
         with patch(
-            "arcgateway.adapters.mattermost.socket.getaddrinfo",
+            "arcgateway_mattermost.adapter.socket.getaddrinfo",
             return_value=[(None, None, None, None, ("8.8.8.8", 0))],
         ):
             with pytest.raises(ValueError) as exc_info:
@@ -540,7 +540,7 @@ class TestConstructionAudit:
         async def _noop(e: InboundEvent) -> None:
             pass
 
-        with patch("arcgateway.adapters.mattermost.MattermostAdapter._audit") as mock_audit:
+        with patch("arcgateway_mattermost.adapter.MattermostAdapter._audit") as mock_audit:
             MattermostAdapter(
                 server_url="http://localhost:8065",
                 bot_token=_PAT_CANARY,

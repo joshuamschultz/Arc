@@ -29,7 +29,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from arcgateway.adapters.telegram import (
+from arcgateway_telegram.adapter import (
     _CONFLICT_MAX_RETRIES,
     _NETWORK_MAX_RETRIES,
     TelegramAdapter,
@@ -115,15 +115,15 @@ async def test_polling_conflict_bounded_retries() -> None:
     # Patch asyncio.sleep to skip waits
     with (
         patch(
-            "arcgateway.adapters.telegram._is_conflict_error",
+            "arcgateway_telegram.adapter._is_conflict_error",
             side_effect=lambda e: isinstance(e, _FakeConflictError),
         ),
         patch(
-            "arcgateway.adapters.telegram._is_network_error",
+            "arcgateway_telegram.adapter._is_network_error",
             side_effect=lambda e: isinstance(e, _FakeNetworkError),
         ),
         patch(
-            "arcgateway.adapters.telegram.asyncio.sleep",
+            "arcgateway_telegram.adapter.asyncio.sleep",
             new_callable=AsyncMock,
         ),
         patch.dict(
@@ -170,15 +170,15 @@ async def test_polling_conflict_escalates_after_max_retries() -> None:
 
     with (
         patch(
-            "arcgateway.adapters.telegram._is_conflict_error",
+            "arcgateway_telegram.adapter._is_conflict_error",
             side_effect=_conflict_side_effect,
         ),
         patch(
-            "arcgateway.adapters.telegram._is_network_error",
+            "arcgateway_telegram.adapter._is_network_error",
             return_value=False,
         ),
         patch(
-            "arcgateway.adapters.telegram.asyncio.sleep",
+            "arcgateway_telegram.adapter.asyncio.sleep",
             new_callable=AsyncMock,
         ),
         patch.dict(
@@ -219,15 +219,15 @@ async def test_network_error_reconnects() -> None:
 
     with (
         patch(
-            "arcgateway.adapters.telegram._is_conflict_error",
+            "arcgateway_telegram.adapter._is_conflict_error",
             return_value=False,
         ),
         patch(
-            "arcgateway.adapters.telegram._is_network_error",
+            "arcgateway_telegram.adapter._is_network_error",
             side_effect=lambda e: isinstance(e, _FakeNetworkError),
         ),
         patch(
-            "arcgateway.adapters.telegram.asyncio.sleep",
+            "arcgateway_telegram.adapter.asyncio.sleep",
             new_callable=AsyncMock,
         ),
         patch.dict(
@@ -265,15 +265,15 @@ async def test_network_error_escalates_after_max_retries() -> None:
 
     with (
         patch(
-            "arcgateway.adapters.telegram._is_conflict_error",
+            "arcgateway_telegram.adapter._is_conflict_error",
             return_value=False,
         ),
         patch(
-            "arcgateway.adapters.telegram._is_network_error",
+            "arcgateway_telegram.adapter._is_network_error",
             side_effect=_network_side_effect,
         ),
         patch(
-            "arcgateway.adapters.telegram.asyncio.sleep",
+            "arcgateway_telegram.adapter.asyncio.sleep",
             new_callable=AsyncMock,
         ),
         patch.dict(
@@ -307,11 +307,11 @@ async def test_unhandled_error_is_not_retryable() -> None:
 
     with (
         patch(
-            "arcgateway.adapters.telegram._is_conflict_error",
+            "arcgateway_telegram.adapter._is_conflict_error",
             return_value=False,
         ),
         patch(
-            "arcgateway.adapters.telegram._is_network_error",
+            "arcgateway_telegram.adapter._is_network_error",
             return_value=False,
         ),
         patch.dict(
@@ -384,7 +384,7 @@ async def test_auth_rejection_emits_audit_log(caplog: Any) -> None:
     update.effective_message = MagicMock()
     update.effective_message.text = "injected"
 
-    with caplog.at_level(logging.INFO, logger="arcgateway.adapters.telegram"):
+    with caplog.at_level(logging.INFO, logger="arcgateway_telegram.adapter"):
         await adapter._handle_update(update, context=MagicMock())
 
     on_message.assert_not_called()

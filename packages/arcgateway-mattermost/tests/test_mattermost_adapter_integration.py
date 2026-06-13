@@ -43,10 +43,10 @@ from unittest.mock import patch
 import aiohttp
 import aiohttp.web
 import pytest
-
-from arcgateway.adapters.mattermost import MattermostAdapter
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
+
+from arcgateway_mattermost.adapter import MattermostAdapter
 
 pytestmark = pytest.mark.asyncio
 
@@ -355,7 +355,7 @@ async def test_federal_tier_rejects_non_intranet_url() -> None:
     We mock getaddrinfo so the test is hermetic (no real DNS lookup).
     """
     with patch(
-        "arcgateway.adapters.mattermost.socket.getaddrinfo",
+        "arcgateway_mattermost.adapter.socket.getaddrinfo",
         return_value=[(None, None, None, None, ("203.0.113.1", 0))],
     ):
         with pytest.raises(ValueError, match="federal tier requires an intranet"):

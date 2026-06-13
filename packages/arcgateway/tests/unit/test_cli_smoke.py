@@ -342,39 +342,17 @@ def test_wire_adapters_telegram_missing_token_personal_warns(tmp_path: Path) -> 
 
 
 def test_wire_adapters_telegram_present_token_registers_adapter(tmp_path: Path) -> None:
-    """_wire_adapters registers TelegramAdapter when token is present."""
+    """_wire_adapters registers a telegram adapter (via the registry) when its token is present."""
+    pytest.importorskip("arcgateway_telegram")
     runner, config = _make_real_runner_and_config(tmp_path, telegram_enabled=True)
 
-    fake_adapter = MagicMock()
-    fake_adapter.name = "telegram"
-
-    with (
-        patch.dict(os.environ, {"TEST_TELEGRAM_TOKEN": "fake-token"}),
-        patch("arcgateway.adapters.telegram.TelegramAdapter", return_value=fake_adapter),
-    ):
+    with patch.dict(os.environ, {"TEST_TELEGRAM_TOKEN": "fake-token"}):
         _wire_adapters(runner, config)
 
-    # runner should have the adapter registered.
     from arcgateway.runner import GatewayRunner
 
     assert isinstance(runner, GatewayRunner)
-    # adapter was added.
-    assert fake_adapter in runner._adapters
-
-
-def test_wire_adapters_telegram_import_error_personal_skips(tmp_path: Path) -> None:
-    """_wire_adapters skips Telegram adapter when import fails at personal tier."""
-    runner, config = _make_real_runner_and_config(tmp_path, telegram_enabled=True)
-
-    with (
-        patch.dict(os.environ, {"TEST_TELEGRAM_TOKEN": "fake-token"}),
-        patch(
-            "arcgateway.adapters.telegram.TelegramAdapter",
-            side_effect=ImportError("python-telegram-bot not installed"),
-        ),
-    ):
-        # Must not raise at personal tier.
-        _wire_adapters(runner, config)
+    assert any(a.name == "telegram" for a in runner._adapters)
 
 
 def test_wire_adapters_telegram_missing_token_federal_exits(tmp_path: Path) -> None:
@@ -403,42 +381,20 @@ def test_wire_adapters_slack_missing_token_personal_warns(tmp_path: Path) -> Non
 
 
 def test_wire_adapters_slack_present_tokens_registers_adapter(tmp_path: Path) -> None:
-    """_wire_adapters registers SlackAdapter when both tokens are present."""
+    """_wire_adapters registers a slack adapter (via the registry) when both tokens are present."""
+    pytest.importorskip("arcgateway_slack")
     runner, config = _make_real_runner_and_config(tmp_path, slack_enabled=True)
 
-    fake_adapter = MagicMock()
-    fake_adapter.name = "slack"
-
-    with (
-        patch.dict(
-            os.environ,
-            {"TEST_SLACK_BOT_TOKEN": "xoxb-fake", "TEST_SLACK_APP_TOKEN": "xapp-fake"},
-        ),
-        patch("arcgateway.adapters.slack.SlackAdapter", return_value=fake_adapter),
+    with patch.dict(
+        os.environ,
+        {"TEST_SLACK_BOT_TOKEN": "xoxb-fake", "TEST_SLACK_APP_TOKEN": "xapp-fake"},
     ):
         _wire_adapters(runner, config)
 
     from arcgateway.runner import GatewayRunner
 
     assert isinstance(runner, GatewayRunner)
-    assert fake_adapter in runner._adapters
-
-
-def test_wire_adapters_slack_import_error_personal_skips(tmp_path: Path) -> None:
-    """_wire_adapters skips Slack adapter when import fails at personal tier."""
-    runner, config = _make_real_runner_and_config(tmp_path, slack_enabled=True)
-
-    with (
-        patch.dict(
-            os.environ,
-            {"TEST_SLACK_BOT_TOKEN": "xoxb-fake", "TEST_SLACK_APP_TOKEN": "xapp-fake"},
-        ),
-        patch(
-            "arcgateway.adapters.slack.SlackAdapter",
-            side_effect=ImportError("slack-bolt not installed"),
-        ),
-    ):
-        _wire_adapters(runner, config)  # must not raise at personal tier
+    assert any(a.name == "slack" for a in runner._adapters)
 
 
 def test_wire_adapters_slack_missing_token_federal_exits(tmp_path: Path) -> None:
@@ -533,3 +489,54 @@ def test_main_dispatches_start(tmp_path: Path) -> None:
         main()
 
     mock_start.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# adapter subcommand — install/list platform extension packages
+# ---------------------------------------------------------------------------
+
+
+def test_cmd_adapter_list_shows_official(capsys: pytest.CaptureFixture[str]) -> None:
+    """cmd_adapter('list') prints every official adapter."""
+    from arcgateway.cli import cmd_adapter
+
+    cmd_adapter("list")
+    out = capsys.readouterr().err  # _echo writes to stderr
+    assert "telegram" in out
+    assert "slack" in out
+    assert "mattermost" in out
+
+
+def test_cmd_adapter_install_unknown_exits(capsys: pytest.CaptureFixture[str]) -> None:
+    """cmd_adapter install rejects a non-official adapter name."""
+    from arcgateway.cli import cmd_adapter
+
+    with pytest.raises(SystemExit) as exc_info:
+        cmd_adapter("install", name="discord")
+    assert exc_info.value.code == 1
+
+
+def test_cmd_adapter_install_invokes_installer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cmd_adapter install calls the installer for an official adapter."""
+    import arcgateway.adapters.install as inst
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        inst,
+        "install_adapter",
+        lambda name, *, upgrade=False: calls.append(name) or 0,
+    )
+    from arcgateway.cli import cmd_adapter
+
+    cmd_adapter("install", name="telegram")  # must not raise
+    assert calls == ["telegram"]
+
+
+def test_main_dispatches_adapter_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() routes 'adapter install <name>' to cmd_adapter."""
+    with (
+        patch.object(sys, "argv", ["arcgateway", "adapter", "install", "telegram"]),
+        patch("arcgateway.cli.cmd_adapter") as mock_adapter,
+    ):
+        main()
+    mock_adapter.assert_called_once()

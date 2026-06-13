@@ -35,7 +35,7 @@ from typing import Any
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
 
-_logger = logging.getLogger("arcgateway.adapters.slack")
+_logger = logging.getLogger("arcgateway_slack.adapter")
 
 _MAX_MESSAGE_LENGTH = 4000
 _DEDUP_TTL_SECONDS = 86400
@@ -185,16 +185,13 @@ class SlackAdapter:
     async def connect(self) -> None:
         """Establish Socket Mode connection."""
         try:
-            # slack_bolt ships no type stubs; ignore-import keeps mypy --strict
-            # green while the lazy import path stays optional.
-            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]  # reason: optional dep — see comment above; slack-bolt ships no type stubs
-                AsyncSocketModeHandler,
-            )
-            from slack_bolt.async_app import (
-                AsyncApp,  # type: ignore[import-not-found]  # reason: same — slack-bolt has no type stubs
-            )
+            # slack-bolt ships no type stubs — the slack_bolt.* mypy override
+            # (ignore_missing_imports) keeps --strict green; the lazy import
+            # path keeps the dependency optional at runtime.
+            from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+            from slack_bolt.async_app import AsyncApp
         except ImportError as exc:
-            msg = "slack-bolt is not installed. Install with: pip install 'arcgateway[slack]'"
+            msg = "slack-bolt is not installed. Install with: pip install 'arcgateway-slack'"
             raise ImportError(msg) from exc
 
         self._app = AsyncApp(token=self._bot_token)

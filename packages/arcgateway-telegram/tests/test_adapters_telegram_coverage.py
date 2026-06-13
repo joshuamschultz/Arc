@@ -17,9 +17,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from arcgateway.adapters.telegram import TelegramAdapter, split_message
 from arcgateway.delivery import DeliveryTarget
+
+from arcgateway_telegram.adapter import TelegramAdapter, split_message
 
 
 def _make_adapter(allowed_user_ids: list[int] | None = None) -> TelegramAdapter:
@@ -192,12 +192,12 @@ async def test_disconnect_handles_application_shutdown_exception() -> None:
 
 @pytest.mark.asyncio
 async def test_run_polling_loop_import_error_returns_cleanly() -> None:
-    """_run_polling_loop() returns early (no exception) when telegram.ext is missing."""
+    """_run_polling_loop() returns early (no exception) when telegram is missing."""
     adapter = _make_adapter()
     adapter._running = True
 
-    # Simulate telegram.ext not installed by patching the import inside the method
-    with patch.dict("sys.modules", {"telegram.ext": None}):  # type: ignore[dict-item]
+    # Simulate python-telegram-bot not installed by patching the import inside the method
+    with patch.dict("sys.modules", {"telegram": None}):  # type: ignore[dict-item]
         # Must return cleanly (logs error and returns)
         await adapter._run_polling_loop()
 

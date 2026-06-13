@@ -59,12 +59,13 @@ def cmd_start(
     Selects executor based on tier: personal/enterprise → AsyncioExecutor,
     federal → SubprocessExecutor.
 
-    Platform adapters are built from the config:
-      - [platforms.telegram] enabled=true → TelegramAdapter
-      - [platforms.slack]    enabled=true → SlackAdapter
+    Remote platform adapters are built from the config via the generic
+    adapter-plugin registry: each ``[platforms.<name>]`` block with
+    ``enabled = true`` loads its plugin from the matching extension package
+    (e.g. ``arcgateway-telegram``). The gateway core names no platform.
 
-    Token credentials are read from the environment variable names specified
-    in the config (never inlined in the config file).
+    Token credentials are read from environment variable names specified
+    in each plugin's own config block (never inlined in the config file).
 
     Federal-tier vault: If tier=federal and a platform credential env var
     is missing, gateway startup hard-fails with an error message rather than
@@ -121,41 +122,7 @@ def _wire_adapters(runner: object, config: object) -> None:
 
     tier = config.gateway.tier
 
-    # Telegram
-    if config.platforms.telegram.enabled:
-        token = config.platforms.telegram.resolve_token()
-        if token is None:
-            msg = (
-                f"arcgateway: Telegram token not found in env var "
-                f"{config.platforms.telegram.token_env!r}"
-            )
-            if tier == "federal":
-                _logger.error("%s — hard error at federal tier", msg)
-                sys.exit(1)
-            else:
-                _logger.warning("%s — skipping Telegram adapter", msg)
-        else:
-            try:
-                from arcgateway.adapters.telegram import TelegramAdapter
-
-                agent_did = config.effective_agent_did("telegram")
-                adapter = TelegramAdapter(
-                    bot_token=token,
-                    allowed_user_ids=config.platforms.telegram.allowed_user_ids,
-                    on_message=runner.session_router.handle,
-                    agent_did=agent_did,
-                )
-                runner.add_adapter(adapter)
-                _logger.info("arcgateway: Telegram adapter registered (agent_did=%s)", agent_did)
-            except ImportError:
-                _logger.error(
-                    "arcgateway: python-telegram-bot not installed. "
-                    "Install with: pip install 'arcgateway[telegram]'"
-                )
-                if tier == "federal":
-                    sys.exit(1)
-
-    # Web (browser chat platform — no remote token, no env-var lookup)
+    # Web is the one core, in-process adapter (no remote token, no plugin).
     if config.platforms.web.enabled:
         from arcgateway.adapters.web import WebPlatformAdapter
 
@@ -170,42 +137,26 @@ def _wire_adapters(runner: object, config: object) -> None:
         runner.add_adapter(web_adapter)
         _logger.info("arcgateway: Web adapter registered (agent_did=%s)", agent_did)
 
-    # Slack
-    if config.platforms.slack.enabled:
-        bot_token = config.platforms.slack.resolve_bot_token()
-        app_token = config.platforms.slack.resolve_app_token()
-        if bot_token is None or app_token is None:
-            missing = (
-                config.platforms.slack.bot_token_env
-                if bot_token is None
-                else config.platforms.slack.app_token_env
-            )
-            msg = f"arcgateway: Slack token not found in env var {missing!r}"
-            if tier == "federal":
-                _logger.error("%s — hard error at federal tier", msg)
-                sys.exit(1)
-            else:
-                _logger.warning("%s — skipping Slack adapter", msg)
-        else:
-            try:
-                from arcgateway.adapters.slack import SlackAdapter
+    # Every remote platform (telegram, slack, mattermost, …) loads through the
+    # generic adapter-plugin registry — the gateway core names none of them.
+    from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters
 
-                agent_did = config.effective_agent_did("slack")
-                slack_adapter = SlackAdapter(
-                    bot_token=bot_token,
-                    app_token=app_token,
-                    allowed_user_ids=config.platforms.slack.allowed_user_ids,
-                    on_message=runner.session_router.handle,
-                )
-                runner.add_adapter(slack_adapter)
-                _logger.info("arcgateway: Slack adapter registered (agent_did=%s)", agent_did)
-            except ImportError:
-                _logger.error(
-                    "arcgateway: slack-bolt not installed. "
-                    "Install with: pip install 'arcgateway[slack]'"
-                )
-                if tier == "federal":
-                    sys.exit(1)
+    try:
+        adapters = build_adapters(
+            platforms=config.platforms.remote_blocks(),
+            on_message=runner.session_router.handle,
+            default_agent_did=config.gateway.agent_did,
+            tier=tier,
+        )
+    except AdapterUnavailableError as exc:
+        # Federal tier fails closed: an enabled adapter that cannot load is a
+        # hard startup error rather than a silently-served subset.
+        _logger.error("arcgateway: %s — refusing to start at federal tier", exc)
+        sys.exit(1)
+
+    for adapter in adapters:
+        runner.add_adapter(adapter)
+        _logger.info("arcgateway: %s adapter registered", adapter.name)
 
 
 def cmd_stop(*, runtime_dir: Path | None = None) -> None:
@@ -307,11 +258,15 @@ agent_did = "did:arc:agent:default"
 [security]
 require_pairing = false
 
+# Remote platforms load from extension packages via the adapter-plugin
+# registry. Enable a block AND install its package, e.g.:
+#   pip install 'arcgateway-telegram'
 [platforms.telegram]
 enabled = false
 token_env = "TELEGRAM_BOT_TOKEN"
 # allowed_user_ids = [123456789]  # Your Telegram user ID
 
+# pip install 'arcgateway-slack'
 [platforms.slack]
 enabled = false
 bot_token_env = "SLACK_BOT_TOKEN"
@@ -327,6 +282,55 @@ app_token_env = "SLACK_APP_TOKEN"
     config_path.chmod(0o600)
     _echo(f"arcgateway setup: wrote starter config to {config_path}")
     _echo("Edit the file and set your platform tokens via environment variables.")
+
+
+def cmd_adapter(
+    subcommand: str | None,
+    *,
+    name: str | None = None,
+    upgrade: bool = False,
+) -> None:
+    """List or install official platform adapter extension packages.
+
+    ``arcgateway adapter list`` shows the official adapters and whether each is
+    installed; ``arcgateway adapter install <name>`` pip/uv-installs
+    ``arcgateway-<name>`` (only official names are accepted).
+    """
+    from arcgateway.adapters.install import (
+        available_adapters,
+        install_adapter,
+        installed_adapters,
+    )
+
+    avail = available_adapters()
+
+    if subcommand == "list":
+        installed = installed_adapters()
+        _echo("Official gateway adapters:")
+        for adapter_name in sorted(avail):
+            mark = "installed" if adapter_name in installed else "not installed"
+            _echo(f"  {adapter_name:<11} {avail[adapter_name]:<24} [{mark}]")
+        return
+
+    if subcommand == "install":
+        if name is None or name not in avail:
+            _echo(f"Error: unknown adapter {name!r}. Available: {', '.join(sorted(avail))}")
+            sys.exit(1)
+        dist = avail[name]
+        _echo(f"Installing {dist} ...")
+        code = install_adapter(name, upgrade=upgrade)
+        if code == 0:
+            _echo(
+                f"Installed {dist}. Enable [platforms.{name}] in gateway.toml, "
+                "set its token env var, and restart the gateway."
+            )
+        else:
+            _echo(f"Error: installing {dist} failed (exit {code}).")
+            sys.exit(code)
+        return
+
+    _echo("Usage: arcgateway adapter [list | install <name> [--upgrade]]")
+    sys.exit(1)
 
 
 def main() -> None:
@@ -358,6 +362,16 @@ def main() -> None:
     # setup
     subparsers.add_parser("setup", help="Write a starter gateway.toml (personal tier)")
 
+    # adapter — install/list platform adapter extension packages
+    adapter_parser = subparsers.add_parser("adapter", help="List or install platform adapters")
+    adapter_sub = adapter_parser.add_subparsers(dest="adapter_command")
+    adapter_sub.add_parser("list", help="List official adapters and install status")
+    adapter_install = adapter_sub.add_parser("install", help="Install an adapter package")
+    adapter_install.add_argument("name", help="Adapter name: telegram, slack, or mattermost")
+    adapter_install.add_argument(
+        "--upgrade", action="store_true", help="Reinstall the latest version"
+    )
+
     args = parser.parse_args()
 
     if args.command == "start":
@@ -368,6 +382,12 @@ def main() -> None:
         cmd_status(runtime_dir=args.runtime_dir)
     elif args.command == "setup":
         cmd_setup()
+    elif args.command == "adapter":
+        cmd_adapter(
+            args.adapter_command,
+            name=getattr(args, "name", None),
+            upgrade=getattr(args, "upgrade", False),
+        )
     else:
         parser.print_help()
         sys.exit(1)

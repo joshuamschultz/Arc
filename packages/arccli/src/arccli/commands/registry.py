@@ -275,6 +275,67 @@ def _gateway_pair_revoke_handler(args: list[str]) -> None:
     asyncio.run(_revoke())
 
 
+# ---------------------------------------------------------------------------
+# Gateway adapter command handlers — install platform extension packages
+# (arc gateway adapter list / install <name>)
+# ---------------------------------------------------------------------------
+
+
+def _gateway_adapter_list_handler(args: list[str]) -> None:
+    """List official gateway adapter packages and their install status.
+
+    Usage: arc gateway adapter list
+    """
+    from arcgateway.adapters.install import available_adapters, installed_adapters
+
+    avail = available_adapters()
+    installed = installed_adapters()
+    sys.stdout.write("Official gateway adapters:\n")
+    for name in sorted(avail):
+        mark = "installed" if name in installed else "not installed"
+        sys.stdout.write(f"  {name:<11} {avail[name]:<24} [{mark}]\n")
+    sys.stdout.write("\nInstall one with: gateway adapter install <name>\n")
+
+
+def _gateway_adapter_install_handler(args: list[str]) -> None:
+    """Install an official gateway adapter extension package.
+
+    Usage: arc gateway adapter install <name> [--upgrade]
+
+    Pip/uv-installs ``arcgateway-<name>`` (the gateway discovers it via its
+    entry point on next start). Only official adapter names are accepted.
+    """
+    from arcgateway.adapters.install import available_adapters, install_adapter
+
+    avail = available_adapters()
+    if not args:
+        sys.stderr.write(
+            "Usage: gateway adapter install <name> [--upgrade]\n"
+            f"  <name>  one of: {', '.join(sorted(avail))}\n"
+        )
+        sys.exit(1)
+
+    name = args[0].strip().lower()
+    if name not in avail:
+        sys.stderr.write(
+            f"Error: unknown adapter {name!r}. Available: {', '.join(sorted(avail))}\n"
+        )
+        sys.exit(1)
+
+    upgrade = "--upgrade" in args[1:] or "-U" in args[1:]
+    dist = avail[name]
+    sys.stdout.write(f"Installing {dist} ...\n")
+    code = install_adapter(name, upgrade=upgrade)
+    if code == 0:
+        sys.stdout.write(
+            f"Installed {dist}. Enable [platforms.{name}] in gateway.toml, "
+            "set its token env var, and restart the gateway.\n"
+        )
+    else:
+        sys.stderr.write(f"Error: installing {dist} failed (exit {code}).\n")
+        sys.exit(code)
+
+
 COMMAND_REGISTRY: list[CommandDef] = [
     # --- Info ---
     CommandDef(
@@ -391,6 +452,23 @@ COMMAND_REGISTRY: list[CommandDef] = [
         gateway_only=True,
         gateway_config_gate="gateway.pairing.enabled",
         handler=_gateway_pair_revoke_handler,
+    ),
+    CommandDef(
+        name="gateway adapter list",
+        description="List official gateway adapter packages and install status",
+        category="Configuration",
+        cli_only=True,
+        gateway_only=True,
+        handler=_gateway_adapter_list_handler,
+    ),
+    CommandDef(
+        name="gateway adapter install",
+        description="Install a gateway adapter package (telegram, slack, mattermost)",
+        category="Configuration",
+        args_hint="<name> [--upgrade]",
+        cli_only=True,
+        gateway_only=True,
+        handler=_gateway_adapter_install_handler,
     ),
     # --- Exit ---
     CommandDef(

@@ -2,12 +2,12 @@
 
 .. deprecated::
     This module (``arcagent.modules.slack``) is superseded by
-    ``arcgateway.adapters.slack.SlackAdapter`` as part of the SPEC-018
+    ``arcgateway_slack.SlackAdapter`` as part of the SPEC-018
     Hermes-Parity Roadmap (T1.7.2 / T1.7.8).
 
     Migration path:
     - Replace ``arcagent.modules.slack.SlackModule`` with
-      ``arcgateway.adapters.slack.SlackAdapter`` and register it with
+      ``arcgateway_slack.SlackAdapter`` and register it with
       ``arcgateway.runner.GatewayRunner``.
     - The new adapter preserves all SPEC-011 design decisions (D-001 … D-025)
       and adds Hermes-pattern Socket Mode replay deduplication (T1.9).

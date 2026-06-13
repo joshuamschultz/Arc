@@ -49,6 +49,9 @@ install:
 	@echo "Installing all Arc packages in editable mode..."
 	uv pip install \
 		-e packages/arcgateway \
+		-e packages/arcgateway-telegram \
+		-e packages/arcgateway-slack \
+		-e packages/arcgateway-mattermost \
 		-e packages/arccli \
 		-e packages/arcagent \
 		-e packages/arcllm \

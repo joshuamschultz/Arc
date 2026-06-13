@@ -26,29 +26,12 @@ dependencies = [
     "watchfiles>=0.21",
 ]
 
-# ── Optional extras — adapters are tier-3 modular (PLAN T1.7) ────────────────
-# Install only the adapters you need:
-#   pip install 'arcgateway[telegram]'
-#   pip install 'arcgateway[slack]'
-#   pip install 'arcgateway[mattermost]'
-#   pip install 'arcgateway[telegram,slack,mattermost]'
-[project.optional-dependencies]
-telegram = [
-    "python-telegram-bot>=20,<22",
-]
-# slack-bolt and slack-sdk are NOT required for arcgateway base.
-# SlackAdapter lazily imports them inside connect() so the package stays
-# importable without these installed. (SPEC-018 T1.7.2 / SPEC-011 D-018)
-slack = [
-    "slack-bolt>=1.18",
-    "slack-sdk>=3",
-]
-# aiohttp is NOT required for arcgateway base.
-# MattermostAdapter lazily imports it inside connect() so the package stays
-# importable without it installed. (SPEC-025 Track F)
-mattermost = [
-    "aiohttp>=3.9,<4",
-]
+# Remote platform adapters are separate extension packages, discovered via the
+# ``arcgateway.adapters`` entry-point group. Install one alongside the gateway:
+#   pip install 'arcgateway-telegram'
+#   pip install 'arcgateway-slack'
+#   pip install 'arcgateway-mattermost'
+# The gateway core ships only the in-process ``web`` adapter.
 
 [project.scripts]
 arcgateway = "arcgateway.cli:main"
@@ -95,20 +78,6 @@ warn_unused_configs = true
 module = ["arcagent.*", "arcllm.*", "arcrun.*", "arccli.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["telegram.*"]
-ignore_missing_imports = true
-
-# slack-bolt and slack-sdk are optional extras; suppress missing-import errors.
-[[tool.mypy.overrides]]
-module = ["slack_bolt.*", "slack_sdk.*"]
-ignore_missing_imports = true
-
-# aiohttp is an optional extra for the Mattermost adapter; suppress missing-import errors.
-[[tool.mypy.overrides]]
-module = ["aiohttp.*"]
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -130,6 +99,5 @@ fail_under = 80
 
 [dependency-groups]
 dev = [
-    "aiohttp>=3.13.3",
     "mypy>=1.19.1",
 ]

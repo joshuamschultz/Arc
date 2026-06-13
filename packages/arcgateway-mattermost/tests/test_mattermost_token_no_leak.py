@@ -10,9 +10,9 @@ from __future__ import annotations
 import logging
 
 import pytest
-
-from arcgateway.adapters.mattermost import MattermostAdapter
 from arcgateway.executor import InboundEvent
+
+from arcgateway_mattermost.adapter import MattermostAdapter
 
 pytestmark = pytest.mark.asyncio
 
@@ -68,7 +68,7 @@ async def test_mattermost_adapter_federal_error_does_not_echo_token() -> None:
     from unittest.mock import patch
 
     with patch(
-        "arcgateway.adapters.mattermost.socket.getaddrinfo",
+        "arcgateway_mattermost.adapter.socket.getaddrinfo",
         return_value=[(None, None, None, None, ("1.2.3.4", 0))],
     ):
         with pytest.raises(ValueError) as exc_info:
@@ -86,7 +86,7 @@ async def test_mattermost_adapter_logging_does_not_emit_token(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Log records emitted at construction must not contain the PAT."""
-    caplog.set_level(logging.DEBUG, logger="arcgateway.adapters.mattermost")
+    caplog.set_level(logging.DEBUG, logger="arcgateway_mattermost.adapter")
     _ = _make_adapter()
     for record in caplog.records:
         assert _PAT not in record.getMessage(), (
@@ -111,7 +111,7 @@ async def test_post_failure_does_not_echo_response_body(
     import logging
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from arcgateway.adapters.mattermost import MattermostAdapter
+    from arcgateway_mattermost.adapter import MattermostAdapter
 
     bot_token = "mm-leak-canary-XXXXXXXXXXXXXX"
 
@@ -139,7 +139,7 @@ async def test_post_failure_does_not_echo_response_body(
     fake_session.close = AsyncMock()
 
     with patch.object(adapter, "_ensure_http_session", AsyncMock(return_value=fake_session)):
-        with caplog.at_level(logging.WARNING, logger="arcgateway.adapters.mattermost"):
+        with caplog.at_level(logging.WARNING, logger="arcgateway_mattermost.adapter"):
             await adapter._post_message("channel-1", "hello")
 
     # Confirm at least one warning was emitted for the failure, and that
