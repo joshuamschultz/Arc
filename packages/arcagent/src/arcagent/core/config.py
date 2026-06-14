@@ -304,6 +304,41 @@ class SecurityConfig(BaseModel):
     validators: ValidatorsConfig = Field(default_factory=ValidatorsConfig)
 
 
+class CapabilitiesConfig(BaseModel):
+    """``[capabilities]`` block — relaxations for agent-authored (untrusted)
+    workspace capability validation.
+
+    Agent-authored tools under ``<workspace>/capabilities/`` pass an AST gate
+    that blocks privileged imports (``sys``, ``os``, ``subprocess``, ...). These
+    knobs permit specific imports WITHOUT moving the tool out of the protected
+    workspace root. They are tier-gated (resolved in
+    ``arcagent.tools._dynamic_loader.resolve_workspace_import_policy``):
+
+    - personal:   all imports allowed (this block is moot — everything passes).
+    - enterprise: deny by default; opt in via ``allow_all_imports`` OR ``allow_imports``.
+    - federal:    deny by default; ONLY ``allow_imports`` is honored;
+                  ``allow_all_imports`` is IGNORED (no blanket relaxation).
+
+    Sandbox-escape protections (eval/exec, frame/class traversal) are always
+    enforced regardless of this block — only module imports are relaxable.
+    """
+
+    allow_all_imports: bool = Field(
+        default=False,
+        description=(
+            "Permit any import in workspace-authored tools. Honored at "
+            "enterprise; IGNORED at federal; moot at personal."
+        ),
+    )
+    allow_imports: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific otherwise-blocked modules to permit in workspace-authored "
+            "tools (e.g. ['sys', 'subprocess']). Honored at enterprise + federal."
+        ),
+    )
+
+
 # --- Root config ---
 
 
@@ -328,6 +363,7 @@ class ArcAgentConfig(BaseModel):
     eval: EvalConfig = EvalConfig()
     session: SessionConfig = SessionConfig()
     security: SecurityConfig = SecurityConfig()
+    capabilities: CapabilitiesConfig = CapabilitiesConfig()
     spawn: SpawnConfig = SpawnConfig()
     ui: UIConfig = UIConfig()
 

@@ -133,6 +133,16 @@ tier = "personal"
 [security.validators]
 auto_run_agent_code = false
 
+[capabilities]
+# Relax the AST import gate for agent-authored tools under
+# workspace/capabilities/ WITHOUT moving them out of the protected root.
+# Tier-gated: personal = all imports allowed (this block is ignored);
+# enterprise = deny by default, set allow_all_imports = true or list
+# allow_imports; federal = deny by default, ONLY allow_imports is honored
+# (allow_all_imports is ignored). eval/exec/frame-traversal stay blocked always.
+allow_all_imports = false
+allow_imports = []
+
 [modules.memory]
 enabled = true
 

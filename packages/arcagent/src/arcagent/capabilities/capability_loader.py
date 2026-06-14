@@ -124,6 +124,8 @@ class CapabilityLoader:
         registry: CapabilityRegistry,
         bus: Any | None = None,
         audit_sink: Any | None = None,
+        allow_all_imports: bool = False,
+        allowed_imports: frozenset[str] = frozenset(),
     ) -> None:
         self._scan_roots: list[ScanRoot] = list(scan_roots)
         self._registry = registry
@@ -131,7 +133,12 @@ class CapabilityLoader:
         self._audit_sink = audit_sink
         self._known_tools: dict[str, str] = {}  # name → version
         self._known_skills: dict[str, str] = {}
-        self._ast_cache = AstValidationCache()
+        # Import policy for the untrusted ``workspace`` root (tier-resolved by
+        # the caller). Defaults are fail-closed so a bare loader blocks imports.
+        self._ast_cache = AstValidationCache(
+            allow_all_imports=allow_all_imports,
+            allowed_imports=allowed_imports,
+        )
 
     async def scan_and_register(self) -> _ReloadDelta:
         """Walk scan roots in precedence order; register everything found."""

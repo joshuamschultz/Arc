@@ -114,10 +114,24 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         if (mod_dir / "capabilities.py").is_file():
             scan_roots.append((f"module:{mod_name}", mod_dir))
 
+    # Tier-resolved import policy for untrusted workspace-authored tools:
+    # personal allows all; federal honors only the explicit allowlist;
+    # enterprise honors allow_all or the allowlist. The AST gate still blocks
+    # the path entirely; this only relaxes which module imports are permitted.
+    from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+
+    caps_cfg = agent._config.capabilities
+    allow_all_imports, allowed_imports = resolve_workspace_import_policy(
+        agent._config.security.tier,
+        allow_all_imports=caps_cfg.allow_all_imports,
+        allow_imports=caps_cfg.allow_imports,
+    )
     agent._capability_loader = CapabilityLoader(
         scan_roots=scan_roots,
         registry=agent._capability_registry,
         bus=bus,
+        allow_all_imports=allow_all_imports,
+        allowed_imports=allowed_imports,
     )
     builtin_runtime.configure(
         workspace=workspace,

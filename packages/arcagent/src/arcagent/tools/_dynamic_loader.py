@@ -131,8 +131,19 @@ class AstValidator(ast.NodeVisitor):
     raises immediately. Construct fresh per source file.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        allow_all_imports: bool = False,
+        allowed_imports: frozenset[str] = frozenset(),
+    ) -> None:
         self._violation: tuple[str, str] | None = None
+        # Import relaxations (tier-resolved by the caller). Default = no
+        # relaxation, so the validator is fail-closed when constructed bare.
+        # Only module imports are relaxable; eval/exec/frame-traversal stay
+        # blocked unconditionally.
+        self._allow_all_imports = allow_all_imports
+        self._allowed_imports = allowed_imports
         # Names bound by ``except AttributeError as <name>`` — accessing
         # ``.obj`` / ``.name`` on these is rejected (R-040).
         self._attr_error_vars: set[str] = set()
@@ -187,8 +198,10 @@ class AstValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _check_import_name(self, module: str) -> None:
+        if self._allow_all_imports:
+            return
         top = module.split(".", 1)[0]
-        if top in _BLOCKED_IMPORTS:
+        if top in _BLOCKED_IMPORTS and top not in self._allowed_imports:
             self._reject("import:" + top, f"module {module!r} is blocked")
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
@@ -319,6 +332,35 @@ def _is_attribute_error_type(node: ast.expr) -> bool:
 # --- AST validation cache -------------------------------------------------
 
 
+def resolve_workspace_import_policy(
+    tier: str,
+    *,
+    allow_all_imports: bool,
+    allow_imports: list[str],
+) -> tuple[bool, frozenset[str]]:
+    """Resolve the effective import policy for workspace-authored tools by tier.
+
+    Returns ``(allow_all, allowed_modules)`` for :class:`AstValidator`:
+
+    - personal:   ``(True, {})``      — every import passes.
+    - federal:    ``(False, allow_imports)`` — ONLY the explicit allowlist;
+                  ``allow_all_imports`` is ignored (no blanket relaxation).
+    - enterprise: ``allow_all_imports`` honored, else the explicit allowlist;
+                  deny-by-default otherwise.
+
+    Sandbox-escape protections (eval/exec, frame traversal) are unaffected —
+    this governs module imports only.
+    """
+    if tier == "personal":
+        return True, frozenset()
+    if tier == "federal":
+        return False, frozenset(allow_imports)
+    # enterprise (and any unknown tier — fail toward the stricter enterprise rule)
+    if allow_all_imports:
+        return True, frozenset()
+    return False, frozenset(allow_imports)
+
+
 class AstValidationCache:
     """Skip re-validation of unchanged files (R-001 perf gate).
 
@@ -329,8 +371,15 @@ class AstValidationCache:
     and re-raises (no false positives, no silent passes).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        allow_all_imports: bool = False,
+        allowed_imports: frozenset[str] = frozenset(),
+    ) -> None:
         self._entries: dict[Path, tuple[str, float]] = {}
+        self._allow_all_imports = allow_all_imports
+        self._allowed_imports = allowed_imports
 
     def validate(self, path: Path) -> None:
         """Validate ``path`` once per (md5, mtime) tuple.
@@ -351,7 +400,10 @@ class AstValidationCache:
         # AstValidator looked up via module dict so test patches stick.
         from arcagent.tools import _dynamic_loader as _self
 
-        _self.AstValidator().validate(source)
+        _self.AstValidator(
+            allow_all_imports=self._allow_all_imports,
+            allowed_imports=self._allowed_imports,
+        ).validate(source)
         self._entries[path] = (digest, mtime)
 
     def invalidate(self, path: Path) -> None:
