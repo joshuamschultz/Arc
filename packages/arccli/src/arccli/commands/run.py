@@ -201,12 +201,30 @@ async def _execute_task(
     from arcllm import load_model
     from arcrun import StaticProvider, Tool, ToolContext, make_execute_tool, run
 
+    from arccli.commands.identity import load_signing_authority
+
     if "/" in model_id:
         provider, _, model_name = model_id.partition("/")
     else:
         provider, model_name = model_id, None
 
-    llm = load_model(provider, model_name, telemetry=True)
+    # Attribute this direct (no-agent) run to the standalone signing authority so
+    # its LLM calls + tool events carry an identity in the audit trail. Run
+    # `arc identity init` to create one. Non-fatal here (attribution, not a gate).
+    authority = load_signing_authority()
+    actor_did = authority.did if authority is not None else None
+    if actor_did is None and not as_json:
+        _write(
+            "Note: no signing authority — run `arc identity init` "
+            "to attribute/audit direct runs."
+        )
+
+    llm = load_model(
+        provider,
+        model_name,
+        telemetry={"agent_did": actor_did} if actor_did else True,
+        agent_label="arc-cli",
+    )
 
     tools: list[Tool] = []
 
@@ -301,6 +319,7 @@ async def _execute_task(
         allowed_strategies=allowed_strategies,
         on_event=event_handler,
         tool_timeout=tool_timeout,
+        actor_did=actor_did,
     )
 
     if as_json:

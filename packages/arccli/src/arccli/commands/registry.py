@@ -122,6 +122,13 @@ def _ext_handler(args: list[str]) -> None:
     ext_handler(args)
 
 
+def _identity_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.identity import identity_handler
+
+    identity_handler(args)
+
+
 def _init_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.init import init_handler
@@ -369,6 +376,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         handler=_run_handler,
     ),
     # --- Configuration ---
+    CommandDef(
+        name="identity",
+        description="Manage the signing authority for direct arcrun/arcllm runs",
+        category="Configuration",
+        args_hint="<init|show>",
+        cli_only=True,
+        handler=_identity_handler,
+    ),
     CommandDef(
         name="init",
         description="Interactive setup wizard — tier-based configuration",
