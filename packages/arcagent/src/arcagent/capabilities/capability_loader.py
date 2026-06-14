@@ -6,7 +6,7 @@ in precedence order (R-001):
   1. ``arcagent/builtins/capabilities/``  — package-internal
   2. ``~/.arc/capabilities/``              — global
   3. ``<agent_root>/capabilities/``        — per-agent
-  4. ``<agent_root>/workspace/.capabilities/`` — agent-authored
+  4. ``<agent_root>/workspace/capabilities/`` — agent-authored
 
 Per-file flow:
 

@@ -1,7 +1,7 @@
 """Built-in ``create_skill`` — SPEC-021 R-032.
 
 Scaffolds a new skill folder under
-``<workspace>/.capabilities/skills/<name>/`` with the required seven
+``<workspace>/capabilities/skills/<name>/`` with the required seven
 sections, four sub-folders (``references/``, ``scripts/``,
 ``templates/``, ``assets/``), and a frontmatter block populated from
 the caller's args. The ``## Resources`` section is left blank — the
@@ -13,7 +13,7 @@ from __future__ import annotations
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
 
-_SKILLS_SUBDIR = ".capabilities/skills"
+_SKILLS_SUBDIR = "capabilities/skills"
 _SUB_FOLDERS = ("references", "scripts", "templates", "assets")
 _REQUIRED_SECTIONS = (
     "## Resources",
@@ -74,7 +74,7 @@ async def create_skill(
     body: str = "",
     version: str = "1.0.0",
 ) -> str:
-    """Scaffold ``workspace/.capabilities/skills/<name>/`` and return path."""
+    """Scaffold ``workspace/capabilities/skills/<name>/`` and return path."""
     if not name.replace("-", "_").isidentifier():
         return f"Error: name {name!r} must be alphanumeric (dashes allowed)"
     workspace = _runtime.workspace()

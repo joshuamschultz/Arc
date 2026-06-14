@@ -15,7 +15,7 @@ from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
 from arcagent.tools._dynamic_loader import ASTValidationError, AstValidator
 
-_CAPABILITIES_SUBDIR = ".capabilities"
+_CAPABILITIES_SUBDIR = "capabilities"
 _VERSION_RE = re.compile(r'version\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)["\']')
 
 
@@ -42,7 +42,7 @@ def _bump(current: str, kind: str) -> str:
     ),
     classification="state_modifying",
     capability_tags=["self_modification"],
-    when_to_use="When you need to change a tool already in workspace/.capabilities/.",
+    when_to_use="When you need to change a tool already in workspace/capabilities/.",
     requires_skill="update-tool",
     version="1.0.0",
 )
@@ -51,7 +51,7 @@ async def update_tool(
     new_source: str,
     version_bump: str = "patch",
 ) -> str:
-    """Overwrite ``<workspace>/.capabilities/<name>.py`` with ``new_source``.
+    """Overwrite ``<workspace>/capabilities/<name>.py`` with ``new_source``.
 
     Reads the current version from the existing file's ``@tool``
     decorator, bumps it per ``version_bump``, and rejects the update

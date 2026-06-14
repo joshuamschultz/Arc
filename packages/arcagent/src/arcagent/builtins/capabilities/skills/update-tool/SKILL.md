@@ -1,7 +1,7 @@
 ---
 name: update-tool
 version: 1.0.0
-description: Update an existing @tool source file in workspace/.capabilities/, bumping its semver per major/minor/patch.
+description: Update an existing @tool source file in workspace/capabilities/, bumping its semver per major/minor/patch.
 triggers: [fix the tool, the tool has a bug, change behavior of, bump the version of, update the tool]
 tools: [read, update_tool, reload]
 ---
@@ -13,7 +13,7 @@ tools: [read, update_tool, reload]
 ## Contract
 
 Inputs you must have:
-- The tool's `name` (matches the file basename in `workspace/.capabilities/`).
+- The tool's `name` (matches the file basename in `workspace/capabilities/`).
 - The full `new_source` body — `update_tool` overwrites, it does not patch.
 - A clear judgment about which version segment to bump.
 
@@ -35,7 +35,7 @@ When in doubt, bump higher. A surprised caller is worse than a redundant version
 
 ## Steps
 
-1. Read the existing source: `read(file_path="<workspace>/.capabilities/<name>.py")`.
+1. Read the existing source: `read(file_path="<workspace>/capabilities/<name>.py")`.
 2. Decide the bump level based on the semver rules above. If the change is anything more than a typo fix, prefer minor over patch.
 3. Compose the new source — copy the existing body, apply the change, update the `version="..."` in the `@tool(...)` decorator to the bumped value.
 4. Call `update_tool(name=..., new_source=..., version_bump="<patch|minor|major>")`. If it returns `Error: must declare version="..."`, the version literal in your source doesn't match the bump — fix and retry.
@@ -54,7 +54,7 @@ When in doubt, bump higher. A surprised caller is worse than a redundant version
 
 ```python
 # Bug fix: missing-file path returns a confusing message
-old_source = await read(file_path=".capabilities/word_count.py")
+old_source = await read(file_path="capabilities/word_count.py")
 new_source = old_source.replace(
     "Error: not a file:",
     "Error: file not found in workspace:",

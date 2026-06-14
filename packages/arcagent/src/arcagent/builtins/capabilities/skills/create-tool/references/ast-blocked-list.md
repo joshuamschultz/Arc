@@ -1,6 +1,6 @@
 # AST validator — blocked patterns
 
-The AST validator runs on every `.py` file under `workspace/.capabilities/` (untrusted scan root). If your source matches any pattern below, `create_tool` returns `Error: AST validation rejected source — <category>`.
+The AST validator runs on every `.py` file under `workspace/capabilities/` (untrusted scan root). If your source matches any pattern below, `create_tool` returns `Error: AST validation rejected source — <category>`.
 
 ## Blocked imports
 

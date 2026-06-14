@@ -83,7 +83,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     # 1. builtins + builtin skills (always)
     # 2. ~/.arc/capabilities/             — global, opt-in by user
     # 3. <agent_root>/capabilities/       — per-agent
-    # 4. <workspace>/.capabilities/       — agent-authored
+    # 4. <workspace>/capabilities/       — agent-authored
     # Plus enabled modules with capabilities.py.
     import arcagent.builtins.capabilities as builtins_pkg
 
@@ -102,7 +102,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     if agent_caps.is_dir():
         scan_roots.append(("agent", agent_caps))
 
-    workspace_caps = workspace / ".capabilities"
+    workspace_caps = workspace / "capabilities"
     if workspace_caps.is_dir():
         scan_roots.append(("workspace", workspace_caps))
 

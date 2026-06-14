@@ -14,7 +14,7 @@ import yaml
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
 
-_SKILLS_SUBDIR = ".capabilities/skills"
+_SKILLS_SUBDIR = "capabilities/skills"
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 
 
@@ -49,7 +49,7 @@ async def update_skill(
     new_body: str,
     version_bump: str = "patch",
 ) -> str:
-    """Rewrite ``<workspace>/.capabilities/skills/<name>/SKILL.md``.
+    """Rewrite ``<workspace>/capabilities/skills/<name>/SKILL.md``.
 
     Frontmatter is preserved (with bumped ``version``); body content
     is replaced wholesale.

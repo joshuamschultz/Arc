@@ -103,7 +103,7 @@ def discover_skills(agent_id: str, agent_root: Path) -> list[dict[str, Any]]:
       - team/<agent>/workspace/skills/        (legacy runtime skills)
       - team/<agent>/skills/                  (legacy agent-shipped skills)
       - team/<agent>/capabilities/<name>/     (agent-shipped capabilities)
-      - team/<agent>/workspace/.capabilities/ (agent-authored capabilities)
+      - team/<agent>/workspace/capabilities/ (agent-authored capabilities)
       - ~/.arcagent/skills/                   (user-global, if present)
       - arcagent builtins                     (create-skill, update-tool, ...)
     """
@@ -127,10 +127,10 @@ def discover_skills(agent_id: str, agent_root: Path) -> list[dict[str, Any]]:
     # the .md filter skips).
     if (agent_root / "capabilities").is_dir():
         _merge(_scan_skills_dir(agent_id, agent_root / "capabilities", "", "agent_dir"))
-    # Agent-authored capabilities (untrusted): workspace/.capabilities/<name>/SKILL.md.
+    # Agent-authored capabilities (untrusted): workspace/capabilities/<name>/SKILL.md.
     # fs_reader skips dot-children, so the hidden dir must be the scan root itself.
-    if (workspace / ".capabilities").is_dir():
-        _merge(_scan_skills_dir(agent_id, workspace / ".capabilities", "", "workspace"))
+    if (workspace / "capabilities").is_dir():
+        _merge(_scan_skills_dir(agent_id, workspace / "capabilities", "", "workspace"))
     # Global skills dir (set by [extensions].global_dir/.. or convention)
     global_skills = Path.home() / ".arcagent" / "skills"
     if global_skills.is_dir():

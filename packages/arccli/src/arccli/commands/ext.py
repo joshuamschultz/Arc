@@ -8,7 +8,7 @@ scan roots:
   1. `arcagent/builtins/capabilities/`  (package, read-only)
   2. `~/.arc/capabilities/`              (global, this command's --global target)
   3. `<agent>/capabilities/`             (per-agent, trusted)
-  4. `<agent>/workspace/.capabilities/`  (agent-authored, untrusted, AST-validated)
+  4. `<agent>/workspace/capabilities/`  (agent-authored, untrusted, AST-validated)
 """
 
 from __future__ import annotations
@@ -102,7 +102,7 @@ def _list(args: argparse.Namespace) -> None:
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         agent_caps = agent_root / "capabilities"
-        ws_caps = agent_root / "workspace" / ".capabilities"
+        ws_caps = agent_root / "workspace" / "capabilities"
         if agent_caps.is_dir():
             dirs_to_scan.append(("agent", agent_caps))
         if ws_caps.is_dir():
@@ -125,7 +125,7 @@ def _list(args: argparse.Namespace) -> None:
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         _write(f"  Agent dir:  {agent_root / 'capabilities'}")
-        _write(f"  Workspace:  {agent_root / 'workspace' / '.capabilities'}")
+        _write(f"  Workspace:  {agent_root / 'workspace' / 'capabilities'}")
 
 
 def _create(args: argparse.Namespace) -> None:

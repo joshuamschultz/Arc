@@ -1,7 +1,7 @@
 ---
 name: update-skill
 version: 1.0.0
-description: Update an existing skill's SKILL.md body in workspace/.capabilities/skills/, bumping its frontmatter semver.
+description: Update an existing skill's SKILL.md body in workspace/capabilities/skills/, bumping its frontmatter semver.
 triggers: [fix the skill, the skill is wrong, refine the procedure, bump the skill version]
 tools: [read, update_skill, reload]
 ---
@@ -13,7 +13,7 @@ tools: [read, update_skill, reload]
 ## Contract
 
 Inputs you must have:
-- The skill's `name` (matches its folder under `workspace/.capabilities/skills/`).
+- The skill's `name` (matches its folder under `workspace/capabilities/skills/`).
 - The full new body for `SKILL.md` after the frontmatter — `update_skill` rewrites the body wholesale.
 - A clear judgment about which version segment to bump.
 
@@ -35,7 +35,7 @@ A skill that has changed its `tools:` field is always at least a minor bump (cal
 
 ## Steps
 
-1. Read the existing SKILL.md: `read(file_path="<workspace>/.capabilities/skills/<name>/SKILL.md")`.
+1. Read the existing SKILL.md: `read(file_path="<workspace>/capabilities/skills/<name>/SKILL.md")`.
 2. Decide the bump level. If you're rewriting more than one section, default to minor; if `## Steps` ordering changed or `tools:` set changed, default to major.
 3. Compose the new body (everything after the closing `---`). The frontmatter is regenerated for you — don't include it in `new_body`.
 4. Call `update_skill(name=..., new_body=..., version_bump="<patch|minor|major>")`.
@@ -54,7 +54,7 @@ A skill that has changed its `tools:` field is always at least a minor bump (cal
 ```python
 # A new anti-pattern surfaced; add it without changing the procedure.
 old = await read(
-    file_path=".capabilities/skills/rotate-credentials/SKILL.md"
+    file_path="capabilities/skills/rotate-credentials/SKILL.md"
 )
 # Strip frontmatter for new_body
 new_body = old.split("---\n", 2)[2]

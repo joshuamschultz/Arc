@@ -1,7 +1,7 @@
 ---
 name: create-skill
 version: 1.0.0
-description: Scaffold a new skill folder under workspace/.capabilities/skills/ with frontmatter and the seven required sections.
+description: Scaffold a new skill folder under workspace/capabilities/skills/ with frontmatter and the seven required sections.
 triggers: [add a skill, write a skill that, document this procedure, capture this workflow as a skill]
 tools: [create_skill, write, edit, reload, read]
 ---
@@ -18,7 +18,7 @@ Inputs you must have:
 - A list of tools the skill expects to invoke (must already be registered).
 
 Outputs the agent must produce:
-- A folder at `workspace/.capabilities/skills/<name>/` with `SKILL.md` plus four sub-folders.
+- A folder at `workspace/capabilities/skills/<name>/` with `SKILL.md` plus four sub-folders.
 - A `reload()` call after `create_skill` succeeds.
 
 Don't proceed if you can't articulate the trigger phrases. A skill that nothing triggers is dead weight.
@@ -75,4 +75,4 @@ Before declaring the new skill done:
 - `reload()` returned a diff containing `+1 added`.
 - The reload did NOT emit `capability:registration_failed` for your skill.
 - No `capability:registration_warning` events were emitted (or you've consciously decided to leave a section as filler).
-- A read of `<workspace>/.capabilities/skills/<name>/SKILL.md` shows real content in all seven sections.
+- A read of `<workspace>/capabilities/skills/<name>/SKILL.md` shows real content in all seven sections.

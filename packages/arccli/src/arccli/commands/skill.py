@@ -93,7 +93,7 @@ def _scan_roots(agent_dir: str | None) -> list[tuple[str, Path]]:
     if agent_dir:
         agent_root = Path(agent_dir).expanduser().resolve()
         agent_caps = agent_root / "capabilities"
-        ws_caps = agent_root / "workspace" / ".capabilities"
+        ws_caps = agent_root / "workspace" / "capabilities"
         if agent_caps.is_dir():
             roots.append(("agent", agent_caps))
         if ws_caps.is_dir():

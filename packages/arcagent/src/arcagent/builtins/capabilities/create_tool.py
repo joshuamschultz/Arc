@@ -1,7 +1,7 @@
 """Built-in ``create_tool`` — SPEC-021 R-031.
 
 Persists a new ``@tool``-decorated Python source file under
-``<workspace>/.capabilities/<name>.py``, AST-validates it, and
+``<workspace>/capabilities/<name>.py``, AST-validates it, and
 returns the path. Does NOT auto-call ``reload`` — the LLM is
 expected to call ``reload`` once after writing one or more new
 capabilities.
@@ -13,7 +13,7 @@ from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
 from arcagent.tools._dynamic_loader import ASTValidationError, AstValidator
 
-_CAPABILITIES_SUBDIR = ".capabilities"
+_CAPABILITIES_SUBDIR = "capabilities"
 
 
 @tool(
@@ -29,7 +29,7 @@ _CAPABILITIES_SUBDIR = ".capabilities"
     version="1.0.0",
 )
 async def create_tool(name: str, source: str) -> str:
-    """Write ``source`` to ``workspace/.capabilities/<name>.py``.
+    """Write ``source`` to ``workspace/capabilities/<name>.py``.
 
     Fails if the name already exists or if AST validation rejects the
     source. Returns the path on success.

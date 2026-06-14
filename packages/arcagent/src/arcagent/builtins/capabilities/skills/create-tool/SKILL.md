@@ -18,7 +18,7 @@ Inputs you must have:
 - A description of the success-case return string.
 
 Outputs the agent must produce:
-- A `.py` file at `workspace/.capabilities/<name>.py` decorated with `@tool(...)`.
+- A `.py` file at `workspace/capabilities/<name>.py` decorated with `@tool(...)`.
 - A `reload()` call after `create_tool` succeeds.
 - A test invocation of the new tool to confirm it works.
 

@@ -136,10 +136,11 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
     classification surface as built-in/module tools.
 
     Locations checked (each optional):
-      - team/<agent>/tools/*.py            (agent-shipped Python tools)
-      - team/<agent>/workspace/tools/*.py  (agent-authored runtime tools)
-      - team/<agent>/extensions/*          (extension modules)
-      - team/<agent>/.capabilities/*.py    (capability dir convention)
+      - team/<agent>/tools/*.py                  (agent-shipped Python tools)
+      - team/<agent>/workspace/tools/*.py        (agent-authored runtime tools)
+      - team/<agent>/extensions/*                (extension modules)
+      - team/<agent>/capabilities/*.py           (operator-curated capabilities)
+      - team/<agent>/workspace/capabilities/*.py (agent-authored at runtime)
     """
     out: list[dict[str, str]] = []
     candidates: list[tuple[Path, str]] = [
@@ -147,7 +148,9 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
         (agent_root / "workspace" / "tools", "workspace"),
         (agent_root / "extensions", "extension"),
         (agent_root / "capabilities", "capability"),
-        (agent_root / ".capabilities", "capability"),
+        # Where create_tool writes agent-authored tools at runtime — this is the
+        # path the UI must scan so newly created tools appear on refresh.
+        (agent_root / "workspace" / "capabilities", "workspace"),
     ]
     for path, transport in candidates:
         if not path.is_dir():

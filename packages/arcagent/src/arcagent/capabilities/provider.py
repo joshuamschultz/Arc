@@ -29,7 +29,7 @@ from arcrun import CapabilityResult, CapabilitySpec, Tool, detached_context
 
 _logger = logging.getLogger("arcagent.capability_provider")
 
-# scan_root of capabilities the agent authored at runtime under <workspace>/.capabilities
+# scan_root of capabilities the agent authored at runtime under <workspace>/capabilities
 WORKSPACE_ROOT = "workspace"
 
 

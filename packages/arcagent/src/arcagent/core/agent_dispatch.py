@@ -126,7 +126,7 @@ def _agent_skills(agent: ArcAgent) -> list[_Skill]:
 def _workspace_authored(agent: ArcAgent) -> frozenset[str]:
     """Names of capabilities (tools + skills) the agent authored at runtime.
 
-    These live under ``<workspace>/.capabilities`` (scan_root == "workspace")
+    These live under ``<workspace>/capabilities`` (scan_root == "workspace")
     and are denied in federal tier (AC-6.1). Pulled from the capability registry,
     which records each entry's scan_root.
     """

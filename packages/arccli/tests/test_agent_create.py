@@ -100,7 +100,7 @@ class TestCreate:
         expected_workspace_dirs = [
             "notes",
             "entities",
-            ".capabilities",
+            "capabilities",
             "sessions",
             "archive",
             "library",
