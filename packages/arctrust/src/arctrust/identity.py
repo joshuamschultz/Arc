@@ -59,6 +59,33 @@ def generate_did(verify_key: VerifyKey, *, org: str, agent_type: str) -> str:
     return f"did:arc:{org}:{agent_type}/{key_hash}"
 
 
+def did_matches_pubkey(did: str, public_key: bytes) -> bool:
+    """Whether a DID's hash suffix was derived from this Ed25519 public key.
+
+    A DID's suffix is ``sha256(public_key)[:8]`` (see :func:`generate_did`).
+    This binds a DID to exactly one keypair: a caller claiming ``did`` must
+    present the public key whose fingerprint matches, which — combined with a
+    valid signature — proves possession of the matching private key.
+
+    Returns False (never raises) on any malformed DID or key, so callers can
+    use it as a plain boolean gate.
+
+    Args:
+        did: DID to check (``did:arc:{org}:{type}/{hash}``).
+        public_key: 32-byte Ed25519 verify key to test against the DID.
+
+    Returns:
+        True iff ``sha256(public_key)[:8]`` equals the DID's hash suffix.
+    """
+    try:
+        expected = parse_did(did)["hash"]
+    except ValueError:
+        return False
+    actual = hashlib.sha256(bytes(public_key)).hexdigest()[:8]
+    # Constant-time compare — the fingerprint is not secret, but it gates auth.
+    return hmac.compare_digest(expected, actual)
+
+
 def parse_did(did: str) -> dict[str, str]:
     """Parse a DID string into its component parts.
 
@@ -414,6 +441,7 @@ __all__ = [
     "AgentIdentity",
     "ChildIdentity",
     "derive_child_identity",
+    "did_matches_pubkey",
     "generate_did",
     "parse_did",
     "validate_did",

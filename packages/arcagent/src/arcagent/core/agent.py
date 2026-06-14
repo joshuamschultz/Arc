@@ -144,14 +144,21 @@ class ArcAgent:
         self._bus = ModuleBus()
 
         # 5. Tool Registry (with policy pipeline)
+        # The agent admits its own identity: its DID -> pubkey seeds the
+        # pipeline's IdentityLayer registry so its signed dispatches authenticate
+        # (deny-by-default at enterprise/federal). Team peers are added when the
+        # agent joins a team.
         tier = self._config.security.tier
-        pipeline = build_pipeline(tier=tier)  # type: ignore[arg-type]  # str vs Literal
+        pipeline = build_pipeline(
+            tier=tier,  # type: ignore[arg-type]  # str vs Literal
+            agent_registry={self._identity.did: self._identity.public_key},
+        )
         self._tool_registry = ToolRegistry(
             config=self._config.tools,
             bus=self._bus,
             telemetry=self._telemetry,
             policy_pipeline=pipeline,
-            agent_did=self._identity.did,
+            identity=self._identity,
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
         )
 

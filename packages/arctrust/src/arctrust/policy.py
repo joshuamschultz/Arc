@@ -40,6 +40,9 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from arctrust.identity import AgentIdentity, did_matches_pubkey
+from arctrust.keypair import verify as _ed25519_verify
+
 _logger = logging.getLogger("arctrust.policy")
 
 # Type aliases for injected dependencies
@@ -59,6 +62,13 @@ class ToolCall(BaseModel):
 
     Carries agent identity, classification context, and optional delegation
     lineage for classification propagation verification.
+
+    Authentication fields (``public_key`` + ``signature``) bind the call to a
+    specific keypair. A call is *authenticated* only when ``signature`` is a
+    valid Ed25519 signature over :meth:`signing_bytes` under ``public_key``,
+    AND ``public_key``'s fingerprint matches ``agent_did`` (see
+    :func:`arctrust.identity.did_matches_pubkey`). Both are ``None`` on an
+    unsigned call, which the IdentityLayer denies fail-closed.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -69,6 +79,29 @@ class ToolCall(BaseModel):
     session_id: str
     classification: str
     parent_call_id: str | None = None
+    public_key: bytes | None = None
+    signature: bytes | None = None
+
+    def signing_bytes(self) -> bytes:
+        """Canonical bytes the signature covers — every field except the auth pair.
+
+        Deterministic JSON (sorted keys) over the authenticated content. The
+        ``public_key``/``signature`` fields are excluded: they ARE the
+        attestation, they cannot also be inside what is attested.
+        """
+        payload = json.dumps(
+            {
+                "tool_name": self.tool_name,
+                "arguments": self.arguments,
+                "agent_did": self.agent_did,
+                "session_id": self.session_id,
+                "classification": self.classification,
+                "parent_call_id": self.parent_call_id,
+            },
+            sort_keys=True,
+            default=str,
+        )
+        return payload.encode("utf-8")
 
 
 class PolicyContext(BaseModel):
@@ -152,8 +185,99 @@ class PolicyLayer(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Call attestation — sign / verify a ToolCall
+# ---------------------------------------------------------------------------
+
+
+def sign_call(call: ToolCall, identity: AgentIdentity) -> ToolCall:
+    """Return a copy of ``call`` signed by ``identity`` (pubkey + signature set).
+
+    The call's ``agent_did`` is overwritten with the signer's DID so a caller
+    cannot sign content while claiming a different identity. Raises if the
+    identity cannot sign (verify-only).
+    """
+    bound = call.model_copy(update={"agent_did": identity.did})
+    signature = identity.sign(bound.signing_bytes())
+    return bound.model_copy(
+        update={"public_key": identity.public_key, "signature": signature}
+    )
+
+
+def verify_call(call: ToolCall) -> bool:
+    """Whether ``call`` is authentically signed by the holder of ``agent_did``.
+
+    Three conditions, all required (fail-closed — any failure returns False):
+      1. The call carries both a ``public_key`` and a ``signature``.
+      2. ``public_key``'s fingerprint matches ``agent_did`` — the presented key
+         is the one the DID was minted from (defeats DID impersonation).
+      3. ``signature`` is a valid Ed25519 signature over ``signing_bytes()``
+         under ``public_key`` — proves possession of the private key and that
+         the call content was not tampered with after signing.
+    """
+    if call.public_key is None or call.signature is None:
+        return False
+    if not did_matches_pubkey(call.agent_did, call.public_key):
+        return False
+    return _ed25519_verify(call.signing_bytes(), call.signature, call.public_key)
+
+
+# ---------------------------------------------------------------------------
 # Concrete layer implementations
 # ---------------------------------------------------------------------------
+
+
+class IdentityLayer:
+    """Authentication gate — the FIRST layer, fail-closed, at every tier.
+
+    Enforces the SSH-key invariant: a call runs only if it is signed by an
+    agent that holds the private key for the DID it claims. When
+    ``require_registered`` is set (enterprise/federal), the agent's DID must
+    also appear in ``registry`` AND the registered pubkey must match the call's
+    key — deny-by-default admission. Personal tier admits any validly
+    self-signed agent (``require_registered=False``).
+
+    ``registry`` maps ``agent_did -> ed25519 public key (32 bytes)``.
+    """
+
+    name = "identity"
+
+    def __init__(self, *, registry: dict[str, bytes], require_registered: bool) -> None:
+        self._registry = registry
+        self._require_registered = require_registered
+
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        if not verify_call(call):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="identity.unsigned_or_invalid",
+                reason=(
+                    f"Call for {call.tool_name!r} is not validly signed by "
+                    f"{call.agent_did!r}: missing/forged signature or the public "
+                    "key does not match the claimed DID."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        if self._require_registered:
+            registered = self._registry.get(call.agent_did)
+            if registered is None or bytes(registered) != bytes(call.public_key or b""):
+                return Decision.deny(
+                    layer=self.name,
+                    rule_id="identity.not_admitted",
+                    reason=(
+                        f"Agent {call.agent_did!r} is not in the admitted-agent "
+                        "registry (or its registered key does not match). "
+                        "Enterprise/federal deny unknown agents by default."
+                    ),
+                    input_hash=input_hash,
+                    evaluated_at_us=now_us,
+                )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
 
 
 class GlobalLayer:
@@ -489,6 +613,7 @@ class PolicyPipeline:
 def build_pipeline(
     *,
     tier: _Tier,
+    agent_registry: dict[str, bytes] | None = None,
     global_deny_rules: dict[str, str] | None = None,
     agent_allowlists: dict[str, set[str]] | None = None,
     forbidden_compositions: list[frozenset[str]] | None = None,
@@ -525,6 +650,13 @@ def build_pipeline(
     Returns:
         Configured PolicyPipeline ready for evaluation.
     """
+    # IdentityLayer runs first at EVERY tier — authentication is universal
+    # (ADR-019). enterprise/federal additionally deny agents that are not in
+    # the admitted-agent registry; personal admits any validly self-signed key.
+    identity = IdentityLayer(
+        registry=agent_registry or {},
+        require_registered=tier in ("enterprise", "federal"),
+    )
     g = GlobalLayer(
         deny_rules=global_deny_rules or {},
         forbidden_compositions=forbidden_compositions or [],
@@ -532,9 +664,10 @@ def build_pipeline(
     layers: list[PolicyLayer]
 
     if tier == "personal":
-        layers = [g]
+        layers = [identity, g]
     elif tier == "enterprise":
         layers = [
+            identity,
             g,
             ProviderLayer(),
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
@@ -542,6 +675,7 @@ def build_pipeline(
         ]
     else:  # federal
         layers = [
+            identity,
             g,
             ProviderLayer(),
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
@@ -592,6 +726,7 @@ __all__ = [
     "AuditSink",
     "Decision",
     "GlobalLayer",
+    "IdentityLayer",
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
@@ -601,4 +736,6 @@ __all__ = [
     "TierConfig",
     "ToolCall",
     "build_pipeline",
+    "sign_call",
+    "verify_call",
 ]

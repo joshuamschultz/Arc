@@ -43,16 +43,27 @@ def policy_evaluate(
     agent_did: str = "did:arc:cli",
     classification: str = "unclassified",
 ) -> dict[str, Any]:
-    """Dry-run a tool-call decision and return the serialized verdict."""
-    from arcagent.core.tool_policy import PolicyContext, ToolCall, build_pipeline
+    """Dry-run a tool-call decision and return the serialized verdict.
 
-    pipeline = build_pipeline(tier=tier)
-    call = ToolCall(
-        tool_name=tool_name,
-        arguments={},
-        agent_did=agent_did,
-        session_id="cli",
-        classification=classification,
+    Signs the probe call with an ephemeral identity (and admits it) so the
+    fail-closed IdentityLayer passes — the dry-run reports the *authorization*
+    verdict (global/agent/sandbox) for the tool, not an authentication failure.
+    The ``agent_did`` argument is retained for the audit-style payload only.
+    """
+    from arcagent.core.tool_policy import PolicyContext, ToolCall, build_pipeline, sign_call
+    from arctrust import AgentIdentity
+
+    probe = AgentIdentity.generate(org="cli", agent_type="probe")
+    pipeline = build_pipeline(tier=tier, agent_registry={probe.did: probe.public_key})
+    call = sign_call(
+        ToolCall(
+            tool_name=tool_name,
+            arguments={},
+            agent_did=agent_did,
+            session_id="cli",
+            classification=classification,
+        ),
+        probe,
     )
     ctx = PolicyContext(tier=tier, policy_version="v1", bundle_age_seconds=0.0)
     decision = asyncio.run(pipeline.evaluate(call, ctx))
@@ -103,7 +114,8 @@ def schedule_list(path: str = ".") -> dict[str, Any]:
     state_file = agent_dir / "workspace" / "proactive" / "schedules.json"
     if not state_file.exists():
         return {"schedules": []}
-    return json.loads(state_file.read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads(state_file.read_text(encoding="utf-8"))
+    return data
 
 
 def schedule_migrate(path: str = ".", *, dry_run: bool = False) -> dict[str, Any]:

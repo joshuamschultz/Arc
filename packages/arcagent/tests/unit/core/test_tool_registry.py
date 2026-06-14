@@ -809,5 +809,96 @@ class TestPipelineEnforcement:
         assert contexts[0].policy_version == "v2.7.1"
 
 
+class TestIdentityEnforcement:
+    """The SSH-key invariant at the tool-dispatch chokepoint: a real
+    ``build_pipeline`` includes the fail-closed IdentityLayer, so a dispatch
+    runs only if the registry signs it with the agent's key. No identity → the
+    call is unsigned → denied; an impostor's key won't match the agent's DID.
+    """
+
+    def _reg(
+        self,
+        config: ArcAgentConfig,
+        bus: ModuleBus,
+        mock_telemetry: MagicMock,
+        identity: Any,
+        *,
+        register_identity: bool = True,
+    ) -> ToolRegistry:
+        from arcagent.core.tool_policy import build_pipeline
+        from arcagent.core.tool_registry import ToolRegistry
+
+        registry = {identity.did: identity.public_key} if register_identity else {}
+        pipeline = build_pipeline(tier="enterprise", agent_registry=registry)
+        return ToolRegistry(
+            config=config.tools,
+            bus=bus,
+            telemetry=mock_telemetry,
+            policy_pipeline=pipeline,
+            identity=identity,
+            tier="enterprise",
+        )
+
+    @staticmethod
+    def _probe() -> RegisteredTool:
+        return RegisteredTool(
+            name="probe",
+            description="probe",
+            input_schema={"type": "object"},
+            transport=ToolTransport.NATIVE,
+            execute=AsyncMock(return_value="ok"),
+            classification="read_only",
+        )
+
+    async def test_signed_dispatch_from_registered_agent_runs(
+        self, config: ArcAgentConfig, bus: ModuleBus, mock_telemetry: MagicMock
+    ) -> None:
+        from arctrust import AgentIdentity
+
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
+        reg = self._reg(config, bus, mock_telemetry, ident)
+        tool = self._probe()
+        reg.register(tool)
+        result = await reg._create_wrapped_execute(tool)()
+        assert result == "ok"
+
+    async def test_dispatch_without_identity_is_denied(
+        self, config: ArcAgentConfig, bus: ModuleBus, mock_telemetry: MagicMock
+    ) -> None:
+        """No signing identity → unsigned call → IdentityLayer denies it."""
+        from arcagent.core.tool_policy import PolicyDenied, build_pipeline
+        from arcagent.core.tool_registry import ToolRegistry
+
+        pipeline = build_pipeline(tier="enterprise")
+        reg = ToolRegistry(
+            config=config.tools,
+            bus=bus,
+            telemetry=mock_telemetry,
+            policy_pipeline=pipeline,
+            tier="enterprise",
+        )  # no identity passed
+        tool = self._probe()
+        reg.register(tool)
+        with pytest.raises(PolicyDenied) as exc:
+            await reg._create_wrapped_execute(tool)()
+        assert exc.value.decision.layer == "identity"
+
+    async def test_unregistered_agent_denied_by_default_enterprise(
+        self, config: ArcAgentConfig, bus: ModuleBus, mock_telemetry: MagicMock
+    ) -> None:
+        """Validly signed, but the agent is not admitted → deny-by-default."""
+        from arctrust import AgentIdentity
+
+        from arcagent.core.tool_policy import PolicyDenied
+
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
+        reg = self._reg(config, bus, mock_telemetry, ident, register_identity=False)
+        tool = self._probe()
+        reg.register(tool)
+        with pytest.raises(PolicyDenied) as exc:
+            await reg._create_wrapped_execute(tool)()
+        assert exc.value.decision.layer == "identity"
+
+
 # Ensure asyncio import isn't flagged as unused
 _ = asyncio

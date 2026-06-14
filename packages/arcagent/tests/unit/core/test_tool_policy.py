@@ -354,13 +354,13 @@ class TestAgentLayer:
 class TestTierFactory:
     """Phase 2 Task 2.15: per-tier layer composition."""
 
-    def test_federal_uses_five_layers(self) -> None:
+    def test_federal_uses_six_layers(self) -> None:
         from arcagent.core.tool_policy import build_pipeline
 
         pipeline = build_pipeline(tier="federal")
         names = [layer.name for layer in pipeline.layers]
-        # All 5 layers present for federal
-        assert names == ["global", "provider", "agent", "team", "sandbox"]
+        # IdentityLayer (auth) runs first at every tier, then the 5 policy layers
+        assert names == ["identity", "global", "provider", "agent", "team", "sandbox"]
 
     def test_enterprise_drops_team_layer(self) -> None:
         from arcagent.core.tool_policy import build_pipeline
@@ -368,14 +368,14 @@ class TestTierFactory:
         pipeline = build_pipeline(tier="enterprise")
         names = [layer.name for layer in pipeline.layers]
         assert "team" not in names
-        assert names == ["global", "provider", "agent", "sandbox"]
+        assert names == ["identity", "global", "provider", "agent", "sandbox"]
 
-    def test_personal_uses_only_global(self) -> None:
+    def test_personal_uses_identity_and_global(self) -> None:
         from arcagent.core.tool_policy import build_pipeline
 
         pipeline = build_pipeline(tier="personal")
         names = [layer.name for layer in pipeline.layers]
-        assert names == ["global"]
+        assert names == ["identity", "global"]
 
 
 class TestDecisionCache:

@@ -29,6 +29,7 @@ from xml.sax.saxutils import escape as xml_escape
 
 from arcrun import Tool as ArcRunTool
 from arcrun import ToolContext
+from arctrust import AgentIdentity
 
 from arcagent.core.config import ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
@@ -39,6 +40,7 @@ from arcagent.core.tool_policy import (
     PolicyDenied,
     PolicyPipeline,
     ToolCall,
+    sign_call,
 )
 from arcagent.core.tool_policy_bridge import (
     _IDENTITY_ARG_NAMES,
@@ -96,6 +98,7 @@ class ToolRegistry:
         telemetry: AgentTelemetry | Any,
         policy_pipeline: PolicyPipeline | None = None,
         *,
+        identity: AgentIdentity | None = None,
         agent_did: str = "did:arc:unknown",
         tier: Literal["federal", "enterprise", "personal"] = "personal",
         policy_version: str = "v0",
@@ -104,7 +107,12 @@ class ToolRegistry:
         self._bus = bus
         self._telemetry = telemetry
         self._policy_pipeline = policy_pipeline
-        self._agent_did = agent_did
+        # Signing identity for tool dispatch. When a policy pipeline is
+        # configured, every ToolCall is signed with this key so the pipeline's
+        # IdentityLayer can authenticate it — an unsigned call is denied
+        # fail-closed. ``agent_did`` defaults from it when an identity is given.
+        self._identity = identity
+        self._agent_did = identity.did if identity is not None else agent_did
         self._tier = tier
         self._policy_version = policy_version
         self._tools: dict[str, RegisteredTool] = {}
@@ -285,6 +293,7 @@ class ToolRegistry:
         bus = self._bus
         telemetry = self._telemetry
         pipeline = self._policy_pipeline
+        identity = self._identity
         agent_did = self._agent_did
         tier = self._tier
         policy_version = self._policy_version
@@ -308,6 +317,11 @@ class ToolRegistry:
                     session_id="",
                     classification="unclassified",
                 )
+                # Sign the call so the pipeline's IdentityLayer can authenticate
+                # it (proves this dispatch came from the key-holding agent, not
+                # an injected call). No identity → call stays unsigned → denied.
+                if identity is not None:
+                    call = sign_call(call, identity)
                 ctx_pol = PolicyContext(
                     tier=tier,
                     policy_version=policy_version,

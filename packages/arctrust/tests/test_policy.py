@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from arctrust.identity import AgentIdentity
 from arctrust.policy import (
     Decision,
     PolicyContext,
@@ -15,6 +16,7 @@ from arctrust.policy import (
     TierConfig,
     ToolCall,
     build_pipeline,
+    sign_call,
 )
 
 # ---------------------------------------------------------------------------
@@ -346,60 +348,69 @@ class TestTierConfig:
 
 
 class TestBuildPipeline:
-    async def test_personal_pipeline_has_one_layer(self) -> None:
-        pipeline = build_pipeline(tier="personal")
-        assert len(pipeline.layers) == 1
+    """Pipelines now prepend a fail-closed IdentityLayer at every tier, so
+    behavioral tests sign their calls and (for enterprise/federal) register the
+    signer in ``agent_registry`` — otherwise the call is denied before reaching
+    the layer under test. That admission gate is itself covered in
+    test_identity_layer.py."""
 
-    async def test_enterprise_pipeline_has_four_layers(self) -> None:
+    @staticmethod
+    def _signed(ident: AgentIdentity, tool_name: str = "read_file") -> ToolCall:
+        return sign_call(make_call(tool_name=tool_name, agent_did=ident.did), ident)
+
+    async def test_personal_pipeline_has_identity_then_global(self) -> None:
+        pipeline = build_pipeline(tier="personal")
+        assert [layer.name for layer in pipeline.layers] == ["identity", "global"]
+
+    async def test_enterprise_pipeline_has_five_layers(self) -> None:
         pipeline = build_pipeline(tier="enterprise")
-        assert len(pipeline.layers) == 4
-
-    async def test_federal_pipeline_has_five_layers(self) -> None:
-        pipeline = build_pipeline(tier="federal")
         assert len(pipeline.layers) == 5
+        assert pipeline.layers[0].name == "identity"
 
-    async def test_personal_allows_by_default(self) -> None:
+    async def test_federal_pipeline_has_six_layers(self) -> None:
+        pipeline = build_pipeline(tier="federal")
+        assert len(pipeline.layers) == 6
+        assert pipeline.layers[0].name == "identity"
+
+    async def test_personal_allows_signed_call_by_default(self) -> None:
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
         pipeline = build_pipeline(tier="personal")
-        result = await pipeline.evaluate(make_call(), make_ctx("personal"))
+        result = await pipeline.evaluate(self._signed(ident), make_ctx("personal"))
         assert result.outcome == "allow"
 
-    async def test_global_denylist_denies(self) -> None:
+    async def test_global_denylist_denies_even_when_signed(self) -> None:
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
         pipeline = build_pipeline(
             tier="personal",
             global_deny_rules={"read_file": "file access denied"},
         )
-        result = await pipeline.evaluate(make_call(tool_name="read_file"), make_ctx("personal"))
+        result = await pipeline.evaluate(
+            self._signed(ident, "read_file"), make_ctx("personal")
+        )
         assert result.outcome == "deny"
         assert "global" in (result.layer or "")
 
     async def test_agent_allowlist_denies_unlisted_tool(self) -> None:
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
         pipeline = build_pipeline(
             tier="enterprise",
-            agent_allowlists={
-                "did:arc:test:exec/aabbccdd": {"allowed_tool"},
-            },
+            agent_registry={ident.did: ident.public_key},
+            agent_allowlists={ident.did: {"allowed_tool"}},
         )
         result = await pipeline.evaluate(
-            make_call(
-                tool_name="forbidden_tool",
-                agent_did="did:arc:test:exec/aabbccdd",
-            ),
-            make_ctx("enterprise"),
+            self._signed(ident, "forbidden_tool"), make_ctx("enterprise")
         )
         assert result.outcome == "deny"
+        assert result.layer == "agent"  # denied by allowlist, not identity
 
     async def test_agent_allowlist_permits_listed_tool(self) -> None:
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
         pipeline = build_pipeline(
             tier="enterprise",
-            agent_allowlists={
-                "did:arc:test:exec/aabbccdd": {"allowed_tool"},
-            },
+            agent_registry={ident.did: ident.public_key},
+            agent_allowlists={ident.did: {"allowed_tool"}},
         )
         result = await pipeline.evaluate(
-            make_call(
-                tool_name="allowed_tool",
-                agent_did="did:arc:test:exec/aabbccdd",
-            ),
-            make_ctx("enterprise"),
+            self._signed(ident, "allowed_tool"), make_ctx("enterprise")
         )
         assert result.outcome == "allow"

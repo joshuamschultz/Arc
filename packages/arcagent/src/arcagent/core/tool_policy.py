@@ -35,6 +35,7 @@ from arctrust.policy import (
     TierConfig,
     ToolCall,
     build_pipeline,
+    sign_call,
 )
 
 from arcagent.core.errors import ArcAgentError
@@ -128,4 +129,5 @@ __all__ = [
     "TierConfig",
     "ToolCall",
     "build_pipeline",
+    "sign_call",
 ]

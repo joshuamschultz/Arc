@@ -27,6 +27,7 @@ class TestPolicyLayers:
         payload = policy_layers(tier="federal")
         assert payload["tier"] == "federal"
         assert payload["layers"] == [
+            "identity",
             "global",
             "provider",
             "agent",
@@ -38,9 +39,9 @@ class TestPolicyLayers:
         payload = policy_layers(tier="enterprise")
         assert "team" not in payload["layers"]
 
-    def test_personal_single_layer(self) -> None:
+    def test_personal_has_identity_and_global(self) -> None:
         payload = policy_layers(tier="personal")
-        assert payload["layers"] == ["global"]
+        assert payload["layers"] == ["identity", "global"]
 
 
 class TestPolicyEvaluate:
