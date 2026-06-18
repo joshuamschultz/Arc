@@ -47,6 +47,14 @@ class LLMConfig(BaseModel):
     model: str
     max_tokens: int = Field(default=4096, gt=0)
     temperature: float = 0.7
+    # Per-agent arcllm module overrides. Keyed by arcllm module name
+    # (``queue``, ``retry``, ``rate_limit``, ``telemetry``, …); each value
+    # is merged into that module's defaults at model load. Lets an agent
+    # tune e.g. ``[llm.modules.queue] call_timeout = 600`` from its own
+    # ``arcagent.toml`` without editing arcllm's global ``config.toml``.
+    # Unknown module names are rejected at load time so a typo
+    # (``[llm.modules.qeue]``) fails loudly.
+    modules: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class UIConfig(BaseModel):

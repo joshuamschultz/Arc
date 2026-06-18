@@ -143,5 +143,6 @@ def ensure_model(
         trace_store=trace_store,
         agent_label=config.agent.name,
         on_event=on_event,
+        arcllm_modules=config.llm.modules or None,
     )
     return model, trace_store

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from arcllm import LLMProvider
+from arcllm import MODULE_NAMES, LLMProvider
 from arcllm import load_model as arcllm_load_model
 
 _logger = logging.getLogger("arcagent.utils")
@@ -18,6 +18,7 @@ def load_eval_model(
     agent_label: str | None = None,
     trace_store: Any | None = None,
     on_event: Callable[[Any], None] | None = None,
+    arcllm_modules: dict[str, dict[str, Any]] | None = None,
 ) -> LLMProvider:
     """Load LLM model via ArcLLM for eval/background use.
 
@@ -37,14 +38,32 @@ def load_eval_model(
             TraceRecord. Enables arcagent to bridge ArcLLM events
             (llm_call, config_change, circuit_change) onto the ModuleBus
             so modules like memory observe LLM activity.
+        arcllm_modules: Optional per-agent overrides for arcllm modules
+            (``queue``, ``retry``, ``rate_limit``, …). Each entry is a dict
+            merged into the corresponding module's config (see
+            ``arcllm.load_model``). Unknown keys raise ``ValueError`` so
+            ``[llm.modules.qeue]`` typos in ``arcagent.toml`` fail loudly
+            instead of silently dropping the override.
     """
     _logger.info("Loading model: %s (label=%s)", model_id, agent_label)
     provider, _, model_name = model_id.partition("/")
+
+    module_overrides: dict[str, Any] = {}
+    if arcllm_modules:
+        unknown = set(arcllm_modules) - MODULE_NAMES
+        if unknown:
+            raise ValueError(
+                f"Unknown arcllm module key(s): {sorted(unknown)}. "
+                f"Valid keys: {sorted(MODULE_NAMES)}.",
+            )
+        module_overrides.update(arcllm_modules)
+
     return arcllm_load_model(
         provider,
         model_name or None,
-        retry=True,
+        retry=module_overrides.pop("retry", True),
         agent_label=agent_label,
         trace_store=trace_store,
         on_event=on_event,
+        **module_overrides,
     )

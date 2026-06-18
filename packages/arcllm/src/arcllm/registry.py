@@ -170,6 +170,27 @@ def _build_adapter(
     return adapter_class(config, resolved_model, resolved_api_key=resolved_api_key)
 
 
+# Canonical set of arcllm module kwarg names accepted by load_model(). This is
+# the single source of truth — callers that validate per-module overrides
+# (e.g. arcagent's load_eval_model) import this instead of re-declaring the
+# list, so adding a module here can't silently drift from downstream guards.
+# test_registry.py asserts this matches load_model's signature.
+MODULE_NAMES: frozenset[str] = frozenset(
+    {
+        "routing",
+        "retry",
+        "fallback",
+        "rate_limit",
+        "circuit_breaker",
+        "telemetry",
+        "queue",
+        "audit",
+        "security",
+        "otel",
+    }
+)
+
+
 def load_model(
     provider: str,
     model: str | None = None,

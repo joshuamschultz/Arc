@@ -643,6 +643,32 @@ class TestLLMBridgeWiring:
         assert callable(kwargs["on_event"]), "on_event must be a callable"
 
     @patch("arcagent.core.model_manager.load_eval_model")
+    async def test_ensure_model_forwards_llm_modules_overrides(
+        self,
+        mock_load_model: MagicMock,
+        agent: ArcAgent,
+    ) -> None:
+        """LLMConfig.modules per-agent overrides reach load_eval_model.
+
+        Long-context stages (e.g. an approver chewing through 40k+ tokens of
+        accumulated handoff JSON) routinely exceed the 180s default
+        queue.call_timeout. Agents need to tune arcllm modules from their
+        own arcagent.toml without editing global arcllm config.
+        """
+        mock_load_model.return_value = MagicMock()
+        agent._config.llm.modules = {
+            "queue": {"call_timeout": 600.0, "max_concurrent": 2},
+        }
+
+        await agent.startup()
+        agent._ensure_model()
+
+        _args, kwargs = mock_load_model.call_args
+        assert kwargs.get("arcllm_modules") == {
+            "queue": {"call_timeout": 600.0, "max_concurrent": 2},
+        }
+
+    @patch("arcagent.core.model_manager.load_eval_model")
     async def test_llm_events_reach_module_bus(
         self,
         mock_load_model: MagicMock,

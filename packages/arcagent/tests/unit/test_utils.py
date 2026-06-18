@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestLoadEvalModel:
     def test_parses_provider_model(self) -> None:
@@ -50,6 +52,39 @@ class TestLoadEvalModel:
             load_eval_model("anthropic/claude-haiku", on_event=callback)
             _args, kwargs = mock_load.call_args
             assert kwargs["on_event"] is callback
+
+    def test_forwards_arcllm_module_overrides(self) -> None:
+        """Per-agent arcllm module overrides reach arcllm.load_model.
+
+        Long-context stages (e.g. an approver chewing through 40k+ tokens of
+        accumulated handoff JSON) routinely exceed the 180s default
+        queue.call_timeout; agents need to bump it from arcagent.toml
+        without editing the global arcllm config.
+        """
+        from arcagent.utils import load_eval_model
+
+        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+            mock_load.return_value = MagicMock()
+            load_eval_model(
+                "anthropic/claude-haiku",
+                arcllm_modules={
+                    "queue": {"call_timeout": 600.0},
+                    "retry": {"max_retries": 5},
+                },
+            )
+            _args, kwargs = mock_load.call_args
+            assert kwargs["queue"] == {"call_timeout": 600.0}
+            assert kwargs["retry"] == {"max_retries": 5}
+
+    def test_unknown_module_key_raises(self) -> None:
+        """An arcllm_modules key that isn't a known arcllm module fails loudly."""
+        from arcagent.utils import load_eval_model
+
+        with pytest.raises(ValueError, match="bogus_module"):
+            load_eval_model(
+                "anthropic/claude-haiku",
+                arcllm_modules={"bogus_module": {"foo": 1}},
+            )
 
 
 class TestFormatMessages:

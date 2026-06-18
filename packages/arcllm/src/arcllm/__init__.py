@@ -27,7 +27,7 @@ from arcllm.exceptions import (
     QueueFullError,
     QueueTimeoutError,
 )
-from arcllm.registry import clear_cache, load_model
+from arcllm.registry import MODULE_NAMES, clear_cache, load_model
 from arcllm.types import (
     ContentBlock,
     Delta,
@@ -95,6 +95,7 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "MODULE_NAMES",
     "AnthropicAdapter",
     "ArcLLMAPIError",
     "ArcLLMConfigError",

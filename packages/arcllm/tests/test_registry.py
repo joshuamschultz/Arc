@@ -727,3 +727,29 @@ class TestModuleStacking:
         assert "anthropic" in _bucket_registry
         clear_cache()
         assert len(_bucket_registry) == 0
+
+
+class TestModuleNames:
+    """MODULE_NAMES is the canonical module-kwarg set imported by callers."""
+
+    def test_module_names_match_load_model_signature(self):
+        """MODULE_NAMES must stay in sync with load_model's module kwargs.
+
+        Module kwargs are the keyword-only params typed ``bool | dict | None``;
+        the infra kwargs (on_event, trace_store, ...) are not. If a module is
+        added to load_model without updating MODULE_NAMES (or vice versa), this
+        fails — preventing downstream guards (arcagent) from silently drifting.
+        """
+        import inspect
+
+        from arcllm.registry import MODULE_NAMES, load_model
+
+        sig = inspect.signature(load_model)
+        module_params = {
+            name
+            for name, param in sig.parameters.items()
+            if param.kind is param.KEYWORD_ONLY
+            and "bool" in str(param.annotation)
+            and "dict" in str(param.annotation)
+        }
+        assert module_params == set(MODULE_NAMES)
