@@ -271,6 +271,7 @@ class ArcAgent:
         input_text: str,
         *,
         session: SessionManager,
+        tool_choice: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -280,20 +281,37 @@ class ArcAgent:
         turn on completion (history/audit parity with the old ``chat``).
         One-shot callers wrap this with ``collect()`` (or use
         ``run_collected``) for a final result.
+
+        ``tool_choice`` is forwarded to arcrun's loop and applied on turn 0;
+        pass ``{"type": "required"}`` from pipeline orchestrators that need
+        the first turn to emit a tool call (typically a ``signals_completion``
+        terminator).
         """
         self._ensure_started()
-        async for event in dispatch_stream(self, input_text, session=session):
+        async for event in dispatch_stream(
+            self,
+            input_text,
+            session=session,
+            tool_choice=tool_choice,
+        ):
             yield event
 
-    async def run_collected(self, input_text: str, *, session_key: str) -> Any:
+    async def run_collected(
+        self,
+        input_text: str,
+        *,
+        session_key: str,
+        tool_choice: dict[str, Any] | None = None,
+    ) -> Any:
         """Run a turn on the ``session_key`` session and collect to a result.
 
         The single callback every non-streaming surface binds (scheduler,
         pulse, slack, telegram, messaging): open-or-resume the keyed session,
-        stream the turn, and return the final ``RunResult``.
+        stream the turn, and return the final ``RunResult``. ``tool_choice``
+        is forwarded to the loop (see :meth:`run`).
         """
         session = await self.session(session_key)
-        return await collect(self.run(input_text, session=session))
+        return await collect(self.run(input_text, session=session, tool_choice=tool_choice))
 
     async def reload(self) -> str:
         """Re-scan capability roots; return R-005 diff string.
