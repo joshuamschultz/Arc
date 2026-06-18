@@ -63,6 +63,20 @@ def _patch_stream(*tokens: str) -> Any:
     return patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory)
 
 
+def _capture_stream(*tokens: str) -> tuple[dict[str, Any], Any]:
+    """Like ``_patch_stream`` but records the kwargs ``arcrun_run_stream`` was
+    called with into the returned dict, so tests can assert on what the agent
+    forwarded to the loop (e.g. tool_choice, store_raw_bodies)."""
+    captured: dict[str, Any] = {}
+
+    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
+        captured.update(kwargs)
+        return _fake_stream(*tokens)
+
+    patcher = patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory)
+    return captured, patcher
+
+
 @pytest.mark.asyncio
 @patch("arcagent.core.model_manager.load_eval_model")
 async def test_run_streams_and_requires_session(
@@ -101,13 +115,8 @@ async def test_run_passes_tool_io_capture_to_arcrun(
     agent_config.telemetry.capture_tool_io = True
     agent = ArcAgent(config=agent_config)
 
-    captured: dict[str, Any] = {}
-
-    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
-        captured.update(kwargs)
-        return _fake_stream("ok")
-
-    with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory):
+    captured, patcher = _capture_stream("ok")
+    with patcher:
         await agent.startup()
         try:
             session = await agent.session("unit:rawio")
@@ -206,19 +215,12 @@ async def test_run_forwards_tool_choice_to_arcrun(
     mock_load_model.return_value = MagicMock(close=AsyncMock())
     agent = ArcAgent(config=agent_config)
 
-    captured: dict[str, Any] = {}
-
-    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
-        captured.update(kwargs)
-        return _fake_stream("ok")
-
-    with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory):
+    captured, patcher = _capture_stream("ok")
+    with patcher:
         await agent.startup()
         try:
             session = await agent.session("unit:tc")
-            async for _ in agent.run(
-                "hi", session=session, tool_choice={"type": "required"},
-            ):
+            async for _ in agent.run("hi", session=session, tool_choice={"type": "required"}):
                 pass
         finally:
             await agent.shutdown()
@@ -236,18 +238,11 @@ async def test_run_collected_forwards_tool_choice(
     mock_load_model.return_value = MagicMock(close=AsyncMock())
     agent = ArcAgent(config=agent_config)
 
-    captured: dict[str, Any] = {}
-
-    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
-        captured.update(kwargs)
-        return _fake_stream("done")
-
-    with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory):
+    captured, patcher = _capture_stream("done")
+    with patcher:
         await agent.startup()
         try:
-            await agent.run_collected(
-                "go", session_key="cb:1", tool_choice={"type": "required"},
-            )
+            await agent.run_collected("go", session_key="cb:1", tool_choice={"type": "required"})
         finally:
             await agent.shutdown()
 
@@ -264,13 +259,8 @@ async def test_run_omits_tool_choice_by_default(
     mock_load_model.return_value = MagicMock(close=AsyncMock())
     agent = ArcAgent(config=agent_config)
 
-    captured: dict[str, Any] = {}
-
-    async def _factory(*args: Any, **kwargs: Any) -> AsyncIterator[StreamEvent]:
-        captured.update(kwargs)
-        return _fake_stream("ok")
-
-    with patch("arcagent.core.agent_dispatch.arcrun_run_stream", side_effect=_factory):
+    captured, patcher = _capture_stream("ok")
+    with patcher:
         await agent.startup()
         try:
             session = await agent.session("unit:tc-default")

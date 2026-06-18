@@ -289,7 +289,10 @@ class ArcAgent:
         """
         self._ensure_started()
         async for event in dispatch_stream(
-            self, input_text, session=session, tool_choice=tool_choice,
+            self,
+            input_text,
+            session=session,
+            tool_choice=tool_choice,
         ):
             yield event
 
@@ -308,9 +311,7 @@ class ArcAgent:
         is forwarded to the loop (see :meth:`run`).
         """
         session = await self.session(session_key)
-        return await collect(
-            self.run(input_text, session=session, tool_choice=tool_choice)
-        )
+        return await collect(self.run(input_text, session=session, tool_choice=tool_choice))
 
     async def reload(self) -> str:
         """Re-scan capability roots; return R-005 diff string.
