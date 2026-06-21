@@ -69,6 +69,34 @@ If you need to *demonstrate* compliance — not just claim it — Arc gives you 
 
 ---
 
+## ⚖️ How Arc Compares
+
+A few self-hosted agent projects get mentioned in the same breath as Arc. They're good at what they do — but they're built for a different job. **NanoClaw, Hermes, and OpenClaw are personal assistants you wire into your chat apps.** Arc is an **accountable agent stack for environments that have to prove what happened.**
+
+| | **Arc** | **NanoClaw** | **Hermes Agent** | **OpenClaw** |
+|---|---|---|---|---|
+| **Built for** | Accountable agent fleets in regulated / federal environments | Lightweight personal assistant, one container per chat group | Self-improving personal agent with persistent memory | Self-hosted personal assistant, 50+ chat integrations |
+| **Language** | Python | TypeScript | Python | TypeScript |
+| **Source LOC** ¹ | **~92K** (11-package modular stack) | ~39K | ~550K (incl. bundled skills) | ~1.2M + ~190K native (iOS / Android / macOS) |
+| **License** | Apache 2.0 | MIT | MIT | MIT |
+| **Shape** | Layered — install one layer or the whole stack | Fork-and-customize monolith | Monolith | Large monorepo |
+| **LLM access** | Direct HTTP, **zero vendor SDKs** | Anthropic Agent SDK | Provider clients / OpenRouter | Provider SDKs |
+| **Providers** | 16 (cloud + on-prem) | Anthropic (via SDK) | 200+ via routers | Multi (Anthropic / OpenAI / …) |
+| **Cryptographic agent identity** | ✅ Ed25519 DID per agent | ❌ | ❌ | ❌ |
+| **Authorization** | ✅ Deny-by-default 5-layer policy, parameter-level | Container mount isolation | App-level | Gateway = trust boundary (config-driven) |
+| **Audit trail** | ✅ Dual, hash-chained (tamper-evident) | App logs | App logs | App logs |
+| **PII redaction** | ✅ Bidirectional at the trust boundary | ❌ | ❌ | ❌ |
+| **Supply-chain integrity** | ✅ Signed skills (Sigstore + Rekor), AST scan, no SDKs | Container sandbox | — | `THIRD_PARTY_NOTICES`, hardening guide |
+| **Code-exec sandbox** | AST validator + stripped subprocess + egress proxy | Linux container | Docker | Docker + loopback-by-default |
+| **Air-gapped / on-prem** | ✅ Ollama · vLLM · TGI, no API key | ❌ needs Anthropic API | Partial (local models) | Partial (needs model API) |
+| **Compliance mapping** | ✅ NIST 800-53 · FedRAMP · CMMC · OWASP LLM/Agentic | ❌ | ❌ | ❌ |
+
+**Where each one wins:** NanoClaw is the leanest way to get a sandboxed Claude into WhatsApp — it offloads the hard parts to Anthropic's SDK (which is also why its small line count is a little misleading; the complexity lives in a closed dependency). Hermes is the most autonomous — agent-curated memory and DSPy/GEPA self-evolution. OpenClaw has the widest integration surface — 50+ messaging platforms and native mobile apps. **Arc wins when "show me the audit trail" is the start of the conversation:** cryptographic identity, a real policy engine, tamper-evident logs, and line-by-line compliance mapping that the others simply don't carry.
+
+> ¹ Source lines of the primary language, excluding tests, `node_modules`, vendored dependencies, generated lockfiles, and documentation sites. Measured June 2026 from each project's `main` branch; competitor counts will drift as those projects evolve.
+
+---
+
 ## 🏗️ Architecture
 
 Arc is a layered stack. Each box is an independently-installable Python package. **Each layer depends only on the layers below it — dependencies point straight down, never sideways.**
