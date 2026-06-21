@@ -5,11 +5,11 @@
 ### **The Whole Arc Stack — One pip Install**
 *The meta-package. `pip install arcmas` and you have everything.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Providers](https://img.shields.io/badge/LLM_providers-16-orange.svg)](#)
-[![Zero SDKs](https://img.shields.io/badge/vendor_SDKs-zero-DC2626.svg)](#)
-[![SCIF Ready](https://img.shields.io/badge/SCIF-ready-7C3AED.svg)](#)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-0073FE.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Providers](https://img.shields.io/badge/LLM_providers-16-F68D2E.svg)](#)
+[![Zero SDKs](https://img.shields.io/badge/vendor_SDKs-zero-54585C.svg)](#)
+[![SCIF Ready](https://img.shields.io/badge/SCIF-ready-002550.svg)](#)
 
 </div>
 

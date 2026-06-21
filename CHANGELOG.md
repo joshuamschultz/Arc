@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **README + documentation rebrand** — Root and per-package READMEs realigned to the CTG Federal brand system (navy `#002550` → azure `#0073FE` blues with a single orange `#F68D2E` accent, replacing the prior rainbow Tailwind palette). New TUI-framed banner on the root README.
+- **Architecture diagram corrected and redrawn** — The dependency graph now reflects the real layered direction (every edge points down toward the `arctrust` / `arcstore` foundation: `arcrun → arcllm`, `arcagent → arcrun`, surfaces → agent, entry → surfaces). Added a branded SVG stack diagram at `docs/assets/arc-architecture.svg`. `arcstore` (operational storage) is now shown as a foundation package alongside `arctrust`; mermaid `classDef` colors switched to the brand palette.
+
 ## [2026-04-26] — Major monorepo refactor
 
 Cross-cutting refactor that promotes `arctrust` to the canonical leaf for the four pillars (Identity, Sign, Authorize, Audit), splits orchestration cleanly between `arcrun` (loop) and `arcagent` (spawn primitives), removes legacy duplicates, hardens audit emission to a single point, and lifts `arcskill` to a real public release. Implements ADR-019 four-pillar universality.

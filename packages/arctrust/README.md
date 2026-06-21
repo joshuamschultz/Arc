@@ -5,11 +5,11 @@
 ### **The Cryptographic Foundation for Arc**
 *Identity · Signing · Audit · Policy — the leaf every other Arc package depends on.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-176-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![Ed25519](https://img.shields.io/badge/crypto-Ed25519-DC2626.svg)](#cryptography)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-176-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-99%25-003B82.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![Ed25519](https://img.shields.io/badge/crypto-Ed25519-F68D2E.svg)](#cryptography)
 
 </div>
 
@@ -34,23 +34,27 @@ If you're building anything that needs to *prove* what happened, this is where y
 
 ```mermaid
 flowchart TB
-    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
 
-    arctrust[arctrust<br/>identity · sign · audit · policy]:::tr
-    arcllm[arcllm]:::other
-    arcrun[arcrun]:::other
-    arcagent[arcagent]:::other
-    arcskill[arcskill]:::other
-    arcteam[arcteam]:::other
-    arcgateway[arcgateway]:::other
+    arctrust[arctrust<br/>identity · sign · audit · policy]:::found
+    arcstore[arcstore]:::found
+    arcrun[arcrun]:::runtime
+    arcagent[arcagent]:::agent
+    arcskill[arcskill]:::agent
+    arcgateway[arcgateway]:::surface
+    arccli[arccli]:::entry
 
-    arcllm --> arctrust
+    arcstore --> arctrust
     arcrun --> arctrust
     arcagent --> arctrust
     arcskill --> arctrust
-    arcteam --> arctrust
     arcgateway --> arctrust
+    arccli --> arctrust
 ```
 
 `arctrust` is the **leaf node** — it imports nothing from Arc, and every other Arc package imports something from it.

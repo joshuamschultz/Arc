@@ -5,11 +5,11 @@
 ### **Verified Skill Hub for Arc**
 *Sigstore + Rekor signature verification. Static scan. Sandboxed dry-run. Atomic activation. Revocation list.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-342-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-86%25-brightgreen.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![Sigstore](https://img.shields.io/badge/Sigstore-verified-7C3AED.svg)](#-the-install-pipeline)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-342-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-86%25-003B82.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![Sigstore](https://img.shields.io/badge/Sigstore-verified-0073FE.svg)](#-the-install-pipeline)
 
 </div>
 
@@ -35,17 +35,14 @@ Skills can be three things:
 
 ```mermaid
 flowchart TB
-    classDef sk fill:#60A5FA,stroke:#1E40AF,color:#0C1A47
-    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    arcagent[arcagent]:::other --> arcskill
-    arcskill[arcskill<br/>verified install · scan · lock · CRL]:::sk --> arctrust[arctrust]:::tr
-    arcskill --> arcrun[arcrun]:::other
-    arcskill --> arcllm[arcllm]:::other
+    arcagent[arcagent]:::agent --> arcskill
+    arcskill[arcskill<br/>verified install · scan · lock · CRL]:::agent --> arctrust[arctrust]:::found
 ```
 
-Depends on `arctrust` (audit + signing), `arcllm`, `arcrun`. `arcagent` depends on `arcskill` for skill discovery and loading.
+Depends only on `arctrust` (audit + signing) — otherwise a leaf. `arcagent` drives `arcskill` for skill discovery and loading.
 
 ---
 
@@ -101,9 +98,9 @@ Each skill goes through 8 gates. Any failure stops the install — no partial st
 
 ```mermaid
 flowchart LR
-    classDef gate fill:#60A5FA,stroke:#1E40AF,color:#0C1A47
-    classDef terminal fill:#34D399,stroke:#065F46,color:#022C22
-    classDef fail fill:#F87171,stroke:#991B1B,color:#450A0A
+    classDef gate fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef terminal fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef fail fill:#F68D2E,stroke:#C06000,color:#FFFFFF
 
     A[1. Fetch<br/>to quarantine]:::gate --> B[2. Sigstore<br/>signature]:::gate
     B --> C[3. Rekor<br/>inclusion proof]:::gate

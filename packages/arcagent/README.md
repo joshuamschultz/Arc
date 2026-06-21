@@ -5,11 +5,11 @@
 ### **The Agent Itself**
 *DID-required at construction. Unified capability loader (tools · skills · hooks · background tasks), sessions, module bus. Wraps arcrun + arcllm with everything an autonomous agent needs to be accountable.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-3%2C136%2B-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/core_coverage-≥90%25-brightgreen.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![DID Required](https://img.shields.io/badge/DID-required-DC2626.svg)](#-the-four-pillars-built-in)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-3%2C136%2B-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/core_coverage-≥90%25-003B82.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![DID Required](https://img.shields.io/badge/DID-required-F68D2E.svg)](#-the-four-pillars-built-in)
 
 </div>
 
@@ -36,22 +36,24 @@ It wraps the lower layers (`arcrun` for the loop, `arcllm` for the model, `arctr
 
 ```mermaid
 flowchart TB
-    classDef ag fill:#A78BFA,stroke:#5B21B6,color:#2E1065
-    classDef rn fill:#34D399,stroke:#065F46,color:#022C22
-    classDef llm fill:#22D3EE,stroke:#0E7490,color:#083344
-    classDef sk fill:#60A5FA,stroke:#1E40AF,color:#0C1A47
-    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    arccli[arccli]:::other --> arcagent
-    arcgateway[arcgateway]:::other --> arcagent
-    arcagent[arcagent<br/>identity · skills · extensions · sessions]:::ag --> arcskill[arcskill]:::sk
-    arcagent --> arcrun[arcrun]:::rn
+    arccli[arccli]:::entry --> arcagent
+    arcgateway[arcgateway]:::surface --> arcagent
+    arcagent[arcagent<br/>identity · skills · extensions · sessions]:::agent --> arcskill[arcskill]:::agent
+    arcagent --> arcrun[arcrun]:::runtime
     arcagent --> arcllm[arcllm]:::llm
-    arcagent --> arctrust[arctrust]:::tr
+    arcagent --> arctrust[arctrust]:::found
+    arcagent --> arcstore[arcstore]:::found
+    arcagent -. serve --ui .-> arcui[arcui]:::surface
 ```
 
-Depends on `arcrun`, `arcllm`, `arcskill`, `arctrust`.
+Depends on `arcrun`, `arcllm`, `arctrust`, `arcstore`; manages `arcskill` capabilities and streams to `arcui` under `arc agent serve --ui`.
 
 ---
 

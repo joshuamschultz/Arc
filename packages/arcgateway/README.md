@@ -5,11 +5,11 @@
 ### **Make Your Agents Reachable from Telegram, Slack, Discord — Safely**
 *Long-running daemon. Multi-platform adapters. Operator-approved pairing. TaskGroup isolation per platform.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-494-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-94%25-brightgreen.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![Pairing Required](https://img.shields.io/badge/pairing-operator_approved-DC2626.svg)](#-operator-approved-pairing)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-494-0055BC.svg)](#-status)
+[![Coverage](https://img.shields.io/badge/coverage-94%25-003B82.svg)](#-status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#-status)
+[![Pairing Required](https://img.shields.io/badge/pairing-operator_approved-F68D2E.svg)](#-operator-approved-pairing)
 
 </div>
 
@@ -29,17 +29,17 @@ Every DM gets a per-(user, agent) session. Every session must be **explicitly pa
 
 ```mermaid
 flowchart LR
-    classDef gw fill:#FB923C,stroke:#9A3412,color:#431407
-    classDef ag fill:#A78BFA,stroke:#5B21B6,color:#2E1065
-    classDef ext fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
-    Telegram[Telegram]:::ext --> arcgateway
-    Slack[Slack]:::ext --> arcgateway
-    Discord[Discord]:::ext --> arcgateway
-    arcgateway[arcgateway<br/>session router · pairing<br/>TaskGroup isolation]:::gw --> arcagent[arcagent]:::ag
+    Telegram[Telegram]:::other --> arcgateway
+    Slack[Slack]:::other --> arcgateway
+    Discord[Discord]:::other --> arcgateway
+    arcgateway[arcgateway<br/>session router · pairing<br/>TaskGroup isolation]:::surface --> arcagent[arcagent]:::agent
 ```
 
-Depends on `arcagent`, `arcrun`, `arcllm`, `arctrust`. **No other Arc package depends on arcgateway** — it's a terminal node.
+Depends on `arcagent` and `arctrust`. **No other Arc package depends on arcgateway** — it's a terminal node.
 
 ---
 

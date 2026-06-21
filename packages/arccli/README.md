@@ -5,10 +5,10 @@
 ### **The `arc` Command-Line Tool**
 *Slash-command registry. JSON output on every data command. The single front door to the entire Arc stack.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-303-success.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![Slash-command registry](https://img.shields.io/badge/registry-slash_commands-2563EB.svg)](#)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-303-0055BC.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![Slash-command registry](https://img.shields.io/badge/registry-slash_commands-0073FE.svg)](#)
 
 </div>
 
@@ -28,17 +28,21 @@ It's built on a **centralized slash-command registry** with lazy handler dispatc
 
 ```mermaid
 flowchart TB
-    classDef cli fill:#FCD34D,stroke:#92400E,color:#451A03
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
     User[👤 User]:::other --> arccli
-    arccli[arccli<br/>'arc' console script]:::cli --> arcagent[arcagent]:::other
-    arccli --> arcrun[arcrun]:::other
-    arccli --> arcllm[arcllm]:::other
-    arccli --> arcteam[arcteam]:::other
-    arccli --> arcui[arcui]:::other
-    arccli --> arcskill[arcskill]:::other
-    arccli --> arcgateway[arcgateway]:::other
+    arccli[arccli<br/>'arc' console script]:::entry --> arcagent[arcagent]:::agent
+    arccli --> arcrun[arcrun]:::runtime
+    arccli --> arcllm[arcllm]:::llm
+    arccli --> arcteam[arcteam]:::surface
+    arccli --> arcui[arcui]:::surface
+    arccli --> arcskill[arcskill]:::agent
+    arccli --> arcgateway[arcgateway]:::surface
 ```
 
 `arccli` is a **terminal layer** — nothing in Arc depends on it. It installs the `arc` console script.

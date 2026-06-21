@@ -5,10 +5,10 @@
 ### **Multi-Agent Coordination for Arc**
 *Entity registry. Channels and DMs. HMAC-signed audit trail. Pluggable storage backends.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-307-success.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![HMAC Audit](https://img.shields.io/badge/audit-HMAC_signed-DC2626.svg)](#%EF%B8%8F-security-architecture)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-307-0055BC.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![HMAC Audit](https://img.shields.io/badge/audit-HMAC_signed-F68D2E.svg)](#%EF%B8%8F-security-architecture)
 
 </div>
 
@@ -34,16 +34,16 @@ Think of it as a tiny Slack-for-agents:
 
 ```mermaid
 flowchart TB
-    classDef tm fill:#F87171,stroke:#991B1B,color:#450A0A
-    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
 
-    arccli[arccli]:::other --> arcteam
-    arcagent[arcagent]:::other --> arcteam
-    arcteam[arcteam<br/>entity registry · messaging · audit]:::tm --> arctrust[arctrust]:::tr
+    arccli[arccli]:::entry --> arcteam
+    arcagent[arcagent]:::agent --> arcteam
+    arcteam[arcteam<br/>entity registry · messaging · HMAC audit]:::surface
 ```
 
-Depends on `arctrust` (audit) and Pydantic.
+Self-contained — its audit trail is HMAC-signed in-package, so it pulls in no other Arc package (just Pydantic). `arccli` and `arcagent` consume it.
 
 ---
 

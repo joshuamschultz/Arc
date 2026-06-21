@@ -5,11 +5,11 @@
 ### **The Loop That Runs an Agent**
 *Async ReAct execution engine. Tool sandbox, streaming, parallel dispatch, hash-chained event log.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-513-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-spawn_92%25-brightgreen.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![asyncio](https://img.shields.io/badge/runtime-asyncio-7C3AED.svg)](#)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-513-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-spawn_92%25-003B82.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![asyncio](https://img.shields.io/badge/runtime-asyncio-0073FE.svg)](#)
 
 </div>
 
@@ -31,26 +31,27 @@ It's deliberately small. **No agent state.** No persistent identity. No skill di
 
 ```mermaid
 flowchart TB
-    classDef rn fill:#34D399,stroke:#065F46,color:#022C22
-    classDef llm fill:#22D3EE,stroke:#0E7490,color:#083344
-    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    arcagent[arcagent]:::other --> arcrun
-    arcgateway[arcgateway]:::other --> arcrun
-    arccli[arccli]:::other --> arcrun
-    arcrun[arcrun<br/>think → act → observe loop]:::rn --> arcllm[arcllm]:::llm
-    arcrun --> arctrust[arctrust]:::tr
+    arcagent[arcagent]:::agent --> arcrun
+    arccli[arccli]:::entry --> arcrun
+    arcrun[arcrun<br/>think → act → observe loop]:::runtime --> arcllm[arcllm]:::llm
+    arcrun --> arctrust[arctrust]:::found
+    arcrun --> arcstore[arcstore]:::found
 ```
 
-Depends on `arcllm` and `arctrust`. Nothing else.
+Depends on `arcllm`, `arctrust`, and `arcstore`. Nothing else.
 
 ---
 
 ## 🚀 Install
 
 ```bash
-pip install arcrun           # standalone (pulls in arcllm + arctrust)
+pip install arcrun           # standalone (pulls in arcllm + arctrust + arcstore)
 # or
 pip install arcmas           # full Arc stack
 ```

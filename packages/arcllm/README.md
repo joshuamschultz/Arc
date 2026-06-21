@@ -5,12 +5,12 @@
 ### **One LLM Client. 16 Providers. Zero SDKs.**
 *Direct HTTP to every major model provider. PII redaction, request signing, OpenTelemetry, and audit baked in.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-885-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-99%25-brightgreen.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![Providers](https://img.shields.io/badge/providers-16-orange.svg)](#-supported-providers)
-[![No SDKs](https://img.shields.io/badge/vendor_SDKs-zero-DC2626.svg)](#-zero-provider-sdks)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-885-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-99%25-003B82.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![Providers](https://img.shields.io/badge/providers-16-F68D2E.svg)](#-supported-providers)
+[![No SDKs](https://img.shields.io/badge/vendor_SDKs-zero-54585C.svg)](#-zero-provider-sdks)
 
 </div>
 
@@ -32,17 +32,19 @@ It also handles the boring-but-critical stuff that every production LLM client e
 
 ```mermaid
 flowchart TB
-    classDef llm fill:#22D3EE,stroke:#0E7490,color:#083344
-    classDef tr fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef entry fill:#D6E6FF,stroke:#0073FE,color:#002550
 
-    arcrun[arcrun]:::other --> arcllm
-    arcagent[arcagent]:::other --> arcllm
-    arccli[arccli]:::other --> arcllm
-    arcllm[arcllm<br/>16 providers · direct HTTP]:::llm --> arctrust[arctrust]:::tr
+    arcrun[arcrun]:::runtime --> arcllm
+    arcagent[arcagent]:::agent --> arcllm
+    arccli[arccli]:::entry --> arcllm
+    arcllm[arcllm<br/>16 providers · direct HTTP]:::llm --> arcstore[arcstore]:::found
 ```
 
-Depends on: `arctrust` (for audit emission), `httpx`, `pydantic`. **That's the entire runtime dependency graph.**
+Depends on one internal package — `arcstore` (hash-chained trace/audit storage) — plus three third-party libraries: `httpx`, `pydantic`, `opentelemetry-api`. **No vendor SDKs. That's the entire runtime dependency graph.**
 
 ---
 

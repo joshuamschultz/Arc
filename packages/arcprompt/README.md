@@ -5,8 +5,8 @@
 ### **Strategy Prompt Provider for Arc**
 *Serves model-facing guidance — system prompts and strategy context — to arcrun and arcagent.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Status: Scaffolding](https://img.shields.io/badge/status-early_scaffolding-FBBF24.svg)](#status)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Status: Scaffolding](https://img.shields.io/badge/status-early_scaffolding-F68D2E.svg)](#status)
 
 </div>
 
@@ -24,10 +24,10 @@
 
 ```mermaid
 flowchart LR
-    classDef pp fill:#FBBF24,stroke:#92400E,color:#451A03
-    classDef other fill:#E5E7EB,stroke:#6B7280,color:#111827
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
-    arcrun[arcrun]:::other --> arcprompt[arcprompt<br/>strategy prompts]:::pp
+    arcrun[arcrun]:::runtime --> arcprompt[arcprompt<br/>strategy prompts]:::other
 ```
 
 A leaf-level utility. `arcrun` depends on it for `get_strategy_prompts`. No other Arc package currently consumes it.

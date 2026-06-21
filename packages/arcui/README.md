@@ -5,10 +5,10 @@
 ### **Real-Time Multi-Agent Dashboard**
 *Live WebSocket telemetry. Three-token auth. Filter by layer, agent, or team. Watch your fleet think in real time.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-300-success.svg)](#status)
-[![Strict mypy](https://img.shields.io/badge/mypy-strict-2563EB.svg)](#status)
-[![FastAPI](https://img.shields.io/badge/FastAPI-WebSocket-009688.svg)](#)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Tests](https://img.shields.io/badge/tests-300-0055BC.svg)](#status)
+[![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
+[![FastAPI](https://img.shields.io/badge/FastAPI-WebSocket-0073FE.svg)](#)
 
 </div>
 
@@ -28,17 +28,19 @@ It's a FastAPI server with WebSocket transport that receives live telemetry from
 
 ```mermaid
 flowchart TB
-    classDef ui fill:#F472B6,stroke:#9D174D,color:#500724
-    classDef ag fill:#A78BFA,stroke:#5B21B6,color:#2E1065
-    classDef llm fill:#22D3EE,stroke:#0E7490,color:#083344
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
-    arcagent[arcagent<br/>+ ui_reporter module]:::ag -->|WebSocket events| arcui
+    arcagent[arcagent<br/>+ ui_reporter module]:::agent -.->|WebSocket events| arcui
     arcllm[arcllm<br/>JSONLTraceStore]:::llm -->|attach_llm| arcui
-    arcui[arcui<br/>FastAPI · WebSocket · UI]:::ui --> Browser[🖥 Browser]
-    arcui --> Terminal[⌨ arc ui tail]
+    arcgateway[arcgateway<br/>fs / roster data plane]:::surface -->|in-process read| arcui
+    arcui[arcui<br/>FastAPI · WebSocket · UI]:::surface --> Browser[🖥 Browser]:::other
+    arcui --> Terminal[⌨ arc ui tail]:::other
 ```
 
-Depends on `arcllm` (for `JSONLTraceStore`) and optionally `arctrust` (via `UIBridgeSink`). `arcagent` and `arccli` depend on `arcui` for the `ui_reporter` module and `arc ui` commands.
+Depends on `arcllm` (for `JSONLTraceStore`), `arcgateway` (the read-only fs / roster data plane), and `arcstore`. `arcagent` and `arccli` depend on `arcui` for the `ui_reporter` module and `arc ui` commands.
 
 ---
 

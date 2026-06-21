@@ -1,25 +1,34 @@
 <div align="center">
 
 ```
-       █████╗ ██████╗  ██████╗
-      ██╔══██╗██╔══██╗██╔════╝
-      ███████║██████╔╝██║
-      ██╔══██║██╔══██╗██║
-      ██║  ██║██║  ██║╚██████╗
-      ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝
+╭───────────────────────────────────────────────────────────╮
+│ arc                                                 ● ● ● │
+├───────────────────────────────────────────────────────────┤
+│                                                           │
+│                  █████╗ ██████╗  ██████╗                  │
+│                 ██╔══██╗██╔══██╗██╔════╝                  │
+│                 ███████║██████╔╝██║                       │
+│                 ██╔══██║██╔══██╗██║                       │
+│                 ██║  ██║██║  ██║╚██████╗                  │
+│                 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝                  │
+│                                                           │
+│         the security-first autonomous agent stack         │
+│            identity · sign · authorize · audit            │
+│                                                           │
+╰───────────────────────────────────────────────────────────╯
 ```
 
-### **The Security-First Autonomous Agent Framework**
+### **The Security-First Autonomous Agent Stack**
 *For environments where trust is non-negotiable.*
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-6%2C400%2B-success.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-90%25%2B-brightgreen.svg)](#status)
-[![Providers](https://img.shields.io/badge/LLM_providers-16-orange.svg)](#supported-llm-providers)
-[![SCIF Ready](https://img.shields.io/badge/SCIF-ready-7C3AED.svg)](#air-gapped-and-on-premises)
-[![FedRAMP](https://img.shields.io/badge/FedRAMP-aligned-002868.svg)](#nist-sp-800-53)
-[![Zero SDKs](https://img.shields.io/badge/vendor_SDKs-zero-DC2626.svg)](#zero-provider-sdks)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-0073FE.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-6%2C400%2B-0055BC.svg)](#-status)
+[![Coverage](https://img.shields.io/badge/coverage-90%25%2B-003B82.svg)](#-status)
+[![Providers](https://img.shields.io/badge/LLM_providers-16-F68D2E.svg)](#-supported-llm-providers)
+[![SCIF Ready](https://img.shields.io/badge/SCIF-ready-002550.svg)](#-air-gapped-and-on-premises)
+[![FedRAMP](https://img.shields.io/badge/FedRAMP-aligned-003B82.svg)](#-compliance-mapping)
+[![Zero SDKs](https://img.shields.io/badge/vendor_SDKs-zero-54585C.svg)](#zero-provider-sdks)
 
 **[Quick Start](#-quick-start)** ·
 **[Architecture](#-architecture)** ·
@@ -62,57 +71,73 @@ If you need to *demonstrate* compliance — not just claim it — Arc gives you 
 
 ## 🏗️ Architecture
 
-Arc is a layered stack. Each box is an independently-installable Python package. Each layer only depends on the layers below it. Nothing reaches sideways.
+Arc is a layered stack. Each box is an independently-installable Python package. **Each layer depends only on the layers below it — dependencies point straight down, never sideways.**
+
+<div align="center">
+
+<img src="docs/assets/arc-architecture.svg" alt="Arc layered architecture — entry and tooling on top, surfaces, the agent, the runtime loop, the LLM client, and the cryptographic foundation at the bottom; each layer depends only on the layers beneath it" width="820">
+
+</div>
+
+The same stack as a dependency graph — every edge is a real `import`, and they all point down toward the `arctrust` / `arcstore` foundation:
 
 ```mermaid
 flowchart TB
-    classDef cli fill:#FCD34D,stroke:#92400E,color:#451A03
-    classDef gw  fill:#FB923C,stroke:#9A3412,color:#431407
-    classDef tm  fill:#F87171,stroke:#991B1B,color:#450A0A
-    classDef ag  fill:#A78BFA,stroke:#5B21B6,color:#2E1065
-    classDef sk  fill:#60A5FA,stroke:#1E40AF,color:#0C1A47
-    classDef rn  fill:#34D399,stroke:#065F46,color:#022C22
-    classDef llm fill:#22D3EE,stroke:#0E7490,color:#083344
-    classDef tr  fill:#94A3B8,stroke:#1E293B,color:#0F172A
-    classDef ui  fill:#F472B6,stroke:#9D174D,color:#500724
+    classDef entry   fill:#D6E6FF,stroke:#0073FE,color:#002550
+    classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
+    classDef agent   fill:#0073FE,stroke:#0055BC,color:#FFFFFF
+    classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
+    classDef llm     fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found   fill:#002550,stroke:#001A38,color:#FFFFFF
 
-    arccli[arccli<br/>The 'arc' command-line tool]:::cli
-    arcgateway[arcgateway<br/>Telegram · Slack · Discord daemon]:::gw
-    arcteam[arcteam<br/>Multi-agent messaging + signed audit]:::tm
-    arcagent[arcagent<br/>The agent · DID · sessions · capabilities]:::ag
-    arcskill[arcskill<br/>Verified skill install · scan · lock]:::sk
-    arcrun[arcrun<br/>The think → act → observe loop]:::rn
-    arcllm[arcllm<br/>16 LLM providers · zero SDKs]:::llm
-    arctrust[arctrust<br/>Identity · signing · audit · policy]:::tr
-    arcui[arcui<br/>Multi-agent dashboard]:::ui
+    arccli[arccli<br/>the 'arc' command]:::entry
+    arctui[arctui<br/>terminal UI]:::entry
+    arcmas[arcmas<br/>meta-install]:::entry
 
-    arccli --> arcgateway
-    arccli --> arcteam
+    arcgateway[arcgateway<br/>chat-platform daemon]:::surface
+    arcteam[arcteam<br/>multi-agent messaging]:::surface
+    arcui[arcui<br/>live dashboard]:::surface
+
+    arcagent[arcagent<br/>the agent · DID · capabilities]:::agent
+    arcskill[arcskill<br/>verified skill install]:::agent
+
+    arcrun[arcrun<br/>think → act → observe loop]:::runtime
+    arcllm[arcllm<br/>16 providers · zero SDKs]:::llm
+
+    arctrust[arctrust<br/>identity · sign · authorize · audit]:::found
+    arcstore[arcstore<br/>operational storage]:::found
+
+    arctui --> arccli
+    arcmas --> arccli
     arccli --> arcagent
-    arccli --> arcui
+    arccli --> arcteam
     arcgateway --> arcagent
-    arcteam --> arctrust
-    arcagent --> arcskill
+    arcui --> arcgateway
+    arcui --> arcllm
     arcagent --> arcrun
+    arcagent --> arctrust
+    arcagent -. "serve --ui" .-> arcui
     arcskill --> arctrust
     arcrun --> arcllm
-    arcllm --> arctrust
-    arcui -.live telemetry.-> arcagent
+    arcrun --> arctrust
+    arcllm --> arcstore
+    arcstore --> arctrust
 ```
 
-| Package | What It Does |
-|---------|-------------|
-| 🟫 [**arctrust**](packages/arctrust/) | The cryptographic foundation — Ed25519 keypairs, DID identity, audit emission, the deny-by-default policy pipeline |
-| 🟦 [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII redaction, request signing, OpenTelemetry, audit |
-| 🟩 [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
-| 🟪 [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
-| 🟦 [**arcskill**](packages/arcskill/) | Skill hub — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list |
-| 🟧 [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
-| 🟥 [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, HMAC-signed audit trail |
-| 🟪 [**arcui**](packages/arcui/) | Multi-agent dashboard — live WebSocket telemetry, three-token auth, layer/agent/team filtering |
-| 🟨 [**arccli**](packages/arccli/) | The unified `arc` command-line tool |
-| 🎁 [**arcmas**](packages/arcmas/) | Meta-package — `pip install arcmas` installs everything |
-| 🧪 arcprompt · arcmodel · arctui | Strategy prompts · model routing · terminal UI (early scaffolding) |
+| Layer | Package | What It Does |
+|-------|---------|-------------|
+| Entry | [**arccli**](packages/arccli/) | The unified `arc` command-line tool |
+| Entry | [**arctui**](packages/arctui/) · [**arcmas**](packages/arcmas/) | Terminal UI · the `pip install arcmas` meta-package that pulls the whole stack |
+| Surface | [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
+| Surface | [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, HMAC-signed audit trail |
+| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — live WebSocket telemetry, three-token auth, layer/agent/team filtering |
+| Agent | [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
+| Agent | [**arcskill**](packages/arcskill/) | Skill hub — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list |
+| Runtime | [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
+| LLM | [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII redaction, request signing, OpenTelemetry, audit |
+| Foundation | [**arctrust**](packages/arctrust/) | The cryptographic leaf — Ed25519 keypairs, DID identity, audit emission, the deny-by-default policy pipeline |
+| Foundation | [**arcstore**](packages/arcstore/) | Operational storage — the durable backing store layers read from and write to |
+| — | 🧪 arcprompt · arcmodel | Strategy prompts · model routing (early scaffolding) |
 
 ---
 
