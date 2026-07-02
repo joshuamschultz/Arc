@@ -6,7 +6,13 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from arcllm.config import ProviderConfig, load_global_config, load_provider_config
+from arcllm.adapters.base import BaseAdapter
+from arcllm.config import (
+    GlobalConfig,
+    ProviderConfig,
+    load_global_config,
+    load_provider_config,
+)
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider
 
@@ -18,8 +24,8 @@ _VALID_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 # Lock protects cache-miss writes for thread safety (PEP 703 ready).
 _cache_lock = threading.Lock()
 _provider_config_cache: dict[str, ProviderConfig] = {}
-_adapter_class_cache: dict[str, type[LLMProvider]] = {}
-_global_config_cache: dict[str, Any] | None = None
+_adapter_class_cache: dict[str, type[BaseAdapter]] = {}
+_global_config_cache: GlobalConfig | None = None
 _module_settings_cache: dict[str, dict[str, Any]] = {}
 _vault_resolver_cache: Any | None = None
 
@@ -58,7 +64,7 @@ def _validate_provider_name(provider_name: str) -> None:
         )
 
 
-def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
+def _get_adapter_class(provider_name: str) -> type[BaseAdapter]:
     """Look up the adapter class by naming convention.
 
     Convention:
@@ -85,7 +91,7 @@ def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
             ) from e
 
         class_name = f"{provider_name.title()}Adapter"
-        adapter_class = getattr(module, class_name, None)
+        adapter_class: type[BaseAdapter] | None = getattr(module, class_name, None)
         if adapter_class is None:
             raise ArcLLMConfigError(
                 f"No adapter class '{class_name}' found in module '{module_path}'"
@@ -95,18 +101,26 @@ def _get_adapter_class(provider_name: str) -> type[LLMProvider]:
         return adapter_class
 
 
-def _ensure_global_config() -> Any:
-    """Load and cache global config + module settings on first access."""
+def _ensure_global_config() -> GlobalConfig:
+    """Load and cache global config + module settings on first access.
+
+    Idempotent accessor: read sites call this to get the loaded config
+    rather than touching the ``| None`` global directly.
+    """
     global _global_config_cache
-    if _global_config_cache is None:
-        with _cache_lock:
-            if _global_config_cache is None:
-                _global_config_cache = load_global_config()
-                for name, cfg in _global_config_cache.modules.items():
-                    _module_settings_cache[name] = {
-                        k: v for k, v in cfg.model_dump().items() if k != "enabled"
-                    }
-    return _global_config_cache
+    cached = _global_config_cache
+    if cached is not None:
+        return cached
+    with _cache_lock:
+        cached = _global_config_cache
+        if cached is None:
+            cached = load_global_config()
+            for name, cfg in cached.modules.items():
+                _module_settings_cache[name] = {
+                    k: v for k, v in cfg.model_dump().items() if k != "enabled"
+                }
+            _global_config_cache = cached
+    return cached
 
 
 def _resolve_module_config(
@@ -124,10 +138,8 @@ def _resolve_module_config(
     Returns:
         Module config dict if enabled, None if disabled.
     """
-    _ensure_global_config()
-
     # Get config.toml settings for this module
-    module_cfg = _global_config_cache.modules.get(module_name)
+    module_cfg = _ensure_global_config().modules.get(module_name)
     config_enabled = module_cfg.enabled if module_cfg else False
     config_settings = _module_settings_cache.get(module_name, {})
 
@@ -273,9 +285,8 @@ def load_model(
     model_name = model or config.provider.default_model
 
     # Ensure global config + vault resolver are initialized
-    _ensure_global_config()
     global _vault_resolver_cache
-    vault_cfg = _global_config_cache.vault
+    vault_cfg = _ensure_global_config().vault
     if vault_cfg.backend and _vault_resolver_cache is None:
         from arcllm.vault import VaultResolver
 
@@ -382,7 +393,9 @@ def load_model(
             telemetry_config["budget_scope"] = budget_scope
 
         # Source default_max_tokens from global config defaults
-        telemetry_config.setdefault("default_max_tokens", _global_config_cache.defaults.max_tokens)
+        telemetry_config.setdefault(
+            "default_max_tokens", _ensure_global_config().defaults.max_tokens
+        )
 
         # Thread trace_store, on_event, and agent_label into telemetry config
         if on_event is not None:

@@ -212,12 +212,10 @@ class SlackBot:
             return
 
         try:
-            from slack_bolt.adapter.socket_mode.async_handler import (  # type: ignore[import-not-found]  # reason: optional dep — module dormant unless arc-agent[slack] is installed
+            from slack_bolt.adapter.socket_mode.async_handler import (
                 AsyncSocketModeHandler,
             )
-            from slack_bolt.async_app import (
-                AsyncApp,  # type: ignore[import-not-found]  # reason: optional dep — see above
-            )
+            from slack_bolt.async_app import AsyncApp
         except ImportError:
             _logger.warning(
                 "slack-bolt not installed; slack module dormant. "

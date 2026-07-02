@@ -109,6 +109,37 @@ class AnthropicAdapter(BaseAdapter):
             "input_schema": tool.parameters,
         }
 
+    # -- Prompt caching -------------------------------------------------------
+    #
+    # Anthropic caches the longest stable prefix ending at a `cache_control`
+    # breakpoint, ordered tools -> system -> messages. A later breakpoint also
+    # reads caches written by earlier ones (cascade), so <=3 fixed breakpoints
+    # (last tool, system, last message block) cover the whole prefix regardless
+    # of conversation length. Placement lives entirely here: `cache_control` is
+    # an Anthropic wire specific and must not leak into shared arcllm types,
+    # arcrun, or arcagent (SPEC-029 D-393).
+
+    def _cache_control(self) -> dict[str, str]:
+        """The ephemeral cache_control marker, honoring the configured TTL."""
+        marker: dict[str, str] = {"type": "ephemeral"}
+        if self._config.provider.cache_ttl == "1h":
+            marker["ttl"] = "1h"
+        return marker
+
+    def _apply_last_message_breakpoint(self, formatted: list[dict[str, Any]]) -> None:
+        """Mark the tail of the conversation as the rolling cache breakpoint.
+
+        String content is promoted to a one-block list so the marker can
+        attach; a block list gets the marker on its last block.
+        """
+        content = formatted[-1]["content"]
+        if isinstance(content, str):
+            formatted[-1]["content"] = [
+                {"type": "text", "text": content, "cache_control": self._cache_control()}
+            ]
+        elif content:
+            content[-1] = {**content[-1], "cache_control": self._cache_control()}
+
     def _build_request_body(
         self,
         messages: list[Message],
@@ -117,6 +148,7 @@ class AnthropicAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         system_text, remaining = self._extract_system(messages)
         formatted = [self._format_message(m) for m in remaining]
+        caching = self._config.provider.enable_prompt_caching
 
         max_tokens, temperature = self._resolve_defaults(**kwargs)
 
@@ -127,12 +159,27 @@ class AnthropicAdapter(BaseAdapter):
             "messages": formatted,
         }
         if system_text is not None:
-            body["system"] = system_text
+            # A cache breakpoint can only attach to a content-block list, so
+            # promote the system string when caching is on; keep the plain
+            # string form otherwise.
+            body["system"] = (
+                [{"type": "text", "text": system_text, "cache_control": self._cache_control()}]
+                if caching
+                else system_text
+            )
         if tools:
-            body["tools"] = [self._format_tool(t) for t in tools]
+            formatted_tools = [self._format_tool(t) for t in tools]
+            if caching:
+                formatted_tools[-1] = {
+                    **formatted_tools[-1],
+                    "cache_control": self._cache_control(),
+                }
+            body["tools"] = formatted_tools
             tool_choice = kwargs.get("tool_choice")
             if tool_choice is not None:
                 body["tool_choice"] = tool_choice
+        if caching and formatted:
+            self._apply_last_message_breakpoint(formatted)
         # Anthropic has no server-side JSON mode — the recommended path for
         # structured output is tool_use with a signals_completion tool. Fail
         # loudly rather than silently dropping the kwarg.

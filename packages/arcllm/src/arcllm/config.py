@@ -51,6 +51,20 @@ class ProviderSettings(BaseModel):
     default_model: str
     default_temperature: float
     vault_path: str = ""
+    # Provider prompt caching. Only adapters that support explicit cache
+    # breakpoints (Anthropic) read these; OpenAI-wire adapters ignore them.
+    # Default on: caching is a pure cost/latency win on a stable prefix.
+    enable_prompt_caching: bool = True
+    # "5m" (default, cheaper writes, smaller exfil window) or "1h" (opt-in for
+    # long-lived agents whose turn cadence exceeds the 5-minute TTL).
+    cache_ttl: str = "5m"
+
+    @field_validator("cache_ttl")
+    @classmethod
+    def _validate_cache_ttl(cls, v: str) -> str:
+        if v not in ("5m", "1h"):
+            raise ValueError(f"cache_ttl must be '5m' or '1h'. Got: {v}")
+        return v
 
     @field_validator("base_url")
     @classmethod

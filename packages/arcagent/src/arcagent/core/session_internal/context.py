@@ -1,9 +1,15 @@
-"""Context Manager — system prompt assembly, token counting, pruning.
+"""Context Manager — system-prompt assembly + token accounting.
 
-Monitors token budget and applies graduated strategies:
-- Prune threshold (70%): Observation masking (replace old tool outputs)
-- Compact threshold (85%): LLM summarization (stub in Phase 3)
-- Emergency threshold (95%): Force truncation
+Two responsibilities:
+
+1. Per-turn ``transform_context`` is append-only (keeps the provider cache
+   prefix byte-stable). Its only in-turn action is a last-resort emergency
+   truncation if a single run reaches the hard ceiling before a compaction
+   boundary fires.
+2. Boundary helpers — ``compaction_split`` (token-based deep split) and
+   ``prune_observations`` (observation masking) — are invoked by
+   ``SessionManager.compact`` at a discrete, persisted compaction boundary,
+   NOT per turn. Structured LLM summarization lives in the session manager.
 """
 
 from __future__ import annotations
@@ -140,15 +146,19 @@ class ContextManager:
         raw = len(text) / _CHARS_PER_TOKEN
         return math.ceil(raw * self._config.estimate_multiplier)
 
-    def usage_ratio(self, text: str) -> float:
-        """Calculate usage ratio (estimated tokens / max tokens)."""
-        return self.estimate_tokens(text) / self._config.max_tokens
-
     def token_ratio(self) -> float:
         """Calculate ratio from accumulated provider-reported usage."""
         if self._config.max_tokens == 0:
             return 0.0
         return self._reported_input_tokens / self._config.max_tokens
+
+    def message_fill_ratio(self, messages: list[Any]) -> float:
+        """Estimated context fill (tokens / max_tokens) for a message list.
+
+        The honest current-context measure used to trigger compaction — reads
+        the live messages rather than the reported-usage accumulator.
+        """
+        return self._estimate_ratio(messages)
 
     def _estimate_ratio(self, messages: list[Any]) -> float:
         """Estimate token usage ratio for a message list."""
@@ -207,73 +217,64 @@ class ContextManager:
         return result
 
     def transform_context(self, messages: list[Any]) -> list[Any]:
-        """Callback for arcrun.run(transform_context=...).
+        """Per-turn context hook for arcrun — append-only by contract.
 
-        Called before each LLM call. Applies graduated token management:
-        1. Estimate current usage
-        2. If > prune_threshold: mask old tool outputs
-        3. If > compact_threshold: trigger memory flush (async event)
-        4. If > emergency_threshold: force truncation
+        Returns messages unchanged so the provider prompt-cache prefix stays
+        byte-stable across turns. Compaction (observation masking + a
+        structured summary) is a discrete, persisted boundary event owned by
+        ``SessionManager.compact`` (via ``maybe_compact``), NOT a per-turn
+        rewrite — a per-turn prune of a sliding window would bust the cache on
+        every turn of a long-running agent.
+
+        The one exception is a last-resort valve: a single run's ReAct loop can
+        add many turns before a compaction boundary fires between dispatches, so
+        if in-run context reaches the hard ceiling, drop the oldest messages to
+        avoid a provider overflow. Rare and discrete.
         """
         if not messages:
             return messages
+        if self._estimate_ratio(messages) >= self._config.emergency_threshold:
+            _logger.warning("Emergency truncation: in-run context reached the hard ceiling")
+            return self._emergency_truncate(messages)
+        return messages
 
-        ratio = self._estimate_ratio(messages)
+    def compaction_split(self, messages: list[Any]) -> tuple[list[Any], list[Any]]:
+        """Split messages into ``(older_to_summarize, recent_to_keep)``.
 
-        # Below prune threshold — no action
-        if ratio < self._config.prune_threshold:
-            return messages
-
-        # Above prune threshold — mask old tool outputs
-        protected = int(self._config.max_tokens * 0.4)
-        result = self.prune_observations(messages, protected_recent_tokens=protected)
-
-        # Re-estimate after pruning
-        ratio = self._estimate_ratio(result)
-
-        # Above compact threshold — trigger pre-compaction memory flush
-        if ratio >= self._config.compact_threshold and self._bus is not None:
-            # Emit event for memory module (async, non-blocking)
-            # Memory module will handle creating daily notes and saving context
-            import asyncio
-
-            try:
-                task = asyncio.create_task(
-                    self._bus.emit(
-                        "agent:pre_compaction",
-                        {"messages": result, "ratio": ratio},
-                    )
-                )
-                # prevent GC of fire-and-forget task (RUF006)
-                task.add_done_callback(lambda t: None)
-            except RuntimeError:
-                # No event loop running (shouldn't happen in async context)
-                _logger.debug("Cannot emit pre_compaction event: no event loop")
-
-        # Above emergency threshold — force truncation
-        if ratio >= self._config.emergency_threshold:
-            result = self._emergency_truncate(result)
-            _logger.warning("Emergency truncation applied: %.1f%% usage", ratio * 100)
-
-        return result
+        Deep + debounced: keeps a recent tail under ~45% of ``max_tokens`` so
+        the post-compaction ratio lands near half the window and many
+        append-only turns follow before the next boundary (no threshold
+        thrash). Keeps >=1 message; summarizes >=1 for any input of >=2 (the
+        caller, ``compact``, only invokes this with >=4 messages).
+        """
+        keep_budget = int(self._config.max_tokens * 0.45)
+        kept_tokens = 0
+        split_idx = 0
+        for i in range(len(messages) - 1, -1, -1):
+            kept_tokens += self.estimate_tokens(_msg_content_str(messages[i]))
+            if kept_tokens > keep_budget:
+                split_idx = i + 1
+                break
+        split_idx = min(max(split_idx, 1), len(messages) - 1)
+        return messages[:split_idx], messages[split_idx:]
 
     def _emergency_truncate(self, messages: list[Any]) -> list[Any]:
-        """Force-truncate oldest messages to get under emergency threshold.
+        """Force-truncate oldest messages to get under the emergency threshold.
 
-        Always preserves the most recent messages.
+        Always keeps at least the most recent message — even when that single
+        message alone exceeds the budget, returning an empty list would send
+        zero messages to the provider (a worse failure than an oversized one).
         """
         target_tokens = int(self._config.max_tokens * self._config.compact_threshold)
 
-        # Build from newest to oldest until we hit budget
         kept: list[Any] = []
         accumulated = 0
         for msg in reversed(messages):
             msg_tokens = self.estimate_tokens(_msg_content_str(msg))
-            if accumulated + msg_tokens <= target_tokens:
-                kept.append(msg)
-                accumulated += msg_tokens
-            else:
+            if kept and accumulated + msg_tokens > target_tokens:
                 break
+            kept.append(msg)
+            accumulated += msg_tokens
 
         kept.reverse()
         return kept

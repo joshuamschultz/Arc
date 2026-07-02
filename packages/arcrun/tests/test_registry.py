@@ -115,3 +115,57 @@ class TestToolRegistry:
         events = [e for e in bus.events if e.type == "tool.removed"]
         assert len(events) == 1
         assert events[0].data["name"] == "gone"
+
+    # -- SPEC-029 D-391: immutable per-run tool set --------------------------
+
+    def test_frozen_registry_rejects_add(self):
+        import pytest
+
+        from arcrun.registry import ToolRegistry
+
+        bus = self._make_bus()
+        reg = ToolRegistry(tools=[_make_tool("a")], event_bus=bus)
+        reg.freeze()
+        with pytest.raises(RuntimeError, match="frozen"):
+            reg.add(_make_tool("b"))
+        # tool set unchanged + anomaly event emitted
+        assert reg.names() == ["a"]
+        denied = [e for e in bus.events if e.type == "tool.mutation_denied"]
+        assert len(denied) == 1
+        assert denied[0].data == {"name": "b", "op": "add"}
+
+    def test_frozen_registry_rejects_remove(self):
+        import pytest
+
+        from arcrun.registry import ToolRegistry
+
+        bus = self._make_bus()
+        reg = ToolRegistry(tools=[_make_tool("a")], event_bus=bus)
+        reg.freeze()
+        with pytest.raises(RuntimeError, match="frozen"):
+            reg.remove("a")
+        assert reg.names() == ["a"]
+        assert any(e.type == "tool.mutation_denied" for e in bus.events)
+
+    def test_list_schemas_byte_stable_across_calls(self):
+        from arcrun.registry import ToolRegistry
+
+        bus = self._make_bus()
+        reg = ToolRegistry(tools=[_make_tool("a"), _make_tool("b")], event_bus=bus)
+        reg.freeze()
+        first = reg.list_schemas()
+        second = reg.list_schemas()
+        # memoized identity — same object reused, so the tools block is byte-stable
+        assert first is second
+        assert [t.name for t in first] == ["a", "b"]
+
+    def test_mutation_before_freeze_invalidates_schema_cache(self):
+        from arcrun.registry import ToolRegistry
+
+        bus = self._make_bus()
+        reg = ToolRegistry(tools=[_make_tool("a")], event_bus=bus)
+        before = reg.list_schemas()
+        reg.add(_make_tool("b"))
+        after = reg.list_schemas()
+        assert [t.name for t in before] == ["a"]
+        assert [t.name for t in after] == ["a", "b"]

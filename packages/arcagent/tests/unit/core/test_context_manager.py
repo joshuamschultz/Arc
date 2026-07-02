@@ -341,32 +341,32 @@ class TestThresholdTriggers:
         result = ctx_mgr.transform_context(messages)
         assert result == messages
 
-    def test_above_prune_threshold_prunes(
+    def test_between_prune_and_emergency_is_identity(
         self, ctx_config: ContextConfig, mock_telemetry: MagicMock
     ) -> None:
-        """Above 70% — observation masking kicks in."""
+        """SPEC-029 D-398: transform_context is append-only below the hard
+        ceiling. Masking/summarization is a persisted compaction boundary event
+        (SessionManager.compact), NOT a per-turn rewrite — so nothing is pruned
+        here even above the old prune/compact thresholds."""
         config = ContextConfig(
-            max_tokens=100,  # Small budget to trigger thresholds easily
+            max_tokens=100,
             prune_threshold=0.70,
             compact_threshold=0.85,
             emergency_threshold=0.95,
-            estimate_multiplier=1.0,  # No multiplier for predictable math
+            estimate_multiplier=1.0,
         )
         mgr = ContextManager(config=config, telemetry=mock_telemetry)
-        # Create messages that push over 70% of 100 tokens
+        # ~87 tokens / 100 → above compact (0.85), below emergency (0.95)
         messages = [
             {"role": "user", "content": "x" * 100},
-            {
-                "role": "tool",
-                "content": "y" * 200,  # Old tool output
-                "tool_call_id": "tc1",
-            },
+            {"role": "tool", "content": "y" * 200, "tool_call_id": "tc1"},
             {"role": "assistant", "content": "z" * 50},
         ]
         result = mgr.transform_context(messages)
-        # Should have pruned the old tool output
+        # Identity — prefix untouched, tool output NOT pruned
+        assert result == messages
         tool_msg = next(m for m in result if m.get("tool_call_id") == "tc1")
-        assert "[output pruned" in tool_msg["content"]
+        assert "[output pruned" not in tool_msg["content"]
 
     def test_emergency_threshold_truncates(self, mock_telemetry: MagicMock) -> None:
         """Above 95% — force truncation of oldest messages."""
@@ -401,13 +401,6 @@ class TestTransformContext:
         ]
         result = ctx_mgr.transform_context(messages)
         assert len(result) == 2
-
-
-class TestUsageRatio:
-    def test_usage_ratio(self, ctx_mgr: ContextManager) -> None:
-        """Usage ratio based on estimated tokens."""
-        ratio = ctx_mgr.usage_ratio("x" * 400)  # ~110 estimated / 1000 max
-        assert 0.0 < ratio < 1.0
 
 
 class TestContextEdgeCases:

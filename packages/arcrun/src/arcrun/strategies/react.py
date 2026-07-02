@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from typing import Any
 
@@ -12,6 +13,27 @@ from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
 from arcrun.strategies import Strategy
 from arcrun.types import LoopResult
+
+# Debug-only guard for the transform_context append-only contract. Off by
+# default so the hot path pays nothing (cold start < 500ms, fleet scale).
+_ASSERT_APPEND_ONLY = os.environ.get("ARCRUN_ASSERT_APPEND_ONLY") == "1"
+
+
+def _check_append_only(original: list[Any], transformed: list[Any]) -> None:
+    """Flag a transform_context that mutated the cached prefix.
+
+    Contract: ``transform_context`` must be append-only between turns — a
+    turn appends to a frozen prefix so the provider cache prefix stays valid.
+    A deliberate compaction returns a *shorter* list (a one-time boundary
+    reset), which is allowed. The anti-pattern this catches is a same-or-
+    longer list whose earlier messages changed — i.e. a per-turn rewrite
+    (e.g. a sliding-window prune) that silently busts the cache every turn.
+    """
+    if len(transformed) >= len(original) and transformed[: len(original)] != original:
+        raise AssertionError(
+            "transform_context mutated the cached prefix (non-append rewrite). "
+            "It must append-only between turns; compaction must return a shorter list."
+        )
 
 
 class ReactStrategy(Strategy):
@@ -165,10 +187,15 @@ async def react_loop(
             steer_msg = state.steer_queue.get_nowait()
             state.messages.append(user_message(steer_msg))
 
-        # Transform context hook
+        # Transform context hook. Contract: append-only between turns (see
+        # _check_append_only). Compaction is a deliberate boundary reset, not
+        # a per-turn rewrite — its owner is the caller (arcagent), not arcrun.
         messages = state.messages
         if state.transform_context is not None:
-            messages = state.transform_context(messages)
+            transformed = state.transform_context(messages)
+            if _ASSERT_APPEND_ONLY:
+                _check_append_only(messages, transformed)
+            messages = transformed
 
         # Call model
         tools = state.registry.list_schemas()

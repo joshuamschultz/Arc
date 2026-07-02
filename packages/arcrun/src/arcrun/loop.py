@@ -51,6 +51,9 @@ def _build_state(
     if not tools:
         raise ValueError("capabilities must advertise at least one capability")
     registry = ToolRegistry(tools=tools, event_bus=bus)
+    # Seal the tool set for the whole run: byte-stable list keeps the provider
+    # cache prefix valid and closes the mid-run tool-injection surface.
+    registry.freeze()
     sandbox_obj = Sandbox(config=sandbox, event_bus=bus)
 
     # When session history provided, prepend fresh system prompt.

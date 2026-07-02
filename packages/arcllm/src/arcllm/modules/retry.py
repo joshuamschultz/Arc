@@ -140,4 +140,5 @@ class RetryModule(BaseModule):
             return min(error.retry_after, self._max_wait)
         backoff = self._backoff_base * (2**attempt)
         jitter = random.uniform(0, backoff)  # noqa: S311 — non-cryptographic jitter
-        return min(backoff + jitter, self._max_wait)
+        wait: float = min(backoff + jitter, self._max_wait)
+        return wait

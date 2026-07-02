@@ -341,8 +341,11 @@ class TestVetoEndToEnd:
 class TestContextManagerPruning:
     """T4.2.5: context manager prunes during arcrun.run."""
 
-    async def test_transform_context_prunes_when_over_threshold(self, tmp_path: Path) -> None:
-        """Context manager prunes old tool outputs when over threshold."""
+    async def test_transform_context_emergency_truncates_at_ceiling(self, tmp_path: Path) -> None:
+        """SPEC-029 D-402: transform_context's only in-run action is the
+        last-resort emergency valve at the hard ceiling — it drops oldest
+        messages to avoid a provider overflow (rare, discrete). Structured
+        masking/summarization lives in the persisted compaction boundary."""
         config = ArcAgentConfig(
             agent=AgentConfig(
                 name="ctx-agent",
@@ -353,33 +356,29 @@ class TestContextManagerPruning:
             telemetry=TelemetryConfig(enabled=False),
             context=ContextConfig(
                 max_tokens=100,
-                prune_threshold=0.70,
+                emergency_threshold=0.95,
             ),
         )
 
         agent = ArcAgent(config=config)
         await agent.startup()
 
-        # Create messages that exceed 70% of 100 tokens (> 70 tokens)
-        # Each char ~0.25 tokens * 1.1 multiplier
-        # Need ~280 chars to hit 70+ tokens
-        old_output = "x" * 200  # ~55 tokens
-        recent_output = "y" * 200  # ~55 tokens
+        # ~110 tokens over a 100-token window → above the 0.95 ceiling
         messages = [
-            {"role": "tool", "content": old_output},
+            {"role": "tool", "content": "x" * 200},
             {"role": "user", "content": "explain"},
-            {"role": "tool", "content": recent_output},
+            {"role": "tool", "content": "y" * 200},
+            {"role": "assistant", "content": "recent"},
         ]
 
         result = agent._context.transform_context(messages)
 
-        # At least one tool output should be pruned
-        pruned_count = sum(
-            1
-            for m in result
-            if isinstance(m.get("content"), str) and "[output pruned" in m["content"]
+        # Emergency valve drops oldest messages (no "[output pruned]" placeholders)
+        assert len(result) < len(messages)
+        assert result[-1] == messages[-1]  # most-recent preserved
+        assert not any(
+            isinstance(m.get("content"), str) and "[output pruned" in m["content"] for m in result
         )
-        assert pruned_count >= 1
 
         await agent.shutdown()
 

@@ -33,6 +33,12 @@ class RunState:
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     steer_queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     followup_queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
+    # Caller hook applied to the message list before each model call.
+    # CONTRACT: append-only between turns — the returned list must keep the
+    # input's prefix so the provider cache prefix stays valid; only the tail
+    # may grow. A deliberate compaction may return a *shorter* list (a one-time
+    # boundary reset), but must never rewrite/reorder earlier messages per turn.
+    # Set ARCRUN_ASSERT_APPEND_ONLY=1 to enforce this in dev.
     transform_context: Callable[..., Any] | None = None
     tool_timeout: float | None = None
     strategy_name: str = ""

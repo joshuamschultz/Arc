@@ -23,9 +23,11 @@ from arcllm.modules._logging import log_structured, validate_log_level
 from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.modules.telemetry_budget import (
     BudgetAccumulator,
-    clear_budgets,  # noqa: F401  re-exported for callers
     get_or_create_accumulator,
     validate_budget_scope,
+)
+from arcllm.modules.telemetry_budget import (
+    clear_budgets as clear_budgets,
 )
 from arcllm.modules.telemetry_cost import DEFAULT_MAX_TOKENS, calculate_cost, estimate_cost
 from arcllm.trace_store import TraceRecord

@@ -69,7 +69,8 @@ class BaseAdapter(LLMProvider):
             return raw
         if isinstance(raw, str):
             try:
-                return json.loads(raw)
+                parsed: dict[str, Any] = json.loads(raw)
+                return parsed
             except json.JSONDecodeError as e:
                 raise ArcLLMParseError(raw_string=raw, original_error=e) from e
         raise ArcLLMParseError(

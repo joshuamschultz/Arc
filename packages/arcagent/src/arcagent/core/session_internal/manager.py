@@ -4,8 +4,9 @@ Manages multi-turn conversation sessions with:
 - UUID4 session IDs
 - Thread-safe message appending (asyncio.Lock)
 - Append-only JSONL transcripts
-- Letta-style sliding window compaction (30/70 split)
-- Pre-compaction flush to context.md (OpenClaw pattern)
+- Discrete, persisted compaction: deep token-based split + structured summary
+  + boundary observation-masking, written back as a new baseline
+- Pre-compaction flush to context.md (durable memory, sanitized)
 - Configurable session retention
 """
 
@@ -17,12 +18,15 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from arcllm.types import Message
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.utils.io import format_messages
+
+if TYPE_CHECKING:
+    from arcagent.core.session_internal.context import ContextManager
 
 _logger = logging.getLogger("arcagent.session_manager")
 
@@ -36,7 +40,7 @@ class SessionManager:
         context_config: ContextConfig,
         telemetry: Any,
         workspace: Path,
-        context_manager: Any = None,
+        context_manager: ContextManager | None = None,
     ) -> None:
         self._config = config
         self._context_config = context_config
@@ -65,11 +69,23 @@ class SessionManager:
         return self._context_manager
 
     def token_ratio(self) -> float:
-        """Delegate token ratio calculation to context manager."""
+        """Provider-reported usage ratio (accumulator). See context_ratio()."""
         if self._context_manager is None:
             return 0.0
-        result: float = self._context_manager.token_ratio()
-        return result
+        return self._context_manager.token_ratio()
+
+    def context_ratio(self) -> float:
+        """Estimated fill ratio of the CURRENT context (tokens / max_tokens).
+
+        The signal used to trigger compaction: an estimate over the live
+        message list — the honest measure of how full context is right now,
+        and it drops after a compaction boundary so the trigger debounces
+        naturally. (The reported-usage accumulator is not wired end-to-end
+        and never resets, so it is unsuitable as a trigger — SPEC-029 review.)
+        """
+        if self._context_manager is None:
+            return 0.0
+        return self._context_manager.message_fill_ratio(self._messages)
 
     async def create_session(self) -> str:
         """Create a new session with a UUID4 ID.
@@ -185,54 +201,92 @@ class SessionManager:
         return list(self._messages)
 
     async def compact(self, model: Any, workspace: Path) -> None:
-        """Letta-style sliding window compaction with pre-compaction flush.
+        """Discrete, persisted compaction (SPEC-029 D-396/398/399/400).
 
-        0. PRE-FLUSH: Extract key facts from messages-to-summarize,
-           append to context.md (OpenClaw pattern — never lose info)
-        1. Split messages: oldest 30% → to_summarize, recent 70% → to_keep
-        2. Summarize oldest via eval model
-        3. Replace summarized messages with compaction_summary entry
-        4. Write compaction_summary to JSONL
+        Append-only between boundaries; when this fires it performs ONE deep,
+        debounced compaction and writes the result back as the new baseline:
 
-        Lock covers entire operation to prevent concurrent compaction
-        from corrupting message state (M-06).
+        0. PRE-FLUSH: structured extraction of the old segment to context.md
+           (durable memory — never lose info; sanitized against ASI-06).
+        1. DEEP SPLIT: keep a recent tail (~<=45% of max_tokens), summarize
+           the rest, so the post-compaction ratio lands near half the window
+           and many append-only turns follow before the next boundary.
+        2. STRUCTURED SUMMARY of the old segment via the eval model (schema,
+           not prose — structure forces preservation).
+        3. OBSERVATION MASKING of stale tool outputs in the kept window,
+           persisted into the rebuilt list (keep tool-call metadata).
+        4. Rebuild ``[summary_entry, *masked_kept]``; emit an audit event.
+
+        Lock covers the whole operation to prevent concurrent compaction from
+        corrupting message state (M-06).
         """
         async with self._lock:
             if len(self._messages) < 4:
                 return  # Not enough messages to compact
 
-            split_idx = max(1, len(self._messages) * 30 // 100)
-            to_summarize = self._messages[:split_idx]
-            to_keep = self._messages[split_idx:]
+            messages_before = len(self._messages)
+            to_summarize, to_keep = self._split_for_compaction()
 
-            # Step 0: Pre-compaction flush
             await self._pre_compact_flush(to_summarize, workspace, model)
-
-            # Step 1-2: Summarize via model
             summary_text = await self._summarize_messages(to_summarize, model)
 
-            # Step 3: Build compaction summary entry
+            # Observation masking on the kept window: keep tool-call metadata,
+            # replace stale output bodies with placeholders. Persisted below so
+            # it is not re-derived (and cache-busted) every subsequent turn.
+            if self._context_manager is not None:
+                protected = int(self._context_config.max_tokens * 0.20)
+                to_keep = self._context_manager.prune_observations(
+                    to_keep, protected_recent_tokens=protected
+                )
+
+            # role/content make the entry render as a normal prefix message on
+            # reassembly (agent_dispatch builds history via Message(**record));
+            # `type` + counts are metadata (pydantic ignores extra keys). The
+            # summary is sanitized before it re-enters context, mirroring the
+            # context.md flush (ASI-06 — no injection laundering into the baseline).
+            safe_summary = self._sanitize_context_output(summary_text)
             summary_entry: dict[str, Any] = {
                 "type": "compaction_summary",
+                "role": "user",
+                "content": f"[Summary of {len(to_summarize)} earlier messages]\n{safe_summary}",
                 "summarized_count": len(to_summarize),
-                "summary": summary_text,
                 "timestamp": datetime.now(UTC).isoformat(),
             }
-
-            # Step 4: Replace messages
             self._messages = [summary_entry, *to_keep]
+            messages_after = len(self._messages)
 
-            # Write summary to JSONL
             if self._jsonl_path is not None:
                 with open(self._jsonl_path, "a", encoding="utf-8") as f:
                     f.write(json.dumps(summary_entry) + "\n")
 
+            if self._telemetry is not None:
+                self._telemetry.audit_event(
+                    "context.compaction",
+                    {
+                        "session_id": self._session_id,
+                        "messages_before": messages_before,
+                        "messages_after": messages_after,
+                        "summarized_count": len(to_summarize),
+                    },
+                )
+
         _logger.info(
-            "Compacted session %s: %d messages → summary + %d recent",
+            "Compacted session %s: %d messages -> summary + %d recent",
             self._session_id,
             len(to_summarize),
             len(to_keep),
         )
+
+    def _split_for_compaction(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Deep token-based split, delegating token math to the context manager.
+
+        Falls back to a 30/70 count split when no context manager is wired
+        (test-only construction; production always injects one).
+        """
+        if self._context_manager is not None:
+            return self._context_manager.compaction_split(self._messages)
+        split_idx = max(1, len(self._messages) * 30 // 100)
+        return self._messages[:split_idx], self._messages[split_idx:]
 
     async def _pre_compact_flush(
         self,
@@ -258,9 +312,11 @@ class SessionManager:
                     Message(
                         role="user",
                         content=(
-                            f"Extract the key facts, decisions, and important state from "
-                            f"this conversation segment. Be concise (2-3 bullet points max):\n\n"
-                            f"{msg_text}"
+                            "Extract durable state from this conversation segment as "
+                            "concise bullets under these headers (skip a header if "
+                            "empty): Decisions, Key facts, Files modified, Rejected "
+                            "approaches, Open questions. Preserve any security "
+                            f"constraints verbatim.\n\n{msg_text}"
                         ),
                     )
                 ]
@@ -274,8 +330,10 @@ class SessionManager:
                 if existing:
                     f.write(existing.rstrip() + "\n\n")
                 f.write(f"## Compaction Flush\n\n{sanitized}\n")
-        except Exception:  # reason: fail-open — log + continue
-            _logger.warning("Pre-compaction flush failed, continuing without flush")
+        except Exception:  # reason: fail-open — durable flush must not block compaction
+            # Log with traceback so a silent loss of durable memory is detectable
+            # (observability-first posture); compaction still proceeds.
+            _logger.warning("Pre-compaction flush failed, continuing without flush", exc_info=True)
 
     @staticmethod
     def _sanitize_context_output(text: str) -> str:
@@ -304,22 +362,39 @@ class SessionManager:
             sanitized = sanitized[:max_chars] + "\n[truncated]"
         return sanitized
 
+    # Structured schema for compaction summaries. Fields (not free prose) force
+    # the model to preserve actionable state; `goal`/`constraints` are copied
+    # verbatim (they carry security-relevant instructions — LLM07/ASI01). The
+    # two fields research flags as most-dropped-yet-critical are kept explicit:
+    # `rejected_approaches` (prevents repeated dead ends) and a quantified
+    # `progress` (prevents premature "done").
+    _SUMMARY_TEMPLATE = (
+        "Summarize this conversation segment into the EXACT template below. "
+        "Copy `goal` and `constraints` VERBATIM (do not paraphrase). Use concise "
+        "bullets; leave a field blank only if truly empty. Do not invent facts.\n\n"
+        "goal: <original task, verbatim>\n"
+        "constraints: <security/user constraints, verbatim>\n"
+        "progress: <what is done so far, quantified>\n"
+        "key_facts: <durable facts learned, with provenance>\n"
+        "files_modified: <path: one-line change>\n"
+        "decisions: <decision: rationale>\n"
+        "rejected_approaches: <what was tried and failed, and why>\n"
+        "open_questions: <unresolved items blocking completion>\n"
+        "next_step: <single concrete next action>\n\n"
+        "CONVERSATION SEGMENT:\n"
+    )
+
     async def _summarize_messages(
         self,
         messages: list[dict[str, Any]],
         model: Any,
     ) -> str:
-        """Summarize messages using the eval model."""
+        """Summarize messages into the structured schema via the eval model."""
         msg_text = format_messages(messages, limit=0, type_filter="message")
 
         try:
             response = await model.invoke(
-                [
-                    Message(
-                        role="user",
-                        content=f"Summarize this conversation segment concisely:\n\n{msg_text}",
-                    )
-                ]
+                [Message(role="user", content=self._SUMMARY_TEMPLATE + msg_text)]
             )
             summary: str = response.content or ""
             return summary[: self._config.compaction_summary_max_chars]

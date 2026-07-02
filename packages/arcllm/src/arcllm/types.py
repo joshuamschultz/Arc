@@ -179,7 +179,15 @@ class LLMResponse(BaseModel):
 
 
 class LLMProvider(ABC):
-    name: str
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Provider identifier (e.g. "anthropic", "openai"). Read-only."""
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Resolved model identifier this provider instance targets. Read-only."""
 
     @abstractmethod
     async def invoke(

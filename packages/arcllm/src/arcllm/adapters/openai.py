@@ -52,10 +52,13 @@ def _parse_openai_sse_line(line: str) -> Delta | None:
     usage_data = chunk.get("usage")
     usage: Usage | None = None
     if usage_data:
+        prompt_details = usage_data.get("prompt_tokens_details")
+        cache_read = prompt_details.get("cached_tokens") if prompt_details else None
         usage = Usage(
             input_tokens=usage_data.get("prompt_tokens", 0),
             output_tokens=usage_data.get("completion_tokens", 0),
             total_tokens=usage_data.get("total_tokens", 0),
+            cache_read_tokens=cache_read,
         )
 
     choices = chunk.get("choices") or []
@@ -267,10 +270,16 @@ class OpenaiAdapter(BaseAdapter):
         details = usage_data.get("completion_tokens_details")
         if details:
             reasoning_tokens = details.get("reasoning_tokens")
+        # Prefix-cache hits. OpenAI and Gemini's OpenAI-compat endpoint both
+        # report this field; absent => None (unsupported), 0 => real miss.
+        # Preserve that distinction — do not coalesce None to 0.
+        prompt_details = usage_data.get("prompt_tokens_details")
+        cache_read = prompt_details.get("cached_tokens") if prompt_details else None
         return Usage(
             input_tokens=prompt_tokens,
             output_tokens=completion_tokens,
             total_tokens=usage_data.get("total_tokens", prompt_tokens + completion_tokens),
+            cache_read_tokens=cache_read,
             reasoning_tokens=reasoning_tokens,
         )
 
@@ -336,7 +345,7 @@ class OpenaiAdapter(BaseAdapter):
         # populate ``parsed_content``.
         return self._parse_response(response.json(), body.get("response_format"))
 
-    async def invoke_stream(self, messages, tools=None, **kwargs):  # type: ignore[no-untyped-def, override]  # reason: override returns AsyncIterator[Delta] yielded via 'yield' — mypy can't model the protocol cleanly here
+    async def invoke_stream(self, messages, tools=None, **kwargs):  # type: ignore[no-untyped-def]  # reason: returns AsyncIterator[Delta] yielded via 'yield' — mypy can't model the async-generator protocol against the base signature cleanly here
         """Stream Deltas using OpenAI's ``stream: true`` SSE protocol.
 
         Re-uses ``_build_request_body`` for parameter parity with

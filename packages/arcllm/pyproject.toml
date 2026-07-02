@@ -58,3 +58,9 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[[tool.mypy.overrides]]
+# Optional runtime deps without published type stubs. Imported lazily inside
+# try/except or feature-gated code paths; not installed in the type-check env.
+module = ["boto3", "boto3.*", "botocore", "botocore.*", "opentelemetry.exporter.*"]
+ignore_missing_imports = true

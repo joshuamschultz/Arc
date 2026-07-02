@@ -58,6 +58,14 @@ FAKE_CONFIG = ProviderConfig(
     models={FAKE_MODEL: FAKE_MODEL_META},
 )
 
+# Caching-off variant for tests that assert the plain-wire request shape
+# (system-as-string, bare message content). Cache breakpoint placement has
+# its own coverage in test_prompt_caching.py (SPEC-029).
+FAKE_CONFIG_NO_CACHE = ProviderConfig(
+    provider=FAKE_PROVIDER_SETTINGS.model_copy(update={"enable_prompt_caching": False}),
+    models={FAKE_MODEL: FAKE_MODEL_META},
+)
+
 
 @pytest.fixture(autouse=True)
 def _set_test_api_key(monkeypatch):
@@ -239,7 +247,7 @@ class TestAnthropicRequestBuilding:
     def test_simple_text_request(self):
         from arcllm.adapters.anthropic import AnthropicAdapter
 
-        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        adapter = AnthropicAdapter(FAKE_CONFIG_NO_CACHE, FAKE_MODEL)
         messages = [Message(role="user", content="Hello")]
         body = adapter._build_request_body(messages)
         assert body["model"] == FAKE_MODEL
@@ -249,7 +257,7 @@ class TestAnthropicRequestBuilding:
     def test_system_message_extraction(self):
         from arcllm.adapters.anthropic import AnthropicAdapter
 
-        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        adapter = AnthropicAdapter(FAKE_CONFIG_NO_CACHE, FAKE_MODEL)
         messages = [
             Message(role="system", content="You are helpful."),
             Message(role="user", content="Hi"),
@@ -262,7 +270,7 @@ class TestAnthropicRequestBuilding:
     def test_multiple_system_messages(self):
         from arcllm.adapters.anthropic import AnthropicAdapter
 
-        adapter = AnthropicAdapter(FAKE_CONFIG, FAKE_MODEL)
+        adapter = AnthropicAdapter(FAKE_CONFIG_NO_CACHE, FAKE_MODEL)
         messages = [
             Message(role="system", content="Be concise."),
             Message(role="system", content="Use tools when needed."),

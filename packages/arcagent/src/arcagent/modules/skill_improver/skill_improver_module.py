@@ -234,7 +234,8 @@ class SkillImproverModule:
             return None
         for skill in self._skill_registry.skills:
             if skill.name == skill_name:
-                return skill.file_path
+                file_path: Path | None = skill.file_path
+                return file_path
         return None
 
     def _get_skill_tags(self, skill_name: str) -> list[str]:

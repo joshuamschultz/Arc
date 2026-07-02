@@ -214,11 +214,13 @@ async def dispatch_stream(
 
 
 async def maybe_compact(agent: ArcAgent, session: SessionManager) -> None:
-    """Trigger compaction if context ratio exceeds compact_threshold."""
+    """Trigger a discrete compaction when the current context ratio crosses the
+    compact threshold. Uses the estimate over live messages (context_ratio),
+    which reflects real context size and drops after a boundary (debounce)."""
     context = agent._context
     if context is None:
         return
-    ratio = session.token_ratio()
+    ratio = session.context_ratio()
     if ratio >= agent._config.context.compact_threshold:
         eval_model = agent._ensure_model()
         await session.compact(eval_model, agent._workspace)

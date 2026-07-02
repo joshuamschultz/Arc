@@ -196,6 +196,7 @@ def test_llmprovider_cannot_instantiate():
 def test_llmprovider_concrete_subclass():
     class FakeProvider(LLMProvider):
         name = "fake"
+        model_name = "fake-1"
 
         async def invoke(self, messages, tools=None, **kwargs):
             return LLMResponse(
@@ -287,6 +288,7 @@ class TestInvokeStreamDefault:
 
         class FakeProvider(LLMProvider):
             name = "fake"
+            model_name = "fake-model"
 
             async def invoke(self, messages, tools=None, **kwargs):
                 return LLMResponse(

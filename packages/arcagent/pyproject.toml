@@ -84,6 +84,11 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+# Skill scaffolding scripts are standalone, sandbox-executed files (never
+# imported as package modules) and several share the basename ``validate.py``,
+# which collides under module resolution. They are not part of the package's
+# type surface.
+exclude = ['builtins/capabilities/skills/.*/scripts/.*\.py$']
 
 [[tool.mypy.overrides]]
 module = ["arcllm.*", "arcrun.*", "arccli.*"]
@@ -97,6 +102,11 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # Azure SDK ships partial type stubs; ignore missing imports for optional dep.
 module = ["azure.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Optional extra: slack_bolt is only installed with arc-agent[slack].
+module = ["slack_bolt.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

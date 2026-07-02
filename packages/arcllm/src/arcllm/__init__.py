@@ -4,6 +4,7 @@ __version__ = "0.4.0"
 
 import importlib
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -85,7 +86,7 @@ _LAZY_IMPORTS: dict[str, str] = {
 }
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name in _LAZY_IMPORTS:
         module = importlib.import_module(_LAZY_IMPORTS[name])
         attr = getattr(module, name)

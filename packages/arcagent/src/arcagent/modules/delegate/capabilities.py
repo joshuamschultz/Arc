@@ -26,6 +26,8 @@ is dispatched (same requirement as ``make_delegate_tool``).
 
 from __future__ import annotations
 
+from typing import Any
+
 from arcagent.modules.delegate import _runtime
 from arcagent.tools._decorator import tool
 
@@ -52,7 +54,7 @@ async def delegate(
     task: str,
     context: str = "",
     system_prompt: str = "",
-    tools: list = [],  # noqa: B006  # list literal required for schema inference
+    tools: list[Any] = [],  # noqa: B006  # list literal required for schema inference
     max_turns: int = 25,
     token_budget: int = 0,
     timeout_s: int = 300,

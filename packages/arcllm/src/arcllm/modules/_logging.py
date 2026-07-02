@@ -39,7 +39,8 @@ def validate_log_level(config: dict[str, Any], default: str = "INFO") -> int:
             f"Invalid log_level '{log_level_name}'. "
             f"Must be one of: {', '.join(sorted(_VALID_LOG_LEVELS))}"
         )
-    return getattr(logging, log_level_name)
+    level: int = getattr(logging, log_level_name)
+    return level
 
 
 def log_structured(

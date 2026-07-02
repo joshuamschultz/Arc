@@ -85,6 +85,8 @@ async def periodic_policy_eval(ctx: Any) -> None:
             "policy.eval_triggered",
             {"turn": st.turn_count, "session_id": session_id},
         )
+    if st.semaphore is None:
+        raise RuntimeError("policy runtime not configured: semaphore missing")
     spawn_background(
         _safe_evaluate(messages, model, session_id=session_id),
         background_tasks=st.background_tasks,
