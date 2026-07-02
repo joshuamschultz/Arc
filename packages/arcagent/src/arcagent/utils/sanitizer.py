@@ -18,8 +18,13 @@ import yaml
 # Zero-width and invisible formatting characters
 _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]")
 
-# ASCII control characters except tab (0x09), newline (0x0A), CR (0x0D)
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+# Other invisible / instruction-smuggling vectors that survive NFKC and the
+# control/zero-width filters: soft hyphen, Mongolian vowel separator, variation
+# selectors, and the Unicode Tag block (invisible-ASCII instruction smuggling).
+_INVISIBLE_RE = re.compile(r"[\u00ad\u180e\ufe00-\ufe0f\U000e0000-\U000e007f]")
+
+# ASCII control characters except tab (0x09), newline (0x0A), CR (0x0D); DEL too.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 # Non-alphanumeric characters for slug generation (strips hyphens too)
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -34,19 +39,23 @@ _MAX_LINK_LENGTH = 200
 _INSTRUCTION_PREFIXES = ("system:", "ignore:", "instruction:", "prompt:", "admin:")
 
 
-def sanitize_text(text: str, max_length: int = 2000) -> str:
+def sanitize_text(text: str, max_length: int = 2000, truncation_suffix: str = "") -> str:
     """Sanitize text for memory storage.
 
     Defense-in-depth against memory poisoning (ASI-06):
     1. NFKC normalization (collapses confusable characters)
-    2. Strip zero-width characters (prevents invisible text injection)
-    3. Strip ASCII control characters (preserves tab/newline/CR)
-    4. Enforce length limit
+    2. Strip zero-width + other invisible chars (tag block, variation selectors,
+       soft hyphen) — invisible-instruction smuggling
+    3. Strip ASCII control characters incl. DEL (preserves tab/newline/CR)
+    4. Enforce length limit; append ``truncation_suffix`` only if truncated
     """
     clean = unicodedata.normalize("NFKC", text)
     clean = _ZERO_WIDTH_RE.sub("", clean)
+    clean = _INVISIBLE_RE.sub("", clean)
     clean = _CONTROL_CHAR_RE.sub("", clean)
-    return clean[:max_length]
+    if len(clean) > max_length:
+        return clean[:max_length] + truncation_suffix
+    return clean
 
 
 def sanitize_wiki_link(link: str) -> str | None:

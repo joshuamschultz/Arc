@@ -24,6 +24,7 @@ from arcllm.types import Message
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.utils.io import format_messages
+from arcagent.utils.sanitizer import sanitize_text
 
 if TYPE_CHECKING:
     from arcagent.core.session_internal.context import ContextManager
@@ -337,30 +338,12 @@ class SessionManager:
 
     @staticmethod
     def _sanitize_context_output(text: str) -> str:
-        """Sanitize LLM output before writing to context.md.
+        """Sanitize LLM output before writing to context.md (ASI-06).
 
-        Defense-in-depth against context poisoning (ASI-06):
-        1. NFKC normalization (collapses confusable characters)
-        2. Strip zero-width characters (prevents invisible text injection)
-        3. Strip ASCII control characters (keep newlines, tabs)
-        4. Cap length to prevent unbounded context growth
+        Shared defense-in-depth sanitizer: NFKC + strip zero-width/invisible
+        (incl. tag block + variation selectors) + strip control chars + cap.
         """
-        import re
-        import unicodedata
-
-        # NFKC normalizes compatibility decomposition + canonical composition
-        sanitized = unicodedata.normalize("NFKC", text)
-        # Remove zero-width and other invisible Unicode characters
-        sanitized = re.sub(r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]", "", sanitized)
-        # Remove ASCII control characters (keep \n, \t for readability)
-        sanitized = "".join(
-            c for c in sanitized if c in ("\n", "\t") or (ord(c) >= 32 and ord(c) != 127)
-        )
-        # Cap length to prevent unbounded context growth
-        max_chars = 2000
-        if len(sanitized) > max_chars:
-            sanitized = sanitized[:max_chars] + "\n[truncated]"
-        return sanitized
+        return sanitize_text(text, max_length=2000, truncation_suffix="\n[truncated]")
 
     # Structured schema for compaction summaries. Fields (not free prose) force
     # the model to preserve actionable state; `goal`/`constraints` are copied

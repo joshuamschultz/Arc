@@ -25,7 +25,7 @@ It wraps the lower layers (`arcrun` for the loop, `arcllm` for the model, `arctr
 - 🧩 **Unified capability system (SPEC-021)** — one loader discovers `@tool` / `@hook` / `@background_task` / `@capability`-class Python files and `SKILL.md` folders across four scan roots with explicit precedence
 - 💾 **Persistent sessions** — JSONL transcripts of every conversation
 - 🚌 **Module bus** — priority-ordered event handlers with veto power
-- 🪟 **Progressive context management** — observation masking + emergency truncation
+- 🪟 **Cache-preserving context management** — append-only turns + discrete, structured compaction at a boundary
 - ⚙️ **TOML configuration** — one file, full surface area, validated by Pydantic
 
 > 🛡️ **Identity required. Tools deny-by-default. Every action audited. Sessions on disk you can read.**
@@ -381,17 +381,41 @@ enabled = true                            # streams events to the arcui dashboar
 
 ---
 
-## 🪟 Progressive Context Management
+## 🪟 Cache-Preserving Context Management
 
-Context window usage is managed in three tiers automatically:
+Context is managed to keep the **provider prompt cache** warm: the model caches the
+longest stable prefix of consecutive requests, so anything that rewrites earlier
+messages mid-conversation busts the cache and re-bills the whole history every turn.
+The rule is therefore **append-only between turns, compact once at a boundary**.
 
-| Threshold | Action |
+**Per turn** — the context hook is append-only. It returns messages unchanged so the
+cache prefix stays byte-stable. Its *only* in-turn action is a last-resort **emergency
+truncation** if a single long run reaches the hard ceiling before a compaction boundary
+(it drops the oldest messages, always keeping the newest).
+
+**At a boundary** — when the estimated context fill crosses the compact threshold
+(checked between runs), one **discrete, persisted compaction** fires and writes a new
+baseline. You pay a single cache miss, then turns append cheaply again:
+
+| Step | What happens |
 |---|---|
-| **< 70%** | No action |
-| **70–95%** | **Observation masking** — old tool outputs replaced with `[output pruned]` placeholders |
-| **> 95%** | **Emergency truncation** |
+| **1. Deep split** | Keep a recent tail (~45% of the window), summarize everything older. Compacting deep avoids re-firing next turn (debounce). |
+| **2. Durable flush** | Extract key facts/decisions from the old segment to `context.md` (sanitized) so nothing is truly lost, even across sessions. |
+| **3. Structured summary** | Summarize the old segment into a **fixed schema** (not free prose) via the eval model — see below. |
+| **4. Boundary masking** | Replace stale tool-output bodies in the kept tail with `[output pruned]` placeholders (tool-call metadata retained), persisted into the new baseline. |
+| **5. Write back** | `[summary, …masked recent]` becomes the session's messages; a `context.compaction` audit event is emitted. |
 
-Recent messages are always protected within a 40% window so the model never loses immediate context.
+The summary is not free-form prose — **structure forces preservation**. Fields:
+`goal` · `constraints` · `progress` · `key_facts` · `files_modified` · `decisions` ·
+`rejected_approaches` · `open_questions` · `next_step`. `goal` and `constraints` are
+copied **verbatim** (they carry security-relevant instructions), and the summary is
+sanitized before it re-enters context (defense against context poisoning).
+
+> Thresholds are configurable under `[context]` in `arcagent.toml`
+> (`compact_threshold`, `emergency_threshold`, `max_tokens`). Compaction triggers off
+> the estimated fill of the current messages, which drops after a boundary.
+
+See ADR-025..028 and SPEC-029 for the design rationale.
 
 ---
 

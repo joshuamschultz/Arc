@@ -27,3 +27,11 @@ class MemoryConfig(ModuleConfig):
     # for environments where this model is unavailable (e.g., air-gapped).
     embedding_model: str = "all-MiniLM-L6-v2"
     entity_extraction_enabled: bool = True
+
+    # SPEC-030 — ongoing daily notes (decoupled from compaction).
+    # Tier 1: cheap per-turn raw append (crash-safety, no LLM).
+    raw_capture_enabled: bool = True
+    # Tier 2b: one eval-model dedupe/tidy pass at session end.
+    session_consolidation_enabled: bool = True
+    # Tier 3: lazy background rollup of the previous day on a new-day boundary.
+    daily_rollup_enabled: bool = True

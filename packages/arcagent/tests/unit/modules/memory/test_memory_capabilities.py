@@ -2,14 +2,15 @@
 
 The new ``capabilities.py`` exposes:
 
-  * 6 ``@hook`` functions (assemble_prompt, pre_tool, post_tool,
-    post_respond, pre_compaction, shutdown).
+  * 5 ``@hook`` functions (assemble_prompt, pre_tool, post_tool,
+    post_respond, shutdown). Note-taking is decoupled from compaction
+    (SPEC-030): there is no ``agent:pre_compaction`` hook.
   * 1 ``@tool`` (``memory_search``).
   * 1 ``@background_task`` (``entity_extraction_loop``).
 
 This file verifies:
 
-  1. All 8 capabilities register via :class:`CapabilityLoader` at the
+  1. All 7 capabilities register via :class:`CapabilityLoader` at the
      correct event/name/kind/priority.
   2. The hook priorities match the legacy
      :class:`MarkdownMemoryModule.startup` registrations.
@@ -84,14 +85,13 @@ class TestLoaderRegistration:
         pre_tool_hooks = await reg.get_hooks("agent:pre_tool")
         post_tool_hooks = await reg.get_hooks("agent:post_tool")
         post_respond_hooks = await reg.get_hooks("agent:post_respond")
-        pre_compact_hooks = await reg.get_hooks("agent:pre_compaction")
         shutdown_hooks = await reg.get_hooks("agent:shutdown")
 
         assert any(h.meta.name == "inject_memory_sections" for h in prompt_hooks)
         assert any(h.meta.name == "memory_pre_tool" for h in pre_tool_hooks)
         assert any(h.meta.name == "memory_post_tool" for h in post_tool_hooks)
         assert any(h.meta.name == "memory_post_respond" for h in post_respond_hooks)
-        assert any(h.meta.name == "memory_pre_compaction" for h in pre_compact_hooks)
+        assert not await reg.get_hooks("agent:pre_compaction")  # SPEC-030: decoupled
         assert any(h.meta.name == "memory_shutdown" for h in shutdown_hooks)
 
         # Tool
@@ -115,7 +115,6 @@ class TestLoaderRegistration:
             inject_memory_sections,
             memory_post_respond,
             memory_post_tool,
-            memory_pre_compaction,
             memory_pre_tool,
             memory_shutdown,
         )
@@ -125,7 +124,6 @@ class TestLoaderRegistration:
         assert memory_pre_tool._arc_capability_meta.priority == 10  # type: ignore[attr-defined]
         assert memory_post_tool._arc_capability_meta.priority == 100  # type: ignore[attr-defined]
         assert memory_post_respond._arc_capability_meta.priority == 100  # type: ignore[attr-defined]
-        assert memory_pre_compaction._arc_capability_meta.priority == 50  # type: ignore[attr-defined]
         assert memory_shutdown._arc_capability_meta.priority == 100  # type: ignore[attr-defined]
 
 

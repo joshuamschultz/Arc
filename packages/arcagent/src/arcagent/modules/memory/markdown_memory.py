@@ -42,6 +42,32 @@ _MEMORY_SUBPATHS = (
 _MAX_AUDIT_SNAPSHOTS = 50
 
 
+def _longterm_for_injection(text: str, exclude: set[str], max_chars: int) -> str:
+    """Select long-term rollup sections for prompt injection.
+
+    Splits ``_longterm.md`` into ``## <date>`` sections, drops any whose date is
+    in ``exclude`` (already surfaced as Today/Yesterday), and keeps the NEWEST
+    sections within ``max_chars`` — new sections append at the end, so truncating
+    from the head would drop the most-recent memory (the useful end).
+    """
+    sections: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            sections.append((line[3:].strip(), [line]))
+        elif sections:
+            sections[-1][1].append(line)
+    blocks = ["\n".join(body).strip() for stem, body in sections if stem not in exclude]
+    kept: list[str] = []
+    total = 0
+    for block in reversed(blocks):  # newest-first
+        if kept and total + len(block) > max_chars:
+            break
+        kept.append(block)
+        total += len(block)
+    kept.reverse()
+    return "\n\n".join(kept)
+
+
 class NoteManager:
     """Manages daily notes with append-only enforcement.
 
@@ -79,6 +105,19 @@ class NoteManager:
             content = yesterday_file.read_text(encoding="utf-8")
             content = self._truncate_to_tokens(content, self._config.notes_budget_yesterday_tokens)
             parts.append(f"### Yesterday ({yesterday.isoformat()})\n\n{content}")
+
+        # Long-term memory: consolidated day rollups (SPEC-030 Tier 3), so older
+        # days remain recallable. Exclude today/yesterday (already shown above,
+        # avoiding double-count) and keep the NEWEST sections within budget.
+        longterm_file = self._notes_dir / "_longterm.md"
+        if longterm_file.exists():
+            content = _longterm_for_injection(
+                longterm_file.read_text(encoding="utf-8"),
+                exclude={today.isoformat(), yesterday.isoformat()},
+                max_chars=self._config.notes_budget_yesterday_tokens * CHARS_PER_TOKEN,
+            )
+            if content:
+                parts.append(f"### Long-term\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
 
@@ -247,7 +286,6 @@ class MarkdownMemoryModule:
             priority=50,
         )
         bus.subscribe("agent:post_respond", self._on_post_respond, priority=100)
-        bus.subscribe("agent:pre_compaction", self._on_pre_compaction, priority=50)
 
     def _get_eval_model(self) -> Any:
         """Lazy-init eval model, caching result."""
@@ -453,22 +491,6 @@ class MarkdownMemoryModule:
                 audit_event_name="memory.background_error",
                 logger=_logger,
             )
-
-    async def _on_pre_compaction(self, ctx: EventContext) -> None:
-        """Handle pre-compaction memory flush (OpenClaw pattern).
-
-        Creates daily notes file if missing and logs the compaction event.
-        Agent will be reminded to save important context via identity.md instructions.
-        """
-        ratio = ctx.data.get("ratio", 0.0)
-        _logger.info(
-            "Pre-compaction triggered at %.1f%% context usage - ensuring daily notes exist",
-            ratio * 100,
-        )
-
-        self._ensure_daily_notes(
-            "**Context approaching limit** - important information should be noted here.\n\n",
-        )
 
     def _resolve_path(self, tool_name: str, args: dict[str, Any]) -> Path | None:
         """Extract and canonicalize file path from tool args."""
