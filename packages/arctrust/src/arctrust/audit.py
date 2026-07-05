@@ -14,6 +14,13 @@ NIST 800-53 AU-2 / AU-9 / AU-10 / AU-11 compliance:
 - NullSink is used in tests and air-gapped evaluation where no sink is needed.
 - emit() swallows sink exceptions — AU-5 (audit failure response): log locally
   but never propagate to caller.
+- read_verified_anchor() closes a gap verify_chain() cannot: verify_chain()
+  only proves internal consistency of the records *present* on a chain, not
+  that none were removed from the head. read_verified_anchor() independently
+  verifies the chain, then returns the newest anchored checkpoint payload
+  (an ordinary AuditEvent with action="trace.checkpoint") for a caller to
+  compare against a live store's current head (see
+  arcllm.trace_retention.verify_against_anchor).
 
 Extension pattern:
   Implement a class with ``write(event: AuditEvent) -> None`` and pass it
@@ -432,6 +439,43 @@ def verify_chain(
     return True
 
 
+def read_verified_anchor(
+    chain_path: Path,
+    public_key: bytes,
+    *,
+    action: str = "trace.checkpoint",
+    genesis_tip: str = GENESIS_PREV_HASH,
+) -> dict[str, Any] | None:
+    """Read the newest verified checkpoint anchor from a WORM chain.
+
+    Checkpoints are ordinary ``AuditEvent`` records with ``action=action``
+    (default ``"trace.checkpoint"``) and the checkpoint manifest carried in
+    ``extra`` — no new schema. Lock-free and read-only, matching
+    :func:`verify_chain`'s streaming style.
+
+    1. If the chain itself fails :func:`verify_chain` (tampered, forged,
+       gapped, or absent), return ``None`` — a chain that cannot attest to
+       its own integrity cannot attest to anything it carries.
+    2. Otherwise scan every record and return the ``extra`` dict of the
+       LATEST record whose ``event.action == action``. Return ``None`` if
+       no such record exists.
+
+    This is the read half of the trace-checkpoint signed anchor: a caller
+    combines the returned checkpoint's ``head_hash`` with a live trace
+    store to prove the store was not rolled back past the last anchor
+    (see ``arcllm.trace_retention.verify_against_anchor``).
+    """
+    if not verify_chain(chain_path, public_key, genesis_tip=genesis_tip):
+        return None
+    latest: dict[str, Any] | None = None
+    for segment in _segment_files(Path(chain_path)):
+        for record in _iter_records(segment):
+            event = record.get("event", {})
+            if event.get("action") == action:
+                latest = event.get("extra")
+    return latest
+
+
 # ---------------------------------------------------------------------------
 # emit() — safe dispatch to any sink
 # ---------------------------------------------------------------------------
@@ -466,5 +510,6 @@ __all__ = [
     "NullSink",
     "WormSink",
     "emit",
+    "read_verified_anchor",
     "verify_chain",
 ]

@@ -8,9 +8,15 @@ record's hash, so in-place mutation or reordering of records present on
 disk is detectable. This is INTERNAL-CONSISTENCY tamper evidence only —
 it does not by itself prove no records were removed from the head of the
 chain (see ``verify_chain()``); full AU-9/AU-10 non-repudiation requires
-an external signed anchor (arctrust's ``SignedChainSink``), which is out
-of scope for this module (arcllm owns capture, not signed-chain anchoring).
-JSONLTraceStore implements the TraceStore Protocol with daily rotation.
+an external signed anchor (arctrust's ``WormSink``). ``JSONLTraceStore``
+stays dependency-free of arctrust: wire a ``checkpoint_sink`` callback at
+construction and this module builds+emits a pre-purge checkpoint (see
+``arcllm.trace_retention.build_checkpoint``) at every rotation boundary;
+the caller supplies the signer (e.g. arctrust's ``WormSink`` via
+``emit()``). ``arcllm.trace_retention.verify_against_anchor`` is the
+matching read-side check that a live store still contains an anchored
+head. JSONLTraceStore implements the TraceStore Protocol with daily
+rotation.
 
 The read path (filtered query, single-record lookup, reverse-line
 streaming) lives in `arcllm.trace_query`. This module owns schema +
@@ -22,7 +28,7 @@ import hashlib
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -217,6 +223,7 @@ class JSONLTraceStore:
         *,
         retention_max_age_days: int | None = None,
         retention_max_bytes: int | None = None,
+        checkpoint_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         # NIST AU-9: traces live at <agent_root>/traces, outside the agent's
         # workspace tool sandbox.
@@ -233,6 +240,11 @@ class JSONLTraceStore:
         # never mid-day, so it never competes with today's live append.
         self._retention_max_age_days = retention_max_age_days
         self._retention_max_bytes = retention_max_bytes
+        # Trace-checkpoint signed anchor: the caller supplies the signer
+        # (e.g. arctrust's WormSink via emit()); this module only builds
+        # and hands off the checkpoint. No arctrust import here — arcllm
+        # stays dependency-free of arctrust (CLAUDE.md "don't mix concerns").
+        self._checkpoint_sink = checkpoint_sink
 
     def _file_for_date(self, date_str: str) -> Path:
         """Return the JSONL file path for a given date."""
@@ -341,14 +353,20 @@ class JSONLTraceStore:
         await self._maybe_purge()
 
     async def _maybe_purge(self) -> None:
-        """Run retention purge at a rotation boundary, if configured.
+        """Anchor a pre-purge checkpoint, then run retention purge if configured.
 
-        SPEC-016 D-440: only fires once per rotation (daily), never on
-        every append, and only ever deletes already-rotated files — the
+        SPEC-016 D-440: purge only fires once per rotation (daily), never
+        on every append, and only ever deletes already-rotated files — the
         file we just rotated *into* (today's) is never a purge candidate.
         Failures are logged, not raised: a purge hiccup must never break
         the calling append().
+
+        The checkpoint anchor runs BEFORE purge deletes anything, and on
+        every rotation regardless of whether retention is configured — the
+        anchor's job is tamper detection (rollback past the last anchor),
+        not retention bookkeeping, so it fires independently.
         """
+        self._anchor_checkpoint()
         if self._retention_max_age_days is None and self._retention_max_bytes is None:
             return
         try:
@@ -361,6 +379,23 @@ class JSONLTraceStore:
             )
         except Exception:  # reason: a purge failure must never break append()
             logger.warning("Retention purge failed for %s", self._traces_dir, exc_info=True)
+
+    def _anchor_checkpoint(self) -> None:
+        """Build and emit a pre-purge checkpoint via ``checkpoint_sink``, if wired.
+
+        Fail-open (NIST AU-5): a signer/sink failure must never break trace
+        capture or the retention purge it precedes. No-op when no
+        ``checkpoint_sink`` was supplied at construction.
+        """
+        if self._checkpoint_sink is None:
+            return
+        try:
+            from arcllm.trace_retention import build_checkpoint
+
+            checkpoint = build_checkpoint(self._traces_dir)
+            self._checkpoint_sink(checkpoint)
+        except Exception:  # reason: an anchor failure must never break capture
+            logger.warning("Checkpoint anchor failed for %s", self._traces_dir, exc_info=True)
 
     @staticmethod
     def _write_line_sync(file_path: Path, payload: dict[str, Any]) -> None:
@@ -454,9 +489,10 @@ class JSONLTraceStore:
         legitimately points at a predecessor file that no longer exists.
         This function proves internal consistency among the records
         present on disk; it does NOT prove that no earlier records were
-        removed — that requires an external anchor (see
-        ``arcllm.trace_retention.build_checkpoint``), a documented
-        tamper-evidence limitation (AU-9/AU-10).
+        removed — that requires an external signed anchor (see
+        ``arcllm.trace_retention.build_checkpoint`` /
+        ``verify_against_anchor``, and the ``checkpoint_sink`` wired at
+        construction), a documented tamper-evidence limitation (AU-9/AU-10).
         """
         files = sorted(self._traces_dir.glob("traces-*.jsonl"))
         prev_hash: str | None = None

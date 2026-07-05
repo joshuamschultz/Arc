@@ -384,9 +384,7 @@ class TestBuildPipeline:
             tier="personal",
             global_deny_rules={"read_file": "file access denied"},
         )
-        result = await pipeline.evaluate(
-            self._signed(ident, "read_file"), make_ctx("personal")
-        )
+        result = await pipeline.evaluate(self._signed(ident, "read_file"), make_ctx("personal"))
         assert result.outcome == "deny"
         assert "global" in (result.layer or "")
 

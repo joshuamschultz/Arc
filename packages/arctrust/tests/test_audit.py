@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from arctrust.audit import AuditEvent, NullSink, WormSink, emit, verify_chain
+from arctrust.audit import AuditEvent, NullSink, WormSink, emit, read_verified_anchor, verify_chain
 from arctrust.keypair import generate_keypair
 
 # ---------------------------------------------------------------------------
@@ -322,3 +322,76 @@ class TestWormSink:
         sink.close()
         # A fresh instance restores tip across segments and continues to verify.
         assert WormSink(path, kp.private_key).verify_chain()
+
+
+# ---------------------------------------------------------------------------
+# read_verified_anchor() — trace-checkpoint signed anchor (SPEC: arcllm gap)
+# ---------------------------------------------------------------------------
+
+
+def _checkpoint_evt(i: int, head_hash: str) -> AuditEvent:
+    return AuditEvent(
+        actor_did=f"did:arc:test:exec/{i:08x}",
+        action="trace.checkpoint",
+        target="traces",
+        outcome="allow",
+        extra={
+            "head_hash": head_hash,
+            "record_count": i,
+            "files": [f"traces-2026-01-{i:02d}.jsonl"],
+        },
+    )
+
+
+class TestChainAnchor:
+    def test_happy_path_returns_newest_checkpoint_extra(self, tmp_path: Path) -> None:
+        """Two checkpoints emitted; the newest one's extra is returned."""
+        path = tmp_path / "audit.jsonl"
+        kp = generate_keypair()
+        sink = WormSink(path, kp.private_key)
+        emit(_checkpoint_evt(1, "a" * 64), sink)
+        emit(_checkpoint_evt(2, "b" * 64), sink)
+
+        anchor = read_verified_anchor(path, kp.public_key)
+
+        assert anchor is not None
+        assert anchor["head_hash"] == "b" * 64
+        assert anchor["record_count"] == 2
+
+    def test_returns_none_when_chain_tampered(self, tmp_path: Path) -> None:
+        """A mutated line fails verify_chain(), so no anchor can be trusted."""
+        path = tmp_path / "audit.jsonl"
+        kp = generate_keypair()
+        sink = WormSink(path, kp.private_key)
+        emit(_checkpoint_evt(1, "a" * 64), sink)
+
+        lines = path.read_text().splitlines()
+        rec = json.loads(lines[0])
+        rec["event"]["target"] = "tampered"
+        path.write_text(json.dumps(rec) + "\n")
+
+        assert read_verified_anchor(path, kp.public_key) is None
+
+    def test_returns_none_when_no_checkpoint_action_present(self, tmp_path: Path) -> None:
+        """A verifiable chain with no matching action yields no anchor."""
+        path = tmp_path / "audit.jsonl"
+        kp = generate_keypair()
+        sink = WormSink(path, kp.private_key)
+        emit(_evt(0), sink)  # action="tool.call" — not a checkpoint
+
+        assert read_verified_anchor(path, kp.public_key) is None
+
+    def test_ignores_non_checkpoint_events_among_mixed(self, tmp_path: Path) -> None:
+        """Non-checkpoint events interleaved with checkpoints are skipped."""
+        path = tmp_path / "audit.jsonl"
+        kp = generate_keypair()
+        sink = WormSink(path, kp.private_key)
+        emit(_checkpoint_evt(1, "a" * 64), sink)
+        emit(_evt(1), sink)
+        emit(_checkpoint_evt(2, "c" * 64), sink)
+        emit(_evt(2), sink)
+
+        anchor = read_verified_anchor(path, kp.public_key)
+
+        assert anchor is not None
+        assert anchor["head_hash"] == "c" * 64

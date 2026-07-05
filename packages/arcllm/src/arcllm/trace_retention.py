@@ -14,10 +14,21 @@ SDD Research Insights — it cannot prove that no earlier records were
 removed; a hash chain alone cannot distinguish a policy purge from a
 malicious truncation of the head (Crosby, tamper-evident logging). That
 requires an external, comparable anchor: :func:`build_checkpoint` returns
-a small manifest (head hash, record count, file inventory) that a
-higher layer (arctrust's signed audit sink) can compare across time to
-detect a missing file set — signing/anchoring that manifest is out of
-scope here (arcllm owns capture, not signed-chain anchoring).
+a small manifest (head hash, record count, file inventory, timestamp)
+that a higher layer signs and durably stores (arcllm owns capture, not
+signed-chain anchoring — see CLAUDE.md "don't mix concerns"). A caller
+wires ``JSONLTraceStore(checkpoint_sink=...)`` to an external signer, e.g.
+arctrust's ``WormSink`` via ``emit(AuditEvent(action="trace.checkpoint",
+extra=checkpoint), sink)``. Later, :func:`verify_against_anchor` checks
+whether a live store still contains an anchored ``head_hash`` — proving
+it was not rolled back to before that anchor. Legitimate retention purge
+only ever deletes the OLDEST files, so the most recently anchored head
+survives it; a malicious rollback past the last anchor removes it.
+
+Residual, documented honestly: activity between two anchors — down to
+the last anchored head — can still be deleted undetected. That window is
+bounded by anchor frequency (this module anchors at every rotation, i.e.
+daily, when a ``checkpoint_sink`` is wired).
 """
 
 import json
@@ -133,13 +144,15 @@ async def purge(
 def build_checkpoint(traces_dir: Path) -> dict[str, Any]:
     """Build an observability manifest: head hash, record count, file list.
 
-    Not itself cryptographically signed — exporting this manifest to a
-    signed, tamper-evident sink is a downstream concern (arctrust owns
-    signing/anchoring; arcllm owns capture — see CLAUDE.md "don't mix
-    concerns"). Comparing two checkpoints taken over time reveals a
-    prefix purge or truncation that ``verify_chain()`` alone cannot see,
-    because a shrinking ``files`` list or a discontinuous ``head_hash``
-    is directly observable even though the chain still self-verifies.
+    Not itself cryptographically signed — exporting this manifest to an
+    external signed anchor, e.g. arctrust's ``WormSink``, is a downstream
+    concern (arctrust owns signing/anchoring; arcllm owns capture — see
+    CLAUDE.md "don't mix concerns"). Comparing two checkpoints taken over
+    time reveals a prefix purge or truncation that ``verify_chain()`` alone
+    cannot see, because a shrinking ``files`` list or a discontinuous
+    ``head_hash`` is directly observable even though the chain still
+    self-verifies. See :func:`verify_against_anchor` for the read-side
+    check against a single anchored checkpoint.
     """
     files = sorted(traces_dir.glob("traces-*.jsonl"))
     record_count = 0
@@ -158,10 +171,64 @@ def build_checkpoint(traces_dir: Path) -> dict[str, Any]:
         "head_hash": head_hash,
         "record_count": record_count,
         "files": [f.name for f in files],
+        "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+def verify_against_anchor(traces_dir: Path, anchor: dict[str, Any]) -> bool:
+    """Check whether a live store still contains a previously anchored head.
+
+    THE GUARANTEE: at anchor time, a signed WORM record immutably captured
+    the store's ``head_hash`` (see :func:`build_checkpoint`). This function
+    proves the live store was NOT rolled back to before that anchor by
+    confirming ``anchor["head_hash"]`` still appears as some live record's
+    ``record_hash``. Legitimate retention purge only deletes the OLDEST
+    rotated files, so a recently anchored head survives it (tolerated,
+    returns True). A malicious rollback/truncation past the last anchor
+    removes that record entirely (detected, returns False) — even though
+    the store's own ``verify_chain()`` still passes over what remains,
+    because that only proves internal consistency of records present.
+
+    Deliberately NOT checked: ``record_count`` non-decreasing or ``files``
+    superset. Both shrink on every legitimate purge, so either check would
+    false-positive as tampering on routine retention. Head-hash presence
+    is the only invariant that distinguishes "purged" from "rolled back."
+
+    Residual (documented honestly): activity between anchors, down to the
+    last anchored head, can still be deleted undetected — this function
+    cannot see it. That window is bounded only by anchor frequency (this
+    module anchors at every rotation when a ``checkpoint_sink`` is wired).
+
+    Args:
+        traces_dir: Directory containing ``traces-*.jsonl`` files.
+        anchor: A checkpoint dict as returned by :func:`build_checkpoint`
+            (typically read back via arctrust's
+            ``read_verified_anchor(...)``).
+
+    Returns:
+        True if ``anchor["head_hash"]`` is the genesis all-zero hash
+        (nothing was anchored yet — vacuously nothing to attest) or is
+        still present among live records. False if it has been rolled
+        back past.
+    """
+    anchor_head = anchor.get("head_hash")
+    if anchor_head == "0" * 64:
+        return True
+    for file_path in sorted(traces_dir.glob("traces-*.jsonl")):
+        for line in file_path.read_text().strip().split("\n"):
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("record_hash") == anchor_head:
+                return True
+    return False
 
 
 __all__ = [
     "build_checkpoint",
     "purge",
+    "verify_against_anchor",
 ]

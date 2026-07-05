@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`verify_against_anchor`** (`trace_retention.py`) — checks whether a live
+  trace store still contains a previously anchored `head_hash`, proving the
+  store was not rolled back to before that anchor. Legitimate retention
+  purge only ever deletes the oldest rotated files, so a recently anchored
+  head survives it (tolerated); a malicious rollback/truncation past the
+  last anchor removes it (detected) — even though `verify_chain()` still
+  passes over the records that remain. Deliberately does NOT check
+  `record_count` non-decreasing or `files` superset — both shrink on every
+  legitimate purge and would false-positive as tampering.
+- **`build_checkpoint` timestamp field** — checkpoints now carry a UTC ISO
+  8601 `timestamp` alongside `head_hash`/`record_count`/`files`.
+- **`JSONLTraceStore(checkpoint_sink=...)`** — an optional callback invoked
+  with a pre-purge checkpoint at every rotation boundary, before any file
+  is deleted. The caller supplies the signer (e.g. arctrust's `WormSink`
+  via `emit(AuditEvent(action="trace.checkpoint", extra=checkpoint), sink)`)
+  — arcllm builds and hands off the checkpoint only, staying
+  dependency-free of arctrust. Fail-open: a signer/sink failure is logged
+  and swallowed, never breaking capture (NIST AU-5).
+
+### Security
+
+- Closes the head-truncation/rollback tamper-evidence gap documented in
+  0.5.0: pairing `checkpoint_sink` + `verify_against_anchor` with an
+  external signed anchor (arctrust's `WormSink` + `read_verified_anchor`)
+  proves a store was not rolled back past the last anchor. Residual,
+  documented honestly: activity between anchors, down to the last anchored
+  head, remains undetectable — bounded by anchor frequency (every
+  rotation).
+
 ## [0.5.0] - 2026-07-05
 
 Gateway hardening — content guardrails, full trace capture, and load balancing (SPEC-015/016/017) — plus a security-review fix pass. Federal-first (NIST 800-53 + OWASP LLM/ASI).

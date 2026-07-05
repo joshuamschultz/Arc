@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`read_verified_anchor`** (`audit.py`) — reads the newest `extra` payload
+  from a WORM chain whose `event.action` matches a caller-supplied action
+  (default `"trace.checkpoint"`), returning `None` if the chain itself fails
+  `verify_chain()` (tampered/forged/gapped/absent) or no matching record
+  exists. Checkpoints are ordinary `AuditEvent`s — no new schema. Pairs with
+  `arcllm.trace_retention.verify_against_anchor` to close the
+  head-truncation/rollback tamper-evidence gap in arcllm's trace store: the
+  WORM chain durably anchors a store's `head_hash` at rotation time, and a
+  later rollback that removes that head is detectable even though arcllm's
+  own hash chain still self-verifies over the records present.
+
+### Fixed
+
+- The 0.2.0 entry below named the now-removed `JsonlSink`/`SignedChainSink`
+  as current public API; both were in fact collapsed into `WormSink` in
+  that same release. Noted here for doc accuracy — no behavior change.
+
 ## [0.2.0] - 2026-04-26
 
 Major expansion: arctrust becomes the canonical leaf for identity, keypair, audit, and policy primitives across the Arc monorepo. Promoted from "trust-store TTL cache" to the four-pillar shared library that every Arc package depends on.

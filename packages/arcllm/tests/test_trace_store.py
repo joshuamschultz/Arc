@@ -1,7 +1,7 @@
 """Tests for TraceStore — TraceRecord, JSONLTraceStore, hash chain verification."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -407,3 +407,75 @@ class TestAppendOffloadsBlockingWork:
             await store._warm_start()
 
         assert calls, "expected _warm_start to dispatch its file read via asyncio.to_thread"
+
+
+# ---------------------------------------------------------------------------
+# checkpoint_sink — trace-checkpoint signed-anchor wiring
+# ---------------------------------------------------------------------------
+
+
+def _write_rotated_file(traces_dir: Path, date_str: str) -> Path:
+    """Write a minimal, already-rotated trace file for a past date."""
+    traces_dir.mkdir(parents=True, exist_ok=True)
+    path = traces_dir / f"traces-{date_str}.jsonl"
+    rec = TraceRecord(
+        trace_id=f"old-{date_str}",
+        timestamp=f"{date_str}T00:00:00+00:00",
+        provider="anthropic",
+        model="claude",
+    ).with_hash("0" * 64)
+    path.write_text(json.dumps(rec.model_dump()) + "\n")
+    return path
+
+
+class TestCheckpointSinkAnchor:
+    async def test_checkpoint_sink_invoked_with_prepurge_checkpoint(self, tmp_path: Path) -> None:
+        """The anchor captures the checkpoint BEFORE purge deletes anything."""
+        traces_dir = tmp_path / "traces"
+        old_date = (datetime.now(UTC) - timedelta(days=10)).strftime("%Y-%m-%d")
+        old_file = _write_rotated_file(traces_dir, old_date)
+
+        received: list[dict[str, object]] = []
+        store = JSONLTraceStore(
+            tmp_path, retention_max_age_days=5, checkpoint_sink=received.append
+        )
+
+        await store._maybe_purge()
+
+        assert len(received) == 1
+        checkpoint = received[0]
+        files = checkpoint["files"]
+        assert isinstance(files, list)
+        assert old_file.name in files  # present in the checkpoint...
+        assert not old_file.exists()  # ...even though purge then deleted it
+
+    async def test_checkpoint_sink_fires_every_rotation_without_retention(
+        self, tmp_path: Path
+    ) -> None:
+        """Anchoring is independent of whether retention purge is configured."""
+        received: list[dict[str, object]] = []
+        store = JSONLTraceStore(tmp_path, checkpoint_sink=received.append)
+
+        await store._maybe_purge()
+
+        assert len(received) == 1
+
+    async def test_no_checkpoint_sink_is_a_noop(self, tmp_path: Path) -> None:
+        store = JSONLTraceStore(tmp_path)
+        await store._maybe_purge()  # must not raise
+
+    async def test_checkpoint_sink_failure_is_swallowed(self, tmp_path: Path) -> None:
+        """A signer/sink failure must never break capture (NIST AU-5)."""
+
+        def _boom(_checkpoint: dict[str, object]) -> None:
+            raise RuntimeError("signer unavailable")
+
+        store = JSONLTraceStore(tmp_path, checkpoint_sink=_boom)
+
+        await store._maybe_purge()  # must not raise
+
+        # Capture still succeeds after an anchor failure.
+        await store.append(
+            TraceRecord(provider="anthropic", model="claude", trace_id="after-failure")
+        )
+        assert await store.verify_chain() is True

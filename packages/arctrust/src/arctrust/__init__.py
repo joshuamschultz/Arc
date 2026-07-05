@@ -27,6 +27,9 @@ Audit:
     WormSink            — Durable, append-only, Ed25519-signed hash chain
                           (the compliance system of record; survives restart)
     emit                — Safe dispatch (swallows sink failures per AU-5)
+    read_verified_anchor — Read the newest verified "trace.checkpoint"
+                          anchor from a WORM chain, or None if the chain
+                          fails verify_chain() or carries no such record
 
 Policy:
     Decision            — Immutable policy evaluation result
@@ -44,9 +47,17 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
-from arctrust.audit import AuditEvent, AuditSink, NullSink, WormSink, emit, verify_chain
+from arctrust.audit import (
+    AuditEvent,
+    AuditSink,
+    NullSink,
+    WormSink,
+    emit,
+    read_verified_anchor,
+    verify_chain,
+)
 from arctrust.identity import (
     AgentIdentity,
     ChildIdentity,
@@ -97,6 +108,7 @@ __all__ = [
     "load_issuer_pubkey",
     "load_operator_pubkey",
     "parse_did",
+    "read_verified_anchor",
     "sign",
     "validate_did",
     "verify",

@@ -148,9 +148,7 @@ async def test_identity_layer_enterprise_denies_unregistered_agent() -> None:
 @pytest.mark.asyncio
 async def test_identity_layer_enterprise_allows_registered_agent() -> None:
     ident = AgentIdentity.generate(org="default", agent_type="executor")
-    layer = IdentityLayer(
-        registry={ident.did: ident.public_key}, require_registered=True
-    )
+    layer = IdentityLayer(registry={ident.did: ident.public_key}, require_registered=True)
     signed = sign_call(_unsigned_call(ident.did), ident)
     decision = await layer.evaluate(signed, _ctx("enterprise"))
     assert decision.outcome == "allow"
@@ -163,9 +161,7 @@ async def test_identity_layer_denies_registered_did_with_wrong_key() -> None:
     attacker = AgentIdentity.generate(org="default", agent_type="executor")
     # Registry maps victim DID -> victim pubkey. Attacker signs a call claiming
     # the victim DID; fingerprint mismatch AND registry-key mismatch → deny.
-    layer = IdentityLayer(
-        registry={victim.did: victim.public_key}, require_registered=True
-    )
+    layer = IdentityLayer(registry={victim.did: victim.public_key}, require_registered=True)
     forged = sign_call(_unsigned_call(victim.did), attacker)
     decision = await layer.evaluate(forged, _ctx("enterprise"))
     assert decision.is_deny()

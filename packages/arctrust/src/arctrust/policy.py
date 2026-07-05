@@ -198,9 +198,7 @@ def sign_call(call: ToolCall, identity: AgentIdentity) -> ToolCall:
     """
     bound = call.model_copy(update={"agent_did": identity.did})
     signature = identity.sign(bound.signing_bytes())
-    return bound.model_copy(
-        update={"public_key": identity.public_key, "signature": signature}
-    )
+    return bound.model_copy(update={"public_key": identity.public_key, "signature": signature})
 
 
 def verify_call(call: ToolCall) -> bool:
