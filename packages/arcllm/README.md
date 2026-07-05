@@ -119,7 +119,7 @@ arc llm validate                 # test API key + connectivity per provider
 `arcllm` wraps the bare adapter in a stack of opt-in modules. The stacking order is deterministic:
 
 ```
-Otel → Telemetry → Audit → Security → Retry → Fallback → RateLimit → Adapter
+Otel → Queue → Telemetry → Audit → Guardrails → Injection → Security → CircuitBreaker → Retry → Fallback → RateLimit → [Routing | LoadBalancer | Adapter]
 ```
 
 Each module is one decorator that adds one concern.
@@ -127,11 +127,14 @@ Each module is one decorator that adds one concern.
 | Module | What It Does | Why You Want It |
 |---|---|---|
 | **Otel** | Creates the root OpenTelemetry span; GenAI semantic conventions | Distributed tracing across services |
-| **Telemetry** | Wall-clock timing, per-call USD cost from provider pricing TOML | Cost attribution + latency tracking |
+| **Telemetry** | Wall-clock timing, per-call USD cost, full raw prompt/response capture (encrypted at rest on the federal tier) | Cost attribution + forensic replay |
 | **Audit** | Emits structured `arctrust` audit events | Compliance, forensics, post-hoc replay |
-| **Security** | Bidirectional PII redaction, HMAC-SHA256 request signing | Lethal Trifecta protection, tamper-evidence |
+| **Guardrails** | Structural response validation: JSON-schema, regex allow/deny, length, banned-content (opt-in, per call) | Improper-output handling (LLM05) |
+| **Injection** | Scans inbound user + tool-result content for prompt-injection (opt-in, off by default) | Prompt injection / context poisoning (LLM01, ASI06) |
+| **Security** | Bidirectional PII + secret redaction (checksum-gated, gov/CUI entities, pluggable detector), HMAC-SHA256 request signing | Lethal Trifecta protection, tamper-evidence |
 | **Retry** | Exponential backoff, jitter, retryable-error classification | Survives transient provider failures |
 | **Fallback** | Failover chain across providers / models | Continuity when a provider is down |
+| **LoadBalancer** | Intra-provider distribution across endpoints/keys — weighted RR, health-aware, sticky (opt-in) | Throughput + quota headroom (SC-5, LLM10) |
 | **RateLimit** | Token bucket per provider | Stay inside provider quotas |
 | **Adapter** | Direct HTTP to the provider | The actual call |
 
@@ -146,6 +149,9 @@ model = load_model(
     retry=True,          # exponential backoff
     rate_limit=True,
     otel=True,           # OpenTelemetry export
+    injection=True,      # prompt-injection scan (off by default)
+    guardrails={...},    # structural output validation, per call
+    load_balance=True,   # spread across endpoints/keys of this provider
 )
 ```
 
@@ -172,18 +178,32 @@ This is the headline. Arc imports **nothing** from `openai`, `anthropic`, `googl
 Sensitive data gets redacted before it leaves your environment **and** when it comes back.
 
 ```python
-# Default detectors
-SSN, Credit Card, Email, Phone, IP
+# Built-in detectors (checksum-gated where applicable)
+SSN, Credit Card (Luhn), Email, Phone, IPv4/IPv6, IBAN (mod-97), ABA routing
 
-# Pluggable for custom patterns
-- CUI / FOUO markings
-- Classification stamps (CONFIDENTIAL, SECRET, etc.)
-- Internal project codenames
-- API keys, JWTs, AWS access keys
-- Anything you can write a regex or NER model for
+# Gov/CUI entities (opt-in via pii_entities)
+US_PASSPORT, US_DRIVERS_LICENSE, DOD_ID/EDIPI, CAC, BANK_ACCOUNT, DOB, MRN
+
+# SECRETS category (togglable)
+AWS keys, GitHub tokens, JWT, PEM blocks, DB URLs, sk-ant-/sk-/AIza/xox
+
+# Bring your own
+- pii_detector_class = "module:Class"   # allowlisted spaCy / Presidio / custom
 ```
 
-Redacted patterns are replaced with `[PII:TYPE]` placeholders. The original is **never persisted in audit logs unless explicitly enabled at DEBUG level.**
+Redacted patterns are replaced with `[PII:TYPE]` / `[SECRET:TYPE]` placeholders, in **both** the outbound request and the returned response (including `tool_calls` arguments).
+
+### 🛡️ Prompt-Injection Detection (opt-in)
+
+`InjectionModule` scans inbound **user turns and tool results** — the LLM01 and ASI06 vectors — before they reach the provider. It NFKC/zero-width-normalizes the scan copy to defeat encoding evasion, then matches an attack-pattern corpus (zero-dep) or, behind `arcllm[injection-semantic]`, an embedding-similarity tier. It **flags or blocks only** — it never interprets, rewrites, or executes content, and passes the messages through byte-identical. Off by default; `enforcement="warn"` runs observe-only before you flip to `block`.
+
+### ✅ Output Guardrails (opt-in, per call)
+
+`GuardrailsModule` validates the **final** response the caller receives: JSON-schema conformance, regex allow/deny lists, a length cap, and a banned-content stop-list. Structural only (LLM05) — semantic judgement (grounding, toxicity) stays in the agent layer. Configured per call via `guardrails={...}`.
+
+### 🔐 Full Trace Capture & Encryption
+
+Every call captures the full raw request and response for forensic replay (`load_for_replay` reconstructs the exact request; execution stays in arcrun). On the federal tier, bodies are sealed with an **AES-256-GCM envelope** (DEK wrapped via AES Key Wrap RFC 3394, KEK from vault, AAD bound to the record identity) — plaintext never touches disk. Records carry a `classification` tag; age/size retention purge bounds growth. The SHA-256 hash chain covers the ciphertext, so capture is tamper-evident for in-place mutation, reorder, and mid-chain deletion. (Head-truncation/rollback detection requires the arctrust `SignedChainSink` external anchor.) Right-to-erasure is intentionally **not** provided — it conflicts with federal audit retention.
 
 ### ✍️ Request Signing
 
@@ -278,6 +298,8 @@ from arcllm import (
     # Errors
     ArcLLMError, ArcLLMAPIError, ArcLLMConfigError, ArcLLMParseError,
     QueueFullError, QueueTimeoutError,
+    ArcLLMInjectionError, ArcLLMGuardrailError,
+    ArcLLMTraceNotFoundError, ArcLLMTraceIntegrityError,
 )
 ```
 
@@ -292,19 +314,25 @@ Provider adapters are lazy-imported — they're only loaded when you call `load_
 | AC-4 (Information Flow) | Bidirectional PII redaction at the trust boundary |
 | AU-2, AU-12 | Audit module emits structured events on every call |
 | AU-9 | Audit module integrates with `arctrust.WormSink` (durable signed hash chain) |
+| AU-3, AU-11 | Full raw prompt/response capture with age/size retention purge |
 | IA-5 | Vault-backed API key resolution; TTL caching; no plaintext on disk |
+| SC-5 | Intra-provider load balancing distributes calls across endpoints/keys |
 | SC-8 | HTTPS enforcement; HTTP only for loopback addresses |
-| SC-13 | HMAC-SHA256 request signing |
+| SC-13 | HMAC-SHA256 request signing; FIPS fail-closed self-check on the encryption path |
+| SC-28 | AES-256-GCM envelope encryption of trace bodies at rest (federal tier) |
 | SI-4 | OpenTelemetry export with GenAI semantic conventions |
+| SI-10, SI-15 | Structural output guardrails; injection scanning of inbound content; checksum-gated PII/secret redaction |
 
 | OWASP LLM (2025) | Mitigation |
 |---|---|
-| LLM01 (Prompt Injection) | PII redaction strips many injection vectors before the model sees them |
-| LLM02 (Sensitive Info Disclosure) | Bidirectional PII detection, audit emits metadata only by default |
-| LLM03 (Supply Chain) | Zero SDK imports, three runtime deps |
-| LLM04 (Data Poisoning) | Canonical-JSON request signing |
-| LLM07 (System Prompt Leakage) | Vault-backed credentials, no secrets in prompts |
-| LLM10 (Unbounded Consumption) | Token budget tracking, per-call cost calc, rate limiter, retry caps |
+| LLM01 (Prompt Injection) | `InjectionModule` scans inbound user + tool-result content (normalized against encoding evasion) before the model sees it |
+| LLM02 (Sensitive Info Disclosure) | Bidirectional PII + secret detection; trace bodies encrypted at rest on the federal tier |
+| LLM03 (Supply Chain) | Zero SDK imports; allowlisted pluggable detector loader |
+| LLM04 (Data Poisoning) | Canonical-JSON request signing; tamper-evident hash-chained trace |
+| LLM05 (Improper Output Handling) | `GuardrailsModule` — JSON-schema, regex allow/deny, banned-content on the response |
+| LLM07 (System Prompt Leakage) | Vault-backed credentials, secret scanner, no secrets in prompts |
+| LLM10 (Unbounded Consumption) | Token/cost tracking, rate limiter, retry caps, load balancing for quota headroom |
+| ASI06 (Context Poisoning) | Tool-result injection scanning |
 
 ---
 

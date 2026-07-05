@@ -162,7 +162,7 @@ flowchart TB
 | Agent | [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
 | Agent | [**arcskill**](packages/arcskill/) | Skill hub — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list |
 | Runtime | [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
-| LLM | [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII redaction, request signing, OpenTelemetry, audit |
+| LLM | [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII/secret redaction, prompt-injection + output guardrails, full encrypted trace capture, load balancing, request signing, OpenTelemetry, audit |
 | Foundation | [**arctrust**](packages/arctrust/) | The cryptographic leaf — Ed25519 keypairs, DID identity, audit emission, the deny-by-default policy pipeline |
 | Foundation | [**arcstore**](packages/arcstore/) | Operational storage — the durable backing store layers read from and write to |
 | — | 🧪 arcprompt · arcmodel | Strategy prompts · model routing (early scaffolding) |

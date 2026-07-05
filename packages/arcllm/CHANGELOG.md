@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-05
+
+Gateway hardening — content guardrails, full trace capture, and load balancing (SPEC-015/016/017) — plus a security-review fix pass. Federal-first (NIST 800-53 + OWASP LLM/ASI).
+
+### Added
+
+- **Prompt-injection module** (`InjectionModule`, opt-in, off by default) — NFKC/zero-width-normalized attack-pattern corpus; optional semantic tier via `arcllm[injection-semantic]`; scans inbound user + tool-result content; `block`/`warn`. LLM01, ASI06.
+- **PII/secret enrichment** — Luhn/mod-97/ABA checksum validators, IPv6, gov/CUI entities (US_PASSPORT, US_DRIVERS_LICENSE, DOD_ID/EDIPI, CAC, BANK_ACCOUNT, DOB, MRN; default-off), a togglable `SECRETS` category (AWS/GitHub/JWT/PEM/DB-URL + `sk-ant-`/`sk-`/`AIza`/`xox`), per-entity `pii_entities` toggles, and an allowlisted `pii_detector_class` loader (bring-your-own spaCy/Presidio).
+- **Output guardrails module** (`GuardrailsModule`, opt-in, per-call) — structural response validation: JSON-schema conformance, regex allow/deny, length cap, banned-content stop-list. Schema validation behind `arcllm[guardrails-schema]`. LLM05.
+- **Full trace capture** — raw prompt/response capture on by default (reuses `request_body`/`response_body` + the SHA-256 hash chain); replay reconstruction via `load_for_replay` (execution stays in arcrun); verbatim lineage persistence; audited disable path.
+- **Trace encryption** (`arcllm[trace-encryption]`) — AES-256-GCM envelope, DEK wrapped with AES Key Wrap (RFC 3394), vault-resolved KEK, AAD bound to `trace_id`+`timestamp`, FIPS fail-closed self-check; per-record `classification` tag; age/size retention purge.
+- **Load-balancing module** (`LoadBalancerModule`, opt-in) — intra-provider distribution across endpoints/keys (weighted round-robin, health-aware, optional sticky), shared-nothing per-pool registry. SC-5, LLM10.
+- New exceptions: `ArcLLMInjectionError`, `ArcLLMGuardrailError`, `ArcLLMTraceNotFoundError`, `ArcLLMTraceIntegrityError`.
+
+### Changed
+
+- Module stack is now `Otel → Queue → Telemetry → Audit → Guardrails → Injection → Security → CircuitBreaker → Retry → Fallback → RateLimit → [Routing | LoadBalancer | Adapter]`.
+- Removed the `_VALID_DETECTORS` hard-reject in `SecurityModule` — completes the pluggable-detector path that was specced but never built.
+- Trace-store hash/serialize/write and `_warm_start` read offloaded to `asyncio.to_thread` (event-loop non-blocking under concurrency).
+
+### Security
+
+- Sensitive bodies are sealed once and never written in plaintext to the operational spool when encryption is enabled.
+- `banned_content` guardrail scans the full response (closed a length-cap bypass).
+- `tool_calls` arguments are now PII/secret-redacted on the response path.
+- `verify_chain()` docs qualified: internal linkage detects mutation/reorder/mid-deletion; head-truncation/rollback detection requires the arctrust `SignedChainSink` external anchor.
+- Right-to-erasure deliberately excluded — conflicts with federal audit immutability/retention (AU-9/10/11, Federal Records Act).
+
 ## [0.4.0] - 2026-04-26
 
 User-config layering, audit hardening, and audit-emission migration to arctrust.
