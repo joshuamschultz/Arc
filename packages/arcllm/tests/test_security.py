@@ -178,7 +178,9 @@ class TestPiiOutboundContentBlocks:
         assert "[PII:SSN]" in str(block.arguments)
 
     async def test_redacts_pii_from_tool_result_block_with_list_content(self):
-        """ToolResultBlock with list[ContentBlock] content should pass through."""
+        """L14/ASI06: ToolResultBlock with list[ContentBlock] content must be
+        recursed into — a structured tool result is exactly the vector PII
+        redaction protects against, not a blind spot."""
         inner = _make_inner()
         module = SecurityModule(_base_config(), inner)
         messages = [
@@ -198,8 +200,10 @@ class TestPiiOutboundContentBlocks:
         sent = inner.invoke.call_args[0][0]
         block = sent[0].content[0]
         assert isinstance(block, ToolResultBlock)
-        # list content passes through (not scanned at this level)
         assert isinstance(block.content, list)
+        nested_text = block.content[0].text
+        assert "[PII:SSN]" in nested_text
+        assert "123-45-6789" not in nested_text
 
     async def test_skips_image_block(self):
         """ImageBlock has no text to scan."""
@@ -252,6 +256,43 @@ class TestPiiInbound:
         result = await module.invoke(messages)
 
         assert result.content is None
+
+    async def test_redacts_pii_from_response_tool_call_arguments(self):
+        """M5: response.tool_calls arguments must be redacted, mirroring the
+        outbound ToolUseBlock.arguments handling — a response tool call is
+        just as capable of carrying PII as response.content."""
+        response = _make_response(
+            content=None,
+            tool_calls=[
+                ToolCall(
+                    id="call-1",
+                    name="lookup_user",
+                    arguments={"ssn": "123-45-6789", "query": "find user"},
+                )
+            ],
+        )
+        inner = _make_inner(response)
+        module = SecurityModule(_base_config(), inner)
+        messages = [Message(role="user", content="lookup")]
+
+        result = await module.invoke(messages)
+
+        assert "123-45-6789" not in str(result.tool_calls[0].arguments)
+        assert result.tool_calls[0].arguments["ssn"] == "[PII:SSN]"
+
+    async def test_response_tool_call_without_pii_unchanged(self):
+        original_args = {"query": "find user"}
+        response = _make_response(
+            content=None,
+            tool_calls=[ToolCall(id="call-1", name="lookup_user", arguments=original_args)],
+        )
+        inner = _make_inner(response)
+        module = SecurityModule(_base_config(), inner)
+        messages = [Message(role="user", content="lookup")]
+
+        result = await module.invoke(messages)
+
+        assert result.tool_calls[0].arguments == original_args
 
 
 # ---------------------------------------------------------------------------
@@ -432,13 +473,22 @@ class TestConfigValidation:
             )
             assert module is not None
 
-    def test_unknown_detector_type_raises(self):
+    def test_unknown_detector_type_no_longer_raises(self):
+        """FR-22: security.py no longer hard-rejects non-'regex' pii_detector values.
+
+        Regression test for the removed `_VALID_DETECTORS` gate (D-093/FR-13
+        complete — see test_pii_loader.py for the allowlisted class-loader
+        coverage). A `pii_detector` string other than "regex" now simply
+        falls through to the built-in RegexPiiDetector.
+        """
         with patch.dict(os.environ, {"TEST_SIGNING_KEY": "key"}):
-            with pytest.raises(ArcLLMConfigError, match="Unsupported pii_detector"):
-                SecurityModule(
-                    _base_config(pii_detector="spacy"),
-                    _make_inner(),
-                )
+            module = SecurityModule(
+                _base_config(pii_detector="spacy"),
+                _make_inner(),
+            )
+        from arcllm._pii import RegexPiiDetector
+
+        assert isinstance(module._pii_detector, RegexPiiDetector)
 
     def test_unknown_config_keys_raises(self):
         with patch.dict(os.environ, {"TEST_SIGNING_KEY": "key"}):

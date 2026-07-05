@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from typing import Any
 
@@ -16,6 +17,7 @@ from arcllm.types import (
     Message,
     TextBlock,
     Tool,
+    ToolCall,
     ToolResultBlock,
     ToolUseBlock,
 )
@@ -24,13 +26,69 @@ _VALID_CONFIG_KEYS = {
     "pii_enabled",
     "pii_detector",
     "pii_custom_patterns",
+    "pii_entities",
+    "pii_detector_class",
     "signing_enabled",
     "signing_algorithm",
     "signing_key_env",
     "enabled",
 }
 
-_VALID_DETECTORS = {"regex"}
+# Allowlisted pii_detector_class module prefixes (ASI04 supply-chain guard).
+# Mirrors vault.py's VaultResolver.from_config exactly (D-427): this
+# narrows the *namespace* importlib will import from — it does NOT sandbox
+# or verify the loaded code's trustworthiness. Signature verification of
+# the loaded package/class is arctrust/arcagent's job, not arcllm's.
+_ALLOWED_DETECTOR_PREFIXES = ("arcllm.", "arcagent.", "arcpii.")
+
+
+def _load_detector_class(ref: str) -> PiiDetector:
+    """Load a custom PiiDetector via an allowlisted ``module:Class`` reference.
+
+    Order is load-bearing: the prefix allowlist gate runs BEFORE
+    ``import_module``, because import executes the target module's
+    top-level code (import-time RCE) — checking after import would be
+    too late (ASI04/ASI05).
+
+    Args:
+        ref: ``"module.path:ClassName"`` format. The loaded class must
+            accept a no-argument constructor — custom detectors manage
+            their own configuration, not ``pii_custom_patterns``/
+            ``pii_entities``.
+
+    Raises:
+        ArcLLMConfigError: On invalid format, non-allowlisted module,
+            missing module/class, or a class that fails the PiiDetector
+            protocol check.
+    """
+    if ":" not in ref:
+        raise ArcLLMConfigError(f"pii_detector_class must be 'module:Class' format, got: '{ref}'")
+
+    module_path, class_name = ref.rsplit(":", 1)
+
+    if not any(module_path.startswith(prefix) for prefix in _ALLOWED_DETECTOR_PREFIXES):
+        raise ArcLLMConfigError(
+            f"pii_detector_class module '{module_path}' is not in the allowlist. "
+            f"Allowed prefixes: {list(_ALLOWED_DETECTOR_PREFIXES)}"
+        )
+
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as e:
+        raise ArcLLMConfigError(
+            f"pii_detector_class '{ref}' not installed. Could not import module '{module_path}'."
+        ) from e
+
+    detector_class = getattr(module, class_name, None)
+    if detector_class is None:
+        raise ArcLLMConfigError(f"pii_detector_class '{class_name}' not found in '{module_path}'")
+
+    instance = detector_class()
+    if not isinstance(instance, PiiDetector):
+        raise ArcLLMConfigError(
+            f"pii_detector_class '{ref}' does not implement PiiDetector.detect()"
+        )
+    return instance
 
 
 class SecurityModule(BaseModule):
@@ -42,8 +100,17 @@ class SecurityModule(BaseModule):
         3. Redact PII from inbound response (from LLM)
         4. Sign request payload and attach to response metadata
 
-    Stack position: Audit -> Security -> Retry
+    Stack position: Audit -> Guardrails -> Injection -> Security -> CircuitBreaker
     (Audit sees redacted data; each retry sends redacted+signed request)
+
+    PII detector selection (D-093/FR-13, ADR-427):
+        - ``pii_detector_class`` set -> allowlisted ``module:Class`` loader
+          (wins over ``pii_detector`` when both are set).
+        - otherwise -> built-in ``RegexPiiDetector``, enriched with
+          checksum-gated entities, gov/CUI categories, and the SECRETS
+          category (Spec 015). Any ``pii_detector`` value other than
+          selecting ``pii_detector_class`` simply resolves to the
+          built-in detector.
     """
 
     def __init__(self, config: dict[str, Any], inner: LLMProvider) -> None:
@@ -53,14 +120,16 @@ class SecurityModule(BaseModule):
         # Build PII detector (lazy — only if PII enabled)
         self._pii_detector: PiiDetector | None = None
         if config.get("pii_enabled", True):
-            detector_type = config.get("pii_detector", "regex")
             custom_patterns = config.get("pii_custom_patterns", [])
-            if detector_type not in _VALID_DETECTORS:
-                raise ArcLLMConfigError(
-                    f"Unsupported pii_detector type: {detector_type!r}. "
-                    f"Supported: {sorted(_VALID_DETECTORS)}"
+            entities = config.get("pii_entities") or None
+            detector_class_ref = config.get("pii_detector_class", "")
+            if detector_class_ref:
+                self._pii_detector = _load_detector_class(detector_class_ref)
+            else:
+                self._pii_detector = RegexPiiDetector(
+                    custom_patterns=custom_patterns or None,
+                    entities=entities,
                 )
-            self._pii_detector = RegexPiiDetector(custom_patterns=custom_patterns or None)
 
         # Build signer (lazy — only if signing enabled)
         self._signer: RequestSigner | None = None
@@ -120,16 +189,12 @@ class SecurityModule(BaseModule):
                 redacted = self._redact_str(block.text)
                 result.append(TextBlock(text=redacted))
             elif isinstance(block, ToolResultBlock):
-                if isinstance(block.content, str):
-                    redacted = self._redact_str(block.content)
-                    result.append(
-                        ToolResultBlock(
-                            tool_use_id=block.tool_use_id,
-                            content=redacted,
-                        )
+                result.append(
+                    ToolResultBlock(
+                        tool_use_id=block.tool_use_id,
+                        content=self._redact_tool_result_content(block.content),
                     )
-                else:
-                    result.append(block)
+                )
             elif isinstance(block, ToolUseBlock):
                 # Scan arguments as JSON string
                 args_str = json.dumps(block.arguments)
@@ -150,6 +215,19 @@ class SecurityModule(BaseModule):
                 result.append(block)
         return result
 
+    def _redact_tool_result_content(
+        self, content: str | list[ContentBlock]
+    ) -> str | list[ContentBlock]:
+        """Redact a ToolResultBlock's content, recursing into nested TextBlocks.
+
+        A structured tool result (``list[ContentBlock]``) is exactly the
+        vector PII redaction protects against (ASI06) — it must not be a
+        blind spot just because it's a list instead of a plain string.
+        """
+        if isinstance(content, str):
+            return self._redact_str(content)
+        return self._redact_blocks(content)
+
     def _redact_str(self, text: str) -> str:
         """Detect and redact PII in a string.
 
@@ -164,16 +242,41 @@ class SecurityModule(BaseModule):
         return redact_text(text, matches)
 
     def _redact_response(self, response: LLMResponse) -> LLMResponse:
-        """Redact PII from response content."""
-        if response.content is None:
-            return response
+        """Redact PII from response content and tool-call arguments (M5).
+
+        Tool-call arguments are just as capable of carrying PII/secrets as
+        ``response.content`` — mirrors the outbound ``ToolUseBlock.arguments``
+        handling in ``_redact_blocks``.
+        """
+        updates: dict[str, Any] = {}
 
         if isinstance(response.content, str):
-            redacted = self._redact_str(response.content)
-            if redacted != response.content:
-                return response.model_copy(update={"content": redacted})
+            redacted_content = self._redact_str(response.content)
+            if redacted_content != response.content:
+                updates["content"] = redacted_content
 
-        return response
+        if response.tool_calls:
+            redacted_calls = self._redact_tool_calls(response.tool_calls)
+            if redacted_calls != response.tool_calls:
+                updates["tool_calls"] = redacted_calls
+
+        if not updates:
+            return response
+        return response.model_copy(update=updates)
+
+    def _redact_tool_calls(self, tool_calls: list[ToolCall]) -> list[ToolCall]:
+        """Redact PII/secrets from each tool call's JSON-serialized arguments."""
+        result: list[ToolCall] = []
+        for call in tool_calls:
+            args_str = json.dumps(call.arguments)
+            redacted_str = self._redact_str(args_str)
+            if redacted_str != args_str:
+                result.append(
+                    ToolCall(id=call.id, name=call.name, arguments=json.loads(redacted_str))
+                )
+            else:
+                result.append(call)
+        return result
 
     def _attach_signature(self, response: LLMResponse, signature: str) -> LLMResponse:
         """Attach signing metadata to response."""

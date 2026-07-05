@@ -505,12 +505,14 @@ class TestTelemetryTraceRecording:
 
         await module.invoke(messages)
 
-        rec = events[0]
+        llm_call_records = [e for e in events if e.event_type == "llm_call"]
+        assert len(llm_call_records) == 1
+        rec = llm_call_records[0]
         assert rec.request_body is None
         assert rec.response_body is None
 
-    async def test_store_raw_bodies_defaults_to_false(self, messages):
-        """SPEC-026 C2 — metadata-only by default: raw bodies are NOT stored."""
+    async def test_store_raw_bodies_defaults_to_true(self, messages):
+        """SPEC-016 D-435 — full capture by default: raw bodies ARE stored."""
         from arcllm.trace_store import TraceRecord
 
         events: list[TraceRecord] = []
@@ -520,19 +522,53 @@ class TestTelemetryTraceRecording:
         await module.invoke(messages)
 
         rec = events[0]
-        assert rec.request_body is None
-        assert rec.response_body is None
+        assert rec.request_body is not None
+        assert rec.response_body is not None
 
-    def test_store_raw_bodies_true_logs_warning(self, caplog):
-        """SPEC-026 AC-4.5 — enabling raw capture must emit a security warning at init."""
+    def test_store_raw_bodies_false_logs_warning(self, caplog):
+        """SPEC-016 D-435 — disabling full capture must emit a security warning at init."""
         import logging
 
         with caplog.at_level(logging.WARNING, logger="arcllm.modules.telemetry"):
-            TelemetryModule(_make_config(store_raw_bodies=True), _make_inner())
+            TelemetryModule(_make_config(store_raw_bodies=False), _make_inner())
 
-        assert any("store_raw_bodies=True" in record.message for record in caplog.records), (
-            "Expected store_raw_bodies=True warning at module init"
+        assert any("store_raw_bodies=False" in record.message for record in caplog.records), (
+            "Expected store_raw_bodies=False warning at module init"
         )
+
+    async def test_store_raw_bodies_false_emits_audited_config_change(self, messages):
+        """FR-21/D-444 — disabling capture emits exactly one config_change record."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(
+            _make_config(on_event=events.append, store_raw_bodies=False), inner
+        )
+
+        await module.invoke(messages)
+        await module.invoke(messages)
+
+        config_changes = [e for e in events if e.event_type == "config_change"]
+        assert len(config_changes) == 1
+        assert config_changes[0].event_data == {
+            "field": "store_raw_bodies",
+            "from": True,
+            "to": False,
+            "resolver_identity": "did:arc:unknown",
+        }
+
+    async def test_store_raw_bodies_true_emits_no_audit_record(self, messages):
+        """The default (capture ON) never emits a config_change audit record."""
+        from arcllm.trace_store import TraceRecord
+
+        events: list[TraceRecord] = []
+        inner = _make_inner()
+        module = TelemetryModule(_make_config(on_event=events.append), inner)
+
+        await module.invoke(messages)
+
+        assert all(e.event_type != "config_change" for e in events)
 
     async def test_agent_label_set_on_record(self, messages):
         """agent_label from config appears on TraceRecord."""

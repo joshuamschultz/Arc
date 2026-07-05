@@ -14,7 +14,9 @@ from arcllm.types import Message, TextBlock, Tool
 FAKE_MODEL = "claude-test-1"
 
 
-def _config(*, enable_caching: bool = True, ttl: str = "5m", api_format: str = "anthropic") -> ProviderConfig:
+def _config(
+    *, enable_caching: bool = True, ttl: str = "5m", api_format: str = "anthropic"
+) -> ProviderConfig:
     return ProviderConfig(
         provider=ProviderSettings(
             api_format=api_format,

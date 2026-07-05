@@ -339,3 +339,71 @@ class TestTraceLocation:
         agent = tmp_path / "agent_a"
         store = JSONLTraceStore(agent)
         assert store._traces_dir == agent / "traces"
+
+
+# ---------------------------------------------------------------------------
+# M3 — blocking hash/serialize/write work must run off the event loop
+# ---------------------------------------------------------------------------
+
+
+class TestAppendOffloadsBlockingWork:
+    async def test_append_frees_event_loop_during_write(self, tmp_path: Path) -> None:
+        """The hash+serialize+write happens off the event loop, inside the
+        chain-ordering lock. A concurrent coroutine must be able to make
+        progress while the write is in flight — forced interleaving via a
+        real threading.Event, not an instant mock (a synchronous write
+        would deadlock this test rather than merely run slower)."""
+        import asyncio
+        import threading
+        from unittest.mock import patch
+
+        store = JSONLTraceStore(tmp_path)
+        write_entered = threading.Event()
+        release_write = threading.Event()
+        real_write = JSONLTraceStore._write_record_sync
+
+        def _blocking_write(record: TraceRecord, prev_hash: str, file_path: Path) -> TraceRecord:
+            write_entered.set()
+            assert release_write.wait(timeout=5), "writer never released — event loop blocked"
+            return real_write(record, prev_hash, file_path)
+
+        marker = {"ran": False}
+
+        async def _concurrent_marker() -> None:
+            loop = asyncio.get_event_loop()
+            started = await loop.run_in_executor(None, write_entered.wait, 5)
+            assert started, "write never started"
+            marker["ran"] = True
+            release_write.set()
+
+        with patch.object(JSONLTraceStore, "_write_record_sync", staticmethod(_blocking_write)):
+            await asyncio.wait_for(
+                asyncio.gather(
+                    store.append(TraceRecord(provider="anthropic", model="claude")),
+                    _concurrent_marker(),
+                ),
+                timeout=5,
+            )
+
+        assert marker["ran"] is True
+
+    async def test_warm_start_reads_file_via_thread(self, tmp_path: Path) -> None:
+        """_warm_start's file read is dispatched to a worker thread."""
+        import asyncio
+        from unittest.mock import patch
+
+        store = JSONLTraceStore(tmp_path)
+        await store.append(TraceRecord(provider="anthropic", model="claude"))
+        store._warm_started = False  # force _warm_start to run again
+
+        calls: list[object] = []
+        orig_to_thread = asyncio.to_thread
+
+        async def _spy(func, *args, **kwargs):  # type: ignore[no-untyped-def]
+            calls.append(func)
+            return await orig_to_thread(func, *args, **kwargs)
+
+        with patch("arcllm.trace_store.asyncio.to_thread", _spy):
+            await store._warm_start()
+
+        assert calls, "expected _warm_start to dispatch its file read via asyncio.to_thread"

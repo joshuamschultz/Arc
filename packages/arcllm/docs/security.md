@@ -581,16 +581,18 @@ burst_capacity = 60           # Max burst allowance
 The JSONL trace store protects audit logs from unauthorized modification through three mechanisms:
 
 1. **File permissions** — Traces directory set to `0o700` (owner-only access), individual JSONL files set to `0o600` (owner read/write only) after every append.
-2. **Hash chain verification on startup** — `_verify_tail()` checks the last 10 records in the hash chain during warm start. Detects record deletion, modification, or insertion.
-3. **Full chain verification** — `verify_chain()` scans all records across all files for complete tamper-evident audit.
+2. **Hash chain verification on startup** — `_verify_tail()` checks the last 10 records in the hash chain during warm start. Detects in-place record modification or reordering among the records present on disk.
+3. **Full chain verification** — `verify_chain()` scans all records across all files for internal-consistency tamper evidence.
+
+Both checks prove internal consistency ONLY — they cannot by themselves prove that no records were removed from the head of the chain (a whole-file deletion or truncation looks identical to a legitimate retention purge). Full AU-9(3)/AU-10 non-repudiation — proving nothing was removed, not just that what remains is self-consistent — requires comparing an external, signed anchor over time (`arctrust`'s `SignedChainSink`, fed by `trace_retention.build_checkpoint()`'s head-hash/record-count/file-list manifest). arcllm owns capture and internal-consistency verification; signing/anchoring that manifest is out of scope for this package.
 
 ### NIST 800-53 Mapping
 
 | Control | Description |
 |---------|-------------|
 | AU-9 | Protection of Audit Information — file permissions prevent unauthorized access |
-| AU-9(3) | Cryptographic Protection — SHA-256 hash chain provides tamper evidence |
-| AU-10 | Non-repudiation — hash chain links prove record ordering and integrity |
+| AU-9(3) | Cryptographic Protection — SHA-256 hash chain provides internal-consistency tamper evidence (not head-truncation proof — see above) |
+| AU-10 | Non-repudiation — requires the external signed anchor described above; the hash chain alone proves ordering/integrity of records present, not that none were removed |
 
 ### How It Works
 

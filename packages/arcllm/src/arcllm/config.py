@@ -14,7 +14,14 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from arcllm.exceptions import ArcLLMConfigError
 
@@ -39,6 +46,21 @@ class ModelMetadata(BaseModel):
     cost_output_per_1m: float
     cost_cache_read_per_1m: float
     cost_cache_write_per_1m: float
+
+
+def _enforce_https_for_remote(v: str) -> str:
+    """Reject non-HTTPS ``base_url`` for remote hosts; allow HTTP for localhost.
+
+    Shared by ``ProviderSettings`` and ``EndpointConfig`` (SPEC-017 FR-2) so a
+    load-balanced pool endpoint gets exactly the same connection-security
+    validation as the primary provider connection — one audited HTTPS rule,
+    not two.
+    """
+    if v.startswith("http://") and not any(
+        v.startswith(f"http://{host}") for host in ("localhost", "127.0.0.1", "[::1]")
+    ):
+        raise ValueError(f"base_url must use HTTPS for remote hosts. Got: {v}")
+    return v
 
 
 class ProviderSettings(BaseModel):
@@ -69,19 +91,62 @@ class ProviderSettings(BaseModel):
     @field_validator("base_url")
     @classmethod
     def _validate_https(cls, v: str) -> str:
-        """Enforce HTTPS for remote hosts. Allow HTTP only for localhost."""
-        if v.startswith("http://") and not any(
-            v.startswith(f"http://{host}") for host in ("localhost", "127.0.0.1", "[::1]")
-        ):
-            raise ValueError(f"base_url must use HTTPS for remote hosts. Got: {v}")
+        return _enforce_https_for_remote(v)
+
+
+class EndpointConfig(BaseModel):
+    """One endpoint in a load-balanced pool (SPEC-017 [[endpoints]]).
+
+    Mirrors the connection-relevant subset of ``ProviderSettings``: a pool
+    endpoint is a variant *base_url*/key of the same provider, so it reuses
+    the identical HTTPS validator and key-resolution contract (D-457) —
+    there is no second, less-audited path for endpoint credentials.
+    """
+
+    base_url: str
+    api_key_env: str = ""
+    vault_path: str = ""
+    weight: int = 1
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_https(cls, v: str) -> str:
+        return _enforce_https_for_remote(v)
+
+    @field_validator("weight")
+    @classmethod
+    def _validate_weight(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError(f"weight must be >= 0. Got: {v}")
         return v
 
 
 class ProviderConfig(BaseModel):
-    """Loaded provider TOML — connection settings + model metadata."""
+    """Loaded provider TOML — connection settings + model metadata + endpoint pool."""
 
     provider: ProviderSettings
     models: dict[str, ModelMetadata]
+    # Optional load-balancing pool (SPEC-017). Empty = single-endpoint,
+    # today's behavior, byte-identical (FR-15 / SC-2).
+    endpoints: list[EndpointConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_endpoint_key_sources(self) -> "ProviderConfig":
+        """Every pool endpoint must resolve a key when the provider requires one.
+
+        Cross-field check (needs ``provider.api_key_required``), so it lives
+        here rather than on ``EndpointConfig`` itself, which has no
+        visibility into the sibling ``[provider]`` section.
+        """
+        if not self.provider.api_key_required:
+            return self
+        for i, endpoint in enumerate(self.endpoints):
+            if not endpoint.api_key_env and not endpoint.vault_path:
+                raise ValueError(
+                    f"endpoints[{i}] (base_url={endpoint.base_url!r}) requires "
+                    "api_key_env or vault_path when api_key_required=true"
+                )
+        return self
 
 
 class DefaultsConfig(BaseModel):
@@ -98,6 +163,41 @@ class ModuleConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     enabled: bool = False
+
+
+class TraceEncryptionConfig(BaseModel):
+    """Envelope-encryption settings for trace bodies at rest (SPEC-016 D-438).
+
+    Disabled by default (personal/enterprise). Federal deployments set
+    ``enabled=True`` and typically ``require_fips=True`` so construction
+    fails closed unless the loaded crypto provider is FIPS-140-3-approved
+    (SC-13). The wrapping key itself is resolved via the existing
+    ``VaultResolver`` (D-447) — this model carries only *where* to look,
+    never the key material.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    backend: str = ""
+    key_ref: str = ""
+    key_env: str = "ARCLLM_TRACE_WRAP_KEY"
+    cache_ttl_seconds: int = 300
+    require_fips: bool = False
+
+
+class TraceRetentionConfig(BaseModel):
+    """Retention purge bounds for rotated trace files (SPEC-016 D-440).
+
+    ``None`` means unlimited for that dimension. Retention operates on
+    whole rotated files, never on today's live chain — see
+    ``arcllm.trace_retention.purge``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_age_days: int | None = None
+    max_bytes: int | None = None
 
 
 class VaultConfig(BaseModel):
@@ -226,7 +326,8 @@ def load_provider_config(provider_name: str) -> ProviderConfig:
     Args:
         provider_name: Provider identifier (e.g., "anthropic", "openai").
 
-    Returns a typed ProviderConfig with connection settings and model metadata.
+    Returns a typed ProviderConfig with connection settings, model metadata,
+    and an optional load-balancing endpoint pool (SPEC-017 [[endpoints]]).
     Raises ArcLLMConfigError on any failure.
     """
     _validate_provider_name(provider_name)
@@ -238,6 +339,29 @@ def load_provider_config(provider_name: str) -> ProviderConfig:
         models = {
             name: ModelMetadata(**metadata) for name, metadata in data.get("models", {}).items()
         }
-        return ProviderConfig(provider=provider_settings, models=models)
+        endpoints = [EndpointConfig(**entry) for entry in data.get("endpoints", [])]
+        return ProviderConfig(provider=provider_settings, models=models, endpoints=endpoints)
     except ValidationError as e:
         raise ArcLLMConfigError(f"Invalid provider config for '{provider_name}': {e}") from e
+
+
+def load_telemetry_retention_config() -> TraceRetentionConfig:
+    """Load ``[modules.telemetry.retention]`` as a typed, validated config.
+
+    Retention purge operates on a ``JSONLTraceStore``'s directory, which is
+    constructed by the caller (the store owns ``agent_root``, not the
+    registry) — so this is a standalone accessor rather than something
+    threaded automatically through ``load_model()``. Callers wire the
+    result into ``JSONLTraceStore(agent_root, retention_max_age_days=...,
+    retention_max_bytes=...)`` themselves (SPEC-016 FR-11).
+
+    Raises:
+        ArcLLMConfigError: On invalid retention settings.
+    """
+    global_config = load_global_config()
+    telemetry_module = global_config.modules.get("telemetry")
+    retention_data = getattr(telemetry_module, "retention", {}) if telemetry_module else {}
+    try:
+        return TraceRetentionConfig(**(retention_data or {}))
+    except ValidationError as e:
+        raise ArcLLMConfigError(f"Invalid telemetry retention config: {e}") from e

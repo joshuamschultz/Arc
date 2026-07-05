@@ -41,6 +41,19 @@ otel = [
 signing = [
     "cryptography>=42.0",
 ]
+trace-encryption = [
+    # _trace_crypto.fips_provider_active() reads the private
+    # cryptography.hazmat.backends.openssl.backend._fips_enabled attribute
+    # (no public API exists — pyca/cryptography#7722). Pinned to a range
+    # verified to still expose that attribute; widen only after re-verifying.
+    "cryptography>=42.0,<47.0",
+]
+injection-semantic = [
+    "numpy>=1.26",
+]
+guardrails-schema = [
+    "jsonschema>=4.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcllm"]
@@ -63,4 +76,10 @@ testpaths = ["tests"]
 # Optional runtime deps without published type stubs. Imported lazily inside
 # try/except or feature-gated code paths; not installed in the type-check env.
 module = ["boto3", "boto3.*", "botocore", "botocore.*", "opentelemetry.exporter.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# jsonschema is imported lazily inside GuardrailsModule (behind
+# arcllm[guardrails-schema]) — not a hard runtime dependency.
+module = ["jsonschema", "jsonschema.*"]
 ignore_missing_imports = true

@@ -8,19 +8,27 @@ wires both into the OTel-instrumented ``invoke()`` flow.
 
 import contextlib
 import contextvars
+import json
 import logging
 import threading
 import time
+import unicodedata
+import uuid
 from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from arcstore.records import SpoolRecord as _SpoolRecord
 from arcstore.spool import record as _spool_record
 from opentelemetry import trace
+from pydantic import ValidationError
 
+from arcllm._trace_crypto import assert_fips_provider_if_required, decode_wrapping_key, seal
+from arcllm.config import TraceEncryptionConfig
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
 from arcllm.modules._logging import log_structured, validate_log_level
-from arcllm.modules.base import BaseModule, validate_config_keys
+from arcllm.modules.base import BaseModule, resolve_enforcement, validate_config_keys
 from arcllm.modules.telemetry_budget import (
     BudgetAccumulator,
     get_or_create_accumulator,
@@ -30,12 +38,47 @@ from arcllm.modules.telemetry_budget import (
     clear_budgets as clear_budgets,
 )
 from arcllm.modules.telemetry_cost import DEFAULT_MAX_TOKENS, calculate_cost, estimate_cost
-from arcllm.trace_store import TraceRecord
+from arcllm.trace_store import EncryptedEnvelope, TraceRecord
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool, Usage
 
 logger = logging.getLogger(__name__)
 
 _UNKNOWN_DID = "did:arc:unknown"
+
+# Per-body size cap (FR-23): a raw body over this size is replaced with a
+# truncation marker rather than writing an unbounded JSONL line. 256KB
+# comfortably covers a large single-turn prompt while bounding the
+# write-amplification a 100k-token context would otherwise cause at scale.
+_DEFAULT_MAX_BODY_BYTES = 256 * 1024
+
+# lineage/classification are attacker-influenceable, persisted-verbatim
+# metadata (D-443) — capped so a homoglyph or oversized blob can't poison
+# a downstream log viewer or classification filter (LLM01 hardening).
+_MAX_CLASSIFICATION_LEN = 128
+_MAX_LINEAGE_BYTES = 8192
+
+# Classification ordering floor enforcement (D-439). Unrecognized labels
+# rank below every configured floor — fail-safe: an unverifiable label
+# can never silently satisfy or exceed the floor.
+_CLASSIFICATION_RANK: dict[str, int] = {
+    "unclassified": 0,
+    "cui": 1,
+    "confidential": 2,
+    "secret": 3,
+    "top_secret": 4,
+}
+
+# kwargs injected by upstream modules or SPEC-016 verbatim-persistence
+# fields — never forwarded to the wrapped provider's invoke() and never
+# folded into the captured request_body (they're recorded on the
+# TraceRecord's own dedicated fields instead).
+_INTERNAL_KWARG_KEYS = {
+    "_retry_attempt",
+    "_retry_group_id",
+    "_queue_wait_ms",
+    "lineage",
+    "classification",
+}
 
 _VALID_CONFIG_KEYS = {
     "cost_input_per_1m",
@@ -58,9 +101,87 @@ _VALID_CONFIG_KEYS = {
     "agent_label",
     "agent_did",
     "store_raw_bodies",
+    "max_body_bytes",
+    # SPEC-016 — classification watermark floor, lineage default, envelope
+    # encryption. All resolved once at construction (AU-2: tier posture
+    # must flow through construction, never re-read per call).
+    "classification",
+    "lineage",
+    "encryption",
+    "encryption_key_secret",
     # arcstore operational spool (SPEC-026 FR-4) — on by default.
     "arcstore_enabled",
 }
+
+
+def _classification_rank(level: str) -> int:
+    """Ordinal rank for a classification level; unrecognized labels rank -1."""
+    return _CLASSIFICATION_RANK.get(level.lower(), -1)
+
+
+def _cap_str(value: str, max_len: int) -> str:
+    """NFKC-normalize then length-cap a persisted, attacker-influenceable string."""
+    normalized = unicodedata.normalize("NFKC", value)
+    return normalized[:max_len]
+
+
+def _text_len_hint(messages: list[Message]) -> int:
+    """Lower-bound character count of a message list's text content (M4).
+
+    A true lower bound on the eventual JSON-encoded byte size of the
+    request body — JSON quoting/escaping/structure only ever ADDS bytes
+    relative to the raw text it wraps, never removes them. Used to decide
+    whether the full ``model_dump()`` + ``json.dumps()`` pass can be
+    skipped because the result is already certain to exceed the cap.
+    """
+    total = 0
+    for m in messages:
+        if isinstance(m.content, str):
+            total += len(m.content)
+        elif isinstance(m.content, list):
+            for block in m.content:
+                text = getattr(block, "text", None)
+                if isinstance(text, str):
+                    total += len(text)
+    return total
+
+
+def _response_text_len_hint(response: LLMResponse) -> int:
+    """Lower-bound character count of a response's text content (M4)."""
+    total = len(response.content) if response.content else 0
+    for tc in response.tool_calls:
+        total += len(str(tc.arguments))
+    return total
+
+
+@dataclass(frozen=True)
+class _PreparedBodies:
+    """Request/response bodies + encryption envelope, built exactly once
+    per invoke() outcome and shared by the trace_store record and the
+    arcstore spool (H1/M4). ``request_body``/``response_body`` are both
+    ``None`` when sealed into ``encryption`` — see ``_prepare_bodies``.
+    """
+
+    trace_id: str
+    timestamp: str
+    request_body: dict[str, Any] | None
+    response_body: dict[str, Any] | None
+    encryption: EncryptedEnvelope | None
+
+
+def resolve_classification(requested: str | None, floor: str) -> str:
+    """Resolve the per-record classification tag, never below ``floor``.
+
+    ``requested`` arrives per-call (upstream, data-source-aware); ``floor``
+    is the config-supplied tier minimum. An unrecognized or lower-ranked
+    ``requested`` value never downgrades below the floor (D-439) —
+    arcllm enforces the floor, it does not classify content.
+    """
+    if requested is None:
+        return floor
+    if _classification_rank(requested) >= _classification_rank(floor):
+        return _cap_str(requested, _MAX_CLASSIFICATION_LEN)
+    return floor
 
 
 # ---------------------------------------------------------------------------
@@ -204,15 +325,45 @@ class TelemetryModule(BaseModule):
         )
         self._agent_label: str | None = config.get("agent_label")
         self._agent_did: str | None = config.get("agent_did") or _global_defaults.get("agent_did")
-        # Metadata-only by default (SPEC-026 FR-4 / C2): durable plaintext
-        # prompts/responses are an exfiltration target (LLM02) and leak system
-        # prompts (LLM07). Raw capture is an explicit, audited opt-in.
-        self._store_raw_bodies: bool = config.get("store_raw_bodies", False)
-        if self._store_raw_bodies:
+        # Full raw capture by default (SPEC-016 D-435): every call is
+        # reconstructable for forensic replay unless an operator makes the
+        # deliberate, audited choice to disable it (see _maybe_audit_disable).
+        self._store_raw_bodies: bool = config.get("store_raw_bodies", True)
+        self._audit_disable_pending = not self._store_raw_bodies
+        if not self._store_raw_bodies:
             logger.warning(
-                "store_raw_bodies=True: raw prompt/response bodies will be persisted — "
-                "not safe for federal/CUI sessions (SPEC-026 FR-4)"
+                "store_raw_bodies=False: full request/response capture is disabled — "
+                "this session will not be reconstructable for replay (SPEC-016 D-435)"
             )
+        self._max_body_bytes: int = config.get("max_body_bytes", _DEFAULT_MAX_BODY_BYTES)
+
+        # Classification watermark floor (SPEC-016 D-439) + lineage default
+        # (D-443). Both resolved once here, at construction, from the
+        # tier-derived config — never re-read per call (AU-2).
+        self._classification_floor: str = _cap_str(
+            config.get("classification", "unclassified"), _MAX_CLASSIFICATION_LEN
+        )
+        self._lineage_default: dict[str, Any] | None = config.get("lineage")
+
+        # Envelope encryption (SPEC-016 D-438). Resolved once at construction;
+        # the wrapping key is never re-resolved per call.
+        try:
+            self._encryption_config = TraceEncryptionConfig(**(config.get("encryption") or {}))
+        except ValidationError as e:
+            raise ArcLLMConfigError(f"Invalid telemetry encryption config: {e}") from e
+
+        self._wrapping_key: bytes | None = None
+        if self._encryption_config.enabled:
+            assert_fips_provider_if_required(require_fips=self._encryption_config.require_fips)
+            secret = config.get("encryption_key_secret")
+            if not secret:
+                raise ArcLLMConfigError(
+                    "modules.telemetry.encryption.enabled=true but no wrapping key "
+                    "was resolved (missing encryption_key_secret) — fail-closed, "
+                    "never falls back to plaintext capture"
+                )
+            self._wrapping_key = decode_wrapping_key(secret)
+
         # arcstore operational spool recording — on by default (SPEC-026 FR-4).
         self._arcstore_enabled: bool = config.get("arcstore_enabled", True)
 
@@ -221,10 +372,7 @@ class TelemetryModule(BaseModule):
         )
 
         if self._budget_enabled:
-            if self._enforcement not in ("warn", "block"):
-                raise ArcLLMConfigError(
-                    f"enforcement must be 'warn' or 'block', got '{self._enforcement}'"
-                )
+            self._enforcement = resolve_enforcement(config, default=self._enforcement)
             for limit_name in ("monthly_limit_usd", "daily_limit_usd", "per_call_max_usd"):
                 val = config.get(limit_name)
                 if val is not None and val < 0:
@@ -406,44 +554,159 @@ class TelemetryModule(BaseModule):
 
         Returns ``(None, None)`` when ``store_raw_bodies`` is off (the federal/
         CUI default). ``response_body`` is ``None`` when there is no response
-        (the error path). Shared by the trace_store record and the arcstore
-        spool so both carry identical payloads (DRY).
+        (the error path). Called exactly ONCE per invoke() outcome by
+        ``_prepare_bodies`` (H1/M4) — never rebuilt independently for the
+        trace_store record and the arcstore spool.
         """
         if not self._store_raw_bodies:
             return None, None
+        return self._build_request_body(messages, tools, kwargs), self._build_response_body(
+            response
+        )
 
-        # Internal keys injected by upstream modules (RetryModule, QueueModule)
-        _internal_keys = {"_retry_attempt", "_retry_group_id", "_queue_wait_ms"}
-        request_body: dict[str, Any] = {
+    def _build_request_body(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None,
+        kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build the capped request body.
+
+        A cheap lower-bound text-length hint is checked FIRST (M4): JSON
+        encoding a message list only ever ADDS bytes (quoting, escaping,
+        struct keys) relative to the raw text it carries, so if that raw
+        text alone already exceeds ``max_body_bytes`` the full
+        ``model_dump()`` + ``json.dumps()`` pass is guaranteed to exceed it
+        too. Skipping straight to the truncation marker means a 100k-token
+        context is never fully serialized just to immediately discard the
+        result as oversized.
+        """
+        cheap_len = _text_len_hint(messages)
+        if cheap_len > self._max_body_bytes:
+            return {"truncated": True, "original_bytes": cheap_len}
+
+        body: dict[str, Any] = {
             "messages": [m.model_dump() for m in messages],
             "tools": [t.model_dump() for t in tools] if tools else None,
-            **{k: v for k, v in kwargs.items() if k != "max_tokens" and k not in _internal_keys},
+            **{
+                k: v
+                for k, v in kwargs.items()
+                if k != "max_tokens" and k not in _INTERNAL_KWARG_KEYS
+            },
         }
         if kwargs.get("max_tokens") is not None:
-            request_body["max_tokens"] = kwargs["max_tokens"]
+            body["max_tokens"] = kwargs["max_tokens"]
+        return self._cap_body(body, self._max_body_bytes)
 
-        response_body: dict[str, Any] | None = None
-        if response is not None:
-            response_body = {
-                "content": response.content,
-                "tool_calls": [tc.model_dump() for tc in response.tool_calls],
-                "stop_reason": response.stop_reason,
-            }
-        return request_body, response_body
+    def _build_response_body(self, response: LLMResponse | None) -> dict[str, Any] | None:
+        """Build the capped response body, or ``None`` on the error path.
+
+        Same cheap-hint short-circuit as ``_build_request_body`` (M4).
+        """
+        if response is None:
+            return None
+        cheap_len = _response_text_len_hint(response)
+        if cheap_len > self._max_body_bytes:
+            return {"truncated": True, "original_bytes": cheap_len}
+
+        body: dict[str, Any] = {
+            "content": response.content,
+            "tool_calls": [tc.model_dump() for tc in response.tool_calls],
+            "stop_reason": response.stop_reason,
+        }
+        return self._cap_body(body, self._max_body_bytes)
+
+    @staticmethod
+    def _cap_body(body: dict[str, Any], max_bytes: int) -> dict[str, Any]:
+        """Truncate a dict payload over ``max_bytes`` (FR-23).
+
+        Shared by request/response body capping and lineage capping (a
+        smaller cap — lineage is provenance metadata, not a document copy)
+        — replace the oversized payload with a small marker rather than
+        writing an unbounded JSONL line. Callers resolve ``None`` (no
+        lineage, no response on the error path) before calling this —
+        there is no body-shaped ``None`` this needs to pass through.
+        """
+        encoded = json.dumps(body, default=str).encode("utf-8")
+        if len(encoded) <= max_bytes:
+            return body
+        return {"truncated": True, "original_bytes": len(encoded)}
+
+    def _prepare_bodies(
+        self,
+        messages: list[Message],
+        tools: list[Tool] | None,
+        kwargs: dict[str, Any],
+        response: LLMResponse | None,
+    ) -> "_PreparedBodies":
+        """Build request/response bodies exactly ONCE per invoke() outcome (H1).
+
+        Shared by both the trace_store record and the arcstore operational
+        spool. Previously each independently called ``_raw_bodies`` (M4 —
+        double model_dump()+json.dumps() per call), and worse, the spool
+        always received the UNSEALED plaintext bodies even when envelope
+        encryption was enabled — a federal deployment with encryption on
+        still wrote plaintext CUI to the operational spool.
+
+        When encryption is enabled the bodies are sealed ONCE here into an
+        ``EncryptedEnvelope`` and the plaintext dicts are discarded
+        entirely — both consumers see the same ``(None, None, envelope)``
+        result. The arcstore spool then simply omits raw bodies for that
+        call (metadata-only); the encrypted trace_store record is the sole
+        body-of-record. This is the simpler of the two documented options
+        (duplicate the ciphertext into the spool vs. omit it there) — one
+        body-of-record, never two copies of the same envelope.
+        """
+        # Generated explicitly (rather than left to TraceRecord's
+        # default_factory) so envelope sealing can bind the SAME trace_id
+        # + timestamp into the GCM AAD that ends up on the record (D-448).
+        trace_id = uuid.uuid4().hex
+        timestamp = datetime.now(UTC).isoformat()
+
+        request_body, response_body = self._raw_bodies(messages, tools, kwargs, response)
+
+        encryption_envelope: EncryptedEnvelope | None = None
+        if (
+            self._encryption_config.enabled
+            and self._wrapping_key is not None
+            and (request_body is not None or response_body is not None)
+        ):
+            encryption_envelope = seal(
+                {"request_body": request_body, "response_body": response_body},
+                trace_id=trace_id,
+                timestamp=timestamp,
+                wrapping_key=self._wrapping_key,
+                key_ref=self._encryption_config.key_ref,
+            )
+            request_body = None
+            response_body = None
+
+        return _PreparedBodies(
+            trace_id=trace_id,
+            timestamp=timestamp,
+            request_body=request_body,
+            response_body=response_body,
+            encryption=encryption_envelope,
+        )
 
     def _build_trace_record(
         self,
         response: LLMResponse,
         cost: float,
         phase_timings: dict[str, float],
-        messages: list[Message],
-        tools: list[Tool] | None,
+        prepared: "_PreparedBodies",
         kwargs: dict[str, Any],
         status: Literal["success", "error", "timeout"] = "success",
         error: str | None = None,
     ) -> TraceRecord:
-        """Build a TraceRecord from invoke() data."""
-        request_body, response_body = self._raw_bodies(messages, tools, kwargs, response)
+        """Build a TraceRecord from invoke() data and pre-built bodies."""
+        lineage = kwargs.get("lineage", self._lineage_default)
+        if lineage is not None:
+            lineage = self._cap_body(lineage, _MAX_LINEAGE_BYTES)
+
+        classification = resolve_classification(
+            kwargs.get("classification"), self._classification_floor
+        )
 
         # Extract retry metadata injected by RetryModule
         attempt_number: int = kwargs.get("_retry_attempt", 0)
@@ -451,13 +714,18 @@ class TelemetryModule(BaseModule):
 
         usage = response.usage
         return TraceRecord(
+            trace_id=prepared.trace_id,
+            timestamp=prepared.timestamp,
             provider=self._inner.name,
             model=response.model,
             agent_label=self._resolve_agent_label(),
             agent_did=self._resolve_agent_did(),
             budget_scope=self._budget_scope,
-            request_body=request_body,
-            response_body=response_body,
+            request_body=prepared.request_body,
+            response_body=prepared.response_body,
+            classification=classification,
+            encryption=prepared.encryption,
+            lineage=lineage,
             duration_ms=phase_timings.get("total_ms", 0.0),
             cost_usd=cost,
             input_tokens=usage.input_tokens,
@@ -480,30 +748,57 @@ class TelemetryModule(BaseModule):
         if self._on_event is not None:
             self._on_event(record)
 
+    async def _maybe_audit_disable(self) -> None:
+        """Emit one ``config_change`` record the first time capture is off.
+
+        FR-21/D-444: disabling full raw capture must itself be an audited
+        act, not a silent flag flip. Fires at most once per module
+        instance, before the first invoke's own llm_call record, so an
+        operator turning capture off can't blind the forensic trail
+        without leaving a trace of having done so.
+        """
+        if not self._audit_disable_pending:
+            return
+        self._audit_disable_pending = False
+        record = TraceRecord(
+            provider=self._inner.name,
+            model=self._inner.model_name,
+            agent_label=self._resolve_agent_label(),
+            agent_did=self._resolve_agent_did(),
+            event_type="config_change",
+            event_data={
+                "field": "store_raw_bodies",
+                "from": True,
+                "to": False,
+                "resolver_identity": self._resolve_agent_did() or _UNKNOWN_DID,
+            },
+        )
+        await self._emit_trace(record)
+
     async def invoke(
         self,
         messages: list[Message],
         tools: list[Tool] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
+        await self._maybe_audit_disable()
         with self._span("arcllm.telemetry") as tel_span:
             t0 = time.monotonic()
             try:
-                response, cost, total_ms = await self._invoke_inner(
+                response, cost, total_ms, prepared = await self._invoke_inner(
                     messages, tools, tel_span, t0, **kwargs
                 )
             except Exception:
                 # FR-4 / C3 — a raising call still records an operational line.
-                req_body, _ = self._raw_bodies(messages, tools, kwargs, None)
+                error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
                 self._record_spool(
                     outcome="error",
                     model=None,
                     cost=None,
                     latency_ms=round((time.monotonic() - t0) * 1000, 1),
-                    request_body=req_body,
+                    request_body=error_prepared.request_body,
                 )
                 raise
-            req_body, resp_body = self._raw_bodies(messages, tools, kwargs, response)
             self._record_spool(
                 outcome="ok",
                 model=response.model,
@@ -511,8 +806,8 @@ class TelemetryModule(BaseModule):
                 latency_ms=total_ms,
                 prompt_tokens=response.usage.input_tokens,
                 completion_tokens=response.usage.output_tokens,
-                request_body=req_body,
-                response_body=resp_body,
+                request_body=prepared.request_body,
+                response_body=prepared.response_body,
             )
             return response
 
@@ -523,12 +818,19 @@ class TelemetryModule(BaseModule):
         tel_span: trace.Span,
         t0: float,
         **kwargs: Any,
-    ) -> tuple[LLMResponse, float, float]:
+    ) -> tuple[LLMResponse, float, float, _PreparedBodies]:
         # Budget pre-check (before calling inner provider)
         budget_meta = self._check_budget_pre_call(tel_span, **kwargs)
 
-        # Strip internal metadata keys before forwarding to inner provider
-        inner_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+        # Strip internal metadata keys before forwarding to inner provider.
+        # NOTE: "classification" is intentionally NOT stripped here — it is
+        # also a RoutingModule kwarg (content-classification routing, further
+        # inside the stack) that RoutingModule itself pops before reaching
+        # the terminal adapter. Only "lineage" is arcllm-internal with no
+        # downstream consumer.
+        inner_kwargs = {
+            k: v for k, v in kwargs.items() if not k.startswith("_") and k != "lineage"
+        }
 
         t_pre = time.monotonic()
         response = await self._inner.invoke(messages, tools, **inner_kwargs)
@@ -584,19 +886,16 @@ class TelemetryModule(BaseModule):
             stop_reason=response.stop_reason,
         )
 
+        # Bodies built exactly ONCE here (H1/M4) — shared by the trace
+        # record below and the spool call back in invoke().
+        prepared = self._prepare_bodies(messages, tools, kwargs, response)
+
         # Build and emit trace record (fire-and-forget for trace_store)
         if self._trace_store is not None or self._on_event is not None:
-            record = self._build_trace_record(
-                response,
-                cost,
-                phase_timings,
-                messages,
-                tools,
-                kwargs,
-            )
+            record = self._build_trace_record(response, cost, phase_timings, prepared, kwargs)
             await self._emit_trace(record)
 
-        return response, cost, total_ms
+        return response, cost, total_ms, prepared
 
     def _record_spool(
         self,

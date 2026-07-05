@@ -6,6 +6,7 @@ import pytest
 
 from arcllm import ArcLLMConfigError, ArcLLMError
 from arcllm.config import (
+    EndpointConfig,
     GlobalConfig,
     ModelMetadata,
     ProviderConfig,
@@ -259,3 +260,114 @@ def test_http_127_allowed():
         default_temperature=0.7,
     )
     assert settings.base_url == "http://127.0.0.1:11434"
+
+
+# --- Endpoint pool config (SPEC-017 Load Balancing) ---
+
+
+def test_provider_config_endpoints_default_empty():
+    """No [[endpoints]] in provider TOML -> endpoints == [] (no breaking change)."""
+    config = load_provider_config("anthropic")
+    assert config.endpoints == []
+
+
+def test_endpoint_pool_parses_typed_list(tmp_path):
+    providers_dir = tmp_path / "providers"
+    providers_dir.mkdir()
+    toml_text = """
+[provider]
+api_format = "test"
+base_url = "https://api.example.com"
+api_key_env = "TEST_KEY"
+default_model = "m"
+default_temperature = 0.7
+
+[[endpoints]]
+base_url = "https://api.example.com"
+api_key_env = "TEST_KEY_A"
+weight = 2
+
+[[endpoints]]
+base_url = "https://api.example.com"
+vault_path = "secret/key-b"
+weight = 1
+"""
+    (providers_dir / "poolprov.toml").write_text(toml_text)
+    with patch("arcllm.config._get_config_dir", return_value=tmp_path):
+        config = load_provider_config("poolprov")
+    assert len(config.endpoints) == 2
+    assert isinstance(config.endpoints[0], EndpointConfig)
+    assert config.endpoints[0].weight == 2
+    assert config.endpoints[0].api_key_env == "TEST_KEY_A"
+    assert config.endpoints[1].vault_path == "secret/key-b"
+
+
+def test_endpoint_https_enforced():
+    with pytest.raises(Exception, match="HTTPS"):
+        EndpointConfig(base_url="http://evil.example.com", api_key_env="X", weight=1)
+
+
+def test_endpoint_localhost_allowed():
+    ep = EndpointConfig(base_url="http://localhost:8000", api_key_env="X", weight=1)
+    assert ep.base_url == "http://localhost:8000"
+
+
+def test_endpoint_negative_weight_rejected():
+    with pytest.raises(Exception, match="weight"):
+        EndpointConfig(base_url="https://api.example.com", api_key_env="X", weight=-1)
+
+
+def test_endpoint_zero_weight_allowed():
+    """weight=0 is a valid, allowed config (drained endpoint) -- not rejected at parse time."""
+    ep = EndpointConfig(base_url="https://api.example.com", api_key_env="X", weight=0)
+    assert ep.weight == 0
+
+
+def test_endpoint_default_weight_is_one():
+    ep = EndpointConfig(base_url="https://api.example.com", api_key_env="X")
+    assert ep.weight == 1
+
+
+def test_endpoint_missing_key_source_rejected_when_required(tmp_path):
+    providers_dir = tmp_path / "providers"
+    providers_dir.mkdir()
+    toml_text = """
+[provider]
+api_format = "test"
+base_url = "https://api.example.com"
+api_key_env = "TEST_KEY"
+api_key_required = true
+default_model = "m"
+default_temperature = 0.7
+
+[[endpoints]]
+base_url = "https://api.example.com"
+weight = 1
+"""
+    (providers_dir / "badpool.toml").write_text(toml_text)
+    with patch("arcllm.config._get_config_dir", return_value=tmp_path):
+        with pytest.raises(ArcLLMConfigError, match=r"api_key_env.*vault_path"):
+            load_provider_config("badpool")
+
+
+def test_endpoint_missing_key_source_allowed_when_not_required(tmp_path):
+    """api_key_required=false endpoints may omit both api_key_env and vault_path."""
+    providers_dir = tmp_path / "providers"
+    providers_dir.mkdir()
+    toml_text = """
+[provider]
+api_format = "test"
+base_url = "https://api.example.com"
+api_key_env = "TEST_KEY"
+api_key_required = false
+default_model = "m"
+default_temperature = 0.7
+
+[[endpoints]]
+base_url = "https://api.example.com"
+weight = 1
+"""
+    (providers_dir / "openpool.toml").write_text(toml_text)
+    with patch("arcllm.config._get_config_dir", return_value=tmp_path):
+        config = load_provider_config("openpool")
+    assert len(config.endpoints) == 1
