@@ -93,3 +93,32 @@ class TestBaseModuleClose:
         module = BaseModule(config={}, inner=mock_inner)
         # Should not raise
         await module.close()
+
+
+# ---------------------------------------------------------------------------
+# resolve_enforcement — shared "warn"/"block" config validation (L4 DRY)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveEnforcement:
+    def test_defaults_to_block_when_absent(self):
+        from arcllm.modules.base import resolve_enforcement
+
+        assert resolve_enforcement({}) == "block"
+
+    def test_returns_configured_warn(self):
+        from arcllm.modules.base import resolve_enforcement
+
+        assert resolve_enforcement({"enforcement": "warn"}) == "warn"
+
+    def test_custom_default_used_when_absent(self):
+        from arcllm.modules.base import resolve_enforcement
+
+        assert resolve_enforcement({}, default="warn") == "warn"
+
+    def test_invalid_value_raises(self):
+        from arcllm.exceptions import ArcLLMConfigError
+        from arcllm.modules.base import resolve_enforcement
+
+        with pytest.raises(ArcLLMConfigError, match="enforcement"):
+            resolve_enforcement({"enforcement": "ignore"})

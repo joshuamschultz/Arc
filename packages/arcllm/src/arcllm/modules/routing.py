@@ -12,6 +12,7 @@ from typing import Any
 from opentelemetry import trace
 
 from arcllm.exceptions import ArcLLMConfigError
+from arcllm.modules.base import resolve_enforcement
 from arcllm.types import LLMProvider, LLMResponse, Message, Tool
 
 logger = logging.getLogger(__name__)
@@ -39,11 +40,7 @@ class RoutingModule(LLMProvider):
         config: dict[str, Any],
         adapters: dict[str, LLMProvider],
     ) -> None:
-        self._enforcement: str = config.get("enforcement", "block")
-        if self._enforcement not in ("warn", "block"):
-            raise ArcLLMConfigError(
-                f"enforcement must be 'warn' or 'block', got '{self._enforcement}'"
-            )
+        self._enforcement: str = resolve_enforcement(config)
 
         if not adapters:
             raise ArcLLMConfigError("RoutingModule requires at least one adapter")

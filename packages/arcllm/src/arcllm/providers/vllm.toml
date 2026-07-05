@@ -42,3 +42,20 @@ cost_input_per_1m = 0.0
 cost_output_per_1m = 0.0
 cost_cache_read_per_1m = 0.0
 cost_cache_write_per_1m = 0.0
+
+# --- Optional endpoint pool for load balancing (SPEC-017) ---
+# Self-hosted replicas serving the same model behind different base_urls.
+# When present AND load_balance is enabled, invokes round-robin across
+# replicas instead of saturating a single one.
+#
+# [[endpoints]]
+# base_url = "http://vllm-replica-1:8000"
+# weight = 1
+#
+# [[endpoints]]
+# base_url = "http://vllm-replica-2:8000"
+# weight = 1
+#
+# [[endpoints]]
+# base_url = "http://vllm-replica-3:8000"
+# weight = 1

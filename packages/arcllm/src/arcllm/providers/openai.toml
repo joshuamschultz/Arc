@@ -108,3 +108,23 @@ cost_input_per_1m = 1.10
 cost_output_per_1m = 4.40
 cost_cache_read_per_1m = 0.275
 cost_cache_write_per_1m = 1.10
+
+# --- Optional endpoint pool for load balancing (SPEC-017) ---
+# When present AND load_balance is enabled, invokes are distributed across
+# these endpoints (weighted round-robin by default). Absent = today's
+# single-endpoint behavior, byte-identical (FR-15).
+#
+# [[endpoints]]
+# base_url = "https://api.openai.com"
+# api_key_env = "OPENAI_API_KEY_A"
+# weight = 2
+#
+# [[endpoints]]
+# base_url = "https://api.openai.com"
+# api_key_env = "OPENAI_API_KEY_B"
+# weight = 1
+#
+# [[endpoints]]
+# base_url = "https://api.openai.com"
+# vault_path = "secret/openai/key-c"        # vault instead of env — same resolver
+# weight = 1

@@ -27,12 +27,39 @@ default_classification = "unclassified"
 [modules.telemetry]
 enabled = true
 log_level = "INFO"
+# SPEC-016 D-435 — full forensic capture (request/response bodies) is ON
+# by default: every call is reconstructable for replay/incident review.
+# Disabling this is itself an audited act (FR-21) — see D-444.
+store_raw_bodies = true
+# Classification watermark FLOOR (D-439) — a per-call value may be
+# supplied (upstream, data-source-aware) but never resolves below this.
+classification = "unclassified"
 # Budget fields (all optional — budget disabled if none present)
 # monthly_limit_usd = 500.00
 # daily_limit_usd = 50.00
 # per_call_max_usd = 5.00
 # alert_threshold_pct = 80
 # enforcement = "block"
+
+# Envelope encryption at rest for captured bodies (SPEC-016 D-438).
+# Off by default (personal/enterprise plaintext, chmod-0600-locked).
+# Federal deployments set enabled=true (+ require_fips=true) so bodies are
+# AES-256-GCM sealed under a vault-resolved wrapping key before write.
+[modules.telemetry.encryption]
+enabled = false
+backend = ""                              # e.g. "arcvault.aws:KmsBackend"
+key_ref = ""
+key_env = "ARCLLM_TRACE_WRAP_KEY"
+cache_ttl_seconds = 300
+require_fips = false                      # federal: true — fail-closed self-check (SC-13)
+
+# Retention purge bounds for rotated trace files (SPEC-016 D-440, FR-11).
+# Unset = unlimited. Read via arcllm.config.load_telemetry_retention_config()
+# and wired into JSONLTraceStore(..., retention_max_age_days=..., ...) by
+# whoever constructs the store (arcagent owns agent_root).
+[modules.telemetry.retention]
+# max_age_days = 365
+# max_bytes = 10737418240
 
 # --- Audit: PII-safe metadata logging ---
 [modules.audit]
@@ -58,6 +85,17 @@ burst_capacity = 60
 # --- Circuit breaker: trip on consecutive failures, cool down before retry ---
 [modules.circuit_breaker]
 enabled = false
+failure_threshold = 5
+cooldown_seconds = 30.0
+half_open_max_calls = 1
+
+# --- Load balancing: intra-provider endpoint/key distribution (SPEC-017) ---
+# Distributes invoke() calls across a provider's [[endpoints]] pool (see
+# providers/*.toml). No-op when the provider has no endpoint pool configured.
+[modules.load_balance]
+enabled = false
+strategy = "weighted_round_robin"
+sticky_key = "session_id"
 failure_threshold = 5
 cooldown_seconds = 30.0
 half_open_max_calls = 1
@@ -96,8 +134,28 @@ enabled = true
 pii_enabled = true
 pii_detector = "regex"
 pii_custom_patterns = []
+pii_detector_class = ""     # "" = built-in RegexPiiDetector; else "module:Class"
 signing_enabled = false
 signing_algorithm = "hmac-sha256"
 signing_key_env = "ARCLLM_SIGNING_KEY"
+
+# [modules.security.pii_entities]
+# allow = ["SSN", "EMAIL", "SECRETS"]   # if present, only these scan
+# deny  = ["IPV4"]                        # else all-but-these scan
+
+# --- Prompt-injection detection: inbound user/tool-result scan (OFF by default) ---
+[modules.injection]
+enabled = false
+enforcement = "warn"        # observe before enforce
+tier = "pattern"             # "semantic" requires arcllm[injection-semantic]
+scan_user = true
+scan_tool_results = true
+
+# --- Structural output guardrails: schema/regex/length/stop-list (per-call) ---
+[modules.guardrails]
+enabled = false
+enforcement = "block"
+max_length = 0               # 0 = uncapped
+banned_content = []
 
 [modules.otel.resource_attributes]
