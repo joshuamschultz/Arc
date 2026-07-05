@@ -1,7 +1,7 @@
 """Tests for ArcLLM provider registry and load_model()."""
 
 import types as stdlib_types
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -489,6 +489,95 @@ class TestModuleStacking:
         # Other costs still injected from metadata
         assert model._cost_output == 15.00
 
+    def test_load_model_lineage_threads_into_telemetry_config(self):
+        """SPEC-016 FR-20 — load_model(lineage=...) threads verbatim into the config."""
+        from arcllm.modules.telemetry import TelemetryModule
+        from arcllm.registry import load_model
+
+        lineage = {"template": "greeting-v1", "rag_docs": ["doc-1"]}
+        model = load_model("anthropic", telemetry=True, retry=False, queue=False, lineage=lineage)
+        assert isinstance(model, TelemetryModule)
+        assert model._lineage_default == lineage
+
+    async def test_load_model_lineage_flows_into_trace_record(self):
+        """End-to-end: lineage set at load_model() appears on the emitted record."""
+        from arcllm.modules.telemetry import TelemetryModule
+        from arcllm.registry import load_model
+        from arcllm.trace_store import TraceRecord
+        from arcllm.types import LLMResponse, Message, Usage
+
+        events: list[TraceRecord] = []
+        lineage = {"template": "v1"}
+        model = load_model(
+            "anthropic",
+            telemetry=True,
+            retry=False,
+            queue=False,
+            security=False,
+            lineage=lineage,
+            on_event=events.append,
+        )
+        assert isinstance(model, TelemetryModule)
+        ok_response = LLMResponse(
+            content="ok",
+            usage=Usage(input_tokens=10, output_tokens=5, total_tokens=15),
+            model="claude-sonnet-4-6",
+            stop_reason="end_turn",
+        )
+        with patch.object(model._inner, "invoke", new=AsyncMock(return_value=ok_response)):
+            await model.invoke([Message(role="user", content="hi")])
+        assert events[0].lineage == lineage
+
+    def test_load_model_encryption_resolves_wrapping_key_via_env(self, monkeypatch):
+        """SPEC-016 D-447 — encryption.enabled resolves the wrapping key at construction."""
+        import base64
+
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        from arcllm.modules.telemetry import TelemetryModule
+        from arcllm.registry import load_model
+
+        secret = base64.b64encode(AESGCM.generate_key(bit_length=256)).decode("ascii")
+        monkeypatch.setenv("ARCLLM_TRACE_WRAP_KEY", secret)
+
+        model = load_model(
+            "anthropic",
+            telemetry={"encryption": {"enabled": True, "key_ref": "v1"}},
+            retry=False,
+            queue=False,
+        )
+        assert isinstance(model, TelemetryModule)
+        assert model._wrapping_key is not None
+        assert model._encryption_config.enabled is True
+
+    def test_load_model_encryption_missing_key_fails_closed(self, monkeypatch):
+        """No vault backend, no env var set — construction fails closed, not plaintext."""
+        from arcllm.exceptions import ArcLLMConfigError
+        from arcllm.registry import load_model
+
+        monkeypatch.delenv("ARCLLM_TRACE_WRAP_KEY", raising=False)
+        with pytest.raises(ArcLLMConfigError):
+            load_model(
+                "anthropic",
+                telemetry={"encryption": {"enabled": True, "key_ref": "v1"}},
+                retry=False,
+                queue=False,
+            )
+
+    def test_load_model_retention_config_not_forwarded_to_telemetry_module(self):
+        """[modules.telemetry.retention] is dropped before TelemetryModule construction —
+        it configures JSONLTraceStore, not per-call telemetry behavior."""
+        from arcllm.modules.telemetry import TelemetryModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            telemetry={"retention": {"max_age_days": 30}},
+            retry=False,
+            queue=False,
+        )
+        assert isinstance(model, TelemetryModule)
+
     def test_load_model_full_stack_with_telemetry(self):
         """Stacking order: Telemetry(Security(Retry(Fallback(RateLimit(adapter))))).
 
@@ -729,6 +818,126 @@ class TestModuleStacking:
         assert len(_bucket_registry) == 0
 
 
+class TestInjectionGuardrailsStacking:
+    """Registry integration: injection/guardrails kwargs wrap the adapter (SPEC-015)."""
+
+    def test_injection_true_wraps_with_injection_module(self):
+        from arcllm.modules.injection import InjectionModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            injection=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, InjectionModule)
+
+    def test_injection_dict_overrides_defaults(self):
+        from arcllm.modules.injection import InjectionModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            injection={"enforcement": "warn"},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, InjectionModule)
+        assert model._enforcement == "warn"
+
+    def test_injection_none_defaults_disabled(self):
+        """config.toml ships injection.enabled=false -- None means disabled."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+        from arcllm.registry import load_model
+
+        model = load_model("anthropic", telemetry=False, retry=False, queue=False, security=False)
+        assert isinstance(model, AnthropicAdapter)
+
+    def test_guardrails_dict_wraps_with_guardrails_module(self):
+        from arcllm.modules.guardrails import GuardrailsModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            guardrails={"max_length": 500},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, GuardrailsModule)
+        assert model._max_length == 500
+
+    def test_guardrails_false_overrides_config(self):
+        from arcllm.adapters.anthropic import AnthropicAdapter
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            guardrails=False,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, AnthropicAdapter)
+
+    def test_stack_order_security_injection_guardrails_audit(self):
+        """ADR-430: Audit(Guardrails(Injection(Security(adapter))))."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+        from arcllm.modules.audit import AuditModule
+        from arcllm.modules.guardrails import GuardrailsModule
+        from arcllm.modules.injection import InjectionModule
+        from arcllm.modules.security import SecurityModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            security=True,
+            injection=True,
+            guardrails=True,
+            audit=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+        )
+        assert isinstance(model, AuditModule)
+        assert isinstance(model._inner, GuardrailsModule)
+        assert isinstance(model._inner._inner, InjectionModule)
+        assert isinstance(model._inner._inner._inner, SecurityModule)
+        assert isinstance(model._inner._inner._inner._inner, AnthropicAdapter)
+
+    def test_injection_sees_pre_redaction_text(self):
+        """Injection wraps Security, so it scans the ORIGINAL (unredacted) text."""
+        import os
+        from unittest.mock import patch
+
+        from arcllm.modules.injection import InjectionModule
+        from arcllm.registry import load_model
+
+        with patch.dict(os.environ, {"ARCLLM_SIGNING_KEY": "test-key"}):
+            model = load_model(
+                "anthropic",
+                security=True,
+                injection={"enforcement": "warn"},
+                telemetry=False,
+                retry=False,
+                queue=False,
+            )
+        assert isinstance(model, InjectionModule)
+        # The adapter directly under Security has not been reached yet by
+        # injection -- injection wraps security, meaning invoke() scans
+        # messages BEFORE they pass into SecurityModule's redaction phase.
+        from arcllm.modules.security import SecurityModule
+
+        assert isinstance(model._inner, SecurityModule)
+
+
 class TestModuleNames:
     """MODULE_NAMES is the canonical module-kwarg set imported by callers."""
 
@@ -753,3 +962,187 @@ class TestModuleNames:
             and "dict" in str(param.annotation)
         }
         assert module_params == set(MODULE_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# TestLoadBalanceStacking (SPEC-017)
+# ---------------------------------------------------------------------------
+
+
+class TestLoadBalanceStacking:
+    """Registry integration: load_balance kwarg builds a pooled adapter.
+
+    Temporarily appends a real (uncommented) ``[[endpoints]]`` pool onto
+    the packaged ``openai.toml`` and restores the original file content
+    on teardown. This exercises the real adapter-discovery convention
+    (provider name -> adapter module/class) rather than inventing a fake
+    provider name that has no adapter module.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _pool_provider(self, monkeypatch):
+        from arcllm.config import _get_config_dir
+
+        openai_toml = _get_config_dir() / "providers" / "openai.toml"
+        original_text = openai_toml.read_text()
+
+        pool_block = """
+
+[[endpoints]]
+base_url = "https://api.example.com"
+api_key_env = "POOL_KEY_A"
+weight = 2
+
+[[endpoints]]
+base_url = "https://api.example.com"
+api_key_env = "POOL_KEY_B"
+weight = 1
+"""
+        openai_toml.write_text(original_text + pool_block)
+        monkeypatch.setenv("POOL_KEY_A", "kA")
+        monkeypatch.setenv("POOL_KEY_B", "kB")
+
+        try:
+            yield
+        finally:
+            openai_toml.write_text(original_text)
+
+    def test_load_balance_true_builds_pool(self):
+        from arcllm.modules.load_balancer import LoadBalancerModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "openai",
+            load_balance=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, LoadBalancerModule)
+        assert len(model._pool) == 2
+
+    def test_load_balance_dict_override(self):
+        from arcllm.modules.load_balancer import LoadBalancerModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "openai",
+            load_balance={"strategy": "sticky"},
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, LoadBalancerModule)
+        assert model._strategy == "sticky"
+
+    def test_load_balance_false_overrides_config(self):
+        from arcllm.adapters.openai import OpenaiAdapter
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "openai",
+            load_balance=False,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, OpenaiAdapter)
+
+    def test_load_balance_none_defaults_disabled(self):
+        """config.toml ships load_balance.enabled=false -- None means disabled."""
+        from arcllm.adapters.openai import OpenaiAdapter
+        from arcllm.registry import load_model
+
+        model = load_model("openai", telemetry=False, retry=False, queue=False, security=False)
+        assert isinstance(model, OpenaiAdapter)
+
+    def test_no_pool_provider_unaffected_by_load_balance_true(self):
+        """load_balance=True but provider has no [[endpoints]] -- pass-through (FR-15)."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            load_balance=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, AnthropicAdapter)
+
+    def test_rate_limit_wraps_load_balancer(self):
+        """RateLimit stays outside LoadBalancer in the stack (per SDD architecture fit)."""
+        from arcllm.modules.load_balancer import LoadBalancerModule
+        from arcllm.modules.rate_limit import RateLimitModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "openai",
+            load_balance=True,
+            rate_limit=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, RateLimitModule)
+        assert isinstance(model._inner, LoadBalancerModule)
+
+    def test_endpoint_weight_zero_excluded_from_pool(self, monkeypatch):
+        from arcllm.config import _get_config_dir
+
+        openai_toml = _get_config_dir() / "providers" / "openai.toml"
+        # Overwrite the pool laid down by the autouse fixture with a
+        # weight=0 variant for this one test.
+        original_with_pool = openai_toml.read_text()
+        base_without_pool = original_with_pool.split("\n\n[[endpoints]]", 1)[0]
+        drained_block = """
+
+[[endpoints]]
+base_url = "https://api.example.com"
+api_key_env = "POOL_KEY_A"
+weight = 1
+
+[[endpoints]]
+base_url = "https://api.example.com"
+api_key_env = "POOL_KEY_B"
+weight = 0
+"""
+        openai_toml.write_text(base_without_pool + drained_block)
+
+        from arcllm.modules.load_balancer import LoadBalancerModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "openai",
+            load_balance=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, LoadBalancerModule)
+        assert len(model._pool) == 1
+
+    def test_endpoint_identity_never_contains_key_value(self):
+        """FR-18: pool endpoint identity carries the key *source name*, not the secret."""
+        from arcllm.modules.load_balancer import LoadBalancerModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "openai",
+            load_balance=True,
+            telemetry=False,
+            retry=False,
+            queue=False,
+            security=False,
+        )
+        assert isinstance(model, LoadBalancerModule)
+        for ep in model._pool:
+            assert "kA" not in ep.endpoint_id
+            assert "kB" not in ep.endpoint_id
+            assert "POOL_KEY" in ep.endpoint_id

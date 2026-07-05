@@ -1,5 +1,16 @@
 """ArcLLM exception hierarchy."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+# Type-only imports — keeps exceptions.py at the bottom of the dependency
+# graph (no runtime import of modules/injection.py or modules/guardrails.py,
+# which would create a cycle since those modules import from here).
+if TYPE_CHECKING:
+    from arcllm.modules.guardrails import Violation
+    from arcllm.modules.injection import InjectionFinding
+
 
 class ArcLLMError(Exception):
     """Base exception for all ArcLLM errors."""
@@ -100,3 +111,44 @@ class QueueTimeoutError(ArcLLMError):
     def __init__(self, timeout: float) -> None:
         self.timeout = timeout
         super().__init__(f"LLM call timed out after {timeout:.1f}s (send-time)")
+
+
+class ArcLLMInjectionError(ArcLLMError):
+    """Raised when InjectionModule detects a prompt-injection pattern in block mode.
+
+    Carries the structured findings so callers can branch (log, alert,
+    human-gate) without string-matching the exception message (D-431).
+    """
+
+    def __init__(self, findings: list[InjectionFinding]) -> None:
+        self.findings = findings
+        super().__init__(f"Prompt injection detected: {len(findings)} finding(s)")
+
+
+class ArcLLMGuardrailError(ArcLLMError):
+    """Raised when GuardrailsModule finds a structural violation in block mode.
+
+    Carries the structured violations so callers can branch (retry with a
+    stricter prompt, alert, human-gate) without string-matching (D-431).
+    """
+
+    def __init__(self, violations: list[Violation]) -> None:
+        self.violations = violations
+        super().__init__(f"Output guardrail violation: {len(violations)} rule(s)")
+
+
+class ArcLLMTraceNotFoundError(ArcLLMError):
+    """Raised by ``load_for_replay`` when no record matches the given trace_id."""
+
+    def __init__(self, trace_id: str) -> None:
+        self.trace_id = trace_id
+        super().__init__(f"Trace '{trace_id}' not found for replay")
+
+
+class ArcLLMTraceIntegrityError(ArcLLMError):
+    """Raised when an encrypted trace envelope fails tamper-evidence checks.
+
+    Distinct from ``ArcLLMConfigError`` (a misconfiguration) — this signals
+    a detected integrity violation (AAD/record-identity mismatch), e.g. a
+    ciphertext transplanted onto a different record (D-448, AU-10).
+    """

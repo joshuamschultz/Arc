@@ -34,6 +34,27 @@ def validate_config_keys(
         )
 
 
+def resolve_enforcement(config: dict[str, Any], *, default: str = "block") -> str:
+    """Resolve and validate the ``enforcement`` config key.
+
+    Shared by every module offering "warn"-or-"block" behavior
+    (GuardrailsModule, InjectionModule, RoutingModule, TelemetryModule
+    budget enforcement) so the accepted values and error message live in
+    exactly one place.
+
+    Args:
+        config: Module configuration dict.
+        default: Value used when ``enforcement`` is absent.
+
+    Raises:
+        ArcLLMConfigError: If the resolved value is neither "warn" nor "block".
+    """
+    enforcement: str = config.get("enforcement", default)
+    if enforcement not in ("warn", "block"):
+        raise ArcLLMConfigError(f"enforcement must be 'warn' or 'block', got '{enforcement}'")
+    return enforcement
+
+
 class BaseModule(LLMProvider):
     """Base class for ArcLLM modules.
 

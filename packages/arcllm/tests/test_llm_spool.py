@@ -96,9 +96,19 @@ async def test_raw_bodies_ride_extra_when_enabled(messages: list[Message]) -> No
     assert extra["response_body"]["content"] == "ok"
 
 
-async def test_no_raw_bodies_in_extra_by_default(messages: list[Message]) -> None:
-    """Metadata-only is the federal/CUI default — no payloads leak into extra."""
+async def test_raw_bodies_in_extra_by_default(messages: list[Message]) -> None:
+    """SPEC-016 D-435 — full capture is now the default: payloads DO appear in extra."""
     module = TelemetryModule(_config(), _inner())
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        await module.invoke(messages)
+    assert "request_body" in recorded[0].extra
+    assert "response_body" in recorded[0].extra
+
+
+async def test_no_raw_bodies_in_extra_when_disabled(messages: list[Message]) -> None:
+    """store_raw_bodies=False (explicit, audited downgrade) omits payloads from extra."""
+    module = TelemetryModule(_config(store_raw_bodies=False), _inner())
     recorded: list = []
     with patch.object(telemetry_mod, "_spool_record", recorded.append):
         await module.invoke(messages)
@@ -118,3 +128,93 @@ async def test_error_path_carries_request_body_only(messages: list[Message]) -> 
     extra = recorded[0].extra
     assert extra["request_body"]["messages"][0]["content"] == "hi"
     assert "response_body" not in extra
+
+
+# ---------------------------------------------------------------------------
+# H1 — encryption must never leak plaintext bodies into the spool, and
+# bodies must be built exactly once per invoke() (folded-in M4).
+# ---------------------------------------------------------------------------
+
+
+def _wrapping_key_secret() -> str:
+    import base64
+
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    return base64.b64encode(AESGCM.generate_key(bit_length=256)).decode("ascii")
+
+
+async def test_spool_never_carries_plaintext_bodies_when_encryption_enabled(
+    messages: list[Message],
+) -> None:
+    """H1: encryption enabled must seal bodies before EITHER consumer (the
+    trace_store record or the arcstore spool) ever sees them — the spool
+    must not be a plaintext-CUI side channel around encryption."""
+    module = TelemetryModule(
+        _config(
+            store_raw_bodies=True,
+            encryption={"enabled": True, "key_ref": "v1"},
+            encryption_key_secret=_wrapping_key_secret(),
+        ),
+        _inner(),
+    )
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        await module.invoke(messages)
+
+    extra = recorded[0].extra
+    assert "request_body" not in extra
+    assert "response_body" not in extra
+    serialized_extra = str(extra)
+    assert "hi" not in serialized_extra  # the plaintext message content
+    assert "ok" not in serialized_extra  # the plaintext response content
+
+
+async def test_spool_never_carries_plaintext_on_error_path_when_encrypted(
+    messages: list[Message],
+) -> None:
+    """H1: the error path must also never leak plaintext to the spool."""
+    inner = _inner()
+    inner.invoke = AsyncMock(side_effect=RuntimeError("boom"))
+    module = TelemetryModule(
+        _config(
+            store_raw_bodies=True,
+            encryption={"enabled": True, "key_ref": "v1"},
+            encryption_key_secret=_wrapping_key_secret(),
+        ),
+        inner,
+    )
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        with pytest.raises(RuntimeError):
+            await module.invoke(messages)
+
+    extra = recorded[0].extra
+    assert "request_body" not in extra
+    assert "hi" not in str(extra)
+
+
+async def test_bodies_built_exactly_once_per_invoke(messages: list[Message]) -> None:
+    """H1/M4: the trace_store record and the arcstore spool must share ONE
+    body-building pass — previously each invoke() rebuilt+re-serialized
+    the bodies a second time for the spool."""
+    events: list = []
+    module = TelemetryModule(_config(store_raw_bodies=True, on_event=events.append), _inner())
+
+    calls = {"n": 0}
+    real_raw_bodies = telemetry_mod.TelemetryModule._raw_bodies
+
+    def _counting_raw_bodies(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["n"] += 1
+        return real_raw_bodies(self, *args, **kwargs)
+
+    recorded: list = []
+    with (
+        patch.object(telemetry_mod.TelemetryModule, "_raw_bodies", _counting_raw_bodies),
+        patch.object(telemetry_mod, "_spool_record", recorded.append),
+    ):
+        await module.invoke(messages)
+
+    assert calls["n"] == 1
+    assert events[0].request_body is not None
+    assert recorded[0].extra["request_body"] is not None

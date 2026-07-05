@@ -13,10 +13,15 @@ instance.
 import asyncio
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from arcllm._trace_crypto import unseal
+from arcllm.exceptions import ArcLLMConfigError, ArcLLMTraceNotFoundError
 from arcllm.trace_store import TraceRecord
+from arcllm.types import Message, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -220,3 +225,108 @@ async def get_record(traces_dir: Path, trace_id: str) -> TraceRecord | None:
             if data.get("trace_id") == trace_id:
                 return TraceRecord(**data)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Replay reconstruction (SPEC-016) — data-only. Replay EXECUTION (re-invoking
+# a model, diffing/scoring outputs) and lineage CONSTRUCTION belong to
+# arcrun/arcagent, never here (D-442, D-443; see SDD Boundaries).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReplayRequest:
+    """A byte-exact, reconstructed LLM request. Data only — no I/O.
+
+    Deliberately exposes no ``execute``/``invoke`` method: re-running the
+    request, streaming the re-run, and diffing/scoring old vs. new output
+    are arcrun/tooling responsibilities (D-442). ``classification`` rides
+    the object verbatim from the source record so a caller applies the
+    same access controls to a decrypted replay as it would to the
+    original (a replay is a CUI read, not a downgrade to unmarked data).
+    """
+
+    provider: str
+    model: str
+    messages: list[Message]
+    tools: list[Tool] | None
+    options: dict[str, Any]
+    lineage: dict[str, Any] | None
+    classification: str
+
+
+def _rebuild_request_from_body(
+    request_body: dict[str, Any],
+) -> tuple[list[Message], list[Tool] | None, dict[str, Any]]:
+    """Reconstruct (messages, tools, options) from a stored request_body."""
+    messages = [Message(**m) for m in request_body.get("messages", [])]
+    tools_data = request_body.get("tools")
+    tools = [Tool(**t) for t in tools_data] if tools_data else None
+    options = {k: v for k, v in request_body.items() if k not in ("messages", "tools")}
+    return messages, tools, options
+
+
+async def load_for_replay(
+    traces_dir: Path,
+    trace_id: str,
+    *,
+    wrapping_key_resolver: Callable[[str], bytes] | None = None,
+) -> ReplayRequest:
+    """Reconstruct a byte-exact :class:`ReplayRequest` for ``trace_id``.
+
+    Transparently decrypts sealed bodies when the record carries an
+    ``encryption`` envelope. Reconstruction only — arcllm never re-invokes
+    a model (see module docstring).
+
+    Args:
+        traces_dir: Directory containing ``traces-*.jsonl`` files.
+        trace_id: The record to reconstruct.
+        wrapping_key_resolver: Given an ``EncryptedEnvelope.key_ref``,
+            returns the KEK bytes that wrapped that record's data key.
+            Required when the record is encrypted; supports KEK rotation
+            since each record resolves its OWN stored key_ref.
+
+    Raises:
+        ArcLLMTraceNotFoundError: No record matches ``trace_id``.
+        ArcLLMConfigError: The record is encrypted but no
+            ``wrapping_key_resolver`` was supplied, or the record was
+            captured metadata-only (no body to reconstruct from) — fails
+            closed rather than returning a partially-empty request.
+    """
+    record = await get_record(traces_dir, trace_id)
+    if record is None:
+        raise ArcLLMTraceNotFoundError(trace_id)
+
+    if record.encryption is not None:
+        if wrapping_key_resolver is None:
+            raise ArcLLMConfigError(
+                f"trace '{trace_id}' is encrypted; wrapping_key_resolver required"
+            )
+        wrapping_key = wrapping_key_resolver(record.encryption.key_ref)
+        bodies = unseal(
+            record.encryption,
+            trace_id=record.trace_id,
+            timestamp=record.timestamp,
+            wrapping_key=wrapping_key,
+        )
+        request_body = bodies.get("request_body")
+    else:
+        request_body = record.request_body
+
+    if request_body is None:
+        raise ArcLLMConfigError(
+            f"trace '{trace_id}' is not reconstructable (captured metadata-only; "
+            "no request_body was stored)"
+        )
+
+    messages, tools, options = _rebuild_request_from_body(request_body)
+
+    return ReplayRequest(
+        provider=record.provider,
+        model=record.model,
+        messages=messages,
+        tools=tools,
+        options=options,
+        lineage=record.lineage,
+        classification=record.classification,
+    )

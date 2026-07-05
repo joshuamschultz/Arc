@@ -1,6 +1,7 @@
 """Provider registry — convention-based adapter discovery and load_model()."""
 
 import importlib
+import logging
 import re
 import threading
 from collections.abc import Callable
@@ -8,6 +9,7 @@ from typing import Any
 
 from arcllm.adapters.base import BaseAdapter
 from arcllm.config import (
+    EndpointConfig,
     GlobalConfig,
     ProviderConfig,
     load_global_config,
@@ -15,6 +17,8 @@ from arcllm.config import (
 )
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider
+
+logger = logging.getLogger(__name__)
 
 # ASI04 / NIST SI-10: Validate provider names to prevent path traversal
 # and arbitrary module import via naming convention adapter discovery.
@@ -41,6 +45,10 @@ def clear_cache() -> None:
     from arcllm.modules.rate_limit import clear_buckets
 
     clear_buckets()
+
+    from arcllm.modules.load_balancer import clear_pools
+
+    clear_pools()
 
     from arcllm.modules.otel import reset_sdk
 
@@ -156,6 +164,30 @@ def _resolve_module_config(
     return None
 
 
+def _construct_adapter(
+    provider_name: str,
+    resolved_model: str,
+    provider_config: ProviderConfig,
+    vault_cfg: Any,
+    vault_resolver: Any,
+) -> LLMProvider:
+    """Shared vault-key-resolution + adapter-construction tail (L8, D-457).
+
+    Single key-handling code path for every adapter build site — the
+    primary adapter, routing-rule adapters, and load-balancer pool
+    endpoints all resolve their vault key and construct their
+    ``BaseAdapter`` here, never a second, less-audited copy of this logic.
+    """
+    resolved_api_key: str | None = None
+    if vault_cfg.backend and vault_resolver is not None:
+        vault_path = provider_config.provider.vault_path
+        api_key_env = provider_config.provider.api_key_env
+        resolved_api_key = vault_resolver.resolve_api_key(api_key_env, vault_path or None)
+
+    adapter_class = _get_adapter_class(provider_name)
+    return adapter_class(provider_config, resolved_model, resolved_api_key=resolved_api_key)
+
+
 def _build_adapter(
     provider_name: str,
     model_name: str | None,
@@ -171,15 +203,51 @@ def _build_adapter(
         _provider_config_cache[provider_name] = load_provider_config(provider_name)
     config = _provider_config_cache[provider_name]
     resolved_model = model_name or config.provider.default_model
+    return _construct_adapter(provider_name, resolved_model, config, vault_cfg, vault_resolver)
 
-    resolved_api_key: str | None = None
-    if vault_cfg.backend and vault_resolver is not None:
-        vault_path = config.provider.vault_path
-        api_key_env = config.provider.api_key_env
-        resolved_api_key = vault_resolver.resolve_api_key(api_key_env, vault_path or None)
 
-    adapter_class = _get_adapter_class(provider_name)
-    return adapter_class(config, resolved_model, resolved_api_key=resolved_api_key)
+def _endpoint_identity(endpoint: EndpointConfig) -> str:
+    """Stable identity string for a pool endpoint: base_url + key *source name*.
+
+    Never includes a resolved secret value (D-457, FR-18) — only the
+    env var name or vault path, i.e. where the key comes from, not the
+    key itself. Used as the per-endpoint health key and as an input to
+    the pool's identity hash (SPEC-017).
+    """
+    key_source = endpoint.api_key_env or endpoint.vault_path
+    return f"{endpoint.base_url}::{key_source}"
+
+
+def _build_adapter_for_endpoint(
+    provider_name: str,
+    model_name: str | None,
+    endpoint: EndpointConfig,
+    vault_cfg: Any,
+    vault_resolver: Any,
+) -> LLMProvider:
+    """Build one adapter for a single load-balancing pool endpoint.
+
+    Clones the resolved ``ProviderConfig`` with the endpoint's
+    ``base_url``/key-source overridden, then reuses the exact same vault
+    resolution + ``BaseAdapter`` construction as ``_build_adapter`` — no
+    second, less-audited key-handling code path (D-457, SPEC-017 ADR-8).
+    """
+    if provider_name not in _provider_config_cache:
+        _provider_config_cache[provider_name] = load_provider_config(provider_name)
+    base_config = _provider_config_cache[provider_name]
+    resolved_model = model_name or base_config.provider.default_model
+
+    endpoint_provider_settings = base_config.provider.model_copy(
+        update={
+            "base_url": endpoint.base_url,
+            "api_key_env": endpoint.api_key_env,
+            "vault_path": endpoint.vault_path,
+        }
+    )
+    endpoint_config = base_config.model_copy(update={"provider": endpoint_provider_settings})
+    return _construct_adapter(
+        provider_name, resolved_model, endpoint_config, vault_cfg, vault_resolver
+    )
 
 
 # Canonical set of arcllm module kwarg names accepted by load_model(). This is
@@ -193,11 +261,14 @@ MODULE_NAMES: frozenset[str] = frozenset(
         "retry",
         "fallback",
         "rate_limit",
+        "load_balance",
         "circuit_breaker",
         "telemetry",
         "queue",
         "audit",
         "security",
+        "injection",
+        "guardrails",
         "otel",
     }
 )
@@ -211,15 +282,19 @@ def load_model(
     on_event: Callable[[Any], None] | None = None,
     trace_store: Any | None = None,
     agent_label: str | None = None,
+    lineage: dict[str, Any] | None = None,
     routing: bool | dict[str, Any] | None = None,
     retry: bool | dict[str, Any] | None = None,
     fallback: bool | dict[str, Any] | None = None,
     rate_limit: bool | dict[str, Any] | None = None,
+    load_balance: bool | dict[str, Any] | None = None,
     circuit_breaker: bool | dict[str, Any] | None = None,
     telemetry: bool | dict[str, Any] | None = None,
     queue: bool | dict[str, Any] | None = None,
     audit: bool | dict[str, Any] | None = None,
     security: bool | dict[str, Any] | None = None,
+    injection: bool | dict[str, Any] | None = None,
+    guardrails: bool | dict[str, Any] | None = None,
     otel: bool | dict[str, Any] | None = None,
 ) -> LLMProvider:
     """Load a configured model object for the given provider.
@@ -241,8 +316,12 @@ def load_model(
         - ``None`` (default): use config.toml enabled flag
 
     Stacking order (outermost first):
-        Otel → Queue → Telemetry → CircuitBreaker → Audit → Security →
-        Retry → Fallback → RateLimit → [Router|Adapter].
+        Otel → Queue → Telemetry → Audit → Guardrails → Injection →
+        Security → CircuitBreaker → Retry → Fallback → RateLimit →
+        [Router|LoadBalancer|Adapter]. (ADR-430: Injection sits above
+        Security so it sees pre-redaction text; Guardrails sits just
+        inside Audit so it validates the final post-Retry/Fallback
+        response and the audit trail records its verdict.)
 
     Args:
         provider: Provider name (e.g., "anthropic", "openai").
@@ -255,11 +334,19 @@ def load_model(
         trace_store: Optional TraceStore for persistent recording. Records appended
             after every invoke(). Independent of on_event — either, both, or neither.
         agent_label: Label attached to TraceRecords for multi-agent identification.
+        lineage: Optional provenance token (template source, RAG documents,
+            variable substitution) attached VERBATIM to every TraceRecord's
+            ``lineage`` field. arcllm never constructs or infers lineage —
+            arcrun/arcagent build it and pass it through here (SPEC-016 D-443).
         routing: RoutingModule configuration override. When enabled, replaces the
             single adapter with a classification-based router.
         retry: RetryModule configuration override.
         fallback: FallbackModule configuration override.
         rate_limit: RateLimitModule configuration override.
+        load_balance: LoadBalancerModule configuration override. When enabled and
+            the provider TOML declares an ``[[endpoints]]`` pool, replaces the
+            single adapter with a load-balanced pool (weighted round-robin,
+            health-aware, or sticky). No-op when no pool is configured.
         circuit_breaker: CircuitBreakerModule configuration override. Per-provider
             circuit breaker with CLOSED/OPEN/HALF_OPEN state machine.
         telemetry: TelemetryModule configuration override. Pricing data is
@@ -268,6 +355,12 @@ def load_model(
             backpressure and send-time timeouts for LLM calls.
         audit: AuditModule configuration override. PII-safe metadata logging.
         security: SecurityModule configuration override. PII redaction + request signing.
+        injection: InjectionModule configuration override. Opt-in, OFF by default.
+            Scans inbound user + tool-result content for prompt-injection patterns
+            before the provider call (OWASP LLM01, ASI06).
+        guardrails: GuardrailsModule configuration override. Opt-in per call.
+            Validates the final resolved response's structure (JSON schema,
+            regex allow/deny, max length, banned-content stop-list) (OWASP LLM05).
         otel: OtelModule configuration override. OpenTelemetry distributed tracing.
 
     Returns:
@@ -307,6 +400,10 @@ def load_model(
 
     # Check if routing is enabled — if so, create a RoutingModule instead of
     # a single adapter. Router replaces adapter at innermost stack position.
+    # LoadBalancer competes for the same innermost slot (SPEC-017 ADR-7) —
+    # both are "Router-like" innermost-replacers; routing takes priority
+    # when both happen to be configured (routing decides provider/model,
+    # a strictly outer concern to endpoint selection within one provider).
     routing_config = _resolve_module_config("routing", routing)
     if routing_config is not None and routing_config.get("rules"):
         from arcllm.modules.routing import RoutingModule
@@ -331,7 +428,30 @@ def load_model(
             adapters,
         )
     else:
-        result = _build_adapter(provider, model_name, vault_cfg, _vault_resolver_cache)
+        lb_config = _resolve_module_config("load_balance", load_balance)
+        if lb_config is not None and config.endpoints:
+            from arcllm.modules.load_balancer import LoadBalancerModule, PoolEndpoint
+
+            pool_endpoints = [
+                PoolEndpoint(
+                    adapter=_build_adapter_for_endpoint(
+                        provider, model_name, ep, vault_cfg, _vault_resolver_cache
+                    ),
+                    weight=ep.weight,
+                    endpoint_id=_endpoint_identity(ep),
+                )
+                for ep in config.endpoints
+                if ep.weight > 0
+            ]
+            result = LoadBalancerModule(lb_config, pool_endpoints, provider)
+        else:
+            if lb_config is not None and not config.endpoints:
+                logger.info(
+                    "load_balance enabled but no endpoints configured for '%s'; "
+                    "using single provider",
+                    provider,
+                )
+            result = _build_adapter(provider, model_name, vault_cfg, _vault_resolver_cache)
 
     # Apply module wrapping (innermost first): RateLimit, Fallback, Retry
     rate_limit_config = _resolve_module_config("rate_limit", rate_limit)
@@ -366,6 +486,22 @@ def load_model(
 
         result = SecurityModule(security_config, result)
 
+    # Injection sits ABOVE Security so it scans the ORIGINAL inbound text,
+    # before PII/secret redaction can obscure encoded attack signal
+    # (ADR-422). Guardrails sits above Injection so it validates the
+    # response Audit will also see (ADR-430).
+    injection_config = _resolve_module_config("injection", injection)
+    if injection_config is not None:
+        from arcllm.modules.injection import InjectionModule
+
+        result = InjectionModule(injection_config, result)
+
+    guardrails_config = _resolve_module_config("guardrails", guardrails)
+    if guardrails_config is not None:
+        from arcllm.modules.guardrails import GuardrailsModule
+
+        result = GuardrailsModule(guardrails_config, result)
+
     audit_config = _resolve_module_config("audit", audit)
     if audit_config is not None:
         from arcllm.modules.audit import AuditModule
@@ -397,13 +533,40 @@ def load_model(
             "default_max_tokens", _ensure_global_config().defaults.max_tokens
         )
 
-        # Thread trace_store, on_event, and agent_label into telemetry config
+        # Thread trace_store, on_event, agent_label, and lineage into config
         if on_event is not None:
             telemetry_config["on_event"] = on_event
         if trace_store is not None:
             telemetry_config["trace_store"] = trace_store
         if agent_label is not None:
             telemetry_config["agent_label"] = agent_label
+        if lineage is not None:
+            telemetry_config["lineage"] = lineage
+
+        # SPEC-016 D-440: retention purge operates on a JSONLTraceStore's
+        # directory, constructed independently of load_model() (the store
+        # owns agent_root). TelemetryModule doesn't consume it — drop it
+        # here rather than teaching TelemetryModule an unused config key.
+        # Callers read arcllm.config.load_telemetry_retention_config() and
+        # wire it into their own JSONLTraceStore construction.
+        telemetry_config.pop("retention", None)
+
+        # SPEC-016 D-438/D-447: resolve the wrapping key ONCE, at
+        # construction (AU-2 — tier posture must flow through construction,
+        # never be re-resolved per call). Reuses the shared VaultResolver
+        # (with its TTL cache) when one is already configured; falls back to
+        # an env-only resolver otherwise (dev/personal, no vault backend).
+        encryption_cfg = telemetry_config.get("encryption") or {}
+        if encryption_cfg.get("enabled"):
+            from arcllm.vault import VaultResolver
+
+            wrap_resolver = _vault_resolver_cache or VaultResolver(
+                backend=None, cache_ttl_seconds=vault_cfg.cache_ttl_seconds
+            )
+            telemetry_config["encryption_key_secret"] = wrap_resolver.resolve_api_key(
+                encryption_cfg.get("key_env", "ARCLLM_TRACE_WRAP_KEY"),
+                encryption_cfg.get("key_ref") or None,
+            )
 
         result = TelemetryModule(telemetry_config, result)
 

@@ -3,7 +3,13 @@
 TraceRecord captures everything about a single LLM invoke():
 timing, tokens, cost, request/response bodies, and phase sub-timings.
 
-Records are hash-chained (SHA-256) for tamper-evident audit trails.
+Records are hash-chained (SHA-256): each record's hash covers the prior
+record's hash, so in-place mutation or reordering of records present on
+disk is detectable. This is INTERNAL-CONSISTENCY tamper evidence only —
+it does not by itself prove no records were removed from the head of the
+chain (see ``verify_chain()``); full AU-9/AU-10 non-repudiation requires
+an external signed anchor (arctrust's ``SignedChainSink``), which is out
+of scope for this module (arcllm owns capture, not signed-chain anchoring).
 JSONLTraceStore implements the TraceStore Protocol with daily rotation.
 
 The read path (filtered query, single-record lookup, reverse-line
@@ -22,7 +28,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 import jcs  # type: ignore[import-untyped]  # RFC 8785 canonical JSON — no stubs available
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +36,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # TraceRecord — frozen Pydantic model for a single LLM call
 # ---------------------------------------------------------------------------
+
+
+class EncryptedEnvelope(BaseModel, frozen=True):
+    """Envelope-encrypted trace bodies at rest (SPEC-016 D-438).
+
+    Present iff ``request_body``/``response_body`` were sealed before
+    write — in that case both are ``None`` on the record and the plaintext
+    bodies only ever existed transiently in memory. ``ciphertext`` is the
+    JCS-canonicalized ``{"request_body":..., "response_body":...}`` pair
+    under AES-256-GCM; ``wrapped_key`` is the per-record data key wrapped
+    with AES Key Wrap (RFC 3394 / SP 800-38F) under the resolved KEK.
+    ``aad`` binds the ciphertext to this record's identity so it cannot be
+    transplanted onto another record (D-448).
+    """
+
+    alg: str = "AES-256-GCM"
+    wrapped_key: str
+    key_ref: str
+    nonce: str
+    ciphertext: str
+    aad: str
 
 
 class TraceRecord(BaseModel, frozen=True):
@@ -43,11 +70,28 @@ class TraceRecord(BaseModel, frozen=True):
     agent_did: str | None = None
     budget_scope: str | None = None
 
-    # Request body (optional per tier config)
+    # Request body — full capture by default (SPEC-016 D-435). ``None``
+    # when capture is disabled, the call errored before a request body
+    # could be built, or the body was sealed into ``encryption`` below.
     request_body: dict[str, Any] | None = None
 
-    # Response body (optional per tier config)
+    # Response body — see request_body. ``None`` on the error path, when
+    # capture is disabled, or when sealed into ``encryption``.
     response_body: dict[str, Any] | None = None
+
+    # Classification watermark (SPEC-016 D-439). Config supplies the tier
+    # FLOOR; a per-call value may be supplied but must never resolve below
+    # that floor (arcllm enforces the floor, never classifies content).
+    classification: str = "unclassified"
+
+    # Envelope encryption (SPEC-016 D-438). Present iff request_body/
+    # response_body were sealed before write.
+    encryption: EncryptedEnvelope | None = None
+
+    # Lineage token (SPEC-016 D-443), persisted VERBATIM from a
+    # load_model()/invoke() kwarg. arcrun/arcagent build it; arcllm never
+    # constructs or infers lineage from message content.
+    lineage: dict[str, Any] | None = None
 
     # Telemetry (always present for llm_call events)
     duration_ms: float = 0.0
@@ -167,7 +211,13 @@ class JSONLTraceStore:
         pointing to the next file, carrying the chain hash forward.
     """
 
-    def __init__(self, agent_root: Path) -> None:
+    def __init__(
+        self,
+        agent_root: Path,
+        *,
+        retention_max_age_days: int | None = None,
+        retention_max_bytes: int | None = None,
+    ) -> None:
         # NIST AU-9: traces live at <agent_root>/traces, outside the agent's
         # workspace tool sandbox.
         self._traces_dir = agent_root / "traces"
@@ -179,6 +229,10 @@ class JSONLTraceStore:
         self._current_file: Path | None = None
         self._line_count: int = 0
         self._warm_started = False
+        # SPEC-016 D-440: retention purge runs at daily rotation boundaries,
+        # never mid-day, so it never competes with today's live append.
+        self._retention_max_age_days = retention_max_age_days
+        self._retention_max_bytes = retention_max_bytes
 
     def _file_for_date(self, date_str: str) -> Path:
         """Return the JSONL file path for a given date."""
@@ -191,8 +245,11 @@ class JSONLTraceStore:
     async def _warm_start(self) -> None:
         """Read the last hash from the most recent JSONL file.
 
-        Also verifies the tail of the hash chain to detect tampering
-        (NIST AU-10: Non-repudiation).
+        Also verifies the tail of the hash chain for internal-consistency
+        tampering (in-place mutation or reordering of the last N records).
+        This is NOT AU-10 non-repudiation on its own — it cannot detect a
+        deleted head or a wholesale file swap; that requires the external
+        signed anchor described on ``JSONLTraceStore``'s class docstring.
         """
         if self._warm_started:
             return
@@ -202,8 +259,11 @@ class JSONLTraceStore:
             last_file = files[0]
             self._current_date = last_file.stem.replace("traces-", "")
             self._current_file = last_file
-            # Read last line to get chain state
-            lines = last_file.read_text().strip().split("\n")
+            # Read last line to get chain state. Dispatched to a worker
+            # thread (M3) — this can be an arbitrarily large file and must
+            # not block the event loop while the append() lock is held.
+            text = await asyncio.to_thread(last_file.read_text)
+            lines = text.strip().split("\n")
             self._line_count = len(lines)
             if lines and lines[-1]:
                 try:
@@ -231,9 +291,9 @@ class JSONLTraceStore:
             try:
                 data = json.loads(line)
                 record = TraceRecord(**data)
-            except (json.JSONDecodeError, Exception):
+            except (json.JSONDecodeError, ValidationError, TypeError):
                 logger.warning("Unparseable record in tail verification")
-                return
+                continue
 
             if prev_hash is not None and record.prev_hash != prev_hash:
                 logger.error(
@@ -260,7 +320,8 @@ class JSONLTraceStore:
         if today == self._current_date:
             return
 
-        # Write rotation tombstone to current file
+        # Write rotation tombstone to current file. Dispatched to a worker
+        # thread (M3) — same blocking-write concern as append().
         if self._current_file is not None and self._current_file.exists():
             tombstone = TraceRecord(
                 provider="system",
@@ -269,30 +330,80 @@ class JSONLTraceStore:
                 event_data={"next_file": f"traces-{today}.jsonl"},
             ).with_hash(self._last_hash)
             self._last_hash = tombstone.record_hash
-            with self._current_file.open("a") as f:
-                f.write(json.dumps(tombstone.model_dump()) + "\n")
+            await asyncio.to_thread(
+                self._write_line_sync, self._current_file, tombstone.model_dump()
+            )
 
         self._current_date = today
         self._current_file = self._file_for_date(today)
         self._line_count = 0
 
+        await self._maybe_purge()
+
+    async def _maybe_purge(self) -> None:
+        """Run retention purge at a rotation boundary, if configured.
+
+        SPEC-016 D-440: only fires once per rotation (daily), never on
+        every append, and only ever deletes already-rotated files — the
+        file we just rotated *into* (today's) is never a purge candidate.
+        Failures are logged, not raised: a purge hiccup must never break
+        the calling append().
+        """
+        if self._retention_max_age_days is None and self._retention_max_bytes is None:
+            return
+        try:
+            from arcllm.trace_retention import purge
+
+            await purge(
+                self._traces_dir,
+                max_age_days=self._retention_max_age_days,
+                max_bytes=self._retention_max_bytes,
+            )
+        except Exception:  # reason: a purge failure must never break append()
+            logger.warning("Retention purge failed for %s", self._traces_dir, exc_info=True)
+
+    @staticmethod
+    def _write_line_sync(file_path: Path, payload: dict[str, Any]) -> None:
+        """Append one JSON line to ``file_path``. Runs in a worker thread (M3)."""
+        with file_path.open("a") as f:
+            f.write(json.dumps(payload) + "\n")
+
+    @staticmethod
+    def _write_record_sync(record: TraceRecord, prev_hash: str, file_path: Path) -> TraceRecord:
+        """Compute the hash-chain link and persist the record.
+
+        Runs in a worker thread (M3) — hashing (JCS canonicalization +
+        SHA-256), JSON serialization, and the file write are all
+        synchronous CPU/IO work that must not block the event loop while
+        the caller holds ``append()``'s chain-ordering lock.
+        """
+        hashed = record.with_hash(prev_hash)
+        JSONLTraceStore._write_line_sync(file_path, hashed.model_dump())
+        # NIST AU-9: Owner read/write only on audit log files
+        file_path.chmod(0o600)
+        return hashed
+
     async def append(self, record: TraceRecord) -> None:
-        """Append a record with hash chain linkage."""
+        """Append a record with hash chain linkage.
+
+        The lock serializes chain ordering; the actual hash/serialize/write
+        work runs off the event loop via ``asyncio.to_thread`` (M3) so a
+        single slow write can't stall every other coroutine awaiting this
+        store while still preserving strict append ordering.
+        """
         async with self._lock:
             await self._warm_start()
             await self._maybe_rotate()
 
-            hashed = record.with_hash(self._last_hash)
-            self._last_hash = hashed.record_hash
-            self._line_count += 1
-
             if self._current_file is None:  # pragma: no cover — set by _maybe_rotate
                 msg = "current_file not set after rotation"
                 raise RuntimeError(msg)
-            with self._current_file.open("a") as f:
-                f.write(json.dumps(hashed.model_dump()) + "\n")
-            # NIST AU-9: Owner read/write only on audit log files
-            self._current_file.chmod(0o600)
+
+            hashed = await asyncio.to_thread(
+                self._write_record_sync, record, self._last_hash, self._current_file
+            )
+            self._last_hash = hashed.record_hash
+            self._line_count += 1
 
     async def query(
         self,
@@ -333,9 +444,22 @@ class JSONLTraceStore:
         return await get_record(self._traces_dir, trace_id)
 
     async def verify_chain(self, start_seq: int = 0) -> bool:
-        """Verify hash chain integrity across all JSONL files."""
+        """Verify hash chain integrity across all JSONL files.
+
+        The first record actually verified (seq == start_seq) is trusted
+        for its own ``prev_hash`` rather than required to equal the
+        hardcoded genesis ``"0"*64``. This is deliberate (SPEC-016 D-440,
+        Research Insight): retention purge deletes whole rotated files
+        oldest-first, so after a purge the oldest SURVIVING record
+        legitimately points at a predecessor file that no longer exists.
+        This function proves internal consistency among the records
+        present on disk; it does NOT prove that no earlier records were
+        removed — that requires an external anchor (see
+        ``arcllm.trace_retention.build_checkpoint``), a documented
+        tamper-evidence limitation (AU-9/AU-10).
+        """
         files = sorted(self._traces_dir.glob("traces-*.jsonl"))
-        prev_hash = "0" * 64
+        prev_hash: str | None = None
         seq = 0
 
         for file_path in files:
@@ -353,6 +477,9 @@ class JSONLTraceStore:
                     continue
 
                 record = TraceRecord(**data)
+
+                if prev_hash is None:
+                    prev_hash = record.prev_hash
 
                 # Verify prev_hash linkage
                 if record.prev_hash != prev_hash:
@@ -415,6 +542,7 @@ class JSONLTraceStore:
 
 
 __all__ = [
+    "EncryptedEnvelope",
     "JSONLTraceStore",
     "TraceRecord",
     "TraceStore",

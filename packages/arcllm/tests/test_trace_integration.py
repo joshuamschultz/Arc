@@ -119,7 +119,11 @@ class TestTraceIntegration:
             assert rec.response_body is not None
 
     async def test_trace_pipeline_without_raw_bodies(self, workspace: Path):
-        """store_raw_bodies=False omits request/response bodies."""
+        """store_raw_bodies=False omits request/response bodies.
+
+        FR-21: the downgrade itself is audited — the first event is a
+        config_change record, the second is the llm_call record we assert on.
+        """
         store = JSONLTraceStore(workspace)
         events: list[TraceRecord] = []
 
@@ -136,7 +140,9 @@ class TestTraceIntegration:
         messages = [Message(role="user", content="hello")]
         await module.invoke(messages)
 
-        rec = events[0]
+        assert events[0].event_type == "config_change"
+        rec = events[1]
+        assert rec.event_type == "llm_call"
         assert rec.request_body is None
         assert rec.response_body is None
         # But telemetry data still present

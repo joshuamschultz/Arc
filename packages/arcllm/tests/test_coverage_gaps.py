@@ -860,6 +860,41 @@ class TestTraceStoreEdgePaths:
         assert any("TAMPER" in m for m in caplog.messages)
 
     @pytest.mark.asyncio
+    async def test_verify_tail_unparseable_line_does_not_abort_remaining_checks(
+        self, agent_root: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """L11: a single unparseable line in the tail must not silently
+        disable verification of every record after it — the old broad
+        ``except (json.JSONDecodeError, Exception)`` + ``return`` combo
+        aborted the whole tail check on the first bad line."""
+        import logging
+
+        store = JSONLTraceStore(agent_root)
+        r1 = self._make_record(trace_id="t1")
+        r2 = self._make_record(trace_id="t2")
+        r3 = self._make_record(trace_id="t3")
+        await store.append(r1)
+        await store.append(r2)
+        await store.append(r3)
+
+        traces_dir = agent_root / "traces"
+        today = store._today()
+        f = traces_dir / f"traces-{today}.jsonl"
+        lines = f.read_text().strip().split("\n")
+        lines[1] = "not valid json at all"
+        f.write_text("\n".join(lines) + "\n")
+
+        store2 = JSONLTraceStore(agent_root)
+        with caplog.at_level(logging.WARNING, logger="arcllm.trace_store"):
+            await store2._warm_start()
+
+        # Both the parse failure AND a downstream check on the surviving
+        # third line were logged — proving the loop kept going past the
+        # bad line instead of returning immediately.
+        assert any("Unparseable" in m for m in caplog.messages)
+        assert any("TAMPER" in m for m in caplog.messages)
+
+    @pytest.mark.asyncio
     async def test_rotation_tombstone_written_on_date_change(self, agent_root: Path) -> None:
         """Lines 250-258: rotation tombstone written when date changes."""
         store = JSONLTraceStore(agent_root)
