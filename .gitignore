@@ -53,6 +53,10 @@ Thumbs.db
 **/.claude/
 CLAUDE.md
 
+# Private internal overlay repo (arc-internal) — separate git dir sharing
+# this worktree. Its history must never be tracked by the public repo.
+.git-internal/
+
 # Work files
 architecture/
 **/architecture/
