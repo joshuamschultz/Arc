@@ -190,6 +190,10 @@ def _try_builtin(name: str) -> ExecutorBackend | None:
         from arcrun.backends.docker import DockerBackend
 
         return DockerBackend()
+    if name == "vm":
+        from arcrun.backends.vm import VmBackend
+
+        return VmBackend()
     return None
 
 

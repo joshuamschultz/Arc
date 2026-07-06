@@ -83,6 +83,24 @@ class ExecHandle:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class SeparatedResult:
+    """Result from run_separated(): distinct stdout, stderr bytes and exit code.
+
+    stdout and stderr are each hard-capped at the backend's max_stdout_bytes.
+    exit_code is the actual process return code (-1 when the process was
+    cancelled or timed out before exiting).
+
+    Canonical location for the type; ``LocalBackend``/``DockerBackend``/
+    ``VmBackend`` all return this so ``execute_python`` can map any backend's
+    separated output onto its stable JSON result.
+    """
+
+    stdout: bytes
+    stderr: bytes
+    exit_code: int
+
+
 # ---------------------------------------------------------------------------
 # ExecutorBackend Protocol
 # ---------------------------------------------------------------------------
@@ -140,6 +158,26 @@ class ExecutorBackend(Protocol):
         After close(), this backend instance MUST NOT be used again.
         """
         ...
+
+
+@runtime_checkable
+class SupportsSeparatedRun(Protocol):
+    """Optional capability: run a command and collect stdout/stderr separately.
+
+    Backends that set ``capabilities.supports_separated_streams = True`` expose
+    this method. ``execute_python`` depends on it to surface distinct stdout and
+    stderr to the model. Gate calls with ``isinstance(backend, SupportsSeparatedRun)``.
+    """
+
+    async def run_separated(
+        self,
+        command: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout: float = 120.0,
+        stdin: str | None = None,
+    ) -> SeparatedResult: ...
 
 
 # ---------------------------------------------------------------------------

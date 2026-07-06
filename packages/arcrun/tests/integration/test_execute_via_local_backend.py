@@ -1,7 +1,9 @@
-"""Integration test: execute_python tool routes through LocalBackend.
+"""Integration test: execute_python routing through the LocalBackend (sandbox OFF).
 
-Verifies that make_execute_tool() at personal/enterprise tier uses LocalBackend,
-runs a real subprocess, and returns stdout in the JSON response.
+Under SPEC-036 the LocalBackend is reached only at personal tier with an explicit
+relax to "local"/"off" — the first-class sandbox-OFF mode. Default personal and
+enterprise route to the container backend (verified here via the selection audit,
+without requiring a docker daemon).
 """
 
 from __future__ import annotations
@@ -10,10 +12,22 @@ import asyncio
 import json
 
 import pytest
+from arctrust import AuditEvent
 
 from arcrun.builtins.execute import make_execute_tool
 from arcrun.events import EventBus
 from arcrun.types import ToolContext
+
+# Personal + sandbox OFF → LocalBackend (host subprocess), runnable without docker.
+_LOCAL = {"tier": "personal", "relax": "local"}
+
+
+class _CaptureSink:
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+
+    def write(self, event: AuditEvent) -> None:
+        self.events.append(event)
 
 
 def _make_ctx() -> ToolContext:
@@ -28,7 +42,7 @@ def _make_ctx() -> ToolContext:
 
 @pytest.mark.asyncio
 async def test_execute_python_returns_stdout() -> None:
-    tool = make_execute_tool(tier="personal")
+    tool = make_execute_tool(**_LOCAL)
     result = await tool.execute({"code": "print('hello_arc')"}, _make_ctx())
     data = json.loads(result)
     assert "hello_arc" in data["stdout"]
@@ -36,19 +50,17 @@ async def test_execute_python_returns_stdout() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_python_captures_stderr_merged_into_stdout() -> None:
-    """stderr is merged into stdout stream so errors are visible."""
-    tool = make_execute_tool(tier="personal")
+    tool = make_execute_tool(**_LOCAL)
     code = "import sys; sys.stderr.write('err_msg\\n'); sys.stdout.write('out_msg\\n')"
     result = await tool.execute({"code": code}, _make_ctx())
     data = json.loads(result)
-    # stdout has the merged output (stderr→stdout via bash -c)
     combined = data["stdout"] + data.get("stderr", "")
     assert "out_msg" in combined
 
 
 @pytest.mark.asyncio
 async def test_execute_python_exit_code_zero_on_success() -> None:
-    tool = make_execute_tool(tier="personal")
+    tool = make_execute_tool(**_LOCAL)
     result = await tool.execute({"code": "pass"}, _make_ctx())
     data = json.loads(result)
     assert data["exit_code"] == 0
@@ -56,7 +68,7 @@ async def test_execute_python_exit_code_zero_on_success() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_python_has_duration() -> None:
-    tool = make_execute_tool(tier="personal")
+    tool = make_execute_tool(**_LOCAL)
     result = await tool.execute({"code": "pass"}, _make_ctx())
     data = json.loads(result)
     assert data["duration_ms"] >= 0
@@ -64,10 +76,8 @@ async def test_execute_python_has_duration() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_python_routes_through_local_backend() -> None:
-    """Verify the tool internally uses a LocalBackend at personal tier."""
-    # We test this indirectly: LocalBackend runs bash -c so PATH is minimal.
-    # The fact that sys.executable works proves we're in LocalBackend territory.
-    tool = make_execute_tool(tier="personal", extra_env={"PATH": "/usr/bin:/bin"})
+    """Sandbox-off runs the host interpreter directly (LocalBackend territory)."""
+    tool = make_execute_tool(extra_env={"PATH": "/usr/bin:/bin"}, **_LOCAL)
     result = await tool.execute({"code": "import sys; print(sys.version_info.major)"}, _make_ctx())
     data = json.loads(result)
     assert "3" in data["stdout"]
@@ -75,14 +85,14 @@ async def test_execute_python_routes_through_local_backend() -> None:
 
 @pytest.mark.asyncio
 async def test_execute_python_tool_name_unchanged() -> None:
-    """Public tool name must remain 'execute_python' for back-compat."""
+    """Public tool name must remain 'execute_python'."""
     tool = make_execute_tool()
     assert tool.name == "execute_python"
 
 
-@pytest.mark.asyncio
-async def test_execute_python_enterprise_tier_uses_local_backend() -> None:
-    tool = make_execute_tool(tier="enterprise")
-    result = await tool.execute({"code": "print('enterprise')"}, _make_ctx())
-    data = json.loads(result)
-    assert "enterprise" in data["stdout"]
+def test_enterprise_tier_selects_container_not_local() -> None:
+    """SPEC-036: enterprise routes to the container backend, never a host subprocess."""
+    sink = _CaptureSink()
+    make_execute_tool(tier="enterprise", audit_sink=sink)
+    selected = next(e for e in sink.events if e.action == "code_exec.backend.selected")
+    assert selected.extra["isolation"] == "container"

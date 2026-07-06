@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-05
+
+SPEC-036: real tier-enforced code-execution sandbox, closing ASI05.
+
+### Added
+
+- **`VmBackend`** (`backends/vm.py`, `isolation="vm"`) — Hardware-isolated execution via Firecracker microVM. Launches through the jailer (namespaces, chroot/pivot_root, cgroups, privilege drop) with seccomp level 2 — never bare `firecracker`. Pluggable via the `VmEngine` Protocol; `gVisor`/`runsc` is a documented alternative engine (userspace-kernel isolation, not hardware-VM class — never an automatic fallback). Fails closed with `VmUnavailableError` when `/dev/kvm` is absent or the host isn't Linux.
+- **`resolve_execution_backend(tier, relax, platform_supports_vm)`** (`builtins/execute.py`) — Pure, side-effect-free tier router: federal → `vm` (refuses if no KVM), enterprise → `docker` (container floor, cannot relax below it), personal → `docker` by default. `IsolationUnavailableError` and `IsolationRelaxationError` distinguish refusal reasons from an ordinary "none" outcome.
+- **Personal sandbox-off** — A personal-tier operator may set `relax="off"` (aliases `"none"`/`"local"`) to run on `LocalBackend` (`isolation="none"`, full host access on their own machine). Every backend selection and every tier-permitted downgrade emits an audit event (`code_exec.backend.selected`, `code_exec.isolation.downgraded`) via `arctrust.audit.emit`.
+
+### Changed
+
+- **`execute_python` no longer runs bare host subprocesses by default** — `make_execute_tool()` now takes `tier`/`relax`/`caller_did`/`audit_sink`, resolves an isolation backend once at build time, and delegates every call to it through `SupportsSeparatedRun`. Tier and relax config are sourced by the caller (arccli); arcrun never reads config itself.
+
+### Security
+
+- Closes ASI05 (Unexpected Code Execution / RCE) with a real hardware-isolation floor at federal tier instead of a stripped-subprocess sandbox.
+- Fail-closed isolation resolution: unavailable required isolation refuses execution rather than silently downgrading.
+- Audit emitted on every backend selection and every downgrade, not just on failure.
+
 ## [0.5.0] - 2026-04-26
 
 Major refactor: streaming runtime API, audit emission migrated to arctrust, spawn primitive moved up to arcagent (separation of concerns), and stricter manifest enforcement at all tiers.

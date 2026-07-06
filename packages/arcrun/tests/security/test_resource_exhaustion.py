@@ -20,7 +20,7 @@ class TestResourceExhaustion:
         """Infinite loop should be killed by timeout."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=2)
+        tool = make_execute_tool(timeout_seconds=2, tier="personal", relax="local")
         code = "while True: pass"
         result = await tool.execute({"code": code}, make_ctx())
         parsed = json.loads(result)
@@ -32,7 +32,7 @@ class TestResourceExhaustion:
         """Large memory allocation should be handled gracefully."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=5)
+        tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = """
 try:
     x = 'A' * (10 ** 9)  # 1GB string
@@ -49,7 +49,7 @@ except MemoryError:
         """Writing large files should be limited to tmpdir."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=5)
+        tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = """
 import os
 try:
@@ -70,7 +70,7 @@ except Exception as e:
         """Spawning subprocesses from executed code should be limited."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=5)
+        tool = make_execute_tool(timeout_seconds=5, tier="personal", relax="local")
         code = """
 import subprocess
 try:
@@ -89,7 +89,7 @@ except Exception as e:
         """Excessive output should be truncated."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=5, max_output_bytes=100)
+        tool = make_execute_tool(timeout_seconds=5, max_output_bytes=100, tier="personal", relax="local")
         code = "print('A' * 10000)"
         result = await tool.execute({"code": code}, make_ctx())
         parsed = json.loads(result)

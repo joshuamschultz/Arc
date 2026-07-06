@@ -42,6 +42,7 @@ from arcrun.backends.base import (
     BackendCapabilities,
     ExecHandle,
     ExecutorBackend,
+    SeparatedResult,
 )
 
 _DEFAULT_MAX_STDOUT = 64 * 1024
@@ -148,6 +149,58 @@ class DockerBackend:
             handle_id=handle_id,
             backend_name=self.name,
             meta={"container_id": container_id, "timeout": timeout},
+        )
+
+    async def run_separated(
+        self,
+        command: str,
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout: float = 120.0,
+        stdin: str | None = None,
+    ) -> SeparatedResult:
+        """Run a command inside the container, collecting stdout/stderr separately.
+
+        Honours the declared supports_separated_streams capability: uses distinct
+        stdout/stderr pipes on the `docker exec` subprocess so execute_python can
+        surface the stderr/stdout split to the model.
+        """
+        container_id = await self._ensure_container()
+        docker_args = ["docker", "exec", "-i"]
+        if cwd:
+            docker_args += ["--workdir", cwd]
+        if env:
+            for key, value in env.items():
+                docker_args += ["--env", f"{key}={value}"]
+        docker_args += [container_id, "bash", "-c", command]
+
+        stdin_data = stdin.encode() if stdin is not None else None
+        stdin_mode = (
+            asyncio.subprocess.PIPE if stdin_data is not None else asyncio.subprocess.DEVNULL
+        )
+        proc = await asyncio.create_subprocess_exec(
+            *docker_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,  # keep stderr separate
+            stdin=stdin_mode,
+            start_new_session=True,
+        )
+        if stdin_data is not None and proc.stdin is not None:
+            proc.stdin.write(stdin_data)
+            proc.stdin.close()
+
+        max_bytes = self.capabilities.max_stdout_bytes
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return SeparatedResult(stdout=b"", stderr=b"Error: execution timed out", exit_code=-1)
+        return SeparatedResult(
+            stdout=stdout_b[:max_bytes],
+            stderr=stderr_b[:max_bytes],
+            exit_code=proc.returncode if proc.returncode is not None else -1,
         )
 
     async def stream(self, handle: ExecHandle) -> AsyncIterator[bytes]:

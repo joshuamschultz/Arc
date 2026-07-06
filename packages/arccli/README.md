@@ -255,6 +255,8 @@ While inside `arc agent chat`:
 | `enterprise` | ✅ | ✅ | ✅ (3x) | ✅ | off | off |
 | `federal` | ✅ | ✅ | ✅ (3x) | ✅ | ✅ (OTLP) | ✅ |
 
+`[security] tier` also sets the `execute_python` isolation floor: `federal` → VM (Firecracker/KVM), `enterprise`/`personal` → container. A `personal`-tier agent can opt into `[execution] relax_isolation = "off"` in its `config.toml` to run code directly on the host (no container) — rejected at `enterprise`/`federal`, which cannot go below their tier floor. `arc` forwards the agent's tier and this config to arcrun on every `execute_python` call.
+
 Non-interactive variant:
 
 ```bash

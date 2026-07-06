@@ -10,7 +10,13 @@ from arcrun.builtins.contained_execute import (
     SandboxTimeoutError,
     SandboxUnavailableError,
 )
-from arcrun.builtins.execute import make_execute_tool
+from arcrun.builtins.execute import (
+    ExecutionIsolationError,
+    IsolationRelaxationError,
+    IsolationUnavailableError,
+    make_execute_tool,
+    resolve_execution_backend,
+)
 from arcrun.builtins.task_complete import (
     TaskCompleteArgs,
     TaskStatus,
@@ -19,6 +25,9 @@ from arcrun.builtins.task_complete import (
 )
 
 __all__ = [
+    "ExecutionIsolationError",
+    "IsolationRelaxationError",
+    "IsolationUnavailableError",
     "SandboxError",
     "SandboxOOMError",
     "SandboxRuntimeError",
@@ -29,4 +38,5 @@ __all__ = [
     "make_budget_breach_args",
     "make_execute_tool",
     "make_task_complete_tool",
+    "resolve_execution_backend",
 ]
