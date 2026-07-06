@@ -346,6 +346,23 @@ class TestChannelPush:
         assert received == ["team"]
 
 
+class TestSubscriptionAddressForms:
+    """Every address form resolves to the SAME inbox stream ``send`` writes to.
+
+    Regression: a poll for ``@builder`` must not listen on ``arc.agent.@builder``
+    while ``send`` routed to ``arc.agent.builder`` — the ``@handle`` form has to
+    normalize on the subscription side too.
+    """
+
+    async def test_handle_forms_map_to_the_send_stream(self) -> None:
+        backend, registry, audit = await _bootstrap()
+        svc = MessagingService(backend, registry, audit)
+        assert svc.resolve_subscriptions("@builder")[0] == "arc.agent.builder"
+        assert svc.resolve_subscriptions("@builder") == svc.resolve_subscriptions("agent://builder")
+        assert svc.resolve_subscriptions("builder")[0] == "arc.agent.builder"
+        assert "arc.role.dev" in svc.resolve_subscriptions("@builder", ["dev"])
+
+
 @dataclass
 class _RecordingDelivery:
     """Fake Delivery that records whether it was acked (FIX #5)."""

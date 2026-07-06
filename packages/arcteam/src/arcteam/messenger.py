@@ -652,13 +652,20 @@ class MessagingService:
     def resolve_subscriptions(self, entity_id: str, roles: list[str] | None = None) -> list[str]:
         """Resolve all streams an entity should poll.
 
-        - arc.agent.{name} (DM inbox, always)
-        - arc.role.{role} (for each role)
+        Accepts the entity in any address form — ``@handle``, ``agent://handle``,
+        ``user://handle``, or a bare handle — and normalizes to the same
+        handle-based inbox stream ``send`` routes to (``arc.agent.{handle}``),
+        plus one ``arc.role.{role}`` per role. Normalizing the ``@handle`` form
+        here is essential: otherwise a poll for ``@builder`` would listen on
+        ``arc.agent.@builder`` while ``send`` wrote to ``arc.agent.builder``.
         """
-        try:
-            _, name = parse_uri(entity_id)
-        except ValueError:
-            name = entity_id
+        if entity_id.startswith("@"):
+            name = entity_id[1:]
+        else:
+            try:
+                _, name = parse_uri(entity_id)
+            except ValueError:
+                name = entity_id
 
         streams = [f"arc.agent.{name}"]
         for role in roles or []:

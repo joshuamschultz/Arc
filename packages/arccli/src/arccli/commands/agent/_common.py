@@ -167,6 +167,9 @@ enabled = true
 
 [modules.messaging.config]
 poll_interval_seconds = 5.0
+# Join the shared team bus. ensure_live_backend degrades to an in-memory
+# backend (with a warning) if no server is reachable, so a solo agent still runs.
+nats_url = "nats://127.0.0.1:4222"
 
 [arcstore]
 enabled = true

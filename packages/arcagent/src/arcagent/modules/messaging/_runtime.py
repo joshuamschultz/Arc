@@ -91,7 +91,17 @@ def configure(
     from arcteam.registry import EntityRegistry
     from arcteam.storage import MemoryBackend
 
-    cfg = MessagingConfig(**(config or {}))
+    # The scaffolded [modules.messaging] config omits entity_id/entity_name, but
+    # the agent knows its own name and registration keys the inbox stream on the
+    # handle (arc.agent.{name}). Default to that so the daemon subscribes to the
+    # same stream peers send it — otherwise it listens on arc.agent.(empty) and
+    # never receives anything.
+    raw = dict(config or {})
+    if not raw.get("entity_id") and agent_name:
+        raw["entity_id"] = f"agent://{agent_name}"
+    if not raw.get("entity_name") and agent_name:
+        raw["entity_name"] = agent_name
+    cfg = MessagingConfig(**raw)
     ws = workspace.resolve()
     resolved_team_root = (team_root or (ws.parent / "team")).resolve()
 
@@ -141,7 +151,17 @@ async def ensure_live_backend() -> None:
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
 
-    backend = await _bootstrap.make_backend(st.config.nats_url)
+    try:
+        backend = await _bootstrap.make_backend(st.config.nats_url)
+    except Exception:  # reason: no reachable NATS — degrade to in-memory, don't crash
+        _logger.warning(
+            "Messaging: NATS unavailable at %s; staying on in-memory backend "
+            "(this agent will not see teammates until a server is reachable)",
+            st.config.nats_url,
+        )
+        st.live_backend_ready = True
+        return
+
     audit = AuditLogger(backend, hmac_key=st.config.audit_hmac_key.encode("utf-8"))
     await audit.initialize()
     st.registry = EntityRegistry(backend, audit)
