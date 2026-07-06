@@ -126,18 +126,33 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         allow_all_imports=caps_cfg.allow_all_imports,
         allow_imports=caps_cfg.allow_imports,
     )
+    # SPEC-033 Sign gate: re-verify signatures at load and adjudicate via TOFU.
+    # Signature is the floor above personal; personal may relax (auto_run).
+    from arcagent.core.tier import Tier
+    from arcagent.core.tofu_layer import TofuLayer
+
+    tier = agent._config.security.tier
+    tofu = TofuLayer(
+        Tier(tier if tier in ("personal", "enterprise", "federal") else "personal"),
+        agent._config.security.validators,
+    )
+    trusted_pubkey = agent._identity.public_key if agent._identity is not None else None
     agent._capability_loader = CapabilityLoader(
         scan_roots=scan_roots,
         registry=agent._capability_registry,
         bus=bus,
         allow_all_imports=allow_all_imports,
         allowed_imports=allowed_imports,
+        tofu=tofu,
+        require_signature=tier in ("enterprise", "federal"),
+        trusted_public_key=trusted_pubkey,
     )
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,
         loader=agent._capability_loader,
         vault_resolver=agent._vault_resolver,
+        identity=agent._identity,
     )
 
     diff = await agent._capability_loader.scan_and_register()

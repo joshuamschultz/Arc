@@ -51,18 +51,25 @@ from arcagent.capabilities.capability_registry import (
     ToolEntry,
 )
 from arcagent.capabilities.skill_validator import validate_skill_folder
+from arcagent.capabilities.trust_backend import Ed25519TrustBackend, TrustBackend
+from arcagent.core.tofu_layer import CapabilitySource, Decision, TofuLayer
 from arcagent.tools._decorator import (
     BackgroundTaskMetadata,
     CapabilityClassMetadata,
     HookMetadata,
     ToolMetadata,
 )
-from arcagent.tools._dynamic_loader import AstValidationCache
+from arcagent.tools._dynamic_loader import AstValidationCache, build_restricted_builtins
 
-# Roots that go through the AST validator + (future) TOFU + sandbox.
-# Trusted roots (builtins/global/agent) ship with the agent or are
-# operator-curated; their authors are responsible for safety.
-_UNTRUSTED_ROOTS: frozenset[str] = frozenset({"workspace"})
+# Roots that go through the AST validator + Sign/TOFU gate + restricted
+# builtins. Every root an agent can write to is untrusted: ``workspace``
+# (agent-authored), plus ``global`` (~/.arc/capabilities) and ``agent``
+# (<agent_root>/capabilities), where a compromised agent can plant a ``.py``
+# via bash and reload it. Only ``builtins`` / ``builtins-skills`` / ``module:*``
+# — the harness's own shipped package code — are trusted. Operator-placed
+# capabilities in global/agent must be signed or TOFU-approved to load above
+# personal, which is correct for federal (nothing unsigned loads).
+_UNTRUSTED_ROOTS: frozenset[str] = frozenset({"workspace", "global", "agent"})
 
 _logger = logging.getLogger("arcagent.capabilities.capability_loader")
 
@@ -126,15 +133,30 @@ class CapabilityLoader:
         audit_sink: Any | None = None,
         allow_all_imports: bool = False,
         allowed_imports: frozenset[str] = frozenset(),
+        tofu: TofuLayer | None = None,
+        require_signature: bool = False,
+        trusted_public_key: bytes | None = None,
+        trust_backend: TrustBackend | None = None,
     ) -> None:
         self._scan_roots: list[ScanRoot] = list(scan_roots)
         self._registry = registry
         self._bus = bus
         self._audit_sink = audit_sink
+        # SPEC-033 load-path Sign gate. ``tofu`` is the per-tier source-approval
+        # policy; ``require_signature`` makes a valid detached signature the
+        # floor (enterprise/federal); ``trusted_public_key`` pins self-authored
+        # signatures to the agent's own DID key. All default off so a bare
+        # library loader keeps pre-SPEC-033 behaviour — production wires them.
+        self._tofu = tofu
+        self._require_signature = require_signature
+        self._trusted_public_key = trusted_public_key
+        self._trust_backend: TrustBackend = trust_backend or Ed25519TrustBackend()
         self._known_tools: dict[str, str] = {}  # name → version
         self._known_skills: dict[str, str] = {}
         # Import policy for the untrusted ``workspace`` root (tier-resolved by
         # the caller). Defaults are fail-closed so a bare loader blocks imports.
+        self._allow_all_imports = allow_all_imports
+        self._allowed_imports = allowed_imports
         self._ast_cache = AstValidationCache(
             allow_all_imports=allow_all_imports,
             allowed_imports=allowed_imports,
@@ -193,6 +215,7 @@ class CapabilityLoader:
         delta: _ReloadDelta,
         seen_tools: set[str],
     ) -> None:
+        restricted_builtins: dict[str, object] | None = None
         if root_name in _UNTRUSTED_ROOTS:
             try:
                 self._ast_cache.validate(path)
@@ -201,8 +224,14 @@ class CapabilityLoader:
                 delta.errors.append((str(path), detail))
                 await self._emit_registration_failed(path, "python", detail)
                 return
+            if not await self._passes_trust_gate(path, path.stem, delta):
+                return
+            restricted_builtins = build_restricted_builtins(
+                allow_all_imports=self._allow_all_imports,
+                allowed_imports=self._allowed_imports,
+            )
         try:
-            module = _load_module(path)
+            module = _load_module(path, restricted_builtins=restricted_builtins)
         except Exception as exc:  # reason: best-effort — record + continue
             detail = _short_error(exc)
             delta.errors.append((str(path), detail))
@@ -214,6 +243,62 @@ class CapabilityLoader:
             if meta is None:
                 continue
             await self._dispatch_capability(value, meta, path, root_name, delta, seen_tools)
+
+    async def _passes_trust_gate(self, path: Path, name: str, delta: _ReloadDelta) -> bool:
+        """Fail-closed Sign gate for any agent-writable source (SPEC-033 B2/C2/D1).
+
+        ``path`` is the signed artifact (a ``.py`` file or a skill's
+        ``SKILL.md``); ``name`` is the capability/skill name TOFU keys on.
+        Re-verifies the detached signature at LOAD, then consults
+        :class:`TofuLayer`. Above personal a missing/invalid signature denies
+        outright; TOFU governs first-sight (NEW_SIGHTING) and drift (DENY).
+        Any evaluation error denies — nothing unsigned or un-adjudicated
+        registers. When no policy is wired (bare library loader) the gate is a
+        no-op, preserving pre-SPEC-033 behaviour.
+
+        Requiring a signature implies a pinned key (SPEC-033 #6): without one,
+        arctrust skips key-pinning and accepts any self-consistent signature, so
+        an unpinned floor is no floor. Fail closed.
+        """
+        if self._tofu is None and not self._require_signature:
+            return True
+        if self._require_signature and self._trusted_public_key is None:
+            await self._deny_capability(path, "signature", "signature required but no pinned key")
+            delta.errors.append((str(path), "signature: required but no pinned key — denied"))
+            return False
+        try:
+            source_bytes = path.read_bytes()
+            signed = self._trust_backend.verify(
+                path, source_bytes, trusted_public_key=self._trusted_public_key
+            )
+            if self._require_signature and not signed:
+                await self._deny_capability(path, "signature", "missing or invalid signature")
+                delta.errors.append((str(path), "signature: unsigned/invalid — denied"))
+                return False
+            if self._tofu is None:
+                return True
+            source_text = source_bytes.decode("utf-8")
+            decision = self._tofu.evaluate(
+                CapabilitySource(name=name, source=source_text, signed=signed)
+            )
+        except Exception as exc:  # reason: fail-closed — any evaluation error denies
+            await self._deny_capability(path, "signature", _short_error(exc))
+            delta.errors.append((str(path), f"trust-gate error: {_short_error(exc)}"))
+            return False
+        if decision is Decision.ALLOW:
+            return True
+        action = "new_sighting" if decision is Decision.NEW_SIGHTING else "deny"
+        await self._deny_capability(path, action, f"tofu decision {decision.value}")
+        delta.errors.append((str(path), f"tofu: {decision.value}"))
+        return False
+
+    async def _deny_capability(self, path: Path, action: str, reason: str) -> None:
+        """Emit the bus + audit event for a Sign-gate refusal."""
+        payload = {"path": str(path), "reason": reason}
+        event_name = f"capability:{action}"
+        if self._bus is not None:
+            await self._bus.emit(event=event_name, data=payload)
+        self._audit(event_name, payload)
 
     async def _dispatch_capability(
         self,
@@ -292,6 +377,12 @@ class CapabilityLoader:
             detail = "; ".join(f"{e.code}: {e.detail}" for e in validation.errors)
             delta.errors.append((str(skill_md), detail))
             await self._emit_registration_failed(skill_md, "skill", detail)
+            return
+        # SKILL.md is injected into the agent prompt (LLM01/ASI06), so an
+        # agent-writable skill folder passes the same Sign/TOFU gate as a .py.
+        if root_name in _UNTRUSTED_ROOTS and not await self._passes_trust_gate(
+            skill_md, folder.name, delta
+        ):
             return
         for warning in validation.warnings:
             await self._emit_registration_warning(skill_md, warning.code, warning.detail)
@@ -416,11 +507,18 @@ class CapabilityLoader:
 # --- Helpers --------------------------------------------------------------
 
 
-def _load_module(path: Path) -> Any:
+def _load_module(path: Path, *, restricted_builtins: dict[str, object] | None = None) -> Any:
     """Import a single .py file as a transient module.
 
     The module name is derived from the path so duplicate ``echo.py``
     files at different scan roots produce distinct module objects.
+
+    When ``restricted_builtins`` is supplied (workspace-authored source),
+    the module namespace is seeded with it BEFORE ``exec`` so the source
+    runs under RESTRICTED_BUILTINS + the wrapped ``__import__`` instead of
+    the full builtin surface — pre-seeding ``__builtins__`` makes ``exec``
+    use it rather than injecting real builtins. First-party roots pass
+    ``None`` and keep the trusted import path.
 
     Reads source + compile + exec directly instead of going through
     ``spec.loader.exec_module``. The latter consults importlib's .pyc
@@ -438,6 +536,8 @@ def _load_module(path: Path) -> Any:
         raise ImportError(f"could not build spec for {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
+    if restricted_builtins is not None:
+        module.__dict__["__builtins__"] = restricted_builtins
     try:
         code = compile(source, str(path), "exec")
         exec(code, module.__dict__)  # noqa: S102 — capability loader executes user code by design

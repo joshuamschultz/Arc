@@ -7,7 +7,6 @@ and audit events. All serializable to JSON for JSONL storage.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -270,7 +269,3 @@ class MutationEvent:
             stop_reason=str(data["stop_reason"]),
             trace_ids=trace_ids_raw,
         )
-
-    def to_json_line(self) -> str:
-        """Serialize to a single JSON line for append-only audit log."""
-        return json.dumps(self.to_dict(), default=str)

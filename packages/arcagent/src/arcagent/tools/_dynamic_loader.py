@@ -467,6 +467,66 @@ RESTRICTED_BUILTINS: dict[str, object] = {
 }
 
 
+def build_restricted_builtins(
+    *,
+    allow_all_imports: bool = False,
+    allowed_imports: frozenset[str] = frozenset(),
+) -> dict[str, object]:
+    """Build a ``__builtins__`` dict for executing agent-authored module source.
+
+    RESTRICTED_BUILTINS (no ``open``/``eval``/``exec``) plus ``__build_class__``
+    (so class-based capabilities can be defined) and a runtime ``__import__``
+    that mirrors the AST import denylist — the same privileged modules the
+    static gate rejects are refused at runtime too, honoring the tier-resolved
+    ``allow_all_imports``/``allowed_imports`` relaxations.
+
+    This is the hardened namespace the capability loader uses in place of a
+    bare ``exec(code, module.__dict__)``. It is defense-in-depth / a fast-fail
+    linter in front of the SPEC-036 execution sandbox — never a substitute for
+    it (the object graph is escapable; real isolation is the sandbox's job).
+    """
+    return {
+        **RESTRICTED_BUILTINS,
+        "__build_class__": _builtins.__build_class__,
+        "__import__": _make_denylist_import(
+            allow_all_imports=allow_all_imports,
+            allowed_imports=allowed_imports,
+        ),
+    }
+
+
+def _make_denylist_import(
+    *,
+    allow_all_imports: bool,
+    allowed_imports: frozenset[str],
+) -> Callable[..., Any]:
+    """Return an ``__import__`` refusing the AST-blocked privileged modules.
+
+    Unlike :func:`_make_restricted_import` (a narrow allowlist for the pure
+    single-tool dynamic path), this mirrors the AST validator's denylist so
+    multi-capability workspace files may still use ordinary stdlib
+    (``json``/``re``/...) while ``os``/``sys``/``subprocess`` stay blocked.
+    """
+    real_import = _builtins.__import__
+
+    def _restricted(
+        name: str,
+        globals: dict[str, Any] | None = None,  # noqa: A002 — mirrors builtin signature
+        locals: dict[str, Any] | None = None,  # noqa: A002
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        top = name.split(".", 1)[0]
+        if not allow_all_imports and top in _BLOCKED_IMPORTS and top not in allowed_imports:
+            raise ASTValidationError(
+                category="import:" + top,
+                detail=f"runtime import of {name!r} is blocked in workspace source",
+            )
+        return real_import(name, globals, locals, fromlist, level)
+
+    return _restricted
+
+
 # --- DynamicToolLoader ----------------------------------------------------
 
 import logging  # noqa: E402
@@ -707,4 +767,5 @@ __all__ = [
     "AstValidator",
     "CollisionPolicy",
     "DynamicToolLoader",
+    "build_restricted_builtins",
 ]

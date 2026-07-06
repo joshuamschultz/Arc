@@ -161,6 +161,19 @@ Powered by **PyNaCl → libsodium**. Same primitive you'd find in WireGuard, age
 | Enterprise | ✅ | ✅ | ✅ | — | — |
 | Federal | ✅ | ✅ | ✅ | ✅ | ✅ |
 
+### Artifact Signing (`arctrust.artifact`)
+
+| Symbol | What It Does |
+|---|---|
+| `content_sha256(content)` | Returns the `sha256:<hex>` digest of `content` |
+| `sign_artifact(content, signer_did, private_key)` | Signs `content` with an Ed25519 seed under `signer_did`; returns an `ArtifactSignature` |
+| `verify_artifact(content, manifest, trusted_public_key=None)` | Re-verifies `content` against its `ArtifactSignature` at load time. Never raises — any malformed field, digest mismatch, or (when pinned) key mismatch is `False` |
+| `ArtifactSignature` | Frozen Pydantic model serialisable to a `.arcsig` sidecar (`to_json`/`from_json`): content digest, signer DID, signer public key, signature, algorithm, timestamp |
+
+Detached content-hash + Ed25519 signing for arbitrary bytes — the primitive behind arcagent's Sign-pillar enforcement on agent-authored capabilities (SPEC-033): sign on write, re-verify at load, independent of any install-time check.
+
+**Honest semantics:** a valid signature proves the bytes are *unmodified since the signer wrote them* and *attributed* to the signer's DID key. It does **not** prove the content is safe — a compromised signer produces a perfectly valid signature over malicious bytes. Safety belongs to the caller's TOFU gate and execution sandbox, never to this primitive.
+
 ### Trust Store (`arctrust.trust_store`)
 
 | Symbol | What It Does |

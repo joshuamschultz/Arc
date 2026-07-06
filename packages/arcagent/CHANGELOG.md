@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-06
+
+SPEC-033: enforce the Sign pillar on the workspace/agent-authored root — restricted-builtins load path, re-verify-at-load, TOFU first-load approval, signed self-modification tools, and a WORM-chained skill-improver audit. Scope is the untrusted workspace root only; first-party (builtins/global/per-agent) roots remain release-signed-upstream and out of scope.
+
+### Added
+
+- **Sidecar artifact signing** (`capabilities/artifact_signing.py`) — agent-authored capabilities get a detached `.arcsig` sidecar (content hash + Ed25519 signature, keyed to the agent's own DID) written on create/update. `create_skill`, `create_tool`, `update_skill`, and `update_tool` all sign what they write via the new `builtins/capabilities/_runtime.sign_artifact_file` helper. No-op when the agent has no signing identity.
+- **Pluggable `TrustBackend`** (`capabilities/trust_backend.py`) — a one-method `verify()` Protocol the capability loader depends on instead of a concrete crypto call. `Ed25519TrustBackend` (arctrust, DID-scoped, network-free) is the default for self-authored artifacts; Sigstore keyless verification (arcskill) governs install-time hub skills separately.
+- **Restricted-builtins module execution** (`tools/_dynamic_loader.build_restricted_builtins`) — the untrusted `<agent>/workspace/.capabilities/` root now executes under `RESTRICTED_BUILTINS` plus a denylist-enforcing `__import__`, in place of the prior bare `exec(code, module.__dict__)` with the full builtin surface. This is a fast-fail linter / defense-in-depth layer in front of the SPEC-036 execution sandbox — not a boundary, and not a substitute for it.
+- **Load-time Sign gate** (`capabilities/capability_loader._passes_trust_gate`) — re-verifies the detached signature on every workspace-root load, independent of any install-time check, then adjudicates via `TofuLayer`: above personal tier a missing/invalid signature denies outright; first-sight and drift are TOFU decisions (`NEW_SIGHTING` / `DENY`). Any evaluation error denies — fail-closed.
+- **`TofuLayer.approve_source`** (`core/tofu_layer.py`) — the pure data operation behind `arc trust approve`. Pins a capability name to its current source hash, superseding any prior approval so a re-approval after drift clears the `DENY`.
+- **WORM signed hash-chain audit for skill mutations** — `skill_improver.CandidateStore.append_audit` now emits `skill.mutation.applied` through an injected `arctrust.AuditSink` (a `WormSink` in production, keyed to the agent's own identity) instead of writing a plaintext `audit.jsonl`. The mutated skill text is itself signed through the same sidecar convention `create_skill` uses.
+- **New tests** — `tests/security/test_sign_gate_load.py`, `tests/security/test_workspace_restricted_load.py`, `tests/unit/capabilities/`, `tests/unit/modules/skill_improver/test_engine_signing.py`.
+
+### Changed
+
+- **`CapabilityLoader.__init__`** — gains `tofu`, `require_signature`, `trusted_public_key`, `trust_backend`, all defaulted off/`None` so a bare library loader keeps pre-SPEC-033 behavior. `agent_lifecycle.setup_capabilities` wires them from the agent's configured tier and identity (`require_signature` true at enterprise/federal).
+- **`builtins/capabilities/_runtime.configure`** — takes an `identity` (arctrust `AgentIdentity`); new `sign_artifact_file()` helper signs artifacts on write using it.
+- **`skill_improver._runtime.configure`** — takes an `identity`; resolves `(signer_did, signing_key)` and wires a `WormSink` at `<workspace>/.audit/skill_improver.worm` when the identity can sign. Fails open (audit disabled, module startup unaffected) if the sink can't be opened.
+
+### Removed
+
+- **`core/os_sandbox.py`** (and its test) — dead code: an uncalled OS-sandbox transport contract, never wired into the execution path. ASI05 enforcement is arcrun's tier-routed `execute` + backends (SPEC-036); this module ceded that ground and had nothing left to do.
+
+### Security
+
+- **SPEC-033 — Sign pillar enforced on the workspace/agent-authored root** — closes the gap where agent-authored code ran under a plain full-builtins `exec` with its signature (if any) checked only at install/create time, never re-checked at load. Restricted-builtins execution, verify-at-load, TOFU first-load approval, and signed self-modification tools now apply on every load. Scoped to the untrusted workspace root; first-party roots (builtins/global/per-agent) are release-signed-upstream and unaffected.
+
 ## [0.4.0] - 2026-04-26
 
 Major refactor: identity primitives moved to arctrust, dedicated orchestration layer for spawn/sub-runs, four-pillar audit migration to arctrust sinks, and removal of legacy duplicate-named files cluttering the tree.

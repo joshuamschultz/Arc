@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from arcagent.capabilities import artifact_signing
 from arcagent.modules.skill_improver.candidate_store import CandidateStore
 from arcagent.modules.skill_improver.config import SkillImproverConfig
 from arcagent.modules.skill_improver.evaluator import SkillEvaluator
@@ -39,12 +40,20 @@ class SkillOptimizer:
         reflector: SkillReflector,
         guardrails: Guardrails,
         store: CandidateStore,
+        *,
+        signer_did: str | None = None,
+        signing_key: bytes | None = None,
     ) -> None:
         self._config = config
         self._evaluator = evaluator
         self._reflector = reflector
         self._guardrails = guardrails
         self._store = store
+        # SPEC-033 D3/REQ-021 — sign the mutated skill on write with the agent's
+        # own DID key so the loader re-verifies it on reload, identically to
+        # create_skill output. None → no signature (personal, relaxable).
+        self._signer_did = signer_did
+        self._signing_key = signing_key
 
     def split_traces(
         self,
@@ -218,8 +227,15 @@ class SkillOptimizer:
         previous_text = skill_path.read_text(encoding="utf-8") if skill_path.exists() else ""
         previous_hash = Candidate(id="", text=previous_text).fingerprint
 
-        # Atomic write to skill file
+        # Atomic write to skill file, then sign the mutation (SPEC-033 D3).
         atomic_write_text(skill_path, candidate.text)
+        if self._signer_did is not None and self._signing_key is not None:
+            artifact_signing.write_signature(
+                skill_path,
+                candidate.text.encode("utf-8"),
+                signer_did=self._signer_did,
+                private_key=self._signing_key,
+            )
 
         # Save candidate to store
         self._store.save(skill_name, candidate, active=True, frontier=True)

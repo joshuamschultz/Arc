@@ -50,4 +50,5 @@ async def create_tool(name: str, source: str) -> str:
     except ASTValidationError as exc:
         return f"Error: AST validation rejected source — {exc}"
     target.write_text(source, encoding="utf-8")
+    _runtime.sign_artifact_file(target, source.encode("utf-8"))
     return f"Created tool {name!r} at {target.relative_to(workspace)}"

@@ -134,7 +134,10 @@ class TestFederalTier:
         target = CapabilitySource(name="x", source=some_source, signed=False)
         assert layer.evaluate(target) == Decision.DENY
 
-    def test_signed_allowed(self, some_source: str) -> None:
+    def test_signed_first_sight_is_new_sighting_not_allow(self, some_source: str) -> None:
+        """A self-signature proves attribution, NOT authorization. Federal must
+        route unknown signed code through the human approval gate, exactly like
+        enterprise — never auto-allow a compromised agent's own new tool."""
         from arcagent.core.tofu_layer import (
             CapabilitySource,
             Decision,
@@ -143,4 +146,76 @@ class TestFederalTier:
 
         layer = TofuLayer(tier=Tier.FEDERAL, validators=ValidatorsConfig())
         target = CapabilitySource(name="x", source=some_source, signed=True)
+        assert layer.evaluate(target) == Decision.NEW_SIGHTING
+
+    def test_signed_and_approved_hash_allows(self, some_source: str) -> None:
+        from arcagent.core.tofu_layer import (
+            CapabilitySource,
+            Decision,
+            TofuLayer,
+        )
+
+        layer = TofuLayer(
+            tier=Tier.FEDERAL,
+            validators=ValidatorsConfig(
+                approved=(
+                    ValidatorEntry(
+                        name="known",
+                        hash=_hash(some_source),
+                        approver="alice@example.com",
+                        timestamp="2026-04-28T00:00:00Z",
+                    ),
+                )
+            ),
+        )
+        target = CapabilitySource(name="known", source=some_source, signed=True)
         assert layer.evaluate(target) == Decision.ALLOW
+
+    def test_signed_but_unapproved_hash_drifts_to_deny(self, some_source: str) -> None:
+        from arcagent.core.tofu_layer import (
+            CapabilitySource,
+            Decision,
+            TofuLayer,
+        )
+
+        layer = TofuLayer(
+            tier=Tier.FEDERAL,
+            validators=ValidatorsConfig(
+                approved=(
+                    ValidatorEntry(
+                        name="known",
+                        hash=_hash(some_source),
+                        approver="alice@example.com",
+                        timestamp="2026-04-28T00:00:00Z",
+                    ),
+                )
+            ),
+        )
+        # Approved name, signed, but content drifted → hard stop.
+        target = CapabilitySource(name="known", source=some_source + "x", signed=True)
+        assert layer.evaluate(target) == Decision.DENY
+
+    def test_approved_hash_but_unsigned_still_denied(self, some_source: str) -> None:
+        """Signature is the floor at federal — an approved hash cannot rescue
+        an unsigned artifact."""
+        from arcagent.core.tofu_layer import (
+            CapabilitySource,
+            Decision,
+            TofuLayer,
+        )
+
+        layer = TofuLayer(
+            tier=Tier.FEDERAL,
+            validators=ValidatorsConfig(
+                approved=(
+                    ValidatorEntry(
+                        name="known",
+                        hash=_hash(some_source),
+                        approver="alice@example.com",
+                        timestamp="2026-04-28T00:00:00Z",
+                    ),
+                )
+            ),
+        )
+        target = CapabilitySource(name="known", source=some_source, signed=False)
+        assert layer.evaluate(target) == Decision.DENY
