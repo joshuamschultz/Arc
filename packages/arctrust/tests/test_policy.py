@@ -13,8 +13,10 @@ from arctrust.policy import (
     PolicyContext,
     PolicyLayer,
     PolicyPipeline,
+    ProviderUsage,
     TierConfig,
     ToolCall,
+    ToolRuntimeStatus,
     build_pipeline,
     sign_call,
 )
@@ -43,10 +45,19 @@ def make_ctx(
     tier: str = "personal",
     bundle_age: float = 0.0,
 ) -> PolicyContext:
+    # Clean provider/runtime state so the now-real Provider/Sandbox layers pass
+    # through at enterprise/federal (they fail closed on missing state); tests
+    # here exercise identity/global/agent behavior, not budget/isolation.
     return PolicyContext(
         tier=tier,  # type: ignore[arg-type]
         policy_version="1.0",
         bundle_age_seconds=bundle_age,
+        provider_usage=ProviderUsage(
+            provider="anthropic", tokens_used=0, cost_used=0.0, requests_in_window=0
+        ),
+        tool_runtime=ToolRuntimeStatus(
+            verified=True, required_isolation="host", available_isolation="host"
+        ),
     )
 
 

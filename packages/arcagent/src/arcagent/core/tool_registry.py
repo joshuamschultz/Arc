@@ -322,6 +322,12 @@ class ToolRegistry:
                 # an injected call). No identity → call stays unsigned → denied.
                 if identity is not None:
                     call = sign_call(call, identity)
+                # provider_usage / team_scope / tool_runtime are populated by
+                # their owning producers (SPEC-038 / arcteam / SPEC-033+036).
+                # Until those land they stay None: the Provider/Sandbox layers are
+                # no-ops when their policy is unconfigured, so default config
+                # allows; a configured budget with missing usage fails closed
+                # (SPEC-034 configured-gate).
                 ctx_pol = PolicyContext(
                     tier=tier,
                     policy_version=policy_version,

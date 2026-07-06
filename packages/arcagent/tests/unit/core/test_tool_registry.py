@@ -853,6 +853,13 @@ class TestIdentityEnforcement:
     async def test_signed_dispatch_from_registered_agent_runs(
         self, config: ArcAgentConfig, bus: ModuleBus, mock_telemetry: MagicMock
     ) -> None:
+        # Enterprise (default config) wires the pipeline end-to-end: the registry
+        # signs the call, IdentityLayer admits the registered agent, and the
+        # now-real Provider/Sandbox layers are no-ops with default config (empty
+        # limits / no runtime state), so the tool runs. This proves the tier is
+        # not bricked while SPEC-038/036 producers are unwired — a configured
+        # budget with missing telemetry would fail closed, but default config
+        # configures nothing.
         from arctrust import AgentIdentity
 
         ident = AgentIdentity.generate(org="test", agent_type="exec")

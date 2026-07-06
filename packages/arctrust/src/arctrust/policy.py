@@ -104,14 +104,74 @@ class ToolCall(BaseModel):
         return payload.encode("utf-8")
 
 
+class ProviderUsage(BaseModel):
+    """LLM-provider consumption for the current call — filled by SPEC-038.
+
+    SPEC-034 (this spec) defines the schema only; the accounting service
+    (SPEC-038) measures usage against the arcrun/arcllm call surface and
+    populates this at dispatch. ``ProviderLayer`` reads it as injected state
+    and never computes it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: str
+    tokens_used: int
+    cost_used: float
+    requests_in_window: int
+
+
+class TeamScope(BaseModel):
+    """Team role + delegation grant for the calling agent — filled by arcteam.
+
+    ``authorized_tools`` is the role's activated capability scope for this
+    call; ``delegation_grant``, when present, is the (never-wider) scope a
+    delegated (``parent_call_id``-carrying) call may reach. SPEC-034 reads and
+    gates; arcteam derives membership and role meaning.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    authorized_tools: frozenset[str]
+    delegation_grant: frozenset[str] | None = None
+
+
+class ToolRuntimeStatus(BaseModel):
+    """Per-tool verification + isolation status — filled by SPEC-033/036.
+
+    ``verified`` is the load-time answer from SPEC-033 (sign/verify + TOFU);
+    ``required_isolation``/``available_isolation`` are compared over the
+    SPEC-036 isolation ladder (``host`` < ``container`` < ``vm``). SPEC-034
+    reads the answers and gates; it re-runs no verification and starts no
+    sandbox.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    verified: bool
+    required_isolation: str
+    available_isolation: str
+
+
 class PolicyContext(BaseModel):
-    """Runtime context for policy evaluation — tier, bundle version, age."""
+    """Runtime context for policy evaluation.
+
+    Base fields (``tier``, ``policy_version``, ``bundle_age_seconds``) are the
+    original contract. The optional state fields carry the injected inputs the
+    real ProviderLayer/TeamLayer/SandboxLayer compare against; each defaults to
+    ``None`` so existing 3-field constructions stay valid (REQ-014) and is
+    populated by its owning spec (REQ-015).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     tier: _Tier
     policy_version: str
     bundle_age_seconds: float
+    provider_usage: ProviderUsage | None = None
+    team_scope: TeamScope | None = None
+    tool_runtime: ToolRuntimeStatus | None = None
 
 
 class Decision(BaseModel):
@@ -306,17 +366,89 @@ class GlobalLayer:
         return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=now_us)
 
 
-class ProviderLayer:
-    """LLM provider budget and rate-limit gates. Stubbed — Phase 3 wiring.
+class ProviderLimit(BaseModel):
+    """Per-provider budget + rate ceiling — a deployment-policy floor (LLM10)."""
 
-    Default behavior is ALLOW so the pipeline produces meaningful results
-    without a full provider stack.
+    model_config = ConfigDict(frozen=True)
+
+    max_tokens: int
+    max_cost: float
+    max_requests: int
+
+
+class ProviderLayer:
+    """LLM provider budget and rate-limit gate — a pure comparator (LLM10).
+
+    Limits come from construction (deployment policy); current usage comes
+    from ``PolicyContext.provider_usage`` (filled by SPEC-038). The layer never
+    calls arcllm, never decrements, and holds no mutable usage store.
+
+    Configured-gate semantics: with no limits configured the layer is a no-op
+    and always allows — absence of a budget policy is not a violation. Once a
+    limit IS configured, missing usage telemetry fails closed
+    (``provider.state_missing``): a real budget with a blind meter cannot be
+    proven within bounds (REQ-004, REQ-005).
     """
 
     name = "provider"
 
+    def __init__(
+        self,
+        *,
+        limits_by_provider: dict[str, ProviderLimit] | None = None,
+    ) -> None:
+        self._limits = limits_by_provider or {}
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        if not self._limits:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        usage = ctx.provider_usage
+        if usage is None:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.state_missing",
+                reason=(
+                    "Provider budget policy is configured but no usage state is in "
+                    "context; fail closed on the telemetry gap (SPEC-038 populates it)."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        limit = self._limits.get(usage.provider)
+        if limit is None:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        if usage.tokens_used >= limit.max_tokens or usage.cost_used >= limit.max_cost:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.budget_exceeded",
+                reason=(
+                    f"Provider {usage.provider!r} budget exceeded: "
+                    f"tokens {usage.tokens_used}/{limit.max_tokens}, "
+                    f"cost {usage.cost_used}/{limit.max_cost}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        if usage.requests_in_window >= limit.max_requests:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.rate_exceeded",
+                reason=(
+                    f"Provider {usage.provider!r} rate exceeded: "
+                    f"requests {usage.requests_in_window}/{limit.max_requests}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
 
 
 class AgentLayer:
@@ -349,21 +481,125 @@ class AgentLayer:
 
 
 class TeamLayer:
-    """Team-scoped delegation rules. Stubbed — Phase 6 wiring."""
+    """Team-scoped delegation gate — capability-scoping comparator (ASI03/ASI07).
+
+    Construction supplies the static role->scope floor (``roles``); the
+    per-call activated scope and any delegation grant arrive on
+    ``PolicyContext.team_scope`` (filled by arcteam/arcagent). Absence of a
+    team scope is not a violation — admission of unknown agents is the
+    IdentityLayer's job (REQ-009).
+    """
 
     name = "team"
 
+    def __init__(self, *, roles: dict[str, frozenset[str]] | None = None) -> None:
+        self._roles = roles or {}
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        scope = ctx.team_scope
+        if scope is None:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        # Static role floor if configured, else the context's activated scope.
+        authorized = self._roles.get(scope.role, scope.authorized_tools)
+        if call.tool_name not in authorized:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="team.scope_violation",
+                reason=(
+                    f"Tool {call.tool_name!r} is outside role {scope.role!r} scope "
+                    f"{sorted(authorized)}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        # A delegated call (carries a parent) may not exceed its grant's scope.
+        if (
+            call.parent_call_id is not None
+            and scope.delegation_grant is not None
+            and call.tool_name not in scope.delegation_grant
+        ):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="team.delegation_exceeded",
+                reason=(
+                    f"Delegated call for {call.tool_name!r} exceeds its grant "
+                    f"{sorted(scope.delegation_grant)}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+
+# Ordered isolation ladder owned by SPEC-036's vocabulary. SPEC-034 references
+# the ordering to compare; it defines no isolation mechanics.
+_ISOLATION_LADDER = ("host", "container", "vm")
+
+
+def _isolation_satisfies(available: str, required: str) -> bool:
+    """True iff ``available`` isolation is at least as strong as ``required``.
+
+    Unknown ``required`` fails closed (unsatisfiable); unknown ``available``
+    ranks below the ladder floor so it satisfies nothing.
+    """
+    if required not in _ISOLATION_LADDER:
+        return False
+    required_rank = _ISOLATION_LADDER.index(required)
+    available_rank = (
+        _ISOLATION_LADDER.index(available) if available in _ISOLATION_LADDER else -1
+    )
+    return available_rank >= required_rank
 
 
 class SandboxLayer:
-    """Dynamic-tool runtime constraints. Stubbed — Phase 7 wiring."""
+    """Dynamic-tool / isolation policy gate — deliberately thin (ASI04/ASI05).
+
+    Reads verification status (SPEC-033) and isolation availability (SPEC-036)
+    from ``PolicyContext.tool_runtime`` and compares. It re-runs no signature
+    verification and starts no sandbox. With no runtime status in context the
+    layer is a no-op and allows: the SPEC-033 load gate already verified any
+    tool that reached the registry, so there is nothing for this layer to add
+    when blind. It gates only when a status IS present (REQ-010..013).
+    """
 
     name = "sandbox"
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        rt = ctx.tool_runtime
+        if rt is None:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        if not rt.verified:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="sandbox.unverified_tool",
+                reason=f"Tool {call.tool_name!r} is unverified/dynamic (SPEC-033).",
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        if not _isolation_satisfies(rt.available_isolation, rt.required_isolation):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="sandbox.isolation_unsatisfiable",
+                reason=(
+                    f"Required isolation {rt.required_isolation!r} exceeds available "
+                    f"{rt.available_isolation!r} (SPEC-036 ladder)."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
 
 
 # ---------------------------------------------------------------------------
@@ -589,7 +825,7 @@ class PolicyPipeline:
             "tier": ctx.tier,
             "policy_version": ctx.policy_version,
             "decision": decision.outcome,
-            "matched_rule": decision.rule_id,
+            "rule_id": decision.rule_id,
             "layer": decision.layer,
             "reason": decision.reason,
             "input_hash": decision.input_hash,
@@ -614,6 +850,8 @@ def build_pipeline(
     agent_registry: dict[str, bytes] | None = None,
     global_deny_rules: dict[str, str] | None = None,
     agent_allowlists: dict[str, set[str]] | None = None,
+    provider_limits: dict[str, ProviderLimit] | None = None,
+    team_roles: dict[str, frozenset[str]] | None = None,
     forbidden_compositions: list[frozenset[str]] | None = None,
     cache_ttl_seconds: float = 30.0,
     max_bundle_age_seconds: float | None = None,
@@ -637,6 +875,8 @@ def build_pipeline(
         tier: Deployment tier.
         global_deny_rules: Tool name → denial reason mapping.
         agent_allowlists: Agent DID → allowed tool name set.
+        provider_limits: Provider name → ProviderLimit floor (ProviderLayer).
+        team_roles: Role → authorized tool scope floor (TeamLayer).
         forbidden_compositions: Sets of capability tags that are forbidden
             when held by a single batch (non-compositional safety).
         cache_ttl_seconds: Decision cache TTL (0 disables).
@@ -659,6 +899,11 @@ def build_pipeline(
         deny_rules=global_deny_rules or {},
         forbidden_compositions=forbidden_compositions or [],
     )
+    # Provider/Sandbox are built only for enterprise/federal. Each is a no-op
+    # when its policy is unconfigured (empty limits / no runtime state) and only
+    # fails closed once a configured policy meets missing telemetry (SPEC-034).
+    provider = ProviderLayer(limits_by_provider=provider_limits or {})
+    sandbox = SandboxLayer()
     layers: list[PolicyLayer]
 
     if tier == "personal":
@@ -667,18 +912,18 @@ def build_pipeline(
         layers = [
             identity,
             g,
-            ProviderLayer(),
+            provider,
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
-            SandboxLayer(),
+            sandbox,
         ]
     else:  # federal
         layers = [
             identity,
             g,
-            ProviderLayer(),
+            provider,
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
-            TeamLayer(),
-            SandboxLayer(),
+            TeamLayer(roles=team_roles or {}),
+            sandbox,
         ]
 
     return PolicyPipeline(
@@ -729,10 +974,14 @@ __all__ = [
     "PolicyLayer",
     "PolicyPipeline",
     "ProviderLayer",
+    "ProviderLimit",
+    "ProviderUsage",
     "SandboxLayer",
     "TeamLayer",
+    "TeamScope",
     "TierConfig",
     "ToolCall",
+    "ToolRuntimeStatus",
     "build_pipeline",
     "sign_call",
     "verify_call",

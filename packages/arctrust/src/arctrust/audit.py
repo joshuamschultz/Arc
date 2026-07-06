@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -503,6 +504,51 @@ def emit(event: AuditEvent, sink: AuditSink) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Policy pipeline -> durable WORM adapter (SPEC-034 REQ-017)
+# ---------------------------------------------------------------------------
+
+
+def worm_policy_sink(sink: AuditSink) -> Callable[[str, dict[str, Any]], None]:
+    """Adapt the policy pipeline's ``(event_type, payload)`` callback to a sink.
+
+    The pipeline emits a flat ``(event_type, payload)`` audit callback once per
+    evaluation; the durable :class:`WormSink` (and every :class:`AuditSink`)
+    consumes an :class:`AuditEvent`. This closes that seam: it builds an
+    ``AuditEvent`` from the payload and routes it through :func:`emit`, so a
+    policy decision lands as one tamper-evident, Ed25519-signed chain record.
+
+    Raw tool ``arguments`` are never copied — only the pipeline's precomputed
+    ``input_hash`` travels into the record (REQ-019, AU-9 minimization). Lives
+    in arctrust because arctrust owns both ``policy`` and ``audit``, so the
+    adapter has no cross-package dependency.
+    """
+
+    def _write(event_type: str, payload: dict[str, Any]) -> None:
+        event = AuditEvent(
+            actor_did=str(payload.get("agent_did", "")),
+            action=event_type,
+            target=str(payload.get("tool_name", "")),
+            outcome=str(payload.get("decision", "")),
+            classification=payload.get("classification"),
+            tier=payload.get("tier"),
+            request_id=payload.get("session_id"),
+            payload_hash=payload.get("input_hash"),
+            extra={
+                "layer": payload.get("layer"),
+                "rule_id": payload.get("rule_id"),
+                "reason": payload.get("reason"),
+                "policy_version": payload.get("policy_version"),
+                "cache_hit": payload.get("cache_hit"),
+                "shadow": payload.get("shadow"),
+                "evaluation_time_us": payload.get("evaluation_time_us"),
+            },
+        )
+        emit(event, sink)
+
+    return _write
+
+
 __all__ = [
     "GENESIS_PREV_HASH",
     "AuditEvent",
@@ -512,4 +558,5 @@ __all__ = [
     "emit",
     "read_verified_anchor",
     "verify_chain",
+    "worm_policy_sink",
 ]

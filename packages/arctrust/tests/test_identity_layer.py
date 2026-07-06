@@ -21,7 +21,9 @@ from arctrust.identity import AgentIdentity, did_matches_pubkey
 from arctrust.policy import (
     IdentityLayer,
     PolicyContext,
+    ProviderUsage,
     ToolCall,
+    ToolRuntimeStatus,
     build_pipeline,
     sign_call,
     verify_call,
@@ -39,7 +41,20 @@ def _unsigned_call(agent_did: str, tool_name: str = "read") -> ToolCall:
 
 
 def _ctx(tier: str) -> PolicyContext:
-    return PolicyContext(tier=tier, policy_version="v1", bundle_age_seconds=0.0)  # type: ignore[arg-type]
+    # Inject clean provider/runtime state so the now-real Provider/Sandbox
+    # layers (fail-closed above personal on missing state) pass through and the
+    # identity/admission behavior under test is what decides the outcome.
+    return PolicyContext(
+        tier=tier,  # type: ignore[arg-type]
+        policy_version="v1",
+        bundle_age_seconds=0.0,
+        provider_usage=ProviderUsage(
+            provider="anthropic", tokens_used=0, cost_used=0.0, requests_in_window=0
+        ),
+        tool_runtime=ToolRuntimeStatus(
+            verified=True, required_isolation="host", available_isolation="host"
+        ),
+    )
 
 
 # --- DID <-> pubkey binding -------------------------------------------------
