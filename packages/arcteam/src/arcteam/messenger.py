@@ -39,6 +39,16 @@ _IDLE_SLEEP = 0.05
 MessageHandler = Callable[["Message"], Awaitable[None]]
 
 
+class RetryableDeliveryError(Exception):
+    """Signal from a subscribe handler that delivery hit transient backpressure.
+
+    The dispatcher responds by NOT acking the message, so the durable consumer
+    redelivers it after ``ack_wait`` — once the downstream (e.g. a full agent
+    steering queue) has drained. Use only for recoverable saturation; a
+    permanent (poison) failure must NOT raise this, or it will redeliver forever.
+    """
+
+
 def _durable_name(entity_id: str, stream: str) -> str:
     """NATS-safe durable name unique per (entity, stream).
 
@@ -101,9 +111,10 @@ class MessagingService:
         self._backend = backend
         self._registry = registry
         self._audit = audit
-        # When a signer is present the service runs in signed mode: every sent
-        # message is Ed25519-signed and every consumed message is verified and
-        # replay-checked before delivery (REQ-030, REQ-031).
+        # The signer signs messages this service *sends* (REQ-030). It does NOT
+        # gate verification: every consumed message is Ed25519-verified,
+        # sender-bound, and replay/dedup-checked regardless of whether this
+        # service can sign — a keyless receiver still rejects forged traffic.
         self._signer = signer
         self._replay = ReplayCache()
         self._dlq_seq: int | None = None
@@ -310,33 +321,51 @@ class MessagingService:
     ) -> list[Message]:
         """Consume unread messages, verifying each before delivery.
 
-        In signed mode (a signer was supplied) every message is Ed25519-verified
-        against its signer's public key and replay-checked; a failure quarantines
-        the message to the DLQ (``bad_signature`` / ``replay``) and drops it from
-        the returned batch (REQ-030, REQ-031). Without a signer this passes
-        messages through unverified.
+        Verification is unconditional — it does not depend on whether this
+        service can itself sign. Every message is Ed25519-verified against its
+        signer's public key, bound to its declared sender, and replay-checked
+        against the nonce window; any failure quarantines it to the DLQ
+        (``bad_signature`` / ``replay``) and drops it from the returned batch
+        (REQ-030, REQ-031). An unsigned or forged message is never delivered.
         """
         candidates = await self.poll(stream, entity_id, max_messages)
-        if self._signer is None:
-            return candidates
         delivered: list[Message] = []
         for message in candidates:
-            reason = await self._verify_incoming(message)
-            if reason is None:
-                delivered.append(message)
-            else:
+            reason = await self._verify_origin(message)
+            if reason is not None:
                 await self._to_dlq(message, reason)
+                continue
+            if not self._replay.check_and_record(message.nonce, message.ts):
+                await self._to_dlq(message, "replay")
+                continue
+            delivered.append(message)
         return delivered
 
-    async def _verify_incoming(self, message: Message) -> str | None:
-        """Return a DLQ reason if the message must be rejected, else None."""
+    async def _verify_origin(self, message: Message) -> str | None:
+        """Return ``"bad_signature"`` if signature or sender-binding fails, else None.
+
+        Two independent checks, both required (REQ-030):
+
+        * The signature must verify against the *signer's* registered public
+          key — an unregistered ``signer_did`` or one lacking a key is rejected.
+        * The declared ``sender`` must resolve to the same DID as ``signer_did``,
+          so a registered peer cannot publish ``sender=agent://alice`` under its
+          own key and have it accepted as from alice (origin forgery).
+
+        Replay/dedup is the caller's concern (``receive`` uses the nonce window;
+        ``subscribe`` dedups by message id), so this method is state-free and
+        safe to run once per delivery on either path.
+        """
         signer = await self._registry.get(message.signer_did)
         if signer is None or not signer.public_key:
             return "bad_signature"
         if not verify_message(message, bytes.fromhex(signer.public_key)):
             return "bad_signature"
-        if not self._replay.check_and_record(message.nonce, message.ts):
-            return "replay"
+        try:
+            if await resolve(self._registry, message.sender) != message.signer_did:
+                return "bad_signature"
+        except UnknownHandle:
+            return "bad_signature"
         return None
 
     # --- Subscribe (durable PUSH) ---
@@ -353,10 +382,14 @@ class MessagingService:
         Opens a durable pull consumer per subscribed stream (inbox, roles, and
         member channels) and runs a background fetch+dispatch loop for each —
         the modern push model: a running entity is delivered to live AND a
-        restarted entity resumes from its last ack. Every message runs the same
-        Ed25519 verify + replay check as :meth:`receive` (invalid -> DLQ), then
-        ``await handler(message)`` before it is acked. Returns a
-        :class:`Subscription` whose ``stop`` cancels the loops.
+        restarted entity resumes from its last ack. Every delivery is verified
+        (signature + sender-binding) exactly as :meth:`receive`; invalid ones go
+        to the DLQ. A single message fanned out to two of this entity's streams
+        (e.g. its inbox and a matching ``role://``) is delivered exactly once —
+        the second copy is a benign duplicate, acked and skipped, never a
+        ``replay``. Valid, first-seen messages reach ``await handler(message)``
+        before being acked. Returns a :class:`Subscription` whose ``stop``
+        cancels the loops.
         """
         entity = await self._registry.get(entity_id)
         roles = entity.roles if entity is not None else []
@@ -368,6 +401,9 @@ class MessagingService:
                     streams.append(stream)
 
         base = durable_name or entity_id
+        # Shared across this subscription's consume loops: message ids already
+        # delivered, so a fan-out duplicate is dropped once rather than replayed.
+        seen_ids: set[str] = set()
         tasks: list[asyncio.Task[None]] = []
         for stream in streams:
             durable = _durable_name(base, stream)
@@ -375,13 +411,15 @@ class MessagingService:
             self._known_streams.add(stream)
             tasks.append(
                 asyncio.create_task(
-                    self._consume_stream(consumer, handler),
+                    self._consume_stream(consumer, handler, seen_ids),
                     name=f"arcteam-subscribe:{durable}",
                 )
             )
         return Subscription(tasks)
 
-    async def _consume_stream(self, consumer: Consumer, handler: MessageHandler) -> None:
+    async def _consume_stream(
+        self, consumer: Consumer, handler: MessageHandler, seen_ids: set[str]
+    ) -> None:
         """Fetch-dispatch loop for one durable consumer until cancelled."""
         while True:
             try:
@@ -396,28 +434,43 @@ class MessagingService:
                 await asyncio.sleep(_IDLE_SLEEP)
                 continue
             for delivery in deliveries:
-                await self._dispatch(delivery, handler)
+                await self._dispatch(delivery, handler, seen_ids)
 
-    async def _dispatch(self, delivery: Delivery, handler: MessageHandler) -> None:
-        """Verify one delivery, hand valid ones to the handler, then ack.
+    async def _dispatch(
+        self, delivery: Delivery, handler: MessageHandler, seen_ids: set[str]
+    ) -> None:
+        """Verify one delivery, hand valid first-seen ones to the handler, then ack.
 
-        Invalid messages are quarantined to the DLQ and still acked so they are
-        not redelivered. A handler failure is logged (fail-open) and the message
-        is acked to avoid a poison-message loop.
+        Verification is unconditional (signature + sender-binding); invalid
+        messages are quarantined to the DLQ and still acked so they are not
+        redelivered. A message id already delivered on this subscription is a
+        benign fan-out duplicate — acked and skipped, never delivered twice. A
+        handler that raises :class:`RetryableDeliveryError` (transient
+        backpressure) is NOT acked, so it redelivers rather than being lost; any
+        other handler failure is logged (fail-open) and acked to avoid a
+        poison-message loop.
         """
         message = Message.model_validate(delivery.data)
-        if self._signer is not None:
-            reason = await self._verify_incoming(message)
-            if reason is not None:
-                await self._to_dlq(message, reason)
-                await delivery.ack()
-                return
+        reason = await self._verify_origin(message)
+        if reason is not None:
+            await self._to_dlq(message, reason)
+            await delivery.ack()
+            return
+        if message.id in seen_ids:
+            await delivery.ack()
+            return
         try:
             await handler(message)
         except asyncio.CancelledError:
             raise
+        except RetryableDeliveryError:
+            # Transient downstream backpressure — do NOT ack or mark seen; the
+            # durable consumer redelivers after ack_wait so the message is not lost.
+            logger.warning("inbox delivery deferred (backpressure) for %s", message.id)
+            return
         except Exception:  # reason: fail-open — log + ack to avoid poison loop
             logger.exception("inbox handler failed for message %s", message.id)
+        seen_ids.add(message.id)
         await delivery.ack()
 
     # --- Cursor ---

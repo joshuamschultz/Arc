@@ -375,16 +375,21 @@ class ArcAgent:
     async def _authorize_steer(self, caller_did: str) -> bool:
         """Whether the policy pipeline permits a mid-turn steer for ``caller_did``.
 
-        Fail-closed authorization (REQ-041): the agent authorizes its own steer
-        action by signing a ``messaging_steer`` :class:`ToolCall` (carrying the
+        Fail-closed authorization (REQ-041): a steer is permitted ONLY on an
+        explicit ALLOW from a present pipeline. The agent authorizes its own
+        steer by signing a ``messaging_steer`` :class:`ToolCall` (carrying the
         triggering ``caller_did``) with its identity and running it through the
-        arctrust pipeline. A DENY blocks the interrupt and is audited; the sender
-        was already authenticated at the message-signature layer.
+        arctrust pipeline. Every non-ALLOW outcome denies: a missing pipeline or
+        identity, a raising pipeline, or an explicit DENY. Every denial is
+        audited and degrades the delivery to ``follow_up`` rather than
+        interrupting; the sender was already authenticated at the
+        message-signature layer.
         """
         pipeline = self._policy_pipeline
         identity = self._identity
         if pipeline is None or identity is None:
-            return True
+            self._audit_steer_denied(caller_did, layer="none", rule_id="", reason="no pipeline")
+            return False
         from arcagent.core.tool_policy import PolicyContext, ToolCall, sign_call
 
         call = ToolCall(
@@ -400,20 +405,42 @@ class ArcAgent:
             policy_version="v0",
             bundle_age_seconds=0.0,
         )
-        decision = await pipeline.evaluate(call, ctx)
+        try:
+            decision = await pipeline.evaluate(call, ctx)
+        except Exception as exc:  # reason: fail-closed — a broken pipeline denies
+            self._audit_steer_denied(
+                caller_did, layer="error", rule_id="", reason=f"evaluate raised: {exc}"
+            )
+            return False
         if decision.is_deny():
-            if self._telemetry is not None:
-                self._telemetry.audit_event(
-                    "messaging.steer.denied",
-                    {
-                        "caller_did": caller_did,
-                        "layer": decision.layer,
-                        "rule_id": decision.rule_id,
-                        "reason": decision.reason,
-                    },
-                )
+            self._audit_steer_denied(
+                caller_did,
+                layer=decision.layer,
+                rule_id=decision.rule_id,
+                reason=decision.reason,
+            )
             return False
         return True
+
+    def _audit_steer_denied(
+        self,
+        caller_did: str,
+        *,
+        layer: str | None,
+        rule_id: str | None,
+        reason: str | None,
+    ) -> None:
+        """Emit the ``messaging.steer.denied`` audit event for a blocked steer."""
+        if self._telemetry is not None:
+            self._telemetry.audit_event(
+                "messaging.steer.denied",
+                {
+                    "caller_did": caller_did,
+                    "layer": layer,
+                    "rule_id": rule_id,
+                    "reason": reason,
+                },
+            )
 
     async def reload(self) -> str:
         """Re-scan capability roots; return R-005 diff string.

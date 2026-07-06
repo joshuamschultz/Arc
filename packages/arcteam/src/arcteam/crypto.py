@@ -14,7 +14,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from arctrust import sign, verify
+from arctrust import AgentIdentity, sign, verify
 
 from arcteam.types import Message
 
@@ -44,6 +44,19 @@ class MessageSigner:
 
     did: str
     private_key: bytes
+
+    @classmethod
+    def from_identity(cls, identity: AgentIdentity) -> MessageSigner:
+        """Build a signer from an arctrust ``AgentIdentity``.
+
+        The single construction path for a signer from an identity — the DID
+        and 32-byte seed come straight from the identity, so callers never
+        reach into private key state themselves.
+
+        Raises:
+            ValueError: Identity is verify-only (no private key to sign with).
+        """
+        return cls(did=identity.did, private_key=identity.signing_seed)
 
 
 def new_nonce() -> str:

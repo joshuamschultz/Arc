@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from arctrust import generate_keypair
+import pytest
+from arctrust import AgentIdentity, generate_keypair
 
 from arcteam.crypto import (
     MessageSigner,
@@ -24,6 +25,26 @@ def _msg(body: str = "hello") -> Message:
         to=["agent://a2"],
         body=body,
     )
+
+
+class TestMessageSignerFromIdentity:
+    def test_builds_signer_that_signs_verifiably(self) -> None:
+        identity = AgentIdentity.generate(org="test", agent_type="executor")
+        signer = MessageSigner.from_identity(identity)
+        assert signer.did == identity.did
+        msg = _msg()
+        msg.signer_did = signer.did
+        msg.nonce = new_nonce()
+        sign_message(msg, signer.private_key)
+        assert verify_message(msg, identity.public_key) is True
+
+    def test_verify_only_identity_raises(self) -> None:
+        identity = AgentIdentity.generate(org="test", agent_type="executor")
+        verify_only = AgentIdentity(
+            did=identity.did, public_key=identity.public_key, _signing_key=None
+        )
+        with pytest.raises(ValueError, match="no private key"):
+            MessageSigner.from_identity(verify_only)
 
 
 class TestSignVerify:

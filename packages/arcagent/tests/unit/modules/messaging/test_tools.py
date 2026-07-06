@@ -1,25 +1,28 @@
-"""Unit tests for messaging module tools."""
+"""Unit tests for messaging module tools.
+
+Exercises the live ``create_messaging_tools`` factory directly: the runtime is
+bootstrapped via ``_runtime.configure`` (the same wiring the capability path
+uses) and the tools are built over its ``MessagingService``/``EntityRegistry``.
+"""
 
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from arctrust import AgentIdentity
 
-from arcagent.modules.messaging import MessagingModule
-from tests.unit.modules.messaging.conftest import (
-    make_config_dict,
-    make_ctx,
-    make_team_config,
-)
+from arcagent.modules.messaging import _bootstrap, _runtime
+from arcagent.modules.messaging.tools import create_messaging_tools
+from tests.unit.modules.messaging.conftest import make_config_dict, make_peer_entity
 
 
 def _find_tool(tools: list, name: str):
-    """Find a tool by name from registered calls."""
-    for call in tools:
-        tool = call.args[0]
+    """Find a tool by name from the created tool list."""
+    for tool in tools:
         if tool.name == name:
             return tool
     msg = f"Tool '{name}' not found"
@@ -27,36 +30,52 @@ def _find_tool(tools: list, name: str):
 
 
 @pytest.fixture
-async def started_module(tmp_path: Path):
-    """Start a messaging module and yield (module, ctx) for tool tests."""
+async def messaging_tools(tmp_path: Path) -> AsyncIterator[tuple[list, object]]:
+    """Bootstrap the live runtime and yield (tools, state) for tool tests."""
+    _runtime.reset()
     config = make_config_dict(
         entity_id="agent://tool_tester",
         entity_name="Tool Tester",
         roles=["executor"],
         capabilities=["task-execution"],
     )
-    team_config = make_team_config(str(tmp_path / "team"))
-    module = MessagingModule(
+    identity = AgentIdentity.generate(org="local", agent_type="agent")
+    team_root = tmp_path / "team"
+    _runtime.configure(
         config=config,
-        team_config=team_config,
         telemetry=MagicMock(),
         workspace=tmp_path,
+        team_root=team_root,
+        agent_name="tool_tester",
+        identity=identity,
     )
-    ctx = make_ctx(tmp_path)
-    await module.startup(ctx)
-    yield module, ctx
-    await module.shutdown()
+    st = _runtime.state()
+    # Register the agent itself so it can send and appears in the roster.
+    await st.registry.register(
+        _bootstrap.self_entity(
+            entity_id="agent://tool_tester",
+            entity_name="Tool Tester",
+            handle="tool_tester",
+            identity=identity,
+            roles=["executor"],
+            capabilities=["task-execution"],
+        )
+    )
+    tools = create_messaging_tools(
+        svc=st.svc,
+        registry=st.registry,
+        config=st.config,
+        team_root=team_root,
+    )
+    yield tools, st
+    _runtime.reset()
 
 
 class TestToolRegistration:
     @pytest.mark.asyncio
-    async def test_messaging_tools_registered(
-        self,
-        started_module,
-    ) -> None:
-        _, ctx = started_module
-        calls = ctx.tool_registry.register.call_args_list
-        names = [c.args[0].name for c in calls]
+    async def test_messaging_tools_created(self, messaging_tools) -> None:
+        tools, _ = messaging_tools
+        names = [t.name for t in tools]
         assert len(names) == 7
         assert "messaging_send" in names
         assert "messaging_check_inbox" in names
@@ -69,42 +88,22 @@ class TestToolRegistration:
 
 class TestSendTool:
     @pytest.mark.asyncio
-    async def test_send_to_another_agent(
-        self,
-        started_module,
-        tmp_path: Path,
-    ) -> None:
-        module, ctx = started_module
+    async def test_send_to_another_agent(self, messaging_tools) -> None:
+        tools, st = messaging_tools
         # Register a second agent so we can message them.
-        from tests.unit.modules.messaging.conftest import make_peer_entity
+        await st.registry.register(make_peer_entity("brad", "Brad", roles=["executor"]))
 
-        await module._registry.register(
-            make_peer_entity("brad", "Brad", roles=["executor"])
-        )
-
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_send",
-        )
-        result = await tool.execute(
-            to="agent://brad",
-            body="Hello Brad!",
-        )
+        tool = _find_tool(tools, "messaging_send")
+        result = await tool.execute(to="agent://brad", body="Hello Brad!")
         data = json.loads(result)
         assert data["status"] == "sent"
         assert "id" in data
         assert "thread_id" in data
 
     @pytest.mark.asyncio
-    async def test_send_no_recipient_errors(
-        self,
-        started_module,
-    ) -> None:
-        _, ctx = started_module
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_send",
-        )
+    async def test_send_no_recipient_errors(self, messaging_tools) -> None:
+        tools, _ = messaging_tools
+        tool = _find_tool(tools, "messaging_send")
         result = await tool.execute(to="", body="hello")
         data = json.loads(result)
         assert "error" in data
@@ -112,29 +111,20 @@ class TestSendTool:
 
 class TestCheckInboxTool:
     @pytest.mark.asyncio
-    async def test_empty_inbox(self, started_module) -> None:
-        _, ctx = started_module
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_check_inbox",
-        )
+    async def test_empty_inbox(self, messaging_tools) -> None:
+        tools, _ = messaging_tools
+        tool = _find_tool(tools, "messaging_check_inbox")
         result = await tool.execute()
         data = json.loads(result)
         assert data["unread"] == 0
 
     @pytest.mark.asyncio
-    async def test_inbox_with_message(
-        self,
-        started_module,
-    ) -> None:
-        module, ctx = started_module
-        # Register sender and send a message to our agent.
+    async def test_inbox_with_message(self, messaging_tools) -> None:
+        tools, st = messaging_tools
         from arcteam.types import Message
 
-        from tests.unit.modules.messaging.conftest import make_peer_entity
-
-        await module._registry.register(make_peer_entity("sender", "Sender"))
-        await module._svc.send(
+        await st.registry.register(make_peer_entity("sender", "Sender"))
+        await st.svc.send(
             Message(
                 sender="agent://sender",
                 to=["agent://tool_tester"],
@@ -142,10 +132,7 @@ class TestCheckInboxTool:
             )
         )
 
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_check_inbox",
-        )
+        tool = _find_tool(tools, "messaging_check_inbox")
         result = await tool.execute()
         data = json.loads(result)
         assert data["unread"] >= 1
@@ -153,20 +140,15 @@ class TestCheckInboxTool:
 
 class TestCheckInboxThreadContext:
     @pytest.mark.asyncio
-    async def test_reply_includes_thread_context(
-        self,
-        started_module,
-    ) -> None:
+    async def test_reply_includes_thread_context(self, messaging_tools) -> None:
         """When a reply arrives, check_inbox includes prior thread messages."""
-        module, ctx = started_module
+        tools, st = messaging_tools
         from arcteam.types import Message
 
-        from tests.unit.modules.messaging.conftest import make_peer_entity
-
-        await module._registry.register(make_peer_entity("alice", "Alice"))
+        await st.registry.register(make_peer_entity("alice", "Alice"))
 
         # Step 1: Alice sends original message to our agent.
-        original = await module._svc.send(
+        original = await st.svc.send(
             Message(
                 sender="agent://alice",
                 to=["agent://tool_tester"],
@@ -175,7 +157,7 @@ class TestCheckInboxThreadContext:
         )
 
         # Ack the original so it's "read".
-        await module._svc.ack(
+        await st.svc.ack(
             "arc.agent.tool_tester",
             "agent://tool_tester",
             seq=original.seq,
@@ -183,7 +165,7 @@ class TestCheckInboxThreadContext:
         )
 
         # Step 2: Our agent sends request to alice (part of multi-step).
-        await module._svc.send(
+        await st.svc.send(
             Message(
                 sender="agent://tool_tester",
                 to=["agent://alice"],
@@ -192,7 +174,7 @@ class TestCheckInboxThreadContext:
         )
 
         # Step 3: Alice replies in the same thread.
-        reply = await module._svc.send(
+        reply = await st.svc.send(
             Message(
                 sender="agent://alice",
                 to=["agent://tool_tester"],
@@ -201,10 +183,7 @@ class TestCheckInboxThreadContext:
             )
         )
 
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_check_inbox",
-        )
+        tool = _find_tool(tools, "messaging_check_inbox")
         result = await tool.execute()
         data = json.loads(result)
 
@@ -219,19 +198,14 @@ class TestCheckInboxThreadContext:
         assert "agent://alice" in senders
 
     @pytest.mark.asyncio
-    async def test_no_thread_context_for_new_messages(
-        self,
-        started_module,
-    ) -> None:
+    async def test_no_thread_context_for_new_messages(self, messaging_tools) -> None:
         """New messages (thread_id == id) don't include thread_context."""
-        module, ctx = started_module
+        tools, st = messaging_tools
         from arcteam.types import Message
 
-        from tests.unit.modules.messaging.conftest import make_peer_entity
+        await st.registry.register(make_peer_entity("bob", "Bob"))
 
-        await module._registry.register(make_peer_entity("bob", "Bob"))
-
-        await module._svc.send(
+        await st.svc.send(
             Message(
                 sender="agent://bob",
                 to=["agent://tool_tester"],
@@ -239,10 +213,7 @@ class TestCheckInboxThreadContext:
             )
         )
 
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_check_inbox",
-        )
+        tool = _find_tool(tools, "messaging_check_inbox")
         result = await tool.execute()
         data = json.loads(result)
         msg = data["streams"]["arc.agent.tool_tester"][0]
@@ -251,12 +222,9 @@ class TestCheckInboxThreadContext:
 
 class TestListEntitiesTool:
     @pytest.mark.asyncio
-    async def test_list_entities(self, started_module) -> None:
-        _, ctx = started_module
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_list_entities",
-        )
+    async def test_list_entities(self, messaging_tools) -> None:
+        tools, _ = messaging_tools
+        tool = _find_tool(tools, "messaging_list_entities")
         result = await tool.execute()
         data = json.loads(result)
         # At least our own agent should be registered.
@@ -267,28 +235,19 @@ class TestListEntitiesTool:
 
 class TestListChannelsTool:
     @pytest.mark.asyncio
-    async def test_list_channels_empty(
-        self,
-        started_module,
-    ) -> None:
-        _, ctx = started_module
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_list_channels",
-        )
+    async def test_list_channels_empty(self, messaging_tools) -> None:
+        tools, _ = messaging_tools
+        tool = _find_tool(tools, "messaging_list_channels")
         result = await tool.execute()
         data = json.loads(result)
         assert data == []
 
     @pytest.mark.asyncio
-    async def test_list_channels_after_create(
-        self,
-        started_module,
-    ) -> None:
-        module, ctx = started_module
+    async def test_list_channels_after_create(self, messaging_tools) -> None:
+        tools, st = messaging_tools
         from arcteam.types import Channel
 
-        await module._svc.create_channel(
+        await st.svc.create_channel(
             Channel(
                 name="ops",
                 description="Operations",
@@ -296,10 +255,7 @@ class TestListChannelsTool:
             )
         )
 
-        tool = _find_tool(
-            ctx.tool_registry.register.call_args_list,
-            "messaging_list_channels",
-        )
+        tool = _find_tool(tools, "messaging_list_channels")
         result = await tool.execute()
         data = json.loads(result)
         assert len(data) == 1

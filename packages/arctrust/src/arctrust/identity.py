@@ -178,6 +178,22 @@ class AgentIdentity:
         """Whether this identity has a private key for signing."""
         return self._signing_key is not None
 
+    @property
+    def signing_seed(self) -> bytes:
+        """Return this identity's 32-byte Ed25519 private key seed.
+
+        The seed is what downstream signers (e.g. arcteam's ``MessageSigner``)
+        need to reconstruct the signing key. Exposing it here is the single,
+        auditable seam for reading private key material — callers must never
+        reach ``_signing_key`` directly.
+
+        Raises:
+            ValueError: Identity has no private key (verify-only).
+        """
+        if self._signing_key is None:
+            raise ValueError("Cannot expose signing seed: no private key available (verify-only)")
+        return self._signing_key.encode()
+
     def sign(self, message: bytes) -> bytes:
         """Sign a message with Ed25519. Returns 64-byte signature bytes.
 

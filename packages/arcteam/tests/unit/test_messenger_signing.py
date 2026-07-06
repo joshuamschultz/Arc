@@ -81,8 +81,14 @@ class TestVerifyOnConsume:
         assert any(e["meta"].get("dlq_reason") == "replay" for e in dlq)
 
 
-class TestUnsignedModeUnchanged:
-    async def test_no_signer_leaves_messages_unsigned(self) -> None:
+class TestUnsignedSendIsRejectedOnConsume:
+    """A signer-less service produces unsigned envelopes, and verification is
+    unconditional (SPEC-031 review, FIX 3): an unsigned message can never be
+    delivered — it is quarantined as ``bad_signature``. This replaces the old
+    ``test_no_signer_leaves_messages_unsigned`` which encoded the pre-fix bug
+    that a keyless receiver accepted unsigned traffic."""
+
+    async def test_unsigned_message_never_delivered(self) -> None:
         backend = MemoryBackend()
         audit = AuditLogger(backend, hmac_key=b"k" * 32)
         await audit.initialize()
@@ -98,4 +104,6 @@ class TestUnsignedModeUnchanged:
         sent = await svc.send(Message(sender="agent://a1", to=["agent://a2"], body="hi"))
         assert sent.sig == ""
         received = await svc.receive("arc.agent.a2", "agent://a2")
-        assert [m.body for m in received] == ["hi"]
+        assert received == []
+        dlq = await svc.dlq_list()
+        assert any(e["meta"].get("dlq_reason") == "bad_signature" for e in dlq)

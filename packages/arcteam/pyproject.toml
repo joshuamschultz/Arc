@@ -20,6 +20,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "arctrust",
     "nats-py>=2.15.0",
     "pydantic>=2.0,<3",
     "python-frontmatter>=1.0",

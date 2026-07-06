@@ -256,16 +256,9 @@ def _init_cmd(args: argparse.Namespace) -> None:
     root_path: str | None = getattr(args, "root_path", None)
     root = Path(root_path) if root_path else TeamConfig().root
 
-    dirs = [
-        root,
-        root / "messages" / "registry",
-        root / "messages" / "channels",
-        root / "messages" / "cursors",
-        root / "messages" / "streams",
-        root / "audit" / "audit",
-    ]
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
+    # The message/audit store is NATS JetStream — init only needs the root and
+    # the HMAC key that the audit chain (AuditLogger) and `status` consume.
+    root.mkdir(parents=True, exist_ok=True)
 
     hmac_path = root / ".hmac_key"
     if not hmac_path.exists():
@@ -276,10 +269,6 @@ def _init_cmd(args: argparse.Namespace) -> None:
         _write(f"HMAC key already exists: {hmac_path}")
 
     _write(f"Team initialized at: {root}")
-    for d in dirs:
-        if d == root:
-            continue
-        _write(f"  {d.relative_to(root)}/")
 
 
 def _backfill_workspaces(args: argparse.Namespace) -> None:
@@ -388,10 +377,38 @@ def _resolve_workspace(raw: str | None) -> str | None:
     return str(resolved)
 
 
+def _registration_identity(entity_type: str, workspace_path: str | None, root: Path) -> Any:
+    """Resolve the persisted identity whose key the entity signs with.
+
+    An agent's identity lives in its own ``arcagent.toml`` (next to its
+    workspace) — the same file the running agent loads at startup — so the
+    registered DID and verify key match what it signs with (REQ-030). When
+    there is no such config (a user, or a bare workspace) a fresh identity is
+    minted and persisted under the team root, so the same key can sign later.
+    """
+    from arctrust import AgentIdentity
+
+    if entity_type == "agent" and workspace_path:
+        config_path = Path(workspace_path).parent / "arcagent.toml"
+        if config_path.exists():
+            from arcagent.core.config import load_config
+
+            config = load_config(config_path)
+            return AgentIdentity.from_config(
+                config.identity,
+                org=config.agent.org,
+                agent_type=config.agent.type,
+                config_path=config_path,
+            )
+
+    identity = AgentIdentity.generate(org="local", agent_type=entity_type)
+    identity.save_keys(root / "keys")
+    return identity
+
+
 def _register(args: argparse.Namespace) -> None:
     """Register an agent or user entity on DID-keyed identity."""
     from arcteam.types import Entity, EntityType
-    from arctrust import AgentIdentity
 
     root = _get_root(args)
     entity_id: str = args.entity_id
@@ -412,13 +429,14 @@ def _register(args: argparse.Namespace) -> None:
 
     handle = entity_id.split("://")[-1]
     uri = entity_id if "://" in entity_id else f"{entity_type}://{handle}"
-    did = AgentIdentity.generate(org="local", agent_type=entity_type).did
+    identity = _registration_identity(entity_type, workspace_path, root)
     entity = Entity(
-        did=did,
+        did=identity.did,
         handle=handle,
         id=uri,
         name=name,
         type=EntityType(entity_type),
+        public_key=identity.public_key.hex(),
         roles=role_list,
         workspace_path=workspace_path,
     )
@@ -646,10 +664,7 @@ async def _signer_for(registry: Any, sender_ref: str) -> Any:
         agent_type=config.agent.type,
         config_path=config_path,
     )
-    signing_key = identity._signing_key
-    if signing_key is None:
-        raise ValueError(f"Sender {sender_ref!r} identity has no private key for signing")
-    return MessageSigner(did=identity.did, private_key=signing_key.encode())
+    return MessageSigner.from_identity(identity)
 
 
 def _send(args: argparse.Namespace) -> None:

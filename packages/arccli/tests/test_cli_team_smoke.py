@@ -72,19 +72,17 @@ class TestTeamInit:
         result = _arc("team", "init", "--root", str(tmp_path))
         assert result.stdout.strip()
 
-    def test_init_creates_directories(self, tmp_path: Path) -> None:
-        """arc team init creates the directories that arcteam actually uses.
+    def test_init_creates_root_not_filebackend_dirs(self, tmp_path: Path) -> None:
+        """arc team init creates only the root; NATS JetStream is the store.
 
-        Paths must mirror the collection layout in arcteam.registry,
-        arcteam.messenger, and arcteam.audit so `status` reads where
-        registration writes.
+        The old on-disk FileBackend layout (messages/*, audit/*) is gone, so
+        init must not recreate those vestigial directories.
         """
-        _arc("team", "init", "--root", str(tmp_path))
-        assert (tmp_path / "messages" / "registry").is_dir()
-        assert (tmp_path / "messages" / "channels").is_dir()
-        assert (tmp_path / "messages" / "cursors").is_dir()
-        assert (tmp_path / "messages" / "streams").is_dir()
-        assert (tmp_path / "audit" / "audit").is_dir()
+        target = tmp_path / "teamroot"
+        _arc("team", "init", "--root", str(target))
+        assert target.is_dir()
+        assert not (target / "messages").exists()
+        assert not (target / "audit").exists()
 
     def test_init_creates_hmac_key(self, tmp_path: Path) -> None:
         """arc team init creates .hmac_key file."""

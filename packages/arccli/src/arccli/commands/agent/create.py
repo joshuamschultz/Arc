@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 from arccli.commands.agent._common import (
     _CALCULATOR_TOOL,
@@ -72,26 +73,26 @@ def _ensure_arcstore_dirs(agent_dir: Path) -> None:
         sys.stdout.write("Warning: could not pre-create arcstore data dir (non-fatal)\n")
 
 
-def _mint_agent_did(agent_dir: Path) -> str:
-    """Materialize the agent's real DID from its scaffolded config.
+def _mint_agent_identity(agent_dir: Path) -> Any:
+    """Materialize the agent's real identity from its scaffolded config.
 
-    ``AgentIdentity`` lives in arctrust; arccli reads it here and passes the
-    DID into arcteam registration (arcteam never fetches identity itself).
-    ``from_config`` mints + persists the DID into the agent's arcagent.toml,
-    so the DID registered here is the SAME one the agent uses at startup.
+    ``AgentIdentity`` lives in arctrust; arccli reads it here and passes both
+    the DID and Ed25519 verify key into arcteam registration (arcteam never
+    fetches identity itself). ``from_config`` mints + persists the keypair,
+    so the identity registered here is the SAME one the agent signs with at
+    startup — the signed bus can therefore verify its messages.
     """
     from arcagent.core.config import load_config
     from arctrust import AgentIdentity
 
     config_path = agent_dir / "arcagent.toml"
     config = load_config(config_path)
-    identity = AgentIdentity.from_config(
+    return AgentIdentity.from_config(
         config.identity,
         org=config.agent.org,
         agent_type=config.agent.type,
         config_path=config_path,
     )
-    return identity.did
 
 
 def _try_auto_register(name: str, agent_dir: Path) -> None:
@@ -102,7 +103,8 @@ def _try_auto_register(name: str, agent_dir: Path) -> None:
 
         from arccli.commands.team import _build_service
 
-        did = _mint_agent_did(agent_dir)
+        identity = _mint_agent_identity(agent_dir)
+        did = identity.did
 
         async def _do() -> None:
             root = TeamConfig().root
@@ -113,6 +115,7 @@ def _try_auto_register(name: str, agent_dir: Path) -> None:
                 id=f"agent://{name}",
                 name=name,
                 type=EntityType("agent"),
+                public_key=identity.public_key.hex(),
                 roles=["executor"],
                 workspace_path=str(agent_dir / "workspace"),
             )

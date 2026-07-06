@@ -82,3 +82,52 @@ class TestCreateRegistersWithDid:
 
         records = asyncio.run(team_backend.query("messages/registry"))
         assert records[0]["did"] == config_did
+
+
+def _agent_identity(tmp_path: Path, name: str) -> Any:
+    """Load the created agent's persisted signing identity from its config."""
+    from arcagent.core.config import load_config
+    from arctrust import AgentIdentity
+
+    config_path = tmp_path / name / "arcagent.toml"
+    config = load_config(config_path)
+    return AgentIdentity.from_config(
+        config.identity,
+        org=config.agent.org,
+        agent_type=config.agent.type,
+        config_path=config_path,
+    )
+
+
+class TestCreateRegistersVerifiableKey:
+    """FIX-1: the registered record must carry the agent's real verify key.
+
+    Without ``public_key``, the signed bus quarantines every message from a
+    real agent as ``bad_signature`` — the entity is registered but unverifiable.
+    """
+
+    def test_registered_public_key_verifies_agent_signature(
+        self, tmp_path, isolated_home, team_backend: Any
+    ):
+        from arcteam.crypto import MessageSigner, sign_message, verify_message
+        from arcteam.types import Message
+
+        _create_agent(tmp_path, "researcher")
+
+        records = asyncio.run(team_backend.query("messages/registry"))
+        record = records[0]
+        assert record["public_key"], "registered entity must carry a verify key"
+
+        # The agent signs with the SAME identity it registered under.
+        signer = MessageSigner.from_identity(_agent_identity(tmp_path, "researcher"))
+        message = Message(
+            sender="agent://researcher",
+            to=["agent://peer"],
+            body="signed by the real agent key",
+            signer_did=signer.did,
+            nonce="nonce-1",
+        )
+        sign_message(message, signer.private_key)
+
+        # This is the exact bug: the registered key must verify that signature.
+        assert verify_message(message, bytes.fromhex(record["public_key"])) is True

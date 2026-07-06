@@ -1,6 +1,6 @@
 """Decorator-form messaging module — SPEC-021.
 
-Seven capabilities mirror :class:`MessagingModule`'s startup registrations:
+The live messaging surface. Nine capabilities register on load:
 
   * ``agent:assemble_prompt`` (priority 50)  — inject team context + roster.
   * ``agent:ready``           (priority 100) — bind agent.run_collected() callback.
@@ -12,11 +12,11 @@ Seven capabilities mirror :class:`MessagingModule`'s startup registrations:
   * ``messaging_list_channels`` (@tool)      — list available channels.
   * ``messaging_inbox_loop``  (@background_task) — durable PUSH inbox consumer.
 
-File tools (``store_team_file`` / ``list_team_files``) are registered only
-when ``team_root`` resolves to an existing path; they are omitted here
+File tools (``store_team_file`` / ``list_team_files``) are not decorated here
 because the decorator pattern does not support conditional registration at
-decoration time. Use the legacy :class:`MessagingModule` path when file
-tools are required, or register them manually post-startup.
+decoration time; they are built by
+:func:`arcagent.modules.messaging.tools.create_messaging_tools` and registered
+manually when ``team_root`` resolves to an existing path.
 
 State is shared via :mod:`arcagent.modules.messaging._runtime`; the agent
 configures it once at startup and the capabilities read it lazily.
@@ -157,12 +157,19 @@ async def _handle_incoming(message: Any) -> None:
     async with st.processing_lock:
         if st.deliver_fn is not None:
             caller_did = message.signer_did or message.sender
-            await st.deliver_fn(
-                caller_did=caller_did,
-                message=_format_delivery(message),
-                session_key=_INBOX_SESSION,
-                interrupt=_interrupt_for(message, st.identity),
-            )
+            try:
+                await st.deliver_fn(
+                    caller_did=caller_did,
+                    message=_format_delivery(message),
+                    session_key=_INBOX_SESSION,
+                    interrupt=_interrupt_for(message, st.identity),
+                )
+            except asyncio.QueueFull as exc:
+                from arcteam.messenger import RetryableDeliveryError
+
+                # The agent's steering queue is full: defer redelivery (do not
+                # let subscribe ack this) rather than silently dropping a teammate.
+                raise RetryableDeliveryError(message.id) from exc
         elif st.agent_run_fn is not None:
             await st.agent_run_fn(_format_delivery(message), session_key=_INBOX_SESSION)
 

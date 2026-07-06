@@ -208,3 +208,48 @@ class TestSteerPolicyGate:
             assert await agent._authorize_steer("did:arc:local:peer/aaaa") is True
         finally:
             await agent.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_authorize_steer_no_pipeline_denies(
+        self, tmp_path: Path, workspace: Path
+    ) -> None:
+        """No policy pipeline → fail-closed deny (REQ-041), never permit."""
+        agent = await _started_agent(tmp_path, workspace)
+        try:
+            agent._policy_pipeline = None
+            assert await agent._authorize_steer("did:arc:local:peer/aaaa") is False
+        finally:
+            await agent.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_authorize_steer_no_identity_denies(
+        self, tmp_path: Path, workspace: Path
+    ) -> None:
+        """No identity → fail-closed deny (REQ-041), never permit."""
+        agent = await _started_agent(tmp_path, workspace)
+        try:
+            agent._identity = None
+            assert await agent._authorize_steer("did:arc:local:peer/aaaa") is False
+        finally:
+            await agent.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_authorize_steer_evaluate_error_denies_and_audits(
+        self, tmp_path: Path, workspace: Path
+    ) -> None:
+        """A raising pipeline is treated as DENY and audited — the error never
+        propagates and never permits the steer (REQ-041)."""
+        agent = await _started_agent(tmp_path, workspace)
+        try:
+            agent._policy_pipeline = MagicMock()
+            agent._policy_pipeline.evaluate = AsyncMock(
+                side_effect=RuntimeError("pipeline boom")
+            )
+            agent._telemetry = MagicMock()
+
+            allowed = await agent._authorize_steer("did:arc:local:peer/aaaa")
+            assert allowed is False
+            agent._telemetry.audit_event.assert_called_once()
+            assert agent._telemetry.audit_event.call_args.args[0] == "messaging.steer.denied"
+        finally:
+            await agent.shutdown()

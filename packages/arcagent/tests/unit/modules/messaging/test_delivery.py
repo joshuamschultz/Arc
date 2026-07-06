@@ -20,7 +20,7 @@ from arcagent.modules.messaging.capabilities import (
     _interrupt_for,
     messaging_bind_run_fn,
 )
-from tests.unit.modules.messaging.conftest import make_config_dict, make_peer_entity
+from tests.unit.modules.messaging.conftest import make_config_dict
 
 
 @pytest.fixture(autouse=True)
@@ -149,7 +149,12 @@ class TestHandleIncoming:
 class TestInboxLoopPush:
     @pytest.mark.asyncio
     async def test_subscribe_pushes_verified_message_to_handler(self, tmp_path: Path) -> None:
-        """End-to-end: subscribe() pushes a signed bus message into deliver_fn — no poll."""
+        """subscribe() pushes a signed, origin-verified bus message into deliver_fn — no poll.
+
+        The message is signed by ``me`` and its ``sender`` resolves to ``me``'s DID, so it
+        passes ``_verify_origin`` (signature + sender==signer_did binding). Cross-agent
+        peer→peer delivery over real NATS is covered by ``tests/integration/test_spec031_e2e``.
+        """
         import asyncio
 
         from arcteam.types import Message
@@ -173,8 +178,6 @@ class TestInboxLoopPush:
                 capabilities=[],
             )
         )
-        await st.registry.register(make_peer_entity("peer", "Peer"))
-
         delivered = asyncio.Event()
         bodies: list[str] = []
 
@@ -187,12 +190,33 @@ class TestInboxLoopPush:
 
         subscription = await st.svc.subscribe(st.config.entity_id, _handle_incoming)
         try:
-            await st.svc.send(Message(sender="agent://peer", to=["agent://me"], body="hi"))
+            await st.svc.send(Message(sender="agent://me", to=["agent://me"], body="hi"))
             await asyncio.wait_for(delivered.wait(), timeout=3)
         finally:
             await subscription.stop()
 
         assert any("hi" in b for b in bodies)
+
+    @pytest.mark.asyncio
+    async def test_queuefull_raises_retryable_not_dropped(self, tmp_path: Path) -> None:
+        """FIX #5: a full steering queue defers redelivery (RetryableDeliveryError), never drops."""
+        import asyncio
+
+        from arcteam.messenger import RetryableDeliveryError
+
+        _runtime.configure(
+            config=make_config_dict(entity_id="agent://me", entity_name="Me"),
+            workspace=tmp_path,
+            identity=_identity(),
+        )
+        st = _runtime.state()
+
+        async def full(**_kwargs: Any) -> str:
+            raise asyncio.QueueFull
+
+        st.deliver_fn = full
+        with pytest.raises(RetryableDeliveryError):
+            await _handle_incoming(_msg(sender="agent://me", signer_did="did:arc:local:me/aaaa"))
 
 
 class TestEnsureLiveBackend:

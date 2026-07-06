@@ -1,9 +1,10 @@
 """Shared arcteam service bootstrap for the messaging module.
 
 Backend selection, message-signer construction, and self-registration live in
-one place so the legacy :class:`MessagingModule` and the decorator capability
-path build byte-identical services (DRY). arcagent owns *which* identity signs
-and *which* substrate carries the traffic; arcteam owns the messaging itself.
+one place so every messaging entry point (the capability runtime and the tool
+factory) builds byte-identical services (DRY). arcagent owns *which* identity
+signs and *which* substrate carries the traffic; arcteam owns the messaging
+itself.
 """
 
 from __future__ import annotations
@@ -21,18 +22,18 @@ def message_signer(identity: AgentIdentity | None) -> MessageSigner | None:
     """Build an arcteam ``MessageSigner`` from the agent's arctrust identity.
 
     Closes REQ-030: the agent signs every message it sends with its own
-    Ed25519 key. The signer carries the raw 32-byte seed that
-    ``arcteam.crypto.sign_message`` needs. ``AgentIdentity`` exposes no public
-    seed accessor, so the seed is read from its own signing key — the agent
-    wiring its own signer, not a cross-package reach into a foreign key.
-    Returns ``None`` for a verify-only identity (nothing to sign with).
+    Ed25519 key. ``MessageSigner.from_identity`` is arcteam's single seam for
+    reading the identity's seed. A verify-only identity has no seed and raises,
+    which maps to ``None`` (optional-signer semantics — nothing to sign with).
     """
-    if identity is None or identity._signing_key is None:
+    if identity is None:
         return None
     from arcteam.crypto import MessageSigner
 
-    seed: bytes = identity._signing_key.encode()
-    return MessageSigner(did=identity.did, private_key=seed)
+    try:
+        return MessageSigner.from_identity(identity)
+    except ValueError:
+        return None
 
 
 async def make_backend(nats_url: str) -> StorageBackend:
