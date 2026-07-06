@@ -26,7 +26,7 @@ dependencies = [
     "arcrun",
     "arc-agent[telegram]",
     "arcteam",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
     "prompt_toolkit>=3.0",
 ]
 

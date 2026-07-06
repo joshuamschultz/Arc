@@ -34,8 +34,13 @@ async def _service_with_signer() -> tuple[MessagingService, EntityRegistry, Mess
         )
     )
     await registry.register(
-        Entity(did="did:arc:local:agent/a2", handle="a2", id="agent://a2", name="A2",
-               type=EntityType.AGENT)
+        Entity(
+            did="did:arc:local:agent/a2",
+            handle="a2",
+            id="agent://a2",
+            name="A2",
+            type=EntityType.AGENT,
+        )
     )
     signer = MessageSigner(did=DID_A1, private_key=kp.private_key)
     svc = MessagingService(backend, registry, audit, signer=signer)
@@ -97,8 +102,13 @@ class TestUnsignedSendIsRejectedOnConsume:
             Entity(did=DID_A1, handle="a1", id="agent://a1", name="A1", type=EntityType.AGENT)
         )
         await registry.register(
-            Entity(did="did:arc:local:agent/a2", handle="a2", id="agent://a2", name="A2",
-                   type=EntityType.AGENT)
+            Entity(
+                did="did:arc:local:agent/a2",
+                handle="a2",
+                id="agent://a2",
+                name="A2",
+                type=EntityType.AGENT,
+            )
         )
         svc = MessagingService(backend, registry, audit)
         sent = await svc.send(Message(sender="agent://a1", to=["agent://a2"], body="hi"))

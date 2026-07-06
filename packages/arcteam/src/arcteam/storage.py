@@ -111,8 +111,11 @@ class MemoryDelivery:
     """A message pulled from ``MemoryBackend``; ``ack`` advances the durable floor."""
 
     def __init__(
-        self, floors: dict[tuple[str, str, str], int], floor_key: tuple[str, str, str],
-        data: dict[str, Any], seq: int,
+        self,
+        floors: dict[tuple[str, str, str], int],
+        floor_key: tuple[str, str, str],
+        data: dict[str, Any],
+        seq: int,
     ) -> None:
         self._floors = floors
         self._floor_key = floor_key

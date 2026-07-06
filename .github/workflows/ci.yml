@@ -32,15 +32,12 @@ jobs:
 
       - name: Mypy (arcllm)
         run: uv run mypy packages/arcllm/src/arcllm/ --strict
-        continue-on-error: true
 
       - name: Mypy (arcrun)
         run: uv run mypy packages/arcrun/src/arcrun/ --strict
-        continue-on-error: true
 
       - name: Mypy (arcagent)
         run: uv run mypy packages/arcagent/src/arcagent/ --strict
-        continue-on-error: true
 
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
@@ -96,4 +93,55 @@ jobs:
         # is a Unix-only module — Windows would fail at module-load.
         if: runner.os != 'Windows'
         run: uv run pytest packages/arcteam/tests/ -v --tb=short
+
+  security:
+    name: Security & SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --all-packages --all-groups
+
+      - name: Export harness runtime closure
+        # Scope the vulnerability gate to what Arc actually ships: every
+        # workspace package + product extras (azure/cloud/container),
+        # EXCLUDING the dev, test, and tutorial groups. Tutorial/help-docs
+        # tooling (jupyter, jupyterlab, jupyter-server, tornado, bleach,
+        # msgpack) and dev tooling (pip, pip-audit) are not part of the
+        # deployed harness and must not gate every PR on their CVEs.
+        run: |
+          uv export --frozen --no-emit-workspace --no-hashes \
+            --all-packages --all-extras --no-default-groups \
+            --format requirements-txt > sbom/requirements-gate.txt
+
+      - name: Vulnerability scan (pip-audit, harness runtime scope)
+        # BLOCKING gate. Audits only the runtime closure exported above and
+        # honors the POA&M in sbom/security-suppressions.txt — each accepted
+        # residual is annotated there with its compensating control and
+        # intended fix. Any NEW unignored vulnerability in the runtime closure
+        # fails this job.
+        run: |
+          IGNORE_ARGS=()
+          while read -r vid; do
+            [ -n "$vid" ] && IGNORE_ARGS+=(--ignore-vuln "$vid")
+          done < <(grep -vE '^\s*#|^\s*$' sbom/security-suppressions.txt | awk '{print $1}')
+          uv run pip-audit --no-deps -r sbom/requirements-gate.txt "${IGNORE_ARGS[@]}"
+
+      - name: Refresh CycloneDX SBOM
+        run: |
+          uv export --frozen --no-emit-project --no-hashes --all-packages \
+            --format requirements-txt > sbom/requirements-nohash.txt
+          uv tool run --from cyclonedx-bom cyclonedx-py requirements \
+            sbom/requirements-nohash.txt --of JSON -o sbom/arc-python.cdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom/arc-python.cdx.json
 

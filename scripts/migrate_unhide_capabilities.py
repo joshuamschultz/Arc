@@ -34,9 +34,7 @@ from pathlib import Path
 def _find_hidden_dirs(root: Path) -> list[Path]:
     """Every ``.capabilities`` directory whose parent is named ``workspace``."""
     return sorted(
-        p
-        for p in root.rglob(".capabilities")
-        if p.is_dir() and p.parent.name == "workspace"
+        p for p in root.rglob(".capabilities") if p.is_dir() and p.parent.name == "workspace"
     )
 
 
@@ -77,8 +75,10 @@ def migrate(root: Path, *, dry_run: bool) -> int:
             print(f"  ! kept existing, did NOT overwrite: {s}")
 
     if had_collision:
-        print("\nSome files existed in both locations and were left untouched — "
-              "review the '!' lines above and reconcile by hand.")
+        print(
+            "\nSome files existed in both locations and were left untouched — "
+            "review the '!' lines above and reconcile by hand."
+        )
         return 1
     print("\nDone." if not dry_run else "\nDry run complete — no changes made.")
     return 0

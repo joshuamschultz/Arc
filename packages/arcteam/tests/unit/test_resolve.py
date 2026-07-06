@@ -56,8 +56,7 @@ class TestResolveEntityRefs:
 
     async def test_did_resolves_to_itself(self, registry: EntityRegistry) -> None:
         assert (
-            await resolve(registry, "did:arc:test:agent/builder")
-            == "did:arc:test:agent/builder"
+            await resolve(registry, "did:arc:test:agent/builder") == "did:arc:test:agent/builder"
         )
 
 

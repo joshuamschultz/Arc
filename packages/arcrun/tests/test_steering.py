@@ -85,7 +85,9 @@ class TestSteer:
         # Injected content is user-role data, never system.
         user_msgs = [m for m in handle._state.messages if m.role == "user"]
         assert any(m.content == "redirect" for m in user_msgs)
-        assert not any(m.role == "system" and m.content == "redirect" for m in handle._state.messages)
+        assert not any(
+            m.role == "system" and m.content == "redirect" for m in handle._state.messages
+        )
 
     @pytest.mark.asyncio
     async def test_steer_skips_remaining_tools(self):

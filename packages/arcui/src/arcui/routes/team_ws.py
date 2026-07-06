@@ -56,9 +56,7 @@ async def _receive_from_browser(ws: WebSocket, sender: str, forwarder: Any) -> N
             )
             continue
         if not isinstance(text, str) or not text:
-            await ws.send_json(
-                {"type": "error", "code": "empty", "message": "post requires text"}
-            )
+            await ws.send_json({"type": "error", "code": "empty", "message": "post requires text"})
             continue
         if forwarder is None:
             await ws.send_json(

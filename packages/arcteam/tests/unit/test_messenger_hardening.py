@@ -77,7 +77,10 @@ class TestForgedSenderRejected:
 
         # Mallory's service: it signs every send with mallory's key.
         mallory_svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/mallory", mallory_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/mallory", mallory_kp.private_key),
         )
         # She forges the sender field.
         await mallory_svc.send(Message(sender="agent://alice", to=["agent://bob"], body="pwn"))
@@ -95,7 +98,10 @@ class TestForgedSenderRejected:
         await _register(registry, "alice", public_key=alice_kp.public_key.hex())
         await _register(registry, "bob")
         svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
         await svc.send(Message(sender="agent://alice", to=["agent://bob"], body="hi"))
         received = await svc.receive("arc.agent.bob", "agent://bob")
@@ -114,7 +120,10 @@ class TestKeylessReceiverVerifies:
         await _register(registry, "alice", public_key=alice_kp.public_key.hex())
         await _register(registry, "bob")
         alice_svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
         await alice_svc.send(Message(sender="agent://alice", to=["agent://bob"], body="ok"))
         await alice_svc.send(Message(sender="agent://alice", to=["agent://bob"], body="evil"))
@@ -151,7 +160,10 @@ class TestSignerTrust:
         await _register(registry, "alice", public_key=alice_kp.public_key.hex())
         await _register(registry, "bob")
         svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
         await svc.send(Message(sender="agent://alice", to=["agent://bob"], body="hi"))
         # Rewrite signer_did to an entity that is not registered.
@@ -169,7 +181,10 @@ class TestSignerTrust:
         await _register(registry, "alice")
         await _register(registry, "bob")
         svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
         await svc.send(Message(sender="agent://alice", to=["agent://bob"], body="hi"))
         received = await svc.receive("arc.agent.bob", "agent://bob")
@@ -190,7 +205,10 @@ class TestFanOutDedup:
         await _register(registry, "alice", public_key=alice_kp.public_key.hex())
         await _register(registry, "builder", roles=["dev"])
         svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
 
         received: list[Message] = []
@@ -261,7 +279,10 @@ class TestConsumeLoopResilience:
         await _register(registry, "alice", public_key=alice_kp.public_key.hex())
         await _register(registry, "bob")
         svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
 
         seen: list[str] = []
@@ -291,7 +312,10 @@ class TestConsumeLoopResilience:
         await _register(registry, "bob")
         flaky: StorageBackend = _FlakyBackend(backend)  # type: ignore[assignment]
         svc = MessagingService(
-            flaky, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            flaky,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
 
         received: list[str] = []
@@ -323,11 +347,12 @@ class TestChannelPush:
         await _register(registry, "alice", public_key=alice_kp.public_key.hex())
         await _register(registry, "builder")
         svc = MessagingService(
-            backend, registry, audit, signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key)
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
         )
-        await svc.create_channel(
-            Channel(name="ops", members=["agent://alice", "agent://builder"])
-        )
+        await svc.create_channel(Channel(name="ops", members=["agent://alice", "agent://builder"]))
 
         received: list[str] = []
         got = asyncio.Event()
@@ -358,7 +383,9 @@ class TestSubscriptionAddressForms:
         backend, registry, audit = await _bootstrap()
         svc = MessagingService(backend, registry, audit)
         assert svc.resolve_subscriptions("@builder")[0] == "arc.agent.builder"
-        assert svc.resolve_subscriptions("@builder") == svc.resolve_subscriptions("agent://builder")
+        assert svc.resolve_subscriptions("@builder") == svc.resolve_subscriptions(
+            "agent://builder"
+        )
         assert svc.resolve_subscriptions("builder")[0] == "arc.agent.builder"
         assert "arc.role.dev" in svc.resolve_subscriptions("@builder", ["dev"])
 

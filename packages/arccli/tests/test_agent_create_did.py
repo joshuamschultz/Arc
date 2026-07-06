@@ -58,7 +58,9 @@ def _create_agent(tmp_path: Path, name: str) -> None:
 
 
 class TestCreateRegistersWithDid:
-    def test_registered_entity_has_did_and_handle(self, tmp_path, isolated_home, team_backend: Any):
+    def test_registered_entity_has_did_and_handle(
+        self, tmp_path, isolated_home, team_backend: Any
+    ):
         _create_agent(tmp_path, "researcher")
 
         records = asyncio.run(team_backend.query("messages/registry"))

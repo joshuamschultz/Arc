@@ -22,10 +22,7 @@ dev = [
     "types-pyyaml>=6.0.12.20260408",
     "types-croniter>=6.2.2.20260408",
     "freezegun>=1.5.5",
-    "nbformat>=5.10.4",
-    "jupyter>=1.1.1",
-    "ipykernel>=7.2.0",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
 ]
 test = [
     "pytest>=8.0",
@@ -35,6 +32,30 @@ test = [
     "faker>=37.0",
     "freezegun>=1.5.0",
     "tomlkit>=0.12",
+]
+# Tutorial / help-docs tooling — Jupyter notebook walkthroughs only. NOT part of
+# the harness runtime closure and deliberately excluded from the CI security
+# audit (which scopes to the runtime requirements export). Their transitive CVEs
+# (jupyterlab, jupyter-server, tornado, bleach, msgpack) never ship in Arc.
+tutorial = [
+    "nbformat>=5.10.4",
+    "jupyter>=1.1.1",
+    "ipykernel>=7.2.0",
+]
+
+[tool.uv]
+# Security floors for transitive runtime dependencies. These packages are pulled
+# in indirectly (mcp, azure-core, boto3, docker, httpx, rich) and have no direct
+# constraint to raise, so we pin the minimum patched version here. Each floor
+# closes CVEs surfaced by the CI pip-audit gate; see sbom/security-suppressions.txt
+# for anything that could NOT be floored.
+constraint-dependencies = [
+    "pyjwt>=2.13.0",          # PYSEC-2026-120/175/176/177/178/179 (via mcp[crypto], msal)
+    "python-multipart>=0.0.31", # CVE-2026-40347/42561/53538/53539/53540 (via mcp)
+    "requests>=2.33.0",       # CVE-2026-25645 (via azure-core, docker)
+    "urllib3>=2.7.0",         # PYSEC-2026-141/142 (via botocore, requests)
+    "idna>=3.15",             # PYSEC-2026-215 (via anyio/httpx)
+    "pygments>=2.20.0",       # CVE-2026-4539 (via rich)
 ]
 
 [tool.uv.workspace]
@@ -66,12 +87,39 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**/*.py" = ["S101", "S105", "S106", "E402", "S603"]
 "scripts/**/*.py" = ["T201"]
+# SBOM report generator: emits a wide-table markdown doc with unicode symbols
+# (arrows, ×) and a status print — line-length/ambiguous-unicode/print lints
+# do not apply to generated report content.
+"sbom/_gen_report.py" = ["E501", "RUF001", "T201"]
 "walkthroughs/**/*.ipynb" = ["S101", "B007", "S307", "S110", "T20", "F401", "F811", "E501", "F821", "E741", "E402", "I001"]
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 warn_return_any = true
+# Skill payload scripts ship inside skill bundles (not importable package
+# modules); several share a filename (e.g. validate.py), which collides under
+# mypy's module resolution. They are not part of the typed package surface.
+exclude = '/skills/[^/]+/scripts/'
+
+# Optional third-party dependencies without type stubs. These are guarded by
+# runtime import checks and only pulled in via extras (otel/aws/docker/schema).
+[[tool.mypy.overrides]]
+module = [
+    "jsonschema",
+    "jsonschema.*",
+    "boto3",
+    "boto3.*",
+    "botocore",
+    "botocore.*",
+    "docker",
+    "docker.*",
+    "dateparser",
+    "dateparser.*",
+    "azure.*",
+    "opentelemetry.exporter.otlp.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

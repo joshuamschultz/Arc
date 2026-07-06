@@ -12,14 +12,14 @@ from pathlib import Path
 
 from arcui.routes.agent_detail.tools import _collect_disk_tools
 
-_TOOL_SRC = '''\
+_TOOL_SRC = """\
 from arcagent.builtins.capabilities import tool
 
 
 @tool(name="word_count", description="Count words")
 async def word_count(text: str) -> str:
     return str(len(text.split()))
-'''
+"""
 
 
 def test_scans_workspace_capabilities(tmp_path: Path) -> None:

@@ -310,9 +310,7 @@ class PolicyEngine:
         # Atomic write
         content = self._serialize_policy(bullets)
         atomic_write_text(self._policy_path, content)
-        _logger.info(
-            "policy.curate: wrote %d bullet(s) to %s", len(bullets), self._policy_path
-        )
+        _logger.info("policy.curate: wrote %d bullet(s) to %s", len(bullets), self._policy_path)
 
     def _parse_policy(self, content: str) -> list[PolicyBullet]:
         """Parse policy.md into structured bullets."""
