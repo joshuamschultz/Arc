@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Hash, MessageSquare, Send, Wrench } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Input } from '@/components/ui/input'
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/states'
 import { StatusDot } from '@/components/status-badge'
 import { useChatSession, type ChatMessage } from '@/hooks/use-chat'
+import { useTeamStream, type TeamFrame } from '@/hooks/use-team-stream'
 import { useRoster, useTeamChannels, useChannelMessages } from '@/lib/queries'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -94,34 +95,115 @@ function ChatPanel({ agentId }: { agentId: string }) {
   )
 }
 
+interface ChannelRow {
+  key: string
+  seq: number
+  from: string
+  body: string
+  mentions: string[]
+  ts: string
+}
+
+function handleOf(ref: string): string {
+  // Defensive: the server already renders handles, but a raw ref that slips
+  // through (backfill payloads) is collapsed to its trailing segment so a DID
+  // never renders in the UI.
+  if (ref.startsWith('did:')) return ref.split('/').pop()?.split(':').pop() ?? ref
+  if (ref.includes('://')) return ref.split('://')[1] ?? ref
+  return ref.replace(/^@/, '')
+}
+
 function ChannelPanel({ name }: { name: string }) {
-  const q = useChannelMessages(name)
+  const history = useChannelMessages(name)
+  const { frames, status, post } = useTeamStream(name)
   const endRef = useRef<HTMLDivElement>(null)
-  const messages = q.data?.messages ?? []
+  const [text, setText] = useState('')
+
+  // History (one-shot backfill) + live frames, deduped by seq. The live stream
+  // is authoritative for anything it has seen; history fills older gaps.
+  const rows = useMemo<ChannelRow[]>(() => {
+    const bySeq = new Map<number, ChannelRow>()
+    for (const m of history.data?.messages ?? []) {
+      const d = m as Dict
+      const seq = Number(d.seq ?? 0)
+      bySeq.set(seq, {
+        key: `h${seq}`,
+        seq,
+        from: handleOf(String(d.sender ?? d.from ?? d.agent_id ?? 'agent')),
+        body: String(d.body ?? d.text ?? d.content ?? ''),
+        mentions: Array.isArray(d.mentions) ? (d.mentions as string[]).map(handleOf) : [],
+        ts: String(d.ts ?? d.timestamp ?? ''),
+      })
+    }
+    for (const f of frames as TeamFrame[]) {
+      bySeq.set(f.seq, {
+        key: f.id || `l${f.seq}`,
+        seq: f.seq,
+        from: handleOf(f.from),
+        body: f.body,
+        mentions: (f.mentions ?? []).map(handleOf),
+        ts: f.ts,
+      })
+    }
+    return [...bySeq.values()].sort((a, b) => a.seq - b.seq)
+  }, [history.data, frames])
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length])
+  }, [rows.length])
+
+  const send = () => {
+    if (!text.trim()) return
+    post(text)
+    setText('')
+  }
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send()
+    }
+  }
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground">
-        <Hash className="size-3.5" /> <span className="font-mono">{name}</span>
+      <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
+        <span className="flex items-center gap-2">
+          <Hash className="size-3.5" /> <span className="font-mono">{name}</span>
+        </span>
+        <span className="capitalize">{status}</span>
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-auto p-4">
-        {messages.length === 0 ? (
+        {rows.length === 0 ? (
           <EmptyState icon={<Hash className="size-7" />} title="No messages in this channel" />
         ) : (
-          messages.map((m: Dict, i) => (
-            <div key={i} className="rounded-lg border border-border bg-card p-2.5 text-sm">
-              <div className="mb-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">{String(m.sender ?? m.from ?? m.agent_id ?? 'agent')}</span>
-                <span>{String(m.ts ?? m.timestamp ?? '')}</span>
+          rows.map((m) => (
+            <div key={m.key} className="rounded-lg border border-border bg-card p-2.5 text-sm">
+              <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">@{m.from}</span>
+                {m.mentions.map((h) => (
+                  <span key={h} className="rounded bg-primary/15 px-1.5 py-0.5 font-medium text-primary">
+                    @{h}
+                  </span>
+                ))}
+                <span className="ml-auto">{m.ts}</span>
               </div>
-              <p className="whitespace-pre-wrap break-words text-foreground">{String(m.text ?? m.content ?? '')}</p>
+              <p className="whitespace-pre-wrap break-words text-foreground">{m.body}</p>
             </div>
           ))
         )}
         <div ref={endRef} />
+      </div>
+      <div className="flex items-center gap-2 border-t border-border p-3">
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+          placeholder={status === 'ready' ? `Message #${name}…` : 'Connecting…'}
+          disabled={status !== 'ready'}
+        />
+        <Button onClick={send} disabled={status !== 'ready' || !text.trim()} size="icon">
+          <Send className="size-4" />
+        </Button>
       </div>
     </div>
   )

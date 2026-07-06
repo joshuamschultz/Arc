@@ -1,22 +1,20 @@
-"""Integration tests for ArcTeam messaging — full FileBackend flows."""
+"""Integration tests for ArcTeam messaging — full messenger flows."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
 from arcteam.audit import AuditLogger
 from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry
-from arcteam.storage import FileBackend
+from arcteam.storage import MemoryBackend
 from arcteam.types import Channel, Entity, EntityType, Message, MsgType, Priority
 
 
 @pytest.fixture
-async def svc(tmp_path: Path) -> MessagingService:
-    """Full service stack with FileBackend on temp directory."""
-    backend = FileBackend(root=tmp_path)
+async def svc() -> MessagingService:
+    """Full service stack with MemoryBackend."""
+    backend = MemoryBackend()
     audit = AuditLogger(backend, hmac_key=b"integration-test-key")
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
@@ -32,6 +30,8 @@ async def populated_svc(svc: MessagingService) -> MessagingService:
     # Register entities
     await registry.register(
         Entity(
+            did="did:arc:test:agent/proc-01",
+            handle="proc-01",
             id="agent://proc-01",
             name="Procurement 01",
             type=EntityType.AGENT,
@@ -40,6 +40,8 @@ async def populated_svc(svc: MessagingService) -> MessagingService:
     )
     await registry.register(
         Entity(
+            did="did:arc:test:agent/proc-02",
+            handle="proc-02",
             id="agent://proc-02",
             name="Procurement 02",
             type=EntityType.AGENT,
@@ -48,6 +50,8 @@ async def populated_svc(svc: MessagingService) -> MessagingService:
     )
     await registry.register(
         Entity(
+            did="did:arc:test:agent/analyst",
+            handle="analyst",
             id="agent://analyst",
             name="Analyst",
             type=EntityType.AGENT,
@@ -56,6 +60,8 @@ async def populated_svc(svc: MessagingService) -> MessagingService:
     )
     await registry.register(
         Entity(
+            did="did:arc:test:user/josh",
+            handle="josh",
             id="user://josh",
             name="Josh",
             type=EntityType.USER,
@@ -221,10 +227,12 @@ class TestDLQCaptures:
     """Integration: DLQ captures all failure types."""
 
     async def test_dlq_failures(self, populated_svc: MessagingService) -> None:
+        from arcteam.registry import UnknownHandle
+
         svc = populated_svc
 
-        # Unregistered sender
-        with pytest.raises(ValueError):
+        # Unregistered sender → UnknownHandle, never a silent DLQ (REQ-002)
+        with pytest.raises(UnknownHandle):
             await svc.send(
                 Message(
                     sender="agent://unknown",
@@ -233,7 +241,7 @@ class TestDLQCaptures:
                 )
             )
 
-        # Invalid URI
+        # Invalid URI → invalid_address DLQ
         with pytest.raises(ValueError):
             await svc.send(
                 Message(
@@ -243,9 +251,8 @@ class TestDLQCaptures:
                 )
             )
 
-        # Check DLQ
+        # Check DLQ — only the invalid address is quarantined now.
         dlq = await svc.dlq_list()
-        assert len(dlq) >= 2
         reasons = {d["meta"]["dlq_reason"] for d in dlq}
-        assert "sender_unauthorized" in reasons
         assert "invalid_address" in reasons
+        assert "sender_unauthorized" not in reasons

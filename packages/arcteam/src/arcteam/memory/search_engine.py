@@ -14,8 +14,8 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rank_bm25 import (
-    BM25Plus,  # type: ignore[import-untyped]  # reason: rank_bm25 ships no type stubs; we use only the documented ctor + get_scores
+from rank_bm25 import (  # type: ignore[import-untyped]  # reason: rank_bm25 ships no type stubs; we use only the documented ctor + get_scores
+    BM25Plus,
 )
 
 from arcteam.memory.classification import ClassificationChecker

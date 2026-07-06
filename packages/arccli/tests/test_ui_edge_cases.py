@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -56,7 +57,7 @@ class TestBackfillNameCollision:
     """
 
     def test_duplicate_name_is_deterministic(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, team_backend: Any, capsys: pytest.CaptureFixture[str]
     ) -> None:
         _init_cmd(argparse.Namespace(root_path=str(tmp_path)))
 

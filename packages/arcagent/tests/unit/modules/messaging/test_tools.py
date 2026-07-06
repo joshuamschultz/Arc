@@ -76,15 +76,10 @@ class TestSendTool:
     ) -> None:
         module, ctx = started_module
         # Register a second agent so we can message them.
-        from arcteam.types import Entity, EntityType
+        from tests.unit.modules.messaging.conftest import make_peer_entity
 
         await module._registry.register(
-            Entity(
-                id="agent://brad",
-                name="Brad",
-                type=EntityType.AGENT,
-                roles=["executor"],
-            )
+            make_peer_entity("brad", "Brad", roles=["executor"])
         )
 
         tool = _find_tool(
@@ -134,15 +129,11 @@ class TestCheckInboxTool:
     ) -> None:
         module, ctx = started_module
         # Register sender and send a message to our agent.
-        from arcteam.types import Entity, EntityType, Message
+        from arcteam.types import Message
 
-        await module._registry.register(
-            Entity(
-                id="agent://sender",
-                name="Sender",
-                type=EntityType.AGENT,
-            )
-        )
+        from tests.unit.modules.messaging.conftest import make_peer_entity
+
+        await module._registry.register(make_peer_entity("sender", "Sender"))
         await module._svc.send(
             Message(
                 sender="agent://sender",
@@ -168,15 +159,11 @@ class TestCheckInboxThreadContext:
     ) -> None:
         """When a reply arrives, check_inbox includes prior thread messages."""
         module, ctx = started_module
-        from arcteam.types import Entity, EntityType, Message
+        from arcteam.types import Message
 
-        await module._registry.register(
-            Entity(
-                id="agent://alice",
-                name="Alice",
-                type=EntityType.AGENT,
-            )
-        )
+        from tests.unit.modules.messaging.conftest import make_peer_entity
+
+        await module._registry.register(make_peer_entity("alice", "Alice"))
 
         # Step 1: Alice sends original message to our agent.
         original = await module._svc.send(
@@ -238,15 +225,11 @@ class TestCheckInboxThreadContext:
     ) -> None:
         """New messages (thread_id == id) don't include thread_context."""
         module, ctx = started_module
-        from arcteam.types import Entity, EntityType, Message
+        from arcteam.types import Message
 
-        await module._registry.register(
-            Entity(
-                id="agent://bob",
-                name="Bob",
-                type=EntityType.AGENT,
-            )
-        )
+        from tests.unit.modules.messaging.conftest import make_peer_entity
+
+        await module._registry.register(make_peer_entity("bob", "Bob"))
 
         await module._svc.send(
             Message(

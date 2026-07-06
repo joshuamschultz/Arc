@@ -174,7 +174,13 @@ class TestEntityModel:
     """Entity model."""
 
     def test_entity_defaults(self) -> None:
-        e = Entity(id="agent://a1", name="Agent One", type=EntityType.AGENT)
+        e = Entity(
+            did="did:arc:test:agent/a1",
+            handle="a1",
+            id="agent://a1",
+            name="Agent One",
+            type=EntityType.AGENT,
+        )
         assert e.roles == []
         assert e.capabilities == []
         assert e.status == "active"

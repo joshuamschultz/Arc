@@ -14,9 +14,31 @@ duration of the test.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+
+
+@pytest.fixture
+def team_backend(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Inject a shared in-memory arcteam backend for in-process CLI tests.
+
+    ``arc team``/``arc agent create`` build their arcteam service through
+    ``arccli.commands.team._connect_backend`` (NATS on the live path). Tests
+    replace that factory with a single :class:`~arcteam.storage.MemoryBackend`
+    instance so every ``_build_service`` call in the test shares one isolated,
+    server-free store. Returns the backend so assertions can read it back.
+    """
+    from arcteam.storage import MemoryBackend
+
+    backend = MemoryBackend()
+
+    async def _fake_connect() -> Any:
+        return backend
+
+    monkeypatch.setattr("arccli.commands.team._connect_backend", _fake_connect)
+    return backend
 
 
 @pytest.fixture(autouse=True, scope="session")

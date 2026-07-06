@@ -49,7 +49,9 @@ from arcagent.core.tool_registry import ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 
 if TYPE_CHECKING:
-    from arcrun import StreamEvent
+    from arcrun import RunHandle, StreamEvent
+
+    from arcagent.core.tool_policy import PolicyPipeline
 
 
 _logger = logging.getLogger("arcagent.agent")
@@ -102,6 +104,14 @@ class ArcAgent:
         self._vault_resolver: Any = None
         self._model: Any = None
         self._trace_store: Any = None
+        # Live steerable runs keyed by session (SPEC-031 D2). A tracked run
+        # exists only while it executes; a teammate message arriving mid-run is
+        # injected into it (steer/follow_up) instead of starting a new one.
+        self._active_runs: dict[str, RunHandle] = {}
+        self._run_finalizers: set[asyncio.Task[None]] = set()
+        # The arctrust policy pipeline (built in startup) — reused to authorize
+        # mid-turn steering (REQ-041), the only steering caller in the system.
+        self._policy_pipeline: PolicyPipeline | None = None
         # Names of tools currently registered in ToolRegistry that came
         # from the capability loader. Tracked so reload() can drop them
         # cleanly and re-register the latest set.
@@ -153,6 +163,7 @@ class ArcAgent:
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
             agent_registry={self._identity.did: self._identity.public_key},
         )
+        self._policy_pipeline = pipeline
         self._tool_registry = ToolRegistry(
             config=self._config.tools,
             bus=self._bus,
@@ -198,7 +209,10 @@ class ArcAgent:
         # drives the agent the same way: one ``run_fn(input, *, session_key)``
         # that opens-or-resumes the keyed session, streams a turn, and
         # collects it to a final result.
-        await self._bus.emit("agent:ready", {"run_fn": self.run_collected})
+        await self._bus.emit(
+            "agent:ready",
+            {"run_fn": self.run_collected, "deliver_fn": self.deliver_message},
+        )
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
         _logger.info(
@@ -312,6 +326,94 @@ class ArcAgent:
         """
         session = await self.session(session_key)
         return await collect(self.run(input_text, session=session, tool_choice=tool_choice))
+
+    def active_run(self, session_key: str) -> RunHandle | None:
+        """Return the live steerable run for ``session_key``, or None if idle."""
+        return self._active_runs.get(session_key)
+
+    async def start_tracked_run(self, input_text: str, *, session_key: str) -> RunHandle:
+        """Start an async, steerable run and track its handle under ``session_key``.
+
+        The returned :class:`arcrun.RunHandle` lets a teammate message be
+        injected mid-task (REQ-040/041). The handle is registered while the loop
+        runs and removed by a finalizer that commits the assistant turn and
+        compacts, matching the streaming path.
+        """
+        from arcagent.core.agent_dispatch import start_tracked_run
+
+        return await start_tracked_run(self, input_text, session_key=session_key)
+
+    async def deliver_message(
+        self,
+        *,
+        caller_did: str,
+        message: str,
+        session_key: str,
+        interrupt: bool,
+    ) -> str:
+        """Deliver a teammate message into the agent's run for ``session_key``.
+
+        The single steering caller in the system (SDD C8). Default is
+        ``follow_up`` at the next turn boundary (REQ-040); ``steer`` is used
+        mid-turn only when ``interrupt`` is set AND the arctrust policy pipeline
+        permits it for ``caller_did`` (REQ-041) — a denied steer degrades to
+        ``follow_up`` rather than interrupting. With no active run for the
+        session, a fresh tracked run is started instead. Returns the action
+        taken: ``"steered"`` | ``"followed_up"`` | ``"started"``.
+        """
+        self._ensure_started()
+        handle = self._active_runs.get(session_key)
+        if handle is None:
+            await self.start_tracked_run(message, session_key=session_key)
+            return "started"
+        if interrupt and await self._authorize_steer(caller_did):
+            await handle.steer(caller_did, message)
+            return "steered"
+        await handle.follow_up(caller_did, message)
+        return "followed_up"
+
+    async def _authorize_steer(self, caller_did: str) -> bool:
+        """Whether the policy pipeline permits a mid-turn steer for ``caller_did``.
+
+        Fail-closed authorization (REQ-041): the agent authorizes its own steer
+        action by signing a ``messaging_steer`` :class:`ToolCall` (carrying the
+        triggering ``caller_did``) with its identity and running it through the
+        arctrust pipeline. A DENY blocks the interrupt and is audited; the sender
+        was already authenticated at the message-signature layer.
+        """
+        pipeline = self._policy_pipeline
+        identity = self._identity
+        if pipeline is None or identity is None:
+            return True
+        from arcagent.core.tool_policy import PolicyContext, ToolCall, sign_call
+
+        call = ToolCall(
+            tool_name="messaging_steer",
+            arguments={"caller_did": caller_did},
+            agent_did=identity.did,
+            session_id="",
+            classification="unclassified",
+        )
+        call = sign_call(call, identity)
+        ctx = PolicyContext(
+            tier=self._config.security.tier,  # type: ignore[arg-type]  # str vs Literal
+            policy_version="v0",
+            bundle_age_seconds=0.0,
+        )
+        decision = await pipeline.evaluate(call, ctx)
+        if decision.is_deny():
+            if self._telemetry is not None:
+                self._telemetry.audit_event(
+                    "messaging.steer.denied",
+                    {
+                        "caller_did": caller_did,
+                        "layer": decision.layer,
+                        "rule_id": decision.rule_id,
+                        "reason": decision.reason,
+                    },
+                )
+            return False
+        return True
 
     async def reload(self) -> str:
         """Re-scan capability roots; return R-005 diff string.

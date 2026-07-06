@@ -10,7 +10,7 @@ Seven capabilities mirror :class:`MessagingModule`'s startup registrations:
   * ``messaging_read_thread`` (@tool)        — read full conversation thread.
   * ``messaging_list_entities`` (@tool)      — list registered team entities.
   * ``messaging_list_channels`` (@tool)      — list available channels.
-  * ``messaging_poll_loop``   (@background_task, interval=1.0) — inbox poller.
+  * ``messaging_inbox_loop``  (@background_task) — durable PUSH inbox consumer.
 
 File tools (``store_team_file`` / ``list_team_files``) are registered only
 when ``team_root`` resolves to an existing path; they are omitted here
@@ -33,41 +33,20 @@ from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
 from arcagent.modules.messaging import _runtime
+from arcagent.modules.messaging.tools import _stream_end_byte_pos
 from arcagent.tools._decorator import background_task, hook, tool
 from arcagent.utils.sanitizer import sanitize_text
 
 _logger = logging.getLogger("arcagent.modules.messaging.capabilities")
 
-# Seconds between poll loop iterations — matches the legacy loop behaviour
-# of sleeping config.poll_interval_seconds between cycles, but the
-# @background_task scheduler ticks at this rate. The loop body checks the
-# config value at runtime so it is still configurable.
+# Required positive interval for the @background_task registration. The loop is
+# spawned once and blocks on the durable-consumer subscription, so this value is
+# a scheduler formality rather than a poll cadence (delivery is push-driven).
 _POLL_TICK = 1.0
-
-# Streams collection name — mirrors arcteam.messenger.STREAMS_COLLECTION.
-_STREAMS_COLLECTION = "streams"
-
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-async def _stream_end_byte_pos(svc: Any, stream: str) -> int:
-    """Best-effort stream-end byte offset for ack cursor.
-
-    Falls back to ``0`` when the backend lacks the helper. Cursor seek
-    is an optimisation, not a correctness requirement.
-    """
-    backend = getattr(svc, "_backend", None)
-    get_end = getattr(backend, "get_stream_end_byte_pos", None)
-    if get_end is None:
-        return 0
-    try:
-        return int(await get_end(_STREAMS_COLLECTION, stream))
-    except Exception:  # reason: fail-open — log + continue
-        _logger.debug("stream end byte_pos fetch failed; using 0", exc_info=True)
-        return 0
 
 
 async def _build_roster() -> str:
@@ -127,81 +106,65 @@ async def _build_roster() -> str:
     return st.roster_cache
 
 
-async def _process_inbox(inbox: dict[str, list[Any]]) -> None:
-    """Format inbox messages and route through agent.run_collected().
+# ---------------------------------------------------------------------------
+# Mid-task delivery (REQ-040/041) + push consume (REQ-021)
+# ---------------------------------------------------------------------------
 
-    Batches all unread messages into a single prompt. Serialised via lock
-    to prevent concurrent processing. Acks after successful processing when
-    auto_ack is configured.
+# Deterministic session the inbox drives — all teammate traffic lands here so a
+# single tracked run absorbs a burst of messages mid-task.
+_INBOX_SESSION = "messaging:inbox"
+
+
+def _interrupt_for(msg: Any, identity: Any) -> bool:
+    """Whether ``msg`` is interrupt-eligible for mid-turn steering (REQ-041).
+
+    Critical priority always is; an ``action_required`` message is only when it
+    @mentions this agent. Everything else queues as a follow_up at turn end.
+    """
+    if str(msg.priority) == "critical":
+        return True
+    if msg.action_required and identity is not None and identity.did in list(msg.mentions):
+        return True
+    return False
+
+
+def _format_delivery(msg: Any) -> str:
+    """Render one incoming message as a sanitised delivery prompt (LLM01)."""
+    sender = sanitize_text(str(msg.sender), max_length=200)
+    body = sanitize_text(str(msg.body), max_length=4000)
+    msg_type = sanitize_text(str(msg.msg_type), max_length=50)
+    priority = sanitize_text(str(msg.priority), max_length=50)
+    flag = " [ACTION REQUIRED]" if msg.action_required else ""
+    lines = [
+        f"Message from {sender} ({msg_type}, {priority} priority){flag}:",
+        f"> {body}",
+        "Reply with messaging_send if a response is warranted.",
+    ]
+    return "\n".join(lines)
+
+
+async def _handle_incoming(message: Any) -> None:
+    """Deliver one bus-pushed message into the agent's run via the steering gate.
+
+    ``MessagingService.subscribe`` has already Ed25519-verified + replay-checked
+    the message and will ack it once this returns (REQ-021/030). Default
+    follow_up; steer only for interrupt-eligible messages the policy pipeline
+    permits — the trust decision lives in ``deliver_fn`` (arcagent core), not
+    here. Before ``agent:ready`` binds ``deliver_fn`` the message routes through
+    ``agent_run_fn`` so nothing is dropped in the startup window.
     """
     st = _runtime.state()
-
-    all_messages: list[dict[str, Any]] = []
-    for stream, msgs in inbox.items():
-        for m in msgs:
-            all_messages.append(
-                {
-                    "stream": stream,
-                    "seq": m.seq,
-                    "id": m.id,
-                    "sender": m.sender,
-                    "body": m.body,
-                    "msg_type": m.msg_type,
-                    "priority": m.priority,
-                    "action_required": m.action_required,
-                    "thread_id": m.thread_id,
-                    "ts": m.ts,
-                }
-            )
-
-    if not all_messages:
-        return
-
     async with st.processing_lock:
-        lines = ["You have new messages. Read each carefully and act on them:", ""]
-        for msg in all_messages:
-            # Sanitise all inter-agent fields before prompt interpolation (LLM01).
-            sender = sanitize_text(str(msg["sender"]), max_length=200)
-            body = sanitize_text(str(msg["body"]), max_length=4000)
-            msg_type = sanitize_text(str(msg["msg_type"]), max_length=50)
-            priority = sanitize_text(str(msg["priority"]), max_length=50)
-
-            action_flag = " [ACTION REQUIRED]" if msg["action_required"] else ""
-            lines.append(f"**From {sender}** ({msg_type}, {priority} priority){action_flag}:")
-            lines.append(f"> {body}")
-            if msg["thread_id"] and msg["thread_id"] != msg["id"]:
-                thread_id = sanitize_text(str(msg["thread_id"]), max_length=200)
-                lines.append(f"  (thread: {thread_id})")
-            lines.append("")
-
-        lines.append(
-            "Process each message: reply to questions, execute tasks, "
-            "and report results. Use messaging_send to respond to senders."
-        )
-
-        prompt = "\n".join(lines)
-        entity_id = st.config.entity_id
-
-        try:
-            _logger.info(
-                "Processing %d inbox message(s) through agent.run_collected()",
-                len(all_messages),
+        if st.deliver_fn is not None:
+            caller_did = message.signer_did or message.sender
+            await st.deliver_fn(
+                caller_did=caller_did,
+                message=_format_delivery(message),
+                session_key=_INBOX_SESSION,
+                interrupt=_interrupt_for(message, st.identity),
             )
-            await st.agent_run_fn(prompt, session_key="messaging:inbox")
-
-            if st.config.auto_ack:
-                for stream, msgs in inbox.items():
-                    if msgs:
-                        last = msgs[-1]
-                        byte_pos = await _stream_end_byte_pos(st.svc, stream)
-                        await st.svc.ack(
-                            stream,
-                            entity_id,
-                            seq=last.seq,
-                            byte_pos=byte_pos,
-                        )
-        except Exception:  # reason: fail-open — log + continue
-            _logger.exception("Failed to process inbox messages via chat")
+        elif st.agent_run_fn is not None:
+            await st.agent_run_fn(_format_delivery(message), session_key=_INBOX_SESSION)
 
 
 # ---------------------------------------------------------------------------
@@ -273,13 +236,20 @@ async def inject_messaging_sections(ctx: Any) -> None:
 
 @hook(event="agent:ready", priority=100)
 async def messaging_bind_run_fn(ctx: Any) -> None:
-    """Bind agent.run_collected() callback for inbox message processing."""
+    """Bind the agent's run + steering callbacks for inbox delivery.
+
+    ``run_fn`` starts an idle-agent run; ``deliver_fn`` injects a teammate
+    message into the agent's current run under policy control (REQ-040/041).
+    """
     data = ctx.data if hasattr(ctx, "data") else {}
+    st = _runtime.state()
     run_fn = data.get("run_fn")
     if run_fn is not None:
-        st = _runtime.state()
         st.agent_run_fn = run_fn
-        _logger.info("Bound agent_run_fn for message processing")
+    deliver_fn = data.get("deliver_fn")
+    if deliver_fn is not None:
+        st.deliver_fn = deliver_fn
+    _logger.info("Bound agent run/deliver callbacks for message processing")
 
 
 @hook(event="agent:shutdown", priority=100)
@@ -516,55 +486,45 @@ async def messaging_list_channels() -> str:
 
 
 @background_task(
-    name="messaging_poll_loop",
+    name="messaging_inbox_loop",
     interval=_POLL_TICK,
 )
-async def messaging_poll_loop(_ctx: Any) -> None:
-    """Background inbox poller — routes new messages through agent.run_collected().
+async def messaging_inbox_loop(_ctx: Any) -> None:
+    """Background inbox loop — durable PUSH consume + policy-gated delivery.
 
-    Ticks every ``_POLL_TICK`` second. The actual inter-poll delay is
-    governed by ``config.poll_interval_seconds``; the task sleeps for the
-    remainder of that interval after each cycle so the scheduler overhead
-    stays constant.
-
-    Falls back to unread-count caching when ``agent_run_fn`` is not yet
-    bound (i.e. before ``agent:ready`` fires).
+    Joins the live NATS bus when configured (REQ-020), then subscribes over the
+    entity's durable consumers (REQ-021): a running agent is delivered to live
+    and a restarted one resumes from its last ack. ``MessagingService.subscribe``
+    Ed25519-verifies + replay-checks each message (REQ-030) and hands valid ones
+    to ``_handle_incoming``, which routes them through the steering gate
+    (REQ-040/041). The loop blocks on the subscription until the task is
+    cancelled by the capability loader, then stops the consumers cleanly.
     """
-    # Give services one second to initialise before the first poll.
+    # Give services one second to initialise before subscribing.
     await asyncio.sleep(1.0)
 
-    while True:
-        try:
-            st = _runtime.state()
-            inbox = await st.svc.poll_all(
-                st.config.entity_id,
-                max_per_stream=st.config.max_messages_per_poll,
-            )
-            st.last_unread = {stream: len(msgs) for stream, msgs in inbox.items()}
+    # Upgrade to the live NATS backend once, if a url is configured.
+    try:
+        await _runtime.ensure_live_backend()
+    except Exception:  # reason: fail-open — stay on in-memory backend
+        _logger.exception("Live backend upgrade failed; staying on in-memory backend")
 
-            if st.agent_run_fn is not None:
-                await _process_inbox(inbox)
-
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # reason: fail-open — log + continue
-            _logger.exception("Messaging poll error")
-
-        try:
-            st = _runtime.state()
-            interval = st.config.poll_interval_seconds
-        except RuntimeError:
-            interval = 5.0
-        await asyncio.sleep(interval)
+    st = _runtime.state()
+    subscription = await st.svc.subscribe(st.config.entity_id, _handle_incoming)
+    try:
+        await subscription.wait()
+    except asyncio.CancelledError:
+        await subscription.stop()
+        raise
 
 
 __all__ = [
     "inject_messaging_sections",
     "messaging_bind_run_fn",
     "messaging_check_inbox",
+    "messaging_inbox_loop",
     "messaging_list_channels",
     "messaging_list_entities",
-    "messaging_poll_loop",
     "messaging_read_thread",
     "messaging_send",
     "messaging_shutdown",

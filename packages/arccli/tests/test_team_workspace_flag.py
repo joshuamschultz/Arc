@@ -11,11 +11,20 @@ Validates:
 from __future__ import annotations
 
 import argparse
+import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from arccli.commands.team import _register
+
+
+def _read_only_record(backend: Any) -> dict:
+    """Return the single DID-keyed registry record from the injected backend."""
+    records = asyncio.run(backend.query("messages/registry"))
+    assert len(records) == 1, f"expected one registered entity, got {records}"
+    return records[0]
 
 
 def _init_root(tmp_path: Path) -> Path:
@@ -46,26 +55,20 @@ def _register_args(
 class TestRegisterWorkspace:
     """SPEC-019 T1.3."""
 
-    def test_explicit_workspace_resolves_to_absolute(self, tmp_path: Path) -> None:
+    def test_explicit_workspace_resolves_to_absolute(
+        self, tmp_path: Path, team_backend: Any
+    ) -> None:
         root = _init_root(tmp_path)
         ws = tmp_path / "workspace_a"
         ws.mkdir()
         args = _register_args(root, str(ws))
         _register(args)
 
-        # Check stored entity
-        from arcteam.storage import FileBackend
-
-        backend = FileBackend(root)
-
-        import asyncio
-
-        record = asyncio.run(backend.read("messages/registry", "agent_w1"))
-        assert record is not None
+        record = _read_only_record(team_backend)
         assert record["workspace_path"] == str(ws.resolve())
 
     def test_default_workspace_is_cwd(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, team_backend: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = _init_root(tmp_path)
         cwd_dir = tmp_path / "cwd_subdir"
@@ -75,14 +78,7 @@ class TestRegisterWorkspace:
         args = _register_args(root, workspace=None)
         _register(args)
 
-        from arcteam.storage import FileBackend
-
-        backend = FileBackend(root)
-
-        import asyncio
-
-        record = asyncio.run(backend.read("messages/registry", "agent_w1"))
-        assert record is not None
+        record = _read_only_record(team_backend)
         assert record["workspace_path"] == str(cwd_dir.resolve())
 
     def test_nonexistent_workspace_rejected(self, tmp_path: Path) -> None:

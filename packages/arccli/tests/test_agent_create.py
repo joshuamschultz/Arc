@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import json
 import os
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -43,6 +46,14 @@ def _arc(*args: str) -> subprocess.CompletedProcess[str]:
 def _registry_dir(home: Path) -> Path:
     """Return the path arcteam writes registry entries to."""
     return home / ".arc" / "team" / "messages" / "registry"
+
+
+def _registry_records(home: Path) -> list[dict]:
+    """Load every DID-keyed registry record (filenames are the DID)."""
+    reg = _registry_dir(home)
+    if not reg.is_dir():
+        return []
+    return [json.loads(p.read_text()) for p in reg.glob("*.json")]
 
 
 class TestCreate:
@@ -197,23 +208,41 @@ class TestAutoRegister:
     real traces live in `<agent>/workspace/traces/`.
     """
 
-    def test_create_writes_registry_entry(self, tmp_path, isolated_home):
-        result = _arc("agent", "create", "auto-reg-test", "--dir", str(tmp_path))
-        assert result.returncode == 0, f"stderr: {result.stderr}"
+    def test_create_writes_registry_entry(self, tmp_path, isolated_home, team_backend: Any):
+        # In-process so the injected in-memory arcteam backend captures the
+        # auto-registration (no NATS server needed).
+        from arccli.commands.agent.create import _create
 
-        registry_file = _registry_dir(isolated_home) / "auto-reg-test.json"
-        assert registry_file.exists(), (
-            f"expected registry entry at {registry_file}; "
-            f"created files in registry dir: "
-            f"{list(_registry_dir(isolated_home).iterdir()) if _registry_dir(isolated_home).is_dir() else 'dir missing'}"
+        _create(
+            argparse.Namespace(
+                name="auto-reg-test",
+                parent_dir=str(tmp_path),
+                model="anthropic/claude-sonnet-4-5-20250929",
+                no_register=False,
+            )
         )
 
-    def test_registered_workspace_path_ends_in_workspace_subdir(self, tmp_path, isolated_home):
-        _arc("agent", "create", "wp-test", "--dir", str(tmp_path))
+        records = asyncio.run(team_backend.query("messages/registry"))
+        assert len(records) == 1, f"expected one registry entry, got {records}"
+        assert records[0]["handle"] == "auto-reg-test"
 
-        registry_file = _registry_dir(isolated_home) / "wp-test.json"
-        data = json.loads(registry_file.read_text())
-        wp = data.get("workspace_path", "")
+    def test_registered_workspace_path_ends_in_workspace_subdir(
+        self, tmp_path, isolated_home, team_backend: Any
+    ):
+        from arccli.commands.agent.create import _create
+
+        _create(
+            argparse.Namespace(
+                name="wp-test",
+                parent_dir=str(tmp_path),
+                model="anthropic/claude-sonnet-4-5-20250929",
+                no_register=False,
+            )
+        )
+
+        records = asyncio.run(team_backend.query("messages/registry"))
+        assert len(records) == 1
+        wp = records[0].get("workspace_path", "")
 
         # Critical: must end in /workspace, NOT at the agent root.
         # JSONLTraceStore appends /traces to this path, and the real traces
@@ -236,9 +265,8 @@ class TestAutoRegister:
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
-        registry_file = _registry_dir(isolated_home) / "skip-reg-test.json"
-        assert not registry_file.exists(), (
-            f"--no-register should not write a registry entry, but found {registry_file}"
+        assert _registry_records(isolated_home) == [], (
+            "--no-register should not write a registry entry"
         )
 
     def test_create_succeeds_even_if_already_registered(self, tmp_path, isolated_home):

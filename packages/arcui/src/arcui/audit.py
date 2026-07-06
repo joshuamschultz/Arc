@@ -20,8 +20,8 @@ from pydantic import BaseModel
 class UIAuditEvent(StrEnum):
     """Canonical UI audit event names.
 
-    Every emitter (`AuthMiddleware`, `UIReporterModule`, future module)
-    references these by name. A new event MUST be added here first —
+    Every emitter (`AuthMiddleware`, future module) references these by
+    name. A new event MUST be added here first —
     string-literal emissions elsewhere are blocked by the
     `tests/unit/test_audit_event_taxonomy.py` regression test.
     """

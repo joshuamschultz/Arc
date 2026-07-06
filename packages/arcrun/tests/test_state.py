@@ -30,23 +30,26 @@ class TestRunState:
         assert state.transform_context is None
 
     def test_steer_queue_works(self):
-        from arcrun.state import RunState
+        from arcrun.state import Injection, RunState
 
         bus = EventBus(run_id="r")
         reg = ToolRegistry(tools=[], event_bus=bus)
         state = RunState(messages=[], registry=reg, event_bus=bus)
-        state.steer_queue.put_nowait("go left")
+        injection = Injection.new("did:arc:caller", "go left")
+        state.steer_queue.put_nowait(injection)
         assert not state.steer_queue.empty()
-        assert state.steer_queue.get_nowait() == "go left"
+        drained = state.steer_queue.get_nowait()
+        assert drained.message == "go left"
+        assert drained.caller_did == "did:arc:caller"
 
     def test_followup_queue_works(self):
-        from arcrun.state import RunState
+        from arcrun.state import Injection, RunState
 
         bus = EventBus(run_id="r")
         reg = ToolRegistry(tools=[], event_bus=bus)
         state = RunState(messages=[], registry=reg, event_bus=bus)
-        state.followup_queue.put_nowait("also do X")
-        assert state.followup_queue.get_nowait() == "also do X"
+        state.followup_queue.put_nowait(Injection.new("did:arc:caller", "also do X"))
+        assert state.followup_queue.get_nowait().message == "also do X"
 
     def test_cancel_event_works(self):
         from arcrun.state import RunState
@@ -57,3 +60,20 @@ class TestRunState:
         assert not state.cancel_event.is_set()
         state.cancel_event.set()
         assert state.cancel_event.is_set()
+
+
+class TestInjection:
+    def test_new_generates_unique_message_id(self):
+        from arcrun.state import Injection
+
+        first = Injection.new("did:arc:caller", "hi")
+        second = Injection.new("did:arc:caller", "hi")
+        assert first.message_id != second.message_id
+
+    def test_new_rejects_empty_caller_did(self):
+        import pytest
+
+        from arcrun.state import Injection
+
+        with pytest.raises(ValueError, match="caller_did"):
+            Injection.new("", "hi")

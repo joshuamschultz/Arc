@@ -18,6 +18,20 @@ class EntityType(StrEnum):
     USER = "user"
 
 
+class EntityStatus(StrEnum):
+    """Presence state of a registered entity (REQ-021).
+
+    Drives message routing: the router pushes to ``active`` members and relies
+    on the durable-consumer inbox to cover ``offline`` ones.
+    """
+
+    active = "active"
+    idle = "idle"
+    blocked = "blocked"
+    waiting = "waiting"
+    offline = "offline"
+
+
 class MsgType(StrEnum):
     """Message classification type."""
 
@@ -72,7 +86,12 @@ MAX_BODY_BYTES = 65536  # 64KB
 
 
 class Message(BaseModel):
-    """13-field message envelope. Maps to NATS JetStream message."""
+    """Message envelope. Maps to a NATS JetStream message.
+
+    ``sig``/``nonce``/``signer_did`` carry the Ed25519 signature, replay nonce,
+    and signer DID: the sender signs on send, the consumer verifies before
+    delivery (see :mod:`arcteam.crypto`).
+    """
 
     seq: int = 0
     id: str = ""
@@ -84,8 +103,12 @@ class Message(BaseModel):
     priority: Priority = Priority.NORMAL
     action_required: bool = False
     body: str
+    mentions: list[str] = Field(default_factory=list)
     refs: list[str] = Field(default_factory=list)
     status: str = "sent"
+    sig: str = ""
+    nonce: str = ""
+    signer_did: str = ""
     meta: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("body")
@@ -108,20 +131,33 @@ def generate_message_id() -> str:
 class Entity(BaseModel):
     """Registered agent or user.
 
+    did: the entity's cryptographic identity, sourced from ``arctrust`` and
+    passed in by the caller (arcteam never mints identities). It is the
+    storage/registry key — every entity is DID-keyed and fail-closed: no
+    entity exists without a DID.
+
+    handle: the unique display name used for ``@mention`` and URI addressing
+    (``agent://<handle>``). Uniqueness is enforced at registration.
+
+    public_key: hex-encoded Ed25519 verify key, used to verify the signature on
+    messages this entity sends (see :mod:`arcteam.crypto`). Empty for entities
+    that never sign.
+
     workspace_path (SPEC-019 FR-2): absolute filesystem path to the agent's
     workspace directory. None for ``EntityType.USER`` records, which have
-    no on-disk workspace. Agent records get this populated by
-    ``arc team register --workspace`` (new agents) or
-    ``arc team backfill-workspaces`` (existing agents predating SPEC-019).
+    no on-disk workspace.
     """
 
+    did: str
+    handle: str
     id: str
     name: str
     type: EntityType
+    public_key: str = ""
     roles: list[str] = Field(default_factory=list)
     capabilities: list[str] = Field(default_factory=list)
     created: str = ""
-    status: str = "active"
+    status: EntityStatus = EntityStatus.active
     workspace_path: str | None = None
 
 

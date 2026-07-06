@@ -14,13 +14,17 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from xml.sax.saxutils import escape as xml_escape
 
 from arcagent.core.module_bus import EventContext, ModuleContext
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.modules.messaging import _bootstrap
 from arcagent.modules.messaging.config import MessagingConfig
 from arcagent.utils.sanitizer import sanitize_text
+
+if TYPE_CHECKING:
+    from arctrust import AgentIdentity
 
 _logger = logging.getLogger("arcagent.messaging")
 
@@ -68,7 +72,7 @@ class MessagingModule:
     """Inter-agent messaging module — Module Bus participant.
 
     On startup:
-    1. Bootstraps arcteam services (FileBackend, AuditLogger, Registry, Messenger)
+    1. Bootstraps arcteam services (backend, AuditLogger, Registry, Messenger)
     2. Registers this agent as an entity in the team registry
     3. Registers 5 LLM-callable tools (send, inbox, thread, entities, channels)
     4. Subscribes to agent:assemble_prompt to inject unread message counts
@@ -81,11 +85,21 @@ class MessagingModule:
         team_config: Any | None = None,
         telemetry: AgentTelemetry | None = None,
         workspace: Path = Path("."),
+        identity: AgentIdentity | None = None,
     ) -> None:
         self._config = MessagingConfig(**(config or {}))
         self._team_config = team_config
         self._telemetry = telemetry
         self._workspace = workspace
+        # The agent's real arctrust identity — source of the DID it registers
+        # under and the key it signs messages with. Minted here only when the
+        # caller supplies none (standalone/test use); real deployments inject
+        # the agent identity so DID and signing key match the running agent.
+        if identity is None:
+            from arctrust import AgentIdentity
+
+            identity = AgentIdentity.generate(org="local", agent_type="agent")
+        self._identity = identity
         self._poll_task: asyncio.Task[None] | None = None
         self._svc: Any = None  # MessagingService — set during startup
         self._registry: Any = None  # EntityRegistry — set during startup
@@ -130,8 +144,7 @@ class MessagingModule:
         from arcteam.audit import AuditLogger
         from arcteam.messenger import MessagingService
         from arcteam.registry import EntityRegistry
-        from arcteam.storage import FileBackend
-        from arcteam.types import Entity, EntityType
+        from arcteam.types import EntityStatus
 
         from arcagent.modules.messaging.tools import create_messaging_tools
 
@@ -149,7 +162,7 @@ class MessagingModule:
         # Bootstrap arcteam services against shared team root.
         team_root = self._resolve_team_root()
 
-        backend = FileBackend(team_root)
+        backend = await _bootstrap.make_backend(self._config.nats_url)
         audit = AuditLogger(
             backend,
             hmac_key=self._config.audit_hmac_key.encode("utf-8"),
@@ -157,29 +170,39 @@ class MessagingModule:
         await audit.initialize()
 
         self._registry = EntityRegistry(backend, audit)
-        self._svc = MessagingService(backend, self._registry, audit)
+        # Inject the agent's signer so every outbound message is Ed25519-signed
+        # and verified before delivery (REQ-030).
+        self._svc = MessagingService(
+            backend,
+            self._registry,
+            audit,
+            signer=_bootstrap.message_signer(self._identity),
+        )
 
-        # Auto-register this agent in the team registry.
+        # Auto-register this agent in the team registry under its real DID.
         if self._config.auto_register:
-            entity = Entity(
-                id=entity_id,
-                name=entity_name,
-                type=EntityType.AGENT,
+            handle = _bootstrap.derive_handle(entity_id, ctx.config.agent.name)
+            entity = _bootstrap.self_entity(
+                entity_id=entity_id,
+                entity_name=entity_name,
+                handle=handle,
+                identity=self._identity,
                 roles=self._config.roles,
                 capabilities=self._config.capabilities,
             )
             try:
                 await self._registry.register(entity)
                 _logger.info(
-                    "Registered entity %s (roles=%s, caps=%s)",
+                    "Registered entity %s (did=%s, roles=%s, caps=%s)",
                     entity_id,
+                    self._identity.did,
                     self._config.roles,
                     self._config.capabilities,
                 )
             except ValueError:
-                # Already registered from a previous session — update status.
-                await self._registry.update_status(entity_id, "online")
-                _logger.info("Entity %s already registered, marked online", entity_id)
+                # Already registered from a previous session — mark active.
+                await self._registry.update_status(entity.did, EntityStatus.active)
+                _logger.info("Entity %s already registered, marked active", entity_id)
 
         # Register LLM-callable tools.
         tools = create_messaging_tools(

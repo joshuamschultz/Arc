@@ -3,12 +3,39 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
+
+
+@dataclass(frozen=True)
+class Injection:
+    """A steer/follow_up message tagged with its verified caller identity.
+
+    arcrun is a dumb but *identified* queue: it never decides whether an
+    injection is permitted — that trust/policy decision belongs to the caller
+    (arcagent). arcrun only guarantees the injection carries a non-empty
+    ``caller_did`` and records it in the audit trail at the drain point.
+    """
+
+    caller_did: str
+    message: str
+    message_id: str
+
+    @classmethod
+    def new(cls, caller_did: str, message: str) -> Injection:
+        """Build an injection, requiring a non-empty ``caller_did``.
+
+        The ``message_id`` is minted here so the enqueue and the later drain-time
+        audit event refer to the same identifier.
+        """
+        if not caller_did:
+            raise ValueError("caller_did is required to inject a steering message")
+        return cls(caller_did=caller_did, message=message, message_id=str(uuid.uuid4()))
 
 
 @dataclass
@@ -31,8 +58,10 @@ class RunState:
     token_budget: int | None = None
     cost_budget: float | None = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
-    steer_queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
-    followup_queue: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
+    steer_queue: asyncio.Queue[Injection] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
+    followup_queue: asyncio.Queue[Injection] = field(
+        default_factory=lambda: asyncio.Queue(maxsize=16)
+    )
     # Caller hook applied to the message list before each model call.
     # CONTRACT: append-only between turns — the returned list must keep the
     # input's prefix so the provider cache prefix stays valid; only the tail

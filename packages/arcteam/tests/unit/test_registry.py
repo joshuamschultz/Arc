@@ -7,7 +7,7 @@ import pytest
 from arcteam.audit import AuditLogger
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend
-from arcteam.types import Entity, EntityType
+from arcteam.types import Entity, EntityStatus, EntityType
 
 
 @pytest.fixture
@@ -20,6 +20,8 @@ async def registry() -> EntityRegistry:
 
 def _agent(name: str, roles: list[str] | None = None) -> Entity:
     return Entity(
+        did=f"did:arc:test:agent/{name}",
+        handle=name,
         id=f"agent://{name}",
         name=name.title(),
         type=EntityType.AGENT,
@@ -29,6 +31,8 @@ def _agent(name: str, roles: list[str] | None = None) -> Entity:
 
 def _user(name: str, roles: list[str] | None = None) -> Entity:
     return Entity(
+        did=f"did:arc:test:user/{name}",
+        handle=name,
         id=f"user://{name}",
         name=name.title(),
         type=EntityType.USER,
@@ -94,7 +98,7 @@ class TestAuditRecords:
 
     async def test_status_change_generates_audit(self, registry: EntityRegistry) -> None:
         await registry.register(_agent("a1"))
-        await registry.update_status("agent://a1", "inactive")
+        await registry.update_status("agent://a1", EntityStatus.offline)
         records = await registry._backend.read_stream("audit", "audit", after_seq=0)
         assert any(r["event_type"] == "entity.status_changed" for r in records)
 
@@ -104,14 +108,14 @@ class TestUpdateStatus:
 
     async def test_update_status(self, registry: EntityRegistry) -> None:
         await registry.register(_agent("a1"))
-        await registry.update_status("agent://a1", "inactive")
+        await registry.update_status("agent://a1", EntityStatus.idle)
         entity = await registry.get("agent://a1")
         assert entity is not None
-        assert entity.status == "inactive"
+        assert entity.status is EntityStatus.idle
 
     async def test_update_status_not_found(self, registry: EntityRegistry) -> None:
         with pytest.raises(ValueError, match="not found"):
-            await registry.update_status("agent://missing", "inactive")
+            await registry.update_status("agent://missing", EntityStatus.offline)
 
 
 class TestUpdateEntity:

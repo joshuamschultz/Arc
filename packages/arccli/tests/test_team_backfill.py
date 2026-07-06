@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -65,19 +66,23 @@ def _backfill_args(root: Path, team_dir: Path, *, apply: bool) -> argparse.Names
     )
 
 
-def _read_workspace_path(root: Path, entity_id: str) -> str | None:
-    from arcteam.storage import FileBackend
+def _read_workspace_path(backend: Any, entity_id: str) -> str | None:
+    """Read workspace_path for the entity addressed by ``entity_id``.
 
-    backend = FileBackend(root)
-    key = entity_id.replace("://", "_")
-    record = asyncio.run(backend.read("messages/registry", key))
-    return None if record is None else record.get("workspace_path")
+    Records are DID-keyed in the arcteam registry collection, so match on
+    handle (the URI local part).
+    """
+    handle = entity_id.split("://")[-1]
+    for record in asyncio.run(backend.query("messages/registry")):
+        if record.get("handle") == handle:
+            return record.get("workspace_path")
+    return None
 
 
 class TestBackfillDryRun:
     """Default mode: dry-run reports changes but writes nothing."""
 
-    def test_dry_run_does_not_persist(self, tmp_path: Path) -> None:
+    def test_dry_run_does_not_persist(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path)
         _register_agent(root, "user://a1", "A1")
 
@@ -87,13 +92,13 @@ class TestBackfillDryRun:
         args = _backfill_args(root, team_dir, apply=False)
         _backfill_workspaces(args)
 
-        assert _read_workspace_path(root, "user://a1") is None
+        assert _read_workspace_path(team_backend, "user://a1") is None
 
 
 class TestBackfillApply:
     """--apply writes workspace_path."""
 
-    def test_apply_writes_workspace_path(self, tmp_path: Path) -> None:
+    def test_apply_writes_workspace_path(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path)
         _register_agent(root, "user://a1", "A1")
 
@@ -103,13 +108,15 @@ class TestBackfillApply:
         args = _backfill_args(root, team_dir, apply=True)
         _backfill_workspaces(args)
 
-        assert _read_workspace_path(root, "user://a1") == str(expected)
+        assert _read_workspace_path(team_backend, "user://a1") == str(expected)
 
 
 class TestBackfillIdempotent:
     """Second --apply with no changes is a no-op."""
 
-    def test_second_apply_no_op(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_second_apply_no_op(
+        self, tmp_path: Path, team_backend: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         root = _init_root(tmp_path)
         _register_agent(root, "user://a1", "A1")
         team_dir = tmp_path / "team"
@@ -126,7 +133,7 @@ class TestBackfillIdempotent:
 class TestBackfillSkipsMissing:
     """Missing arcagent.toml is silently skipped."""
 
-    def test_missing_toml_skipped(self, tmp_path: Path) -> None:
+    def test_missing_toml_skipped(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path)
         _register_agent(root, "user://a1", "A1")
         team_dir = tmp_path / "team"
@@ -137,14 +144,14 @@ class TestBackfillSkipsMissing:
         _backfill_workspaces(args)
 
         # No write occurred
-        assert _read_workspace_path(root, "user://a1") is None
+        assert _read_workspace_path(team_backend, "user://a1") is None
 
 
 class TestBackfillMalformedToml:
     """Malformed TOML produces warning, does not abort."""
 
     def test_malformed_toml_skipped_with_warning(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self, tmp_path: Path, team_backend: Any, capsys: pytest.CaptureFixture[str]
     ) -> None:
         root = _init_root(tmp_path)
         _register_agent(root, "user://a1", "A1")
@@ -157,4 +164,4 @@ class TestBackfillMalformedToml:
         _backfill_workspaces(args)
         out = capsys.readouterr().out
         assert "skip" in out.lower()
-        assert _read_workspace_path(root, "user://a1") is None
+        assert _read_workspace_path(team_backend, "user://a1") is None

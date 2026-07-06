@@ -162,6 +162,12 @@ enabled = true
 [modules.scheduler.config]
 check_interval_seconds = 30
 
+[modules.messaging]
+enabled = true
+
+[modules.messaging.config]
+poll_interval_seconds = 5.0
+
 [arcstore]
 enabled = true
 store_raw_bodies = false
