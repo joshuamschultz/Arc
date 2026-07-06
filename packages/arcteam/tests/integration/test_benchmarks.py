@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import pytest
 
 from arcteam.audit import AuditLogger
 from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry
-from arcteam.storage import FileBackend
+from arcteam.storage import MemoryBackend
 from arcteam.types import Channel, Entity, EntityType, Message
 
 
 @pytest.fixture
-async def svc(tmp_path: Path) -> MessagingService:
-    """Full service stack with FileBackend for benchmarking."""
-    backend = FileBackend(root=tmp_path)
+async def svc() -> MessagingService:
+    """Full service stack with MemoryBackend for benchmarking."""
+    backend = MemoryBackend()
     audit = AuditLogger(backend, hmac_key=b"bench-key")
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
@@ -25,6 +24,8 @@ async def svc(tmp_path: Path) -> MessagingService:
 
     await registry.register(
         Entity(
+            did="did:arc:test:agent/bench",
+            handle="bench",
             id="agent://bench",
             name="Bench",
             type=EntityType.AGENT,

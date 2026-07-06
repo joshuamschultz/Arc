@@ -10,9 +10,32 @@ from typing import Any
 from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
 from arcrun.executor import execute_tool_call
 from arcrun.sandbox import Sandbox
-from arcrun.state import RunState
+from arcrun.state import Injection, RunState
 from arcrun.strategies import Strategy
 from arcrun.types import LoopResult
+
+# Longest injection preview carried in the audit event. The full message rides
+# the message list as user-role data; the audit event keeps a bounded preview.
+_PREVIEW_LEN = 120
+
+
+def _inject(state: RunState, injection: Injection, event_type: str) -> None:
+    """Append an injected message as user-role data and emit its audit event.
+
+    Single drain path for both steer and follow_up: the message is appended as
+    ``user`` role (data, never system — mitigates LLM01/ASI06) and every
+    injection is attributed to its ``caller_did`` in the tamper-evident event
+    chain (Audit pillar). arcrun makes no trust decision here.
+    """
+    state.messages.append(user_message(injection.message))
+    state.event_bus.emit(
+        event_type,
+        {
+            "caller_did": injection.caller_did,
+            "message_id": injection.message_id,
+            "preview": injection.message[:_PREVIEW_LEN],
+        },
+    )
 
 # Debug-only guard for the transform_context append-only contract. Off by
 # default so the hot path pays nothing (cold start < 500ms, fleet scale).
@@ -114,8 +137,7 @@ async def _execute_tool_calls(
                 succeeded_ids.add(tc.id)
 
             if not state.steer_queue.empty():
-                steer_msg = state.steer_queue.get_nowait()
-                state.messages.append(user_message(steer_msg))
+                _inject(state, state.steer_queue.get_nowait(), "steer.injected")
                 steered = True
 
     # Execute queued parallel-safe calls concurrently
@@ -134,8 +156,7 @@ async def _execute_tool_calls(
                 tool_results_map[idx] = tool_result(tc.id, f"Error: {result}")
 
         if not state.steer_queue.empty():
-            steer_msg = state.steer_queue.get_nowait()
-            state.messages.append(user_message(steer_msg))
+            _inject(state, state.steer_queue.get_nowait(), "steer.injected")
     elif parallel_queue and steered:
         for idx, tc in parallel_queue.items():
             tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
@@ -184,8 +205,7 @@ async def react_loop(
 
         # Check steer queue
         if not state.steer_queue.empty():
-            steer_msg = state.steer_queue.get_nowait()
-            state.messages.append(user_message(steer_msg))
+            _inject(state, state.steer_queue.get_nowait(), "steer.injected")
 
         # Transform context hook. Contract: append-only between turns (see
         # _check_append_only). Compaction is a deliberate boundary reset, not
@@ -232,8 +252,7 @@ async def react_loop(
         # End turn (no tool calls)
         if response.stop_reason == "end_turn" and not response.tool_calls:
             if not state.followup_queue.empty():
-                followup_msg = state.followup_queue.get_nowait()
-                state.messages.append(user_message(followup_msg))
+                _inject(state, state.followup_queue.get_nowait(), "followup.injected")
                 _end_turn(state, bus)
                 continue
             _end_turn(state, bus)

@@ -72,13 +72,15 @@ export interface ChannelMessagesResponse {
   messages: Dict[]
   next_after_seq: number | null
 }
+// Initial channel history. Live updates arrive over the read-only `/ws/team`
+// stream (see `useTeamStream`), so this is a one-shot backfill — the 5s DB poll
+// it used to carry is gone (SPEC-031 F3 / REQ-062).
 export const useChannelMessages = (name: string | null) =>
   useQuery<ChannelMessagesResponse>({
     queryKey: ['team', 'channel', name],
     queryFn: ({ signal }) =>
       apiGet(`/api/team/channels/${encodeURIComponent(name!)}/messages?limit=100`, signal),
     enabled: !!name,
-    refetchInterval: 5000,
   })
 
 // --- Config (settings) -----------------------------------------------------

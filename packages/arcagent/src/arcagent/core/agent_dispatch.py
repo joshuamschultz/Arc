@@ -14,12 +14,14 @@ solely to keep ``agent.py`` slim.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any
 
 from arcllm import Message
-from arcrun import Event, StreamEvent, TurnEndEvent, get_strategy_prompts
+from arcrun import Event, RunHandle, StreamEvent, TurnEndEvent, get_strategy_prompts
+from arcrun import run_async as arcrun_run_async
 from arcrun import run_stream as arcrun_run_stream
 
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
@@ -211,6 +213,82 @@ async def dispatch_stream(
             "automated": False,
         },
     )
+
+
+async def start_tracked_run(
+    agent: ArcAgent,
+    input_text: str,
+    *,
+    session_key: str,
+) -> RunHandle:
+    """Start an async, steerable run for ``session_key`` and track its handle.
+
+    Mirrors :func:`dispatch_stream`'s session bookkeeping but drives
+    ``arcrun.run_async`` so a :class:`RunHandle` exists for the duration of the
+    loop — the seam SPEC-031 mid-task delivery injects into. The handle is
+    registered in ``agent._active_runs`` and removed by a finalizer that commits
+    the assistant turn, compacts, and emits ``agent:post_respond`` (parity with
+    the streaming path). REQ-040/041.
+    """
+    session = await agent.session(session_key)
+    await session.append_message({"role": "user", "content": input_text})
+    _telemetry, _bus, model, provider, system_prompt, bridge = await build_run_context(
+        agent, input_text
+    )
+    history = [Message(**m) for m in session.get_messages()]
+    transform = agent._context.transform_context if agent._context else None
+
+    handle = await arcrun_run_async(
+        model,
+        provider,
+        system_prompt,
+        input_text,
+        messages=history,
+        on_event=bridge,
+        transform_context=transform,
+        actor_did=agent._identity.did if agent._identity else None,
+        store_raw_bodies=agent._config.telemetry.capture_tool_io,
+    )
+    agent._active_runs[session_key] = handle
+    finalizer = asyncio.ensure_future(
+        _finalize_tracked_run(agent, handle, session, session_key, input_text)
+    )
+    agent._run_finalizers.add(finalizer)
+    finalizer.add_done_callback(agent._run_finalizers.discard)
+    return handle
+
+
+async def _finalize_tracked_run(
+    agent: ArcAgent,
+    handle: RunHandle,
+    session: SessionManager,
+    session_key: str,
+    input_text: str,
+) -> None:
+    """Await a tracked run, commit its assistant turn, compact, and untrack it."""
+    final_text = ""
+    try:
+        result = await handle.result()
+        final_text = result.content or ""
+        await session.append_message({"role": "assistant", "content": final_text})
+        await maybe_compact(agent, session)
+        if agent._bus is not None:
+            await agent._bus.emit(
+                "agent:post_respond",
+                {
+                    "result": None,
+                    "messages": [
+                        {"role": "user", "content": input_text},
+                        {"role": "assistant", "content": final_text},
+                    ],
+                    "session_id": session.session_id,
+                    "automated": True,
+                },
+            )
+    except Exception:  # reason: fail-open — background run must not crash the loop
+        _logger.exception("Tracked run finalizer failed for session %s", session_key)
+    finally:
+        agent._active_runs.pop(session_key, None)
 
 
 async def maybe_compact(agent: ArcAgent, session: SessionManager) -> None:

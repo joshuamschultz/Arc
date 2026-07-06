@@ -91,6 +91,34 @@ def test_observe_run_routes_are_pull_only() -> None:
     )
 
 
+def test_single_bus_read_only_subscriber_is_allowed() -> None:
+    """SPEC-031 F3 — the ONE arcteam-bus read-only subscriber IS permitted.
+
+    The teardown forbids a *parallel* push pipeline (event buffers, subscription
+    / connection managers, a UIBridgeSink, a dashboard bus). It does NOT forbid
+    the single read-only observer this spec introduces: ``team_stream`` (the
+    view fan-out + bus observer) and the ``/ws/team`` route. These must import
+    cleanly and stay a thin view — they never sign or route.
+    """
+    import inspect
+
+    from arcui import team_stream
+    from arcui.routes import team_ws
+
+    assert hasattr(team_stream, "TeamStreamHub")
+    assert hasattr(team_stream, "TeamBusObserver")
+    assert team_ws.routes, "the /ws/team read-only subscriber route must be registered"
+
+    # Thin view: no signing, no policy evaluation, no messenger send in either
+    # module — arcui renders and forwards, it never routes or signs.
+    for mod in (team_stream, team_ws):
+        src = inspect.getsource(mod)
+        assert ".sign(" not in src, f"{mod.__name__} must not sign messages"
+        assert "PolicyPipeline" not in src, f"{mod.__name__} must not evaluate policy"
+        assert "keypair" not in src, f"{mod.__name__} must not touch keypairs"
+        assert ".send(" not in src, f"{mod.__name__} must not call a messenger send"
+
+
 def test_arcui_is_not_an_emit_subscriber() -> None:
     """arcui must not register itself as a sink/subscriber of arctrust.emit().
 

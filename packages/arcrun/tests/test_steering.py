@@ -6,7 +6,12 @@ import pytest
 from conftest import LLMResponse, MockModel, ToolCall
 
 from arcrun import StaticProvider
+from arcrun.state import Injection
 from arcrun.types import Tool
+
+
+def _injection(caller_did: str, message: str) -> Injection:
+    return Injection.new(caller_did, message)
 
 
 async def _slow_echo(params: dict, ctx: object) -> str:
@@ -42,9 +47,45 @@ class TestSteer:
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         # Give loop time to start, then steer
         await asyncio.sleep(0.005)
-        await handle.steer("change direction")
+        await handle.steer("did:arc:caller", "change direction")
         result = await handle.result()
         assert result.content == "Steered!"
+
+    @pytest.mark.asyncio
+    async def test_steer_requires_caller_did(self):
+        from arcrun.loop import run_async
+
+        model = MockModel([LLMResponse(content="ok", stop_reason="end_turn")])
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
+        with pytest.raises(ValueError, match="caller_did"):
+            await handle.steer("", "change direction")
+        await handle.result()
+
+    @pytest.mark.asyncio
+    async def test_steer_emits_attributed_audit_event(self):
+        from arcrun.loop import run_async
+
+        model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="tc1", name="echo", arguments={"input": "a"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="Steered!", stop_reason="end_turn"),
+            ]
+        )
+        handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
+        handle._state.steer_queue.put_nowait(_injection("did:arc:mgr", "redirect"))
+        result = await handle.result()
+        events = [e for e in result.events if e.type == "steer.injected"]
+        assert len(events) == 1
+        assert events[0].data["caller_did"] == "did:arc:mgr"
+        assert events[0].data["preview"] == "redirect"
+        assert events[0].data["message_id"]
+        # Injected content is user-role data, never system.
+        user_msgs = [m for m in handle._state.messages if m.role == "user"]
+        assert any(m.content == "redirect" for m in user_msgs)
+        assert not any(m.role == "system" and m.content == "redirect" for m in handle._state.messages)
 
     @pytest.mark.asyncio
     async def test_steer_skips_remaining_tools(self):
@@ -65,7 +106,7 @@ class TestSteer:
         )
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         # Inject steer immediately so it catches between tools
-        handle._state.steer_queue.put_nowait("redirect")
+        handle._state.steer_queue.put_nowait(_injection("did:arc:caller", "redirect"))
         result = await handle.result()
         assert result.content == "After steer."
 
@@ -83,10 +124,15 @@ class TestFollowUp:
         )
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task")
         # Queue followup before loop starts
-        handle._state.followup_queue.put_nowait("also do X")
+        handle._state.followup_queue.put_nowait(_injection("did:arc:mgr", "also do X"))
         result = await handle.result()
         assert result.content == "Also did X."
         assert result.turns == 2
+        events = [e for e in result.events if e.type == "followup.injected"]
+        assert len(events) == 1
+        assert events[0].data["caller_did"] == "did:arc:mgr"
+        assert events[0].data["preview"] == "also do X"
+        assert events[0].data["message_id"]
 
     @pytest.mark.asyncio
     async def test_followup_empty_returns_normally(self):

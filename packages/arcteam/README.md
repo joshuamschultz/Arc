@@ -61,12 +61,12 @@ pip install arcmas             # full Arc stack
 
 ```python
 from arcteam import MessagingService, EntityRegistry
-from arcteam.storage import FileBackend
+from arcteam.backends.nats import NatsBackend
 from arcteam.audit import AuditLogger
 from arcteam.types import Entity, EntityType
 
-# Set up
-backend = FileBackend("/var/arc/team")
+# Set up (production substrate: NATS JetStream)
+backend = await NatsBackend.connect("nats://127.0.0.1:4222")
 audit = AuditLogger(backend, hmac_key=AuditLogger.load_hmac_key())
 await audit.initialize()
 registry = EntityRegistry(backend, audit)
@@ -136,7 +136,8 @@ from arcteam import (
 )
 
 from arcteam.audit import AuditLogger
-from arcteam.storage import StorageBackend, FileBackend, MemoryBackend
+from arcteam.storage import StorageBackend, MemoryBackend
+from arcteam.backends.nats import NatsBackend
 from arcteam.types import (
     Entity, EntityType,
     Channel,
@@ -194,7 +195,7 @@ Entities (agents and humans) each have:
 
 | Backend | Use For |
 |---|---|
-| `FileBackend` | Production. Append-only logs, atomic writes |
+| `NatsBackend` | Production. NATS JetStream: durable streams, KV records, durable consumers |
 | `MemoryBackend` | Tests, ephemeral coordination |
 
 The `StorageBackend` Protocol is small enough to roll your own — point at SQLite, Redis, NATS JetStream, or whatever else fits your environment.

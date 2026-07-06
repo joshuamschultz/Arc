@@ -1,6 +1,6 @@
 """YAML frontmatter + markdown file I/O for entity files.
 
-Atomic writes via tempfile + os.replace (matches FileBackend pattern).
+Atomic writes via tempfile + os.replace.
 File locks via fcntl.flock for concurrent access.
 """
 
@@ -35,7 +35,7 @@ _SAFE_PATH_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
 class MemoryStorage:
     """YAML frontmatter + markdown file I/O for entity files.
 
-    Atomic writes via tempfile + os.replace (matches FileBackend pattern).
+    Atomic writes via tempfile + os.replace.
     File locks via fcntl.flock for concurrent access.
     """
 

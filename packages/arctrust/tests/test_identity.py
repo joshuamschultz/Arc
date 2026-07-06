@@ -166,6 +166,27 @@ class TestAgentIdentitySignVerify:
         assert not verify_only.can_sign
 
 
+class TestSigningSeed:
+    def test_returns_32_byte_seed(self) -> None:
+        identity = AgentIdentity.generate(org="test", agent_type="executor")
+        seed = identity.signing_seed
+        assert isinstance(seed, bytes)
+        assert len(seed) == 32
+
+    def test_seed_reconstructs_same_keypair(self) -> None:
+        identity = AgentIdentity.generate(org="test", agent_type="executor")
+        rebuilt = SigningKey(identity.signing_seed)
+        assert bytes(rebuilt.verify_key) == identity.public_key
+
+    def test_verify_only_identity_raises(self) -> None:
+        identity = AgentIdentity.generate(org="test", agent_type="executor")
+        verify_only = AgentIdentity(
+            did=identity.did, public_key=identity.public_key, _signing_key=None
+        )
+        with pytest.raises(ValueError, match="no private key"):
+            _ = verify_only.signing_seed
+
+
 class TestAgentIdentityFileStorage:
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         identity = AgentIdentity.generate(org="test", agent_type="executor")

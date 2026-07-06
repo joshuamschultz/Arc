@@ -3,8 +3,32 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    from arcteam.types import Entity
+
+
+def make_peer_entity(handle: str, name: str | None = None, roles: list[str] | None = None) -> Entity:
+    """Build a DID-keyed peer Entity for messaging tests.
+
+    Every entity now requires a real DID + unique handle (REQ-001), so tests
+    mint an arctrust identity per peer and key the entity on it.
+    """
+    from arcteam.types import Entity, EntityType
+    from arctrust import AgentIdentity
+
+    identity = AgentIdentity.generate(org="local", agent_type="agent")
+    return Entity(
+        did=identity.did,
+        handle=handle,
+        id=f"agent://{handle}",
+        name=name or handle.title(),
+        type=EntityType.AGENT,
+        public_key=identity.public_key.hex(),
+        roles=roles or [],
+    )
 
 
 def make_config_dict(

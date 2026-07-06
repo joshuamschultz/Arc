@@ -10,7 +10,7 @@ Both routes are read-only; sending messages remains the responsibility
 of agents themselves (via the ``messaging_send`` tool registered by
 ``arcagent.modules.messaging``). The handlers read through
 ``request.app.state.messaging_service`` so tests can inject a fake
-service without standing up a FileBackend.
+service without standing up a live NATS backend.
 
 NIST SI-10: channel names go through ``_VALID_CHANNEL_NAME_RE`` before
 hitting the backend; arcteam's URI validator only matches the broader

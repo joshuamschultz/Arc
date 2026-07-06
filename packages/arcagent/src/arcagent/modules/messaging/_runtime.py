@@ -9,6 +9,10 @@ at startup.
 Mirrors the pattern in :mod:`arcagent.modules.policy._runtime` and
 :mod:`arcagent.modules.memory._runtime`. Single-agent-per-process is the
 assumption; this is shared mutable state for one agent.
+
+``configure`` is synchronous (called from the sync capability wiring), so it
+builds the dependency-free in-memory backend eagerly and defers any live NATS
+connection to :func:`ensure_live_backend`, awaited once at poll-loop start.
 """
 
 from __future__ import annotations
@@ -17,9 +21,13 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from arcagent.modules.messaging import _bootstrap
 from arcagent.modules.messaging.config import MessagingConfig
+
+if TYPE_CHECKING:
+    from arctrust import AgentIdentity
 
 _logger = logging.getLogger("arcagent.modules.messaging._runtime")
 
@@ -33,10 +41,18 @@ class _State:
     telemetry: Any
     team_root: Path
     agent_name: str
+    # The agent's arctrust identity — DID it registers under and key it signs
+    # messages with (REQ-030). None only in verify-only/degraded setups.
+    identity: AgentIdentity | None
     # arcteam service objects — set by configure(), typed as Any to avoid
     # a hard import-time dependency on the optional arcteam package.
     svc: Any  # MessagingService
     registry: Any  # EntityRegistry
+    # Deliver a policy-gated teammate message into the agent's current run
+    # (REQ-040/041); bound from the agent:ready payload alongside agent_run_fn.
+    deliver_fn: Any = None
+    # Whether the live NATS backend upgrade has run (idempotent guard).
+    live_backend_ready: bool = False
     # Latest unread counts per stream — updated by the poll loop and read
     # by the assemble_prompt hook for context injection.
     last_unread: dict[str, int] = field(default_factory=dict)
@@ -59,24 +75,27 @@ def configure(
     workspace: Path = Path("."),
     team_root: Path | None = None,
     agent_name: str = "",
+    identity: AgentIdentity | None = None,
 ) -> None:
     """Bind module state and bootstrap arcteam services.
 
     Called once at agent startup. Imports arcteam lazily so the module
     can be imported without arcteam installed (it is an optional dep).
+    Builds the in-memory backend synchronously; a configured ``nats_url``
+    is connected lazily by :func:`ensure_live_backend`.
     """
     global _state
 
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
-    from arcteam.storage import FileBackend
+    from arcteam.storage import MemoryBackend
 
     cfg = MessagingConfig(**(config or {}))
     ws = workspace.resolve()
     resolved_team_root = (team_root or (ws.parent / "team")).resolve()
 
-    backend = FileBackend(resolved_team_root)
+    backend = MemoryBackend()
     audit = AuditLogger(
         backend,
         hmac_key=cfg.audit_hmac_key.encode("utf-8"),
@@ -85,7 +104,13 @@ def configure(
     # before the first poll must await it separately (the poll loop waits
     # 1 s before its first cycle, giving startup time to complete).
     registry = EntityRegistry(backend, audit)
-    svc = MessagingService(backend, registry, audit)
+    # Sign every outbound message with the agent's own key (REQ-030).
+    svc = MessagingService(
+        backend,
+        registry,
+        audit,
+        signer=_bootstrap.message_signer(identity),
+    )
 
     _state = _State(
         config=cfg,
@@ -93,9 +118,41 @@ def configure(
         telemetry=telemetry,
         team_root=resolved_team_root,
         agent_name=agent_name,
+        identity=identity,
         svc=svc,
         registry=registry,
     )
+
+
+async def ensure_live_backend() -> None:
+    """Upgrade to the live NATS JetStream backend when a url is configured.
+
+    Idempotent: runs at most once. Rebuilds the audit chain, registry, and
+    messenger over the shared, push-capable substrate so a served agent joins
+    the real bus (REQ-020). With no ``nats_url`` this is a no-op and the
+    in-memory backend built by :func:`configure` stays in place.
+    """
+    st = state()
+    if st.live_backend_ready or not st.config.nats_url:
+        st.live_backend_ready = True
+        return
+
+    from arcteam.audit import AuditLogger
+    from arcteam.messenger import MessagingService
+    from arcteam.registry import EntityRegistry
+
+    backend = await _bootstrap.make_backend(st.config.nats_url)
+    audit = AuditLogger(backend, hmac_key=st.config.audit_hmac_key.encode("utf-8"))
+    await audit.initialize()
+    st.registry = EntityRegistry(backend, audit)
+    st.svc = MessagingService(
+        backend,
+        st.registry,
+        audit,
+        signer=_bootstrap.message_signer(st.identity),
+    )
+    st.live_backend_ready = True
+    _logger.info("Messaging upgraded to live NATS backend at %s", st.config.nats_url)
 
 
 def state() -> _State:
@@ -114,4 +171,4 @@ def reset() -> None:
     _state = None
 
 
-__all__ = ["configure", "reset", "state"]
+__all__ = ["configure", "ensure_live_backend", "reset", "state"]

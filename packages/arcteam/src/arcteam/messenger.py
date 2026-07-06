@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any  # used for ui_reporter duck-type and dlq entries
+from typing import Any  # used for DLQ entry dicts
 
 from arcteam.audit import AuditLogger
-from arcteam.registry import EntityRegistry
-from arcteam.storage import StorageBackend
+from arcteam.crypto import MessageSigner, ReplayCache, new_nonce, sign_message, verify_message
+from arcteam.mentions import apply_mentions
+from arcteam.registry import EntityRegistry, UnknownHandle, resolve
+from arcteam.storage import Consumer, Delivery, StorageBackend
 from arcteam.types import (
     MAX_BODY_BYTES,
     Channel,
@@ -26,6 +29,36 @@ CHANNELS_COLLECTION = "messages/channels"
 CURSORS_COLLECTION = "messages/cursors"
 DLQ_COLLECTION = "dlq"
 DLQ_KEY = "dlq"
+
+# Consume-loop tuning. The push loop fetches a batch, dispatches each message,
+# then re-fetches; the idle sleep bounds the busy-spin when a stream is quiet
+# (the NATS consumer also blocks up to its own fetch timeout).
+_FETCH_BATCH = 20
+_IDLE_SLEEP = 0.05
+
+MessageHandler = Callable[["Message"], Awaitable[None]]
+
+
+class RetryableDeliveryError(Exception):
+    """Signal from a subscribe handler that delivery hit transient backpressure.
+
+    The dispatcher responds by NOT acking the message, so the durable consumer
+    redelivers it after ``ack_wait`` — once the downstream (e.g. a full agent
+    steering queue) has drained. Use only for recoverable saturation; a
+    permanent (poison) failure must NOT raise this, or it will redeliver forever.
+    """
+
+
+def _durable_name(entity_id: str, stream: str) -> str:
+    """NATS-safe durable name unique per (entity, stream).
+
+    A durable identifies the consumer whose ack floor a re-subscribe resumes
+    from (REQ-021). NATS durable names cannot contain ``.``/``://``, so both
+    parts are flattened to a single token.
+    """
+    safe_entity = entity_id.replace("://", "_").replace(".", "_")
+    safe_stream = stream.replace(".", "_")
+    return f"{safe_entity}__{safe_stream}"
 
 
 def _stream_name_from_uri(uri: str) -> str:
@@ -48,38 +81,45 @@ def _cursor_key(stream: str, entity_id: str) -> str:
     return f"{stream}/{safe}"
 
 
+class Subscription:
+    """Handle for a running push subscription; ``stop`` cancels its loops."""
+
+    def __init__(self, tasks: list[asyncio.Task[None]]) -> None:
+        self._tasks = tasks
+
+    async def wait(self) -> None:
+        """Block until every consume loop ends (they run until cancelled)."""
+        await asyncio.gather(*self._tasks)
+
+    async def stop(self) -> None:
+        """Cancel every consume loop and wait for them to unwind."""
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+
+
 class MessagingService:
-    """Pull-based messaging. Zero arcagent dependency. Standalone service."""
+    """Push + pull messaging. Zero arcagent dependency. Standalone service."""
 
     def __init__(
         self,
         backend: StorageBackend,
         registry: EntityRegistry,
         audit: AuditLogger,
-        ui_reporter: Any | None = None,
+        signer: MessageSigner | None = None,
     ) -> None:
         self._backend = backend
         self._registry = registry
         self._audit = audit
-        # Duck-typed UIReporter hook. No arcui import — caller injects if needed.
-        self._ui_reporter = ui_reporter
+        # The signer signs messages this service *sends* (REQ-030). It does NOT
+        # gate verification: every consumed message is Ed25519-verified,
+        # sender-bound, and replay/dedup-checked regardless of whether this
+        # service can sign — a keyless receiver still rejects forged traffic.
+        self._signer = signer
+        self._replay = ReplayCache()
         self._dlq_seq: int | None = None
         self._known_streams: set[str] = set()
         self._cursor_cache: dict[str, Cursor] = {}
-
-    def set_ui_reporter(self, ui_reporter: Any | None) -> None:
-        """Attach (or detach) the duck-typed UI reporter post-construction.
-
-        Use case: arcui's lifespan builds a dashboard-bus bridge but the
-        ``MessagingService`` is constructed earlier (often by an external
-        CLI). Threading the reporter through the constructor would force
-        every caller to know about arcui; a setter keeps the
-        dependency direction clean.
-
-        Passing ``None`` detaches a previously-set reporter (useful in
-        tests and on graceful shutdown).
-        """
-        self._ui_reporter = ui_reporter
 
     async def _next_dlq_seq(self) -> int:
         """Get next DLQ sequence number (cached)."""
@@ -100,12 +140,27 @@ class MessagingService:
     # --- Channel membership check ---
 
     async def _check_channel_membership(self, sender: str, channel_name: str) -> bool:
-        """Verify sender is a member of the target channel (FR-7)."""
+        """Verify sender is a member of the target channel (FR-7).
+
+        Both the sender and the stored members are run through ``resolve`` so
+        membership is compared by DID — an entity matches whether it was added
+        by handle, URI, or DID.
+        """
         data = await self._backend.read(CHANNELS_COLLECTION, channel_name)
         if data is None:
             return False
         channel = Channel.model_validate(data)
-        return sender in channel.members
+        try:
+            sender_did = await resolve(self._registry, sender)
+        except UnknownHandle:
+            return False
+        member_dids: set[str] = set()
+        for member in channel.members:
+            try:
+                member_dids.add(await resolve(self._registry, member))
+            except UnknownHandle:
+                continue
+        return sender_did in member_dids
 
     # --- Send ---
 
@@ -115,11 +170,11 @@ class MessagingService:
         Auto-assigns seq, id, ts, thread_id. Validates body size.
         Enforces channel membership for channel:// targets (FR-7).
         """
-        # Validate sender is registered
-        sender = await self._registry.get(message.sender)
-        if sender is None:
-            await self._to_dlq(message, "sender_unauthorized")
-            raise ValueError(f"Sender not registered: {message.sender}")
+        # Validate sender is a registered entity. An unknown sender raises
+        # UnknownHandle (REQ-002) — never a silent sender_unauthorized DLQ.
+        sender_did = await resolve(self._registry, message.sender)
+        if not sender_did.startswith("did:"):
+            raise UnknownHandle(f"Sender is not a registered entity: {message.sender}")
 
         # Validate body size
         if len(message.body.encode("utf-8")) > MAX_BODY_BYTES:
@@ -135,13 +190,31 @@ class MessagingService:
         if not message.thread_id:
             message.thread_id = message.id
 
+        # Record @mentions from the body and raise attention flags (REQ-004).
+        await apply_mentions(self._registry, message)
+
+        # Sign the finalized envelope (REQ-030). The signature covers the body
+        # and mentions, so it must run after they are set and before routing.
+        if self._signer is not None:
+            message.signer_did = self._signer.did
+            message.nonce = new_nonce()
+            sign_message(message, self._signer.private_key)
+
         # Serialize once before the loop (not per-target)
         base_dict = message.model_dump()
 
         # Route to each target
         streams_written: list[str] = []
         last_seq = 0
-        for uri in message.to:
+        for target in message.to:
+            # `@handle` is sugar for addressing an entity's inbox. Resolve it
+            # (raising UnknownHandle for an unknown handle, e.g. @ghost) and
+            # normalize to the agent URI so routing stays name-based.
+            if target.startswith("@"):
+                await resolve(self._registry, target)
+                uri = f"agent://{target[1:]}"
+            else:
+                uri = target
             try:
                 scheme, name = parse_uri(uri)
                 stream = _stream_name_from_uri(uri)
@@ -176,18 +249,6 @@ class MessagingService:
                 stream=stream,
                 msg_seq=seq,
             )
-            # UIReporter hook — fires per routed URI if a reporter was injected.
-            if self._ui_reporter is not None:
-                self._ui_reporter.emit_team_event(
-                    event_type="message_route",
-                    data={
-                        "to": list(message.to),
-                        "message_id": message.id,
-                        "channel": stream,
-                        "sender": message.sender,
-                        "seq": seq,
-                    },
-                )
 
         message.seq = last_seq
         message.status = "sent"
@@ -249,6 +310,168 @@ class MessagingService:
         poll_results = await asyncio.gather(*tasks)
 
         return {stream: msgs for stream, msgs in poll_results if msgs}
+
+    # --- Consume (verify + replay) ---
+
+    async def receive(
+        self,
+        stream: str,
+        entity_id: str,
+        max_messages: int = 10,
+    ) -> list[Message]:
+        """Consume unread messages, verifying each before delivery.
+
+        Verification is unconditional — it does not depend on whether this
+        service can itself sign. Every message is Ed25519-verified against its
+        signer's public key, bound to its declared sender, and replay-checked
+        against the nonce window; any failure quarantines it to the DLQ
+        (``bad_signature`` / ``replay``) and drops it from the returned batch
+        (REQ-030, REQ-031). An unsigned or forged message is never delivered.
+        """
+        candidates = await self.poll(stream, entity_id, max_messages)
+        delivered: list[Message] = []
+        for message in candidates:
+            reason = await self._verify_origin(message)
+            if reason is not None:
+                await self._to_dlq(message, reason)
+                continue
+            if not self._replay.check_and_record(message.nonce, message.ts):
+                await self._to_dlq(message, "replay")
+                continue
+            delivered.append(message)
+        return delivered
+
+    async def _verify_origin(self, message: Message) -> str | None:
+        """Return ``"bad_signature"`` if signature or sender-binding fails, else None.
+
+        Two independent checks, both required (REQ-030):
+
+        * The signature must verify against the *signer's* registered public
+          key — an unregistered ``signer_did`` or one lacking a key is rejected.
+        * The declared ``sender`` must resolve to the same DID as ``signer_did``,
+          so a registered peer cannot publish ``sender=agent://alice`` under its
+          own key and have it accepted as from alice (origin forgery).
+
+        Replay/dedup is the caller's concern (``receive`` uses the nonce window;
+        ``subscribe`` dedups by message id), so this method is state-free and
+        safe to run once per delivery on either path.
+        """
+        signer = await self._registry.get(message.signer_did)
+        if signer is None or not signer.public_key:
+            return "bad_signature"
+        if not verify_message(message, bytes.fromhex(signer.public_key)):
+            return "bad_signature"
+        try:
+            if await resolve(self._registry, message.sender) != message.signer_did:
+                return "bad_signature"
+        except UnknownHandle:
+            return "bad_signature"
+        return None
+
+    # --- Subscribe (durable PUSH) ---
+
+    async def subscribe(
+        self,
+        entity_id: str,
+        handler: MessageHandler,
+        *,
+        durable_name: str | None = None,
+    ) -> Subscription:
+        """Push live messages to ``handler`` over durable consumers (REQ-021).
+
+        Opens a durable pull consumer per subscribed stream (inbox, roles, and
+        member channels) and runs a background fetch+dispatch loop for each —
+        the modern push model: a running entity is delivered to live AND a
+        restarted entity resumes from its last ack. Every delivery is verified
+        (signature + sender-binding) exactly as :meth:`receive`; invalid ones go
+        to the DLQ. A single message fanned out to two of this entity's streams
+        (e.g. its inbox and a matching ``role://``) is delivered exactly once —
+        the second copy is a benign duplicate, acked and skipped, never a
+        ``replay``. Valid, first-seen messages reach ``await handler(message)``
+        before being acked. Returns a :class:`Subscription` whose ``stop``
+        cancels the loops.
+        """
+        entity = await self._registry.get(entity_id)
+        roles = entity.roles if entity is not None else []
+        streams = self.resolve_subscriptions(entity_id, roles)
+        for channel in await self.list_channels():
+            if entity_id in channel.members:
+                stream = f"arc.channel.{channel.name}"
+                if stream not in streams:
+                    streams.append(stream)
+
+        base = durable_name or entity_id
+        # Shared across this subscription's consume loops: message ids already
+        # delivered, so a fan-out duplicate is dropped once rather than replayed.
+        seen_ids: set[str] = set()
+        tasks: list[asyncio.Task[None]] = []
+        for stream in streams:
+            durable = _durable_name(base, stream)
+            consumer = await self._backend.open_consumer(STREAMS_COLLECTION, stream, durable)
+            self._known_streams.add(stream)
+            tasks.append(
+                asyncio.create_task(
+                    self._consume_stream(consumer, handler, seen_ids),
+                    name=f"arcteam-subscribe:{durable}",
+                )
+            )
+        return Subscription(tasks)
+
+    async def _consume_stream(
+        self, consumer: Consumer, handler: MessageHandler, seen_ids: set[str]
+    ) -> None:
+        """Fetch-dispatch loop for one durable consumer until cancelled."""
+        while True:
+            try:
+                deliveries = await consumer.fetch(_FETCH_BATCH)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # reason: fail-open — log + retry after a beat
+                logger.exception("consume fetch failed; retrying")
+                await asyncio.sleep(_IDLE_SLEEP)
+                continue
+            if not deliveries:
+                await asyncio.sleep(_IDLE_SLEEP)
+                continue
+            for delivery in deliveries:
+                await self._dispatch(delivery, handler, seen_ids)
+
+    async def _dispatch(
+        self, delivery: Delivery, handler: MessageHandler, seen_ids: set[str]
+    ) -> None:
+        """Verify one delivery, hand valid first-seen ones to the handler, then ack.
+
+        Verification is unconditional (signature + sender-binding); invalid
+        messages are quarantined to the DLQ and still acked so they are not
+        redelivered. A message id already delivered on this subscription is a
+        benign fan-out duplicate — acked and skipped, never delivered twice. A
+        handler that raises :class:`RetryableDeliveryError` (transient
+        backpressure) is NOT acked, so it redelivers rather than being lost; any
+        other handler failure is logged (fail-open) and acked to avoid a
+        poison-message loop.
+        """
+        message = Message.model_validate(delivery.data)
+        reason = await self._verify_origin(message)
+        if reason is not None:
+            await self._to_dlq(message, reason)
+            await delivery.ack()
+            return
+        if message.id in seen_ids:
+            await delivery.ack()
+            return
+        try:
+            await handler(message)
+        except asyncio.CancelledError:
+            raise
+        except RetryableDeliveryError:
+            # Transient downstream backpressure — do NOT ack or mark seen; the
+            # durable consumer redelivers after ack_wait so the message is not lost.
+            logger.warning("inbox delivery deferred (backpressure) for %s", message.id)
+            return
+        except Exception:  # reason: fail-open — log + ack to avoid poison loop
+            logger.exception("inbox handler failed for message %s", message.id)
+        seen_ids.add(message.id)
+        await delivery.ack()
 
     # --- Cursor ---
 

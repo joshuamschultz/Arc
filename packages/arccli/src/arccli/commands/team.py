@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import signal
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+_DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
+_PREFLIGHT_TIMEOUT = 0.5
+_CONNECT_TIMEOUT = 3.0
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -59,20 +66,80 @@ def _get_root(args: argparse.Namespace) -> Path:
     return TeamConfig().root
 
 
-async def _build_service(root: Path) -> tuple[Any, Any, Any, Any]:
-    """Bootstrap arcteam services from a root directory."""
+async def _preflight(url: str) -> None:
+    """Fail fast if the NATS port is not accepting connections.
+
+    ``nats.connect`` retries internally on a refused port, so a quick TCP probe
+    keeps ``arc`` responsive (and best-effort auto-registration snappy) when no
+    server is running.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 4222
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=_PREFLIGHT_TIMEOUT
+        )
+    except (TimeoutError, OSError) as exc:
+        raise ConnectionError(f"NATS not reachable at {url}") from exc
+    writer.close()
+    await writer.wait_closed()
+
+
+async def _connect_backend() -> Any:
+    """Connect the live NATS JetStream backend from the configured URL.
+
+    The URL is read from ``ARCTEAM_NATS_URL`` (default: the local dev server).
+    Tests replace this factory with an in-memory backend via monkeypatch, so
+    no NATS server is required off the live path.
+    """
+    import nats
+    from arcteam.backends.nats import NatsBackend
+
+    async def _swallow(_exc: Exception) -> None:
+        return None
+
+    url = os.environ.get("ARCTEAM_NATS_URL", _DEFAULT_NATS_URL)
+    await _preflight(url)
+    nc = await asyncio.wait_for(
+        nats.connect(url, connect_timeout=2, allow_reconnect=False, error_cb=_swallow),
+        timeout=_CONNECT_TIMEOUT,
+    )
+    return NatsBackend(nc.jetstream(), nc)
+
+
+async def _build_service(
+    root: Path,
+    backend: Any | None = None,
+    signer: Any | None = None,
+) -> tuple[Any, Any, Any, Any]:
+    """Bootstrap arcteam services over a storage backend.
+
+    Live callers pass ``backend=None`` and get a NATS-backed service; tests
+    inject a :class:`~arcteam.storage.MemoryBackend`. A ``signer`` promotes the
+    messenger to signed mode (REQ-030) — required on the send path.
+    """
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
-    from arcteam.storage import FileBackend
 
-    backend = FileBackend(root)
+    if backend is None:
+        backend = await _connect_backend()
     hmac_key = AuditLogger.load_hmac_key()
     audit = AuditLogger(backend, hmac_key=hmac_key)
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
-    svc = MessagingService(backend, registry, audit)
+    svc = MessagingService(backend, registry, audit, signer=signer)
     return svc, registry, audit, backend
+
+
+async def _shutdown(backend: Any) -> None:
+    """Drain a live backend connection; a no-op for the in-memory test backend."""
+    close = getattr(backend, "close", None)
+    if close is not None:
+        await close()
 
 
 def _print_message(msg: Any) -> None:
@@ -121,44 +188,30 @@ def _print_message(msg: Any) -> None:
 
 
 def _status(args: argparse.Namespace) -> None:
-    """Show team overview — entity count, channels, messages, audit chain.
+    """Show team overview — entities, channels, and teams counted from the store."""
+    from arcteam.team import TeamStore
 
-    Paths must mirror the on-disk layout written by ``arcteam`` collections:
-    ``messages/registry`` (entities), ``messages/channels`` (channels),
-    ``messages/streams`` (message streams as ``.log`` files), and
-    ``audit/audit`` (audit chain as ``.log`` files).
-    """
     root = _get_root(args)
     use_json: bool = getattr(args, "use_json", False)
 
-    entities_dir = root / "messages" / "registry"
-    channels_dir = root / "messages" / "channels"
+    async def _run() -> tuple[int, int, int]:
+        svc, registry, audit, backend = await _build_service(root)
+        try:
+            entities = await registry.list_entities()
+            channels = await svc.list_channels()
+            teams = await TeamStore(backend, audit).list_teams()
+        finally:
+            await _shutdown(backend)
+        return len(entities), len(channels), len(teams)
 
-    entity_count = len(list(entities_dir.glob("*.json"))) if entities_dir.is_dir() else 0
-    channel_count = len(list(channels_dir.glob("*.json"))) if channels_dir.is_dir() else 0
-
-    message_count = 0
-    streams_dir = root / "messages" / "streams"
-    if streams_dir.is_dir():
-        for stream_file in streams_dir.rglob("*.log"):
-            with open(stream_file, encoding="utf-8") as f:
-                message_count += sum(1 for _ in f)
-
-    audit_dir = root / "audit" / "audit"
-    audit_count = 0
-    if audit_dir.is_dir():
-        for audit_file in audit_dir.glob("*.log"):
-            with open(audit_file, encoding="utf-8") as f:
-                audit_count += sum(1 for _ in f)
-
+    entity_count, channel_count, team_count = asyncio.run(_run())
     hmac_exists = (root / ".hmac_key").exists()
 
     data = {
         "root": str(root),
         "entities": entity_count,
         "channels": channel_count,
-        "messages": message_count,
-        "audit_entries": audit_count,
+        "teams": team_count,
         "hmac_key": hmac_exists,
     }
 
@@ -171,8 +224,7 @@ def _status(args: argparse.Namespace) -> None:
                 ("Root", str(root)),
                 ("Entities", str(entity_count)),
                 ("Channels", str(channel_count)),
-                ("Messages", str(message_count)),
-                ("Audit entries", str(audit_count)),
+                ("Teams", str(team_count)),
                 ("HMAC key", "present" if hmac_exists else "MISSING"),
             ]
         )
@@ -204,16 +256,9 @@ def _init_cmd(args: argparse.Namespace) -> None:
     root_path: str | None = getattr(args, "root_path", None)
     root = Path(root_path) if root_path else TeamConfig().root
 
-    dirs = [
-        root,
-        root / "messages" / "registry",
-        root / "messages" / "channels",
-        root / "messages" / "cursors",
-        root / "messages" / "streams",
-        root / "audit" / "audit",
-    ]
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
+    # The message/audit store is NATS JetStream — init only needs the root and
+    # the HMAC key that the audit chain (AuditLogger) and `status` consume.
+    root.mkdir(parents=True, exist_ok=True)
 
     hmac_path = root / ".hmac_key"
     if not hmac_path.exists():
@@ -224,10 +269,6 @@ def _init_cmd(args: argparse.Namespace) -> None:
         _write(f"HMAC key already exists: {hmac_path}")
 
     _write(f"Team initialized at: {root}")
-    for d in dirs:
-        if d == root:
-            continue
-        _write(f"  {d.relative_to(root)}/")
 
 
 def _backfill_workspaces(args: argparse.Namespace) -> None:
@@ -287,21 +328,24 @@ async def _apply_workspace_updates(
     root: Path, matches: list[tuple[str, Path]], apply: bool
 ) -> None:
     """Update each entity's `workspace_path` field; idempotent."""
-    _, registry, _, _ = await _build_service(root)
-    for entity_id, workspace in matches:
-        entity = await registry.get(entity_id)
-        if entity is None:
-            _write(f"  skip {entity_id}: not in registry")
-            continue
-        if entity.workspace_path == str(workspace):
-            _write(f"  unchanged {entity_id}")
-            continue
-        if apply:
-            entity.workspace_path = str(workspace)
-            await registry.update(entity)
-            _write(f"  updated {entity_id} -> {workspace}")
-        else:
-            _write(f"  would update {entity_id} -> {workspace}")
+    _, registry, _, backend = await _build_service(root)
+    try:
+        for entity_id, workspace in matches:
+            entity = await registry.get(entity_id)
+            if entity is None:
+                _write(f"  skip {entity_id}: not in registry")
+                continue
+            if entity.workspace_path == str(workspace):
+                _write(f"  unchanged {entity_id}")
+                continue
+            if apply:
+                entity.workspace_path = str(workspace)
+                await registry.update(entity)
+                _write(f"  updated {entity_id} -> {workspace}")
+            else:
+                _write(f"  would update {entity_id} -> {workspace}")
+    finally:
+        await _shutdown(backend)
 
 
 def _resolve_workspace(raw: str | None) -> str | None:
@@ -333,8 +377,37 @@ def _resolve_workspace(raw: str | None) -> str | None:
     return str(resolved)
 
 
+def _registration_identity(entity_type: str, workspace_path: str | None, root: Path) -> Any:
+    """Resolve the persisted identity whose key the entity signs with.
+
+    An agent's identity lives in its own ``arcagent.toml`` (next to its
+    workspace) — the same file the running agent loads at startup — so the
+    registered DID and verify key match what it signs with (REQ-030). When
+    there is no such config (a user, or a bare workspace) a fresh identity is
+    minted and persisted under the team root, so the same key can sign later.
+    """
+    from arctrust import AgentIdentity
+
+    if entity_type == "agent" and workspace_path:
+        config_path = Path(workspace_path).parent / "arcagent.toml"
+        if config_path.exists():
+            from arcagent.core.config import load_config
+
+            config = load_config(config_path)
+            return AgentIdentity.from_config(
+                config.identity,
+                org=config.agent.org,
+                agent_type=config.agent.type,
+                config_path=config_path,
+            )
+
+    identity = AgentIdentity.generate(org="local", agent_type=entity_type)
+    identity.save_keys(root / "keys")
+    return identity
+
+
 def _register(args: argparse.Namespace) -> None:
-    """Register an agent or user entity."""
+    """Register an agent or user entity on DID-keyed identity."""
     from arcteam.types import Entity, EntityType
 
     root = _get_root(args)
@@ -354,17 +427,26 @@ def _register(args: argparse.Namespace) -> None:
             sys.stderr.write(f"arc team register: {exc}\n")
             sys.exit(2)
 
+    handle = entity_id.split("://")[-1]
+    uri = entity_id if "://" in entity_id else f"{entity_type}://{handle}"
+    identity = _registration_identity(entity_type, workspace_path, root)
     entity = Entity(
-        id=entity_id,
+        did=identity.did,
+        handle=handle,
+        id=uri,
         name=name,
         type=EntityType(entity_type),
+        public_key=identity.public_key.hex(),
         roles=role_list,
         workspace_path=workspace_path,
     )
 
     async def _run() -> None:
-        _, registry, _, _ = await _build_service(root)
-        await registry.register(entity)
+        _, registry, _, backend = await _build_service(root)
+        try:
+            await registry.register(entity)
+        finally:
+            await _shutdown(backend)
 
     asyncio.run(_run())
     _write(f"Registered {entity_type}: {entity_id}")
@@ -379,8 +461,11 @@ def _entities(args: argparse.Namespace) -> None:
     use_json: bool = getattr(args, "use_json", False)
 
     async def _run() -> list[Any]:
-        _, registry, _, _ = await _build_service(root)
-        entities: list[Any] = await registry.list_entities(role=role_filter)
+        _, registry, _, backend = await _build_service(root)
+        try:
+            entities: list[Any] = await registry.list_entities(role=role_filter)
+        finally:
+            await _shutdown(backend)
         return entities
 
     result: list[Any] = asyncio.run(_run())
@@ -402,8 +487,11 @@ def _channels(args: argparse.Namespace) -> None:
     use_json: bool = getattr(args, "use_json", False)
 
     async def _run() -> list[Any]:
-        svc, _, _, _ = await _build_service(root)
-        channels: list[Any] = await svc.list_channels()
+        svc, _, _, backend = await _build_service(root)
+        try:
+            channels: list[Any] = await svc.list_channels()
+        finally:
+            await _shutdown(backend)
         return channels
 
     result: list[Any] = asyncio.run(_run())
@@ -463,6 +551,394 @@ def _memory_status(args: argparse.Namespace) -> None:
                 ("Tier", data["tier"]),
             ]
         )
+
+
+# ---------------------------------------------------------------------------
+# Team lifecycle verbs (C4) — create / add-member / remove-member
+# ---------------------------------------------------------------------------
+
+
+def _split_csv(raw: str) -> list[str]:
+    """Split a comma-separated argument into trimmed, non-empty tokens."""
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _create_team(args: argparse.Namespace) -> None:
+    """Create a team on the new ``TeamStore`` (REQ-010, REQ-012)."""
+    from arcteam.registry import resolve
+    from arcteam.team import Team, TeamStore
+
+    root = _get_root(args)
+    team_id: str = args.team_id
+    name: str = getattr(args, "name", None) or team_id
+    channel: str = args.channel
+    members_raw: str = getattr(args, "members", "") or ""
+    goal: str | None = getattr(args, "goal", None)
+
+    async def _run() -> None:
+        _, registry, audit, backend = await _build_service(root)
+        try:
+            member_dids = [await resolve(registry, ref) for ref in _split_csv(members_raw)]
+            store = TeamStore(backend, audit)
+            await store.create(
+                Team(
+                    id=team_id,
+                    name=name,
+                    members=member_dids,
+                    default_channel=channel,
+                    goal_ref=goal,
+                )
+            )
+        finally:
+            await _shutdown(backend)
+
+    asyncio.run(_run())
+    _write(f"Created team: {team_id}")
+
+
+def _add_member(args: argparse.Namespace) -> None:
+    """Add a member to a team (REQ-012)."""
+    _mutate_member(args, add=True)
+
+
+def _remove_member(args: argparse.Namespace) -> None:
+    """Remove a member from a team (REQ-012)."""
+    _mutate_member(args, add=False)
+
+
+def _mutate_member(args: argparse.Namespace, *, add: bool) -> None:
+    """Resolve a member ref to a DID and add/remove it from a team."""
+    from arcteam.registry import resolve
+    from arcteam.team import TeamStore
+
+    root = _get_root(args)
+    team_id: str = args.team_id
+    member: str = args.member
+
+    async def _run() -> None:
+        _, registry, audit, backend = await _build_service(root)
+        try:
+            did = await resolve(registry, member)
+            store = TeamStore(backend, audit)
+            if add:
+                await store.add_member(team_id, did)
+            else:
+                await store.remove_member(team_id, did)
+        finally:
+            await _shutdown(backend)
+
+    asyncio.run(_run())
+    verb, prep = ("Added", "to") if add else ("Removed", "from")
+    _write(f"{verb} {member} {prep} team {team_id}")
+
+
+# ---------------------------------------------------------------------------
+# Messaging verbs (C4) — send / inbox / read / thread
+# ---------------------------------------------------------------------------
+
+
+async def _signer_for(registry: Any, sender_ref: str) -> Any:
+    """Build a ``MessageSigner`` from the sender's arctrust identity (REQ-030).
+
+    The signing key lives with the agent, not arcteam: resolve the entity,
+    locate its ``arcagent.toml`` (the parent of the registered workspace), load
+    the persisted identity, and hand its Ed25519 seed to the messenger so every
+    outgoing envelope is signed.
+    """
+    from arcagent.core.config import load_config
+    from arcteam.crypto import MessageSigner
+    from arcteam.registry import UnknownHandle
+    from arctrust import AgentIdentity
+
+    entity = await registry.get(sender_ref)
+    if entity is None:
+        raise UnknownHandle(f"Unknown sender: {sender_ref}")
+    if not entity.workspace_path:
+        raise ValueError(f"Sender {sender_ref!r} has no workspace; cannot locate signing identity")
+
+    config_path = Path(entity.workspace_path).parent / "arcagent.toml"
+    config = load_config(config_path)
+    identity = AgentIdentity.from_config(
+        config.identity,
+        org=config.agent.org,
+        agent_type=config.agent.type,
+        config_path=config_path,
+    )
+    return MessageSigner.from_identity(identity)
+
+
+def _send(args: argparse.Namespace) -> None:
+    """Send a signed message to one or more targets (REQ-012, REQ-030)."""
+    from arcteam.messenger import MessagingService
+    from arcteam.types import Message, MsgType, Priority
+
+    root = _get_root(args)
+    sender: str = args.sender
+    targets = _split_csv(args.to)
+    refs = _split_csv(args.refs) if getattr(args, "refs", None) else []
+    msg_type: str | None = getattr(args, "type", None)
+    priority: str | None = getattr(args, "priority", None)
+
+    async def _run() -> Any:
+        _, registry, audit, backend = await _build_service(root)
+        try:
+            signer = await _signer_for(registry, sender)
+            svc = MessagingService(backend, registry, audit, signer=signer)
+            message = Message(
+                sender=sender,
+                to=targets,
+                body=args.body,
+                msg_type=MsgType(msg_type) if msg_type else MsgType.INFO,
+                priority=Priority(priority) if priority else Priority.NORMAL,
+                action_required=bool(getattr(args, "action", False)),
+                refs=refs,
+                thread_id=getattr(args, "thread_id", None),
+            )
+            return await svc.send(message)
+        finally:
+            await _shutdown(backend)
+
+    sent = asyncio.run(_run())
+    _write(f"Sent: {sent.id} (seq={sent.seq})")
+
+
+def _inbox(args: argparse.Namespace) -> None:
+    """Poll every stream the sender subscribes to (REQ-012)."""
+    root = _get_root(args)
+    sender: str = args.sender
+    limit: int = getattr(args, "limit", 10)
+    use_json: bool = getattr(args, "use_json", False)
+
+    async def _run() -> Any:
+        svc, _, _, backend = await _build_service(root)
+        try:
+            return await svc.poll_all(sender, max_per_stream=limit)
+        finally:
+            await _shutdown(backend)
+
+    result = asyncio.run(_run())
+    if use_json:
+        _print_json({stream: [m.model_dump() for m in msgs] for stream, msgs in result.items()})
+    elif not result:
+        _write("No new messages.")
+    else:
+        for stream, msgs in result.items():
+            _write(f"{stream} ({len(msgs)} unread):")
+            for msg in msgs:
+                _print_message(msg)
+
+
+def _read(args: argparse.Namespace) -> None:
+    """Read channel or DM history without advancing any cursor (REQ-012)."""
+    root = _get_root(args)
+    sender: str = args.sender
+    limit: int = getattr(args, "limit", 20)
+    use_json: bool = getattr(args, "use_json", False)
+    channel: str | None = getattr(args, "channel", None)
+    dm: str | None = getattr(args, "dm", None)
+
+    if channel:
+        stream = f"arc.channel.{channel}"
+    elif dm:
+        stream = f"arc.agent.{dm}"
+    else:
+        sys.stderr.write("arc team read: specify --channel or --dm\n")
+        sys.exit(2)
+
+    async def _run() -> Any:
+        svc, _, _, backend = await _build_service(root)
+        try:
+            return await svc.poll(stream, sender, max_messages=limit)
+        finally:
+            await _shutdown(backend)
+
+    messages = asyncio.run(_run())
+    if use_json:
+        _print_json([m.model_dump() for m in messages])
+    else:
+        _write(f"{stream} ({len(messages)} messages):")
+        for msg in messages:
+            _print_message(msg)
+
+
+def _thread(args: argparse.Namespace) -> None:
+    """Show all messages in a thread, chronologically (REQ-012)."""
+    root = _get_root(args)
+    thread_id: str = args.thread_id
+    stream: str = args.stream
+    use_json: bool = getattr(args, "use_json", False)
+
+    async def _run() -> Any:
+        svc, _, _, backend = await _build_service(root)
+        try:
+            return await svc.get_thread(stream, thread_id)
+        finally:
+            await _shutdown(backend)
+
+    messages = asyncio.run(_run())
+    if use_json:
+        _print_json([m.model_dump() for m in messages])
+    else:
+        _write(f"Thread {thread_id} ({len(messages)} messages):")
+        for msg in messages:
+            _print_message(msg)
+
+
+# ---------------------------------------------------------------------------
+# Supervised daemon orchestrator (E2) — arc team up / down
+# ---------------------------------------------------------------------------
+
+
+class TeamSupervisor:
+    """Supervise one ``arc agent serve`` daemon per team member (REQ-051).
+
+    Mirrors the arcgateway runner supervision shape: one task per member inside
+    a single ``asyncio.TaskGroup`` so a crash never kills siblings, each task
+    restarts its daemon after a backoff delay, and a stop gate terminates every
+    child on graceful shutdown.
+    """
+
+    def __init__(
+        self,
+        targets: dict[str, str],
+        spawn: Any,
+        backoff: float = 1.0,
+    ) -> None:
+        self.targets = targets
+        self._spawn = spawn
+        self._backoff = backoff
+        self._stop = asyncio.Event()
+        self._procs: dict[str, Any] = {}
+
+    def stop(self) -> None:
+        """Signal all supervised members to shut down."""
+        self._stop.set()
+
+    async def run(self) -> None:
+        """Supervise every member until :meth:`stop` (or a signal) fires."""
+        async with asyncio.TaskGroup() as tg:
+            for name, agent_dir in self.targets.items():
+                tg.create_task(self._supervise(name, agent_dir), name=f"member:{name}")
+            tg.create_task(self._stopper(), name="stop_gate")
+
+    async def _supervise(self, name: str, agent_dir: str) -> None:
+        while not self._stop.is_set():
+            proc = await self._spawn(name, agent_dir)
+            self._procs[name] = proc
+            if self._stop.is_set():
+                proc.terminate()
+                return
+            await proc.wait()
+            if self._stop.is_set():
+                return
+            await asyncio.sleep(self._backoff)
+
+    async def _stopper(self) -> None:
+        await self._stop.wait()
+        for proc in self._procs.values():
+            proc.terminate()
+
+
+def _arc_executable() -> str:
+    """Resolve the ``arc`` CLI entry point for spawning member daemons."""
+    import shutil
+
+    found = shutil.which("arc")
+    return found if found else sys.argv[0]
+
+
+async def _spawn_agent_serve(name: str, agent_dir: str) -> Any:
+    """Spawn ``arc agent serve <agent_dir>`` as a supervised child (REQ-051)."""
+    # Args are internal: the resolved arc binary and a registered agent dir.
+    return await asyncio.create_subprocess_exec(
+        _arc_executable(),
+        "agent",
+        "serve",
+        agent_dir,
+    )
+
+
+async def _build_supervisor(root: Path, team_id: str, spawn: Any | None = None) -> TeamSupervisor:
+    """Map a team's members to ``(handle -> agent_dir)`` and build a supervisor."""
+    from arcteam.team import TeamStore
+
+    _, registry, audit, backend = await _build_service(root)
+    try:
+        team = await TeamStore(backend, audit).get(team_id)
+        if team is None:
+            raise ValueError(f"Team not found: {team_id}")
+        targets: dict[str, str] = {}
+        for did in team.members:
+            entity = await registry.get(did)
+            if entity is None or not entity.workspace_path:
+                continue
+            targets[entity.handle] = str(Path(entity.workspace_path).parent)
+    finally:
+        await _shutdown(backend)
+    return TeamSupervisor(targets, spawn=spawn or _spawn_agent_serve)
+
+
+def _team_pid_path(root: Path, team_id: str) -> Path:
+    """Return the PID file path for a running team supervisor."""
+    safe = team_id.replace(":", "_").replace("/", "_")
+    return root / "run" / f"team-{safe}.pid"
+
+
+async def _run_supervisor(supervisor: TeamSupervisor) -> None:
+    """Install signal handlers and run the supervisor until shutdown."""
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, supervisor.stop)
+        except (NotImplementedError, OSError):
+            pass
+    await supervisor.run()
+
+
+def _up(args: argparse.Namespace) -> None:
+    """Boot each team member as a supervised ``arc agent serve`` daemon (REQ-051)."""
+    root = _get_root(args)
+    team_id: str = args.team_id
+
+    supervisor = asyncio.run(_build_supervisor(root, team_id))
+    if not supervisor.targets:
+        _write(f"Team {team_id} has no runnable members.")
+        return
+
+    pid_path = _team_pid_path(root, team_id)
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    pid_path.write_text(f"{os.getpid()}\n")
+    _write(f"Starting {len(supervisor.targets)} member daemon(s) for team {team_id}...")
+    try:
+        asyncio.run(_run_supervisor(supervisor))
+    finally:
+        pid_path.unlink(missing_ok=True)
+
+
+def _stop_pid(pid_path: Path, kill: Callable[[int, int], object] = os.kill) -> None:
+    """Send SIGTERM to the PID recorded in ``pid_path`` and remove the file."""
+    try:
+        pid = int(pid_path.read_text().strip())
+    except (ValueError, OSError):
+        pid_path.unlink(missing_ok=True)
+        return
+    try:
+        kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    pid_path.unlink(missing_ok=True)
+
+
+def _down(args: argparse.Namespace) -> None:
+    """Stop a running team's member daemons (REQ-051)."""
+    root = _get_root(args)
+    team_id: str = args.team_id
+    pid_path = _team_pid_path(root, team_id)
+    if not pid_path.exists():
+        _write(f"Team {team_id} is not running.")
+        return
+    _stop_pid(pid_path)
+    _write(f"Stopped team {team_id}.")
 
 
 # ---------------------------------------------------------------------------
@@ -537,6 +1013,60 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Persist changes. Without this flag, the command is dry-run.",
     )
 
+    # create (team)
+    p = subs.add_parser("create", help="Create a team.")
+    p.add_argument("team_id", help="Team id.")
+    p.add_argument("--name", default=None, help="Display name (default: team id).")
+    p.add_argument("--channel", required=True, help="Default channel for team traffic.")
+    p.add_argument("--members", default="", help="Comma-separated member refs (handles/DIDs).")
+    p.add_argument("--goal", default=None, help="Optional goal artifact ref.")
+
+    # add-member
+    p = subs.add_parser("add-member", help="Add a member to a team.")
+    p.add_argument("team_id", help="Team id.")
+    p.add_argument("member", help="Member ref (handle or DID).")
+
+    # remove-member
+    p = subs.add_parser("remove-member", help="Remove a member from a team.")
+    p.add_argument("team_id", help="Team id.")
+    p.add_argument("member", help="Member ref (handle or DID).")
+
+    # send
+    p = subs.add_parser("send", help="Send a signed message.")
+    p.add_argument("--sender", required=True, help="Sender ref (agent://handle).")
+    p.add_argument("--to", required=True, help="Target refs (comma-separated).")
+    p.add_argument("--body", required=True, help="Message body.")
+    p.add_argument("--type", dest="type", default=None, help="Message type.")
+    p.add_argument("--priority", default=None, help="Priority.")
+    p.add_argument("--action", action="store_true", help="Mark action required.")
+    p.add_argument("--refs", default=None, help="Comma-separated references.")
+    p.add_argument("--thread-id", dest="thread_id", default=None, help="Thread id (for replies).")
+
+    # inbox
+    p = subs.add_parser("inbox", help="Check inbox across subscribed streams.")
+    p.add_argument("--sender", required=True, help="Whose inbox to poll.")
+    p.add_argument("--limit", type=int, default=10, help="Max messages per stream.")
+
+    # read
+    p = subs.add_parser("read", help="Read channel or DM history.")
+    p.add_argument("--sender", required=True, help="Reader ref.")
+    p.add_argument("--channel", default=None, help="Channel name.")
+    p.add_argument("--dm", default=None, help="DM entity handle.")
+    p.add_argument("--limit", type=int, default=20, help="Max messages.")
+
+    # thread
+    p = subs.add_parser("thread", help="View a message thread.")
+    p.add_argument("thread_id", help="Thread id.")
+    p.add_argument("--stream", required=True, help="Stream name.")
+
+    # up
+    p = subs.add_parser("up", help="Boot each team member as a supervised daemon.")
+    p.add_argument("team_id", help="Team id.")
+
+    # down
+    p = subs.add_parser("down", help="Stop a running team's member daemons.")
+    p.add_argument("team_id", help="Team id.")
+
     return parser
 
 
@@ -549,6 +1079,15 @@ _SUBCOMMAND_MAP = {
     "channels": _channels,
     "memory-status": _memory_status,
     "backfill-workspaces": _backfill_workspaces,
+    "create": _create_team,
+    "add-member": _add_member,
+    "remove-member": _remove_member,
+    "send": _send,
+    "inbox": _inbox,
+    "read": _read,
+    "thread": _thread,
+    "up": _up,
+    "down": _down,
 }
 
 

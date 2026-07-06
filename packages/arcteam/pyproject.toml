@@ -20,13 +20,14 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "arctrust",
+    "nats-py>=2.15.0",
     "pydantic>=2.0,<3",
     "python-frontmatter>=1.0",
     "rank-bm25>=0.2.2",
 ]
 
 [project.scripts]
-arc-team = "arcteam.cli:main"
 arc-memory = "arcteam.memory.cli:main"
 
 [tool.hatch.build.targets.wheel]
@@ -63,6 +64,9 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--strict-markers -v"
+markers = [
+    "slow: end-to-end test that starts a real nats-server (skipped when the binary is absent)",
+]
 
 [tool.coverage.run]
 source = ["arcteam"]

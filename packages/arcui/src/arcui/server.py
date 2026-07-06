@@ -12,6 +12,8 @@ WebSocket left is ``/ws/chat`` (interactive chat), which is bidirectional.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections import deque as _deque
 from pathlib import Path
@@ -40,7 +42,9 @@ from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import team_chat as team_chat_routes
 from arcui.routes import team_pages as team_pages_routes
+from arcui.routes import team_ws as team_ws_routes
 from arcui.routes import traces as traces_routes
+from arcui.team_stream import TeamBusObserver, TeamStreamHub
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +119,8 @@ def create_app(
     team_root: Path | None = None,
     gateway_config: Any | None = None,
     messaging_service: Any | None = None,
+    team_post_forwarder: Any | None = None,
+    team_stream_interval: float = 1.0,
     data_dir: Path | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
@@ -133,6 +139,13 @@ def create_app(
             non-None and ``team_root`` is set, the lifespan composes an
             in-process gateway runtime (executor, session router, web/slack/
             telegram adapters) and exposes it via ``app.state``. SPEC-023.
+        team_post_forwarder: Optional async callable
+            ``(*, sender, channel, text) -> None`` that hands a human group post
+            to arcteam, which signs and routes it as that human entity (REQ-061).
+            arcui only forwards — it never signs or routes. ``None`` disables
+            posting (the ``/ws/team`` route replies with an error frame).
+        team_stream_interval: Seconds between :class:`TeamBusObserver` polls of
+            the arcteam bus that feed the read-only ``/ws/team`` stream.
         data_dir: Arc data directory for the Observe mirror (spool + WORM +
             store). Defaults to ``arcstore.config.resolve_data_dir()``.
 
@@ -159,6 +172,7 @@ def create_app(
         *agent_detail_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,
+        *team_ws_routes.routes,
     ]
 
     # Mount static files if the directory exists.
@@ -254,6 +268,16 @@ def create_app(
             for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                 if adapter is not None:
                     await adapter.connect()
+        # SPEC-031 F1: subscribe read-only to the arcteam bus and feed the
+        # team-flow stream. Fail-open — a bus problem must never block the
+        # dashboard; the stream just stays empty.
+        observer_task: asyncio.Task[None] | None = None
+        if messaging_service is not None:
+            observer = TeamBusObserver(messaging_service, starlette_app.state.team_stream)
+            observer_task = asyncio.create_task(
+                observer.run(interval=team_stream_interval),
+                name="arcui:team-bus-observer",
+            )
         # Browser-open callback (registered by `arc ui start` on
         # loopback) hooks the same lifespan via app.router.lifespan
         # extension below.
@@ -262,6 +286,10 @@ def create_app(
         try:
             yield
         finally:
+            if observer_task is not None:
+                observer_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await observer_task
             try:
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
@@ -302,6 +330,13 @@ def create_app(
     # a supported state — the routes degrade to empty payloads so the
     # Team Chat tab never throws when the deployment lacks a team_root.
     app.state.messaging_service = messaging_service
+    # SPEC-031 C10: the read-only team-flow stream. The hub is always present
+    # so ``/ws/team`` can accept viewers even before a bus is wired; it simply
+    # stays quiet until the TeamBusObserver (started in lifespan) feeds it.
+    app.state.team_stream = TeamStreamHub()
+    # arcteam-owned forwarder for human group posts (REQ-061). arcui forwards,
+    # never signs — see ``team_ws`` route.
+    app.state.team_post_forwarder = team_post_forwarder
     app.state.agent_registry = agent_registry
     app.state.pending_controls = {}
     app.state.circuit_breakers = []

@@ -23,6 +23,8 @@ async def svc() -> MessagingService:
     # Register test entities
     await registry.register(
         Entity(
+            did="did:arc:test:agent/a1",
+            handle="a1",
             id="agent://a1",
             name="Agent One",
             type=EntityType.AGENT,
@@ -31,6 +33,8 @@ async def svc() -> MessagingService:
     )
     await registry.register(
         Entity(
+            did="did:arc:test:agent/a2",
+            handle="a2",
             id="agent://a2",
             name="Agent Two",
             type=EntityType.AGENT,
@@ -39,6 +43,8 @@ async def svc() -> MessagingService:
     )
     await registry.register(
         Entity(
+            did="did:arc:test:user/josh",
+            handle="josh",
             id="user://josh",
             name="Josh",
             type=EntityType.USER,
@@ -404,10 +410,12 @@ class TestInvalidURI:
 
 
 class TestUnregisteredSender:
-    """Unregistered sender: rejected, DLQ entry created."""
+    """Unregistered sender: rejected with UnknownHandle, never a silent DLQ (REQ-002)."""
 
-    async def test_unregistered_sender_dlq(self, svc: MessagingService) -> None:
-        with pytest.raises(ValueError, match="not registered"):
+    async def test_unregistered_sender_raises_unknown_handle(self, svc: MessagingService) -> None:
+        from arcteam.registry import UnknownHandle
+
+        with pytest.raises(UnknownHandle):
             await svc.send(
                 Message(
                     sender="agent://unknown",
@@ -416,7 +424,7 @@ class TestUnregisteredSender:
                 )
             )
         dlq = await svc.dlq_list()
-        assert any(d["meta"].get("dlq_reason") == "sender_unauthorized" for d in dlq)
+        assert not any(d["meta"].get("dlq_reason") == "sender_unauthorized" for d in dlq)
 
 
 class TestAuditOnSend:

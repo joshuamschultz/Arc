@@ -14,7 +14,7 @@ from arcrun.capabilities import CapabilityProvider, provider_tools
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
-from arcrun.state import RunState
+from arcrun.state import Injection, RunState
 from arcrun.strategies import STRATEGIES, select_strategy
 from arcrun.types import LoopResult, SandboxConfig
 
@@ -190,13 +190,21 @@ class RunHandle:
         self._state = state
         self._task = task
 
-    async def steer(self, message: str) -> None:
-        """Interrupt: inject after current tool, skip remaining."""
-        self._state.steer_queue.put_nowait(message)
+    async def steer(self, caller_did: str, message: str) -> None:
+        """Interrupt: inject after current tool, skip remaining.
 
-    async def follow_up(self, message: str) -> None:
-        """Queue: inject at end_turn before returning."""
-        self._state.followup_queue.put_nowait(message)
+        ``caller_did`` must be a non-empty verified identity; arcrun records it
+        but does not authorize it (the policy decision is the caller's job).
+        """
+        self._state.steer_queue.put_nowait(Injection.new(caller_did, message))
+
+    async def follow_up(self, caller_did: str, message: str) -> None:
+        """Queue: inject at end_turn before returning.
+
+        ``caller_did`` must be a non-empty verified identity; arcrun records it
+        but does not authorize it (the policy decision is the caller's job).
+        """
+        self._state.followup_queue.put_nowait(Injection.new(caller_did, message))
 
     async def cancel(self) -> None:
         """Hard stop. Drains queues and sets cancel signal."""
