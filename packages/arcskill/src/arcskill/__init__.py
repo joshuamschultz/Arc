@@ -5,4 +5,4 @@ and LLM contexts. Public surface is exposed under ``arcskill.hub`` and
 ``arcskill.lock``.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

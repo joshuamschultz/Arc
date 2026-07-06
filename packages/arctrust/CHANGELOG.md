@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-06
+
+SPEC-033 A1: detached artifact signing — the crypto primitive behind arcagent's Sign-pillar enforcement on agent-authored capabilities.
+
+### Added
+
+- **Artifact signing** (`artifact.py`) — `sign_artifact`/`verify_artifact`/`content_sha256` and the `ArtifactSignature` model. Content-hash (`sha256:<hex>`) + Ed25519 detached signature over arbitrary bytes, serialisable to a `.arcsig` sidecar (`ArtifactSignature.to_json`/`from_json`). `verify_artifact` never raises — any malformed field, algorithm mismatch, digest mismatch, or (when pinned) public-key mismatch collapses to `False`, fail-closed. Exported from the package root: `ArtifactSignature`, `content_sha256`, `sign_artifact`, `verify_artifact`.
+- **Honest semantics, documented** — a valid signature proves the bytes are *unmodified since the signer wrote them* and *attributed* to the signer's DID key. It does not prove the content is safe; a compromised signer produces a perfectly valid signature over malicious bytes. Safety is the caller's TOFU gate and execution sandbox, never this primitive — stated explicitly in the module docstring so downstream callers don't over-trust it.
+- **Tests** — `test_artifact.py`.
+
+## [0.3.0] - 2026-07-05
+
 ### Added
 
 - **`read_verified_anchor`** (`audit.py`) — reads the newest `extra` payload

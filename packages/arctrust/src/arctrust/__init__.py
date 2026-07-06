@@ -47,8 +47,14 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
+from arctrust.artifact import (
+    ArtifactSignature,
+    content_sha256,
+    sign_artifact,
+    verify_artifact,
+)
 from arctrust.audit import (
     AuditEvent,
     AuditSink,
@@ -85,6 +91,7 @@ from arctrust.trust_store import (
 
 __all__ = [
     "AgentIdentity",
+    "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
     "ChildIdentity",
@@ -100,6 +107,7 @@ __all__ = [
     "WormSink",
     "__version__",
     "build_pipeline",
+    "content_sha256",
     "derive_child_identity",
     "emit",
     "generate_did",
@@ -110,7 +118,9 @@ __all__ = [
     "parse_did",
     "read_verified_anchor",
     "sign",
+    "sign_artifact",
     "validate_did",
     "verify",
+    "verify_artifact",
     "verify_chain",
 ]

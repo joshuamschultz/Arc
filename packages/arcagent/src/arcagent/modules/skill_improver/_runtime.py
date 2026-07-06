@@ -48,6 +48,9 @@ class _State:
     guardrails: Guardrails
     candidate_store: CandidateStore
     eval_label: str
+    # SPEC-033 D3 — agent DID + key to sign mutated skills on write.
+    signer_did: str | None = None
+    signing_key: bytes | None = None
     # Lazily initialised in the agent:ready hook once skill_registry arrives.
     trace_collector: Any = None
     eval_model: Any = None
@@ -67,6 +70,7 @@ def configure(
     llm_config: Any = None,
     skill_registry: Any = None,
     agent_name: str = "",
+    identity: Any = None,
 ) -> None:
     """Bind module state. Called once at agent startup.
 
@@ -74,11 +78,18 @@ def configure(
     any wrapper that exposes ``.skills`` and ``.discover(ws, ws)``.
     ``None`` is acceptable; the agent:ready hook re-checks and initialises
     the TraceCollector once a registry is available.
+
+    ``identity`` (arctrust ``AgentIdentity``) supplies the DID key used to
+    sign mutated skills (SPEC-033 D3) and to sign the tamper-evident WORM
+    audit chain (D4). When it can sign, the candidate store is wired to a
+    ``WormSink`` in a store separate from skill code (AU-9(2)).
     """
     global _state
     cfg = SkillImproverConfig(**(config or {}))
     ec = eval_config or EvalConfig()
     ws = workspace.resolve()
+    signer_did, signing_key = _resolve_signer(identity)
+    worm_sink = _build_worm_sink(ws, signing_key, telemetry)
     _state = _State(
         config=cfg,
         eval_config=ec,
@@ -87,10 +98,55 @@ def configure(
         llm_config=llm_config,
         skill_registry=skill_registry,
         guardrails=Guardrails(cfg),
-        candidate_store=CandidateStore(ws),
+        candidate_store=CandidateStore(ws, audit_sink=worm_sink),
         eval_label=f"{agent_name}/skill_improver" if agent_name else "skill_improver",
+        signer_did=signer_did,
+        signing_key=signing_key,
         semaphore=asyncio.Semaphore(ec.max_concurrent),
     )
+
+
+def _resolve_signer(identity: Any) -> tuple[str | None, bytes | None]:
+    """Extract (did, signing seed) from an AgentIdentity, or (None, None)."""
+    if identity is None or not getattr(identity, "can_sign", False):
+        return None, None
+    try:
+        return identity.did, identity.signing_seed
+    except Exception:  # reason: verify-only identity — no seed; skip signing
+        return None, None
+
+
+def _build_worm_sink(workspace: Path, signing_key: bytes | None, telemetry: Any) -> Any:
+    """Build a WORM audit sink in an operator-owned store (AU-9(2), SI-7(7)).
+
+    The chain lives in ``<agent_root>/.audit`` — beside the workspace, not
+    inside it — so the agent's workspace-confined file tools cannot truncate or
+    forge their own audit record. On load a pre-existing chain is integrity-
+    checked; a failure emits a ``skill_improver.audit.chain_verify_failed`` alert
+    (SI-7(7)) so tampering is surfaced rather than silently trusted.
+
+    Fail-open (AU-5): if the sink cannot be opened (e.g. a lock is already
+    held), audit degrades to disabled rather than breaking module startup.
+    """
+    if signing_key is None:
+        return None
+    try:
+        from arctrust import WormSink
+
+        # agent root = the workspace's parent; operator-owned, agent cannot write here.
+        chain = workspace.parent / ".audit" / "skill_improver.worm"
+        preexisting = chain.exists()
+        sink = WormSink(chain, signing_key)
+    except Exception:  # reason: fail-open — never break startup on audit setup
+        _logger.warning("skill_improver WORM audit sink unavailable; audit disabled")
+        return None
+    if preexisting and not sink.verify_chain():
+        _logger.error("skill_improver WORM audit chain failed load-time verification")
+        if telemetry is not None:
+            telemetry.audit_event(
+                "skill_improver.audit.chain_verify_failed", {"chain": str(chain)}
+            )
+    return sink
 
 
 def state() -> _State:

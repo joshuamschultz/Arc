@@ -132,6 +132,8 @@ async def _optimize_skill(skill_name: str) -> None:
         reflector=reflector,
         guardrails=st.guardrails,
         store=st.candidate_store,
+        signer_did=st.signer_did,
+        signing_key=st.signing_key,
     )
 
     result = await optimizer.optimize(skill_name, current_text, traces)

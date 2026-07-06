@@ -25,12 +25,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from arctrust.identity import AgentIdentity
+
     from arcagent.capabilities.capability_loader import CapabilityLoader
 
 _workspace: Path | None = None
 _allowed_paths: list[Path] | None = None
 _loader: CapabilityLoader | None = None
 _vault_resolver: Any = None
+_identity: AgentIdentity | None = None
 
 
 def configure(
@@ -39,17 +42,38 @@ def configure(
     allowed_paths: list[Path] | None = None,
     loader: CapabilityLoader | None = None,
     vault_resolver: Any = None,
+    identity: AgentIdentity | None = None,
 ) -> None:
     """Bind per-agent runtime state. Called once at agent startup.
 
     Subsequent calls overwrite — used by tests to reset between
     runs. Production agents should call exactly once during startup.
     """
-    global _workspace, _allowed_paths, _loader, _vault_resolver
+    global _workspace, _allowed_paths, _loader, _vault_resolver, _identity
     _workspace = workspace.resolve()
     _allowed_paths = allowed_paths
     _loader = loader
     _vault_resolver = vault_resolver
+    _identity = identity
+
+
+def sign_artifact_file(artifact: Path, content: bytes) -> None:
+    """Sign an agent-authored artifact on write with the agent's own DID key.
+
+    No-op when the agent has no signing identity (verify-only, or an
+    unconfigured test harness) — the loader's per-tier gate then decides
+    whether an unsigned artifact may still run (only personal may relax).
+    """
+    if _identity is None or not _identity.can_sign:
+        return
+    from arcagent.capabilities import artifact_signing
+
+    artifact_signing.write_signature(
+        artifact,
+        content,
+        signer_did=_identity.did,
+        private_key=_identity.signing_seed,
+    )
 
 
 def workspace() -> Path:
@@ -103,11 +127,12 @@ def get_secret(name: str) -> str | None:
 
 def reset() -> None:
     """Clear all runtime state. Test-only helper."""
-    global _workspace, _allowed_paths, _loader, _vault_resolver
+    global _workspace, _allowed_paths, _loader, _vault_resolver, _identity
     _workspace = None
     _allowed_paths = None
     _loader = None
     _vault_resolver = None
+    _identity = None
 
 
 __all__ = [
@@ -116,5 +141,6 @@ __all__ = [
     "get_secret",
     "loader",
     "reset",
+    "sign_artifact_file",
     "workspace",
 ]

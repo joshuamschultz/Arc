@@ -104,9 +104,26 @@ class TestSeedSnapshot:
 
 
 class TestAuditLog:
-    """F8: Append-only JSONL, MutationEvent serialization."""
+    """F8 / SPEC-033 D4: mutation audit is the signed, tamper-evident WORM chain.
 
-    def test_append_audit(self, store: CandidateStore) -> None:
+    No plaintext ``audit.jsonl`` — events route through an injected arctrust
+    ``WormSink`` (Ed25519-signed, hash-linked), stored separately from skill
+    code (AU-9(2)) and verifiable end-to-end (AU-10).
+    """
+
+    def _worm_store(self, tmp_path: Path, workspace: Path) -> tuple[CandidateStore, Path, bytes]:
+        from arctrust import WormSink
+        from arctrust.keypair import generate_keypair
+
+        kp = generate_keypair()
+        chain = tmp_path / "audit_store" / "skill_improver.worm"
+        sink = WormSink(chain, kp.private_key)
+        return CandidateStore(workspace, audit_sink=sink), chain, kp.public_key
+
+    def test_append_audit_writes_signed_chain(self, tmp_path: Path, workspace: Path) -> None:
+        from arctrust import verify_chain
+
+        store, chain, pubkey = self._worm_store(tmp_path, workspace)
         event = MutationEvent(
             timestamp=datetime(2026, 2, 25, 14, 0, 0, tzinfo=UTC),
             skill_name="test-skill",
@@ -116,37 +133,43 @@ class TestAuditLog:
             generation=1,
             scores={"accuracy": 4.0},
             improvement={"accuracy": 0.5},
-            stop_reason="stagnation",
+            stop_reason="applied",
             trace_ids=["t1"],
         )
         store.append_audit("test-skill", event)
 
-        audit_path = store._skill_dir("test-skill") / "audit.jsonl"
-        assert audit_path.exists()
-        lines = audit_path.read_text().strip().splitlines()
-        assert len(lines) == 1
-        parsed = json.loads(lines[0])
-        assert parsed["candidate_id"] == "c1"
+        # No plaintext audit log is ever written.
+        assert not (store._skill_dir("test-skill") / "audit.jsonl").exists()
+        # Chain verifies against the signer's key; the record is present.
+        assert verify_chain(chain, pubkey) is True
+        records = [json.loads(line) for line in chain.read_text().splitlines() if line]
+        assert any(r["event"]["extra"]["candidate_id"] == "c1" for r in records)
 
-    def test_audit_append_only(self, store: CandidateStore) -> None:
+    def test_audit_chain_is_tamper_evident(self, tmp_path: Path, workspace: Path) -> None:
+        from arctrust import verify_chain
+
+        store, chain, pubkey = self._worm_store(tmp_path, workspace)
         for i in range(3):
-            event = MutationEvent(
-                timestamp=datetime(2026, 2, 25, 14, i, 0, tzinfo=UTC),
-                skill_name="test-skill",
-                previous_hash="a",
-                new_hash="b",
-                candidate_id=f"c{i}",
-                generation=i,
-                scores={},
-                improvement={},
-                stop_reason="max_iterations",
-                trace_ids=[],
+            store.append_audit(
+                "test-skill",
+                MutationEvent(
+                    timestamp=datetime(2026, 2, 25, 14, i, 0, tzinfo=UTC),
+                    skill_name="test-skill",
+                    previous_hash="a",
+                    new_hash="b",
+                    candidate_id=f"c{i}",
+                    generation=i,
+                    scores={},
+                    improvement={},
+                    stop_reason="applied",
+                    trace_ids=[],
+                ),
             )
-            store.append_audit("test-skill", event)
-
-        audit_path = store._skill_dir("test-skill") / "audit.jsonl"
-        lines = audit_path.read_text().strip().splitlines()
-        assert len(lines) == 3
+        assert verify_chain(chain, pubkey) is True
+        # Mutate a byte in the chain → verification fails (SI-7 detection).
+        raw = chain.read_bytes().replace(b'"c1"', b'"cX"', 1)
+        chain.write_bytes(raw)
+        assert verify_chain(chain, pubkey) is False
 
 
 class TestRollback:

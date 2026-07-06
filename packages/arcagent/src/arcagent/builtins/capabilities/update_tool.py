@@ -81,4 +81,5 @@ async def update_tool(
     except ASTValidationError as exc:
         return f"Error: AST validation rejected source — {exc}"
     target.write_text(new_source, encoding="utf-8")
+    _runtime.sign_artifact_file(target, new_source.encode("utf-8"))
     return f"Updated tool {name!r} {match.group(1)} → {new_version}"

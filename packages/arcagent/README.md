@@ -138,7 +138,7 @@ await agent.shutdown()
 | Pillar | How It Shows Up |
 |---|---|
 | 🪪 **Identity** | `ArcAgent.__init__` refuses construction without a resolvable DID. Identity loaded from `[identity].did` in TOML; keypair from `key_dir`. Hard error on missing or wrong-permission keyfile |
-| ✍️ **Sign** | Skills, extensions, and pairings are verified before loading. No "skip for testing" backdoors |
+| ✍️ **Sign** | Agent-authored capabilities are signed on write (`.arcsig` sidecar, content hash + Ed25519) and **re-verified at load**, independent of any install-time check. A TOFU gate adjudicates first-sight and drift above personal tier. No "skip for testing" backdoors |
 | ✅ **Authorize** | Every tool call goes through the 5-layer policy pipeline (`arctrust.policy`). First DENY wins. Fail-closed |
 | 📜 **Audit** | Every operation emits an `arctrust.AuditEvent`. Sinks fan out: JSONL for compliance, hash-chained for tamper-evidence, WebSocket for live dashboards |
 
@@ -466,6 +466,20 @@ The four defenses gate the **untrusted scan root only** — `<workspace>/.capabi
 4. **Egress proxy** — network only via `ToolContext.http`, with per-tool origin allowlist (scheme + host + port). Deny-by-default. Every request audit-logged.
 
 Tier gates: Federal refuses agent-authored capabilities entirely. Enterprise allows them only after a human records approval via `arc trust approve` (persisted under `[security.validators.approved]`). Personal allows them with `[security.validators] auto_run_agent_code = true`.
+
+### Sign-Pillar Enforcement (SPEC-033)
+
+Scoped to the untrusted workspace root (`<agent>/workspace/.capabilities/`) — first-party roots (builtins, `~/.arc/capabilities/`, per-agent `capabilities/`) are release-signed-upstream and out of scope.
+
+| Control | What It Does |
+|---|---|
+| **Restricted-builtins execution** | Workspace-root modules exec under `RESTRICTED_BUILTINS` + a denylist-enforcing `__import__` instead of a bare full-builtins `exec`. Fast-fail linter / defense-in-depth in front of the SPEC-036 sandbox — not a boundary, not a substitute for it |
+| **Signed on write** | `create_skill`, `create_tool`, `update_skill`, `update_tool` write a detached `.arcsig` sidecar (content hash + Ed25519, keyed to the agent's own DID) alongside every artifact they produce |
+| **Re-verified at load** | The capability loader recomputes the content hash and re-checks the signature on every load — independent of, and in addition to, whatever check ran at create/install time |
+| **TOFU first-load approval** | A missing/invalid signature denies outright above personal tier; first-sight and drift are adjudicated by `TofuLayer` and recorded via `arc trust approve` |
+| **WORM-chained skill-improver audit** | Skill mutations from the self-improvement loop are signed and audited through an `arctrust.AuditSink` (a `WormSink` in production) — no plaintext `audit.jsonl` |
+
+Honest scope: a valid signature proves the artifact is unmodified since the signer wrote it and attributes it to that DID — it does not prove the content is safe. Safety is the TOFU gate's and the execution sandbox's job.
 
 ---
 
