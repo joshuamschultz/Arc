@@ -119,7 +119,11 @@ def _exec_cmd(args: argparse.Namespace) -> None:
 async def _run_exec_async(code: str, timeout: float, max_output: int, as_json: bool) -> None:
     from arcrun import ToolContext, make_execute_tool
 
-    tool = make_execute_tool(timeout_seconds=timeout, max_output_bytes=max_output)
+    # Ad-hoc `arc run exec` has no agent config → personal tier, sandbox off
+    # (this is a developer running code on their own machine, REQ-020/050).
+    tool = make_execute_tool(
+        timeout_seconds=timeout, max_output_bytes=max_output, tier="personal", relax="local"
+    )
     ctx = ToolContext(
         run_id="cli-exec",
         tool_call_id="manual",
@@ -255,7 +259,10 @@ async def _execute_task(
         )
 
     if with_code_exec:
-        tools.append(make_execute_tool(timeout_seconds=code_timeout))
+        # `arc run task` is a thin ad-hoc agent → personal tier, sandbox off.
+        tools.append(
+            make_execute_tool(timeout_seconds=code_timeout, tier="personal", relax="local")
+        )
 
     # Register spawn_task by default — agent decides which capabilities to expose.
     # The CLI plays the role of a thin agent here. Closure mutation lets nested

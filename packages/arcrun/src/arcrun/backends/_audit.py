@@ -25,6 +25,7 @@ def _emit_audit_event(
     target: str,
     outcome: str,
     tier: str | None = None,
+    actor_did: str | None = None,
     extra: dict[str, Any] | None = None,
     sink: Any,
 ) -> None:
@@ -33,7 +34,7 @@ def _emit_audit_event(
         from arctrust import AuditEvent, emit
 
         event = AuditEvent(
-            actor_did=_LOADER_ACTOR,
+            actor_did=actor_did or _LOADER_ACTOR,
             action=action,
             target=target,
             outcome=outcome,
@@ -47,6 +48,80 @@ def _emit_audit_event(
             action,
             target,
             exc_info=True,
+        )
+
+
+def emit_backend_selected(
+    *,
+    tier: str,
+    resolved: str,
+    isolation: str,
+    caller_did: str | None,
+    relax: str | None,
+    relax_reason: str,
+    platform_supports_vm: bool,
+    outcome: str,
+    sink: Any | None,
+) -> None:
+    """Emit code_exec.backend.selected on every execute_python build (AU-2/AU-3).
+
+    Carries the AU-3 record content: caller identity, tier, resolved backend +
+    isolation, the relax value and its reason, the platform VM fact, and the
+    allow/refuse outcome. Emitted for successes AND fail-closed refusals.
+    """
+    logger.info(
+        "code_exec.backend.selected tier=%s resolved=%s isolation=%s outcome=%s",
+        tier,
+        resolved,
+        isolation,
+        outcome,
+    )
+    if sink is not None:
+        _emit_audit_event(
+            action="code_exec.backend.selected",
+            target=resolved,
+            outcome=outcome,
+            tier=tier,
+            actor_did=caller_did,
+            extra={
+                "isolation": isolation,
+                "relax": relax,
+                "relax_reason": relax_reason,
+                "platform_supports_vm": platform_supports_vm,
+            },
+            sink=sink,
+        )
+
+
+def emit_isolation_downgraded(
+    *,
+    tier: str,
+    resolved: str,
+    reason: str,
+    caller_did: str | None,
+    sink: Any | None,
+) -> None:
+    """Emit code_exec.isolation.downgraded when a tier-permitted downgrade occurs.
+
+    Fires for a personal explicit relax below the default and for the non-Linux/
+    no-KVM container fallback. Federal never downgrades (it refuses instead), so
+    this event never carries tier=federal.
+    """
+    logger.warning(
+        "code_exec.isolation.downgraded tier=%s resolved=%s reason=%s",
+        tier,
+        resolved,
+        reason,
+    )
+    if sink is not None:
+        _emit_audit_event(
+            action="code_exec.isolation.downgraded",
+            target=resolved,
+            outcome="downgrade",
+            tier=tier,
+            actor_did=caller_did,
+            extra={"reason": reason},
+            sink=sink,
         )
 
 

@@ -1,4 +1,11 @@
-"""Tests for make_execute_tool() factory and execution."""
+"""Tests for make_execute_tool() factory and execution.
+
+Execution semantics (stdout/stderr/exit_code/timeout/truncation) are verified
+through the personal sandbox-OFF path (relax="local" → LocalBackend), which is
+the host-subprocess substrate these assertions were written against. The default
+tier now routes personal→container; the container/VM substrates are exercised in
+skip-guarded integration tests.
+"""
 
 import json
 
@@ -6,6 +13,10 @@ import pytest
 
 from arcrun.events import EventBus
 from arcrun.types import Tool, ToolContext
+
+# Personal + sandbox OFF → LocalBackend (isolation="none"): the host-subprocess
+# path this suite asserts against, runnable without docker/KVM.
+_LOCAL = {"tier": "personal", "relax": "local"}
 
 
 def _make_ctx() -> ToolContext:
@@ -52,7 +63,7 @@ class TestExecuteToolExecution:
     async def test_simple_print_stdout(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "print('hello world')"}, ctx)
         result = json.loads(raw)
@@ -63,7 +74,7 @@ class TestExecuteToolExecution:
     async def test_stderr_capture(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "import sys; sys.stderr.write('oops\\n')"}, ctx)
         result = json.loads(raw)
@@ -73,7 +84,7 @@ class TestExecuteToolExecution:
     async def test_exit_code_on_failure(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "raise ValueError('bad')"}, ctx)
         result = json.loads(raw)
@@ -83,7 +94,7 @@ class TestExecuteToolExecution:
     async def test_timeout_handling(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool(timeout_seconds=1)
+        tool = make_execute_tool(timeout_seconds=1, **_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "import time; time.sleep(30)"}, ctx)
         result = json.loads(raw)
@@ -94,7 +105,7 @@ class TestExecuteToolExecution:
     async def test_output_truncation(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool(max_output_bytes=50)
+        tool = make_execute_tool(max_output_bytes=50, **_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "print('x' * 1000)"}, ctx)
         result = json.loads(raw)
@@ -104,7 +115,7 @@ class TestExecuteToolExecution:
     async def test_structured_json_result(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "print(42)"}, ctx)
         result = json.loads(raw)
@@ -117,7 +128,7 @@ class TestExecuteToolExecution:
     async def test_minimal_env_no_home_leak(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "import os; print(os.environ.get('HOME', ''))"}, ctx)
         result = json.loads(raw)
@@ -127,7 +138,7 @@ class TestExecuteToolExecution:
     async def test_temp_dir_isolation(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "import os; print(os.getcwd())"}, ctx)
         result = json.loads(raw)
@@ -137,7 +148,7 @@ class TestExecuteToolExecution:
     async def test_duration_ms_present(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool()
+        tool = make_execute_tool(**_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "print(1)"}, ctx)
         result = json.loads(raw)
@@ -148,7 +159,7 @@ class TestExecuteToolExecution:
     async def test_extra_env(self):
         from arcrun.builtins import make_execute_tool
 
-        tool = make_execute_tool(extra_env={"MY_VAR": "test123"})
+        tool = make_execute_tool(extra_env={"MY_VAR": "test123"}, **_LOCAL)
         ctx = _make_ctx()
         raw = await tool.execute({"code": "import os; print(os.environ['MY_VAR'])"}, ctx)
         result = json.loads(raw)

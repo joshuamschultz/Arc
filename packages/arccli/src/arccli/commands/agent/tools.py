@@ -6,7 +6,27 @@ import argparse
 import json
 import sys
 
-from arccli.commands.agent._common import _discover_tools, _resolve_agent_dir
+from arccli.commands.agent._common import (
+    _discover_tools,
+    _load_agent_config,
+    _resolve_agent_dir,
+)
+
+
+def _agent_isolation(agent_dir: object) -> tuple[str, str | None]:
+    """Resolve (tier, relax) for the agent's code-exec isolation floor.
+
+    Tier is the agent's ``[security] tier`` (personal by default); relax is the
+    explicit ``[execution] relax_isolation`` opt-down (unset by default). Both
+    are forwarded to arcrun's router — arccli is only the seam that carries them.
+    """
+    from pathlib import Path
+
+    cfg = _load_agent_config(Path(str(agent_dir)))
+    tier = str(cfg.get("security", {}).get("tier", "personal"))
+    relax_raw = cfg.get("execution", {}).get("relax_isolation")
+    relax = str(relax_raw) if relax_raw else None
+    return tier, relax
 
 
 def _tools(args: argparse.Namespace) -> None:
@@ -17,7 +37,8 @@ def _tools(args: argparse.Namespace) -> None:
     if getattr(args, "with_code_exec", False):
         from arcrun import make_execute_tool
 
-        tools.append(make_execute_tool())
+        tier, relax = _agent_isolation(agent_dir)
+        tools.append(make_execute_tool(tier=tier, relax=relax))
 
     if getattr(args, "json", False):
         data = [

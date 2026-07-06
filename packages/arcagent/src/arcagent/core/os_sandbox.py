@@ -1,5 +1,18 @@
 """SPEC-021 Component C-005 — OS-level sandbox wrapper.
 
+.. note:: ASI05 enforcement surface moved to arcrun (SPEC-036).
+
+   Tier-routed code execution — the real ASI05 ("Unexpected Code Execution")
+   control — now lives in ``arcrun.builtins.execute`` + the execution backends
+   (``VmBackend`` for federal, ``DockerBackend`` for enterprise/personal,
+   ``LocalBackend`` for personal sandbox-off). ``execute_python`` selects a
+   backend by tier and fails closed when the required isolation is unavailable.
+
+   This module is NOT that enforcement point and is not wired into the execution
+   path. It remains as the (uncalled) OS-sandbox transport contract for a future
+   in-process syscall-scoping use case; the Linux ``SeccompSandbox`` is a
+   deliberate not-yet-implemented placeholder, not a claimed-but-absent gate.
+
 Per D-353/D-359, self-executing agent code at enterprise+ tier runs
 inside an OS-level isolation layer:
 
