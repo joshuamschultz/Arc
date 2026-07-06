@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcrun import collect
-from arctrust import AgentIdentity
+from arctrust import AgentIdentity, WormSink, worm_policy_sink
 
 from arcagent.capabilities.capability_registry import SkillEntry
 from arcagent.core.agent_dispatch import dispatch_stream
@@ -112,10 +112,26 @@ class ArcAgent:
         # The arctrust policy pipeline (built in startup) — reused to authorize
         # mid-turn steering (REQ-041), the only steering caller in the system.
         self._policy_pipeline: PolicyPipeline | None = None
+        # Durable WORM sink for policy-decision audit records (SPEC-034). Holds
+        # an exclusive lock for its lifetime; closed in shutdown().
+        self._policy_worm: WormSink | None = None
         # Names of tools currently registered in ToolRegistry that came
         # from the capability loader. Tracked so reload() can drop them
         # cleanly and re-register the latest set.
         self._capability_tool_names: set[str] = set()
+
+    def _policy_audit_log_path(self) -> Path:
+        """Resolve the WORM chain file for policy-decision audit (SPEC-034).
+
+        Uses ``config.security.policy_audit_log`` when set (relative paths
+        resolve against the workspace); otherwise defaults to
+        ``<workspace>/audit/policy-chain.jsonl``.
+        """
+        configured = self._config.security.policy_audit_log
+        if configured:
+            path = Path(configured)
+            return path if path.is_absolute() else (self._workspace / path)
+        return self._workspace / "audit" / "policy-chain.jsonl"
 
     async def startup(self) -> None:
         """Initialize all components in dependency order.
@@ -159,9 +175,16 @@ class ArcAgent:
         # (deny-by-default at enterprise/federal). Team peers are added when the
         # agent joins a team.
         tier = self._config.security.tier
+        # Route every policy decision into a durable, Ed25519-signed WORM chain
+        # (SPEC-034). arcagent owns the file path + operator key; arctrust owns
+        # the adapter and the chain. The agent signs records with its own DID
+        # seed — the same key that authenticates its dispatches.
+        worm = WormSink(self._policy_audit_log_path(), self._identity.signing_seed)
+        self._policy_worm = worm
         pipeline = build_pipeline(
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
             agent_registry={self._identity.did: self._identity.public_key},
+            audit_sink=worm_policy_sink(worm),
         )
         self._policy_pipeline = pipeline
         self._tool_registry = ToolRegistry(
@@ -518,6 +541,11 @@ class ArcAgent:
         # Reverse-order cleanup
         await bus.shutdown()
         await tool_registry.shutdown()
+
+        # Release the WORM chain lock (SPEC-034).
+        if self._policy_worm is not None:
+            self._policy_worm.close()
+            self._policy_worm = None
 
         # Close LLM client (releases httpx connection pool). Guarded
         # because _model is lazy — may never have been materialized.

@@ -311,6 +311,18 @@ class SecurityConfig(BaseModel):
     # SPEC-021 — TOFU approvals for self-executing agent code.
     validators: ValidatorsConfig = Field(default_factory=ValidatorsConfig)
 
+    # SPEC-034 — durable WORM chain file for policy-decision audit records.
+    # Relative paths resolve against the workspace; None → <workspace>/audit/
+    # policy-chain.jsonl. The pipeline routes every ALLOW/DENY here as one
+    # tamper-evident, Ed25519-signed record (AU-9/AU-10).
+    policy_audit_log: str | None = Field(
+        default=None,
+        description=(
+            "Path to the WORM audit chain for policy decisions. Relative to the "
+            "workspace; defaults to <workspace>/audit/policy-chain.jsonl."
+        ),
+    )
+
 
 class CapabilitiesConfig(BaseModel):
     """``[capabilities]`` block — relaxations for agent-authored (untrusted)

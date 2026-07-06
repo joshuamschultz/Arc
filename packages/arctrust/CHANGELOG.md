@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-06
+
+SPEC-034: complete the PolicyPipeline — the three stub layers become real policy decisions, the `PolicyContext` grows a typed injected-state contract, and every decision is routed into the durable WORM chain.
+
+### Added
+
+- **Real `ProviderLayer`** (`policy.py`, LLM10) — a pure comparator. Holds per-provider `ProviderLimit` (budget + rate) floors from construction; reads live `PolicyContext.provider_usage` (filled later by SPEC-038). Denies `provider.budget_exceeded` / `provider.rate_exceeded`. **Configured-gate:** with no limits configured the layer is a no-op ALLOW (absence of a budget policy is not a violation); only once a limit IS configured does missing usage telemetry fail closed (`provider.state_missing`). Never calls arcllm, never decrements, holds no mutable store.
+- **Real `TeamLayer`** (`policy.py`, ASI03/ASI07) — capability-scoping. Static role→scope floor from construction; per-call activated scope + delegation grant from `PolicyContext.team_scope`. Denies `team.scope_violation` (out-of-scope tool) and `team.delegation_exceeded` (delegated call wider than its grant — monotonic-narrowing). Absent team scope ALLOWs (admission is IdentityLayer's job).
+- **Real `SandboxLayer`** (`policy.py`, ASI04/ASI05) — deliberately thin. Reads verification (SPEC-033) + isolation (SPEC-036) status from `PolicyContext.tool_runtime` and compares over the `host < container < vm` ladder. Denies `sandbox.unverified_tool` / `sandbox.isolation_unsatisfiable`. **Configured-gate:** with no runtime status in context the layer is a no-op ALLOW — the SPEC-033 load gate already verified any registry tool, so a blind sandbox layer has nothing to add. Re-runs no verification, starts no sandbox.
+- **`PolicyContext` injected-state contract** — new frozen Pydantic models `ProviderUsage`, `TeamScope`, `ToolRuntimeStatus` and three optional fields (`provider_usage`, `team_scope`, `tool_runtime`), each defaulting `None` so existing 3-field constructions stay valid. `ProviderLimit` model + `build_pipeline(provider_limits=, team_roles=)` config threads.
+- **`worm_policy_sink(sink)`** (`audit.py`, REQ-017) — adapts the pipeline's `(event_type, payload)` audit callback to a durable `AuditSink`, mapping each decision to an `AuditEvent(action="policy.evaluate")` and emitting it via `emit()`. Raw tool arguments are never copied (only `input_hash`, AU-9). Routes every ALLOW/DENY into the tamper-evident, Ed25519-signed WORM chain; `verify_chain()` passes over the result. Exported from the package root.
+
+### Changed
+
+- Policy audit payload key `matched_rule` → `rule_id` (AU-2 event-reconstruction payload now carries `tier`, `layer`, `rule_id`, `input_hash`, `classification`; no raw arguments).
+- `build_pipeline` constructs the Provider/Team/Sandbox layers (enterprise/federal only) with their config. Each layer is a no-op when its policy is unconfigured and fails closed only when a configured policy meets missing telemetry — so default/empty config never bricks a tier.
+
 ## [0.4.0] - 2026-07-06
 
 SPEC-033 A1: detached artifact signing — the crypto primitive behind arcagent's Sign-pillar enforcement on agent-authored capabilities.

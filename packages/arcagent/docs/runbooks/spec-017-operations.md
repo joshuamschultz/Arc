@@ -203,7 +203,7 @@ engine = ProactiveEngine(
 1. Check `arc_policy_decisions_total{outcome="deny"}` by layer —
    narrow down which layer is denying.
 2. Inspect the associated audit events (`policy.evaluate` with
-   `decision="deny"`). Each carries `layer`, `matched_rule`, and
+   `decision="deny"`). Each carries `layer`, `rule_id`, and
    `reason`.
 3. If a new bundle was just promoted, consider re-running it under
    `shadow=True` to verify the deny count matches expectation.
