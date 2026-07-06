@@ -14,10 +14,18 @@ The live boot/exec test lives in tests/integration and is skip-guarded on /dev/k
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from arcrun.backends import ExecutorBackend
-from arcrun.backends.vm import FirecrackerEngine, VmBackend, VmUnavailableError
+from arcrun.backends.vm import (
+    FirecrackerEngine,
+    VmBackend,
+    VmGuestPolicy,
+    VmUnavailableError,
+)
 
 
 class TestVmBackendProtocol:
@@ -117,6 +125,90 @@ class TestFirecrackerJailerArgv:
 
     def test_engine_name_is_firecracker(self) -> None:
         assert FirecrackerEngine().name == "firecracker"
+
+
+class TestVmGuestPostureConfig:
+    """#4: vmconfig.json is rendered from self._policy and written to the chroot."""
+
+    def test_vmconfig_rendered_from_policy(self, tmp_path: Path) -> None:
+        policy = VmGuestPolicy(
+            network=False,
+            read_only_rootfs=True,
+            vcpu_count=2,
+            mem_limit_mib=128,
+            pids_limit=32,
+        )
+        backend = VmBackend(chroot_base=str(tmp_path), policy=policy)
+        config_path = backend._write_vmconfig(
+            "arc-vm-abc123", "python3 -", cwd="/tmp", env={"A": "b"}
+        )
+        data = json.loads(Path(config_path).read_text())
+
+        # Machine caps come straight from the policy.
+        assert data["machine-config"]["vcpu_count"] == 2
+        assert data["machine-config"]["mem_size_mib"] == 128
+        # Deny-by-default egress → no NICs; rootfs is read-only.
+        assert data["network-interfaces"] == []
+        assert data["drives"][0]["is_read_only"] is True
+        # Config lives under the SAME jailer id it was rendered for.
+        assert "arc-vm-abc123" in config_path
+
+    def test_network_enabled_policy_adds_nic(self, tmp_path: Path) -> None:
+        backend = VmBackend(
+            chroot_base=str(tmp_path), policy=VmGuestPolicy(network=True)
+        )
+        config_path = backend._write_vmconfig("arc-vm-net", "python3 -", cwd=None, env=None)
+        data = json.loads(Path(config_path).read_text())
+        assert data["network-interfaces"] != []
+
+
+class TestVmSingleJailerId:
+    """#4: the jailer --id and the rendered config path MUST reference one id."""
+
+    @pytest.mark.asyncio
+    async def test_run_separated_uses_single_jailer_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        backend = VmBackend(chroot_base=str(tmp_path))
+        # Bypass the KVM gate so the launch path executes on this non-KVM host.
+        monkeypatch.setattr(backend, "_ensure_available", lambda: None)
+
+        captured: dict[str, str] = {}
+
+        class _RecordingEngine:
+            name = "recording"
+
+            def build_launch_argv(
+                self,
+                *,
+                jailer_id: str,
+                chroot_base: str,
+                uid: int,
+                gid: int,
+                config_file: str,
+            ) -> list[str]:
+                captured["jailer_id"] = jailer_id
+                captured["config_file"] = config_file
+                return ["true"]
+
+        backend._engine = _RecordingEngine()
+
+        class _FakeProc:
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", b""
+
+        async def fake_exec(*argv: str, **kwargs: object) -> _FakeProc:
+            return _FakeProc()
+
+        monkeypatch.setattr("arcrun.backends.vm.asyncio.create_subprocess_exec", fake_exec)
+
+        await backend.run_separated("python3 -", stdin="print(1)")
+
+        # The id passed to the jailer --id and the id in the config path agree.
+        assert captured["jailer_id"] in captured["config_file"]
+        assert Path(captured["config_file"]).exists()
 
 
 class TestVmBuiltinResolution:

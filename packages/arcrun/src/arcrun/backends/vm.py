@@ -36,6 +36,8 @@ rootfs, non-root, pid/mem/cpu bounds, hard wall-clock timeout.
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import sys
 import uuid
 from collections.abc import AsyncIterator
@@ -244,12 +246,15 @@ class VmBackend:
         federal-deployment prerequisite (documented in the SDD).
         """
         self._ensure_available()
+        # One id per run: the jailer ``--id`` and the config path MUST agree, or
+        # the jailer chroots to a directory that has no vmconfig.json.
+        jailer_id = self._jailer_id()
         argv = self._engine.build_launch_argv(
-            jailer_id=self._jailer_id(),
+            jailer_id=jailer_id,
             chroot_base=self._chroot_base,
             uid=_JAILER_UID,
             gid=_JAILER_GID,
-            config_file=self._config_file(command, cwd=cwd, env=env),
+            config_file=self._write_vmconfig(jailer_id, command, cwd=cwd, env=env),
         )
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -291,19 +296,78 @@ class VmBackend:
     def _jailer_id(self) -> str:
         return f"arc-vm-{uuid.uuid4().hex[:12]}"
 
-    def _config_file(
+    def _write_vmconfig(
         self,
+        jailer_id: str,
         command: str,
         *,
         cwd: str | None,
         env: dict[str, str] | None,
     ) -> str:
-        """Path to the Firecracker machine-config the jailer will read.
+        """Render the deny-by-default Firecracker machine-config into the chroot.
 
-        On a provisioned host this renders the deny-by-default guest config
-        (read-only rootfs, no network, mem/vcpu bounds) that runs ``command``.
+        The config encodes ``self._policy`` as the machine spec — mem/vcpu caps,
+        read-only rootfs, and no network interfaces (egress denied). The guest
+        payload (``command``, working dir, env, pids cap) rides the kernel cmdline
+        via ``boot_args``; the guest init reads /proc/cmdline to launch it. Written
+        under ``<chroot_base>/<jailer_id>/root/`` so the path matches the jailer
+        ``--id``. Reached only after the KVM gate passes, so the chroot write
+        happens solely on a provisioned host.
         """
-        return str(Path(self._chroot_base) / self._jailer_id() / "root" / "vmconfig.json")
+        policy = self._policy
+        root = Path(self._chroot_base) / jailer_id / "root"
+        root.mkdir(parents=True, exist_ok=True)
+        config = {
+            "boot-source": {
+                "kernel_image_path": "vmlinux",
+                "boot_args": _guest_boot_args(
+                    command, cwd=cwd, env=env, pids_limit=policy.pids_limit
+                ),
+            },
+            "drives": [
+                {
+                    "drive_id": "rootfs",
+                    "path_on_host": "rootfs.ext4",
+                    "is_root_device": True,
+                    "is_read_only": policy.read_only_rootfs,
+                }
+            ],
+            "machine-config": {
+                "vcpu_count": policy.vcpu_count,
+                "mem_size_mib": policy.mem_limit_mib,
+                "smt": False,
+            },
+            # Deny-by-default egress: no NICs unless the policy explicitly enables
+            # the guest network (it never does at any Arc tier).
+            "network-interfaces": (
+                [] if not policy.network else [{"iface_id": "eth0", "host_dev_name": "arc-tap0"}]
+            ),
+        }
+        config_path = root / "vmconfig.json"
+        config_path.write_text(json.dumps(config, indent=2, sort_keys=True))
+        return str(config_path)
+
+
+def _guest_boot_args(
+    command: str,
+    *,
+    cwd: str | None,
+    env: dict[str, str] | None,
+    pids_limit: int,
+) -> str:
+    """Kernel cmdline carrying the guest payload the init reads from /proc/cmdline.
+
+    The command, working dir, env, and pids cap are base64-JSON-encoded into a
+    single ``arc_payload`` token so arbitrary code/values never split the cmdline.
+    """
+    payload = {
+        "cmd": command,
+        "cwd": cwd or "/tmp",
+        "env": env or {},
+        "pids_limit": pids_limit,
+    }
+    encoded = base64.b64encode(json.dumps(payload, sort_keys=True).encode()).decode()
+    return f"console=ttyS0 reboot=k panic=1 pci=off arc_payload={encoded}"
 
 
 __all__ = [

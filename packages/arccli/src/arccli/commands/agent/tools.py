@@ -35,10 +35,17 @@ def _tools(args: argparse.Namespace) -> None:
     tools = _discover_tools(agent_dir)
 
     if getattr(args, "with_code_exec", False):
+        from pathlib import Path
+
         from arcrun import make_execute_tool
 
         tier, relax = _agent_isolation(agent_dir)
-        tools.append(make_execute_tool(tier=tier, relax=relax))
+        # Attribute the backend-selection event to the agent's DID. This is a
+        # read-only listing, so no live audit sink is wired (logger-only); a
+        # persisted audit record belongs to an execution, not a `tools` listing.
+        cfg = _load_agent_config(Path(str(agent_dir)))
+        caller_did = cfg.get("identity", {}).get("did") or None
+        tools.append(make_execute_tool(tier=tier, relax=relax, caller_did=caller_did))
 
     if getattr(args, "json", False):
         data = [

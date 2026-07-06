@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-05
+
+### Added
+
+- **`[execution] relax_isolation` agent config** — Agent `config.toml` now supports a `personal`-tier-only `[execution]` block to relax the `execute_python` isolation floor down to a bare host subprocess (`"off"`/`"none"`/`"local"`) or leave it at the container default. Rejected at `enterprise`/`federal`. `arc` reads the agent's `[security] tier` and this config and forwards both to arcrun on every `execute_python` call (SPEC-036).
+
 ## [0.4.0] - 2026-04-26
 
 Major refactor: legacy Click groups removed, command tree reorganized into a single `commands/` package, and full smoke-test coverage of every subcommand.

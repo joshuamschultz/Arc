@@ -15,10 +15,8 @@ or contains agent logic.
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -29,7 +27,9 @@ from arcrun.backends.vm import VmUnavailableError
 from arcrun.types import Tool, ToolContext
 
 _DEFAULT_ENV = {
-    "PATH": "/usr/bin:/bin",
+    # /usr/local/bin FIRST: the official python container image installs
+    # python3 there, and omitting it hid the interpreter from `docker exec`.
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
     "HOME": "/tmp",
     "LANG": "en_US.UTF-8",
 }
@@ -116,15 +116,16 @@ def platform_supports_vm(kvm_path: str = "/dev/kvm") -> bool:
     return sys.platform.startswith("linux") and Path(kvm_path).exists()
 
 
-def _downgrade_reason(tier: str, relax: str | None, supports_vm: bool) -> str | None:
+def _downgrade_reason(relax: str | None) -> str | None:
     """Reason string when a tier-permitted downgrade happened, else None.
 
-    Federal never downgrades (it refuses), so this only fires for non-federal.
+    The only tier-permitted downgrade is a personal operator explicitly relaxing
+    isolation OFF (sandbox off). A no-KVM host is NOT a downgrade for personal or
+    enterprise — their floor is the container, which they still get; federal
+    refuses rather than downgrades, so it never reaches here.
     """
     if relax is not None and relax.lower() in _OFF_VALUES:
         return f"personal operator relaxed isolation to {relax!r} (sandbox off)"
-    if not supports_vm:
-        return "no /dev/kvm (or non-Linux): VM isolation unavailable, using container floor"
     return None
 
 
@@ -191,7 +192,7 @@ def make_execute_tool(
         outcome="allow",
         sink=audit_sink,
     )
-    reason = _downgrade_reason(tier, relax, supports_vm)
+    reason = _downgrade_reason(relax)
     if reason is not None:
         emit_isolation_downgraded(
             tier=tier,
@@ -217,14 +218,18 @@ def make_execute_tool(
             )
 
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                script = os.path.join(tmpdir, "script.py")
-                with open(script, "w") as f:
-                    f.write(code)
-                command = f"{shlex.quote(interpreter)} {shlex.quote('script.py')}"
-                result = await backend.run_separated(
-                    command, cwd=tmpdir, env=env, timeout=timeout_seconds
-                )
+            # Feed the source over stdin to ``python3 -`` so it is staged INSIDE
+            # the isolation boundary (container/VM guest), never referenced by a
+            # host path the guest cannot see. ``/tmp`` is the writable scratch dir
+            # in every backend (container tmpfs, host, VM guest). The personal-off
+            # path pipes to the same reader on the host.
+            result = await backend.run_separated(
+                f"{shlex.quote(interpreter)} -",
+                cwd="/tmp",
+                env=env,
+                timeout=timeout_seconds,
+                stdin=code,
+            )
         finally:
             await backend.close()
 

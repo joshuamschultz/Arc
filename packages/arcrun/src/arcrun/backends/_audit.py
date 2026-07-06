@@ -103,9 +103,10 @@ def emit_isolation_downgraded(
 ) -> None:
     """Emit code_exec.isolation.downgraded when a tier-permitted downgrade occurs.
 
-    Fires for a personal explicit relax below the default and for the non-Linux/
-    no-KVM container fallback. Federal never downgrades (it refuses instead), so
-    this event never carries tier=federal.
+    Fires only for a personal operator's explicit relax OFF (sandbox off). A
+    no-KVM host is not a downgrade for personal/enterprise (they keep their
+    container floor); federal never downgrades (it refuses instead), so this
+    event never carries tier=federal.
     """
     logger.warning(
         "code_exec.isolation.downgraded tier=%s resolved=%s reason=%s",

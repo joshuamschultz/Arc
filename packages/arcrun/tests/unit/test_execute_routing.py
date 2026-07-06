@@ -4,7 +4,8 @@ These exercise the wired path (make_execute_tool → router → backend) without
 container/VM runtime:
 - Backend selection is audited on every build (AU-2/AU-3).
 - Personal sandbox-OFF genuinely reaches the host filesystem OUTSIDE any container.
-- The non-Linux/no-KVM dev fallback is audited as a downgrade.
+- A no-KVM host is NOT a downgrade for personal/enterprise (their floor is the
+  container, which they still get) — no spurious downgrade event is emitted.
 - Federal on a host with no VM support refuses (fail closed) and audits the refusal.
 """
 
@@ -110,9 +111,9 @@ class TestPersonalSandboxOff:
 
 
 class TestDevFallback:
-    """REQ-030: non-federal on no-KVM degrades to container with an audited notice."""
+    """#5: non-federal on no-KVM selects the container floor — NOT a downgrade."""
 
-    def test_non_federal_no_kvm_audits_downgrade(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_non_federal_no_kvm_emits_no_downgrade(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Force platform_supports_vm False regardless of host.
         monkeypatch.setattr(
             "arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False
@@ -121,9 +122,10 @@ class TestDevFallback:
         make_execute_tool(tier="enterprise", audit_sink=sink)
         selected = next(e for e in sink.events if e.action == "code_exec.backend.selected")
         assert selected.extra["isolation"] == "container"
+        # The container IS the enterprise floor — no-KVM is not a downgrade, so the
+        # audit trail must not be polluted with a spurious downgrade event.
         downgrades = [e for e in sink.events if e.action == "code_exec.isolation.downgraded"]
-        assert len(downgrades) == 1
-        assert "kvm" in downgrades[0].extra["reason"].lower()
+        assert downgrades == []
 
 
 class TestFederalFailClosed:
