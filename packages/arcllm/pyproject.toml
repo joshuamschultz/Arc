@@ -39,14 +39,14 @@ otel = [
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
 signing = [
-    "cryptography>=42.0",
+    "cryptography>=46.0.7",
 ]
 trace-encryption = [
     # _trace_crypto.fips_provider_active() reads the private
     # cryptography.hazmat.backends.openssl.backend._fips_enabled attribute
     # (no public API exists — pyca/cryptography#7722). Pinned to a range
     # verified to still expose that attribute; widen only after re-verifying.
-    "cryptography>=42.0,<47.0",
+    "cryptography>=46.0.7,<47.0",
 ]
 injection-semantic = [
     "numpy>=1.26",

@@ -226,23 +226,24 @@ class SlackBot:
         self._app = AsyncApp(token=bot_token)
 
         # Register message event handler (catches all DM subtypes)
-        @self._app.event("message")  # type: ignore[untyped-decorator]  # reason: slack_bolt has no type stubs
+        @self._app.event("message")
         async def handle_message_event(event: dict[str, Any], say: Any) -> None:
             await self._handle_message(event)
 
         # Register no-op handlers to suppress WARNING logs
-        @self._app.event("message_changed")  # type: ignore[untyped-decorator]  # reason: slack_bolt has no type stubs
+        @self._app.event("message_changed")
         async def handle_message_changed(event: dict[str, Any]) -> None:
             pass  # Suppress warning logs for message edits
 
-        @self._app.event("message_deleted")  # type: ignore[untyped-decorator]  # reason: slack_bolt has no type stubs
+        @self._app.event("message_deleted")
         async def handle_message_deleted(event: dict[str, Any]) -> None:
             pass  # Suppress warning logs for message deletions
 
         # Create Socket Mode handler and connect
         self._handler = AsyncSocketModeHandler(self._app, app_token)
         try:
-            await self._handler.connect_async()  # Non-blocking — NOT start_async()
+            # reason: slack_sdk's AsyncSocketModeHandler ships no type stubs
+            await self._handler.connect_async()  # type: ignore[no-untyped-call]  # Non-blocking — NOT start_async()
         except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to establish Socket Mode connection")
             self._emit_event("slack:error", {"error": "connection_failed"})

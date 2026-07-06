@@ -51,9 +51,7 @@ class TestRecords:
         await backend.write("reg", "k1", {"v": 1})
         assert await backend.exists("reg", "k1") is True
 
-    async def test_query_and_list_keys_roundtrip_original_keys(
-        self, backend: NatsBackend
-    ) -> None:
+    async def test_query_and_list_keys_roundtrip_original_keys(self, backend: NatsBackend) -> None:
         await backend.write("reg", "did:arc:local:agent/a1", {"role": "ops"})
         await backend.write("reg", "did:arc:local:agent/a2", {"role": "dev"})
         keys = await backend.list_keys("reg")

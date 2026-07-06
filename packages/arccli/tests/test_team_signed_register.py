@@ -122,9 +122,7 @@ class TestSignerForErrorBranches:
         _, registry, _, _ = asyncio.run(_build_service(root))
         return registry
 
-    def test_unknown_sender_raises_unknown_handle(
-        self, tmp_path: Path, team_backend: Any
-    ) -> None:
+    def test_unknown_sender_raises_unknown_handle(self, tmp_path: Path, team_backend: Any) -> None:
         from arcteam.registry import UnknownHandle
 
         registry = self._registry(_init_root(tmp_path))

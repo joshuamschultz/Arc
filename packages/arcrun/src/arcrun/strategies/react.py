@@ -37,6 +37,7 @@ def _inject(state: RunState, injection: Injection, event_type: str) -> None:
         },
     )
 
+
 # Debug-only guard for the transform_context append-only contract. Off by
 # default so the hot path pays nothing (cold start < 500ms, fleet scale).
 _ASSERT_APPEND_ONLY = os.environ.get("ARCRUN_ASSERT_APPEND_ONLY") == "1"

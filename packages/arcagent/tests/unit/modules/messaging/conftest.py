@@ -10,7 +10,9 @@ if TYPE_CHECKING:
     from arcteam.types import Entity
 
 
-def make_peer_entity(handle: str, name: str | None = None, roles: list[str] | None = None) -> Entity:
+def make_peer_entity(
+    handle: str, name: str | None = None, roles: list[str] | None = None
+) -> Entity:
     """Build a DID-keyed peer Entity for messaging tests.
 
     Every entity now requires a real DID + unique handle (REQ-001), so tests

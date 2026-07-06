@@ -113,16 +113,12 @@ class TestTeamLifecycle:
             )
         )
 
-        _add_member(
-            argparse.Namespace(root=str(root), team_id="alpha", member="user://bob")
-        )
+        _add_member(argparse.Namespace(root=str(root), team_id="alpha", member="user://bob"))
         members = _query(team_backend, "teams")[0]["members"]
         assert len(members) == 1
         assert members[0].startswith("did:")
 
-        _remove_member(
-            argparse.Namespace(root=str(root), team_id="alpha", member="user://bob")
-        )
+        _remove_member(argparse.Namespace(root=str(root), team_id="alpha", member="user://bob"))
         assert _query(team_backend, "teams")[0]["members"] == []
 
 

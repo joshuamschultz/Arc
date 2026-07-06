@@ -1,0 +1,14 @@
+# Arc security suppressions — POA&M seed (Plan of Action & Milestones)
+#
+# This file is the single source of truth for vulnerabilities the CI security
+# gate (`pip-audit` over the harness runtime closure) is permitted to accept.
+# The gate reads the first whitespace-delimited token of every non-comment,
+# non-blank line and passes it to `pip-audit --ignore-vuln`.
+#
+# Every entry MUST be annotated: vuln id · package · why deferred · compensating
+# control · intended fix. Nothing lands here that can be safely bumped. Keep it
+# truthful — auditors read this file as the POA&M of record (NIST 800-53 CA-5).
+#
+# Format:  <VULN_ID>   # <package version> · <why deferred> · <control> · <fix>
+
+GHSA-537c-gmf6-5ccf   # cryptography 46.0.7 · fix is 48.0.1 but Arc deliberately caps cryptography <47.0 for FIPS 140-3 validated OpenSSL provider compatibility (federal mode) · compensating control: the affected code path (PKCS7/SMIME decryption with untrusted attacker-controlled data) is not reachable in Arc — Arc uses cryptography only for Ed25519 signing/verification and X.509 identity, never PKCS7 decryption · intended fix: lift the <47.0 cap once a FIPS-validated build of cryptography >=48.0.1 is available, then remove this suppression.

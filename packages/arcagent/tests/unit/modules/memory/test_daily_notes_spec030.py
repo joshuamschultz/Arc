@@ -71,7 +71,9 @@ class TestRawCapture:
         st = _runtime.state()
         st.eval_model = _mock_model()
 
-        await caps.memory_post_respond(SimpleNamespace(data={"messages": _turn("hi there", "hello back")}))
+        await caps.memory_post_respond(
+            SimpleNamespace(data={"messages": _turn("hi there", "hello back")})
+        )
 
         note = (ws / "notes" / "2026-07-02.md").read_text(encoding="utf-8")
         assert "user: hi there → assistant: hello back" in note

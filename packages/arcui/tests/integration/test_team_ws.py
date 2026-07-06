@@ -53,7 +53,9 @@ class _FakeMessage:
         return dict(self._data)
 
 
-def _msg(*, sender: str, channel: str, body: str, seq: int, mentions: list[str] | None = None) -> dict[str, Any]:
+def _msg(
+    *, sender: str, channel: str, body: str, seq: int, mentions: list[str] | None = None
+) -> dict[str, Any]:
     return {
         "seq": seq,
         "id": f"m{seq}",

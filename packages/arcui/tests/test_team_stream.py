@@ -197,9 +197,7 @@ class _FakeService:
     async def list_channel_messages(
         self, channel_name: str, after_seq: int = 0, limit: int = 100
     ) -> list[_FakeMessage]:
-        return [
-            _FakeMessage(m) for m in self._channels[channel_name] if m["seq"] > after_seq
-        ]
+        return [_FakeMessage(m) for m in self._channels[channel_name] if m["seq"] > after_seq]
 
 
 class TestTeamBusObserver:
@@ -245,9 +243,7 @@ class TestTeamBusObserver:
         assert await observer.poll_once() == 1
         # No new messages ⇒ nothing re-published.
         assert await observer.poll_once() == 0
-        channels["ops"].append(
-            _msg(sender="agent://intake", channel="ops", body="two", seq=2)
-        )
+        channels["ops"].append(_msg(sender="agent://intake", channel="ops", body="two", seq=2))
         assert await observer.poll_once() == 1
 
     async def test_run_survives_a_failing_poll(self) -> None:

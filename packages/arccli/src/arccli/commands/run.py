@@ -215,8 +215,7 @@ async def _execute_task(
     actor_did = authority.did if authority is not None else None
     if actor_did is None and not as_json:
         _write(
-            "Note: no signing authority — run `arc identity init` "
-            "to attribute/audit direct runs."
+            "Note: no signing authority — run `arc identity init` to attribute/audit direct runs."
         )
 
     llm = load_model(
