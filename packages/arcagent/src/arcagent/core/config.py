@@ -323,6 +323,52 @@ class SecurityConfig(BaseModel):
         ),
     )
 
+    # SPEC-053 — operator-key custody. The operator key is the deployment audit
+    # authority that signs every WORM chain; it is distinct from the agent DID
+    # (the audited subject must not be the audit authority) and is loaded
+    # read-only from OUTSIDE the workspace tool-sandbox (AU-9(2)/AU-10).
+    operator_key_dir: str = Field(
+        default="~/.arc/operator",
+        description=(
+            "Directory holding the deployment operator key (audit authority). "
+            "Kept outside the agent workspace; private key is 0600, dir 0700. "
+            "SPEC-053."
+        ),
+    )
+    operator_vault_path: str = Field(
+        default="",
+        description=(
+            "When set (and a vault backend is configured), the operator key is "
+            "resolved via the vault instead of the on-disk file (SPEC-037 seam)."
+        ),
+    )
+
+    # SPEC-053 — federal witness anchor (REQ-009/010). Federal tier submits each
+    # operator-signed checkpoint head to an EXTERNAL append-only witness so a
+    # rollback past the last anchor is detectable even by a holder of the
+    # operator key. Other tiers ignore these.
+    witness_medium_path: str = Field(
+        default="~/.arc/witness/anchor.log",
+        description=(
+            "Append-only medium the federal witness writes operator-signed heads "
+            "to. MUST live outside operator_key_dir — the operator-key holder must "
+            "not also own the witness, or the rollback check is illusory. Federal "
+            "deployments SHOULD point this at a separate host or removable WORM "
+            "medium (a deployment concern, like the vault seam). SPEC-053 REQ-009."
+        ),
+    )
+    witness_mode: str = Field(
+        default="offline",
+        description=(
+            "Federal witness backend: 'offline' (air-gapped append-only medium) "
+            "or 'transparency_log' (online Rekor-style). SPEC-053 REQ-010."
+        ),
+    )
+    witness_log_url: str = Field(
+        default="",
+        description="Transparency-log endpoint when witness_mode='transparency_log'.",
+    )
+
 
 class CapabilitiesConfig(BaseModel):
     """``[capabilities]`` block — relaxations for agent-authored (untrusted)

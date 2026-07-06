@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-06
+
+SPEC-053: audit-authority independence. The audited subject can no longer be its own audit authority.
+
+### Added
+- `OperatorKey` (`arctrust.operator`) — the deployment audit-signing seed. Deliberately NOT an `AgentIdentity`: it exposes only `seed` + `public_key`, with no `sign`/`did` surface, so the type system prevents any code from using an agent identity as the audit authority (or vice versa). Generate / load / save (0600 file, 0700 dir) with a `vault_resolver` seam (SPEC-037) for HSM/vault custody.
+- `WitnessAnchor` Protocol + two implementations (`arctrust.witness`): `AppendOnlyMediumWitness` (offline / air-gapped) and `TransparencyLogWitness` (online Rekor-style, over an injected transport). External witnessing of operator-signed checkpoint heads (REQ-009/010) reuses the existing `build_checkpoint` payload — no parallel anchor format.
+
+### Changed
+- `PolicyPipeline.evaluate` now authenticates BEFORE both short-circuits (SPEC-034 review Findings 2 + 6): the `IdentityLayer` runs first — ahead of the restricted-mode safe-set check and the decision-cache lookup — so an unsigned/de-registered call can never be handed a safe-set ALLOW or a cache-hit ALLOW. The decision cache key now incorporates a signature fingerprint, so an unsigned call and a signed call can never collide. First-DENY-wins, fail-closed, shadow, and TTL semantics are unchanged.
+
 ## [0.5.0] - 2026-07-06
 
 SPEC-034: complete the PolicyPipeline — the three stub layers become real policy decisions, the `PolicyContext` grows a typed injected-state contract, and every decision is routed into the durable WORM chain.

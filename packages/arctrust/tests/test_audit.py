@@ -395,3 +395,40 @@ class TestChainAnchor:
 
         assert anchor is not None
         assert anchor["head_hash"] == "c" * 64
+
+
+# ---------------------------------------------------------------------------
+# SPEC-053 T-03 — audit authority is the OPERATOR key, never an agent DID
+# ---------------------------------------------------------------------------
+
+
+class TestAuditAuthorityIndependence:
+    def test_chain_signed_by_operator_not_agent(self, tmp_path: Path) -> None:
+        """A WORM chain signed with the operator seed verifies ONLY under the
+        operator public key; the agent DID key — even a valid one — must fail.
+
+        This is the whole point of SPEC-053: the audited subject (agent) is not
+        the audit authority (operator). If the agent key verified the chain, a
+        compromised agent could re-sign its own tamper-evident history.
+        """
+        from arctrust.operator import OperatorKey
+
+        operator = OperatorKey.generate()
+        agent = generate_keypair()  # a legitimate, distinct agent DID keypair
+
+        chain = tmp_path / "audit" / "policy.worm"
+        sink = WormSink(chain, operator.seed)
+        for i in range(3):
+            sink.write(
+                AuditEvent(
+                    actor_did="did:arc:test:exec/aabbccdd",
+                    action="policy.evaluate",
+                    target=f"tool-{i}",
+                    outcome="allow",
+                )
+            )
+        sink.close()
+
+        assert verify_chain(chain, operator.public_key) is True
+        assert verify_chain(chain, agent.public_key) is False
+        assert operator.public_key != agent.public_key

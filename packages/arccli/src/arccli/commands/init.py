@@ -301,6 +301,17 @@ def _init(args: argparse.Namespace) -> None:
     if not env_path.exists():
         env_path.touch(mode=0o600)
 
+    # SPEC-053 — the deployment operator key (audit authority for every WORM
+    # chain), distinct from any agent DID. Generated once, idempotent. All
+    # crypto is delegated to arctrust. Enterprise/federal print the pubkey
+    # fingerprint for out-of-band recording (anti-genesis-substitution +
+    # witness bootstrap); personal is silent/zero-config.
+    from arccli.commands.operator import ensure_operator_key
+
+    operator = ensure_operator_key(arc_dir)
+    if tier in ("enterprise", "federal"):
+        _write(f"  Operator key fingerprint: {operator.public_key.hex()[:16]}")
+
     if tier in ("enterprise", "federal"):
         team_dir = arc_dir / "team"
         for sub in ("entities", "channels", "cursors"):

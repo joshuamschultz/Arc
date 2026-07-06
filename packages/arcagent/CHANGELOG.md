@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-06
+
+SPEC-053: wire the operator key (audit authority) into every WORM sink; the agent DID seed no longer signs any audit chain.
+
+### Changed
+- The three WORM audit sinks are rewired to the deployment **operator key**, replacing the agent DID seed outright (no flag, no fallback): the policy-decision chain (`core/agent.py`), the skill-improver audit chain (`modules/skill_improver/_runtime.py`), and the new trace-checkpoint anchor (`core/model_manager.py`). Chains now verify only under the operator public key. **The mutated-skill signature stays on the agent DID** (SPEC-033 D3) — audit authority and artifact provenance are different attestations.
+- `core/agent.py` loads the operator key read-only at startup from outside the workspace tool-sandbox (auto-bootstrapped at personal tier; vault seam for federal), and builds the federal external witness (tier = stringency; federal only *adds* the witness).
+
+### Added
+- `SecurityConfig` fields: `operator_key_dir`, `operator_vault_path`, `witness_mode`, `witness_log_url` (SPEC-053 REQ-004/005/010).
+- `model_manager.build_checkpoint_sink` — operator-signed `trace.checkpoint` WORM anchor; at federal tier the head is also submitted to an external witness so a rollback past the last anchor is detectable even by a holder of the operator key.
+
 ## [0.5.0] - 2026-07-06
 
 SPEC-033: enforce the Sign pillar on the workspace/agent-authored root — restricted-builtins load path, re-verify-at-load, TOFU first-load approval, signed self-modification tools, and a WORM-chained skill-improver audit. Scope is the untrusted workspace root only; first-party (builtins/global/per-agent) roots remain release-signed-upstream and out of scope.

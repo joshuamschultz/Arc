@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-06
+
+SPEC-053: `arc init` generates the deployment operator key (audit authority).
+
+### Added
+- **`arc init` operator key** — generates a fresh Ed25519 operator keypair (if none exists) at `<config-dir>/operator/operator.key` (private key `0600`, dir `0700`), idempotent on re-run. Personal tier is silent/zero-config; enterprise/federal print the operator public-key fingerprint for out-of-band recording. All crypto is delegated to `arctrust.OperatorKey` (`arccli.commands.operator`).
+
+### Changed
+- The `arc run` direct-run WORM audit sink is now signed by the operator key, not the caller's DID seed (audited subject ≠ audit authority).
+- Version synced across `pyproject.toml` and `arccli.__init__` (was drifted at 0.4.1 / 0.4.0).
+
 ## [0.4.1] - 2026-07-05
 
 ### Added

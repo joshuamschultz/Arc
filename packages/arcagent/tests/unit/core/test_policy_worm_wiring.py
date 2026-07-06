@@ -24,11 +24,14 @@ from arcagent.core.tool_policy import PolicyContext, ToolCall, sign_call
 
 
 def _config(tmp_path: Path) -> ArcAgentConfig:
-    return ArcAgentConfig(
+    cfg = ArcAgentConfig(
         agent=AgentConfig(name="worm-agent", workspace=str(tmp_path / "ws")),
         llm=LLMConfig(model="test/model"),
         telemetry=TelemetryConfig(enabled=False),
     )
+    # SPEC-053 — operator key (audit authority) lives outside the workspace.
+    cfg.security.operator_key_dir = str(tmp_path / "operator")
+    return cfg
 
 
 def _unsigned_call(agent_did: str) -> ToolCall:
@@ -59,11 +62,16 @@ class TestPolicyWormWiring:
         assert decision.is_deny()
 
         path = agent._policy_audit_log_path()
-        pub = identity.public_key
+        operator = agent._operator_key
+        assert operator is not None
+        # SPEC-053 — chain is signed by the OPERATOR key, not the agent DID.
+        pub = operator.public_key
+        agent_pub = identity.public_key
         await agent.shutdown()  # release the exclusive chain lock
 
         assert path.exists()
         assert verify_chain(path, pub) is True
+        assert verify_chain(path, agent_pub) is False
         records = [json.loads(line) for line in path.read_text().splitlines() if line]
         policy_records = [r for r in records if r["event"]["action"] == "policy.evaluate"]
         assert policy_records, "expected at least one policy.evaluate record"

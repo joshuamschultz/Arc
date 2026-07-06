@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
 
+# SPEC-053 #1 — modules that construct an operator-signed WORM audit sink and so
+# legitimately need the operator seed. No other module is handed it.
+_WORM_SINK_MODULE_NAMES = frozenset({"skill_improver"})
+
 # Per D-346/D-347 — short skill-usage instruction injected at priority 91.
 _SKILL_USAGE_INSTRUCTION = (
     "## Skills\n"
@@ -205,6 +209,16 @@ def configure_module_runtimes(agent: ArcAgent, workspace: Path) -> None:
             "agent_did": identity.did if identity else "",
             "identity": identity,
         }
+        # SPEC-053 #1 — the operator seed (audit authority) is NOT broadcast to
+        # every module. Only modules that actually build a WORM audit sink are
+        # handed it, shrinking the in-process attack surface: a compromised
+        # generic module can no longer harvest the seed even by declaring an
+        # ``operator_key`` parameter. Full closure (confining bash + all
+        # file/subprocess transports away from ``~/.arc/operator/**`` and
+        # ``.audit/**``, plus out-of-process/vault signing so no in-process path
+        # dereferences the seed) is SPEC-035 + SPEC-037 — out of scope here.
+        if mod_name in _WORM_SINK_MODULE_NAMES:
+            available["operator_key"] = agent._operator_key
         sig = inspect.signature(configure_fn)
         kwargs = {name: value for name, value in available.items() if name in sig.parameters}
         try:

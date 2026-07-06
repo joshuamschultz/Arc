@@ -20,6 +20,10 @@ Keypair:
     sign                — Ed25519 sign → 64-byte signature
     verify              — Ed25519 verify → bool (never raises)
 
+Operator (audit authority):
+    OperatorKey         — deployment audit-signing seed, deliberately NOT an
+                          AgentIdentity (no sign/did); signs every WORM chain
+
 Audit:
     AuditEvent          — Pydantic schema for structured audit events
     AuditSink           — Protocol for sink implementations
@@ -47,7 +51,7 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 from arctrust.artifact import (
     ArtifactSignature,
@@ -74,6 +78,7 @@ from arctrust.identity import (
     validate_did,
 )
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
+from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
 from arctrust.policy import (
     Decision,
     PolicyContext,
@@ -89,9 +94,17 @@ from arctrust.trust_store import (
     load_issuer_pubkey,
     load_operator_pubkey,
 )
+from arctrust.witness import (
+    AppendOnlyMediumWitness,
+    TransparencyLogWitness,
+    WitnessAnchor,
+    WitnessDivergenceError,
+    verify_local_head_witnessed,
+)
 
 __all__ = [
     "AgentIdentity",
+    "AppendOnlyMediumWitness",
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
@@ -99,12 +112,17 @@ __all__ = [
     "Decision",
     "KeyPair",
     "NullSink",
+    "OperatorKey",
+    "OperatorKeyIntegrityError",
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
     "TierConfig",
     "ToolCall",
+    "TransparencyLogWitness",
     "TrustStoreError",
+    "WitnessAnchor",
+    "WitnessDivergenceError",
     "WormSink",
     "__version__",
     "build_pipeline",
@@ -124,5 +142,6 @@ __all__ = [
     "verify",
     "verify_artifact",
     "verify_chain",
+    "verify_local_head_witnessed",
     "worm_policy_sink",
 ]

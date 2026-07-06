@@ -29,7 +29,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcrun import collect
-from arctrust import AgentIdentity, WormSink, worm_policy_sink
+from arctrust import (
+    AgentIdentity,
+    AppendOnlyMediumWitness,
+    OperatorKey,
+    WitnessAnchor,
+    WormSink,
+    read_verified_anchor,
+    verify_local_head_witnessed,
+    worm_policy_sink,
+)
 
 from arcagent.capabilities.capability_registry import SkillEntry
 from arcagent.core.agent_dispatch import dispatch_stream
@@ -88,6 +97,14 @@ class ArcAgent:
         # Components initialized during startup()
         self._telemetry: AgentTelemetry | None = None
         self._identity: AgentIdentity | None = None
+        # SPEC-053 — the deployment operator key (audit authority). Loaded
+        # read-only at startup from OUTSIDE the workspace tool-sandbox; signs
+        # every WORM chain so the audited agent is never its own audit
+        # authority. Distinct from _identity (which attests ToolCalls only).
+        self._operator_key: OperatorKey | None = None
+        # SPEC-053 — federal external witness for trace-checkpoint anchors. None
+        # at personal/enterprise (tier = stringency: federal only ADDS this).
+        self._witness: WitnessAnchor | None = None
         self._bus: ModuleBus | None = None
         self._tool_registry: ToolRegistry | None = None
         self._context: ContextManager | None = None
@@ -133,6 +150,69 @@ class ArcAgent:
             return path if path.is_absolute() else (self._workspace / path)
         return self._workspace / "audit" / "policy-chain.jsonl"
 
+    def _operator_key_path(self) -> Path:
+        """Resolve the operator-key file (SPEC-053 REQ-004).
+
+        Lives under ``security.operator_key_dir`` (default ``~/.arc/operator``),
+        outside the workspace tool-sandbox so agent-invoked file tools cannot
+        write or replace it.
+        """
+        return Path(self._config.security.operator_key_dir).expanduser() / "operator.key"
+
+    def _build_witness(self) -> WitnessAnchor | None:
+        """Build the external witness for trace-checkpoint anchors (federal only).
+
+        Tier is stringency, not a gate (ADR-019): operator-key separation holds
+        at every tier; federal ADDS the witness. The medium lives at
+        ``security.witness_medium_path`` — OUTSIDE ``operator_key_dir`` so the
+        operator-key holder does not also own the witness (that would make the
+        rollback check illusory). The air-gapped append-only medium is the
+        Must-have path; the online transparency-log submitter
+        (``arctrust.TransparencyLogWitness``) needs a network transport supplied
+        by the deployment (SPEC-037) and is not wired here.
+        """
+        if self._config.security.tier != "federal":
+            return None
+        medium = Path(self._config.security.witness_medium_path).expanduser()
+        return AppendOnlyMediumWitness(medium)
+
+    def _trace_checkpoint_chain_path(self) -> Path:
+        """Resolve the operator-signed trace-checkpoint WORM chain (SPEC-053)."""
+        return self._workspace.parent / ".audit" / "trace-checkpoint.worm"
+
+    def _prior_audit_chains_exist(self) -> bool:
+        """True if any WORM audit chain already exists for this deployment.
+
+        A chain proves an operator key was previously present and signed it, so
+        a now-missing key file is covert erasure, not a first-ever bootstrap —
+        the operator-key load must fail closed rather than regenerate (SPEC-053).
+        """
+        audit_dir = self._workspace.parent / ".audit"
+        candidates = (
+            self._policy_audit_log_path(),
+            self._trace_checkpoint_chain_path(),
+            audit_dir / "skill_improver.worm",
+        )
+        return any(p.exists() for p in candidates)
+
+    def _verify_witness_consistency(self) -> None:
+        """Fail closed at federal if the local head is not externally witnessed.
+
+        Wires ``verify_inclusion`` into startup (SPEC-053 REQ-009): the newest
+        verified local operator-signed anchor must appear in the separately
+        custodied witness. If it does not — a rollback + re-anchor by a holder of
+        the operator key, or a missing/unavailable witness — federal fails
+        closed; other tiers warn. A deployment with nothing anchored yet passes.
+        """
+        if self._witness is None or self._operator_key is None:
+            return
+        local = read_verified_anchor(
+            self._trace_checkpoint_chain_path(), self._operator_key.public_key
+        )
+        verify_local_head_witnessed(
+            local, self._witness, federal=self._config.security.tier == "federal"
+        )
+
     async def startup(self) -> None:
         """Initialize all components in dependency order.
 
@@ -166,6 +246,22 @@ class ArcAgent:
         # Update telemetry with real DID (avoids full reconstruction)
         self._telemetry.set_agent_did(self._identity.did)
 
+        # 3.5 Operator key (audit authority) — loaded read-only, from outside
+        # the workspace. Auto-bootstrapped ONLY on a genuine first-ever start
+        # (REQ-006); a missing key with a prior chain/record fails closed rather
+        # than regenerate (covert-erasure defense, SPEC-053 #3). Resolved via the
+        # vault seam when configured (REQ-005).
+        self._operator_key = OperatorKey.load(
+            self._operator_key_path(),
+            vault_resolver=self._vault_resolver,
+            vault_path=self._config.security.operator_vault_path,
+            generate_if_absent=True,
+            prior_chain_exists=self._prior_audit_chains_exist(),
+        )
+        self._witness = self._build_witness()
+        # Fail closed at federal if the local head diverged from the witness.
+        self._verify_witness_consistency()
+
         # 4. Module Bus
         self._bus = ModuleBus()
 
@@ -176,10 +272,10 @@ class ArcAgent:
         # agent joins a team.
         tier = self._config.security.tier
         # Route every policy decision into a durable, Ed25519-signed WORM chain
-        # (SPEC-034). arcagent owns the file path + operator key; arctrust owns
-        # the adapter and the chain. The agent signs records with its own DID
-        # seed — the same key that authenticates its dispatches.
-        worm = WormSink(self._policy_audit_log_path(), self._identity.signing_seed)
+        # (SPEC-034). arcagent owns the file path; arctrust owns the adapter and
+        # the chain. Signed with the OPERATOR key (SPEC-053), never the agent
+        # DID — the audited subject must not be its own audit authority.
+        worm = WormSink(self._policy_audit_log_path(), self._operator_key.seed)
         self._policy_worm = worm
         pipeline = build_pipeline(
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
@@ -271,6 +367,9 @@ class ArcAgent:
                 config=self._config,
                 workspace=self._workspace,
                 bus=self._bus,
+                operator_key=self._operator_key,
+                actor_did=self._identity.did if self._identity is not None else "",
+                witness=self._witness,
             )
             self._model = model
             self._trace_store = trace_store

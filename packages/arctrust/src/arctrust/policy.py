@@ -710,37 +710,43 @@ class PolicyPipeline:
         return list(self._layers)
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        """Run layered evaluation. First DENY wins. Exceptions are DENY."""
+        """Run layered evaluation. First DENY wins. Exceptions are DENY.
+
+        Authentication runs FIRST — before the restricted-mode short-circuit
+        and before the decision-cache lookup (SPEC-053 Findings 2 + 6). An
+        unsigned, invalidly-signed, or de-registered call is denied by the
+        IdentityLayer immediately, so it can never be handed a safe-set ALLOW in
+        restricted mode nor a cache-hit ALLOW minted for a validly-signed call.
+        """
         started_at = self._monotonic()
 
-        # Restricted mode pre-check (stale bundle + offline)
+        # 1. Authenticate before any short-circuit.
+        identity_decision = await self._run_identity(call, ctx)
+        if identity_decision is not None and identity_decision.is_deny():
+            self._emit_audit(call, ctx, identity_decision, started_at)
+            return self._shadow_override(identity_decision)
+
+        # 2. Restricted mode (stale bundle + offline) — only for authenticated calls.
         restricted = self._check_restricted(call, ctx)
         if restricted is not None:
             self._emit_audit(call, ctx, restricted, started_at)
             return self._shadow_override(restricted)
 
-        # Cache hit
+        # 3. Cache hit — the key is bound to the call's signature fingerprint, so
+        #    a cached ALLOW is never served across a different (or absent) signer.
         cache_key = self._cache_key(call)
         cached = self._cache_get(cache_key)
         if cached is not None:
             self._emit_audit(call, ctx, cached, started_at, cache_hit=True)
             return self._shadow_override(cached)
 
-        # Layered evaluation — first DENY wins, exception → DENY (R-012)
-        decision: Decision | None = None
+        # 4. Remaining layers — first DENY wins, exception → DENY (R-012).
+        #    Identity already passed above; skip re-running it here.
+        decision: Decision | None = identity_decision
         for layer in self._layers:
-            try:
-                decision = await layer.evaluate(call, ctx)
-            except Exception as exc:  # reason: fail-open — log + continue
-                _logger.exception("Policy layer %r raised — failing closed (R-012)", layer.name)
-                decision = Decision.deny(
-                    layer=layer.name,
-                    rule_id="layer_error",
-                    reason=f"{type(exc).__name__}: {exc}",
-                    input_hash=_hash_call(call),
-                    evaluated_at_us=_now_us(),
-                )
-                break
+            if layer.name == "identity":
+                continue
+            decision = await self._eval_layer(layer, call, ctx)
             if decision.is_deny():
                 break
 
@@ -752,6 +758,29 @@ class PolicyPipeline:
         return self._shadow_override(decision)
 
     # --- Internals ---
+
+    async def _run_identity(self, call: ToolCall, ctx: PolicyContext) -> Decision | None:
+        """Evaluate the IdentityLayer up front, or None when no such layer exists."""
+        identity = next((layer for layer in self._layers if layer.name == "identity"), None)
+        if identity is None:
+            return None
+        return await self._eval_layer(identity, call, ctx)
+
+    async def _eval_layer(
+        self, layer: PolicyLayer, call: ToolCall, ctx: PolicyContext
+    ) -> Decision:
+        """Evaluate one layer, converting any exception to a fail-closed DENY (R-012)."""
+        try:
+            return await layer.evaluate(call, ctx)
+        except Exception as exc:  # reason: fail-closed — a raising layer denies (R-012)
+            _logger.exception("Policy layer %r raised — failing closed (R-012)", layer.name)
+            return Decision.deny(
+                layer=layer.name,
+                rule_id="layer_error",
+                reason=f"{type(exc).__name__}: {exc}",
+                input_hash=_hash_call(call),
+                evaluated_at_us=_now_us(),
+            )
 
     def _check_restricted(self, call: ToolCall, ctx: PolicyContext) -> Decision | None:
         """Return a DENY/ALLOW if restricted mode applies, else None."""
@@ -783,7 +812,14 @@ class PolicyPipeline:
         )
 
     def _cache_key(self, call: ToolCall) -> str:
-        return f"{call.agent_did}|{call.tool_name}|{call.classification}|{_hash_call(call)}"
+        # sig_fingerprint binds the cached decision to the exact signer: an
+        # unsigned call (empty signature) and a signed call can never collide,
+        # so a cache-hit ALLOW is never replayed across identities (Finding 2).
+        sig_fingerprint = hashlib.sha256(call.signature or b"").hexdigest()[:16]
+        return (
+            f"{call.agent_did}|{call.tool_name}|{call.classification}"
+            f"|{sig_fingerprint}|{_hash_call(call)}"
+        )
 
     def _cache_get(self, key: str) -> Decision | None:
         if self._cache_ttl <= 0:
