@@ -46,6 +46,20 @@ class MemoryConfig(BaseModel):
     fan_strength: float = Field(default=1.6, description="S in S_ji = S - ln(fan)")
     max_hops: int = Field(default=3, description="spreading-activation hop cap")
 
+    # Structural / analogical retrieval (the centerpiece)
+    struct_trigger_min: float = Field(
+        default=0.25, description="min trigger-embedding cosine for the (a) channel"
+    )
+    struct_activation_min: float = Field(
+        default=0.0, description="min cue-graph activation (>) for the (b) channel"
+    )
+    rerank_margin: float = Field(
+        default=0.05, description="personal-tier rerank only when top1/top2 margin < this"
+    )
+    enrich_stream_radius: int = Field(
+        default=1, description="raw-stream events kept either side of each instance"
+    )
+
     # Capture
     dedup_window: int = Field(default=128, description="windowed dedup — recent hashes kept")
     max_event_chars: int = Field(default=2000, description="sanitize size cap per event")

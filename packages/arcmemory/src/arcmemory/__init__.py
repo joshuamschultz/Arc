@@ -24,6 +24,12 @@ from arcmemory.distill import (
 )
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
+from arcmemory.index.structural import (
+    InsightBundle,
+    Reranker,
+    StructuralIndex,
+    StructuralResult,
+)
 from arcmemory.index.surface import SurfaceIndex, SurfaceResult
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
@@ -45,7 +51,7 @@ from arcmemory.types import (
     TimeWindow,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Bundle",
@@ -64,6 +70,7 @@ __all__ = [
     "FastCapture",
     "IndexRebuilder",
     "Insight",
+    "InsightBundle",
     "InsightCandidate",
     "InsightMint",
     "InsightStore",
@@ -72,9 +79,12 @@ __all__ = [
     "ProceduralStore",
     "Procedure",
     "Recall",
+    "Reranker",
     "Scope",
     "SemanticStore",
     "Situation",
+    "StructuralIndex",
+    "StructuralResult",
     "SurfaceIndex",
     "SurfaceResult",
     "Tier",

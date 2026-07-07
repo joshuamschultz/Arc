@@ -28,8 +28,10 @@ except ImportError:  # pragma: no cover - exercised only where the extra is abse
 DEFAULT_DIMS = 384
 
 # The derived tables that a rebuild wipes and re-derives. Kept as a constant so
-# rebuild and tests share one source of truth for "what is disposable".
-DERIVED_TABLES = ("fts_chunks", "edges", "vec0")
+# rebuild and tests share one source of truth for "what is disposable". The
+# ``insight_trigger`` abstraction-space vectors are derived from the insight cards
+# (re-embedded by ``index/structural.trigger_index``), hence disposable too.
+DERIVED_TABLES = ("fts_chunks", "edges", "vec0", "insight_trigger")
 
 
 def _load_sqlite_vec(conn: sqlite3.Connection) -> bool:
@@ -141,6 +143,20 @@ class MemoryDB:
                 f"USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[{self._dims}])"
             )
 
+        # Abstraction-space trigger vectors — kept in a SEPARATE table from the
+        # surface ``vec0`` chunks (SDD 7) so surface noise cannot drown a minted
+        # trigger. A plain table (float32 blob) so the structural trigger channel
+        # works even where the sqlite-vec extension is absent (it degrades to the
+        # cue-graph channel only when *no embedder* is injected, not when vec0 is).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS insight_trigger ("
+            "insight_id TEXT PRIMARY KEY, scope TEXT NOT NULL, "
+            "content_hash TEXT NOT NULL, embedding BLOB NOT NULL)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_insight_trigger_scope ON insight_trigger(scope)"
+        )
+
         conn.commit()
 
     def wipe_derived(self) -> None:
@@ -152,6 +168,7 @@ class MemoryDB:
         conn = self.connect()
         conn.execute("DELETE FROM fts_chunks")
         conn.execute("DELETE FROM edges")
+        conn.execute("DELETE FROM insight_trigger")
         if self._vec_available:
             conn.execute("DELETE FROM vec0")
         conn.commit()

@@ -4,6 +4,59 @@ All notable changes to the `arcmemory` package are documented here. Format follo
 [Keep a Changelog](https://keepachangelog.com/); this package adheres to semantic
 versioning.
 
+## [0.3.0] — 2026-07-07
+
+Structural / analogical retrieval — the centerpiece (SPEC-041, Phase 6). This is the
+differentiator: retrieving a recurring pattern/thesis whose match to the present is
+**structural, not lexical** — zero surface overlap with the original episodes.
+
+### Added
+
+- **Trigger index** `index/structural.py::trigger_index` (T-060) — embeds each
+  insight `trigger` into a **separate** `insight_trigger` table, kept apart from the
+  surface `vec0` chunks so surface noise cannot drown a minted abstraction. Content-
+  gated (only new/changed triggers re-embed, riding the SPEC-038 budget). A plain
+  float32-blob table, so the trigger channel works without `sqlite-vec` and degrades
+  cleanly (to the cue-graph channel only) when no embedder is injected.
+- **Channel (a) trigger-embedding** `structural.trigger_match` (T-061) — abstracts
+  the current situation (default: reuse the turn's existing summary — no new LLM
+  call, OQ-1), embeds it, and cosine-matches insight *trigger* vectors. A situation
+  described at the *mechanism* level matches an insight whose trigger shares **no
+  surface token** with the original episodes.
+- **Channel (b) cue-graph spreading activation** `structural.cue_match` (T-062) —
+  lights the abstract cue nodes the situation implies and flows activation over the
+  **existing** `WeightedGraph.spreading_activation` (ACT-R base-level, fan effect,
+  hop-capped, zero-LLM) to the insight nodes whose cues are active — retrieving with
+  **zero lexical/semantic overlap** to the instances. The graph edges *are* the
+  learned "situation-shape → pattern" map.
+- **Confidence gate** (T-063) — `known` insights are actionable anchors; `guessed`
+  insights are surfaced tentatively (`verify_first`). Conjunctive gating (both
+  channels must agree — R-8 false-positive control) means a never-recurring `guessed`
+  insight, whose cue edges decay below the forget floor over time, silently **decays
+  out** of retrieval.
+- **Enrichment** `structural.enrich` (T-064) — "spot, then enrich": from a matched
+  insight, traverse to its instance episodes, the entities they mention, the adjacent
+  insights sharing its cues (bounded hops), and the surrounding raw-stream events
+  (`enrich_stream_radius`).
+- **Optional cross-encoder rerank** `structural.match(reranker=…)` (T-065) — an
+  injected `Reranker` seam over the *small* structural candidate set, tier-gated:
+  personal OFF (with a deterministic top-1/top-2 `rerank_margin` fallback),
+  enterprise/federal ON. The reranker verdict only reorders; it never enters agent
+  context (LLM09/LLM10, bounded, off the hot path).
+- **AC-6 planted structural probe** (the acceptance proof) — past episodes are
+  consolidated into an insight with a surface-stripped trigger + abstract cues, then
+  a **new situation in a different domain with mechanically-asserted ZERO surface
+  overlap** is retrieved via **both** channels and enriched with its instances; a
+  never-recurring `guessed` insight decays out over simulated time.
+
+### Changed
+
+- `db.py` — added the separate `insight_trigger` table (+ scope index) to the
+  per-agent schema; `insight_trigger` joins `DERIVED_TABLES` and `wipe_derived`
+  (disposable, re-derived by `trigger_index`).
+- `config.py` — added `struct_trigger_min`, `struct_activation_min`, `rerank_margin`,
+  and `enrich_stream_radius` tuning constants.
+
 ## [0.2.0] — 2026-07-07
 
 Surface retrieval + slow-path consolidation (SPEC-041, Phases 4/5).
