@@ -265,10 +265,19 @@ class StructuralIndex:
     # -- helpers ------------------------------------------------------------
 
     def _situation_cues(self, situation: Situation) -> list[str]:
-        """The abstract cues a situation lights: its own, or tagged from its text."""
+        """The active graph nodes a situation lights (the cue-channel seeds).
+
+        Explicit ``cues`` (the turn's tagged entities / active concept nodes, passed
+        through the production seam) win. Otherwise we tag the abstraction against the
+        **entity + cue** vocabulary — i.e. the real graph nodes — NOT the cue phrases
+        alone. Seeding from concrete entity/concept nodes is what lets a genuinely
+        different-domain situation reach an insight *through* the graph (its nodes
+        spread over learned edges to the insight's cues), instead of only firing when
+        the raw query literally contains a cue phrase.
+        """
         if situation.cues:
             return situation.cues
-        vocab = self._cue_vocabulary()
+        vocab = self._cue_vocabulary() | self._entity_vocabulary()
         return tag_entities(_abstract(situation), vocab)
 
     def _cue_vocabulary(self) -> set[str]:
@@ -301,7 +310,10 @@ class StructuralIndex:
             score=score,
             kind="structural",
             confidence=card.status,
-            classification="unclassified",
+            # The card's stored label is the dominating classification of the episodes
+            # it generalizes (set at mint) — carry it, never a literal, so the no-read-up
+            # gate drops a SECRET-derived insight and fails closed on an unknown one.
+            classification=card.classification,
             verify_first=verify_first,
         )
 

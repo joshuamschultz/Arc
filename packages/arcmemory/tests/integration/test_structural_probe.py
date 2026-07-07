@@ -97,15 +97,24 @@ class PlantingDistiller:
         )
 
 
+# The insight's abstraction, as minted below. Zero-overlap is measured against BOTH the
+# episodes AND these (trigger + cue), so the probe cannot lexically leak the answer.
+_INSIGHT_TRIGGER = "a property is asserted yet the enforcing mechanism stays unwired"
+_INSIGHT_CUE = "claims-without-enforcement"
+# The present situation's active concept node (finance domain), bridged to the insight's
+# cue by a LEARNED graph edge — never by a shared token.
+_FOREIGN_CUE = "settlement-ceiling"
+
+
 def _salient(text: str) -> set[str]:
     return {t for t in text.lower().replace("-", " ").split() if len(t) > 3}
 
 
-def _assert_zero_overlap(text: str, episodes: list[str]) -> None:
+def _assert_zero_overlap(text: str, references: list[str]) -> None:
     toks = _salient(text)
-    for ep in episodes:
-        clash = toks & _salient(ep)
-        assert not clash, f"{text!r} leaked surface token(s) {clash} from episode {ep!r}"
+    for ref in references:
+        clash = toks & _salient(ref)
+        assert not clash, f"{text!r} leaked surface token(s) {clash} from {ref!r}"
 
 
 async def test_planted_structural_probe_retrieved_both_channels_then_enriched(
@@ -134,21 +143,26 @@ async def test_planted_structural_probe_retrieved_both_channels_then_enriched(
     structural = StructuralIndex(db, workspace, scope, embedder=emb)
     await structural.trigger_index()
 
+    # A LEARNED cross-domain edge: the finance concept the present situation lights is
+    # associated with the abstract cue. Spreading activation traverses THIS edge to reach
+    # the insight — the graph *is* the situation-shape -> pattern mapping.
+    WeightedGraph(db).hebbian_bump(scope.key, _FOREIGN_CUE, _INSIGHT_CUE)
+
     # --- the present situation: a DIFFERENT domain, same abstract structure --
     situation = Situation(
         text="the fee schedule promises a ceiling the ledger fails to apply",
         summary="a safeguard is declared but left uninvoked on the settlement path",
-        cues=["claims-without-enforcement"],
+        cues=[_FOREIGN_CUE],
     )
 
-    # PROOF of zero surface overlap: the situation, the trigger, and the cue all
-    # share no salient token with any planted episode. The ONLY link is structural.
-    _assert_zero_overlap(situation.text, _EPISODES)
-    _assert_zero_overlap(situation.summary, _EPISODES)
-    _assert_zero_overlap(
-        "a property is asserted yet the enforcing mechanism stays unwired", _EPISODES
-    )
-    _assert_zero_overlap("claims-without-enforcement", _EPISODES)
+    # PROOF of zero surface overlap, measured against the episodes AND the insight's own
+    # trigger + cue: the situation shares no salient token with any of them. The only
+    # links left are the dim-0 abstraction (trigger channel) and the learned graph edge
+    # (cue channel) — the match is provably STRUCTURAL, not lexical.
+    references = [*_EPISODES, _INSIGHT_TRIGGER, _INSIGHT_CUE]
+    _assert_zero_overlap(situation.text, references)
+    _assert_zero_overlap(situation.summary, references)
+    _assert_zero_overlap(_FOREIGN_CUE, references)
 
     # --- channel (a): trigger-embedding ------------------------------------
     trig_ranked = await structural.trigger_match(situation, top_k=5)

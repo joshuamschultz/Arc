@@ -128,12 +128,16 @@ class IndexRebuilder:
             for path in sorted(directory.glob("*.md")):
                 text = path.read_text(encoding="utf-8")
                 fm, _ = parse_document(text)
-                classification = str(fm.get("classification", "unclassified"))
+                # A genuinely missing label passes through empty — the no-read-up gate
+                # decides fail-closed (federal) vs default (personal), never the index.
+                classification = str(fm.get("classification") or "")
                 rel = str(path.relative_to(self._workspace))
                 chunks.append((f"file:{rel}", rel, text, classification))
 
         for event in self._episodic.events(self._scope.key):
-            chunks.append((f"event:{event.event_id}", "episodic", event.text, "unclassified"))
+            chunks.append(
+                (f"event:{event.event_id}", "episodic", event.text, event.classification)
+            )
 
         embeddings = await self._embed([text for _, _, text, _ in chunks])
         for i, (chunk_id, source, text, classification) in enumerate(chunks):

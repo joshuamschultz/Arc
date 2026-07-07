@@ -82,8 +82,18 @@ async def inject_recall(ctx: Any) -> None:
     else:
         if not await _acl_allows("memory.search", st.agent_did):
             return
+        # Reuse the turn's existing abstraction (no new LLM call — OQ-1); the Brain
+        # derives the structural cue seeds from its own entity/cue graph, so a
+        # different-domain turn can still match a stored abstraction. ``summary`` is
+        # empty unless a prior handler supplied one — a Brain that ignores it degrades
+        # to lexical-only, never errors.
+        summary = str(ctx.data.get("summary") or "")
         text = await st.brain.retrieve(
-            query, clearance="unclassified", top_k=st.config.top_k, budget=st.config.budget
+            query,
+            clearance="unclassified",
+            top_k=st.config.top_k,
+            budget=st.config.budget,
+            summary=summary,
         )
         _cache_recall(st, key, text)
         await _audit("memory.recall", {"query_len": len(query), "hit": bool(text)})

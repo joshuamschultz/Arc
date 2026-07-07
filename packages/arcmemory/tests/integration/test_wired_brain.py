@@ -346,9 +346,27 @@ async def test_t103_structural_probe_both_channels_live_only_when_embedder_wired
             ts="2026-01-01T00:00:02+00:00",
         ),
     ]
-    # A present situation in a DIFFERENT domain, abstracted to the same mechanism
-    # (dim 4 markers "declared"/"uninvoked") and carrying the abstract cue phrase.
-    probe = "the ledger declared a cap left uninvoked — a claims without enforcement gap"
+    # A present situation in a DIFFERENT domain (finance), driven through the production
+    # seam: the query carries NO mechanism marker and NO cue token; the reused turn
+    # SUMMARY names the mechanism with dim-4 markers ("declared"/"uninvoked" — different
+    # tokens from the trigger's "asserted"/"unwired"); the active concept node reaches
+    # the insight's cue through a LEARNED graph edge, never a shared token.
+    query = "the settlement ledger overran its posted ceiling"
+    summary = "a safeguard is declared but left uninvoked on the live path"
+    foreign_cue = "settlement-ceiling"
+    insight_trigger = "a property is asserted yet the enforcing mechanism stays unwired"
+    insight_cue = "claims-without-enforcement"
+
+    def _salient(text: str) -> set[str]:
+        return {t for t in text.lower().replace("-", " ").split() if len(t) > 3}
+
+    forbidden = _salient(insight_trigger) | _salient(insight_cue)
+    for ep in episodes:
+        forbidden |= _salient(ep.text)
+    for probe_text in (query, summary, foreign_cue):
+        assert not (_salient(probe_text) & forbidden), (
+            f"{probe_text!r} leaked a salient token of the insight's trigger/cue/episodes"
+        )
 
     # --- RED: unwired brain — trigger channel dead -------------------------
     red_ws = tmp_path / "red"
@@ -358,7 +376,7 @@ async def test_t103_structural_probe_both_channels_live_only_when_embedder_wired
         red_ws, _DID, embedder=None, distiller=PlantingDistiller(), audit_sink=red_sink
     )
     await red_brain.consolidate()
-    await red_brain.retrieve(probe, top_k=5, budget=10_000)
+    await red_brain.retrieve(query, summary=summary, cues=[foreign_cue], top_k=5, budget=10_000)
     assert _structural_degraded(red_sink), "unwired brain must degrade the trigger channel"
 
     # --- GREEN: wired brain — both channels live --------------------------
@@ -373,7 +391,11 @@ async def test_t103_structural_probe_both_channels_live_only_when_embedder_wired
         audit_sink=green_sink,
     )
     await green_brain.consolidate()
-    text = await green_brain.retrieve(probe, top_k=5, budget=10_000)
+    # Plant the learned cross-domain edge so the cue channel can reach the insight.
+    WeightedGraph(MemoryDB(green_ws)).hebbian_bump(_scope().key, foreign_cue, insight_cue)
+    text = await green_brain.retrieve(
+        query, summary=summary, cues=[foreign_cue], top_k=5, budget=10_000
+    )
 
     assert "enforcement is never connected" in text, "probe must be retrieved via the wired brain"
     assert not _structural_degraded(green_sink), "wired embedder -> both channels, not degraded"

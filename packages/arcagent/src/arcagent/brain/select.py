@@ -36,6 +36,7 @@ def select_brain(
     embed_model: str = "",
     distill_provider: str = "",
     distill_model: str = "",
+    brain_allowlist: tuple[str, ...] = (),
 ) -> Brain:
     """Return the configured Brain (fail-safe: any error degrades to NullBrain).
 
@@ -45,6 +46,10 @@ def select_brain(
     trigger channel, and consolidation insight-minting are live. ``embed_backend
     == "none"`` or an empty ``distill_provider`` leaves the respective seam unwired
     (recall degrades to BM25 + graph; consolidation is a no-op) — never a crash.
+
+    A dotted BYO class-path is arbitrary code executed at startup (ASI04). Above the
+    personal tier it is refused unless it appears in ``brain_allowlist`` (the operator's
+    signed/vetted registry) — fail-closed, never imported (see :func:`_load_custom`).
     """
     choice = (setting or "none").strip()
     if choice in ("none", "", "null"):
@@ -68,7 +73,7 @@ def select_brain(
                 "running memory-less (NullBrain)"
             )
         return NullBrain()
-    return _load_custom(choice, workspace, agent_did)
+    return _load_custom(choice, workspace, agent_did, tier=tier, allowlist=brain_allowlist)
 
 
 def _try_arcmemory(
@@ -90,7 +95,7 @@ def _try_arcmemory(
     safe_tier = tier if tier in ("personal", "enterprise", "federal") else "personal"
     config = arcmemory.MemoryConfig.for_tier(safe_tier)
     embedder = _build_embedder(arcmemory, agent_did, embed_backend, embed_model)
-    distiller = _build_distiller(arcmemory, distill_provider, distill_model)
+    distiller = _build_distiller(arcmemory, distill_provider, distill_model, agent_did)
     brain: Brain = arcmemory.ArcMemoryBrain(
         workspace,
         agent_did,
@@ -110,20 +115,39 @@ def _build_embedder(arcmemory: Any, agent_did: str, backend: str, model: str) ->
     return arcmemory.ArcLLMEmbedder(model=model or None, backend=backend, telemetry=telemetry)
 
 
-def _build_distiller(arcmemory: Any, provider: str, model: str) -> Any:
-    """arcllm-backed distiller (fresh provider per consolidation), or ``None`` when off."""
+def _build_distiller(arcmemory: Any, provider: str, model: str, agent_did: str) -> Any:
+    """arcllm-backed distiller (fresh provider per consolidation), or ``None`` when off.
+
+    The per-run provider is loaded WITH telemetry so its ``invoke`` rides the SPEC-038
+    budget/circuit-breaker (LLM10) — exactly as the embedder seam does; a runaway
+    consolidation cannot make an unbounded distillation call.
+    """
     if not provider:
         return None
     import arcllm
 
+    telemetry = {"agent_did": agent_did}
+
     def factory() -> Any:
-        return arcllm.load_model(provider, model or None)
+        return arcllm.load_model(provider, model or None, telemetry=telemetry)
 
     return arcmemory.ArcLLMDistiller(factory, model=model or None)
 
 
-def _load_custom(class_path: str, workspace: Path, agent_did: str) -> Brain:
-    """Import + instantiate a BYO Brain from a dotted ``module:Class`` / ``module.Class``."""
+def _load_custom(
+    class_path: str, workspace: Path, agent_did: str, *, tier: str, allowlist: tuple[str, ...]
+) -> Brain:
+    """Import + instantiate a BYO Brain from a dotted ``module:Class`` / ``module.Class``.
+
+    Above the personal tier a BYO class-path must be operator-allowlisted (the signed
+    registry posture of SPEC-033) — otherwise it is REFUSED before any import, because
+    importing an unverified dotted path is arbitrary code execution at startup (ASI04).
+    """
+    if tier != "personal" and class_path not in allowlist:
+        raise ValueError(
+            f"BYO brain class-path {class_path!r} is not on the operator allowlist; "
+            f"refusing to import an unverified class-path at tier {tier!r} (fail-closed)"
+        )
     module_name, _, attr = class_path.replace(":", ".").rpartition(".")
     if not module_name:
         raise ValueError(f"invalid brain class path: {class_path!r}")

@@ -149,7 +149,9 @@ class SurfaceIndex:
                     chunk_id=f"event:{event.event_id}",
                     source_path="episodic",
                     text=event.text,
-                    classification="unclassified",
+                    # The stored stream label — NOT a literal — so a classified capture
+                    # is gated on the raw-stream channel too (empty => fail-closed).
+                    classification=event.classification,
                     mtime=_iso_epoch(event.ts),
                     content_hash=content_hash(event.text),
                 )

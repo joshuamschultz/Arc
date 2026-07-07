@@ -110,9 +110,17 @@ class ArcMemoryBrain:
         clearance: str = "unclassified",
         top_k: int = 5,
         budget: int = 1024,
+        summary: str = "",
+        cues: list[str] | None = None,
         session_id: str | None = None,
     ) -> str:
         """Single-pass, clearance-gated, boundary-marked recall (REQ-040..062).
+
+        ``summary`` is the turn's already-computed abstraction (reused, no new LLM call
+        — OQ-1); it drives the analogical trigger channel and the cue tagging. ``cues``
+        are the turn's active concept/entity nodes (graph seeds) for the structural
+        cue channel — when omitted, arcmemory derives them by tagging the abstraction
+        against its own entity/cue graph. Both are optional (backward-compatible).
 
         Returns the injectable ``<memory-result>`` rendering (empty string when
         nothing survives the gate). Never raises on a missing embedder — recall
@@ -121,8 +129,9 @@ class ArcMemoryBrain:
         bundle = self._bundle(session_id)
         await bundle.retriever.index()
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
+        situation = Situation(text=query, summary=summary, cues=list(cues or []))
         result = await bundle.retriever.retrieve(
-            Situation(text=query), clearance=clr, top_k=top_k, budget=budget
+            situation, clearance=clr, top_k=top_k, budget=budget
         )
         return result.text
 

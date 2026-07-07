@@ -123,6 +123,28 @@ class Deduper:
 # in exactly one place (arctrust owns the classification type system).
 
 
+def dominating_classification(labels: list[str]) -> str:
+    """Return the most-restrictive label to carry when a memory generalizes several.
+
+    An insight (or any derived memory) inherits the classification of the episodes it
+    generalizes — it must be at least as restrictive as its most-classified source, and
+    it must *preserve* an unknown label so federal ``strict`` still fails closed. The
+    rule: the highest KNOWN label wins; only when *every* source is unknown/empty do we
+    propagate the unknown label ("") so the gate fails closed at federal (an empty list
+    — a memory with no sources — defaults to ``unclassified``).
+    """
+    known: list[tuple[Classification, str]] = []
+    saw_unknown = False
+    for label in labels:
+        try:
+            known.append((parse_classification(label, strict=True), label))
+        except ValueError:
+            saw_unknown = True
+    if known:
+        return max(known, key=lambda pair: pair[0])[1]
+    return "" if saw_unknown else "unclassified"
+
+
 def gate_no_read_up(
     recalls: list[Recall],
     *,
@@ -259,6 +281,7 @@ __all__ = [
     "Deduper",
     "boundary_mark",
     "content_hash",
+    "dominating_classification",
     "enforce_budget",
     "gate_no_read_up",
     "privacy_filter",

@@ -49,9 +49,18 @@ class Brain(Protocol):
         clearance: str = "unclassified",
         top_k: int = 5,
         budget: int = 1024,
+        summary: str = "",
+        cues: list[str] | None = None,
         session_id: str | None = None,
     ) -> str:
-        """Query-conditioned, clearance-gated recall; returns injectable text."""
+        """Query-conditioned, clearance-gated recall; returns injectable text.
+
+        ``summary`` is the turn's already-computed abstraction (reused, no new LLM
+        call) and ``cues`` its active concept/entity nodes — both optional, so a Brain
+        that ignores them still satisfies the contract. They feed the analogical
+        (structural) recall channel so a different-domain turn can still match a stored
+        abstraction without sharing surface tokens.
+        """
         ...
 
     async def consolidate(self, *, session_id: str | None = None) -> Mapping[str, object]:
@@ -88,6 +97,8 @@ class NullBrain:
         clearance: str = "unclassified",
         top_k: int = 5,
         budget: int = 1024,
+        summary: str = "",
+        cues: list[str] | None = None,
         session_id: str | None = None,
     ) -> str:
         return ""

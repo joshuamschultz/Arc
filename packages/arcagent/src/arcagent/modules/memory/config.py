@@ -11,6 +11,8 @@ recall + consolidation scheduling. ``brain`` is the SPEC-047 selector:
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from arcagent.modules.base_config import ModuleConfig
 
 
@@ -19,6 +21,10 @@ class MemoryConfig(ModuleConfig):
 
     brain: str = "none"
     tier: str = "personal"
+
+    # Operator-vetted BYO brain class-paths. Above the personal tier a dotted
+    # ``module:Class`` brain is refused unless it appears here (ASI04 sign gate).
+    brain_allowlist: list[str] = Field(default_factory=list)
 
     # Embedder seam (arcmemory semantic + analogical-trigger channels). ``local``
     # wires arcllm's offline model; ``none`` degrades recall to BM25 + graph.

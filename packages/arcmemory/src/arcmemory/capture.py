@@ -79,6 +79,7 @@ class FastCapture:
             kind=kind,
             text=clean,
             hash=content_hash(clean),
+            classification=classification,
         )
         event.entities = tag_entities(clean, self._vocabulary())
 

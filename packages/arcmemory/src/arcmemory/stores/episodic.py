@@ -16,6 +16,8 @@ import json
 from pathlib import Path
 
 from arcmemory.db import MemoryDB
+from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.security import dominating_classification
 from arcmemory.types import Event
 
 
@@ -33,8 +35,8 @@ class EpisodicStore:
         seq = self._next_seq(event.scope)
         conn.execute(
             "INSERT OR REPLACE INTO episodic "
-            "(event_id, ts, scope, kind, text, hash, refs, seq) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(event_id, ts, scope, kind, text, hash, classification, refs, seq) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 event.event_id,
                 event.ts,
@@ -42,6 +44,7 @@ class EpisodicStore:
                 event.kind,
                 event.text,
                 event.hash,
+                event.classification,
                 json.dumps(event.refs),
                 seq,
             ),
@@ -49,20 +52,30 @@ class EpisodicStore:
         conn.commit()
 
     def append_bullet(self, event: Event) -> Path:
-        """Append a bullet for ``event`` to today's daily-log; return the file path."""
+        """Append a bullet for ``event`` to today's daily-log; return the file path.
+
+        The day-file carries a frontmatter ``classification`` = the dominating label of
+        every bullet written to it, so the glass-box file channel is gated exactly like
+        the raw stream (no unclassified-plaintext leak of a classified capture).
+        """
         day = event.ts[:10]  # YYYY-MM-DD prefix of the ISO timestamp
         self._daily_dir.mkdir(parents=True, exist_ok=True)
         path = self._daily_dir / f"{day}.md"
-        bullet = f"- {event.ts} [{event.kind}] {event.text}\n"
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(bullet)
+        prior_label, body = "", ""
+        if path.exists():
+            fm, body = parse_document(path.read_text(encoding="utf-8"))
+            prior_label = str(fm.get("classification", ""))
+        label = dominating_classification([prior_label, event.classification])
+        bullet = f"- {event.ts} [{event.kind}] {event.text}"
+        new_body = f"{body.rstrip()}\n{bullet}" if body.strip() else bullet
+        atomic_write_text(path, render_document({"classification": label}, new_body))
         return path
 
     def events(self, scope_key: str) -> list[Event]:
         """Return all events for a scope, in stream (seq) order."""
         conn = self._db.connect()
         rows = conn.execute(
-            "SELECT event_id, ts, scope, kind, text, hash, refs "
+            "SELECT event_id, ts, scope, kind, text, hash, classification, refs "
             "FROM episodic WHERE scope = ? ORDER BY seq",
             (scope_key,),
         ).fetchall()
@@ -74,7 +87,10 @@ class EpisodicStore:
                 kind=r[3],
                 text=r[4],
                 hash=r[5] or "",
-                refs=json.loads(r[6]) if r[6] else [],
+                # Preserve an explicit empty label (fail-closed at federal); only a
+                # legacy NULL falls back to the default.
+                classification="unclassified" if r[6] is None else r[6],
+                refs=json.loads(r[7]) if r[7] else [],
             )
             for r in rows
         ]

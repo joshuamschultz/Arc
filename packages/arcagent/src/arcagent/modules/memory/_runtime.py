@@ -72,6 +72,7 @@ def configure(
         embed_model=cfg.embed_model,
         distill_provider=cfg.distill_provider,
         distill_model=cfg.distill_model,
+        brain_allowlist=tuple(cfg.brain_allowlist),
     )
     _state = _State(
         config=cfg,

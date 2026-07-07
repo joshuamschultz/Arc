@@ -73,6 +73,7 @@ class Event(BaseModel):
     kind: str
     text: str
     hash: str = ""
+    classification: str = "unclassified"
     refs: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
 
@@ -144,6 +145,7 @@ class Insight(BaseModel):
     trigger: str
     cues: list[str] = Field(default_factory=list)
     instances: list[str] = Field(default_factory=list)
+    classification: str = "unclassified"
     confidence: float = 0.0
     salience: float = 0.0
     status: Confidence = Confidence.GUESSED

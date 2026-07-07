@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.index.graph import WeightedGraph
+from arcmemory.security import dominating_classification
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Confidence, Event, Fact, Insight, Scope
@@ -155,9 +156,10 @@ async def mint_insights(
     instances), promoting to ``known`` once confidence crosses the threshold.
     """
     result = await distiller.mint_insights(events, facts)
+    by_id = {e.event_id: e for e in events}
     minted: list[Insight] = []
     for cand in result.insights:
-        insight = _apply_insight(store.read(cand.id), cand, config)
+        insight = _apply_insight(store.read(cand.id), cand, config, by_id)
         store.write(insight)
         for cue in insight.cues:
             graph.link(scope.key, insight.id, cue, kind="cue")
@@ -166,20 +168,32 @@ async def mint_insights(
 
 
 def _apply_insight(
-    existing: Insight | None, cand: InsightCandidate, config: MemoryConfig
+    existing: Insight | None,
+    cand: InsightCandidate,
+    config: MemoryConfig,
+    events_by_id: dict[str, Event],
 ) -> Insight:
-    """Fold a candidate into an existing card (or mint fresh); set status by confidence."""
+    """Fold a candidate into an existing card (or mint fresh); set status by confidence.
+
+    The card inherits the MAX classification of the episodes it generalizes (plus any
+    prior card's label), so an abstraction can never launder a classified episode down
+    to a lower clearance — and an unknown-labeled instance keeps the card fail-closed.
+    """
     hits = (existing.hits if existing else 0) + cand.hits
     cues = _merge_unique(existing.cues if existing else [], cand.cues)
     instances = _merge_unique(existing.instances if existing else [], cand.instances)
     confidence = confidence_from_hits(hits, config.gamma)
     status = Confidence.KNOWN if confidence >= config.known_threshold else Confidence.GUESSED
+    labels = [events_by_id[i].classification for i in instances if i in events_by_id]
+    if existing is not None:
+        labels.append(existing.classification)
     return Insight(
         id=cand.id,
         statement=cand.statement,
         trigger=cand.trigger,
         cues=cues,
         instances=instances,
+        classification=dominating_classification(labels),
         confidence=confidence,
         salience=existing.salience if existing else 0.0,
         status=status,
