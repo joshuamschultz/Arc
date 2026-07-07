@@ -22,6 +22,41 @@ if TYPE_CHECKING:
 _UNBOUNDED_INT = 2**63 - 1
 _UNBOUNDED_COST = float("inf")
 
+# SPEC-039 OQ-3 — conservative per-tier default ceilings (SPEC-038 REQ-001/004/005).
+# Applied only where the operator left a ceiling unset, so budgets are ON by
+# default rather than operator-only. Federal is the tightest floor — a federal
+# agent is never unbounded by omission (a missing budget block still caps it);
+# enterprise gets a looser default cap; personal is absent here and stays
+# unbounded/relaxable when unset. An explicit operator ceiling always wins.
+_TIER_DEFAULT_MAX_TOKENS: dict[str, int] = {"federal": 500_000, "enterprise": 2_000_000}
+_TIER_DEFAULT_MAX_COST_USD: dict[str, float] = {"federal": 10.0, "enterprise": 50.0}
+_TIER_DEFAULT_MAX_REQUESTS: dict[str, int] = {"federal": 500, "enterprise": 2_000}
+
+
+def _effective_ceilings(config: ArcAgentConfig) -> tuple[int | None, float | None, int | None]:
+    """Resolve (tokens, cost, requests) ceilings after applying tier defaults.
+
+    An operator-set value always wins; an unset value falls back to the tier
+    default (``None`` for personal — unbounded). This is the single point where
+    tier stringency turns the operator-optional budget into a default-on cap.
+    """
+    budget = config.budget
+    tier = config.security.tier
+    max_tokens = (
+        budget.max_tokens if budget.max_tokens is not None else _TIER_DEFAULT_MAX_TOKENS.get(tier)
+    )
+    max_cost = (
+        budget.max_cost_usd
+        if budget.max_cost_usd is not None
+        else _TIER_DEFAULT_MAX_COST_USD.get(tier)
+    )
+    max_requests = (
+        budget.max_requests
+        if budget.max_requests is not None
+        else _TIER_DEFAULT_MAX_REQUESTS.get(tier)
+    )
+    return max_tokens, max_cost, max_requests
+
 
 def build_provider_usage(parent_state: Any, provider_label: str | None) -> ProviderUsage | None:
     """Bridge the live arcrun RunState onto a ProviderUsage (SPEC-038 REQ-004/010).
@@ -73,13 +108,13 @@ def build_clearance_context(
 def resolve_run_budget(config: ArcAgentConfig) -> tuple[int | None, float | None]:
     """Resolve the per-run token + cost ceilings for the circuit-breaker (REQ-001/005).
 
-    Returns the operator-configured ceilings threaded onto arcrun's RunState. A
-    ``None`` ceiling is unbounded (personal-relaxable default). The value is
-    operator-authored config — no agent tool can raise it, so at enterprise/
-    federal a set ceiling is a non-relaxable floor.
+    Returns the effective ceilings threaded onto arcrun's RunState after the
+    per-tier default fill. A ``None`` ceiling is unbounded (personal-relaxable
+    default). The value is operator-authored config — no agent tool can raise
+    it, so at enterprise/federal it acts as a non-relaxable floor.
     """
-    budget = config.budget
-    return budget.max_tokens, budget.max_cost_usd
+    max_tokens, max_cost, _ = _effective_ceilings(config)
+    return max_tokens, max_cost
 
 
 def resolve_provider_limits(config: ArcAgentConfig) -> dict[str, ProviderLimit]:
@@ -87,20 +122,19 @@ def resolve_provider_limits(config: ArcAgentConfig) -> dict[str, ProviderLimit]:
 
     The label is the configured model identity (``llm.model``) — the same trusted
     value the dispatch fill attributes usage to (never ``response.model``). Unset
-    ceilings become an unbounded sentinel so only the metric the operator capped
-    can trip ``provider.budget_exceeded``. Returns ``{}`` when no ceiling is set,
-    leaving ProviderLayer a no-op ALLOW.
+    ceilings become an unbounded sentinel so only the capped metric can trip
+    ``provider.budget_exceeded``. Returns ``{}`` only when every effective ceiling
+    is unbounded (personal with no operator budget), leaving ProviderLayer a
+    no-op ALLOW; federal/enterprise get a default-on limit.
     """
-    budget = config.budget
-    if budget.max_tokens is None and budget.max_cost_usd is None:
+    max_tokens, max_cost, max_requests = _effective_ceilings(config)
+    if max_tokens is None and max_cost is None and max_requests is None:
         return {}
     return {
         config.llm.model: ProviderLimit(
-            max_tokens=budget.max_tokens if budget.max_tokens is not None else _UNBOUNDED_INT,
-            max_cost=budget.max_cost_usd if budget.max_cost_usd is not None else _UNBOUNDED_COST,
-            max_requests=(
-                budget.max_requests if budget.max_requests is not None else _UNBOUNDED_INT
-            ),
+            max_tokens=max_tokens if max_tokens is not None else _UNBOUNDED_INT,
+            max_cost=max_cost if max_cost is not None else _UNBOUNDED_COST,
+            max_requests=max_requests if max_requests is not None else _UNBOUNDED_INT,
         )
     }
 

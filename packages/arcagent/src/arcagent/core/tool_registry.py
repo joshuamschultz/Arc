@@ -6,7 +6,7 @@ timeout enforcement, and audit logging.
 
 Sibling modules
 ---------------
-- ``arcagent.core.tool_transport``      — ToolTransport enum,
+- ``arcagent.tools._transport``         — ToolTransport enum,
   RegisteredTool dataclass, ``native_tool`` decorator,
   ``_validate_tool_args``, ``_echo_tool``, ``ToolClassification``.
 - ``arcagent.core.tool_policy_bridge``  — caller-DID binding helpers
@@ -53,7 +53,8 @@ from arcagent.core.tool_policy_bridge import (
     _bind_caller_did,
     _is_memory_tool,
 )
-from arcagent.core.tool_transport import (
+from arcagent.tools._policy_fill import build_clearance_context, build_provider_usage
+from arcagent.tools._transport import (
     _DEFAULT_PREAMBLE,
     _PY_TYPE_MAP,
     RegisteredTool,
@@ -63,7 +64,6 @@ from arcagent.core.tool_transport import (
     _validate_tool_args,
     native_tool,
 )
-from arcagent.tools._policy_fill import build_clearance_context, build_provider_usage
 from arcagent.tools.human_gate import HumanGate
 
 _logger = logging.getLogger("arcagent.tool_registry")

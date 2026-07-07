@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-07
+
+SPEC-039 quality pass: core back under budget, and per-tier default budget ceilings so token/cost/request limits are ON by default (SPEC-038 OQ-3).
+
+### Added
+- Conservative per-tier default budget ceilings (`arcagent/tools/_policy_fill.py`). When an operator leaves a ceiling unset, a tier default now applies: federal is the tightest floor (500k tokens / $10 / 500 requests), enterprise a looser cap (2M tokens / $50 / 2k requests), and personal stays unbounded/relaxable. An explicit operator ceiling always wins. Both the arcrun circuit-breaker (`resolve_run_budget`) and the arctrust `ProviderLayer` (`resolve_provider_limits`) are now default-on above personal — a federal agent is never unbounded by omission.
+
+### Changed
+- **Behavior:** federal/enterprise agents with no `[budget]` block are now capped by the tier default rather than running unbounded.
+- Relocated tool-definition primitives from `core/tool_transport.py` to `tools/_transport.py` (ToolTransport, RegisteredTool, `native_tool`, arg validation) — tool-domain code moved out of the nucleus so `arcagent/core` is back under the 3500 NCLOC budget (3411, 89 to spare). Behavior-preserving; every name is still re-exported through `core.tool_registry`.
+
 ## [0.9.0] - 2026-07-06
 
 SPEC-038 sub-scopes A/C/D wiring: arcagent bridges arcrun budget usage onto the policy pipeline, binds clearance to identity, enforces no-exfil at egress, and tags outbound-comms tools so the SPEC-035 trifecta gate fires.
