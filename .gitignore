@@ -61,9 +61,9 @@ CLAUDE.md
 architecture/
 **/architecture/
 # ...but package architecture TEST suites are real tests (import-graph / DAG
-# guards) and must be tracked — re-include them and their contents.
-!packages/arcmemory/tests/architecture/
-!packages/arcmemory/tests/architecture/**
+# guards) and must be tracked — re-include them and their contents (ALL packages).
+!packages/**/tests/architecture/
+!packages/**/tests/architecture/**
 
 # Agent playground
 Basic_Agent/
