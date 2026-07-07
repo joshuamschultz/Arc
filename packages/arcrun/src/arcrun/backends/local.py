@@ -32,13 +32,13 @@ import os
 import signal
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 
 from arcrun.backends.base import (
     TRUNCATION_MARKER,
     BackendCapabilities,
     ExecHandle,
     ExecutorBackend,
+    SeparatedResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,19 +46,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_STDOUT = 64 * 1024  # 64 KiB
 _STREAM_CHUNK = 4096
 
-
-@dataclass
-class SeparatedResult:
-    """Result from run_separated(): distinct stdout, stderr bytes and exit code.
-
-    stdout and stderr are each hard-capped at max_stdout_bytes of the backend.
-    exit_code is the actual process return code (None only if the process was
-    cancelled before exiting, in which case callers should treat it as -1).
-    """
-
-    stdout: bytes
-    stderr: bytes
-    exit_code: int
+# SeparatedResult now lives in base.py so every backend returns the same type;
+# re-exported here so existing importers (from arcrun.backends.local import
+# SeparatedResult) keep resolving.
+__all__ = ["LocalBackend", "SeparatedResult"]
 
 
 class LocalBackend:

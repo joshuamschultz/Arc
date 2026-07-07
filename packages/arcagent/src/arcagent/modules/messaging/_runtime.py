@@ -44,6 +44,10 @@ class _State:
     # The agent's arctrust identity — DID it registers under and key it signs
     # messages with (REQ-030). None only in verify-only/degraded setups.
     identity: AgentIdentity | None
+    # The config-resolved OPERATOR signer (audit authority) — signs the messaging
+    # WORM audit chain (SPEC-037 F4), never the agent DID seed. Same custody +
+    # algorithm as the policy chain; under vault_transit it holds no seed.
+    operator_signer: Any
     # arcteam service objects — set by configure(), typed as Any to avoid
     # a hard import-time dependency on the optional arcteam package.
     svc: Any  # MessagingService
@@ -76,6 +80,7 @@ def configure(
     team_root: Path | None = None,
     agent_name: str = "",
     identity: AgentIdentity | None = None,
+    operator_signer: Any = None,
 ) -> None:
     """Bind module state and bootstrap arcteam services.
 
@@ -83,23 +88,43 @@ def configure(
     can be imported without arcteam installed (it is an optional dep).
     Builds the in-memory backend synchronously; a configured ``nats_url``
     is connected lazily by :func:`ensure_live_backend`.
+
+    ``operator_signer`` (arctrust ``Signer``) signs the messaging WORM audit
+    chain (SPEC-037 F4). It MUST be the deployment operator authority — never the
+    agent DID seed, never an ephemeral key — so the audited subject is not its
+    own audit authority (SPEC-053). Absent it, this fails closed rather than
+    audit with a repudiable key.
     """
     global _state
+
+    if operator_signer is None:
+        raise ValueError(
+            "messaging module requires the operator signer to sign its audit "
+            "chain (SPEC-037 F4) — refusing to fall back to the agent DID seed "
+            "or an ephemeral key (fail-closed)"
+        )
 
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
     from arcteam.storage import MemoryBackend
 
-    cfg = MessagingConfig(**(config or {}))
+    # The scaffolded [modules.messaging] config omits entity_id/entity_name, but
+    # the agent knows its own name and registration keys the inbox stream on the
+    # handle (arc.agent.{name}). Default to that so the daemon subscribes to the
+    # same stream peers send it — otherwise it listens on arc.agent.(empty) and
+    # never receives anything.
+    raw = dict(config or {})
+    if not raw.get("entity_id") and agent_name:
+        raw["entity_id"] = f"agent://{agent_name}"
+    if not raw.get("entity_name") and agent_name:
+        raw["entity_name"] = agent_name
+    cfg = MessagingConfig(**raw)
     ws = workspace.resolve()
     resolved_team_root = (team_root or (ws.parent / "team")).resolve()
 
     backend = MemoryBackend()
-    audit = AuditLogger(
-        backend,
-        hmac_key=cfg.audit_hmac_key.encode("utf-8"),
-    )
+    audit = AuditLogger(backend, operator_signer)
     # AuditLogger.initialize() is async; callers that need it initialised
     # before the first poll must await it separately (the poll loop waits
     # 1 s before its first cycle, giving startup time to complete).
@@ -119,6 +144,7 @@ def configure(
         team_root=resolved_team_root,
         agent_name=agent_name,
         identity=identity,
+        operator_signer=operator_signer,
         svc=svc,
         registry=registry,
     )
@@ -141,8 +167,18 @@ async def ensure_live_backend() -> None:
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
 
-    backend = await _bootstrap.make_backend(st.config.nats_url)
-    audit = AuditLogger(backend, hmac_key=st.config.audit_hmac_key.encode("utf-8"))
+    try:
+        backend = await _bootstrap.make_backend(st.config.nats_url)
+    except Exception:  # reason: no reachable NATS — degrade to in-memory, don't crash
+        _logger.warning(
+            "Messaging: NATS unavailable at %s; staying on in-memory backend "
+            "(this agent will not see teammates until a server is reachable)",
+            st.config.nats_url,
+        )
+        st.live_backend_ready = True
+        return
+
+    audit = AuditLogger(backend, st.operator_signer)
     await audit.initialize()
     st.registry = EntityRegistry(backend, audit)
     st.svc = MessagingService(

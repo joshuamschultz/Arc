@@ -61,7 +61,7 @@ _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "pii_enabled": True,
             "pii_detector": "regex",
             "signing_enabled": True,
-            "signing_algorithm": "hmac-sha256",
+            "signing_algorithm": "ed25519",
             "signing_key_env": "ARCLLM_SIGNING_KEY",
         },
     },
@@ -300,6 +300,17 @@ def _init(args: argparse.Namespace) -> None:
     env_path = arc_dir / ".env"
     if not env_path.exists():
         env_path.touch(mode=0o600)
+
+    # SPEC-053 — the deployment operator key (audit authority for every WORM
+    # chain), distinct from any agent DID. Generated once, idempotent. All
+    # crypto is delegated to arctrust. Enterprise/federal print the pubkey
+    # fingerprint for out-of-band recording (anti-genesis-substitution +
+    # witness bootstrap); personal is silent/zero-config.
+    from arccli.commands.operator import ensure_operator_key
+
+    operator = ensure_operator_key(arc_dir)
+    if tier in ("enterprise", "federal"):
+        _write(f"  Operator key fingerprint: {operator.public_key.hex()[:16]}")
 
     if tier in ("enterprise", "federal"):
         team_dir = arc_dir / "team"

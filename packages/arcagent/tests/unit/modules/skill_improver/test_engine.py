@@ -248,6 +248,5 @@ class TestPostOptimizationApplication:
 
         # Verify file updated
         assert "Improved" in skill_path.read_text()
-        # Verify audit log exists
-        audit_path = store._skill_dir("test-skill") / "audit.jsonl"
-        assert audit_path.exists()
+        # SPEC-033 D4/REQ-060: no plaintext audit log — audit is the WORM chain.
+        assert not (store._skill_dir("test-skill") / "audit.jsonl").exists()

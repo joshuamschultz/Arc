@@ -17,11 +17,15 @@ from __future__ import annotations
 
 import pytest
 
+from arctrust.classification import Classification
 from arctrust.identity import AgentIdentity, did_matches_pubkey
 from arctrust.policy import (
+    ClearanceContext,
     IdentityLayer,
     PolicyContext,
+    ProviderUsage,
     ToolCall,
+    ToolRuntimeStatus,
     build_pipeline,
     sign_call,
     verify_call,
@@ -39,7 +43,25 @@ def _unsigned_call(agent_did: str, tool_name: str = "read") -> ToolCall:
 
 
 def _ctx(tier: str) -> PolicyContext:
-    return PolicyContext(tier=tier, policy_version="v1", bundle_age_seconds=0.0)  # type: ignore[arg-type]
+    # Inject clean provider/runtime/clearance state so the now-real
+    # Provider/Sandbox/Classification layers (fail-closed above personal on
+    # missing state; federal forces classification enforcement) pass through and
+    # the identity/admission behavior under test is what decides the outcome.
+    return PolicyContext(
+        tier=tier,  # type: ignore[arg-type]
+        policy_version="v1",
+        bundle_age_seconds=0.0,
+        provider_usage=ProviderUsage(
+            provider="anthropic", tokens_used=0, cost_used=0.0, requests_in_window=0
+        ),
+        tool_runtime=ToolRuntimeStatus(
+            verified=True, required_isolation="host", available_isolation="host"
+        ),
+        clearance=ClearanceContext(
+            caller_clearance=Classification.UNCLASSIFIED,
+            resource_classification=Classification.UNCLASSIFIED,
+        ),
+    )
 
 
 # --- DID <-> pubkey binding -------------------------------------------------

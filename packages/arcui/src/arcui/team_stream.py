@@ -134,9 +134,7 @@ class TeamStreamHub:
         return await self._queues[ws].get()
 
     @staticmethod
-    def _enqueue_drop_oldest(
-        queue: asyncio.Queue[dict[str, Any]], frame: dict[str, Any]
-    ) -> str:
+    def _enqueue_drop_oldest(queue: asyncio.Queue[dict[str, Any]], frame: dict[str, Any]) -> str:
         """Enqueue ``frame``; on a full queue drop the oldest and retry.
 
         Returns the delivery outcome: ``delivered``, ``dropped_backpressure``,
@@ -210,9 +208,7 @@ class TeamBusObserver:
         for channel in await self._service.list_channels():
             name = str(getattr(channel, "name", channel))
             after = self._last_seq.get(name, 0)
-            messages = await self._service.list_channel_messages(
-                name, after, _OBSERVER_PAGE_LIMIT
-            )
+            messages = await self._service.list_channel_messages(name, after, _OBSERVER_PAGE_LIMIT)
             for message in messages:
                 raw = message.model_dump() if hasattr(message, "model_dump") else dict(message)
                 await self._hub.publish(render_team_frame(raw, self._handle_of))

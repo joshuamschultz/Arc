@@ -131,9 +131,13 @@ arc run exec --tool calculator --params '{"expression": "2 ** 32"}'
 
 | Symbol | What It Does |
 |---|---|
-| `make_execute_tool(config)` | Factory for the built-in `execute_python` tool |
+| `make_execute_tool(tier, relax, ...)` | Factory for the built-in `execute_python` tool. Resolves an isolation backend once at build time, tier-routed |
+| `resolve_execution_backend(tier, relax, platform_supports_vm)` | Pure router: `(tier, relax, platform fact)` → `"vm"` \| `"docker"` \| `"local"` |
+| `ExecutorBackend` | Protocol every isolation backend implements — `LocalBackend`, `DockerBackend`, `VmBackend` |
+| `VmBackend` | Firecracker-microVM backend (`isolation="vm"`) — jailer + seccomp-L2; fails closed without `/dev/kvm` |
 | `SandboxConfig` | Workspace path, env vars, timeout, output cap |
 | `SandboxError`, `SandboxOOMError`, `SandboxRuntimeError`, `SandboxTimeoutError`, `SandboxUnavailableError` | Typed exception hierarchy |
+| `IsolationUnavailableError`, `IsolationRelaxationError` | Tier-routing refusals — federal with no VM support, or a relax value below the tier floor |
 
 ### Event API
 
@@ -169,7 +173,18 @@ Built-in strategies: `react` (default — Reason + Act), `code` (code-first gene
 
 Tools are not callable unless explicitly registered. JSON Schema parameter validation runs on **every call.**
 
-The built-in `execute_python` tool runs code in a **stripped subprocess**:
+The built-in `execute_python` tool is **tier-routed**: the deployment tier picks the isolation floor, and `resolve_execution_backend()` maps it to a concrete backend:
+
+| Tier | Backend | Isolation |
+|---|---|---|
+| `federal` | `VmBackend` (Firecracker microVM, jailer + seccomp-L2) | `vm` — own guest kernel behind a KVM boundary. Refuses (`IsolationUnavailableError`) if `/dev/kvm` isn't available; never downgrades |
+| `enterprise` | `DockerBackend` | `container` — cannot be relaxed below this floor |
+| `personal` (default) | `DockerBackend` | `container` |
+| `personal` (`relax_isolation = "off"` / `"none"` / `"local"`) | `LocalBackend` | `none` — full host access, on the operator's own machine, explicit opt-in only |
+
+Every backend selection — and every tier-permitted downgrade — emits an audit event (`code_exec.backend.selected`, `code_exec.isolation.downgraded`) before the first line of agent code runs.
+
+`LocalBackend` (used at `isolation="none"`, and as the container backend's underlying process model) still runs code in a **stripped subprocess**:
 
 | Defense | What |
 |---|---|
@@ -244,6 +259,7 @@ This is what makes Arc usable for human-in-the-loop workflows — the human can 
 | Property | How |
 |---|---|
 | **Deny-by-default tools** | Tool registry is empty until you populate it; JSON Schema on every call |
+| **Tier-routed isolation** | Federal → hardware VM (Firecracker), enterprise/personal → container; fail-closed when the required isolation is unavailable |
 | **Sandboxed subprocess** | Stripped env, process group, two-phase timeout, fresh workspace |
 | **Workspace boundary** | All file paths route through `resolve_workspace_path()` |
 | **Hash-chained events** | Every event includes the hash of the previous; `verify_chain()` detects tampering |
@@ -262,12 +278,13 @@ This is what makes Arc usable for human-in-the-loop workflows — the human can 
 | AU-9 | Hash-chained event log; `verify_chain()` for tamper detection |
 | CM-7 | Minimal subprocess environment |
 | SC-28 | Ephemeral workspace per execution |
+| SC-39(1) | Hardware-enforced isolation boundary (Firecracker microVM) at federal tier |
 | SI-10 | JSON Schema parameter validation; null byte / symlink / boundary guards |
 
 | OWASP Agentic | Mitigation |
 |---|---|
 | ASI02 (Tool Misuse) | Deny-by-default registry, parameter validation |
-| ASI05 (RCE) | Sandboxed subprocess, restricted env, output cap, two-phase timeout |
+| ASI05 (RCE) | Tier-routed isolation — hardware VM at federal, container at enterprise/personal, fail-closed on unavailable isolation; sandboxed subprocess, restricted env, output cap, two-phase timeout |
 | ASI06 (Memory/Context Poisoning) | Workspace boundary enforcement, path traversal guards |
 | ASI08 (Cascading Failures) | Cooperative cancellation, two-phase timeout, output cap |
 

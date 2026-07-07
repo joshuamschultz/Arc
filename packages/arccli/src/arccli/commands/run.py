@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,83 @@ _ENV_PATHS = [
     Path.home() / ".arc" / ".env",
     Path.home() / ".env",
 ]
+
+_MACHINE_CONFIG = Path.home() / ".arc" / "arcagent.toml"
+_DIRECT_RUN_AUDIT = Path.home() / ".arc" / "audit" / "direct-run.jsonl"
+
+
+def _machine_config() -> dict[str, Any]:
+    """Load the machine-wide ``~/.arc/arcagent.toml``, or {} when absent/unreadable."""
+    if not _MACHINE_CONFIG.exists():
+        return {}
+    try:
+        with open(_MACHINE_CONFIG, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def _machine_isolation() -> tuple[str, str | None]:
+    """Resolve ``(tier, relax)`` for direct ``arc run`` code execution.
+
+    Tier comes from ``ARC_TIER`` or the machine-wide ``~/.arc/arcagent.toml``
+    ``[security].tier`` and defaults to personal ONLY when the host is genuinely
+    unconfigured — so a federal/enterprise host runs sandboxed + audited, never as
+    a bare host subprocess. relax comes from ``ARC_RELAX_ISOLATION`` or
+    ``[execution].relax_isolation``; a genuinely-unconfigured personal box keeps
+    ``arc run``'s documented dev-tool default of host execution (``"local"``),
+    while any configured tier gets its real isolation floor (relax stays unset).
+    """
+    cfg = _machine_config()
+    tier = (
+        os.environ.get("ARC_TIER") or str(cfg.get("security", {}).get("tier", "")) or "personal"
+    ).lower()
+    relax_raw = os.environ.get("ARC_RELAX_ISOLATION") or cfg.get("execution", {}).get(
+        "relax_isolation"
+    )
+    relax = str(relax_raw) if relax_raw else None
+    if relax is None and tier == "personal":
+        relax = "local"
+    return tier, relax
+
+
+def _worm_sink(identity: Any) -> Any | None:
+    """Build the operator-signed tamper-evident WORM audit sink (SPEC-053).
+
+    The chain is signed by the deployment OPERATOR key (the audit authority),
+    never the caller's DID seed — the audited subject must not be its own audit
+    authority. ``identity`` still gates whether a direct run is attributed at
+    all. Best-effort (AU-5): audit degrades to disabled, never breaks the run.
+    """
+    if not identity.can_sign:
+        return None
+    try:
+        from arctrust import WormSink
+
+        from arccli.commands.operator import resolve_operator_signer
+
+        _DIRECT_RUN_AUDIT.parent.mkdir(parents=True, exist_ok=True)
+        # Config-resolved operator signer (custody + algorithm) — never a bare
+        # Ed25519 default (SPEC-037 F3).
+        return WormSink(_DIRECT_RUN_AUDIT, resolve_operator_signer())
+    except Exception:  # reason: audit is best-effort — never break the run (AU-5)
+        return None
+
+
+def _direct_run_identity() -> tuple[str | None, Any | None]:
+    """Return ``(caller_did, audit_sink)`` for a direct CLI run.
+
+    Loads the standalone signing authority so ``execute_python``'s selection /
+    downgrade / refuse events are attributed to the operator DID and PERSISTED to
+    their WORM audit chain. Absent an authority (or if the chain cannot be opened)
+    both degrade to None — logger-only, unattributed — never a hard failure.
+    """
+    from arccli.commands.identity import load_signing_authority
+
+    identity = load_signing_authority()
+    if identity is None:
+        return None, None
+    return identity.did, _worm_sink(identity)
 
 
 def _load_env() -> None:
@@ -113,13 +192,39 @@ def _exec_cmd(args: argparse.Namespace) -> None:
     max_output: int = getattr(args, "max_output", 65536)
     as_json: bool = getattr(args, "as_json", False)
 
-    asyncio.run(_run_exec_async(code, timeout, max_output, as_json))
+    tier, relax = _machine_isolation()
+    caller_did, audit_sink = _direct_run_identity()
+    asyncio.run(
+        _run_exec_async(
+            code, timeout, max_output, as_json, tier, relax, caller_did, audit_sink
+        )
+    )
 
 
-async def _run_exec_async(code: str, timeout: float, max_output: int, as_json: bool) -> None:
+async def _run_exec_async(
+    code: str,
+    timeout: float,
+    max_output: int,
+    as_json: bool,
+    tier: str,
+    relax: str | None,
+    caller_did: str | None,
+    audit_sink: Any | None,
+) -> None:
     from arcrun import ToolContext, make_execute_tool
 
-    tool = make_execute_tool(timeout_seconds=timeout, max_output_bytes=max_output)
+    # Isolation is sourced from the machine config (never hardcoded): a personal
+    # dev box runs sandbox-off on the host, an enterprise/federal host is routed
+    # to its container/VM floor. Selection/downgrade/refuse events are attributed
+    # to the operator DID and persisted to the audit sink.
+    tool = make_execute_tool(
+        timeout_seconds=timeout,
+        max_output_bytes=max_output,
+        tier=tier,
+        relax=relax,
+        caller_did=caller_did,
+        audit_sink=audit_sink,
+    )
     ctx = ToolContext(
         run_id="cli-exec",
         tool_call_id="manual",
@@ -213,10 +318,10 @@ async def _execute_task(
     # `arc identity init` to create one. Non-fatal here (attribution, not a gate).
     authority = load_signing_authority()
     actor_did = authority.did if authority is not None else None
+    audit_sink = _worm_sink(authority) if authority is not None else None
     if actor_did is None and not as_json:
         _write(
-            "Note: no signing authority — run `arc identity init` "
-            "to attribute/audit direct runs."
+            "Note: no signing authority — run `arc identity init` to attribute/audit direct runs."
         )
 
     llm = load_model(
@@ -256,7 +361,18 @@ async def _execute_task(
         )
 
     if with_code_exec:
-        tools.append(make_execute_tool(timeout_seconds=code_timeout))
+        # Isolation is sourced from the machine config (never hardcoded); the
+        # selection is attributed to the operator DID and persisted to the sink.
+        tier, relax = _machine_isolation()
+        tools.append(
+            make_execute_tool(
+                timeout_seconds=code_timeout,
+                tier=tier,
+                relax=relax,
+                caller_did=actor_did,
+                audit_sink=audit_sink,
+            )
+        )
 
     # Register spawn_task by default — agent decides which capabilities to expose.
     # The CLI plays the role of a thin agent here. Closure mutation lets nested

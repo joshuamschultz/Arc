@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcskill"
-version = "0.1.0"
+version = "0.1.2"
 description = "Skill management hub for Arc — signed install, scan, lock, CRL lifecycle"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -22,3 +22,16 @@ Repository = "https://github.com/joshuamschultz/Arc"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcskill"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+# sigstore ships no type stubs and is an optional [hub] extra — absent from the
+# base env. Guarded by _sigstore_importable(); ignore missing imports so strict
+# passes with or without the extra installed.
+[[tool.mypy.overrides]]
+module = ["sigstore", "sigstore.*"]
+ignore_missing_imports = true

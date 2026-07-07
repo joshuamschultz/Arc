@@ -18,6 +18,8 @@ from arcrun.backends.base import (
     BackendCapabilities,
     ExecHandle,
     ExecutorBackend,
+    SeparatedResult,
+    SupportsSeparatedRun,
     _ThreadedProcessHandle,
 )
 from arcrun.backends.docker import DockerBackend
@@ -27,6 +29,7 @@ from arcrun.backends.loader import (
     load_backend,
 )
 from arcrun.backends.local import LocalBackend
+from arcrun.backends.vm import VmBackend, VmUnavailableError
 
 __all__ = [
     "TRUNCATION_MARKER",
@@ -37,6 +40,10 @@ __all__ = [
     "ExecutorBackend",
     "FederalBackendPolicyError",
     "LocalBackend",
+    "SeparatedResult",
+    "SupportsSeparatedRun",
+    "VmBackend",
+    "VmUnavailableError",
     "_ThreadedProcessHandle",
     "load_backend",
 ]

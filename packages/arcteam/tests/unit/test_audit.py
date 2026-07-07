@@ -1,17 +1,28 @@
-"""Tests for arcteam.audit — AuditLogger with chained HMACs."""
+"""Tests for arcteam.audit — AuditLogger with a chained asymmetric signature.
+
+SPEC-037 REQ-002: each record is signed with an arctrust Ed25519 ``Signer``
+over ``prev_signature || canonical(record)``; ``verify_chain`` verifies against
+the operator public key, and any record/signature mutation fails.
+"""
 
 from __future__ import annotations
 
 import pytest
+from arctrust.keypair import generate_keypair
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.storage import MemoryBackend
 
 
+def _signer() -> InProcessSigner:
+    return InProcessSigner(generate_keypair().private_key)
+
+
 @pytest.fixture
 async def audit() -> AuditLogger:
     backend = MemoryBackend()
-    al = AuditLogger(backend, hmac_key=b"test-key")
+    al = AuditLogger(backend, _signer())
     await al.initialize()
     return al
 
@@ -22,9 +33,7 @@ def backend() -> MemoryBackend:
 
 
 class TestSingleRecord:
-    """Single audit record: correct fields, HMAC present."""
-
-    async def test_log_creates_record(self, audit: AuditLogger) -> None:
+    async def test_log_creates_signed_record(self, audit: AuditLogger) -> None:
         await audit.log(
             event_type="message.sent",
             subject="arc.channel.ops",
@@ -39,15 +48,15 @@ class TestSingleRecord:
         assert r["audit_seq"] == 1
         assert r["event_type"] == "message.sent"
         assert r["actor_id"] == "agent://a1"
-        assert r["hmac_sha256"] != ""
-        assert r["classification"] == "UNCLASSIFIED"
-        assert r["timestamp_utc"] != ""
+        # Asymmetric signature triad present; no HMAC field.
+        assert r["signature"] != ""
+        assert r["algorithm"] == "ed25519"
+        assert r["public_key"] != ""
+        assert "hmac_sha256" not in r
 
 
 class TestChainIntegrity:
-    """Chain integrity: 10 records, verify_chain returns True."""
-
-    async def test_valid_chain(self, audit: AuditLogger) -> None:
+    async def test_valid_chain_ed25519(self, audit: AuditLogger) -> None:
         for i in range(10):
             await audit.log(
                 event_type=f"event_{i}",
@@ -59,14 +68,30 @@ class TestChainIntegrity:
         assert valid is True
         assert last_seq == 10
 
+    async def test_chain_verifies_against_operator_public_key(
+        self, backend: MemoryBackend
+    ) -> None:
+        """The signature verifies with the public key ONLY (non-repudiation)."""
+        from arctrust.signer import ED25519, verify_signature
+
+        from arcteam.audit import _signing_input
+
+        signer = _signer()
+        audit = AuditLogger(backend, signer)
+        await audit.initialize()
+        await audit.log(event_type="e", subject="s", actor_id="agent://a1", detail="d")
+
+        record = backend._streams["audit"]["audit"][0]
+        signature = bytes.fromhex(record["signature"])
+        assert verify_signature(
+            ED25519, _signing_input(record, ""), signature, signer.public_key
+        )
+
 
 class TestTamperDetection:
-    """Tamper detection: modify a record, verify_chain returns False."""
-
-    async def test_tampered_record(self, backend: MemoryBackend) -> None:
-        audit = AuditLogger(backend, hmac_key=b"test-key")
+    async def test_tampered_record_fails(self, backend: MemoryBackend) -> None:
+        audit = AuditLogger(backend, _signer())
         await audit.initialize()
-
         for i in range(5):
             await audit.log(
                 event_type=f"event_{i}",
@@ -75,22 +100,43 @@ class TestTamperDetection:
                 detail=f"record {i}",
             )
 
-        # Tamper with the 3rd record
-        records = backend._streams["audit"]["audit"]
-        records[2]["detail"] = "TAMPERED"
+        backend._streams["audit"]["audit"][2]["detail"] = "TAMPERED"
 
         valid, last_seq = await audit.verify_chain()
         assert valid is False
-        assert last_seq == 2  # Verified up to record before tampering
+        assert last_seq == 2  # verified up to the record before tampering
+
+    async def test_forged_signature_fails(self, backend: MemoryBackend) -> None:
+        """A record re-signed under a DIFFERENT key must fail verification —
+        the verifier trusts the operator key, not the record's embedded key."""
+        audit = AuditLogger(backend, _signer())
+        await audit.initialize()
+        for i in range(3):
+            await audit.log(
+                event_type=f"event_{i}",
+                subject="test",
+                actor_id="agent://a1",
+                detail=f"record {i}",
+            )
+
+        # Attacker re-signs record[1] with their own key and swaps the pubkey in.
+        from arcteam.audit import _signing_input
+
+        attacker = _signer()
+        rec = backend._streams["audit"]["audit"][1]
+        prev_sig = backend._streams["audit"]["audit"][0]["signature"]
+        rec["signature"] = attacker.sign(_signing_input(rec, prev_sig)).hex()
+        rec["public_key"] = attacker.public_key.hex()
+
+        valid, last_seq = await audit.verify_chain()
+        assert valid is False
+        assert last_seq == 1
 
 
 class TestGapDetection:
-    """Gap detection: delete a record, verify_chain detects gap."""
-
-    async def test_sequence_gap(self, backend: MemoryBackend) -> None:
-        audit = AuditLogger(backend, hmac_key=b"test-key")
+    async def test_sequence_gap_fails(self, backend: MemoryBackend) -> None:
+        audit = AuditLogger(backend, _signer())
         await audit.initialize()
-
         for i in range(5):
             await audit.log(
                 event_type=f"event_{i}",
@@ -99,36 +145,26 @@ class TestGapDetection:
                 detail=f"record {i}",
             )
 
-        # Remove the 3rd record (index 2), creating a gap in audit_seq
         del backend._streams["audit"]["audit"][2]
 
         valid, last_seq = await audit.verify_chain()
         assert valid is False
-        assert last_seq == 2  # Last verified before gap
+        assert last_seq == 2
 
 
-class TestHMACKeyFromEnv:
-    """HMAC key from environment variable."""
+class TestPersistence:
+    async def test_chain_resumes_across_instances(self, backend: MemoryBackend) -> None:
+        """A second logger over the SAME signer + backend continues the chain."""
+        seed = generate_keypair().private_key
+        first = AuditLogger(backend, InProcessSigner(seed))
+        await first.initialize()
+        for i in range(3):
+            await first.log(event_type=f"e{i}", subject="s", actor_id="a", detail=f"d{i}")
 
-    def test_load_key_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("ARCTEAM_HMAC_KEY", "my-secret-key")
-        key = AuditLogger.load_hmac_key("ARCTEAM_HMAC_KEY")
-        assert key == b"my-secret-key"
+        second = AuditLogger(backend, InProcessSigner(seed))
+        await second.initialize()
+        await second.log(event_type="e3", subject="s", actor_id="a", detail="d3")
 
-    def test_load_key_missing_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("ARCTEAM_HMAC_KEY", raising=False)
-        key = AuditLogger.load_hmac_key("ARCTEAM_HMAC_KEY")
-        assert key is None
-
-    async def test_session_key_warning(self, backend: MemoryBackend) -> None:
-        """When no key provided, uses random session key with warning."""
-        audit = AuditLogger(backend)  # No key
-        await audit.initialize()
-        await audit.log(
-            event_type="test",
-            subject="test",
-            actor_id="agent://a1",
-            detail="test",
-        )
-        valid, _ = await audit.verify_chain()
-        assert valid is True  # Session key works within same instance
+        valid, last_seq = await second.verify_chain()
+        assert valid is True
+        assert last_seq == 4

@@ -70,8 +70,7 @@ async def update_skill(
         return f"Error: {exc}"
     fm["version"] = new_version
     new_frontmatter = yaml.safe_dump(fm, sort_keys=False).strip()
-    skill_md.write_text(
-        f"---\n{new_frontmatter}\n---\n\n{new_body}\n",
-        encoding="utf-8",
-    )
+    rendered = f"---\n{new_frontmatter}\n---\n\n{new_body}\n"
+    skill_md.write_text(rendered, encoding="utf-8")
+    _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8"))
     return f"Updated skill {name!r} {current_version} → {new_version}"

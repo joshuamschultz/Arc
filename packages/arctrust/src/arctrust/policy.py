@@ -9,12 +9,13 @@ arcagent.core.tool_policy). What lives here:
   - PolicyPipeline: the ordered, short-circuiting, fail-closed evaluator
   - TierConfig: deployment tier metadata consumed by build_pipeline
   - build_pipeline(): factory that assembles the correct layer set per tier
-  - Concrete layers: GlobalLayer, ProviderLayer, AgentLayer, TeamLayer,
-    SandboxLayer — kept here so build_pipeline can assemble them without
-    importing arcagent.
+  - Concrete layers: IdentityLayer, GlobalLayer, ClassificationLayer,
+    ProviderLayer, AgentLayer, TeamLayer, SandboxLayer — kept here so
+    build_pipeline can assemble them without importing arcagent.
 
-SPEC-017 R-010 through R-018:
-- R-010: 5-layer ordering (Global → Provider → Agent → Team → Sandbox)
+SPEC-017 R-010 through R-018 (layer set later extended by SPEC-038/ADR-019
+with IdentityLayer and ClassificationLayer — see tier matrix below):
+- R-010: layered ordering, tier-scoped composition (see matrix)
 - R-011: First-DENY-wins, structured deny reasons
 - R-012: Exception → DENY (fail-closed)
 - R-013: LRU cache keyed on (agent_did, tool_name, classification)
@@ -22,10 +23,17 @@ SPEC-017 R-010 through R-018:
 - R-017: Shadow mode — evaluate and log but always return ALLOW
 - R-018: Restricted mode — stale bundle → deny all except safe_set
 
-Tier matrix (R-010):
-  federal:    Global + Provider + Agent + Team + Sandbox (5 layers)
-  enterprise: Global + Provider + Agent + Sandbox        (4 layers)
-  personal:   Global                                     (1 layer)
+Tier matrix (current, SPEC-017 R-010 + SPEC-038 F5/ADR-019):
+  federal:    Identity + Global + Classification + Provider + Agent
+              + Team + Sandbox                            (7 layers)
+  enterprise: Identity + Global + Classification + Provider + Agent
+              + Sandbox                                   (6 layers)
+  personal:   Identity + Global                            (2 layers)
+
+Identity runs first at every tier (authentication is universal, ADR-019).
+Classification, Provider, and Sandbox are real (not stubs) but relaxable
+and no-op-safe at personal/unconfigured state; they fail closed once a
+call actually carries the policy/telemetry they gate (SPEC-034, SPEC-038).
 """
 
 from __future__ import annotations
@@ -40,8 +48,10 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from arctrust.classification import Classification, dominates
 from arctrust.identity import AgentIdentity, did_matches_pubkey
 from arctrust.keypair import verify as _ed25519_verify
+from arctrust.signer import verify_signature
 
 _logger = logging.getLogger("arctrust.policy")
 
@@ -55,6 +65,29 @@ _Tier = Literal["federal", "enterprise", "personal"]
 # ---------------------------------------------------------------------------
 # Contract types
 # ---------------------------------------------------------------------------
+
+
+class ApprovalGrant(BaseModel):
+    """Operator-signed, one-shot approval unlocking a forbidden composition.
+
+    An operator/human mints this over the hash of exactly one ToolCall
+    (``call_hash``) with their OWN identity. It travels on ``ToolCall.approval``
+    and is verified by :func:`verify_approval`, which rejects any grant whose
+    ``approver_did`` equals the agent's DID (ASI09 — no self-approval). The
+    signature covers only ``call_hash`` + ``approver_did`` so the grant binds to
+    one call and one approver and nothing else.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    call_hash: str
+    approver_did: str
+    public_key: bytes
+    # Signing algorithm of ``signature`` (ed25519 default; ecdsa-p256 when the
+    # operator authority signs out-of-process at federal). Drives verification
+    # so a federal ECDSA grant verifies without the verifier assuming Ed25519.
+    algorithm: str = "ed25519"
+    signature: bytes
 
 
 class ToolCall(BaseModel):
@@ -81,6 +114,20 @@ class ToolCall(BaseModel):
     parent_call_id: str | None = None
     public_key: bytes | None = None
     signature: bytes | None = None
+    capability_tags: frozenset[str] = frozenset()
+    """Resolved trifecta legs for THIS call (e.g. ``{"private_data"}``).
+
+    Attestation/routing metadata carried alongside the agent's signature —
+    deliberately excluded from :meth:`signing_bytes`, exactly as
+    ``public_key``/``signature`` are.
+    """
+
+    approval: ApprovalGrant | None = None
+    """Operator-signed one-shot approval that unlocks a forbidden composition.
+
+    Like ``capability_tags``, this rides alongside the signed payload and is
+    NOT part of :meth:`signing_bytes` — it carries its own operator signature.
+    """
 
     def signing_bytes(self) -> bytes:
         """Canonical bytes the signature covers — every field except the auth pair.
@@ -104,14 +151,105 @@ class ToolCall(BaseModel):
         return payload.encode("utf-8")
 
 
+class ProviderUsage(BaseModel):
+    """LLM-provider consumption for the current call — filled by SPEC-038.
+
+    SPEC-034 (this spec) defines the schema only; the accounting service
+    (SPEC-038) measures usage against the arcrun/arcllm call surface and
+    populates this at dispatch. ``ProviderLayer`` reads it as injected state
+    and never computes it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    provider: str
+    tokens_used: int
+    cost_used: float
+    requests_in_window: int
+
+
+class ClearanceContext(BaseModel):
+    """Caller clearance + resource classification for a call — filled by arcagent.
+
+    The two labels + direction the ``ClassificationLayer`` needs to enforce
+    Bell-LaPadula "no read up" at the tool surface (SPEC-038 REQ-023). arctrust
+    owns the ladder and the predicate; arcagent binds the caller clearance to
+    identity and resolves the resource classification (per-tool config label
+    and/or the touched memory entity).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    caller_clearance: Classification
+    resource_classification: Classification
+
+
+class TeamScope(BaseModel):
+    """Team role + delegation grant for the calling agent — filled by arcteam.
+
+    ``authorized_tools`` is the role's activated capability scope for this
+    call; ``delegation_grant``, when present, is the (never-wider) scope a
+    delegated (``parent_call_id``-carrying) call may reach. SPEC-034 reads and
+    gates; arcteam derives membership and role meaning.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    authorized_tools: frozenset[str]
+    delegation_grant: frozenset[str] | None = None
+
+
+class ToolRuntimeStatus(BaseModel):
+    """Per-tool verification + isolation status — filled by SPEC-033/036.
+
+    ``verified`` is the load-time answer from SPEC-033 (sign/verify + TOFU);
+    ``required_isolation``/``available_isolation`` are compared over the
+    SPEC-036 isolation ladder (``host`` < ``container`` < ``vm``). SPEC-034
+    reads the answers and gates; it re-runs no verification and starts no
+    sandbox.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    verified: bool
+    required_isolation: str
+    available_isolation: str
+
+
 class PolicyContext(BaseModel):
-    """Runtime context for policy evaluation — tier, bundle version, age."""
+    """Runtime context for policy evaluation.
+
+    Base fields (``tier``, ``policy_version``, ``bundle_age_seconds``) are the
+    original contract. The optional state fields carry the injected inputs the
+    real ProviderLayer/TeamLayer/SandboxLayer compare against; each defaults to
+    ``None`` so existing 3-field constructions stay valid (REQ-014) and is
+    populated by its owning spec (REQ-015).
+    """
 
     model_config = ConfigDict(frozen=True)
 
     tier: _Tier
     policy_version: str
     bundle_age_seconds: float
+    provider_usage: ProviderUsage | None = None
+    team_scope: TeamScope | None = None
+    tool_runtime: ToolRuntimeStatus | None = None
+    clearance: ClearanceContext | None = None
+    """Caller clearance + resource classification for the no-read-up check.
+
+    Defaults ``None`` so existing constructions stay valid; populated by
+    arcagent at dispatch. The ClassificationLayer fails closed above personal
+    when this is absent under a configured pipeline (SPEC-038 REQ-023).
+    """
+
+    session_capabilities: frozenset[str] | None = None
+    """Trifecta legs accumulated from prior allowed calls this session.
+
+    The GlobalLayer unions this with the call's ``capability_tags`` to test
+    ``forbidden_compositions``. Defaults ``None`` so existing 3-field
+    constructions stay valid; populated by the session's capability accumulator.
+    """
 
 
 class Decision(BaseModel):
@@ -220,6 +358,85 @@ def verify_call(call: ToolCall) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Operator approval — sign / verify a one-shot ApprovalGrant
+# ---------------------------------------------------------------------------
+
+
+def _approval_signing_bytes(call_hash: str, approver_did: str) -> bytes:
+    """Canonical bytes an approval signature covers: the bound call + approver."""
+    payload = json.dumps(
+        {"call_hash": call_hash, "approver_did": approver_did},
+        sort_keys=True,
+    )
+    return payload.encode("utf-8")
+
+
+@runtime_checkable
+class ApprovalAuthority(Protocol):
+    """The operator authority that mints approvals — did + asymmetric signer.
+
+    Satisfied by :class:`arctrust.identity.AgentIdentity` (in-process Ed25519)
+    and by an out-of-process operator signer wrapper (VaultSigner + derived DID)
+    alike, so the human-approval gate signs the same way at every custody tier.
+    """
+
+    @property
+    def did(self) -> str: ...
+
+    @property
+    def public_key(self) -> bytes: ...
+
+    @property
+    def algorithm(self) -> str: ...
+
+    def sign(self, message: bytes) -> bytes: ...
+
+
+def sign_approval(call: ToolCall, operator: ApprovalAuthority) -> ApprovalGrant:
+    """Mint an operator-signed approval bound to exactly this ``call``.
+
+    Signed by ``operator`` — a human/operator authority, NEVER the agent's own.
+    :func:`verify_approval` rejects a grant whose approver DID equals the agent
+    DID, so an agent cannot self-approve even if it calls this with itself. The
+    grant records the operator's ``algorithm`` so ECDSA-P256 (federal
+    out-of-process) grants verify without the verifier assuming Ed25519.
+    """
+    call_hash = _hash_call(call)
+    signature = operator.sign(_approval_signing_bytes(call_hash, operator.did))
+    return ApprovalGrant(
+        call_hash=call_hash,
+        approver_did=operator.did,
+        public_key=operator.public_key,
+        algorithm=operator.algorithm,
+        signature=signature,
+    )
+
+
+def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
+    """Whether ``approval`` is a valid one-shot operator grant for ``call``.
+
+    Four conditions, all required (fail-closed — any failure returns False):
+      1. ``approver_did`` is NOT the agent's DID (ASI09 — no self-approval).
+      2. ``call_hash`` binds to exactly this call (one-shot).
+      3. ``public_key``'s fingerprint matches the claimed approver DID.
+      4. ``signature`` is a valid signature (per ``approval.algorithm``) over
+         the grant's bytes.
+    """
+    if approval.approver_did == call.agent_did:
+        return False
+    if approval.call_hash != _hash_call(call):
+        return False
+    if not did_matches_pubkey(approval.approver_did, approval.public_key):
+        return False
+    return verify_signature(
+        approval.algorithm,
+        _approval_signing_bytes(approval.call_hash, approval.approver_did),
+        approval.signature,
+        approval.public_key,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Concrete layer implementations
 # ---------------------------------------------------------------------------
 
@@ -292,6 +509,13 @@ class GlobalLayer:
         self._deny_rules = deny_rules
         self._forbidden_compositions = forbidden_compositions
 
+    def _first_forbidden(self, union: set[str]) -> frozenset[str] | None:
+        """First configured composition fully contained in ``union``, else None."""
+        for combo in self._forbidden_compositions:
+            if combo.issubset(union):
+                return combo
+        return None
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         reason = self._deny_rules.get(call.tool_name)
         now_us = _now_us()
@@ -303,20 +527,182 @@ class GlobalLayer:
                 input_hash=_hash_call(call),
                 evaluated_at_us=now_us,
             )
+
+        union = set(call.capability_tags) | set(ctx.session_capabilities or frozenset())
+        matched = self._first_forbidden(union)
+        if matched is not None and not (
+            call.approval is not None and verify_approval(call, call.approval)
+        ):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="global.forbidden_composition",
+                reason=(
+                    f"forbidden capability composition {sorted(matched)} "
+                    "requires human approval"
+                ),
+                input_hash=_hash_call(call),
+                evaluated_at_us=now_us,
+            )
+
         return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=now_us)
 
 
-class ProviderLayer:
-    """LLM provider budget and rate-limit gates. Stubbed — Phase 3 wiring.
+class ClassificationLayer:
+    """No-read-up gate at the tool surface — a pure predicate (SPEC-038 REQ-023).
 
-    Default behavior is ALLOW so the pipeline produces meaningful results
-    without a full provider stack.
+    Realizes Bell-LaPadula "simple security" over the ladder arctrust owns: a
+    call is denied when the resource classification is not dominated by the
+    caller's clearance. Both labels arrive on ``PolicyContext.clearance``
+    (filled by arcagent); this layer computes nothing and reads no I/O.
+
+    Configured-gate semantics mirror ProviderLayer/SandboxLayer: when a call
+    carries clearance labels the layer always enforces no-read-up. When the
+    labels are ABSENT the layer is a no-op ALLOW unless the deployment turned on
+    ``enforced`` classification (federal fail-closed, REQ-026), in which case a
+    missing clearance context denies — relaxable to allow only at personal
+    (NIST 800-53 AC-4). The default (``enforced=False``) never bricks a blind
+    pipeline.
+    """
+
+    name = "classification"
+
+    def __init__(self, *, enforced: bool = False, relaxable: bool = False) -> None:
+        self._enforced = enforced
+        self._relaxable = relaxable
+
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        cc = ctx.clearance
+        if cc is None:
+            if self._enforced and not self._relaxable:
+                return Decision.deny(
+                    layer=self.name,
+                    rule_id="classification.state_missing",
+                    reason=(
+                        "Classification is enforced but no clearance context is "
+                        "present; fail closed on the missing labels (SPEC-038)."
+                    ),
+                    input_hash=input_hash,
+                    evaluated_at_us=now_us,
+                )
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        if not dominates(cc.caller_clearance, cc.resource_classification):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="classification.read_up",
+                reason=(
+                    f"Caller clearance {cc.caller_clearance.name} does not dominate "
+                    f"resource classification {cc.resource_classification.name} (no read up)."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+
+class ProviderLimit(BaseModel):
+    """Per-provider budget + rate ceiling — a deployment-policy floor (LLM10)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    max_tokens: int
+    max_cost: float
+    max_requests: int
+
+
+class ProviderLayer:
+    """LLM provider budget and rate-limit gate — a pure comparator (LLM10).
+
+    Limits come from construction (deployment policy); current usage comes
+    from ``PolicyContext.provider_usage`` (filled by SPEC-038). The layer never
+    calls arcllm, never decrements, and holds no mutable usage store.
+
+    Configured-gate semantics: with no limits configured the layer is a no-op
+    and always allows — absence of a budget policy is not a violation. Once a
+    limit IS configured, missing usage telemetry fails closed
+    (``provider.state_missing``): a real budget with a blind meter cannot be
+    proven within bounds (REQ-004, REQ-005).
     """
 
     name = "provider"
 
+    def __init__(
+        self,
+        *,
+        limits_by_provider: dict[str, ProviderLimit] | None = None,
+        relaxable: bool = False,
+    ) -> None:
+        self._limits = limits_by_provider or {}
+        self._relaxable = relaxable
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        if not self._limits:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        usage = ctx.provider_usage
+        if usage is None:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.state_missing",
+                reason=(
+                    "Provider budget policy is configured but no usage state is in "
+                    "context; fail closed on the telemetry gap (SPEC-038 populates it)."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        limit = self._limits.get(usage.provider)
+        if limit is None:
+            # SPEC-038 REQ-011 — an unknown provider label under an active limit
+            # regime is a budget-dodge-by-label. Fail closed (deny) at
+            # enterprise/federal; personal (relaxable) allows + audits.
+            if self._relaxable:
+                return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.unknown_label",
+                reason=(
+                    f"Provider {usage.provider!r} is not in the configured budget "
+                    "map; fail closed on the unrecognized label."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        if usage.tokens_used >= limit.max_tokens or usage.cost_used >= limit.max_cost:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.budget_exceeded",
+                reason=(
+                    f"Provider {usage.provider!r} budget exceeded: "
+                    f"tokens {usage.tokens_used}/{limit.max_tokens}, "
+                    f"cost {usage.cost_used}/{limit.max_cost}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        if usage.requests_in_window >= limit.max_requests:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.rate_exceeded",
+                reason=(
+                    f"Provider {usage.provider!r} rate exceeded: "
+                    f"requests {usage.requests_in_window}/{limit.max_requests}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
 
 
 class AgentLayer:
@@ -349,21 +735,125 @@ class AgentLayer:
 
 
 class TeamLayer:
-    """Team-scoped delegation rules. Stubbed — Phase 6 wiring."""
+    """Team-scoped delegation gate — capability-scoping comparator (ASI03/ASI07).
+
+    Construction supplies the static role->scope floor (``roles``); the
+    per-call activated scope and any delegation grant arrive on
+    ``PolicyContext.team_scope`` (filled by arcteam/arcagent). Absence of a
+    team scope is not a violation — admission of unknown agents is the
+    IdentityLayer's job (REQ-009).
+    """
 
     name = "team"
 
+    def __init__(self, *, roles: dict[str, frozenset[str]] | None = None) -> None:
+        self._roles = roles or {}
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        scope = ctx.team_scope
+        if scope is None:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        # Static role floor if configured, else the context's activated scope.
+        authorized = self._roles.get(scope.role, scope.authorized_tools)
+        if call.tool_name not in authorized:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="team.scope_violation",
+                reason=(
+                    f"Tool {call.tool_name!r} is outside role {scope.role!r} scope "
+                    f"{sorted(authorized)}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        # A delegated call (carries a parent) may not exceed its grant's scope.
+        if (
+            call.parent_call_id is not None
+            and scope.delegation_grant is not None
+            and call.tool_name not in scope.delegation_grant
+        ):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="team.delegation_exceeded",
+                reason=(
+                    f"Delegated call for {call.tool_name!r} exceeds its grant "
+                    f"{sorted(scope.delegation_grant)}."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+
+# Ordered isolation ladder owned by SPEC-036's vocabulary. SPEC-034 references
+# the ordering to compare; it defines no isolation mechanics.
+_ISOLATION_LADDER = ("host", "container", "vm")
+
+
+def _isolation_satisfies(available: str, required: str) -> bool:
+    """True iff ``available`` isolation is at least as strong as ``required``.
+
+    Unknown ``required`` fails closed (unsatisfiable); unknown ``available``
+    ranks below the ladder floor so it satisfies nothing.
+    """
+    if required not in _ISOLATION_LADDER:
+        return False
+    required_rank = _ISOLATION_LADDER.index(required)
+    available_rank = (
+        _ISOLATION_LADDER.index(available) if available in _ISOLATION_LADDER else -1
+    )
+    return available_rank >= required_rank
 
 
 class SandboxLayer:
-    """Dynamic-tool runtime constraints. Stubbed — Phase 7 wiring."""
+    """Dynamic-tool / isolation policy gate — deliberately thin (ASI04/ASI05).
+
+    Reads verification status (SPEC-033) and isolation availability (SPEC-036)
+    from ``PolicyContext.tool_runtime`` and compares. It re-runs no signature
+    verification and starts no sandbox. With no runtime status in context the
+    layer is a no-op and allows: the SPEC-033 load gate already verified any
+    tool that reached the registry, so there is nothing for this layer to add
+    when blind. It gates only when a status IS present (REQ-010..013).
+    """
 
     name = "sandbox"
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        rt = ctx.tool_runtime
+        if rt is None:
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        if not rt.verified:
+            return Decision.deny(
+                layer=self.name,
+                rule_id="sandbox.unverified_tool",
+                reason=f"Tool {call.tool_name!r} is unverified/dynamic (SPEC-033).",
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        if not _isolation_satisfies(rt.available_isolation, rt.required_isolation):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="sandbox.isolation_unsatisfiable",
+                reason=(
+                    f"Required isolation {rt.required_isolation!r} exceeds available "
+                    f"{rt.available_isolation!r} (SPEC-036 ladder)."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
 
 
 # ---------------------------------------------------------------------------
@@ -399,12 +889,12 @@ class TierConfig(BaseModel):
             "federal": cls(
                 tier="federal",
                 max_parallel_tools=4,  # R-025: FIPS cap
-                layer_names=("global", "provider", "agent", "team", "sandbox"),
+                layer_names=("global", "classification", "provider", "agent", "team", "sandbox"),
             ),
             "enterprise": cls(
                 tier="enterprise",
                 max_parallel_tools=10,
-                layer_names=("global", "provider", "agent", "sandbox"),
+                layer_names=("global", "classification", "provider", "agent", "sandbox"),
             ),
             "personal": cls(
                 tier="personal",
@@ -474,48 +964,82 @@ class PolicyPipeline:
         return list(self._layers)
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
-        """Run layered evaluation. First DENY wins. Exceptions are DENY."""
+        """Run layered evaluation. First DENY wins. Exceptions are DENY.
+
+        Authentication runs FIRST — before the restricted-mode short-circuit
+        and before the decision-cache lookup (SPEC-053 Findings 2 + 6). An
+        unsigned, invalidly-signed, or de-registered call is denied by the
+        IdentityLayer immediately, so it can never be handed a safe-set ALLOW in
+        restricted mode nor a cache-hit ALLOW minted for a validly-signed call.
+        """
         started_at = self._monotonic()
 
-        # Restricted mode pre-check (stale bundle + offline)
+        # 1. Authenticate before any short-circuit.
+        identity_decision = await self._run_identity(call, ctx)
+        if identity_decision is not None and identity_decision.is_deny():
+            self._emit_audit(call, ctx, identity_decision, started_at)
+            return self._shadow_override(identity_decision)
+
+        # 2. Restricted mode (stale bundle + offline) — only for authenticated calls.
         restricted = self._check_restricted(call, ctx)
         if restricted is not None:
             self._emit_audit(call, ctx, restricted, started_at)
             return self._shadow_override(restricted)
 
-        # Cache hit
-        cache_key = self._cache_key(call)
-        cached = self._cache_get(cache_key)
+        # 3. Cache hit — the key is bound to the call's signature fingerprint, so
+        #    a cached ALLOW is never served across a different (or absent) signer.
+        #    An approval-bearing call is a one-shot, security-relevant input whose
+        #    approval is (correctly) excluded from the cache key; it must never be
+        #    served from cache nor pollute it, or a cached composition DENY would
+        #    defeat the human-approval flow (SPEC-035).
+        cache_key = self._cache_key(call, ctx)
+        cached = self._cache_get(cache_key) if call.approval is None else None
         if cached is not None:
             self._emit_audit(call, ctx, cached, started_at, cache_hit=True)
             return self._shadow_override(cached)
 
-        # Layered evaluation — first DENY wins, exception → DENY (R-012)
-        decision: Decision | None = None
+        # 4. Remaining layers — first DENY wins, exception → DENY (R-012).
+        #    Identity already passed above; skip re-running it here.
+        decision: Decision | None = identity_decision
         for layer in self._layers:
-            try:
-                decision = await layer.evaluate(call, ctx)
-            except Exception as exc:  # reason: fail-open — log + continue
-                _logger.exception("Policy layer %r raised — failing closed (R-012)", layer.name)
-                decision = Decision.deny(
-                    layer=layer.name,
-                    rule_id="layer_error",
-                    reason=f"{type(exc).__name__}: {exc}",
-                    input_hash=_hash_call(call),
-                    evaluated_at_us=_now_us(),
-                )
-                break
+            if layer.name == "identity":
+                continue
+            decision = await self._eval_layer(layer, call, ctx)
             if decision.is_deny():
                 break
 
         if decision is None:
             decision = Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
 
-        self._cache_put(cache_key, decision)
+        if call.approval is None:
+            self._cache_put(cache_key, decision)
         self._emit_audit(call, ctx, decision, started_at)
         return self._shadow_override(decision)
 
     # --- Internals ---
+
+    async def _run_identity(self, call: ToolCall, ctx: PolicyContext) -> Decision | None:
+        """Evaluate the IdentityLayer up front, or None when no such layer exists."""
+        identity = next((layer for layer in self._layers if layer.name == "identity"), None)
+        if identity is None:
+            return None
+        return await self._eval_layer(identity, call, ctx)
+
+    async def _eval_layer(
+        self, layer: PolicyLayer, call: ToolCall, ctx: PolicyContext
+    ) -> Decision:
+        """Evaluate one layer, converting any exception to a fail-closed DENY (R-012)."""
+        try:
+            return await layer.evaluate(call, ctx)
+        except Exception as exc:  # reason: fail-closed — a raising layer denies (R-012)
+            _logger.exception("Policy layer %r raised — failing closed (R-012)", layer.name)
+            return Decision.deny(
+                layer=layer.name,
+                rule_id="layer_error",
+                reason=f"{type(exc).__name__}: {exc}",
+                input_hash=_hash_call(call),
+                evaluated_at_us=_now_us(),
+            )
 
     def _check_restricted(self, call: ToolCall, ctx: PolicyContext) -> Decision | None:
         """Return a DENY/ALLOW if restricted mode applies, else None."""
@@ -546,8 +1070,20 @@ class PolicyPipeline:
             evaluated_at_us=decision.evaluated_at_us,
         )
 
-    def _cache_key(self, call: ToolCall) -> str:
-        return f"{call.agent_did}|{call.tool_name}|{call.classification}|{_hash_call(call)}"
+    def _cache_key(self, call: ToolCall, ctx: PolicyContext) -> str:
+        # sig_fingerprint binds the cached decision to the exact signer: an
+        # unsigned call (empty signature) and a signed call can never collide,
+        # so a cache-hit ALLOW is never replayed across identities (Finding 2).
+        sig_fingerprint = hashlib.sha256(call.signature or b"").hexdigest()[:16]
+        # session_capabilities feeds the GlobalLayer composition check, so it is
+        # part of the decision's inputs. Omitting it lets a fixed-argument call
+        # ALLOWed under a partial ledger replay that ALLOW after the ledger
+        # completes a forbidden set — skipping the DENY (SPEC-035 stale replay).
+        caps = ",".join(sorted(ctx.session_capabilities or ()))
+        return (
+            f"{call.agent_did}|{call.tool_name}|{call.classification}"
+            f"|{sig_fingerprint}|{caps}|{_hash_call(call)}"
+        )
 
     def _cache_get(self, key: str) -> Decision | None:
         if self._cache_ttl <= 0:
@@ -589,7 +1125,7 @@ class PolicyPipeline:
             "tier": ctx.tier,
             "policy_version": ctx.policy_version,
             "decision": decision.outcome,
-            "matched_rule": decision.rule_id,
+            "rule_id": decision.rule_id,
             "layer": decision.layer,
             "reason": decision.reason,
             "input_hash": decision.input_hash,
@@ -614,6 +1150,9 @@ def build_pipeline(
     agent_registry: dict[str, bytes] | None = None,
     global_deny_rules: dict[str, str] | None = None,
     agent_allowlists: dict[str, set[str]] | None = None,
+    provider_limits: dict[str, ProviderLimit] | None = None,
+    team_roles: dict[str, frozenset[str]] | None = None,
+    classification_enforced: bool = False,
     forbidden_compositions: list[frozenset[str]] | None = None,
     cache_ttl_seconds: float = 30.0,
     max_bundle_age_seconds: float | None = None,
@@ -623,20 +1162,24 @@ def build_pipeline(
 ) -> PolicyPipeline:
     """Build a tier-specific policy pipeline.
 
-    Tier matrix (SPEC-017 R-010):
+    Tier matrix (SPEC-017 R-010, extended by SPEC-038 F5/ADR-019):
 
-    =========== ==================================================
+    =========== ==========================================================
     Tier        Layers
-    =========== ==================================================
-    federal     global, provider, agent, team, sandbox  (5 layers)
-    enterprise  global, provider, agent, sandbox        (4 layers)
-    personal    global                                  (1 layer)
-    =========== ==================================================
+    =========== ==========================================================
+    federal     identity, global, classification, provider, agent,
+                team, sandbox                                (7 layers)
+    enterprise  identity, global, classification, provider, agent,
+                sandbox                                       (6 layers)
+    personal    identity, global                              (2 layers)
+    =========== ==========================================================
 
     Args:
         tier: Deployment tier.
         global_deny_rules: Tool name → denial reason mapping.
         agent_allowlists: Agent DID → allowed tool name set.
+        provider_limits: Provider name → ProviderLimit floor (ProviderLayer).
+        team_roles: Role → authorized tool scope floor (TeamLayer).
         forbidden_compositions: Sets of capability tags that are forbidden
             when held by a single batch (non-compositional safety).
         cache_ttl_seconds: Decision cache TTL (0 disables).
@@ -659,6 +1202,23 @@ def build_pipeline(
         deny_rules=global_deny_rules or {},
         forbidden_compositions=forbidden_compositions or [],
     )
+    # SPEC-038 F5 — tier is stringency, not a gate (ADR-019). Federal forces
+    # classification enforcement to a non-relaxable fail-closed floor regardless
+    # of the operator flag; personal is the only relaxable tier (unknown provider
+    # label / missing clearance ALLOW+audit). Enterprise honors the operator flag
+    # and denies unknown labels. This is the single authority for the floor — it
+    # never depends on an operator remembering to set the flag.
+    relaxable = tier == "personal"
+    enforced = classification_enforced or tier == "federal"
+    # Provider/Sandbox are built only for enterprise/federal. Each is a no-op
+    # when its policy is unconfigured (empty limits / no runtime state) and only
+    # fails closed once a configured policy meets missing telemetry (SPEC-034).
+    provider = ProviderLayer(limits_by_provider=provider_limits or {}, relaxable=relaxable)
+    sandbox = SandboxLayer()
+    # No-read-up gate (SPEC-038). Like Provider/Sandbox it is a no-op when its
+    # clearance context is absent at personal (not wired there) and fails closed
+    # only at enterprise/federal once a call carries clearance labels.
+    classification = ClassificationLayer(enforced=enforced, relaxable=relaxable)
     layers: list[PolicyLayer]
 
     if tier == "personal":
@@ -667,18 +1227,20 @@ def build_pipeline(
         layers = [
             identity,
             g,
-            ProviderLayer(),
+            classification,
+            provider,
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
-            SandboxLayer(),
+            sandbox,
         ]
     else:  # federal
         layers = [
             identity,
             g,
-            ProviderLayer(),
+            classification,
+            provider,
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
-            TeamLayer(),
-            SandboxLayer(),
+            TeamLayer(roles=team_roles or {}),
+            sandbox,
         ]
 
     return PolicyPipeline(
@@ -721,7 +1283,11 @@ def _hash_call(call: ToolCall) -> str:
 
 __all__ = [
     "AgentLayer",
+    "ApprovalAuthority",
+    "ApprovalGrant",
     "AuditSink",
+    "ClassificationLayer",
+    "ClearanceContext",
     "Decision",
     "GlobalLayer",
     "IdentityLayer",
@@ -729,11 +1295,17 @@ __all__ = [
     "PolicyLayer",
     "PolicyPipeline",
     "ProviderLayer",
+    "ProviderLimit",
+    "ProviderUsage",
     "SandboxLayer",
     "TeamLayer",
+    "TeamScope",
     "TierConfig",
     "ToolCall",
+    "ToolRuntimeStatus",
     "build_pipeline",
+    "sign_approval",
     "sign_call",
+    "verify_approval",
     "verify_call",
 ]

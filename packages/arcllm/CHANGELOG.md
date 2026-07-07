@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.6.0] - 2026-07-06
+
+SPEC-037: request-signing HMAC replaced by asymmetric attestation; the FIPS gate moved to arctrust.
+
+### Changed
+- **Request signing is asymmetric.** `create_signer` returns an arctrust `Signer` (Ed25519 default, ECDSA-P256 for the FIPS/federal path); `HmacSigner` and the `hmac`/`hashlib` imports in `_signing.py` are **deleted**. The `signing_algorithm` default is `ed25519` (was `hmac-sha256`) and the signing-key env holds a hex-encoded 32-byte seed. The response now carries `request_signature` (hex), `signing_algorithm`, and `signing_public_key`, so an attestation verifies with the public key alone (AU-10 non-repudiation). The signed model label is the config-resolved `model_name`, never a response field (REQ-011). REQ-001/004/011.
+- **The FIPS provider gate moved to `arctrust.fips`** (single source of truth for signing + encryption). `_trace_crypto.fips_provider_active` / `assert_fips_provider_if_required` are **removed**; `telemetry` now calls `arctrust.fips.assert_fips_if_required(...)`.
+- Adds an `arctrust` dependency; the redundant `signing` extra is removed (crypto arrives via arctrust).
+
+### Added (prior unreleased — SPEC-053 trace-checkpoint anchor)
 
 - **`verify_against_anchor`** (`trace_retention.py`) — checks whether a live
   trace store still contains a previously anchored `head_hash`, proving the

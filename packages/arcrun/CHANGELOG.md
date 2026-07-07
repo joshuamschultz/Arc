@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+SPEC-038 sub-scope A: the per-run budget is now a real circuit-breaker. Token is the primary ceiling (present on both streaming and non-streaming paths); cost is the best-effort secondary.
+
+### Added
+- `RunState.max_tokens` — per-run token ceiling, enforced at the top of each turn beside the existing `max_cost_usd` check.
+- `run()`/`run_async()` gain `max_tokens` / `max_cost_usd` parameters, threaded through `_build_state` onto `RunState` (the budget is now reachable via the public API).
+- `make_budget_breach_args` supports a `max_tokens` reason; both breach sites (`max_turns`, budget) route through the single terminator (no inline payload dicts). A budget halt emits one `loop.completed` carrying the breached metric + observed tokens/cost.
+
+### Removed
+- Dead `RunState.token_budget` / `RunState.cost_budget` fields (zero readers; `cost_budget` duplicated `max_cost_usd`).
+
+## [0.7.0] - 2026-07-06
+
+SPEC-035 sub-scope C: workspace bind-mount for the execution backends + a shell entry point, so a confined agent shell keeps workspace access while the operator seed and WORM chains stay unreachable.
+
+### Added
+- `run_shell(command, *, tier, workspace, readonly_subpaths, caller_did, audit_sink, ...)` — routes a shell command through `resolve_execution_backend` (enterprise→container, federal→VM), emits `code_exec.backend.selected`, and fails closed (`IsolationUnavailableError`) at federal with no VM. Exported at the top level.
+- `DockerBackend` / `VmBackend` now honor `workspace_mount` + `readonly_subpaths`: the workspace is bind-mounted `:rw` at `/workspace` (workdir), protected sub-paths are mounted `:ro`, and host `~/.arc`/`.audit` are never mounted. Implements the previously-declared-but-absent `supports_bind_mount`.
+
+### Fixed
+- `__version__` corrected (was stale at `0.5.0` while package metadata was ahead).
+
+## [0.6.0] - 2026-07-05
+
+SPEC-036: real tier-enforced code-execution sandbox, closing ASI05.
+
+### Added
+
+- **`VmBackend`** (`backends/vm.py`, `isolation="vm"`) — Hardware-isolated execution via Firecracker microVM. Launches through the jailer (namespaces, chroot/pivot_root, cgroups, privilege drop) with seccomp level 2 — never bare `firecracker`. Pluggable via the `VmEngine` Protocol; `gVisor`/`runsc` is a documented alternative engine (userspace-kernel isolation, not hardware-VM class — never an automatic fallback). Fails closed with `VmUnavailableError` when `/dev/kvm` is absent or the host isn't Linux.
+- **`resolve_execution_backend(tier, relax, platform_supports_vm)`** (`builtins/execute.py`) — Pure, side-effect-free tier router: federal → `vm` (refuses if no KVM), enterprise → `docker` (container floor, cannot relax below it), personal → `docker` by default. `IsolationUnavailableError` and `IsolationRelaxationError` distinguish refusal reasons from an ordinary "none" outcome.
+- **Personal sandbox-off** — A personal-tier operator may set `relax="off"` (aliases `"none"`/`"local"`) to run on `LocalBackend` (`isolation="none"`, full host access on their own machine). Every backend selection and every tier-permitted downgrade emits an audit event (`code_exec.backend.selected`, `code_exec.isolation.downgraded`) via `arctrust.audit.emit`.
+
+### Changed
+
+- **`execute_python` no longer runs bare host subprocesses by default** — `make_execute_tool()` now takes `tier`/`relax`/`caller_did`/`audit_sink`, resolves an isolation backend once at build time, and delegates every call to it through `SupportsSeparatedRun`. Tier and relax config are sourced by the caller (arccli); arcrun never reads config itself.
+
+### Security
+
+- Closes ASI05 (Unexpected Code Execution / RCE) with a real hardware-isolation floor at federal tier instead of a stripped-subprocess sandbox.
+- Fail-closed isolation resolution: unavailable required isolation refuses execution rather than silently downgrading.
+- Audit emitted on every backend selection and every downgrade, not just on failure.
+
 ## [0.5.0] - 2026-04-26
 
 Major refactor: streaming runtime API, audit emission migrated to arctrust, spawn primitive moved up to arcagent (separation of concerns), and stricter manifest enforcement at all tiers.

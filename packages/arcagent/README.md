@@ -138,7 +138,7 @@ await agent.shutdown()
 | Pillar | How It Shows Up |
 |---|---|
 | 🪪 **Identity** | `ArcAgent.__init__` refuses construction without a resolvable DID. Identity loaded from `[identity].did` in TOML; keypair from `key_dir`. Hard error on missing or wrong-permission keyfile |
-| ✍️ **Sign** | Skills, extensions, and pairings are verified before loading. No "skip for testing" backdoors |
+| ✍️ **Sign** | Agent-authored capabilities are signed on write (`.arcsig` sidecar, content hash + Ed25519) and **re-verified at load**, independent of any install-time check. A TOFU gate adjudicates first-sight and drift above personal tier. No "skip for testing" backdoors |
 | ✅ **Authorize** | Every tool call goes through the 5-layer policy pipeline (`arctrust.policy`). First DENY wins. Fail-closed |
 | 📜 **Audit** | Every operation emits an `arctrust.AuditEvent`. Sinks fan out: JSONL for compliance, hash-chained for tamper-evidence, WebSocket for live dashboards |
 
@@ -223,13 +223,15 @@ A **capability** is anything the loader picks up from one of four scan roots —
 | # | Root | Trust | Who writes it | What goes here |
 |---|------|-------|---------------|----------------|
 | 1 | `arcagent/builtins/capabilities/` | trusted | ships with the package | `bash`, `read`, `write`, `edit`, `find`, `grep`, `ls`, `reload`, plus the self-mod tools (`create_tool`, `create_skill`, `update_tool`, `update_skill`) and the 4 self-mod skill folders |
-| 2 | `~/.arc/capabilities/` | trusted | the human operator | global, opt-in capabilities shared across every agent |
-| 3 | `<agent_root>/capabilities/` | trusted | the human operator | per-agent capabilities and skill folders |
-| 4 | `<agent_root>/workspace/.capabilities/` | **UNTRUSTED** | the agent itself, at runtime | passes through the AST validator + (future) TOFU + OS sandbox before being imported |
+| 2 | `~/.arc/capabilities/` | **untrusted** (writable by the operator, but a compromised agent can plant a file here via `bash`) | the human operator | global, opt-in capabilities shared across every agent |
+| 3 | `<agent_root>/capabilities/` | **untrusted** (same reasoning) | the human operator | per-agent capabilities and skill folders |
+| 4 | `<agent_root>/workspace/.capabilities/` | **untrusted** | the agent itself, at runtime | passes through the AST validator + TOFU + OS sandbox before being imported |
+
+Roots 2-4 all go through the same gate — AST validator, Sign/TOFU check, restricted-builtins exec (`CapabilityLoader._UNTRUSTED_ROOTS`). Only root 1 (`builtins`) and the `module:<mod>` roots below are trusted and skip it entirely — they're the harness's own shipped Python, trusted via the normal package supply chain (`pip-audit`, code review), not a per-load signature check.
 
 > Override by collision: define `web_search` (a `@tool`) at root 2, then again at root 3, and root 3 wins. The reload diff names it explicitly: `~1 replaced (web_search 1.0.0→1.1.0)`.
 
-Plus: any module in `arcagent/modules/<mod>/` that has `[modules.<mod>].enabled = true` and a `capabilities.py` is loaded as an extra scan root (`module:<mod>`). Disabled modules are silently skipped.
+Plus: any module in `arcagent/modules/<mod>/` that has `[modules.<mod>].enabled = true` and a `capabilities.py` is loaded as an extra scan root (`module:<mod>`) — trusted, shipped code, same as root 1. Disabled modules are silently skipped.
 
 ### Skill folders
 
@@ -299,7 +301,7 @@ Errors append one indented line per failure (`<path>: <short reason>`), and each
 
 ### Trust tiers in this loader
 
-Only the workspace root is treated as untrusted code. Everything in builtins / global / per-agent is assumed operator-curated and skips the AST validator. The workspace root goes through:
+The workspace, global (`~/.arc/capabilities/`), and per-agent (`<agent_root>/capabilities/`) roots are all treated as untrusted code — anywhere a compromised agent could plant a `.py` file via `bash` and trigger a reload. Only `builtins` and the `module:<mod>` extra roots (the harness's own shipped Python) are trusted and skip the gate below entirely. Untrusted roots go through:
 
 1. **Source encoding check** — non-UTF-8 coding declarations rejected before the parser runs
 2. **AST validator** — rejects 9 bypass categories (privileged imports, frame traversal, `eval`/`exec`/`compile`/`__import__`, `sys.modules` subscription, `__builtins__` mutation, `__init_subclass__`, starred `__builtins__` unpacking)
@@ -458,7 +460,7 @@ This is the ACE framework (arXiv:2510.04618).
 
 ### Dynamic Tool Safety (Four Defense Layers)
 
-The four defenses gate the **untrusted scan root only** — `<workspace>/.capabilities/`, where the agent itself can write Python. Builtins, global, and per-agent roots are operator-curated and skip the AST gate.
+The four defenses gate every untrusted scan root — `<workspace>/.capabilities/` (agent-authored), `~/.arc/capabilities/` (global), and `<agent_root>/capabilities/` (per-agent) — anywhere a compromised agent could plant a file and trigger a reload. Only `builtins` and the `module:<mod>` roots (the harness's own shipped Python) are trusted and skip the AST gate.
 
 1. **Source encoding check** — reject non-UTF-8 coding declarations (codec attacks lose **before** the AST parser).
 2. **AST validator** — rejects 9 bypass categories: privileged imports (`os`, `ctypes`, `subprocess`, `pickle`, `sys`...), frame traversal (`gi_frame`, `f_back`, `__subclasses__`), dynamic execution (`eval`, `exec`, `compile`, `__import__`), `sys.modules` subscription, `__builtins__` assignment, `__init_subclass__` definitions, starred `__builtins__` unpacking. References real CVEs.
@@ -466,6 +468,20 @@ The four defenses gate the **untrusted scan root only** — `<workspace>/.capabi
 4. **Egress proxy** — network only via `ToolContext.http`, with per-tool origin allowlist (scheme + host + port). Deny-by-default. Every request audit-logged.
 
 Tier gates: Federal refuses agent-authored capabilities entirely. Enterprise allows them only after a human records approval via `arc trust approve` (persisted under `[security.validators.approved]`). Personal allows them with `[security.validators] auto_run_agent_code = true`.
+
+### Sign-Pillar Enforcement (SPEC-033)
+
+The signed-on-write / re-verified-at-load mechanism below is specific to the agent's own self-mod tools (`create_skill`, `create_tool`, ...), which only ever write into the workspace root. But the load-time Sign/TOFU gate itself (`CapabilityLoader._passes_trust_gate`) also covers the global (`~/.arc/capabilities/`) and per-agent (`<agent_root>/capabilities/`) roots — a missing/invalid signature denies outright above personal tier there too. Only `builtins` and the `module:<mod>` roots (arcagent's own shipped modules — `bio_memory`, `pulse`, `scheduler`, etc.) are genuinely out of scope: they are ordinary installed Python, trusted via the normal package supply chain, never signature-checked at load.
+
+| Control | What It Does |
+|---|---|
+| **Restricted-builtins execution** | Workspace-root modules exec under `RESTRICTED_BUILTINS` + a denylist-enforcing `__import__` instead of a bare full-builtins `exec`. Fast-fail linter / defense-in-depth in front of the SPEC-036 sandbox — not a boundary, not a substitute for it |
+| **Signed on write** | `create_skill`, `create_tool`, `update_skill`, `update_tool` write a detached `.arcsig` sidecar (content hash + Ed25519, keyed to the agent's own DID) alongside every artifact they produce |
+| **Re-verified at load** | The capability loader recomputes the content hash and re-checks the signature on every load — independent of, and in addition to, whatever check ran at create/install time |
+| **TOFU first-load approval** | A missing/invalid signature denies outright above personal tier; first-sight and drift are adjudicated by `TofuLayer` and recorded via `arc trust approve` |
+| **WORM-chained skill-improver audit** | Skill mutations from the self-improvement loop are signed and audited through an `arctrust.AuditSink` (a `WormSink` in production) — no plaintext `audit.jsonl` |
+
+Honest scope: a valid signature proves the artifact is unmodified since the signer wrote it and attributes it to that DID — it does not prove the content is safe. Safety is the TOFU gate's and the execution sandbox's job.
 
 ---
 

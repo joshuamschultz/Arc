@@ -131,7 +131,7 @@ Each module is one decorator that adds one concern.
 | **Audit** | Emits structured `arctrust` audit events | Compliance, forensics, post-hoc replay |
 | **Guardrails** | Structural response validation: JSON-schema, regex allow/deny, length, banned-content (opt-in, per call) | Improper-output handling (LLM05) |
 | **Injection** | Scans inbound user + tool-result content for prompt-injection (opt-in, off by default) | Prompt injection / context poisoning (LLM01, ASI06) |
-| **Security** | Bidirectional PII + secret redaction (checksum-gated, gov/CUI entities, pluggable detector), HMAC-SHA256 request signing | Lethal Trifecta protection, tamper-evidence |
+| **Security** | Bidirectional PII + secret redaction (checksum-gated, gov/CUI entities, pluggable detector), asymmetric request signing (Ed25519 / ECDSA-P256 FIPS) | Lethal Trifecta protection, tamper-evidence |
 | **Retry** | Exponential backoff, jitter, retryable-error classification | Survives transient provider failures |
 | **Fallback** | Failover chain across providers / models | Continuity when a provider is down |
 | **LoadBalancer** | Intra-provider distribution across endpoints/keys — weighted RR, health-aware, sticky (opt-in) | Throughput + quota headroom (SC-5, LLM10) |
@@ -210,8 +210,10 @@ Every call captures the full raw request and response for forensic replay (`load
 Every LLM request can be cryptographically signed:
 
 1. Messages, tools, and model name are serialized to **canonical JSON** (`sort_keys=True`, compact separators).
-2. The canonical bytes are signed with **HMAC-SHA256** (Ed25519 in progress).
+2. The canonical bytes are signed with an arctrust `Signer` — **Ed25519** by default, **ECDSA-P256** on the FIPS/federal path. Symmetric (HMAC) signing is removed; selecting it is a hard config error.
 3. Signature + algorithm get attached to the response metadata.
+
+Signing key custody is `in_process` (personal/dev default — the seed lives in the arcllm process) or `vault_transit` (enterprise/federal default — the seed never enters the process; a transit backend signs by reference). arctrust's `FileNotaryTransit` is the out-of-process reference implementation for dev/CI; production federal deployments swap in a real HSM/vault transit backend behind the same `Signer` protocol.
 
 Downstream systems can verify exactly what was sent — no "trust me, the prompt was..." in compliance reports.
 
@@ -318,7 +320,7 @@ Provider adapters are lazy-imported — they're only loaded when you call `load_
 | IA-5 | Vault-backed API key resolution; TTL caching; no plaintext on disk |
 | SC-5 | Intra-provider load balancing distributes calls across endpoints/keys |
 | SC-8 | HTTPS enforcement; HTTP only for loopback addresses |
-| SC-13 | HMAC-SHA256 request signing; FIPS fail-closed self-check on the encryption path |
+| SC-13 | Asymmetric request signing (Ed25519 default, ECDSA-P256 FIPS path via arctrust); FIPS fail-closed self-check on the encryption path |
 | SC-28 | AES-256-GCM envelope encryption of trace bodies at rest (federal tier) |
 | SI-4 | OpenTelemetry export with GenAI semantic conventions |
 | SI-10, SI-15 | Structural output guardrails; injection scanning of inbound content; checksum-gated PII/secret redaction |

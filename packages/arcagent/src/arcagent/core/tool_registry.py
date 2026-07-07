@@ -6,7 +6,7 @@ timeout enforcement, and audit logging.
 
 Sibling modules
 ---------------
-- ``arcagent.core.tool_transport``      — ToolTransport enum,
+- ``arcagent.tools._transport``         — ToolTransport enum,
   RegisteredTool dataclass, ``native_tool`` decorator,
   ``_validate_tool_args``, ``_echo_tool``, ``ToolClassification``.
 - ``arcagent.core.tool_policy_bridge``  — caller-DID binding helpers
@@ -34,6 +34,11 @@ from arctrust import AgentIdentity
 from arcagent.core.config import ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.session_internal.capability_ledger import (
+    SessionCapabilityLedger,
+    current_session_id,
+    legs_for_tags,
+)
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import (
     PolicyContext,
@@ -48,7 +53,8 @@ from arcagent.core.tool_policy_bridge import (
     _bind_caller_did,
     _is_memory_tool,
 )
-from arcagent.core.tool_transport import (
+from arcagent.tools._policy_fill import build_clearance_context, build_provider_usage
+from arcagent.tools._transport import (
     _DEFAULT_PREAMBLE,
     _PY_TYPE_MAP,
     RegisteredTool,
@@ -58,6 +64,7 @@ from arcagent.core.tool_transport import (
     _validate_tool_args,
     native_tool,
 )
+from arcagent.tools.human_gate import HumanGate
 
 _logger = logging.getLogger("arcagent.tool_registry")
 
@@ -102,11 +109,21 @@ class ToolRegistry:
         agent_did: str = "did:arc:unknown",
         tier: Literal["federal", "enterprise", "personal"] = "personal",
         policy_version: str = "v0",
+        capability_ledger: SessionCapabilityLedger | None = None,
+        human_gate: HumanGate | None = None,
+        provider_label: str | None = None,
+        resource_classifications: dict[str, str] | None = None,
+        classification_strict: bool = False,
     ) -> None:
         self._config = config
         self._bus = bus
         self._telemetry = telemetry
         self._policy_pipeline = policy_pipeline
+        # SPEC-035 — lethal-trifecta accumulation + human-approval gate. Both
+        # optional so bootstrap/tests can register tools without them; ArcAgent
+        # wires them in production. When absent, dispatch behaves as before.
+        self._capability_ledger = capability_ledger
+        self._human_gate = human_gate
         # Signing identity for tool dispatch. When a policy pipeline is
         # configured, every ToolCall is signed with this key so the pipeline's
         # IdentityLayer can authenticate it — an unsigned call is denied
@@ -115,6 +132,13 @@ class ToolRegistry:
         self._agent_did = identity.did if identity is not None else agent_did
         self._tier = tier
         self._policy_version = policy_version
+        # SPEC-038 — trusted provider label (config-sourced, never response.model)
+        # for ProviderUsage attribution, and per-tool resource classifications
+        # for the no-read-up ClassificationLayer. ``classification_strict`` fails
+        # closed on unknown labels at federal.
+        self._provider_label = provider_label
+        self._resource_classifications = resource_classifications or {}
+        self._classification_strict = classification_strict
         self._tools: dict[str, RegisteredTool] = {}
         self._prompt_cache: str | None = None
         self._preamble: str = config.preamble or _DEFAULT_PREAMBLE
@@ -263,7 +287,11 @@ class ToolRegistry:
                 ctx: ToolContext,
                 _w: Any = wrapped,
             ) -> str:
-                raw_result = await _w(args)
+                # Thread the live RunState (arcrun budget accounting) into the
+                # wrapped executor so it can build ProviderUsage for the
+                # ProviderLayer (SPEC-038 REQ-004). arcrun exposes state;
+                # arcagent bridges; arctrust decides.
+                raw_result = await _w(args, parent_state=ctx.parent_state)
                 return str(raw_result)
 
             result.append(
@@ -277,6 +305,38 @@ class ToolRegistry:
                 )
             )
         return result
+
+    async def _resolve_forbidden_composition(
+        self,
+        call: ToolCall,
+        ctx_pol: PolicyContext,
+        decision: Any,
+        human_gate: HumanGate | None,
+        tool_legs: frozenset[str],
+        accumulated: frozenset[str],
+    ) -> ToolCall:
+        """Pause a trifecta-completing deny for human approval, or fail closed.
+
+        SPEC-035 REQ-014/015. On any non-composition deny, or when no gate is
+        wired, the deny stands. On a forbidden-composition deny the gate is
+        asked for a one-shot, operator-signed approval; a granted token is
+        re-evaluated (arctrust honors it exactly once) and lets the single call
+        through. Denial/timeout → deny (fail closed).
+        """
+        if decision.rule_id != "global.forbidden_composition" or human_gate is None:
+            raise PolicyDenied(decision)
+        union = frozenset(tool_legs) | frozenset(accumulated)
+        approval = await human_gate.request(call, legs=union)
+        if approval is None:
+            raise PolicyDenied(decision)
+        approved_call = call.model_copy(update={"approval": approval})
+        pipeline = self._policy_pipeline
+        if pipeline is None:  # unreachable in practice — fail closed defensively
+            raise PolicyDenied(decision)
+        decision2 = await pipeline.evaluate(approved_call, ctx_pol)
+        if decision2.is_deny():
+            raise PolicyDenied(decision2)
+        return approved_call
 
     def _create_wrapped_execute(self, tool: RegisteredTool) -> Any:
         """Create a wrapped execute function for a tool.
@@ -297,8 +357,20 @@ class ToolRegistry:
         agent_did = self._agent_did
         tier = self._tier
         policy_version = self._policy_version
+        ledger = self._capability_ledger
+        human_gate = self._human_gate
+        provider_label = self._provider_label
+        resource_label = self._resource_classifications.get(tool.name)
+        classification_strict = self._classification_strict
+        # Session-scoped trifecta legs this tool contributes (deployment map).
+        tool_legs = legs_for_tags(tool.capability_tags)
 
-        async def wrapped_execute(args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        async def wrapped_execute(
+            args: dict[str, Any] | None = None,
+            *,
+            parent_state: Any = None,
+            **kwargs: Any,
+        ) -> Any:
             if args is None:
                 args = kwargs
 
@@ -310,26 +382,57 @@ class ToolRegistry:
             # No sudo mode, no bypass flag. Exceptions in layers are
             # caught by the pipeline and returned as DENY (fail-closed).
             if pipeline is not None:
+                session_id = current_session_id()
+                accumulated = (
+                    ledger.snapshot(session_id) if ledger is not None else frozenset()
+                )
                 call = ToolCall(
                     tool_name=tool.name,
                     arguments=args,
                     agent_did=agent_did,
-                    session_id="",
-                    classification="unclassified",
+                    session_id=session_id,
+                    classification=resource_label or "unclassified",
+                    capability_tags=tool_legs,
                 )
                 # Sign the call so the pipeline's IdentityLayer can authenticate
                 # it (proves this dispatch came from the key-holding agent, not
                 # an injected call). No identity → call stays unsigned → denied.
                 if identity is not None:
                     call = sign_call(call, identity)
+                # SPEC-038 REQ-004/010 — bridge the live arcrun usage onto the
+                # ProviderLayer seam with a TRUSTED config-sourced provider label
+                # (never response.model). Lights up SPEC-034's inert layer.
+                provider_usage = build_provider_usage(parent_state, provider_label)
+                # SPEC-038 REQ-023 — no-read-up labels for the ClassificationLayer:
+                # caller clearance from identity, resource classification from the
+                # per-tool config label. None when either is absent (layer no-ops).
+                clearance_ctx = build_clearance_context(
+                    identity, resource_label, classification_strict
+                )
+                # session_capabilities carries the accumulated trifecta legs so
+                # GlobalLayer sees the cross-call union (SPEC-035 REQ-012).
                 ctx_pol = PolicyContext(
                     tier=tier,
                     policy_version=policy_version,
                     bundle_age_seconds=0.0,
+                    session_capabilities=accumulated,
+                    provider_usage=provider_usage,
+                    clearance=clearance_ctx,
                 )
                 decision = await pipeline.evaluate(call, ctx_pol)
                 if decision.is_deny():
-                    raise PolicyDenied(decision)
+                    call = await self._resolve_forbidden_composition(
+                        call, ctx_pol, decision, human_gate, tool_legs, accumulated
+                    )
+                # On ALLOW (or after a granted one-shot approval), record the
+                # legs so the next call sees the updated union.
+                if ledger is not None and tool_legs:
+                    ledger.record(session_id, tool_legs)
+                # SPEC-038 F2 — track the max classification of data read this
+                # session so the no-exfil egress gate has a real data label
+                # (reuses the already-parsed resource classification).
+                if ledger is not None and clearance_ctx is not None:
+                    ledger.record_read(session_id, clearance_ctx.resource_classification)
 
             # 2. Pre-tool event (may veto)
             ctx = await bus.emit(

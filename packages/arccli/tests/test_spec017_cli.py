@@ -23,12 +23,13 @@ from arccli.commands.spec017 import (
 
 
 class TestPolicyLayers:
-    def test_federal_lists_all_five(self) -> None:
+    def test_federal_lists_all_layers(self) -> None:
         payload = policy_layers(tier="federal")
         assert payload["tier"] == "federal"
         assert payload["layers"] == [
             "identity",
             "global",
+            "classification",
             "provider",
             "agent",
             "team",

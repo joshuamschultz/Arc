@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-06
+
+SPEC-038 sub-scopes B + C: arctrust becomes the canonical owner of the classification ladder and gains a no-read-up policy layer; the provider-budget layer now fails closed on an unknown label.
+
+### Added
+- `arctrust.classification` — the single ordered `Classification` ladder (`UNCLASSIFIED < CUI < CONFIDENTIAL < SECRET < TOP_SECRET`), a `dominates()` total-order comparator, and `parse_classification(value, *, strict)` (federal `strict=True` fails closed on unknown/empty; personal warns + defaults `UNCLASSIFIED`). NOFORN/SCI compartments are out of scope.
+- `ClassificationLayer` — a thin no-read-up predicate slotted after `GlobalLayer` (enterprise/federal). Enforces `dominates(caller_clearance, resource_classification)` from `PolicyContext.clearance` (new `ClearanceContext`); no-ops when unlabeled, fails closed (`classification.state_missing`) when `enforced`.
+- `AgentIdentity.clearance` (immutable, defaults `UNCLASSIFIED`); `derive_child_identity` narrows clearance monotone-non-increasing (`min(requested, parent)`) and carries it on `ChildIdentity`.
+- `build_pipeline(classification_enforced=...)`.
+
+### Changed
+- `ProviderLayer` — an unknown provider label under configured limits now DENYs (`provider.unknown_label`) at enterprise/federal (`relaxable=True` allows only at personal). Closes the SPEC-034 budget-dodge-by-label fail-open.
+
+## [0.8.0] - 2026-07-06
+
+SPEC-037: the `Signer` seam — asymmetric signing with pluggable, out-of-process key custody, plus a generalised FIPS gate. Additive: Ed25519 stays the default everywhere; existing DIDs, WORM chains, and operator keys are unchanged.
+
+### Added
+- `arctrust.signer` — `Signer` Protocol (`public_key`, `algorithm`, `sign`); `InProcessSigner` (Ed25519 via PyNaCl, ECDSA-P256 via PyCA `cryptography`); `VaultSigner` that signs BY REFERENCE through a `VaultTransit` boundary so the seed never enters the process (REQ-006, closes the SPEC-053 in-process-seed residual); reference `FileNotaryTransit` (out-of-process notary subprocess) for dev/CI; `SignerConfig` + `build_signer` (fail-closed — `vault_transit` with no transit client is an error, never an in-process fallback); `verify_signature` (algorithm-dispatched, never raises).
+- `arctrust.fips` — one generalised FIPS gate for signing AND encryption: `fips_backend_active`, `algorithm_is_fips_approved` (`ecdsa-p256`/`aes-256-gcm` approved; `ed25519` rejected under FIPS since Arc's is libsodium), `assert_fips_if_required` (raises `ArcTrustFipsError` fail-closed at federal), `ArcTrustFipsError`.
+- `OperatorKey.into_signer(algorithm)` — adapt the on-disk operator key into an in-process `Signer`.
+- `cryptography>=46.0.7` dependency (ECDSA-P256 + the FIPS backend probe).
+
+### Changed
+- **`WormSink.__init__` takes `signer: Signer` instead of `operator_private_key: bytes`** — the raw-seed constructor path is deleted. Records now carry `algorithm`; `verify_chain` dispatches per record (defaults to `ed25519` for pre-SPEC-037 records, so existing chains verify unchanged). `verify_chain`'s public-key call shape is unchanged (REQ-003).
+
+## [0.7.0] - 2026-07-06
+
+SPEC-035: forbidden-composition enforcement goes live in the policy engine, plus operator-signed approval tokens.
+
+### Added
+- `GlobalLayer.forbidden_compositions` is now enforced: `evaluate` unions `ToolCall.capability_tags` with `PolicyContext.session_capabilities` and DENYs (`rule_id="global.forbidden_composition"`) when any configured forbidden set is a subset — the subset check is inlined (no arcagent dependency).
+- `ToolCall.capability_tags` and `ToolCall.approval` (both frozen, optional, excluded from `signing_bytes()`); `PolicyContext.session_capabilities`.
+- `ApprovalGrant` + `sign_approval` / `verify_approval`: operator/human-signed, one-shot, call-hash-bound approval tokens. `verify_approval` fails closed and rejects self-approval (approver DID == agent DID) — ASI09.
+- Approval-bearing calls bypass the decision cache (read + write) so a one-shot approval is always freshly evaluated and never served a cached DENY.
+
+## [0.6.0] - 2026-07-06
+
+SPEC-053: audit-authority independence. The audited subject can no longer be its own audit authority.
+
+### Added
+- `OperatorKey` (`arctrust.operator`) — the deployment audit-signing seed. Deliberately NOT an `AgentIdentity`: it exposes only `seed` + `public_key`, with no `sign`/`did` surface, so the type system prevents any code from using an agent identity as the audit authority (or vice versa). Generate / load / save (0600 file, 0700 dir) with a `vault_resolver` seam (SPEC-037) for HSM/vault custody.
+- `WitnessAnchor` Protocol + two implementations (`arctrust.witness`): `AppendOnlyMediumWitness` (offline / air-gapped) and `TransparencyLogWitness` (online Rekor-style, over an injected transport). External witnessing of operator-signed checkpoint heads (REQ-009/010) reuses the existing `build_checkpoint` payload — no parallel anchor format.
+
+### Changed
+- `PolicyPipeline.evaluate` now authenticates BEFORE both short-circuits (SPEC-034 review Findings 2 + 6): the `IdentityLayer` runs first — ahead of the restricted-mode safe-set check and the decision-cache lookup — so an unsigned/de-registered call can never be handed a safe-set ALLOW or a cache-hit ALLOW. The decision cache key now incorporates a signature fingerprint, so an unsigned call and a signed call can never collide. First-DENY-wins, fail-closed, shadow, and TTL semantics are unchanged.
+
+## [0.5.0] - 2026-07-06
+
+SPEC-034: complete the PolicyPipeline — the three stub layers become real policy decisions, the `PolicyContext` grows a typed injected-state contract, and every decision is routed into the durable WORM chain.
+
+### Added
+
+- **Real `ProviderLayer`** (`policy.py`, LLM10) — a pure comparator. Holds per-provider `ProviderLimit` (budget + rate) floors from construction; reads live `PolicyContext.provider_usage` (filled later by SPEC-038). Denies `provider.budget_exceeded` / `provider.rate_exceeded`. **Configured-gate:** with no limits configured the layer is a no-op ALLOW (absence of a budget policy is not a violation); only once a limit IS configured does missing usage telemetry fail closed (`provider.state_missing`). Never calls arcllm, never decrements, holds no mutable store.
+- **Real `TeamLayer`** (`policy.py`, ASI03/ASI07) — capability-scoping. Static role→scope floor from construction; per-call activated scope + delegation grant from `PolicyContext.team_scope`. Denies `team.scope_violation` (out-of-scope tool) and `team.delegation_exceeded` (delegated call wider than its grant — monotonic-narrowing). Absent team scope ALLOWs (admission is IdentityLayer's job).
+- **Real `SandboxLayer`** (`policy.py`, ASI04/ASI05) — deliberately thin. Reads verification (SPEC-033) + isolation (SPEC-036) status from `PolicyContext.tool_runtime` and compares over the `host < container < vm` ladder. Denies `sandbox.unverified_tool` / `sandbox.isolation_unsatisfiable`. **Configured-gate:** with no runtime status in context the layer is a no-op ALLOW — the SPEC-033 load gate already verified any registry tool, so a blind sandbox layer has nothing to add. Re-runs no verification, starts no sandbox.
+- **`PolicyContext` injected-state contract** — new frozen Pydantic models `ProviderUsage`, `TeamScope`, `ToolRuntimeStatus` and three optional fields (`provider_usage`, `team_scope`, `tool_runtime`), each defaulting `None` so existing 3-field constructions stay valid. `ProviderLimit` model + `build_pipeline(provider_limits=, team_roles=)` config threads.
+- **`worm_policy_sink(sink)`** (`audit.py`, REQ-017) — adapts the pipeline's `(event_type, payload)` audit callback to a durable `AuditSink`, mapping each decision to an `AuditEvent(action="policy.evaluate")` and emitting it via `emit()`. Raw tool arguments are never copied (only `input_hash`, AU-9). Routes every ALLOW/DENY into the tamper-evident, Ed25519-signed WORM chain; `verify_chain()` passes over the result. Exported from the package root.
+
+### Changed
+
+- Policy audit payload key `matched_rule` → `rule_id` (AU-2 event-reconstruction payload now carries `tier`, `layer`, `rule_id`, `input_hash`, `classification`; no raw arguments).
+- `build_pipeline` constructs the Provider/Team/Sandbox layers (enterprise/federal only) with their config. Each layer is a no-op when its policy is unconfigured and fails closed only when a configured policy meets missing telemetry — so default/empty config never bricks a tier.
+
+## [0.4.0] - 2026-07-06
+
+SPEC-033 A1: detached artifact signing — the crypto primitive behind arcagent's Sign-pillar enforcement on agent-authored capabilities.
+
+### Added
+
+- **Artifact signing** (`artifact.py`) — `sign_artifact`/`verify_artifact`/`content_sha256` and the `ArtifactSignature` model. Content-hash (`sha256:<hex>`) + Ed25519 detached signature over arbitrary bytes, serialisable to a `.arcsig` sidecar (`ArtifactSignature.to_json`/`from_json`). `verify_artifact` never raises — any malformed field, algorithm mismatch, digest mismatch, or (when pinned) public-key mismatch collapses to `False`, fail-closed. Exported from the package root: `ArtifactSignature`, `content_sha256`, `sign_artifact`, `verify_artifact`.
+- **Honest semantics, documented** — a valid signature proves the bytes are *unmodified since the signer wrote them* and *attributed* to the signer's DID key. It does not prove the content is safe; a compromised signer produces a perfectly valid signature over malicious bytes. Safety is the caller's TOFU gate and execution sandbox, never this primitive — stated explicitly in the module docstring so downstream callers don't over-trust it.
+- **Tests** — `test_artifact.py`.
+
+## [0.3.0] - 2026-07-05
+
 ### Added
 
 - **`read_verified_anchor`** (`audit.py`) — reads the newest `extra` payload

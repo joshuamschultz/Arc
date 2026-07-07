@@ -127,6 +127,10 @@ flowchart LR
 
 CRL is **also checked on boot** — `check_revocation_on_boot()` quarantines any locked skill whose cert was revoked since the last boot.
 
+### Re-verified at load, not just at install
+
+Install-time and load-time are different trust boundaries — a signed bundle can be tampered with on disk in between. `verify_artifact_at_load()` (`hub/verify.py`) recomputes the content hash from the bytes on disk right now and re-runs the same `verify_bundle` core the installer used, so a post-install byte change fails the load check. Same precedent as Linux kernel-module signing and `jarsigner`: signature checked once at install is not enough.
+
 ---
 
 ## 🧱 Public API

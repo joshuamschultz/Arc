@@ -20,6 +20,10 @@ Keypair:
     sign                — Ed25519 sign → 64-byte signature
     verify              — Ed25519 verify → bool (never raises)
 
+Operator (audit authority):
+    OperatorKey         — deployment audit-signing seed, deliberately NOT an
+                          AgentIdentity (no sign/did); signs every WORM chain
+
 Audit:
     AuditEvent          — Pydantic schema for structured audit events
     AuditSink           — Protocol for sink implementations
@@ -47,8 +51,14 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.3.0"
+__version__ = "0.9.0"
 
+from arctrust.artifact import (
+    ArtifactSignature,
+    content_sha256,
+    sign_artifact,
+    verify_artifact,
+)
 from arctrust.audit import (
     AuditEvent,
     AuditSink,
@@ -57,6 +67,18 @@ from arctrust.audit import (
     emit,
     read_verified_anchor,
     verify_chain,
+    worm_policy_sink,
+)
+from arctrust.classification import (
+    Classification,
+    dominates,
+    parse_classification,
+)
+from arctrust.fips import (
+    ArcTrustFipsError,
+    algorithm_is_fips_approved,
+    assert_fips_if_required,
+    fips_backend_active,
 )
 from arctrust.identity import (
     AgentIdentity,
@@ -67,7 +89,10 @@ from arctrust.identity import (
     validate_did,
 )
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
+from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
 from arctrust.policy import (
+    ClassificationLayer,
+    ClearanceContext,
     Decision,
     PolicyContext,
     PolicyLayer,
@@ -76,41 +101,93 @@ from arctrust.policy import (
     ToolCall,
     build_pipeline,
 )
+from arctrust.signer import (
+    ECDSA_P256,
+    ED25519,
+    FileNotaryTransit,
+    InProcessSigner,
+    Signer,
+    SignerConfig,
+    SignerError,
+    VaultSigner,
+    VaultTransit,
+    build_signer,
+    verify_signature,
+)
 from arctrust.trust_store import (
     TrustStoreError,
     invalidate_cache,
     load_issuer_pubkey,
     load_operator_pubkey,
 )
+from arctrust.witness import (
+    AppendOnlyMediumWitness,
+    TransparencyLogWitness,
+    WitnessAnchor,
+    WitnessDivergenceError,
+    verify_local_head_witnessed,
+)
 
 __all__ = [
+    "ECDSA_P256",
+    "ED25519",
     "AgentIdentity",
+    "AppendOnlyMediumWitness",
+    "ArcTrustFipsError",
+    "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
     "ChildIdentity",
+    "Classification",
+    "ClassificationLayer",
+    "ClearanceContext",
     "Decision",
+    "FileNotaryTransit",
+    "InProcessSigner",
     "KeyPair",
     "NullSink",
+    "OperatorKey",
+    "OperatorKeyIntegrityError",
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
+    "Signer",
+    "SignerConfig",
+    "SignerError",
     "TierConfig",
     "ToolCall",
+    "TransparencyLogWitness",
     "TrustStoreError",
+    "VaultSigner",
+    "VaultTransit",
+    "WitnessAnchor",
+    "WitnessDivergenceError",
     "WormSink",
     "__version__",
+    "algorithm_is_fips_approved",
+    "assert_fips_if_required",
     "build_pipeline",
+    "build_signer",
+    "content_sha256",
     "derive_child_identity",
+    "dominates",
     "emit",
+    "fips_backend_active",
     "generate_did",
     "generate_keypair",
     "invalidate_cache",
     "load_issuer_pubkey",
     "load_operator_pubkey",
+    "parse_classification",
     "parse_did",
     "read_verified_anchor",
     "sign",
+    "sign_artifact",
     "validate_did",
     "verify",
+    "verify_artifact",
     "verify_chain",
+    "verify_local_head_witnessed",
+    "verify_signature",
+    "worm_policy_sink",
 ]

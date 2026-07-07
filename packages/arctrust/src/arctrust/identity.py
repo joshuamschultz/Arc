@@ -32,6 +32,7 @@ from typing import Any
 from nacl.signing import SigningKey, VerifyKey
 from pydantic import BaseModel
 
+from arctrust.classification import Classification
 from arctrust.keypair import KEY_SIZE, generate_keypair
 
 _logger = logging.getLogger("arctrust.identity")
@@ -55,7 +56,17 @@ def generate_did(verify_key: VerifyKey, *, org: str, agent_type: str) -> str:
     Returns:
         DID string in the form ``did:arc:{org}:{type}/{hash}``.
     """
-    key_hash = hashlib.sha256(bytes(verify_key)).hexdigest()[:8]
+    return did_from_public_key(bytes(verify_key), org=org, agent_type=agent_type)
+
+
+def did_from_public_key(public_key: bytes, *, org: str, agent_type: str) -> str:
+    """Derive a DID from raw public-key bytes (algorithm-agnostic).
+
+    Same fingerprint rule as :func:`generate_did` — ``sha256(public_key)[:8]`` —
+    but takes bytes so an ECDSA-P256 (DER) operator key derives a DID exactly
+    like an Ed25519 one (SPEC-037: the approval authority may sign with either).
+    """
+    key_hash = hashlib.sha256(public_key).hexdigest()[:8]
     return f"did:arc:{org}:{agent_type}/{key_hash}"
 
 
@@ -168,15 +179,30 @@ class AgentIdentity:
         did: str,
         public_key: bytes,
         _signing_key: SigningKey | None = None,
+        clearance: Classification = Classification.UNCLASSIFIED,
     ) -> None:
         self.did = did
         self.public_key = public_key
         self._signing_key = _signing_key
+        # Maximum classification this identity is cleared for (SPEC-038 REQ-021).
+        # Resolved from operator config by arcagent at construction; immutable
+        # for the session. Defaults UNCLASSIFIED (permissive for single-dev).
+        self.clearance = clearance
 
     @property
     def can_sign(self) -> bool:
         """Whether this identity has a private key for signing."""
         return self._signing_key is not None
+
+    @property
+    def algorithm(self) -> str:
+        """Signing algorithm — always Ed25519 for an agent identity.
+
+        Present so an :class:`AgentIdentity` satisfies the ``Signer`` /
+        approval-authority contract (public_key + algorithm + sign) uniformly
+        with :class:`arctrust.signer.VaultSigner` (SPEC-037).
+        """
+        return "ed25519"
 
     @property
     def signing_seed(self) -> bytes:
@@ -405,11 +431,13 @@ class ChildIdentity(BaseModel):
         did: DID in ``did:arc:delegate:child/{hex8}`` format.
         sk_bytes: 32-byte Ed25519 private key seed.
         ttl_s: Seconds until this identity expires.
+        clearance: Child's clearance — never exceeds the parent's (SPEC-038).
     """
 
     did: str
     sk_bytes: bytes
     ttl_s: int
+    clearance: Classification = Classification.UNCLASSIFIED
 
 
 def derive_child_identity(
@@ -417,6 +445,8 @@ def derive_child_identity(
     parent_sk_bytes: bytes,
     spawn_id: str,
     wallclock_timeout_s: float | None = None,
+    parent_clearance: Classification = Classification.UNCLASSIFIED,
+    requested_clearance: Classification | None = None,
 ) -> ChildIdentity:
     """Derive a deterministic child identity from parent secret key and spawn id.
 
@@ -437,6 +467,12 @@ def derive_child_identity(
     """
     ttl = int(wallclock_timeout_s) if wallclock_timeout_s is not None else 300
 
+    # Delegation narrows clearance monotone-non-increasing (SPEC-038 REQ-022):
+    # a child can never out-clear its parent. A request above the parent's is
+    # clamped down here; the federal hard-deny is the caller's (arcagent spawn).
+    requested = requested_clearance if requested_clearance is not None else parent_clearance
+    child_clearance = min(requested, parent_clearance)
+
     # HKDF-SHA256 expand step
     # PRK = HMAC-SHA256(salt="arc.spawn", IKM=parent_sk)
     # T(1) = HMAC-SHA256(PRK, info=spawn_id_bytes || 0x01)
@@ -449,7 +485,7 @@ def derive_child_identity(
     hex_suffix = child_seed[:4].hex()
     did = f"did:arc:delegate:child/{hex_suffix}"
 
-    return ChildIdentity(did=did, sk_bytes=child_seed, ttl_s=ttl)
+    return ChildIdentity(did=did, sk_bytes=child_seed, ttl_s=ttl, clearance=child_clearance)
 
 
 __all__ = [

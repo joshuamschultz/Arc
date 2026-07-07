@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcllm"
-version = "0.5.1"
+version = "0.6.0"
 description = "Unified LLM abstraction layer for autonomous agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,6 +25,7 @@ dependencies = [
     "opentelemetry-api>=1.20",
     "jcs>=0.2.1",
     "arcstore",
+    "arctrust",
 ]
 
 [project.urls]
@@ -38,15 +39,12 @@ otel = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.20",
     "opentelemetry-exporter-otlp-proto-http>=1.20",
 ]
-signing = [
-    "cryptography>=42.0",
-]
 trace-encryption = [
-    # _trace_crypto.fips_provider_active() reads the private
-    # cryptography.hazmat.backends.openssl.backend._fips_enabled attribute
-    # (no public API exists — pyca/cryptography#7722). Pinned to a range
-    # verified to still expose that attribute; widen only after re-verifying.
-    "cryptography>=42.0,<47.0",
+    # AES-256-GCM trace-body sealing. The FIPS provenance/gate lives in
+    # arctrust (arctrust.fips reads the private
+    # cryptography.hazmat.backends.openssl.backend._fips_enabled attribute —
+    # no public API exists, pyca/cryptography#7722).
+    "cryptography>=46.0.7,<47.0",
 ]
 injection-semantic = [
     "numpy>=1.26",

@@ -19,6 +19,8 @@ from arcagent.core.tool_policy import (
 class _DenyAllLayer:
     """Policy layer that denies every call."""
 
+    name = "global"
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         return Decision.deny(
             layer="global",
@@ -32,12 +34,16 @@ class _DenyAllLayer:
 class _AllowAllLayer:
     """Policy layer that allows every call."""
 
+    name = "global"
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         return Decision.allow(input_hash="h", evaluated_at_us=0)
 
 
 class _RecordingLayer:
     """Records whether evaluate was called."""
+
+    name = "global"
 
     def __init__(self) -> None:
         self.called = False

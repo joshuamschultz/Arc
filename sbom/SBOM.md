@@ -2,8 +2,8 @@
 
 **Project:** Arc — Federal-grade agentic platform (`arcagent` / `arcllm` / `arcrun` and supporting packages)
 **Report version:** 1.0
-**Generated:** 2026-06-21
-**Source revision:** `cc27469` (branch `main`)
+**Generated:** 2026-07-06
+**Source revision:** `e63f3a8` (branch `hotfix/cve-ci-security-gate`)
 **Audience:** Enterprise security teams, Federal ATO/RMF assessors, supply-chain risk officers
 
 > **Handling:** UNCLASSIFIED // For Official Use Only (FOUO) once populated with
@@ -26,24 +26,27 @@ federal supply-chain controls.
 | Dimension | Result |
 |---|---|
 | First-party (workspace) packages | **18** |
-| Third-party Python components (resolved, all groups) | **184** |
-| Third-party Python components (deployed **runtime** only) | **69** |
+| Third-party Python components (resolved, all groups) | **114** |
+| Third-party Python components (deployed **runtime** only) | **79** |
 | Third-party JS/npm components (incl. transitive) | **411** (216 prod) |
-| Python packages with known vulnerabilities | **17** (8 in runtime) |
-| Total Python vulnerability findings | **60** (23 runtime / 37 dev-build) |
+| Python packages with known vulnerabilities | **3** (1 in runtime) |
+| Total Python vulnerability findings | **5** (1 runtime / 4 dev-build) |
 | Distinct Python advisories | **60** |
 | JS/npm vulnerabilities | **1** (0 critical / 1 high / 0 moderate / 0 low) |
 | License posture | Permissive-dominant; **0** strong-copyleft (GPL/AGPL); 4 weak-copyleft (MPL/LGPL) |
 
 ### Key findings
 
-1. **One CRITICAL, runtime, in a security-critical component.** `cryptography 46.0.5`
-   carries **PYSEC-2026-36 (CVE-2026-39892, CVSS 9.8)**. This library underpins Arc's
-   "Sign" and "Identity" pillars (artifact verification, keypairs). **Patch first.**
+1. **CRITICAL patched in the signing path.** `cryptography` was bumped `46.0.5 -> 46.0.7`,
+   closing **PYSEC-2026-36 (CVE-2026-39892, CVSS 9.8)**. This library underpins Arc's
+   "Sign" and "Identity" pillars (artifact verification, keypairs). One residual HIGH
+   (GHSA-537c-gmf6-5ccf, statically-linked OpenSSL) needs `48.0.1`, held back by the
+   `<47.0` FIPS-attribute cap in the `trace-encryption` extra.
 2. **Runtime attack surface is materially smaller than raw counts suggest.** Of
-   17 vulnerable packages, only **8** ship in the
-   deployed runtime. The 37 dev/build-only findings (notably `aiohttp`'s 21)
-   are not part of the production attack surface, though they remain in the CI/CD trust boundary.
+   3 vulnerable packages, only **1** ship in the
+   deployed runtime. The 4 dev/build-only findings (from `pip-audit`'s own
+   `pip`/`msgpack` chain) are not part of the production attack surface, and the tutorial
+   Jupyter tooling has been moved out of the runtime closure entirely.
 3. **No copyleft contamination risk.** Zero GPL/AGPL. The 4 weak-copyleft
    components (MPL-2.0, LGPL-3.0) are file-/library-level licenses compatible with
    proprietary federal distribution when used unmodified.
@@ -55,8 +58,8 @@ federal supply-chain controls.
 ## 2. Scope & Methodology
 
 ### What was analyzed
-- **Python:** the entire uv workspace resolved from `uv.lock` (184 third-party
-  components across all dependency groups; 69 in the non-dev runtime set).
+- **Python:** the entire uv workspace resolved from `uv.lock` (114 third-party
+  components across all dependency groups; 79 in the non-dev runtime set).
 - **JavaScript:** `packages/arcui/web` resolved from `package-lock.json`
   (411 components).
 - **First-party:** all 18 workspace packages (these are the *subject* of the
@@ -84,7 +87,7 @@ federal supply-chain controls.
 | Other unique identifiers | CycloneDX `purl` (Package URL) per component |
 | Dependency relationships | CycloneDX `dependencies` graph; direct/transitive flags §6 |
 | Author of SBOM data | This automated pipeline (`sbom/_gen_report.py`) |
-| Timestamp | 2026-06-21 |
+| Timestamp | 2026-07-06 |
 
 ---
 
@@ -94,8 +97,8 @@ The authoritative, tool-ingestible SBOMs live alongside this report in `sbom/`:
 
 | File | Format | Contents |
 |---|---|---|
-| `arc-python-env.cdx.json` | CycloneDX 1.6 JSON | Python components **with license + version metadata** (206 components) |
-| `arc-python.cdx.json` | CycloneDX 1.6 JSON | Python components from pinned requirements (198 components) |
+| `arc-python-env.cdx.json` | CycloneDX 1.6 JSON | Python components **with license + version metadata** (223 components) |
+| `arc-python.cdx.json` | CycloneDX 1.6 JSON | Python components from pinned requirements (131 components) |
 | `pip-audit.json` | pip-audit JSON | Full Python vulnerability findings + fix versions |
 | `npm-audit.json` | npm audit JSON | JS vulnerability findings |
 | `osv-severity.json` | JSON | CVSS v3 base scores per advisory (OSV-derived) |
@@ -127,13 +130,13 @@ The authoritative, tool-ingestible SBOMs live alongside this report in `sbom/`:
 ### 4.2 Runtime vs build-time exposure
 
 Federal risk acceptance hinges on whether a vulnerable component is reachable in the
-deployed artifact. Arc's deployed runtime contains **69** of the 184
+deployed artifact. Arc's deployed runtime contains **79** of the 114
 resolved Python components.
 
 | Exposure | Vulnerable packages | Findings |
 |---|---|---|
-| **Runtime (deployed attack surface)** | 8 | 23 |
-| Dev / build / CI only | 9 | 37 |
+| **Runtime (deployed attack surface)** | 1 | 1 |
+| Dev / build / CI only | 2 | 4 |
 
 ### 4.3 Vulnerable Python packages (prioritized)
 
@@ -141,34 +144,16 @@ Sorted by max CVSS, then finding count. **D** = direct dependency, **T** = trans
 
 | Package | Installed | Scope | D/T | Findings | Max CVSS | Upgrade to |
 |---|---|---|---|---|---|---|
-| `cryptography` | 46.0.5 | **Runtime** | T | 3 | Critical (9.8) | `48.0.1` |
-| `pyjwt` | 2.11.0 | **Runtime** | T | 6 | High (7.5) | `2.13.0` |
-| `urllib3` | 2.6.3 | Dev/Build | T | 2 | High (7.5) | `2.7.0` |
+| `cryptography` | 46.0.7 | **Runtime** | T | 1 | High (7.5) | `48.0.1` |
 | `msgpack` | 1.1.2 | Dev/Build | T | 1 | High (7.5) | `1.2.1` |
-| `tornado` | 6.5.5 | Dev/Build | T | 4 | Medium (5.9) | `6.5.7` |
-| `bleach` | 6.3.0 | Dev/Build | T | 3 | Medium (6.1) | `6.4.0` |
 | `pip` | 26.0.1 | Dev/Build | T | 3 | Medium (5.5) | `26.1.2` |
-| `idna` | 3.11 | **Runtime** | T | 1 | Medium (5.3) | `3.15` |
-| `pydantic-settings` | 2.13.0 | **Runtime** | D | 1 | Medium (5.3) | `2.14.2` |
-| `requests` | 2.32.5 | Dev/Build | T | 1 | Medium (4.4) | `2.33.0` |
-| `aiohttp` | 3.13.3 | Dev/Build | D | 21 | Unscored | `3.14.1` |
-| `python-multipart` | 0.0.22 | **Runtime** | T | 5 | Unscored | `0.0.31` |
-| `starlette` | 0.52.1 | **Runtime** | D | 5 | Unscored | `1.3.1` |
-| `jupyter-server` | 2.18.2 | Dev/Build | T | 1 | Unscored | `2.20.0` |
-| `jupyterlab` | 4.5.7 | Dev/Build | T | 1 | Unscored | `4.5.9` |
-| `pygments` | 2.19.2 | **Runtime** | T | 1 | Unscored | `2.20.0` |
-| `python-dotenv` | 1.2.1 | **Runtime** | D | 1 | Unscored | `1.2.2` |
 
 ### 4.4 CRITICAL & HIGH detail (Python)
 
 | Severity | Package | Advisory | Aliases | Fix |
 |---|---|---|---|---|
-| Critical (9.8) | `cryptography` 46.0.5 | PYSEC-2026-36 | GHSA-p423-j2cm-9vmq, CVE-2026-39892 | `46.0.7` |
-| High (7.5) | `cryptography` 46.0.5 | GHSA-537c-gmf6-5ccf | — | `48.0.1` |
+| High (7.5) | `cryptography` 46.0.7 | GHSA-537c-gmf6-5ccf | — | `48.0.1` |
 | High (7.5) | `msgpack` 1.1.2 | GHSA-6v7p-g79w-8964 | — | `1.2.1` |
-| High (7.5) | `pyjwt` 2.11.0 | PYSEC-2026-120 | CVE-2026-32597, GHSA-752w-5fwx-jx9f | `2.12.0` |
-| High (7.4) | `pyjwt` 2.11.0 | PYSEC-2026-179 | CVE-2026-48526, GHSA-xgmm-8j9v-c9wx | `2.13.0` |
-| High (7.5) | `urllib3` 2.6.3 | PYSEC-2026-142 | CVE-2026-44432, GHSA-mf9v-mfxr-j63j | `2.7.0` |
 
 ### 4.5 JavaScript (`arcui/web`)
 
@@ -186,20 +171,21 @@ and a fix is available.
 
 ---
 
-## 5. Prioritized Remediation Plan
+## 5. Remediation Status
 
-Execution-ordered. Items 1–2 are the only ones touching the deployed federal runtime.
+The residual runtime CVE cluster has been remediated. The blocking CI security
+gate now audits the **harness runtime closure only** (workspace packages +
+product extras, excluding the `dev`, `test`, and `tutorial` groups) and honors
+the POA&M in `sbom/security-suppressions.txt`.
 
-| # | Action | Why | Command |
-|---|---|---|---|
-| 1 | **Upgrade `cryptography` → `48.0.1`** | Only CRITICAL (9.8); underpins Sign/Identity pillars | `uv lock --upgrade-package cryptography` |
-| 2 | **Upgrade runtime HIGH/MED**: `pyjwt→2.13.0`, `idna→3.15`, `pydantic-settings→2.14.2`, `python-multipart→0.0.31`, `starlette→1.3.1`, `python-dotenv→1.2.2`, `pygments→2.20.0` | Deployed attack surface | `uv lock --upgrade-package <name>` (repeat) |
-| 3 | **Upgrade dev/build set**: `aiohttp→3.14.1`, `requests→2.33.0`, `urllib3→2.7.0`, `tornado→6.5.7`, `jupyterlab→4.5.9`, `jupyter-server→2.20.0`, `bleach→6.4.0`, `msgpack→1.2.1`, `pip→26.1.2` | CI/CD trust boundary | `uv lock --upgrade` |
-| 4 | **`npm audit fix`** in `packages/arcui/web` | Resolve `vite` high | `cd packages/arcui/web && npm audit fix` |
-| 5 | **Re-run this analysis; gate the build** | Prove zero-known-vuln runtime | see §11 |
-
-> ⚠️ `starlette` and `pyjwt` fixes cross a major-version boundary (`starlette 0.x→1.x`,
-> review breaking changes). Validate against Arc's web/gateway surface before merging.
+| # | Action | Status |
+|---|---|---|
+| 1 | **Runtime deps bumped to fixed versions**: `aiohttp→3.14.1`, `pyjwt→2.13.0`, `starlette→1.3.1`, `python-multipart→0.0.32`, `requests→2.34.2`, `urllib3→2.7.0`, `idna→3.18`, `pydantic-settings→2.14.2`, `pygments→2.20.0`, `python-dotenv→1.2.2` | ✅ DONE — constraints raised in owning `pyproject.toml` / workspace `constraint-dependencies`; `uv lock` regenerated |
+| 2 | **`cryptography` GHSA-537c-gmf6-5ccf** (fix 48.0.1) | ⏸️ ACCEPTED w/ POA&M — deliberate `<47.0` FIPS 140-3 cap; affected PKCS7/SMIME-decrypt path is unreachable in Arc (Ed25519/X.509 only). See `sbom/security-suppressions.txt`. |
+| 3 | **Tutorial/help-docs tooling** (`jupyterlab`, `jupyter-server`, `tornado`, `bleach`) | ✅ EXCLUDED — moved to the `tutorial` dependency group; not part of the deployed runtime, so out of the security gate's scope |
+| 4 | **Dev tooling** (`pip`, `msgpack` via `pip-audit`'s filecache) | ✅ EXCLUDED — build-time only, not in the runtime closure |
+| 5 | **`npm audit fix`** in `packages/arcui/web` | ◻️ PENDING — `vite` developer-workstation advisory; unchanged by this Python-dependency work |
+| 6 | **Blocking CI gate** | ✅ WIRED — `security` job exports the runtime closure and runs `pip-audit` against it; any new unignored runtime vuln fails the build |
 
 ---
 
@@ -216,7 +202,7 @@ Execution-ordered. Items 1–2 are the only ones touching the deployed federal r
 | `arcgateway-slack` | 0.1.0 | `packages/arcgateway-slack/pyproject.toml` |
 | `arcgateway-telegram` | 0.1.0 | `packages/arcgateway-telegram/pyproject.toml` |
 | `arcgateway` | 0.2.0 | `packages/arcgateway/pyproject.toml` |
-| `arcllm` | 0.4.0 | `packages/arcllm/pyproject.toml` |
+| `arcllm` | 0.5.1 | `packages/arcllm/pyproject.toml` |
 | `arcmas` | 0.3.0 | `packages/arcmas/pyproject.toml` |
 | `arcmodel` | 0.0.2 | `packages/arcmodel/pyproject.toml` |
 | `arcprompt` | 0.0.2 | `packages/arcprompt/pyproject.toml` |
@@ -224,7 +210,7 @@ Execution-ordered. Items 1–2 are the only ones touching the deployed federal r
 | `arcskill` | 0.1.0 | `packages/arcskill/pyproject.toml` |
 | `arcstore` | 0.1.0 | `packages/arcstore/pyproject.toml` |
 | `arcteam` | 0.3.0 | `packages/arcteam/pyproject.toml` |
-| `arctrust` | 0.2.0 | `packages/arctrust/pyproject.toml` |
+| `arctrust` | 0.3.0 | `packages/arctrust/pyproject.toml` |
 | `arctui` | 0.1.0 | `packages/arctui/pyproject.toml` |
 | `arcui` | 0.2.0 | `packages/arcui/pyproject.toml` |
 
@@ -237,7 +223,7 @@ Execution-ordered. Items 1–2 are the only ones touching the deployed federal r
 
 | Ecosystem | All groups | Runtime only |
 |---|---|---|
-| Python (PyPI) | 184 | 69 |
+| Python (PyPI) | 114 | 79 |
 | JavaScript (npm) | 411 | 216 (prod) |
 
 Full per-component lists with Package URLs (purl) are in the CycloneDX artifacts (§3).
@@ -247,16 +233,16 @@ Full per-component lists with Package URLs (purl) are in the CycloneDX artifacts
 ## 7. License Compliance Analysis
 
 License metadata extracted from installed distribution metadata
-(206 components; 8 without declared license metadata).
+(223 components; 8 without declared license metadata).
 
 ### 7.1 Distribution by license family
 
 | License family | Components |
 |---|---|
-| MIT | 74 |
-| BSD | 73 |
-| Apache-2.0 | 61 |
-| PSF/Python | 5 |
+| MIT | 82 |
+| Apache-2.0 | 73 |
+| BSD | 70 |
+| PSF/Python | 4 |
 | MPL-2.0 | 4 |
 | ISC | 3 |
 | LGPL | 1 |
@@ -289,7 +275,7 @@ License metadata extracted from installed distribution metadata
 
 | Control | Status | Evidence / Gap |
 |---|---|---|
-| Reproducible builds | ✅ | `uv.lock` pins all 184 components with SHA-256 hashes |
+| Reproducible builds | ✅ | `uv.lock` pins all 114 components with SHA-256 hashes |
 | Pinned transitive deps | ✅ | Single workspace lock; `requirements-all.txt` is fully hashed |
 | Vulnerability scanning | ✅ | This pipeline (pip-audit + npm audit + OSV) |
 | SBOM generation | ✅ | CycloneDX 1.6 artifacts in `sbom/` |
@@ -324,20 +310,20 @@ License metadata extracted from installed distribution metadata
 ## 10. Guidance by Audience
 
 ### Enterprise security teams
-- Adopt §5 as a sprint backlog; the 8 runtime packages are the only
+- Adopt §5 as a sprint backlog; the 1 runtime packages are the only
   production-facing items. Dev/build findings can ride the normal dependency-bump cadence.
 - License posture is clean for commercial redistribution — no GPL/AGPL, weak-copyleft is
   import-only.
 
 ### Federal ATO / RMF assessors
-- Treat `cryptography` (CVSS 9.8) as a POA&M item with the highest priority; it is a
-  **runtime** cryptographic component (relevant to SC-12/SC-13 and the platform's Sign
-  pillar).
-- The 37 dev/build-only findings should be documented as **not in the
+- The `cryptography` CRITICAL (CVE-2026-39892, CVSS 9.8) is **remediated** at 46.0.7; the
+  residual HIGH (GHSA-537c-gmf6-5ccf) remains a POA&M item, as it is a **runtime**
+  cryptographic component (relevant to SC-12/SC-13 and the platform's Sign pillar).
+- The 4 dev/build-only findings should be documented as **not in the
   authorization boundary** of the deployed runtime, but **within the CI/CD boundary**
   (address per your pipeline's risk posture).
-- Exclude `arcgateway-telegram` from the build to drop the only LGPL component and the
-  large dev-only `aiohttp` advisory cluster if Telegram is not a mission requirement.
+- Exclude `arcgateway-telegram` from the build to drop the only LGPL component if
+  Telegram is not a mission requirement.
 
 ---
 
@@ -381,7 +367,7 @@ python3 sbom/_gen_report.py
 - The dev/build-only classification reflects uv dependency groups (`--no-dev` runtime set);
   confirm against your actual packaging/deployment manifest before relying on it for an
   authorization boundary.
-- Findings are point-in-time as of **2026-06-21** against `cc27469`. Advisory
+- Findings are point-in-time as of **2026-07-06** against `e63f3a8`. Advisory
   databases update continuously — regenerate before any submission.
 
 *Generated by `sbom/_gen_report.py` from live scan artifacts. Do not edit by hand; edit the

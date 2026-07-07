@@ -6,8 +6,11 @@ The policy ENGINE (pipeline, decision, layers, tier config) lives in
 1. Re-exports engine types so arcagent call sites import from one place.
 2. Defines ``PolicyDenied`` — the exception raised when dispatch is denied.
    This must live in arcagent because it inherits from ``ArcAgentError``.
-3. Defines ``ForbiddenCompositionChecker`` — used by tool_registry to reject
-   batches whose combined capability tags form a forbidden set (arXiv:2603.15973).
+
+Forbidden-composition enforcement (the lethal-trifecta subset test) is LIVE in
+arctrust's ``GlobalLayer`` (SPEC-035) — arcagent maps tool tags to trifecta legs
+(``core.session_internal.capability_ledger``) and hands arctrust resolved
+frozensets. There is no arcagent copy of the checker.
 
 arcagent does NOT reimplement the pipeline engine. It imports and reuses the
 canonical implementation from arctrust.
@@ -24,12 +27,15 @@ from collections.abc import Callable
 from arctrust.policy import (
     AgentLayer,
     AuditSink,
+    ClassificationLayer,
+    ClearanceContext,
     Decision,
     GlobalLayer,
     PolicyContext,
     PolicyLayer,
     PolicyPipeline,
     ProviderLayer,
+    ProviderUsage,
     SandboxLayer,
     TeamLayer,
     TierConfig,
@@ -77,46 +83,12 @@ class PolicyDenied(ArcAgentError):  # noqa: N818 — domain convention
         self.decision = decision
 
 
-# ---------------------------------------------------------------------------
-# ForbiddenCompositionChecker — non-compositional safety (arXiv:2603.15973)
-# ---------------------------------------------------------------------------
-
-
-class ForbiddenCompositionChecker:
-    """Reject tool batches whose combined capabilities are forbidden.
-
-    Two individually-safe tools can compose into a forbidden outcome
-    (arXiv:2603.15973). Example: ``file_read + network_egress = exfiltration``.
-
-    Each tool declares ``capability_tags``; at batch dispatch time we union
-    those tags and check whether any forbidden set is a subset of the union.
-    Forbidden sets are declared at deployment time — audit-visible.
-    """
-
-    def __init__(self, *, forbidden: list[frozenset[str]]) -> None:
-        self._forbidden = list(forbidden)
-
-    def is_forbidden(self, capabilities: set[str]) -> bool:
-        """True if ``capabilities`` contains any forbidden combination."""
-        return self.first_forbidden(capabilities) is not None
-
-    def first_forbidden(self, capabilities: set[str]) -> frozenset[str] | None:
-        """Return the first matching forbidden set, or None.
-
-        The returned set identifies WHY the batch was rejected — useful for
-        structured deny reasons in the audit trail.
-        """
-        for combo in self._forbidden:
-            if combo.issubset(capabilities):
-                return combo
-        return None
-
-
 __all__ = [
     "AgentLayer",
     "AuditSink",
+    "ClassificationLayer",
+    "ClearanceContext",
     "Decision",
-    "ForbiddenCompositionChecker",
     "GlobalLayer",
     "MonotonicClock",
     "PolicyContext",
@@ -124,6 +96,7 @@ __all__ = [
     "PolicyLayer",
     "PolicyPipeline",
     "ProviderLayer",
+    "ProviderUsage",
     "SandboxLayer",
     "TeamLayer",
     "TierConfig",

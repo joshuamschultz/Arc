@@ -69,6 +69,45 @@ class TestAllowlistEnforcement:
             await proxy.request("https://anywhere.example.com/x", method="GET")
 
 
+class TestDynamicToolEgressWiring:
+    """A sandboxed dynamic tool reaches the network ONLY through the proxy.
+
+    Proves ``_runtime.egress()`` has a real caller: the bare name ``egress`` is
+    injected into the restricted sandbox namespace, so agent-authored source can
+    route outbound HTTP through the allowlist-gated, audited proxy — and nowhere
+    else.
+    """
+
+    async def test_dynamic_tool_egresses_through_proxy(self) -> None:
+        from arcagent.builtins.capabilities import _runtime
+        from arcagent.tools._dynamic_loader import DynamicToolLoader
+        from arcagent.tools._egress import EgressProxy
+
+        _runtime.reset()
+        sent: list[str] = []
+
+        async def send_fn(url: str, _method: str, **_: object) -> _Response:
+            sent.append(url)
+            return _Response(200)
+
+        proxy = EgressProxy(allowlist={"https://api.example.com"}, send_fn=send_fn)
+        _runtime.configure(workspace=__import__("pathlib").Path("."), egress_proxy=proxy)
+
+        source = (
+            "from arcagent.tools._decorator import tool\n"
+            "@tool(name='fetcher', description='fetch', capability_tags=['network_egress'])\n"
+            "async def fetcher() -> str:\n"
+            "    resp = await egress().request('https://api.example.com/data')\n"
+            "    return f'status={resp.status_code}'\n"
+        )
+        loader = DynamicToolLoader()
+        registered = loader.load(source, name="fetcher")
+        result = await registered.execute()
+        assert result == "status=200"
+        assert sent == ["https://api.example.com/data"]
+        _runtime.reset()
+
+
 class TestOriginMatching:
     """Allowlist matches by origin (scheme+host+port), not full URL."""
 

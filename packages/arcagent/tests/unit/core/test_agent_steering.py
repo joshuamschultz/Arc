@@ -242,9 +242,7 @@ class TestSteerPolicyGate:
         agent = await _started_agent(tmp_path, workspace)
         try:
             agent._policy_pipeline = MagicMock()
-            agent._policy_pipeline.evaluate = AsyncMock(
-                side_effect=RuntimeError("pipeline boom")
-            )
+            agent._policy_pipeline.evaluate = AsyncMock(side_effect=RuntimeError("pipeline boom"))
             agent._telemetry = MagicMock()
 
             allowed = await agent._authorize_steer("did:arc:local:peer/aaaa")

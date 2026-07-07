@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.storage import MemoryBackend
@@ -15,7 +16,7 @@ DID_B = "did:arc:test:agent/bob"
 @pytest.fixture
 async def store() -> TeamStore:
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"test-key")
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     return TeamStore(backend, audit)
 

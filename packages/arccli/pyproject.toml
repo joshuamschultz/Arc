@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arccmd"
-version = "0.4.0"
+version = "0.5.1"
 description = "Unified CLI for Arc products (arcllm, arcrun, arc-agent)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,7 +26,7 @@ dependencies = [
     "arcrun",
     "arc-agent[telegram]",
     "arcteam",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
     "prompt_toolkit>=3.0",
 ]
 

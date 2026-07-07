@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcrun"
-version = "0.5.0"
+version = "0.8.0"
 description = "Async execution engine for autonomous agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,9 @@ packages = ["src/arcrun"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: live-runtime tests (real docker / Firecracker) excluded from the fast unit run",
+]
 
 [tool.mypy]
 strict = true
@@ -67,3 +70,5 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 "tests/**/*.py" = ["S101", "S105", "S106", "S108", "E402", "E501", "N806", "N814", "E741", "B007"]
 "src/arcrun/builtins/contained_execute.py" = ["S108"]
 "src/arcrun/builtins/execute.py" = ["S108"]
+# "/tmp" is the in-GUEST working-dir default written to vmconfig, not a host temp path.
+"src/arcrun/backends/vm.py" = ["S108"]

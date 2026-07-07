@@ -27,7 +27,9 @@ from arcrun import run_stream as arcrun_run_stream
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import SessionManager
+from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.tools._policy_fill import resolve_run_budget
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -171,8 +173,14 @@ async def dispatch_stream(
     )
     history = [Message(**m) for m in session.get_messages()]
     transform = agent._context.transform_context if agent._context else None
+    # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
+    # circuit-breaker (LLM10) is reachable through the real streaming path.
+    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
 
     final_text = ""
+    # Bind the session id for this dispatch so the capability ledger (and the
+    # per-agent egress proxy) key trifecta legs to THIS session (SPEC-035).
+    session_token = bind_session_id(session.session_id)
     try:
         async with telemetry.session_span(input_text):
             _logger.info("Running agent loop for task: %s", input_text[:80])
@@ -187,6 +195,8 @@ async def dispatch_stream(
                 tool_choice=tool_choice,
                 actor_did=agent._identity.did if agent._identity else None,
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
+                max_tokens=max_tokens,
+                max_cost_usd=max_cost_usd,
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
@@ -198,6 +208,8 @@ async def dispatch_stream(
             {"task": input_text, "error": str(exc), "error_type": type(exc).__name__},
         )
         raise
+    finally:
+        reset_session_id(session_token)
 
     await session.append_message({"role": "assistant", "content": final_text})
     await maybe_compact(agent, session)
@@ -237,18 +249,27 @@ async def start_tracked_run(
     )
     history = [Message(**m) for m in session.get_messages()]
     transform = agent._context.transform_context if agent._context else None
+    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
 
-    handle = await arcrun_run_async(
-        model,
-        provider,
-        system_prompt,
-        input_text,
-        messages=history,
-        on_event=bridge,
-        transform_context=transform,
-        actor_did=agent._identity.did if agent._identity else None,
-        store_raw_bodies=agent._config.telemetry.capture_tool_io,
-    )
+    # Bind the session id before the loop task is created so the background run
+    # (and its tool dispatches) inherit it in their copied context (SPEC-035).
+    session_token = bind_session_id(session.session_id)
+    try:
+        handle = await arcrun_run_async(
+            model,
+            provider,
+            system_prompt,
+            input_text,
+            messages=history,
+            on_event=bridge,
+            transform_context=transform,
+            actor_did=agent._identity.did if agent._identity else None,
+            store_raw_bodies=agent._config.telemetry.capture_tool_io,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
+        )
+    finally:
+        reset_session_id(session_token)
     agent._active_runs[session_key] = handle
     finalizer = asyncio.ensure_future(
         _finalize_tracked_run(agent, handle, session, session_key, input_text)

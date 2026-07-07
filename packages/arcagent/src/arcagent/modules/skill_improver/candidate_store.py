@@ -13,6 +13,8 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
+from arctrust import AuditEvent, AuditSink, emit
+
 from arcagent.modules.skill_improver.models import Candidate, MutationEvent
 from arcagent.utils.io import atomic_write_text
 
@@ -21,6 +23,18 @@ _logger = logging.getLogger("arcagent.modules.skill_improver.candidate_store")
 # Strict patterns for path-safe identifiers (ASI-02 defense)
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$")
 _SAFE_CANDIDATE_ID_RE = re.compile(r"^[a-f0-9-]{1,40}$|^seed$")
+
+
+def _mutation_audit_event(skill_name: str, event: MutationEvent) -> AuditEvent:
+    """Map a :class:`MutationEvent` onto the arctrust audit schema."""
+    return AuditEvent(
+        actor_did="did:arc:skill-improver",
+        action="skill.mutation.applied",
+        target=skill_name,
+        outcome=event.stop_reason,
+        payload_hash=event.new_hash,
+        extra=event.to_dict(),
+    )
 
 
 def _validate_skill_name(name: str) -> None:
@@ -40,8 +54,13 @@ def _validate_candidate_id(cid: str) -> None:
 class CandidateStore:
     """Persist skill optimization candidates and audit trail."""
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, audit_sink: AuditSink | None = None) -> None:
         self._workspace = workspace
+        # SPEC-033 D4/REQ-022 — mutation audit routes through the tamper-evident
+        # WORM chain (a ``WormSink`` in production), stored separately from the
+        # mutable skill code (AU-9(2)). No plaintext JSONL: it can be silently
+        # truncated/reordered, which defeats the audit's purpose.
+        self._audit_sink = audit_sink
 
     def _skill_dir(self, skill_name: str) -> Path:
         """Base directory for a skill's trace and candidate data."""
@@ -134,11 +153,17 @@ class CandidateStore:
         return seed_path.read_text(encoding="utf-8")
 
     def append_audit(self, skill_name: str, event: MutationEvent) -> None:
-        """Append a mutation event to the audit log (NIST AU-3)."""
-        audit_path = self._skill_dir(skill_name) / "audit.jsonl"
-        audit_path.parent.mkdir(parents=True, exist_ok=True)
-        with audit_path.open("a", encoding="utf-8") as f:
-            f.write(event.to_json_line() + "\n")
+        """Emit a mutation event to the tamper-evident WORM chain (AU-9/AU-10).
+
+        Routes through the injected arctrust ``AuditSink`` — a ``WormSink`` in
+        production: Ed25519-signed, hash-linked, append-only, stored apart from
+        the skill code. A no-op when no sink is configured (the caller decides
+        whether a run is audited); there is no plaintext fallback.
+        """
+        _validate_skill_name(skill_name)
+        if self._audit_sink is None:
+            return
+        emit(_mutation_audit_event(skill_name, event), self._audit_sink)
 
     def rollback(self, skill_name: str, candidate_id: str) -> None:
         """Revert to a previous candidate version."""

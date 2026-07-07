@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ConfigError
 
@@ -55,6 +55,17 @@ class LLMConfig(BaseModel):
     # Unknown module names are rejected at load time so a typo
     # (``[llm.modules.qeue]``) fails loudly.
     modules: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class BudgetConfig(BaseModel):
+    """SPEC-038 REQ-001/004/005 — per-run token/cost/request ceilings (LLM10)."""
+
+    # Tier-resolved at dispatch: personal relaxable/unbounded-when-unset;
+    # enterprise/federal treat a set ceiling as a non-relaxable floor. ``None`` =
+    # unbounded. Feeds both the arcrun circuit-breaker and the ProviderLayer.
+    max_tokens: int | None = None
+    max_cost_usd: float | None = None
+    max_requests: int | None = None
 
 
 class UIConfig(BaseModel):
@@ -101,6 +112,20 @@ class ToolConfig(BaseModel):
     deny: list[str] = []
     timeout_seconds: int = 30
     allowed_paths: list[str] = []
+    # SPEC-035 REQ-002 — operator-declared paths that are read-only to the
+    # agent's mutating tools, unioned with the goal-file defaults. Resolved once
+    # at agent start; the agent has no tool that can edit this config.
+    protected_paths: list[str] = []
+    # SPEC-035 REQ-013 — origins external-comms tools may reach through the
+    # EgressProxy (deny-by-default). ``scheme://host[:port]`` entries.
+    egress_allowlist: list[str] = []
+    # SPEC-038 REQ-023 — per-tool resource classification label (no-read-up).
+    # Tool name → classification string (e.g. ``{"read_secret" = "SECRET"}``).
+    # Unlabeled tools default to UNCLASSIFIED (no gating).
+    classifications: dict[str, str] = {}
+    # SPEC-038 REQ-025 — per-origin destination clearance (no-exfil). Allowlisted
+    # origin → clearance string. Missing → UNCLASSIFIED (external = lowest).
+    egress_clearances: dict[str, str] = {}
 
 
 class MCPServerEntry(BaseModel):
@@ -129,6 +154,19 @@ class ProcessToolEntry(BaseModel):
     timeout_seconds: int = 30
 
 
+class HumanGatePolicy(BaseModel):
+    """SPEC-035 REQ-014/016 — lethal-trifecta human-approval gate config.
+
+    ``auto_approve`` lists named low-risk leg-compositions that personal/
+    enterprise may approve without a human (each an explicit, audited leg list,
+    e.g. ``[["private_data", "external_comms", "untrusted_input"]]``). Federal
+    ignores it — the gate can never be auto-satisfied at federal (ADR-019).
+    """
+
+    timeout_seconds: float = 300.0
+    auto_approve: list[list[str]] = []
+
+
 class ToolsConfig(BaseModel):
     """All tool configurations by transport."""
 
@@ -136,6 +174,7 @@ class ToolsConfig(BaseModel):
     http: dict[str, HTTPToolEntry] = {}
     process: dict[str, ProcessToolEntry] = {}
     policy: ToolConfig = ToolConfig()
+    human_gate: HumanGatePolicy = HumanGatePolicy()
     allowed_module_prefixes: list[str] = Field(default=["arcagent."])
     preamble: str = ""
 
@@ -308,8 +347,148 @@ class SecurityConfig(BaseModel):
         ),
     )
 
+    # SPEC-038 REQ-021 — the agent's max clearance, bound to identity at
+    # construction (operator-authored; no agent tool can raise it). REQ-026 —
+    # classification_enforced fails the ClassificationLayer closed on a missing
+    # clearance context (federal posture); off by default so it never bricks.
+    clearance: str = "UNCLASSIFIED"
+    classification_enforced: bool = False
+
     # SPEC-021 — TOFU approvals for self-executing agent code.
     validators: ValidatorsConfig = Field(default_factory=ValidatorsConfig)
+
+    # SPEC-034 — durable WORM chain file for policy-decision audit records.
+    # Relative paths resolve against the workspace; None → <workspace>/audit/
+    # policy-chain.jsonl. The pipeline routes every ALLOW/DENY here as one
+    # tamper-evident, Ed25519-signed record (AU-9/AU-10).
+    policy_audit_log: str | None = Field(
+        default=None,
+        description=(
+            "Path to the WORM audit chain for policy decisions. Relative to the "
+            "workspace; defaults to <workspace>/audit/policy-chain.jsonl."
+        ),
+    )
+
+    # SPEC-053 — operator-key custody. The operator key is the deployment audit
+    # authority that signs every WORM chain; it is distinct from the agent DID
+    # (the audited subject must not be the audit authority) and is loaded
+    # read-only from OUTSIDE the workspace tool-sandbox (AU-9(2)/AU-10).
+    operator_key_dir: str = Field(
+        default="~/.arc/operator",
+        description=(
+            "Directory holding the deployment operator key (audit authority). "
+            "Kept outside the agent workspace; private key is 0600, dir 0700. "
+            "SPEC-053."
+        ),
+    )
+    operator_vault_path: str = Field(
+        default="",
+        description=(
+            "When set (and a vault backend is configured), the operator key is "
+            "resolved via the vault instead of the on-disk file (SPEC-037 seam)."
+        ),
+    )
+
+    # SPEC-037 — asymmetric + FIPS signing + out-of-process key custody.
+    signing_algorithm: str = Field(
+        default="ed25519",
+        description=(
+            "Operator/WORM signing algorithm: 'ed25519' (default, "
+            "personal/enterprise) or 'ecdsa-p256' (FIPS/federal path). "
+            "SPEC-037 REQ-004."
+        ),
+    )
+    custody: str = Field(
+        default="in_process",
+        description=(
+            "Operator key custody: 'in_process' (on-disk 0600 seed, "
+            "personal default) or 'vault_transit' (sign by reference; the seed "
+            "never enters the agent process — enterprise default, federal "
+            "mandatory). SPEC-037 REQ-006/007."
+        ),
+    )
+    notary_keystore: str = Field(
+        default="",
+        description=(
+            "vault_transit only: keystore for the reference out-of-process "
+            "FileNotaryTransit signer (dev/CI without an HSM). Empty → "
+            "<operator_key_dir>/notary. A real deployment swaps this seam for a "
+            "Vault Transit / PKCS#11 HSM adapter. SPEC-037 REQ-006."
+        ),
+    )
+    require_fips: bool = Field(
+        default=False,
+        description=(
+            "Federal floor: when true, startup fails closed unless the crypto "
+            "backend is FIPS-validated AND the algorithm is FIPS-approved "
+            "(forces ecdsa-p256). Tier is stringency, not a gate. SPEC-037 "
+            "REQ-008/009."
+        ),
+    )
+
+    # SPEC-053 — federal witness anchor (REQ-009/010). Federal tier submits each
+    # operator-signed checkpoint head to an EXTERNAL append-only witness so a
+    # rollback past the last anchor is detectable even by a holder of the
+    # operator key. Other tiers ignore these.
+    witness_medium_path: str = Field(
+        default="~/.arc/witness/anchor.log",
+        description=(
+            "Append-only medium the federal witness writes operator-signed heads "
+            "to. MUST live outside operator_key_dir — the operator-key holder must "
+            "not also own the witness, or the rollback check is illusory. Federal "
+            "deployments SHOULD point this at a separate host or removable WORM "
+            "medium (a deployment concern, like the vault seam). SPEC-053 REQ-009."
+        ),
+    )
+    witness_mode: str = Field(
+        default="offline",
+        description=(
+            "Federal witness backend: 'offline' (air-gapped append-only medium) "
+            "or 'transparency_log' (online Rekor-style). SPEC-053 REQ-010."
+        ),
+    )
+    witness_log_url: str = Field(
+        default="",
+        description="Transparency-log endpoint when witness_mode='transparency_log'.",
+    )
+
+    @model_validator(mode="after")
+    def _enforce_tier_crypto_floor(self) -> SecurityConfig:
+        """Couple the crypto posture to the tier (SPEC-037 F2, ADR-019).
+
+        Federal MUST sign out-of-process with FIPS-approved ECDSA-P256 — the
+        composite audit-forgery defense requires all three together, so the tier
+        forces them. An explicit weaker value fails closed rather than being
+        silently honored. Enterprise defaults to vault_transit (REQ-007) but may
+        relax to in_process; personal stays in_process.
+        """
+        if self.tier == "federal":
+            self._reject_weaker_federal_override()
+            self.require_fips = True
+            self.custody = "vault_transit"
+            self.signing_algorithm = "ecdsa-p256"
+        elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
+            self.custody = "vault_transit"
+        return self
+
+    def _reject_weaker_federal_override(self) -> None:
+        """Fail closed if a federal config explicitly set a weaker crypto value."""
+        set_fields = self.model_fields_set
+        if "require_fips" in set_fields and not self.require_fips:
+            raise ValueError(
+                "federal tier requires require_fips=true (SC-13/IA-7) — refusing "
+                "to run a federal deployment with the FIPS floor disabled"
+            )
+        if "custody" in set_fields and self.custody != "vault_transit":
+            raise ValueError(
+                "federal tier requires custody=vault_transit (SPEC-037 REQ-006) — "
+                "the operator seed must never enter the agent process at federal"
+            )
+        if "signing_algorithm" in set_fields and self.signing_algorithm != "ecdsa-p256":
+            raise ValueError(
+                "federal tier requires signing_algorithm=ecdsa-p256 (Arc's Ed25519 "
+                "is PyNaCl/libsodium with no CMVP validation path)"
+            )
 
 
 class CapabilitiesConfig(BaseModel):
@@ -374,6 +553,7 @@ class ArcAgentConfig(BaseModel):
     capabilities: CapabilitiesConfig = CapabilitiesConfig()
     spawn: SpawnConfig = SpawnConfig()
     ui: UIConfig = UIConfig()
+    budget: BudgetConfig = BudgetConfig()
 
 
 _ENV_PREFIX = "ARCAGENT_"

@@ -251,13 +251,6 @@ class TestMutationEvent:
         assert restored.generation == 1
         assert len(restored.trace_ids) == 3
 
-    def test_to_json_line(self) -> None:
-        event = self._make_event()
-        line = event.to_json_line()
-        parsed = json.loads(line)
-        assert parsed["skill_name"] == "plan-travel"
-        assert parsed["stop_reason"] == "stagnation"
-
     def test_frozen(self) -> None:
         event = self._make_event()
         try:

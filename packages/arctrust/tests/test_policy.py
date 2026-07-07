@@ -13,8 +13,10 @@ from arctrust.policy import (
     PolicyContext,
     PolicyLayer,
     PolicyPipeline,
+    ProviderUsage,
     TierConfig,
     ToolCall,
+    ToolRuntimeStatus,
     build_pipeline,
     sign_call,
 )
@@ -43,10 +45,19 @@ def make_ctx(
     tier: str = "personal",
     bundle_age: float = 0.0,
 ) -> PolicyContext:
+    # Clean provider/runtime state so the now-real Provider/Sandbox layers pass
+    # through at enterprise/federal (they fail closed on missing state); tests
+    # here exercise identity/global/agent behavior, not budget/isolation.
     return PolicyContext(
         tier=tier,  # type: ignore[arg-type]
         policy_version="1.0",
         bundle_age_seconds=bundle_age,
+        provider_usage=ProviderUsage(
+            provider="anthropic", tokens_used=0, cost_used=0.0, requests_in_window=0
+        ),
+        tool_runtime=ToolRuntimeStatus(
+            verified=True, required_isolation="host", available_isolation="host"
+        ),
     )
 
 
@@ -362,15 +373,28 @@ class TestBuildPipeline:
         pipeline = build_pipeline(tier="personal")
         assert [layer.name for layer in pipeline.layers] == ["identity", "global"]
 
-    async def test_enterprise_pipeline_has_five_layers(self) -> None:
+    async def test_enterprise_pipeline_has_six_layers(self) -> None:
         pipeline = build_pipeline(tier="enterprise")
-        assert len(pipeline.layers) == 5
-        assert pipeline.layers[0].name == "identity"
+        assert [layer.name for layer in pipeline.layers] == [
+            "identity",
+            "global",
+            "classification",
+            "provider",
+            "agent",
+            "sandbox",
+        ]
 
-    async def test_federal_pipeline_has_six_layers(self) -> None:
+    async def test_federal_pipeline_has_seven_layers(self) -> None:
         pipeline = build_pipeline(tier="federal")
-        assert len(pipeline.layers) == 6
-        assert pipeline.layers[0].name == "identity"
+        assert [layer.name for layer in pipeline.layers] == [
+            "identity",
+            "global",
+            "classification",
+            "provider",
+            "agent",
+            "team",
+            "sandbox",
+        ]
 
     async def test_personal_allows_signed_call_by_default(self) -> None:
         ident = AgentIdentity.generate(org="test", agent_type="exec")
@@ -412,3 +436,92 @@ class TestBuildPipeline:
             self._signed(ident, "allowed_tool"), make_ctx("enterprise")
         )
         assert result.outcome == "allow"
+
+
+# ---------------------------------------------------------------------------
+# SPEC-053 T-12 — authenticate BEFORE short-circuits; bind cache to identity
+# (SPEC-034 review Findings 2 + 6)
+# ---------------------------------------------------------------------------
+
+
+class TestAuthenticateBeforeShortCircuits:
+    def _ident(self) -> AgentIdentity:
+        return AgentIdentity.generate(org="test", agent_type="exec")
+
+    def _signed(self, ident: AgentIdentity, tool_name: str) -> ToolCall:
+        return sign_call(make_call(tool_name=tool_name, agent_did=ident.did), ident)
+
+    def _unsigned(self, ident: AgentIdentity, tool_name: str) -> ToolCall:
+        return make_call(tool_name=tool_name, agent_did=ident.did)
+
+    async def test_finding6_restricted_unsigned_safeset_call_denied(self) -> None:
+        """Finding 6: in restricted mode, an UNSIGNED safe-set call must be
+        authenticated (and denied) — the safe-set short-circuit no longer
+        bypasses identity."""
+        ident = self._ident()
+        pipeline = build_pipeline(
+            tier="personal",
+            agent_registry={ident.did: ident.public_key},
+            max_bundle_age_seconds=60.0,
+            safe_set={"safe_tool"},
+        )
+        ctx = make_ctx(bundle_age=120.0)  # stale bundle → restricted mode active
+
+        decision = await pipeline.evaluate(self._unsigned(ident, "safe_tool"), ctx)
+        assert decision.is_deny()
+        assert decision.rule_id == "identity.unsigned_or_invalid"
+
+    async def test_finding6_restricted_signed_safeset_call_allows(self) -> None:
+        ident = self._ident()
+        pipeline = build_pipeline(
+            tier="personal",
+            agent_registry={ident.did: ident.public_key},
+            max_bundle_age_seconds=60.0,
+            safe_set={"safe_tool"},
+        )
+        ctx = make_ctx(bundle_age=120.0)
+        decision = await pipeline.evaluate(self._signed(ident, "safe_tool"), ctx)
+        assert decision.outcome == "allow"
+
+    async def test_finding2a_unsigned_call_never_hits_signed_cache(self) -> None:
+        """Finding 2a: a cached ALLOW for a signed call must NOT be served to an
+        unsigned call with identical (tool_name, arguments, agent_did,
+        classification). It gets no cache hit and is denied by identity."""
+        ident = self._ident()
+        pipeline = build_pipeline(
+            tier="personal",
+            agent_registry={ident.did: ident.public_key},
+            cache_ttl_seconds=300.0,
+        )
+        ctx = make_ctx()
+
+        allow = await pipeline.evaluate(self._signed(ident, "read_file"), ctx)
+        assert allow.outcome == "allow"  # this decision is now cached
+
+        # Same (tool_name, arguments, agent_did, classification) but UNSIGNED.
+        replay = await pipeline.evaluate(self._unsigned(ident, "read_file"), ctx)
+        assert replay.is_deny()
+        assert replay.rule_id == "identity.unsigned_or_invalid"
+
+    async def test_finding2b_deregistered_replay_within_ttl_denied(self) -> None:
+        """Finding 2b: after an ALLOW is cached, de-registering the agent must
+        cause its replayed (validly-signed) call to DENY within the TTL window —
+        identity runs before the cache, so a stale ALLOW cannot be replayed."""
+        ident = self._ident()
+        registry = {ident.did: ident.public_key}
+        pipeline = build_pipeline(
+            tier="enterprise",
+            agent_registry=registry,
+            cache_ttl_seconds=300.0,
+        )
+        ctx = make_ctx(tier="enterprise")
+        signed = self._signed(ident, "read_file")
+
+        allow = await pipeline.evaluate(signed, ctx)
+        assert allow.outcome == "allow"  # cached
+
+        del registry[ident.did]  # revoke admission (same dict the layer holds)
+
+        replay = await pipeline.evaluate(signed, ctx)
+        assert replay.is_deny()
+        assert replay.rule_id == "identity.not_admitted"

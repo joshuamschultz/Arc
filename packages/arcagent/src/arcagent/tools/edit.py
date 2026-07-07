@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
-from arcagent.tools._validation import resolve_workspace_path
+from arcagent.tools._validation import (
+    enforce_protected_path,
+    resolve_protected_paths,
+    resolve_workspace_path,
+)
 
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -49,6 +53,7 @@ def create_tool(
     """Create a workspace-scoped edit tool."""
     ws = workspace.resolve()
     _allowed = allowed_paths
+    _protected = resolve_protected_paths(ws, [])
 
     async def execute(
         *,
@@ -63,6 +68,7 @@ def create_tool(
             return "Error: old_string must not be empty"
 
         resolved = resolve_workspace_path(file_path, ws, allowed_paths=_allowed)
+        enforce_protected_path(resolved, _protected, tool_name="edit", file_path=file_path)
 
         if not resolved.exists():
             return f"Error: File not found: {file_path}"

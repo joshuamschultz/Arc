@@ -26,11 +26,17 @@ from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
+from arcagent.tools._egress_build import build_egress_proxy
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
+
+# SPEC-053/037 — modules that construct an operator-signed WORM audit sink and so
+# receive the config-RESOLVED operator Signer (same custody + algorithm as the
+# policy chain). No other module is handed it, and none is handed the raw seed.
+_WORM_SINK_MODULE_NAMES = frozenset({"skill_improver", "messaging"})
 
 # Per D-346/D-347 — short skill-usage instruction injected at priority 91.
 _SKILL_USAGE_INSTRUCTION = (
@@ -67,17 +73,32 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     # Configure builtin runtime — workspace + allowed_paths visible
     # to read/write/edit/bash; loader reference patched in below.
     from arcagent.builtins.capabilities import _runtime as builtin_runtime
+    from arcagent.tools._validation import resolve_protected_paths
 
     allowed_paths = [Path(p).resolve() for p in agent._config.tools.policy.allowed_paths] or None
+    # SPEC-035 REQ-002 — resolve the goal-lock set once; immutable for the session.
+    protected_paths = resolve_protected_paths(
+        workspace, list(agent._config.tools.policy.protected_paths)
+    )
+    protected_audit = telemetry.audit_event if telemetry is not None else None
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,
         loader=None,
         vault_resolver=agent._vault_resolver,
+        protected_paths=protected_paths,
+        audit_sink=protected_audit,
+        tier=agent._config.security.tier,
+    )
+
+    # Build the single per-agent egress proxy up front so module runtimes (e.g.
+    # telegram) receive it and route their outbound comms through it (REQ-031).
+    egress_proxy = build_egress_proxy(
+        config=agent._config, ledger=agent._capability_ledger, telemetry=telemetry
     )
 
     # Configure each enabled module's runtime via signature dispatch.
-    configure_module_runtimes(agent, workspace)
+    configure_module_runtimes(agent, workspace, egress_proxy=egress_proxy)
 
     # Scan roots per SPEC-021 R-001 precedence:
     # 1. builtins + builtin skills (always)
@@ -126,18 +147,37 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         allow_all_imports=caps_cfg.allow_all_imports,
         allow_imports=caps_cfg.allow_imports,
     )
+    # SPEC-033 Sign gate: re-verify signatures at load and adjudicate via TOFU.
+    # Signature is the floor above personal; personal may relax (auto_run).
+    from arcagent.core.tier import Tier
+    from arcagent.core.tofu_layer import TofuLayer
+
+    tier = agent._config.security.tier
+    tofu = TofuLayer(
+        Tier(tier if tier in ("personal", "enterprise", "federal") else "personal"),
+        agent._config.security.validators,
+    )
+    trusted_pubkey = agent._identity.public_key if agent._identity is not None else None
     agent._capability_loader = CapabilityLoader(
         scan_roots=scan_roots,
         registry=agent._capability_registry,
         bus=bus,
         allow_all_imports=allow_all_imports,
         allowed_imports=allowed_imports,
+        tofu=tofu,
+        require_signature=tier in ("enterprise", "federal"),
+        trusted_public_key=trusted_pubkey,
     )
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,
         loader=agent._capability_loader,
         vault_resolver=agent._vault_resolver,
+        identity=agent._identity,
+        protected_paths=protected_paths,
+        audit_sink=protected_audit,
+        egress_proxy=egress_proxy,
+        tier=agent._config.security.tier,
     )
 
     diff = await agent._capability_loader.scan_and_register()
@@ -152,7 +192,9 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     await agent._capability_loader.start_lifecycles()
 
 
-def configure_module_runtimes(agent: ArcAgent, workspace: Path) -> None:
+def configure_module_runtimes(
+    agent: ArcAgent, workspace: Path, *, egress_proxy: Any = None
+) -> None:
     """Call ``_runtime.configure(...)`` on every enabled module.
 
     Each module's configure() declares the kwargs it needs; we
@@ -189,7 +231,16 @@ def configure_module_runtimes(agent: ArcAgent, workspace: Path) -> None:
             "bus": agent._bus,
             "agent_did": identity.did if identity else "",
             "identity": identity,
+            "egress_proxy": egress_proxy,
         }
+        # SPEC-053/037 — the operator authority is NOT broadcast to every module.
+        # Only modules that actually build a WORM audit sink receive the resolved
+        # operator Signer, shrinking the in-process attack surface: a compromised
+        # generic module cannot harvest signing authority by declaring the
+        # parameter. Under vault_transit this Signer holds NO seed — it signs by
+        # reference (SPEC-037 F1), so no module ever dereferences the operator seed.
+        if mod_name in _WORM_SINK_MODULE_NAMES:
+            available["operator_signer"] = agent._operator_signer
         sig = inspect.signature(configure_fn)
         kwargs = {name: value for name, value in available.items() if name in sig.parameters}
         try:

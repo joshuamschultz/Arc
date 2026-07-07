@@ -21,10 +21,11 @@ from typing import Any, Literal
 
 from arcstore.records import SpoolRecord as _SpoolRecord
 from arcstore.spool import record as _spool_record
+from arctrust.fips import assert_fips_if_required
 from opentelemetry import trace
 from pydantic import ValidationError
 
-from arcllm._trace_crypto import assert_fips_provider_if_required, decode_wrapping_key, seal
+from arcllm._trace_crypto import decode_wrapping_key, seal
 from arcllm.config import TraceEncryptionConfig
 from arcllm.exceptions import ArcLLMBudgetError, ArcLLMConfigError
 from arcllm.modules._logging import log_structured, validate_log_level
@@ -354,7 +355,12 @@ class TelemetryModule(BaseModule):
 
         self._wrapping_key: bytes | None = None
         if self._encryption_config.enabled:
-            assert_fips_provider_if_required(require_fips=self._encryption_config.require_fips)
+            # One arctrust gate covers signing AND encryption (SPEC-037). Trace
+            # bodies are sealed with AES-256-GCM — a FIPS-approved algorithm.
+            assert_fips_if_required(
+                require_fips=self._encryption_config.require_fips,
+                algorithm="aes-256-gcm",
+            )
             secret = config.get("encryption_key_secret")
             if not secret:
                 raise ArcLLMConfigError(

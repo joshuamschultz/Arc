@@ -29,7 +29,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcrun import collect
-from arctrust import AgentIdentity
+from arctrust import (
+    AgentIdentity,
+    AppendOnlyMediumWitness,
+    FileNotaryTransit,
+    OperatorKey,
+    Signer,
+    SignerConfig,
+    SignerError,
+    WitnessAnchor,
+    WormSink,
+    assert_fips_if_required,
+    build_signer,
+    parse_classification,
+    read_verified_anchor,
+    verify_local_head_witnessed,
+    worm_policy_sink,
+)
+from arctrust.signer import VAULT_TRANSIT
 
 from arcagent.capabilities.capability_registry import SkillEntry
 from arcagent.core.agent_dispatch import dispatch_stream
@@ -42,11 +59,17 @@ from arcagent.core.model_manager import (
 )
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import ContextManager, SessionManager
+from arcagent.core.session_internal.capability_ledger import (
+    LETHAL_TRIFECTA,
+    SessionCapabilityLedger,
+)
 from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
+from arcagent.tools._policy_fill import resolve_provider_limits
+from arcagent.tools.human_gate import HumanGate, HumanGateConfig
 
 if TYPE_CHECKING:
     from arcrun import RunHandle, StreamEvent
@@ -55,6 +78,10 @@ if TYPE_CHECKING:
 
 
 _logger = logging.getLogger("arcagent.agent")
+
+# key_ref the operator seed is stored under in a vault_transit keystore/HSM
+# (mirrors arctrust.operator's vault operator id). SPEC-037 REQ-006.
+_OPERATOR_KEY_REF = "operator"
 
 
 __all__ = [
@@ -88,6 +115,18 @@ class ArcAgent:
         # Components initialized during startup()
         self._telemetry: AgentTelemetry | None = None
         self._identity: AgentIdentity | None = None
+        # SPEC-053 — the deployment operator key (audit authority). Loaded
+        # read-only at startup from OUTSIDE the workspace tool-sandbox; signs
+        # every WORM chain so the audited agent is never its own audit
+        # authority. Distinct from _identity (which attests ToolCalls only).
+        self._operator_key: OperatorKey | None = None
+        # SPEC-037 — the operator key resolved through the arctrust Signer seam.
+        # Every WORM/checkpoint signature goes through this, so a federal
+        # vault-transit deployment signs by reference (seed never in-process).
+        self._operator_signer: Signer | None = None
+        # SPEC-053 — federal external witness for trace-checkpoint anchors. None
+        # at personal/enterprise (tier = stringency: federal only ADDS this).
+        self._witness: WitnessAnchor | None = None
         self._bus: ModuleBus | None = None
         self._tool_registry: ToolRegistry | None = None
         self._context: ContextManager | None = None
@@ -112,10 +151,154 @@ class ArcAgent:
         # The arctrust policy pipeline (built in startup) — reused to authorize
         # mid-turn steering (REQ-041), the only steering caller in the system.
         self._policy_pipeline: PolicyPipeline | None = None
+        # SPEC-035 — per-session lethal-trifecta ledger + human-approval gate.
+        self._capability_ledger: SessionCapabilityLedger | None = None
+        self._human_gate: HumanGate | None = None
+        # Durable WORM sink for policy-decision audit records (SPEC-034). Holds
+        # an exclusive lock for its lifetime; closed in shutdown().
+        self._policy_worm: WormSink | None = None
         # Names of tools currently registered in ToolRegistry that came
         # from the capability loader. Tracked so reload() can drop them
         # cleanly and re-register the latest set.
         self._capability_tool_names: set[str] = set()
+
+    def _policy_audit_log_path(self) -> Path:
+        """Resolve the WORM chain file for policy-decision audit (SPEC-034).
+
+        Uses ``config.security.policy_audit_log`` when set (relative paths
+        resolve against the workspace); otherwise defaults to
+        ``<workspace>/audit/policy-chain.jsonl``.
+        """
+        configured = self._config.security.policy_audit_log
+        if configured:
+            path = Path(configured)
+            return path if path.is_absolute() else (self._workspace / path)
+        return self._workspace / "audit" / "policy-chain.jsonl"
+
+    def _operator_key_path(self) -> Path:
+        """Resolve the operator-key file (SPEC-053 REQ-004).
+
+        Lives under ``security.operator_key_dir`` (default ``~/.arc/operator``),
+        outside the workspace tool-sandbox so agent-invoked file tools cannot
+        write or replace it.
+        """
+        return Path(self._config.security.operator_key_dir).expanduser() / "operator.key"
+
+    def _resolve_operator_signer(self, sec: Any) -> Signer:
+        """Resolve the operator audit/approval signer from custody config (F1).
+
+        Federal FIPS floor (SC-13/IA-7) is asserted first: fail closed before any
+        signing key is used if the backend/algorithm are not FIPS-approved.
+
+        - ``in_process``: load the read-only on-disk (or vault-resolved) operator
+          seed and sign in-process (personal default).
+        - ``vault_transit``: sign BY REFERENCE through a transit boundary; the
+          seed never enters this process. ``self._operator_key`` stays ``None``.
+          A transit that cannot be resolved fails closed — never a silent
+          in-process fallback (NFR-3).
+        """
+        assert_fips_if_required(require_fips=sec.require_fips, algorithm=sec.signing_algorithm)
+        if sec.custody == VAULT_TRANSIT:
+            self._operator_key = None
+            transit = self._resolve_transit(sec)
+            return build_signer(
+                SignerConfig(
+                    custody=VAULT_TRANSIT,
+                    algorithm=sec.signing_algorithm,
+                    key_ref=_OPERATOR_KEY_REF,
+                ),
+                vault_transit=transit,
+            )
+        # in_process — auto-bootstrapped ONLY on a genuine first-ever start
+        # (REQ-006); a missing key with a prior chain/record fails closed rather
+        # than regenerate (covert-erasure defense, SPEC-053 #3).
+        self._operator_key = OperatorKey.load(
+            self._operator_key_path(),
+            vault_resolver=self._vault_resolver,
+            vault_path=sec.operator_vault_path,
+            generate_if_absent=True,
+            prior_chain_exists=self._prior_audit_chains_exist(),
+        )
+        return self._operator_key.into_signer(sec.signing_algorithm)
+
+    def _resolve_transit(self, sec: Any) -> FileNotaryTransit:
+        """Resolve the out-of-process signing transit for vault_transit custody.
+
+        Defaults to the reference ``FileNotaryTransit`` (dev/CI without an HSM);
+        a real deployment swaps this seam for a Vault Transit / PKCS#11 adapter.
+        Fails closed if the transit cannot serve the operator key — the composite
+        must never degrade to in-process signing.
+        """
+        keystore = (
+            Path(sec.notary_keystore).expanduser()
+            if sec.notary_keystore
+            else Path(sec.operator_key_dir).expanduser() / "notary"
+        )
+        transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
+        try:
+            transit.public_key(_OPERATOR_KEY_REF)
+        except OSError as exc:
+            raise SignerError(
+                f"custody=vault_transit but the transit at {keystore} cannot serve "
+                f"the operator key {_OPERATOR_KEY_REF!r} — refusing to fall back to "
+                "in-process signing (fail-closed, NFR-3). Provision the notary "
+                "keystore (or configure a production Vault Transit/HSM adapter)."
+            ) from exc
+        return transit
+
+    def _build_witness(self) -> WitnessAnchor | None:
+        """Build the external witness for trace-checkpoint anchors (federal only).
+
+        Tier is stringency, not a gate (ADR-019): operator-key separation holds
+        at every tier; federal ADDS the witness. The medium lives at
+        ``security.witness_medium_path`` — OUTSIDE ``operator_key_dir`` so the
+        operator-key holder does not also own the witness (that would make the
+        rollback check illusory). The air-gapped append-only medium is the
+        Must-have path; the online transparency-log submitter
+        (``arctrust.TransparencyLogWitness``) needs a network transport supplied
+        by the deployment (SPEC-037) and is not wired here.
+        """
+        if self._config.security.tier != "federal":
+            return None
+        medium = Path(self._config.security.witness_medium_path).expanduser()
+        return AppendOnlyMediumWitness(medium)
+
+    def _trace_checkpoint_chain_path(self) -> Path:
+        """Resolve the operator-signed trace-checkpoint WORM chain (SPEC-053)."""
+        return self._workspace.parent / ".audit" / "trace-checkpoint.worm"
+
+    def _prior_audit_chains_exist(self) -> bool:
+        """True if any WORM audit chain already exists for this deployment.
+
+        A chain proves an operator key was previously present and signed it, so
+        a now-missing key file is covert erasure, not a first-ever bootstrap —
+        the operator-key load must fail closed rather than regenerate (SPEC-053).
+        """
+        audit_dir = self._workspace.parent / ".audit"
+        candidates = (
+            self._policy_audit_log_path(),
+            self._trace_checkpoint_chain_path(),
+            audit_dir / "skill_improver.worm",
+        )
+        return any(p.exists() for p in candidates)
+
+    def _verify_witness_consistency(self) -> None:
+        """Fail closed at federal if the local head is not externally witnessed.
+
+        Wires ``verify_inclusion`` into startup (SPEC-053 REQ-009): the newest
+        verified local operator-signed anchor must appear in the separately
+        custodied witness. If it does not — a rollback + re-anchor by a holder of
+        the operator key, or a missing/unavailable witness — federal fails
+        closed; other tiers warn. A deployment with nothing anchored yet passes.
+        """
+        if self._witness is None or self._operator_signer is None:
+            return
+        local = read_verified_anchor(
+            self._trace_checkpoint_chain_path(), self._operator_signer.public_key
+        )
+        verify_local_head_witnessed(
+            local, self._witness, federal=self._config.security.tier == "federal"
+        )
 
     async def startup(self) -> None:
         """Initialize all components in dependency order.
@@ -150,6 +333,15 @@ class ArcAgent:
         # Update telemetry with real DID (avoids full reconstruction)
         self._telemetry.set_agent_did(self._identity.did)
 
+        # 3.5 Operator signing authority (audit authority) — resolved by custody.
+        # in_process loads the read-only on-disk seed; vault_transit signs by
+        # reference and NEVER loads the seed into this process (SPEC-037 F1).
+        sec = self._config.security
+        self._operator_signer = self._resolve_operator_signer(sec)
+        self._witness = self._build_witness()
+        # Fail closed at federal if the local head diverged from the witness.
+        self._verify_witness_consistency()
+
         # 4. Module Bus
         self._bus = ModuleBus()
 
@@ -159,11 +351,48 @@ class ArcAgent:
         # (deny-by-default at enterprise/federal). Team peers are added when the
         # agent joins a team.
         tier = self._config.security.tier
+        # Route every policy decision into a durable, Ed25519-signed WORM chain
+        # (SPEC-034). arcagent owns the file path; arctrust owns the adapter and
+        # the chain. Signed with the OPERATOR key (SPEC-053), never the agent
+        # DID — the audited subject must not be its own audit authority.
+        worm = WormSink(self._policy_audit_log_path(), self._operator_signer)
+        self._policy_worm = worm
+        policy_sink = worm_policy_sink(worm)
+        # SPEC-035 REQ-011 — the lethal-trifecta forbidden composition is LIVE in
+        # GlobalLayer at every tier. arcagent owns the deployment set; arctrust
+        # receives the resolved frozenset.
+        # SPEC-038 REQ-021 — bind the operator-declared clearance to identity.
+        # Federal parses strict (unknown/empty label → fail closed).
+        strict_classification = tier == "federal"
+        self._identity.clearance = parse_classification(
+            self._config.security.clearance, strict=strict_classification
+        )
         pipeline = build_pipeline(
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
             agent_registry={self._identity.did: self._identity.public_key},
+            forbidden_compositions=[LETHAL_TRIFECTA],
+            classification_enforced=self._config.security.classification_enforced,
+            provider_limits=resolve_provider_limits(self._config),
+            audit_sink=policy_sink,
         )
         self._policy_pipeline = pipeline
+        # SPEC-035 REQ-012/014 — per-session capability ledger + human-approval
+        # gate for trifecta completion. The gate signs one-shot approvals with
+        # the OPERATOR key (SPEC-053 authority), never the agent DID (ASI09); no
+        # channel is wired by default → fail-closed unless personal auto-approve.
+        self._capability_ledger = SessionCapabilityLedger()
+        gate_cfg = self._config.tools.human_gate
+        human_gate = HumanGate(
+            operator_signer=self._operator_signer,
+            agent_did=self._identity.did,
+            tier=tier,
+            config=HumanGateConfig(
+                timeout_seconds=gate_cfg.timeout_seconds,
+                auto_approve=[frozenset(legs) for legs in gate_cfg.auto_approve],
+            ),
+            audit_sink=policy_sink,
+        )
+        self._human_gate = human_gate
         self._tool_registry = ToolRegistry(
             config=self._config.tools,
             bus=self._bus,
@@ -171,6 +400,11 @@ class ArcAgent:
             policy_pipeline=pipeline,
             identity=self._identity,
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
+            capability_ledger=self._capability_ledger,
+            human_gate=human_gate,
+            provider_label=self._config.llm.model,
+            resource_classifications=dict(self._config.tools.policy.classifications),
+            classification_strict=strict_classification,
         )
 
         workspace = self._workspace
@@ -248,6 +482,9 @@ class ArcAgent:
                 config=self._config,
                 workspace=self._workspace,
                 bus=self._bus,
+                operator_signer=self._operator_signer,
+                actor_did=self._identity.did if self._identity is not None else "",
+                witness=self._witness,
             )
             self._model = model
             self._trace_store = trace_store
@@ -518,6 +755,11 @@ class ArcAgent:
         # Reverse-order cleanup
         await bus.shutdown()
         await tool_registry.shutdown()
+
+        # Release the WORM chain lock (SPEC-034).
+        if self._policy_worm is not None:
+            self._policy_worm.close()
+            self._policy_worm = None
 
         # Close LLM client (releases httpx connection pool). Guarded
         # because _model is lazy — may never have been materialized.

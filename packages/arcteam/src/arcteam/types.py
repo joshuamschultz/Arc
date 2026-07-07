@@ -106,6 +106,7 @@ class Message(BaseModel):
     mentions: list[str] = Field(default_factory=list)
     refs: list[str] = Field(default_factory=list)
     status: str = "sent"
+    classification: str = "UNCLASSIFIED"
     sig: str = ""
     nonce: str = ""
     signer_did: str = ""
@@ -159,6 +160,7 @@ class Entity(BaseModel):
     created: str = ""
     status: EntityStatus = EntityStatus.active
     workspace_path: str | None = None
+    clearance: str = "UNCLASSIFIED"
 
 
 class Channel(BaseModel):
@@ -168,6 +170,7 @@ class Channel(BaseModel):
     description: str = ""
     members: list[str] = Field(default_factory=list)
     created: str = ""
+    clearance: str = "UNCLASSIFIED"
 
 
 class Cursor(BaseModel):
@@ -181,7 +184,15 @@ class Cursor(BaseModel):
 
 
 class AuditRecord(BaseModel):
-    """Tamper-evident audit entry."""
+    """Tamper-evident audit entry.
+
+    ``signature`` is a per-record asymmetric signature over
+    ``prev_signature || canonical(record)`` (SPEC-037 REQ-002); ``public_key``
+    and ``algorithm`` let an external holder verify it, while
+    :meth:`arcteam.audit.AuditLogger.verify_chain` checks against the known
+    operator public key. ``key_ref`` names the vault-transit key when the
+    signer is out-of-process.
+    """
 
     audit_seq: int
     event_type: str
@@ -193,4 +204,7 @@ class AuditRecord(BaseModel):
     classification: str = "UNCLASSIFIED"
     timestamp_utc: str
     detail: str
-    hmac_sha256: str = ""
+    signature: str = ""
+    public_key: str = ""
+    algorithm: str = "ed25519"
+    key_ref: str = ""

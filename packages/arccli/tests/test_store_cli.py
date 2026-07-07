@@ -24,11 +24,12 @@ def _seed_valid_worm(data_dir: Path) -> bytes:
     """Write a real signed WORM chain via arctrust; return the public key."""
     from arctrust.audit import AuditEvent, WormSink
     from arctrust.keypair import generate_keypair
+    from arctrust.signer import InProcessSigner
 
     kp = generate_keypair()
     worm_dir = data_dir / "worm"
     worm_dir.mkdir(parents=True, exist_ok=True)
-    sink = WormSink(_worm_file(data_dir), kp.private_key)
+    sink = WormSink(_worm_file(data_dir), InProcessSigner(kp.private_key))
     sink.write(AuditEvent(actor_did="did:arc:1", action="tool_call", target="fs", outcome="allow"))
     sink.write(
         AuditEvent(actor_did="did:arc:1", action="tool_call", target="net", outcome="allow")

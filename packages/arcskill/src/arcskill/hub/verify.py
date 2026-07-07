@@ -269,6 +269,36 @@ def verify_bundle(
     return result
 
 
+def verify_artifact_at_load(
+    bundle_path: Path,
+    source: SkillSource,
+    config: HubConfig,
+    *,
+    audit_sink: AuditSink | None = None,
+) -> VerifyResult:
+    """Re-verify an installed hub skill bundle at LOAD time (SPEC-033 C1/REQ-011).
+
+    Install-time and load-time are different trust boundaries: a signed bundle
+    can be tampered on disk in between, so — following the Linux kernel-module
+    and ``jarsigner`` precedent — every load re-verifies. This recomputes the
+    content hash from the bytes on disk NOW and runs the same
+    :func:`verify_bundle` core, so a post-install byte change fails the load
+    check (``verify_bundle`` raises :class:`SignatureInvalid`). Federal-grade
+    verification remains the floor; personal/enterprise may skip only when the
+    ``sigstore`` package is unavailable (``VerifyResult.skipped``).
+
+    Returns the :class:`VerifyResult` (``signature_valid`` / ``skipped`` /
+    ``revoked``) so the caller can fail-close on ``revoked`` or an unmet floor.
+    """
+    return verify_bundle(
+        bundle_path=bundle_path,
+        source=source,
+        config=config,
+        content_hash=sha256_path(bundle_path),
+        audit_sink=audit_sink,
+    )
+
+
 def _emit_audit(
     *,
     audit_sink: AuditSink | None,

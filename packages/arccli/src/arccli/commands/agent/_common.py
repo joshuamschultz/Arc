@@ -133,6 +133,16 @@ tier = "personal"
 [security.validators]
 auto_run_agent_code = false
 
+[execution]
+# Code-execution isolation floor follows [security] tier:
+#   federal -> VM (Firecracker/KVM), enterprise -> container, personal -> container.
+# A PERSONAL-tier operator MAY relax down to a bare host subprocess
+# ("sandbox off" — full host filesystem access, no container) by uncommenting
+# exactly one of the lines below. Rejected at enterprise/federal (cannot go
+# below the tier floor). Unset = the tier default (container for personal).
+#   relax_isolation = "off"        # sandbox OFF: run on the host, no isolation
+#   relax_isolation = "container"  # explicit container (same as the default)
+
 [capabilities]
 # Relax the AST import gate for agent-authored tools under
 # workspace/capabilities/ WITHOUT moving them out of the protected root.
@@ -167,6 +177,9 @@ enabled = true
 
 [modules.messaging.config]
 poll_interval_seconds = 5.0
+# Join the shared team bus. ensure_live_backend degrades to an in-memory
+# backend (with a warning) if no server is reachable, so a solo agent still runs.
+nats_url = "nats://127.0.0.1:4222"
 
 [arcstore]
 enabled = true

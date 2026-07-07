@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-06
+
+SPEC-037: WORM/audit signing goes through the arctrust `Signer` seam.
+
+### Changed
+- `arc run` direct-audit WORM sink and the `arc team` `AuditLogger` build a `Signer` from the operator key (`load_operator_key().into_signer()`) instead of a raw seed / shared HMAC key.
+- `arc team init` now bootstraps the operator audit key (asymmetric authority) instead of generating a `.hmac_key`; `arc team status` reports operator-key presence.
+
+## [0.5.0] - 2026-07-06
+
+SPEC-053: `arc init` generates the deployment operator key (audit authority).
+
+### Added
+- **`arc init` operator key** — generates a fresh Ed25519 operator keypair (if none exists) at `<config-dir>/operator/operator.key` (private key `0600`, dir `0700`), idempotent on re-run. Personal tier is silent/zero-config; enterprise/federal print the operator public-key fingerprint for out-of-band recording. All crypto is delegated to `arctrust.OperatorKey` (`arccli.commands.operator`).
+
+### Changed
+- The `arc run` direct-run WORM audit sink is now signed by the operator key, not the caller's DID seed (audited subject ≠ audit authority).
+- Version synced across `pyproject.toml` and `arccli.__init__` (was drifted at 0.4.1 / 0.4.0).
+
+## [0.4.1] - 2026-07-05
+
+### Added
+
+- **`[execution] relax_isolation` agent config** — Agent `config.toml` now supports a `personal`-tier-only `[execution]` block to relax the `execute_python` isolation floor down to a bare host subprocess (`"off"`/`"none"`/`"local"`) or leave it at the container default. Rejected at `enterprise`/`federal`. `arc` reads the agent's `[security] tier` and this config and forwards both to arcrun on every `execute_python` call (SPEC-036).
+
 ## [0.4.0] - 2026-04-26
 
 Major refactor: legacy Click groups removed, command tree reorganized into a single `commands/` package, and full smoke-test coverage of every subcommand.

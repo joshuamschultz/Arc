@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.mentions import extract_mentions
@@ -31,7 +32,7 @@ class TestExtractMentions:
 @pytest.fixture
 async def svc() -> MessagingService:
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"test-key")
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     await registry.register(
@@ -55,9 +56,7 @@ async def svc() -> MessagingService:
         )
     )
     service = MessagingService(backend, registry, audit)
-    await service.create_channel(
-        Channel(name="ops", members=["agent://a1", "agent://builder"])
-    )
+    await service.create_channel(Channel(name="ops", members=["agent://a1", "agent://builder"]))
     return service
 
 
@@ -89,9 +88,7 @@ class TestSendPopulatesMentions:
         assert sent.priority == Priority.CRITICAL
 
     async def test_unknown_body_mention_ignored(self, svc: MessagingService) -> None:
-        sent = await svc.send(
-            Message(sender="agent://a1", to=["channel://ops"], body="hi @ghost")
-        )
+        sent = await svc.send(Message(sender="agent://a1", to=["channel://ops"], body="hi @ghost"))
         assert sent.mentions == []
         assert sent.action_required is False
 

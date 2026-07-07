@@ -1,9 +1,9 @@
 """Tool transport types and the native_tool decorator.
 
-Sibling of ``arcagent.core.tool_registry``. Owns the static building
-blocks that describe a tool: the transport enum, the RegisteredTool
-dataclass, the schema-builder decorator, argument-schema validation,
-and the small built-ins exposed to tests.
+The static building blocks that describe a tool: the transport enum, the
+RegisteredTool dataclass, the schema-builder decorator, argument-schema
+validation, and the small built-ins exposed to tests. These are tool-domain
+primitives, so they live with the tools package rather than in the nucleus.
 
 Re-exported through ``arcagent.core.tool_registry`` so existing
 imports

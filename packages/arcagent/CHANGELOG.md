@@ -7,6 +7,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-07
+
+SPEC-039 quality pass: core back under budget, and per-tier default budget ceilings so token/cost/request limits are ON by default (SPEC-038 OQ-3).
+
+### Added
+- Conservative per-tier default budget ceilings (`arcagent/tools/_policy_fill.py`). When an operator leaves a ceiling unset, a tier default now applies: federal is the tightest floor (500k tokens / $10 / 500 requests), enterprise a looser cap (2M tokens / $50 / 2k requests), and personal stays unbounded/relaxable. An explicit operator ceiling always wins. Both the arcrun circuit-breaker (`resolve_run_budget`) and the arctrust `ProviderLayer` (`resolve_provider_limits`) are now default-on above personal — a federal agent is never unbounded by omission.
+
+### Changed
+- **Behavior:** federal/enterprise agents with no `[budget]` block are now capped by the tier default rather than running unbounded.
+- Relocated tool-definition primitives from `core/tool_transport.py` to `tools/_transport.py` (ToolTransport, RegisteredTool, `native_tool`, arg validation) — tool-domain code moved out of the nucleus so `arcagent/core` is back under the 3500 NCLOC budget (3411, 89 to spare). Behavior-preserving; every name is still re-exported through `core.tool_registry`.
+
+## [0.9.0] - 2026-07-06
+
+SPEC-038 sub-scopes A/C/D wiring: arcagent bridges arcrun budget usage onto the policy pipeline, binds clearance to identity, enforces no-exfil at egress, and tags outbound-comms tools so the SPEC-035 trifecta gate fires.
+
+### Added
+- Dispatch now fills `PolicyContext.provider_usage` from the live arcrun `RunState` (`ctx.parent_state`) with a TRUSTED, config-sourced provider label (`llm.model`, never `LLMResponse.model`), lighting up the previously-inert SPEC-034 `ProviderLayer`.
+- Dispatch fills `PolicyContext.clearance` (caller clearance from identity + per-tool resource classification from `[tools.policy] classifications`), driving the no-read-up `ClassificationLayer`.
+- `[security] clearance` + `classification_enforced` and `[tools.policy] classifications` / `egress_clearances` config.
+- `EgressProxy` refuses above-ceiling data (`egress.classification_refused`, `EgressClassificationDenied`) — no-exfil with a single external ceiling (`UNCLASSIFIED`) plus per-origin overrides.
+- `messaging_send` / Telegram `notify_user` now declare the `external_comms` leg; `messaging_check_inbox` / `messaging_read_thread` declare `untrusted_input`; `browser_navigate` maps to both legs. The lethal-trifecta gate now has real leg producers.
+- `spawn()` propagates clearance monotone-non-increasing (child clamped to the parent's clearance).
+
+## [0.8.0] - 2026-07-06
+
+SPEC-037: the operator key resolves through the arctrust `Signer` seam; config selects custody / algorithm / FIPS.
+
+### Added
+- `[security]` config: `signing_algorithm` (`ed25519` default | `ecdsa-p256`), `custody` (`in_process` | `vault_transit`), `require_fips` (federal floor). SPEC-037 REQ-004/007/008/009.
+- Startup runs `arctrust.assert_fips_if_required(...)` before any signing key is used — fail-closed at federal (SC-13/IA-7).
+- `ArcAgent._operator_signer`: the operator key resolved through the `Signer` seam; every WORM/checkpoint signature goes through it.
+
+### Changed
+- Every WORM construction site now passes a `Signer` (raw seed deleted): the policy WORM chain, `model_manager.build_checkpoint_sink` / `ensure_model` (`operator_signer`), the checkpoint witness-head signing, and `skill_improver` audit. The messaging audit chain (`AuditLogger`) takes an asymmetric `Signer` built from the agent identity (`_bootstrap.audit_signer`); `MessagingConfig.audit_hmac_key` removed.
+
+## [0.7.0] - 2026-07-06
+
+SPEC-035: lock goals, break the lethal trifecta, and confine bash. Three confinement floors wired at every tier (ADR-019).
+
+### Added
+- **Goal-lock (REQ-001..004).** `is_protected_path` / `enforce_protected_path` / `resolve_protected_paths` in `tools/_validation.py`. `write`, `edit`, and `bash` consult one shared guard before any mutation; the default protected set (`identity.md`, `policy.md`, `context.md`) is unioned with operator `tools.policy.protected_paths`, resolved once at agent start and immutable for the session. Denials raise `TOOL_PROTECTED_PATH` and emit `tool.protected_path.denied` (tool + caller DID + path).
+- **Lethal-trifecta gate (REQ-010..016).** `SessionCapabilityLedger` + tag→leg map (`core/session_internal/capability_ledger.py`) accumulate `{private_data, external_comms, untrusted_input}` legs across calls and inject them as `PolicyContext.session_capabilities`; the trifecta forbidden set is passed into `build_pipeline(forbidden_compositions=...)`. `HumanGate` (`tools/human_gate.py`) pauses a trifecta-completing call for an operator-signed one-shot approval (never the agent DID — ASI09), fails closed on timeout/denial, and never auto-approves at federal. `[tools.human_gate]` config (timeout + named auto-approve compositions).
+- **EgressProxy wiring (REQ-013).** One per-agent `EgressProxy` (deny-by-default `tools.policy.egress_allowlist`) is the single external-comms mediation point; a successful egress records the `external_comms` leg.
+- **Sandboxed bash (REQ-020..025).** At enterprise/federal, `bash` delegates to arcrun's tier-routed isolation backend with the workspace bind-mounted read-write, protected files read-only (goal-lock survives sandboxing), and host `~/.arc`/`.audit` never mounted. Personal keeps host bash with an advisory goal-lock guard.
+
+### Removed
+- `ForbiddenCompositionChecker` (arcagent duplicate) — the subset check is now LIVE inside arctrust's `GlobalLayer`; arcagent supplies only the tag→leg mapping.
+
+## [0.6.0] - 2026-07-06
+
+SPEC-053: wire the operator key (audit authority) into every WORM sink; the agent DID seed no longer signs any audit chain.
+
+### Changed
+- The three WORM audit sinks are rewired to the deployment **operator key**, replacing the agent DID seed outright (no flag, no fallback): the policy-decision chain (`core/agent.py`), the skill-improver audit chain (`modules/skill_improver/_runtime.py`), and the new trace-checkpoint anchor (`core/model_manager.py`). Chains now verify only under the operator public key. **The mutated-skill signature stays on the agent DID** (SPEC-033 D3) — audit authority and artifact provenance are different attestations.
+- `core/agent.py` loads the operator key read-only at startup from outside the workspace tool-sandbox (auto-bootstrapped at personal tier; vault seam for federal), and builds the federal external witness (tier = stringency; federal only *adds* the witness).
+
+### Added
+- `SecurityConfig` fields: `operator_key_dir`, `operator_vault_path`, `witness_mode`, `witness_log_url` (SPEC-053 REQ-004/005/010).
+- `model_manager.build_checkpoint_sink` — operator-signed `trace.checkpoint` WORM anchor; at federal tier the head is also submitted to an external witness so a rollback past the last anchor is detectable even by a holder of the operator key.
+
+## [0.5.0] - 2026-07-06
+
+SPEC-033: enforce the Sign pillar on the workspace/agent-authored root — restricted-builtins load path, re-verify-at-load, TOFU first-load approval, signed self-modification tools, and a WORM-chained skill-improver audit. Scope is the untrusted workspace root only; first-party (builtins/global/per-agent) roots remain release-signed-upstream and out of scope.
+
+### Added
+
+- **Sidecar artifact signing** (`capabilities/artifact_signing.py`) — agent-authored capabilities get a detached `.arcsig` sidecar (content hash + Ed25519 signature, keyed to the agent's own DID) written on create/update. `create_skill`, `create_tool`, `update_skill`, and `update_tool` all sign what they write via the new `builtins/capabilities/_runtime.sign_artifact_file` helper. No-op when the agent has no signing identity.
+- **Pluggable `TrustBackend`** (`capabilities/trust_backend.py`) — a one-method `verify()` Protocol the capability loader depends on instead of a concrete crypto call. `Ed25519TrustBackend` (arctrust, DID-scoped, network-free) is the default for self-authored artifacts; Sigstore keyless verification (arcskill) governs install-time hub skills separately.
+- **Restricted-builtins module execution** (`tools/_dynamic_loader.build_restricted_builtins`) — the untrusted `<agent>/workspace/.capabilities/` root now executes under `RESTRICTED_BUILTINS` plus a denylist-enforcing `__import__`, in place of the prior bare `exec(code, module.__dict__)` with the full builtin surface. This is a fast-fail linter / defense-in-depth layer in front of the SPEC-036 execution sandbox — not a boundary, and not a substitute for it.
+- **Load-time Sign gate** (`capabilities/capability_loader._passes_trust_gate`) — re-verifies the detached signature on every workspace-root load, independent of any install-time check, then adjudicates via `TofuLayer`: above personal tier a missing/invalid signature denies outright; first-sight and drift are TOFU decisions (`NEW_SIGHTING` / `DENY`). Any evaluation error denies — fail-closed.
+- **`TofuLayer.approve_source`** (`core/tofu_layer.py`) — the pure data operation behind `arc trust approve`. Pins a capability name to its current source hash, superseding any prior approval so a re-approval after drift clears the `DENY`.
+- **WORM signed hash-chain audit for skill mutations** — `skill_improver.CandidateStore.append_audit` now emits `skill.mutation.applied` through an injected `arctrust.AuditSink` (a `WormSink` in production, keyed to the agent's own identity) instead of writing a plaintext `audit.jsonl`. The mutated skill text is itself signed through the same sidecar convention `create_skill` uses.
+- **New tests** — `tests/security/test_sign_gate_load.py`, `tests/security/test_workspace_restricted_load.py`, `tests/unit/capabilities/`, `tests/unit/modules/skill_improver/test_engine_signing.py`.
+
+### Changed
+
+- **`CapabilityLoader.__init__`** — gains `tofu`, `require_signature`, `trusted_public_key`, `trust_backend`, all defaulted off/`None` so a bare library loader keeps pre-SPEC-033 behavior. `agent_lifecycle.setup_capabilities` wires them from the agent's configured tier and identity (`require_signature` true at enterprise/federal).
+- **`builtins/capabilities/_runtime.configure`** — takes an `identity` (arctrust `AgentIdentity`); new `sign_artifact_file()` helper signs artifacts on write using it.
+- **`skill_improver._runtime.configure`** — takes an `identity`; resolves `(signer_did, signing_key)` and wires a `WormSink` at `<workspace>/.audit/skill_improver.worm` when the identity can sign. Fails open (audit disabled, module startup unaffected) if the sink can't be opened.
+
+### Removed
+
+- **`core/os_sandbox.py`** (and its test) — dead code: an uncalled OS-sandbox transport contract, never wired into the execution path. ASI05 enforcement is arcrun's tier-routed `execute` + backends (SPEC-036); this module ceded that ground and had nothing left to do.
+
+### Security
+
+- **SPEC-033 — Sign pillar enforced on the workspace/agent-authored root** — closes the gap where agent-authored code ran under a plain full-builtins `exec` with its signature (if any) checked only at install/create time, never re-checked at load. Restricted-builtins execution, verify-at-load, TOFU first-load approval, and signed self-modification tools now apply on every load. Scoped to the untrusted workspace root; first-party roots (builtins/global/per-agent) are release-signed-upstream and unaffected.
+
 ## [0.4.0] - 2026-04-26
 
 Major refactor: identity primitives moved to arctrust, dedicated orchestration layer for spawn/sub-runs, four-pillar audit migration to arctrust sinks, and removal of legacy duplicate-named files cluttering the tree.

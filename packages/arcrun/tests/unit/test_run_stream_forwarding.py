@@ -81,3 +81,38 @@ async def test_run_stream_forwards_messages_bridge_and_tool_choice() -> None:
     # Stream still terminates with a TurnEndEvent.
     assert isinstance(events[-1], TurnEndEvent)
     assert events[-1].final_text == "done"
+
+
+@pytest.mark.asyncio
+async def test_run_stream_forwards_budget_ceilings() -> None:
+    """run_stream threads max_tokens/max_cost_usd into the loop (SPEC-038 F1).
+
+    Without this forwarding the circuit-breaker is unreachable through the
+    streaming agent path — the ceilings never land on RunState.
+    """
+    captured: dict[str, Any] = {}
+
+    async def _fake_run(*args: Any, **kwargs: Any) -> LoopResult:
+        captured.update(kwargs)
+        return LoopResult(
+            content="done",
+            turns=1,
+            tool_calls_made=0,
+            tokens_used={},
+            strategy_used="react",
+            cost_usd=0.0,
+        )
+
+    with patch("arcrun.loop.run", side_effect=_fake_run):
+        stream = await run_stream(
+            model=object(),
+            capabilities=StaticProvider([_tool()]),
+            system_prompt="sys",
+            task="do it",
+            max_tokens=1234,
+            max_cost_usd=5.5,
+        )
+        _ = [ev async for ev in stream]
+
+    assert captured["max_tokens"] == 1234
+    assert captured["max_cost_usd"] == 5.5

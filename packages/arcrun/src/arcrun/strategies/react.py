@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
+from arcrun.builtins.task_complete import BudgetBreachReason, make_budget_breach_args
 from arcrun.executor import execute_tool_call
 from arcrun.sandbox import Sandbox
 from arcrun.state import Injection, RunState
@@ -36,6 +37,7 @@ def _inject(state: RunState, injection: Injection, event_type: str) -> None:
             "preview": injection.message[:_PREVIEW_LEN],
         },
     )
+
 
 # Debug-only guard for the transform_context append-only contract. Off by
 # default so the hot path pays nothing (cold start < 500ms, fleet scale).
@@ -187,17 +189,23 @@ async def react_loop(
         if state.cancel_event.is_set():
             break
 
-        # SPEC-017 R-032 — cost cap. Enforced at the top of each turn
-        # so we never start a turn knowing we're already over budget.
-        if state.max_cost_usd is not None and state.cost_usd >= state.max_cost_usd:
-            state.completion_payload = {
-                "status": "failed",
-                "summary": "Cost limit reached before task completed.",
-                "error": "max_cost",
-            }
+        # SPEC-038 REQ-001/003 — token+cost circuit-breaker. Enforced at the
+        # top of each turn so we never start a turn already over budget. Token
+        # is the primary ceiling (present on both paths); cost is secondary.
+        over_cost = state.max_cost_usd is not None and state.cost_usd >= state.max_cost_usd
+        over_tok = state.max_tokens is not None and state.tokens_used["total"] >= state.max_tokens
+        if over_cost or over_tok:
+            reason: BudgetBreachReason = "max_cost" if over_cost else "max_tokens"
+            state.completion_payload = make_budget_breach_args(reason=reason).model_dump(
+                exclude_none=True
+            )
             bus.emit(
                 "loop.completed",
-                {"reason": "max_cost", "cost_usd": state.cost_usd},
+                {
+                    "reason": reason,
+                    "cost_usd": state.cost_usd,
+                    "tokens": state.tokens_used.copy(),
+                },
             )
             return _build_result(state, None)
 
@@ -288,11 +296,9 @@ async def react_loop(
         # SPEC-017 R-032 — max_turns breach synthesizes a failed
         # task_complete so consumers see a structured terminator,
         # not silent truncation.
-        state.completion_payload = {
-            "status": "failed",
-            "summary": "Turn limit reached before task completed.",
-            "error": "max_turns",
-        }
+        state.completion_payload = make_budget_breach_args(reason="max_turns").model_dump(
+            exclude_none=True
+        )
         bus.emit(
             "loop.max_turns",
             {

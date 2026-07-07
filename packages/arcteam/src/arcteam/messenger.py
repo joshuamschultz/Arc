@@ -6,7 +6,9 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any  # used for DLQ entry dicts
+from typing import Any, NoReturn  # used for DLQ entry dicts
+
+from arctrust.classification import Classification, dominates, parse_classification
 
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner, ReplayCache, new_nonce, sign_message, verify_message
@@ -107,10 +109,15 @@ class MessagingService:
         registry: EntityRegistry,
         audit: AuditLogger,
         signer: MessageSigner | None = None,
+        strict_classification: bool = False,
     ) -> None:
         self._backend = backend
         self._registry = registry
         self._audit = audit
+        # SPEC-038 REQ-026 — federal fails closed on an unresolvable recipient
+        # clearance or an unknown classification label. Personal/enterprise
+        # default to permissive UNCLASSIFIED.
+        self._strict_classification = strict_classification
         # The signer signs messages this service *sends* (REQ-030). It does NOT
         # gate verification: every consumed message is Ed25519-verified,
         # sender-bound, and replay/dedup-checked regardless of whether this
@@ -161,6 +168,74 @@ class MessagingService:
             except UnknownHandle:
                 continue
         return sender_did in member_dids
+
+    # --- Classification (no-write-down) ---
+
+    async def _resolve_recipient_clearance(self, scheme: str, name: str) -> Classification | None:
+        """Resolve a recipient/channel/role clearance, or None if unresolvable.
+
+        Role targets fan out to members; the strictest (lowest) member clearance
+        governs — a role message may only go as low as its least-cleared member.
+        """
+        if scheme in ("agent", "user"):
+            entity = await self._registry.get(f"{scheme}://{name}")
+            if entity is None:
+                return None
+            return parse_classification(entity.clearance, strict=self._strict_classification)
+        if scheme == "channel":
+            data = await self._backend.read(CHANNELS_COLLECTION, name)
+            if data is None:
+                return None
+            channel = Channel.model_validate(data)
+            return parse_classification(channel.clearance, strict=self._strict_classification)
+        if scheme == "role":
+            members = await self._registry.by_role(name)
+            if not members:
+                return None
+            levels = [
+                parse_classification(m.clearance, strict=self._strict_classification)
+                for m in members
+            ]
+            return min(levels)
+        return None
+
+    async def _enforce_no_write_down(
+        self, message: Message, scheme: str, name: str, uri: str
+    ) -> None:
+        """Refuse a send whose classification the recipient cannot receive.
+
+        Fail closed: an unresolvable recipient clearance (or an unknown label at
+        federal) refuses delivery (REQ-024/026). NIST 800-53 AC-4.
+        """
+        msg_level = parse_classification(
+            message.classification, strict=self._strict_classification
+        )
+        recipient_level = await self._resolve_recipient_clearance(scheme, name)
+        if recipient_level is None:
+            if not self._strict_classification:
+                recipient_level = Classification.UNCLASSIFIED
+            else:
+                await self._refuse_classification(message, uri, "unresolvable recipient clearance")
+
+        if recipient_level is not None and dominates(recipient_level, msg_level):
+            return
+        await self._refuse_classification(
+            message,
+            uri,
+            f"message classification {msg_level.name} exceeds recipient clearance",
+        )
+
+    async def _refuse_classification(self, message: Message, uri: str, detail: str) -> NoReturn:
+        """Audit + DLQ a classification refusal, then raise (fail closed)."""
+        await self._to_dlq(message, "classification_refused")
+        await self._audit.log(
+            event_type="message.classification_refused",
+            subject=uri,
+            actor_id=message.sender,
+            detail=f"{detail} (to {uri})",
+            classification=message.classification,
+        )
+        raise ValueError(f"Message refused: {detail} for {uri}")
 
     # --- Send ---
 
@@ -230,6 +305,10 @@ class MessagingService:
                     raise ValueError(
                         f"Sender {message.sender} is not a member of channel://{name}"
                     )
+
+            # SPEC-038 REQ-024 — no-write-down: the recipient/channel clearance
+            # must dominate the message classification, or the send is refused.
+            await self._enforce_no_write_down(message, scheme, name, uri)
 
             msg_dict = {**base_dict}
             seq, _offset = await self._backend.append_auto_seq(
@@ -652,13 +731,20 @@ class MessagingService:
     def resolve_subscriptions(self, entity_id: str, roles: list[str] | None = None) -> list[str]:
         """Resolve all streams an entity should poll.
 
-        - arc.agent.{name} (DM inbox, always)
-        - arc.role.{role} (for each role)
+        Accepts the entity in any address form — ``@handle``, ``agent://handle``,
+        ``user://handle``, or a bare handle — and normalizes to the same
+        handle-based inbox stream ``send`` routes to (``arc.agent.{handle}``),
+        plus one ``arc.role.{role}`` per role. Normalizing the ``@handle`` form
+        here is essential: otherwise a poll for ``@builder`` would listen on
+        ``arc.agent.@builder`` while ``send`` wrote to ``arc.agent.builder``.
         """
-        try:
-            _, name = parse_uri(entity_id)
-        except ValueError:
-            name = entity_id
+        if entity_id.startswith("@"):
+            name = entity_id[1:]
+        else:
+            try:
+                _, name = parse_uri(entity_id)
+            except ValueError:
+                name = entity_id
 
         streams = [f"arc.agent.{name}"]
         for role in roles or []:

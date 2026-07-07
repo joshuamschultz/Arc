@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from enum import IntEnum
-
+from arctrust.classification import Classification
 from pydantic import BaseModel, Field
 
-
-class Classification(IntEnum):
-    """US Government classification hierarchy."""
-
-    UNCLASSIFIED = 0
-    CUI = 1
-    CONFIDENTIAL = 2
-    SECRET = 3
-    TOP_SECRET = 4
+__all__ = [
+    "Classification",
+    "EntityFile",
+    "EntityMetadata",
+    "IndexEntry",
+    "MemoryStatus",
+    "PromotionResult",
+    "SearchResult",
+]
 
 
 class EntityMetadata(BaseModel):

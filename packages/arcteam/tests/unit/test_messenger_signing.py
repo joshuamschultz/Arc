@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from arctrust import generate_keypair
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner
@@ -19,7 +20,7 @@ DID_A1 = "did:arc:local:agent/a1"
 
 async def _service_with_signer() -> tuple[MessagingService, EntityRegistry, MessageSigner]:
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"k" * 32)
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     kp = generate_keypair()
@@ -34,8 +35,13 @@ async def _service_with_signer() -> tuple[MessagingService, EntityRegistry, Mess
         )
     )
     await registry.register(
-        Entity(did="did:arc:local:agent/a2", handle="a2", id="agent://a2", name="A2",
-               type=EntityType.AGENT)
+        Entity(
+            did="did:arc:local:agent/a2",
+            handle="a2",
+            id="agent://a2",
+            name="A2",
+            type=EntityType.AGENT,
+        )
     )
     signer = MessageSigner(did=DID_A1, private_key=kp.private_key)
     svc = MessagingService(backend, registry, audit, signer=signer)
@@ -90,15 +96,20 @@ class TestUnsignedSendIsRejectedOnConsume:
 
     async def test_unsigned_message_never_delivered(self) -> None:
         backend = MemoryBackend()
-        audit = AuditLogger(backend, hmac_key=b"k" * 32)
+        audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
         await audit.initialize()
         registry = EntityRegistry(backend, audit)
         await registry.register(
             Entity(did=DID_A1, handle="a1", id="agent://a1", name="A1", type=EntityType.AGENT)
         )
         await registry.register(
-            Entity(did="did:arc:local:agent/a2", handle="a2", id="agent://a2", name="A2",
-                   type=EntityType.AGENT)
+            Entity(
+                did="did:arc:local:agent/a2",
+                handle="a2",
+                id="agent://a2",
+                name="A2",
+                type=EntityType.AGENT,
+            )
         )
         svc = MessagingService(backend, registry, audit)
         sent = await svc.send(Message(sender="agent://a1", to=["agent://a2"], body="hi"))

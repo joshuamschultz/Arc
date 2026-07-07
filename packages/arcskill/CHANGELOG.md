@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-07
+
+SPEC-039 quality pass: arcskill now passes `mypy --strict` like the other packages.
+
+### Changed
+- Added a minimal `[tool.mypy]` config with a module override (`ignore_missing_imports` for the optional `sigstore` / `sigstore.*` `[hub]` extras), so `mypy --strict src/arcskill` is clean whether or not the optional extras are installed.
+- `hub/_docker.py` now declares `__all__` so its aliased optional import `_DockerBackend` is an explicit re-export (fixes a strict no-implicit-reexport `attr-defined` in `dry_run.py`).
+- Removed two dead `# type: ignore[import-untyped]` on `import yaml` (types-PyYAML is present, so the ignores were unused under strict).
+
+## [0.1.1] - 2026-07-06
+
+SPEC-033 C1/REQ-011: re-verify installed hub skills at load time, not just install time.
+
+### Added
+
+- **`verify_artifact_at_load`** (`hub/verify.py`) — re-verifies an installed hub skill bundle's Sigstore/Rekor signature against the bytes on disk at LOAD time, recomputing the content hash from the current file rather than trusting the install-time record. Install-time and load-time are different trust boundaries — a signed bundle can be tampered with on disk in between — so, following the Linux kernel-module / `jarsigner` precedent, every load re-verifies through the same `verify_bundle` core. A post-install byte change fails the load check. Returns the same `VerifyResult` (`signature_valid` / `skipped` / `revoked`) so the caller can fail-close on `revoked` or an unmet tier floor.
+- **Tests** — `tests/unit/hub/test_verify_at_load.py`.
+
 ## [0.1.0] - 2026-04-26
 
 First public release of the skill management hub. Validates, installs, scans, and locks skills for use by agents, run loops, and LLM contexts.

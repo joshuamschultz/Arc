@@ -84,7 +84,9 @@ class TestBoundaryMasking:
     async def test_compact_masks_kept_window_and_persists(self, tmp_path: Path) -> None:
         old_msgs = [{"role": "user", "content": "old"}]
         kept = [{"role": "tool", "content": "y" * 500, "tool_call_id": "tc1"}]
-        kept_masked = [{"role": "tool", "content": "[output pruned — 60 tokens]", "tool_call_id": "tc1"}]
+        kept_masked = [
+            {"role": "tool", "content": "[output pruned — 60 tokens]", "tool_call_id": "tc1"}
+        ]
 
         cm = MagicMock()
         cm.compaction_split.return_value = (old_msgs, kept)

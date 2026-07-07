@@ -36,13 +36,14 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from arctrust.keypair import KeyPair, sign, verify
+from arctrust.signer import ED25519, Signer, verify_signature
 
 _logger = logging.getLogger("arctrust.audit")
 
@@ -193,7 +194,10 @@ class WormSink:
 
     Args:
         path: Active chain file. Rotated segments live beside it.
-        operator_private_key: 32-byte Ed25519 seed used to sign each record.
+        signer: The operator :class:`~arctrust.signer.Signer` (in-process or
+            vault-transit) that signs each record's ``event_hash``. Under
+            vault-transit custody the operator seed never enters this process
+            (SPEC-037 REQ-006).
         genesis_tip: Expected ``prev_hash`` of the very first record. Defaults
             to the all-zero genesis anchor; supply an out-of-band value to
             detect head replacement (anti-genesis-substitution).
@@ -207,15 +211,16 @@ class WormSink:
     def __init__(
         self,
         path: Path,
-        operator_private_key: bytes,
+        signer: Signer,
         *,
         genesis_tip: str = GENESIS_PREV_HASH,
         max_records: int = 100_000,
         max_bytes: int = 50 * 1024 * 1024,
     ) -> None:
         self._path = Path(path)
-        self._private_key = operator_private_key
-        self._public_key = KeyPair.from_seed(operator_private_key).public_key
+        self._signer = signer
+        self._public_key = signer.public_key
+        self._algorithm = signer.algorithm
         self._genesis_tip = genesis_tip
         self._max_records = max_records
         self._max_bytes = max_bytes
@@ -272,12 +277,13 @@ class WormSink:
         prev_hash = self._chain_tip or self._genesis_tip
         event_dump = event.model_dump(mode="json")
         event_hash = _canonical_event_hash(seq=seq, prev_hash=prev_hash, event=event_dump)
-        signature = sign(event_hash.encode("utf-8"), self._private_key).hex()
+        signature = self._signer.sign(event_hash.encode("utf-8")).hex()
         record = {
             "seq": seq,
             "event": event_dump,
             "prev_hash": prev_hash,
             "event_hash": event_hash,
+            "algorithm": self._algorithm,
             "signature": signature,
         }
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
@@ -407,13 +413,16 @@ def verify_chain(
     Streams records across all rotated segments + the active file (no
     all-in-RAM list), checking for each record:
     - ``event_hash`` recomputes from ``(seq, prev_hash, event)`` (AU-9 links),
-    - the Ed25519 ``signature`` verifies against ``public_key`` (AU-10),
+    - the ``signature`` verifies against ``public_key`` under the record's
+      ``algorithm`` (Ed25519 or ECDSA-P256; AU-10 non-repudiation),
     - ``seq`` is contiguous from 0 (no gap / mid-deletion),
     - ``prev_hash`` chains to the previous record's ``event_hash``,
     - the first record's ``prev_hash`` equals the expected genesis tip.
 
     Returns False on any violation. This is the read path used by
-    ``arc store verify`` and by store-ingest tamper flagging.
+    ``arc store verify`` and by store-ingest tamper flagging. Records written
+    before SPEC-037 carry no ``algorithm`` field and are Ed25519 by definition,
+    so the field defaults to ``ed25519`` (existing chains verify unchanged).
     """
     prev_hash = genesis_tip
     expected_seq = 0
@@ -432,7 +441,8 @@ def verify_chain(
                 sig = bytes.fromhex(record.get("signature", ""))
             except ValueError:
                 return False
-            if not verify(event_hash.encode("utf-8"), sig, public_key):
+            algorithm = record.get("algorithm", ED25519)
+            if not verify_signature(algorithm, event_hash.encode("utf-8"), sig, public_key):
                 return False
             prev_hash = event_hash
             expected_seq += 1
@@ -503,6 +513,51 @@ def emit(event: AuditEvent, sink: AuditSink) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Policy pipeline -> durable WORM adapter (SPEC-034 REQ-017)
+# ---------------------------------------------------------------------------
+
+
+def worm_policy_sink(sink: AuditSink) -> Callable[[str, dict[str, Any]], None]:
+    """Adapt the policy pipeline's ``(event_type, payload)`` callback to a sink.
+
+    The pipeline emits a flat ``(event_type, payload)`` audit callback once per
+    evaluation; the durable :class:`WormSink` (and every :class:`AuditSink`)
+    consumes an :class:`AuditEvent`. This closes that seam: it builds an
+    ``AuditEvent`` from the payload and routes it through :func:`emit`, so a
+    policy decision lands as one tamper-evident, Ed25519-signed chain record.
+
+    Raw tool ``arguments`` are never copied — only the pipeline's precomputed
+    ``input_hash`` travels into the record (REQ-019, AU-9 minimization). Lives
+    in arctrust because arctrust owns both ``policy`` and ``audit``, so the
+    adapter has no cross-package dependency.
+    """
+
+    def _write(event_type: str, payload: dict[str, Any]) -> None:
+        event = AuditEvent(
+            actor_did=str(payload.get("agent_did", "")),
+            action=event_type,
+            target=str(payload.get("tool_name", "")),
+            outcome=str(payload.get("decision", "")),
+            classification=payload.get("classification"),
+            tier=payload.get("tier"),
+            request_id=payload.get("session_id"),
+            payload_hash=payload.get("input_hash"),
+            extra={
+                "layer": payload.get("layer"),
+                "rule_id": payload.get("rule_id"),
+                "reason": payload.get("reason"),
+                "policy_version": payload.get("policy_version"),
+                "cache_hit": payload.get("cache_hit"),
+                "shadow": payload.get("shadow"),
+                "evaluation_time_us": payload.get("evaluation_time_us"),
+            },
+        )
+        emit(event, sink)
+
+    return _write
+
+
 __all__ = [
     "GENESIS_PREV_HASH",
     "AuditEvent",
@@ -512,4 +567,5 @@ __all__ = [
     "emit",
     "read_verified_anchor",
     "verify_chain",
+    "worm_policy_sink",
 ]

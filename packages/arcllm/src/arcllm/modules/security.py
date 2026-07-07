@@ -6,8 +6,11 @@ import importlib
 import json
 from typing import Any
 
+from arctrust.fips import assert_fips_if_required
+from arctrust.signer import Signer
+
 from arcllm._pii import PiiDetector, RegexPiiDetector, redact_text
-from arcllm._signing import RequestSigner, canonical_payload, create_signer
+from arcllm._signing import canonical_payload, create_signer
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.modules.base import BaseModule, validate_config_keys
 from arcllm.types import (
@@ -31,6 +34,7 @@ _VALID_CONFIG_KEYS = {
     "signing_enabled",
     "signing_algorithm",
     "signing_key_env",
+    "require_fips",
     "enabled",
 }
 
@@ -131,10 +135,20 @@ class SecurityModule(BaseModule):
                     entities=entities,
                 )
 
-        # Build signer (lazy — only if signing enabled)
-        self._signer: RequestSigner | None = None
-        self._signing_algorithm: str = config.get("signing_algorithm", "hmac-sha256")
+        # Build signer (lazy — only if signing enabled). Asymmetric by default
+        # (Ed25519); ecdsa-p256 for the FIPS/federal path. HMAC is gone.
+        self._signer: Signer | None = None
+        self._signing_algorithm: str = config.get("signing_algorithm", "ed25519")
         if config.get("signing_enabled", True):
+            # Same generalized arctrust FIPS gate as trace encryption: at federal
+            # (require_fips=true) request signing must use a FIPS-validated
+            # backend AND a FIPS-approved algorithm — fail closed before any
+            # attestation, so arcllm never claims FIPS while signing with
+            # non-validated Ed25519 (SPEC-037 secondary).
+            assert_fips_if_required(
+                require_fips=config.get("require_fips", False),
+                algorithm=self._signing_algorithm,
+            )
             signing_key_env = config.get("signing_key_env", "ARCLLM_SIGNING_KEY")
             self._signer = create_signer(self._signing_algorithm, signing_key_env)
 
@@ -158,11 +172,13 @@ class SecurityModule(BaseModule):
                 with self._span("security.pii_redact_inbound"):
                     response = self._redact_response(response)
 
-            # Phase 4: Sign request and attach to response
+            # Phase 4: Sign request and attach to response. The model label
+            # bound into the signed payload is the config-resolved model_name
+            # (never an attacker-suppliable response field) — REQ-011.
             if self._signer is not None:
                 with self._span("security.sign"):
                     payload = canonical_payload(messages, tools, self.model_name)
-                    signature = self._signer.sign(payload)
+                    signature = self._signer.sign(payload).hex()
                     response = self._attach_signature(response, signature)
 
             return response
@@ -279,9 +295,16 @@ class SecurityModule(BaseModule):
         return result
 
     def _attach_signature(self, response: LLMResponse, signature: str) -> LLMResponse:
-        """Attach signing metadata to response."""
+        """Attach asymmetric signing metadata to the response.
+
+        The public key rides alongside so a downstream verifier can check the
+        attestation with public material only (AU-10 non-repudiation) — it never
+        needs, and never receives, signing material.
+        """
         metadata = dict(response.metadata) if response.metadata else {}
         metadata["request_signature"] = signature
         metadata["signing_algorithm"] = self._signing_algorithm
+        if self._signer is not None:
+            metadata["signing_public_key"] = self._signer.public_key.hex()
 
         return response.model_copy(update={"metadata": metadata})
