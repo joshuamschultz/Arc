@@ -25,7 +25,7 @@ class StubEmbedder:
         self.dims = dims
         self.calls = 0
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.calls += len(texts)
         out: list[list[float]] = []
         for text in texts:

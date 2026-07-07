@@ -193,7 +193,7 @@ async def test_crash_mid_write_leaves_consistent_manifest(workspace, db, scope) 
     # A fresh consolidator sees the pending manifest and recovers deterministically.
     recovered = _consolidator(workspace, db, scope, _distiller())
     assert recovered.pending_recovery
-    recovered.recover()
+    await recovered.recover()
     assert not manifest_path.exists()
 
 
@@ -228,7 +228,7 @@ class ClusterEmbedder:
 
     _CLUSTERS: ClassVar[dict[str, int]] = {"producer": 0, "wired": 1, "verify": 2}
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
         for text in texts:
             vec = [0.0, 0.0, 0.0]
@@ -257,7 +257,7 @@ async def test_cue_merge_repoints_instance_links(workspace, db, scope) -> None:
         config=MemoryConfig(),
         embedder=ClusterEmbedder(),
     )
-    merges = consolidator.merge_cues()
+    merges = await consolidator.merge_cues()
 
     assert merges, "expected a near-duplicate cue merge"
     # Both insights now reference the single canonical cue.

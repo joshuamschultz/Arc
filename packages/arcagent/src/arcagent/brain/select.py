@@ -32,13 +32,34 @@ def select_brain(
     agent_did: str,
     tier: str = "personal",
     audit_sink: Any = None,
+    embed_backend: str = "local",
+    embed_model: str = "",
+    distill_provider: str = "",
+    distill_model: str = "",
 ) -> Brain:
-    """Return the configured Brain (fail-safe: any error degrades to NullBrain)."""
+    """Return the configured Brain (fail-safe: any error degrades to NullBrain).
+
+    When arcmemory is selected and importable, its embedder + distiller seams are
+    wired to arcllm (:class:`arcmemory.ArcLLMEmbedder` /
+    :class:`arcmemory.ArcLLMDistiller`) so semantic vector recall, the analogical
+    trigger channel, and consolidation insight-minting are live. ``embed_backend
+    == "none"`` or an empty ``distill_provider`` leaves the respective seam unwired
+    (recall degrades to BM25 + graph; consolidation is a no-op) — never a crash.
+    """
     choice = (setting or "none").strip()
     if choice in ("none", "", "null"):
         return NullBrain()
     if choice in ("arcmemory", "auto"):
-        brain = _try_arcmemory(workspace, agent_did, tier, audit_sink)
+        brain = _try_arcmemory(
+            workspace,
+            agent_did,
+            tier,
+            audit_sink,
+            embed_backend=embed_backend,
+            embed_model=embed_model,
+            distill_provider=distill_provider,
+            distill_model=distill_model,
+        )
         if brain is not None:
             return brain
         if choice == "arcmemory":
@@ -50,18 +71,55 @@ def select_brain(
     return _load_custom(choice, workspace, agent_did)
 
 
-def _try_arcmemory(workspace: Path, agent_did: str, tier: str, audit_sink: Any) -> Brain | None:
-    """Build ``ArcMemoryBrain`` if arcmemory is importable, else ``None``."""
+def _try_arcmemory(
+    workspace: Path,
+    agent_did: str,
+    tier: str,
+    audit_sink: Any,
+    *,
+    embed_backend: str,
+    embed_model: str,
+    distill_provider: str,
+    distill_model: str,
+) -> Brain | None:
+    """Build an arcllm-wired ``ArcMemoryBrain`` if arcmemory is importable, else ``None``."""
     try:
         arcmemory = importlib.import_module("arcmemory")
     except ImportError:
         return None
     safe_tier = tier if tier in ("personal", "enterprise", "federal") else "personal"
     config = arcmemory.MemoryConfig.for_tier(safe_tier)
+    embedder = _build_embedder(arcmemory, agent_did, embed_backend, embed_model)
+    distiller = _build_distiller(arcmemory, distill_provider, distill_model)
     brain: Brain = arcmemory.ArcMemoryBrain(
-        workspace, agent_did, config=config, audit_sink=audit_sink
+        workspace,
+        agent_did,
+        config=config,
+        embedder=embedder,
+        distiller=distiller,
+        audit_sink=audit_sink,
     )
     return brain
+
+
+def _build_embedder(arcmemory: Any, agent_did: str, backend: str, model: str) -> Any:
+    """arcllm-backed embedder, or ``None`` when the backend is explicitly off."""
+    if backend == "none":
+        return None
+    telemetry = {"agent_did": agent_did}
+    return arcmemory.ArcLLMEmbedder(model=model or None, backend=backend, telemetry=telemetry)
+
+
+def _build_distiller(arcmemory: Any, provider: str, model: str) -> Any:
+    """arcllm-backed distiller (fresh provider per consolidation), or ``None`` when off."""
+    if not provider:
+        return None
+    import arcllm
+
+    def factory() -> Any:
+        return arcllm.load_model(provider, model or None)
+
+    return arcmemory.ArcLLMDistiller(factory, model=model or None)
 
 
 def _load_custom(class_path: str, workspace: Path, agent_did: str) -> Brain:

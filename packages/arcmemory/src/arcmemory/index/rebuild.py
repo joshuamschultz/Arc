@@ -39,10 +39,42 @@ except ImportError:  # pragma: no cover
 _SOURCE_SUBDIRS = ("entities", "insights", "procedures", "daily-log")
 
 
-class Embedder(Protocol):
-    """Vector seam: turn texts into fixed-width vectors. Injected, not imported."""
+class EmbeddingUnavailableError(Exception):
+    """A *wired* embedder that cannot serve this call — arcmemory degrades.
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+    Distinct from ``embedder is None`` (never wired): the arcllm-backed adapter
+    raises this when the underlying backend is genuinely absent (e.g. the local
+    model extra is not installed) so retrieval/consolidation fall back to
+    BM25 + graph instead of crashing (REQ-041). Never surfaced to the agent.
+    """
+
+
+class Embedder(Protocol):
+    """Vector seam: turn texts into fixed-width vectors. Injected, not imported.
+
+    Async so an implementation can ``await arcllm.embed`` directly on the event
+    loop that already drives ``retrieve``/``consolidate`` — no nested loop, no
+    ``run_until_complete``, no blocking bridge (the loop-safe seam, Phase 10).
+    """
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]: ...
+
+
+async def embed_or_none(embedder: Embedder | None, texts: list[str]) -> list[list[float]] | None:
+    """Embed through the seam, or ``None`` when embeddings are unavailable.
+
+    The single degrade funnel every call site shares: ``None`` embedder (never
+    wired) and a wired-but-unavailable embedder (``EmbeddingUnavailableError``) both
+    collapse to ``None`` so the caller drops the vector channel and never raises.
+    """
+    if embedder is None:
+        return None
+    if not texts:
+        return []
+    try:
+        return await embedder.embed_texts(texts)
+    except EmbeddingUnavailableError:
+        return None
 
 
 class IndexRebuilder:
@@ -68,7 +100,7 @@ class IndexRebuilder:
         self._mem_dir = self._workspace / "memory"
         self._seed_vocab = set(seed_vocabulary or [])
 
-    def rebuild(self) -> None:
+    async def rebuild(self) -> None:
         """Wipe all derived tables and re-derive them from truth (idempotent)."""
         conn = self._db.connect()
         conn.execute("DELETE FROM fts_chunks")
@@ -78,13 +110,13 @@ class IndexRebuilder:
             conn.execute("DELETE FROM vec0")
         conn.commit()
 
-        self._rebuild_chunks()
+        await self._rebuild_chunks()
         self._rebuild_link_edges()
         self._rebuild_assoc_edges()
 
     # -- chunks + fts + vectors -------------------------------------------
 
-    def _rebuild_chunks(self) -> None:
+    async def _rebuild_chunks(self) -> None:
         """Chunk every source file + every raw event; index into fts + vec."""
         conn = self._db.connect()
         chunks: list[tuple[str, str, str, str]] = []  # (chunk_id, source, text, classification)
@@ -103,7 +135,7 @@ class IndexRebuilder:
         for event in self._episodic.events(self._scope.key):
             chunks.append((f"event:{event.event_id}", "episodic", event.text, "unclassified"))
 
-        embeddings = self._embed([text for _, _, text, _ in chunks])
+        embeddings = await self._embed([text for _, _, text, _ in chunks])
         for i, (chunk_id, source, text, classification) in enumerate(chunks):
             conn.execute(
                 "INSERT OR REPLACE INTO chunks "
@@ -122,13 +154,11 @@ class IndexRebuilder:
                 )
         conn.commit()
 
-    def _embed(self, texts: list[str]) -> list[list[float]] | None:
+    async def _embed(self, texts: list[str]) -> list[list[float]] | None:
         """Embed chunk texts through the injected seam, or None when unavailable."""
-        if self._embedder is None or not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
+        if not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
             return None
-        if not texts:
-            return []
-        return self._embedder.embed_texts(texts)
+        return await embed_or_none(self._embedder, texts)
 
     # -- edges -------------------------------------------------------------
 
@@ -160,4 +190,4 @@ class IndexRebuilder:
                 self._graph.hebbian_bump(self._scope.key, a, b, ts=event.ts)
 
 
-__all__ = ["Embedder", "IndexRebuilder"]
+__all__ = ["Embedder", "EmbeddingUnavailableError", "IndexRebuilder", "embed_or_none"]

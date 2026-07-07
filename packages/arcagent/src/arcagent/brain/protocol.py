@@ -58,7 +58,7 @@ class Brain(Protocol):
         """Slow "sleep" consolidation; returns mutation counts + ``episode_summary``."""
         ...
 
-    def rebuild_index(self, *, session_id: str | None = None) -> None:
+    async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the source-of-truth files."""
         ...
 
@@ -95,7 +95,7 @@ class NullBrain:
     async def consolidate(self, *, session_id: str | None = None) -> Mapping[str, object]:
         return {}
 
-    def rebuild_index(self, *, session_id: str | None = None) -> None:
+    async def rebuild_index(self, *, session_id: str | None = None) -> None:
         return None
 
 

@@ -305,7 +305,7 @@ tutorial = [
 
 [[package]]
 name = "arc-agent"
-version = "0.13.0"
+version = "0.13.1"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
@@ -559,7 +559,7 @@ requires-dist = [{ name = "arccmd", editable = "packages/arccli" }]
 
 [[package]]
 name = "arcmemory"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "packages/arcmemory" }
 dependencies = [
     { name = "arcllm" },

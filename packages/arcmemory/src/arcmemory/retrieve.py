@@ -77,10 +77,10 @@ class Retriever:
             audit_sink=self._audit,
         )
 
-    def index(self) -> None:
+    async def index(self) -> None:
         """Incrementally (re)build both derived indices (content-gated, LLM10)."""
-        self._surface.index_if_needed()
-        self._structural.trigger_index()
+        await self._surface.index_if_needed()
+        await self._structural.trigger_index()
 
     async def retrieve(
         self,
@@ -93,7 +93,7 @@ class Retriever:
     ) -> Bundle:
         """Fuse both channels, gate on clearance, and return a bounded bundle."""
         pool = max(top_k * 2, top_k)
-        surf = self._surface.search(situation.text, top_k=pool)
+        surf = await self._surface.search(situation.text, top_k=pool)
         stru = await self._structural.match(situation, top_k=pool, reranker=reranker)
 
         fused = _rrf_fuse([surf.recalls, stru.recalls])

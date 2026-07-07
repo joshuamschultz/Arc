@@ -4,6 +4,46 @@ All notable changes to the `arcmemory` package are documented here. Format follo
 [Keep a Changelog](https://keepachangelog.com/); this package adheres to semantic
 versioning.
 
+## [0.6.0] — 2026-07-07
+
+The embedder + distiller seams go **live in production** (SPEC-041, Phases 10/11).
+Phases 8/9 shipped the brain with both seams set to `None`, so semantic vector
+recall, the analogical *trigger* channel, and consolidation insight-minting were
+dark. This release wires them to arcllm — async-safe — and adds the end-to-end
+integration ACs that drive the real path.
+
+### Added
+
+- **`arcllm_seam.ArcLLMEmbedder` / `ArcLLMDistiller`** — the arcllm-backed adapters
+  for the `Embedder` and `Distiller` seams. `ArcLLMEmbedder.embed_texts` awaits
+  `arcllm.embed`; `ArcLLMDistiller` runs two bounded structured completions (fact
+  extraction + insight minting) through a per-call `provider_factory` (a fresh,
+  self-closing provider — consolidation is off the hot path). Both live in arcmemory
+  (which depends on arcllm), so arcagent's `select_brain` can light them up without
+  arcagent holding memory logic.
+- **`index.rebuild.EmbeddingUnavailableError` + `embed_or_none`** — the single degrade
+  funnel: a never-wired embedder (`None`) and a wired-but-unavailable one (the arcllm
+  `[local]` extra absent) both collapse to a `None` vector channel → BM25 + graph,
+  audited, never a crash (REQ-041).
+- **Phase-10 wired-brain integration suite** (`tests/integration/test_wired_brain.py`)
+  — the ACs driven through `ArcMemoryBrain` with the seams wired: zero-LLM capture
+  (AC-2), consolidate mints/promotes/decays via the wired distiller (AC-4), semantic
+  no-lexical-overlap recall on real vectors (AC-5), the **structural probe retrieved
+  via BOTH channels only through the wired embedder** (AC-6, the differentiator),
+  no-read-up + fail-closed + injection-inert recall (AC-8), byte-identical rebuild and
+  embedder-disabled degrade (AC-3/AC-7). Plus adapter unit tests (`test_arcllm_seam`).
+
+### Changed
+
+- **The `Embedder` seam is now async** (`async def embed_texts`). Embedding happens
+  inside the already-async `retrieve()` / `consolidate()` / `index_if_needed()` /
+  `trigger_index()` / `rebuild()` paths, which now `await` the seam directly on the
+  running event loop — **no nested loop, no `run_until_complete`, no thread that
+  blocks the loop**. This closes the Phase-8 sync/async hazard that left the seams
+  unwired. `Retriever.index`, `SurfaceIndex.{index_if_needed,search}`,
+  `StructuralIndex.{trigger_index,trigger_match}`, `Consolidator.{merge_cues,recover}`,
+  `IndexRebuilder.rebuild`, and `ArcMemoryBrain.rebuild_index` are async accordingly.
+
 ## [0.5.0] — 2026-07-07
 
 The `Brain` plug-in for arcagent (SPEC-041, Phase 8). arcagent defines a structural

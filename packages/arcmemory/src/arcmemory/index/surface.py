@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.index.rebuild import Embedder
+from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.mdfile import parse_document
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
@@ -100,7 +100,7 @@ class SurfaceIndex:
 
     # -- indexing ----------------------------------------------------------
 
-    def index_if_needed(self) -> int:
+    async def index_if_needed(self) -> int:
         """Embed + index only new/changed chunks; return how many were (re)indexed."""
         conn = self._db.connect()
         stored = {
@@ -113,7 +113,7 @@ class SurfaceIndex:
         if not changed:
             return 0
 
-        embeddings = self._embed([c.text for c in changed])
+        embeddings = await self._embed([c.text for c in changed])
         for i, chunk in enumerate(changed):
             self._upsert_chunk(conn, chunk, embeddings[i] if embeddings is not None else None)
         conn.commit()
@@ -188,19 +188,17 @@ class SurfaceIndex:
                 (chunk.chunk_id, sqlite_vec.serialize_float32(embedding)),
             )
 
-    def _embed(self, texts: list[str]) -> list[list[float]] | None:
+    async def _embed(self, texts: list[str]) -> list[list[float]] | None:
         """Embed through the injected seam, or None when embeddings are unavailable."""
-        if self._embedder is None or not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
+        if not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
             return None
-        if not texts:
-            return []
-        return self._embedder.embed_texts(texts)
+        return await embed_or_none(self._embedder, texts)
 
     # -- search ------------------------------------------------------------
 
-    def search(self, text: str, *, top_k: int = 5) -> SurfaceResult:
+    async def search(self, text: str, *, top_k: int = 5) -> SurfaceResult:
         """Fuse vec + bm25 + graph + recency; return the top-k boundary-ready recalls."""
-        vec_ranked = self._vec_search(text)
+        vec_ranked = await self._vec_search(text)
         degraded = vec_ranked is None
         ranked_lists = [self._bm25_search(text), self._graph_search(text), self._recency_order()]
         if vec_ranked is not None:
@@ -218,11 +216,14 @@ class SurfaceIndex:
         recalls = [self._to_recall(cid, 0.0) for cid in self._bm25_search(text)[:top_k]]
         return [r.content for r in recalls if r is not None]
 
-    def _vec_search(self, text: str) -> list[str] | None:
+    async def _vec_search(self, text: str) -> list[str] | None:
         """Brute-force cosine over ``vec0``; None when embeddings are unavailable."""
-        if self._embedder is None or not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
+        if not self._db.vec_available or not _SQLITE_VEC_IMPORTABLE:
             return None
-        query = self._embedder.embed_texts([text])[0]
+        vectors = await embed_or_none(self._embedder, [text])
+        if not vectors:
+            return None
+        query = vectors[0]
         conn = self._db.connect()
         rows = conn.execute("SELECT chunk_id, embedding FROM vec0").fetchall()
         scored: list[tuple[float, str]] = []

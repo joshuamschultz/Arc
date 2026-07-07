@@ -1,13 +1,16 @@
 """arcmemory — Arc's dual-speed analogical memory substrate (SPEC-041).
 
-Public surface for the foundation phase: the typed models, the config, the
-per-agent SQLite substrate, the four stores, the weighted graph, the index
-rebuilder, and the zero-LLM fast-capture path. Retrieval, consolidation, and the
-``Brain`` Protocol land in later phases.
+Public surface: the typed models, the config, the per-agent SQLite substrate, the
+four stores, the weighted graph, the index rebuilder, the zero-LLM fast-capture
+path, the surface + structural retrieval channels, sleep consolidation, and the
+``ArcMemoryBrain`` that satisfies arcagent's structural ``Brain`` seam. The
+``ArcLLMEmbedder`` / ``ArcLLMDistiller`` adapters bridge the async embedder /
+distiller seams onto arcllm so semantic recall and consolidation run in production.
 """
 
 from __future__ import annotations
 
+from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig, Tier
@@ -24,7 +27,7 @@ from arcmemory.distill import (
     mint_insights,
 )
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.index.rebuild import Embedder, IndexRebuilder
+from arcmemory.index.rebuild import Embedder, EmbeddingUnavailableError, IndexRebuilder
 from arcmemory.index.structural import (
     InsightBundle,
     Reranker,
@@ -58,9 +61,11 @@ from arcmemory.types import (
     TimeWindow,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
+    "ArcLLMDistiller",
+    "ArcLLMEmbedder",
     "ArcMemoryBrain",
     "Bundle",
     "Confidence",
@@ -69,6 +74,7 @@ __all__ = [
     "Cue",
     "Distiller",
     "Embedder",
+    "EmbeddingUnavailableError",
     "Entity",
     "EpisodicStore",
     "Event",

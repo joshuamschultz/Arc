@@ -37,7 +37,7 @@ class ConceptEmbedder:
     def __init__(self) -> None:
         self.calls = 0
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.calls += len(texts)
         out: list[list[float]] = []
         for text in texts:
@@ -71,24 +71,24 @@ def _surface(
 # -- T-040: incremental, content-gated indexing -----------------------------
 
 
-def test_index_embeds_all_then_skips_unchanged(workspace, db, scope) -> None:
+async def test_index_embeds_all_then_skips_unchanged(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     episodic = EpisodicStore(db, workspace)
     _append(episodic, scope, "e0", "the puppy barked", "2026-07-07T00:00:00+00:00")
     _append(episodic, scope, "e1", "the kitten meowed", "2026-07-07T00:00:01+00:00")
 
     surface = _surface(db, workspace, scope, embedder=emb)
-    first = surface.index_if_needed()
+    first = await surface.index_if_needed()
     assert first == 2  # both event chunks embedded on first pass
     assert emb.calls == 2
 
     # Nothing changed -> no re-embedding on the second pass.
-    second = surface.index_if_needed()
+    second = await surface.index_if_needed()
     assert second == 0
     assert emb.calls == 2
 
 
-def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
+async def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     entities = workspace / "memory" / "entities"
     entities.mkdir(parents=True)
@@ -96,13 +96,13 @@ def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
     (entities / "felix.md").write_text("---\nname: Felix\n---\n\nthe feline meowed")
 
     surface = _surface(db, workspace, scope, embedder=emb)
-    surface.index_if_needed()
+    await surface.index_if_needed()
     baseline = emb.calls
     assert baseline == 2
 
     # Change one file's *content* -> only that chunk re-embeds.
     (entities / "rex.md").write_text("---\nname: Rex\n---\n\nthe canine sailed")
-    changed = surface.index_if_needed()
+    changed = await surface.index_if_needed()
     assert changed == 1
     assert emb.calls == baseline + 1
 
@@ -110,7 +110,7 @@ def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
 # -- T-041: RRF fusion, semantic recall, recency ----------------------------
 
 
-def test_semantic_query_with_no_lexical_overlap_is_recalled(workspace, db, scope) -> None:
+async def test_semantic_query_with_no_lexical_overlap_is_recalled(workspace, db, scope) -> None:
     """A query sharing a CONCEPT but no TOKEN with the target still retrieves it."""
     emb = ConceptEmbedder()
     episodic = EpisodicStore(db, workspace)
@@ -121,9 +121,9 @@ def test_semantic_query_with_no_lexical_overlap_is_recalled(workspace, db, scope
     _append(episodic, scope, "e2", "the sedan needs an engine", "2026-07-07T00:00:02+00:00")
 
     surface = _surface(db, workspace, scope, embedder=emb)
-    surface.index_if_needed()
+    await surface.index_if_needed()
 
-    result = surface.search("a small puppy", top_k=1)
+    result = await surface.search("a small puppy", top_k=1)
     assert not result.degraded
     assert result.recalls, "expected a recall"
     top = result.recalls[0]
@@ -131,24 +131,24 @@ def test_semantic_query_with_no_lexical_overlap_is_recalled(workspace, db, scope
     assert "puppy" not in top.content  # proves it was NOT a substring match
 
 
-def test_fusion_beats_bm25_alone(workspace, db, scope) -> None:
+async def test_fusion_beats_bm25_alone(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     episodic = EpisodicStore(db, workspace)
     _append(episodic, scope, "e0", "the hound sailed away", "2026-07-07T00:00:00+00:00")
     _append(episodic, scope, "e1", "the kitten meowed loudly", "2026-07-07T00:00:01+00:00")
 
     surface = _surface(db, workspace, scope, embedder=emb)
-    surface.index_if_needed()
+    await surface.index_if_needed()
 
     # BM25 alone finds nothing (no shared token with "puppy").
     bm25_only = surface.bm25_only("a small puppy", top_k=2)
     assert all("hound" not in c for c in bm25_only)
     # Fusion (with the concept vector) surfaces the canine chunk.
-    fused = surface.search("a small puppy", top_k=2)
+    fused = await surface.search("a small puppy", top_k=2)
     assert any("hound sailed" in r.content for r in fused.recalls)
 
 
-def test_newer_chunk_ranks_higher_on_a_tie(workspace, db, scope) -> None:
+async def test_newer_chunk_ranks_higher_on_a_tie(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     episodic = EpisodicStore(db, workspace)
     # Two lexically-identical chunks; only the timestamp differs.
@@ -156,9 +156,9 @@ def test_newer_chunk_ranks_higher_on_a_tie(workspace, db, scope) -> None:
     _append(episodic, scope, "new", "the puppy barked", "2026-07-07T00:00:00+00:00")
 
     surface = _surface(db, workspace, scope, embedder=emb)
-    surface.index_if_needed()
+    await surface.index_if_needed()
 
-    result = surface.search("the puppy barked", top_k=2)
+    result = await surface.search("the puppy barked", top_k=2)
     ordered = [r.source for r in result.recalls]
     assert ordered.index("event:new") < ordered.index("event:old")
 
@@ -166,15 +166,15 @@ def test_newer_chunk_ranks_higher_on_a_tie(workspace, db, scope) -> None:
 # -- T-042: degrade to BM25 + graph when embeddings are unavailable ---------
 
 
-def test_degrades_to_bm25_when_embedder_absent(workspace, db, scope) -> None:
+async def test_degrades_to_bm25_when_embedder_absent(workspace, db, scope) -> None:
     sink = RecordingSink()
     episodic = EpisodicStore(db, workspace)
     _append(episodic, scope, "e0", "the puppy barked", "2026-07-07T00:00:00+00:00")
 
     surface = _surface(db, workspace, scope, embedder=None, sink=sink)
-    surface.index_if_needed()  # no embedder -> no vectors, fts still built
+    await surface.index_if_needed()  # no embedder -> no vectors, fts still built
 
-    result = surface.search("puppy", top_k=3)
+    result = await surface.search("puppy", top_k=3)
     # BM25 still returns the lexical match; no exception is raised.
     assert result.degraded
     assert any("puppy" in r.content for r in result.recalls)

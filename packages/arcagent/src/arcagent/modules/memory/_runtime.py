@@ -63,7 +63,16 @@ def configure(
     del agent_name  # accepted for signature-dispatch parity; unused here
     cfg = MemoryConfig(**(config or {}))
     ws = Path(workspace).resolve()
-    brain = select_brain(cfg.brain, workspace=ws, agent_did=agent_did, tier=cfg.tier)
+    brain = select_brain(
+        cfg.brain,
+        workspace=ws,
+        agent_did=agent_did,
+        tier=cfg.tier,
+        embed_backend=cfg.embed_backend,
+        embed_model=cfg.embed_model,
+        distill_provider=cfg.distill_provider,
+        distill_model=cfg.distill_model,
+    )
     _state = _State(
         config=cfg,
         brain=brain,

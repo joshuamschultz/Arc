@@ -1,0 +1,149 @@
+"""Phase 10 — the arcllm-backed embedder + distiller adapters.
+
+Proves the loop-safe async bridge translates arcllm's responses into arcmemory's
+seam contracts, and that an unavailable embedder degrades (never crashes). arcllm is
+stubbed (monkeypatched ``arcllm.embed`` / a fake provider) so these stay offline and
+deterministic — the point is the *adapter* logic, not a live model.
+"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from typing import Any
+
+import arcllm
+import pytest
+
+from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
+from arcmemory.index.rebuild import EmbeddingUnavailableError
+from arcmemory.types import Event, Fact
+
+# -- ArcLLMEmbedder ---------------------------------------------------------
+
+
+async def test_embedder_returns_arcllm_vectors(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, Any] = {}
+
+    async def fake_embed(texts: list[str], **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        seen["texts"] = texts
+        return SimpleNamespace(vectors=[[1.0, 2.0, 3.0]])
+
+    monkeypatch.setattr(arcllm, "embed", fake_embed)
+    embedder = ArcLLMEmbedder(model="m", backend="local")
+
+    assert await embedder.embed_texts(["hello"]) == [[1.0, 2.0, 3.0]]
+    assert seen["texts"] == ["hello"] and seen["model"] == "m" and seen["backend"] == "local"
+
+
+async def test_embedder_empty_input_skips_arcllm(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def boom(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("arcllm.embed must not be called for empty input")
+
+    monkeypatch.setattr(arcllm, "embed", boom)
+    assert await ArcLLMEmbedder(model="m").embed_texts([]) == []
+
+
+async def test_embedder_unavailable_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def unavailable(*_a: Any, **_k: Any) -> Any:
+        raise arcllm.ArcLLMEmbeddingUnavailableError("m", "backend not installed")
+
+    monkeypatch.setattr(arcllm, "embed", unavailable)
+    with pytest.raises(EmbeddingUnavailableError):
+        await ArcLLMEmbedder(model="m").embed_texts(["x"])
+
+
+# -- ArcLLMDistiller --------------------------------------------------------
+
+
+class _FakeProvider:
+    """A minimal arcllm provider: records calls, returns a canned response."""
+
+    def __init__(
+        self, *, parsed: dict[str, Any] | None = None, content: str | None = None
+    ) -> None:
+        self._parsed = parsed
+        self._content = content
+        self.invocations: list[dict[str, Any]] = []
+
+    async def invoke(self, messages: list[Any], *, response_format: Any = None) -> Any:
+        self.invocations.append({"response_format": response_format})
+        return SimpleNamespace(parsed_content=self._parsed, content=self._content)
+
+
+def _factory(provider: _FakeProvider) -> Any:
+    @asynccontextmanager
+    async def make() -> Any:
+        yield provider
+
+    return make
+
+
+async def test_distiller_extracts_facts_from_parsed_content() -> None:
+    provider = _FakeProvider(
+        parsed={"facts": [{"slug": "alice", "predicate": "role", "value": "manager"}]}
+    )
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
+
+    assert result.facts[0].slug == "alice" and result.facts[0].value == "manager"
+
+
+async def test_distiller_mints_insights_from_parsed_content() -> None:
+    provider = _FakeProvider(
+        parsed={
+            "insights": [
+                {"id": "p1", "statement": "s", "trigger": "t", "cues": ["c"], "instances": ["e0"]}
+            ]
+        }
+    )
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.mint_insights(
+        [Event(event_id="e0", scope="s", kind="obs", text="t")],
+        [Fact(predicate="role", value="manager", confidence=0.8)],
+    )
+
+    assert result.insights[0].id == "p1" and result.insights[0].cues == ["c"]
+
+
+async def test_distiller_parses_raw_content_when_no_parsed_object() -> None:
+    provider = _FakeProvider(
+        content='{"facts": [{"slug": "bob", "predicate": "p", "value": "v"}]}'
+    )
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
+
+    assert result.facts[0].slug == "bob"
+
+
+async def test_distiller_falls_back_to_plain_when_json_mode_unsupported() -> None:
+    class _Anthropicish(_FakeProvider):
+        async def invoke(self, messages: list[Any], *, response_format: Any = None) -> Any:
+            self.invocations.append({"response_format": response_format})
+            if response_format is not None:  # anthropic path: no server-side JSON mode
+                raise arcllm.ArcLLMConfigError("json mode unsupported")
+            return SimpleNamespace(parsed_content=None, content='{"facts": []}')
+
+    provider = _Anthropicish()
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
+
+    assert result.facts == []
+    # Tried JSON-mode first, then retried plain — two invocations.
+    assert len(provider.invocations) == 2
+    assert provider.invocations[0]["response_format"] is not None
+    assert provider.invocations[1]["response_format"] is None
+
+
+async def test_distiller_tolerates_garbage_content() -> None:
+    provider = _FakeProvider(content="not json at all")
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
+
+    assert result.facts == []  # empty object, never a crash

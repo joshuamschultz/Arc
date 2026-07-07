@@ -59,7 +59,7 @@ class _SpyBrain:
         self.consolidations += 1
         return {"episode_summary": "did work", "insights_minted": 1, "facts_updated": 0}
 
-    def rebuild_index(self, **_: Any) -> None:
+    async def rebuild_index(self, **_: Any) -> None:
         return None
 
 

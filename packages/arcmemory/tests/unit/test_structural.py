@@ -43,7 +43,7 @@ class ConceptEmbedder:
     def __init__(self) -> None:
         self.calls = 0
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.calls += len(texts)
         out: list[list[float]] = []
         for text in texts:
@@ -95,7 +95,7 @@ def _no_token_overlap(a: str, b_texts: list[str]) -> bool:
 # -- T-060: trigger index kept SEPARATE from surface vec0 -------------------
 
 
-def test_trigger_index_embeds_triggers_apart_from_surface(workspace, db, scope) -> None:
+async def test_trigger_index_embeds_triggers_apart_from_surface(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     _mint(
         workspace,
@@ -112,7 +112,7 @@ def test_trigger_index_embeds_triggers_apart_from_surface(workspace, db, scope) 
         ),
     )
 
-    indexed = _structural(db, workspace, scope, embedder=emb).trigger_index()
+    indexed = await _structural(db, workspace, scope, embedder=emb).trigger_index()
     assert indexed == 2  # both triggers embedded
 
     conn = db.connect()
@@ -124,27 +124,27 @@ def test_trigger_index_embeds_triggers_apart_from_surface(workspace, db, scope) 
         assert not (trig_ids & vec_keys)
 
 
-def test_trigger_index_is_content_gated(workspace, db, scope) -> None:
+async def test_trigger_index_is_content_gated(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     _mint(workspace, db, scope, Insight(id="p1", statement="s", trigger="asserted yet unwired"))
     idx = _structural(db, workspace, scope, embedder=emb)
 
-    assert idx.trigger_index() == 1
+    assert await idx.trigger_index() == 1
     assert emb.calls == 1
     # Nothing changed -> no re-embed on the second pass.
-    assert idx.trigger_index() == 0
+    assert await idx.trigger_index() == 0
     assert emb.calls == 1
 
 
-def test_trigger_index_without_embedder_is_noop(workspace, db, scope) -> None:
+async def test_trigger_index_without_embedder_is_noop(workspace, db, scope) -> None:
     _mint(workspace, db, scope, Insight(id="p1", statement="s", trigger="asserted yet unwired"))
-    assert _structural(db, workspace, scope, embedder=None).trigger_index() == 0
+    assert await _structural(db, workspace, scope, embedder=None).trigger_index() == 0
 
 
 # -- T-061: channel (a) trigger-embedding, mechanism-level match ------------
 
 
-def test_trigger_match_finds_insight_with_no_surface_overlap(workspace, db, scope) -> None:
+async def test_trigger_match_finds_insight_with_no_surface_overlap(workspace, db, scope) -> None:
     """A mechanism-level situation matches a trigger sharing NO token with the episodes."""
     episodes = [
         "the recipe lists salt but the cook forgets it entirely",
@@ -162,7 +162,7 @@ def test_trigger_match_finds_insight_with_no_surface_overlap(workspace, db, scop
 
     emb = ConceptEmbedder()
     idx = _structural(db, workspace, scope, embedder=emb)
-    idx.trigger_index()
+    await idx.trigger_index()
 
     # A DIFFERENT-domain situation, abstracted to the mechanism level.
     situation = Situation(
@@ -171,15 +171,15 @@ def test_trigger_match_finds_insight_with_no_surface_overlap(workspace, db, scop
     )
     assert _no_token_overlap(situation.text, episodes)
 
-    ranked = idx.trigger_match(situation, top_k=3)
+    ranked = await idx.trigger_match(situation, top_k=3)
     assert ranked is not None
     assert ranked[0][0] == "silent-noop"
 
 
-def test_trigger_match_without_embedder_returns_none(workspace, db, scope) -> None:
+async def test_trigger_match_without_embedder_returns_none(workspace, db, scope) -> None:
     _mint(workspace, db, scope, Insight(id="p1", statement="s", trigger="asserted yet unwired"))
     idx = _structural(db, workspace, scope, embedder=None)
-    assert idx.trigger_match(Situation(text="x", summary="asserted")) is None
+    assert await idx.trigger_match(Situation(text="x", summary="asserted")) is None
 
 
 # -- T-062: channel (b) cue-graph spreading activation ----------------------
@@ -297,7 +297,7 @@ async def test_confidence_gate_flags_guessed_not_known(workspace, db, scope) -> 
     _mint(workspace, db, scope, known)
     _mint(workspace, db, scope, guessed)
     idx = _structural(db, workspace, scope, embedder=emb)
-    idx.trigger_index()
+    await idx.trigger_index()
 
     known_hit = await idx.match(
         Situation(text="x", summary="a declared safeguard left uninvoked", cues=["c-known"])
@@ -324,7 +324,7 @@ async def test_never_recurring_guessed_insight_decays_out(workspace, db, scope) 
     )
     _mint(workspace, db, scope, guessed, ts=t0)  # salience 0, minted once, never reinforced
     idx = _structural(db, workspace, scope, embedder=emb)
-    idx.trigger_index()
+    await idx.trigger_index()
 
     situation = Situation(text="y", summary="a dangling orphaned subscription", cues=["c-guessed"])
     # Fresh: matched via BOTH channels.
@@ -434,7 +434,7 @@ class RecordingReranker:
         return [float(len(candidates) - i) for i in range(len(candidates))]
 
 
-def _two_insight_index(
+async def _two_insight_index(
     workspace: Path, db: MemoryDB, scope: Scope, tier: str
 ) -> tuple[StructuralIndex, ConceptEmbedder]:
     emb = ConceptEmbedder()
@@ -473,12 +473,12 @@ def _two_insight_index(
         embedder=emb,
         config=MemoryConfig.for_tier(tier),  # type: ignore[arg-type]
     )
-    idx.trigger_index()
+    await idx.trigger_index()
     return idx, emb
 
 
 async def test_personal_skips_rerank_when_margin_wide(workspace, db, scope) -> None:
-    idx, _ = _two_insight_index(workspace, db, scope, "personal")
+    idx, _ = await _two_insight_index(workspace, db, scope, "personal")
     rr = RecordingReranker()
     # Only p1's cue lights -> a single candidate, so the margin is wide (no rival).
     await idx.match(Situation(text="x", summary="asserted unwired", cues=["c1"]), reranker=rr)
@@ -486,7 +486,7 @@ async def test_personal_skips_rerank_when_margin_wide(workspace, db, scope) -> N
 
 
 async def test_enterprise_reranks_bounded_candidate_set(workspace, db, scope) -> None:
-    idx, _ = _two_insight_index(workspace, db, scope, "enterprise")
+    idx, _ = await _two_insight_index(workspace, db, scope, "enterprise")
     rr = RecordingReranker()
     # Both cues light -> both promoted -> a two-candidate set to rerank.
     result = await idx.match(

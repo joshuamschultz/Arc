@@ -119,7 +119,7 @@ class ArcMemoryBrain:
         degrades to BM25 + graph.
         """
         bundle = self._bundle(session_id)
-        bundle.retriever.index()
+        await bundle.retriever.index()
         clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
         result = await bundle.retriever.retrieve(
             Situation(text=query), clearance=clr, top_k=top_k, budget=budget
@@ -137,13 +137,13 @@ class ArcMemoryBrain:
         if consolidator is None:
             return self._summarize(ConsolidationResult())
         if consolidator.pending_recovery:
-            consolidator.recover()
+            await consolidator.recover()
         result = await consolidator.run()
         return self._summarize(result)
 
-    def rebuild_index(self, *, session_id: str | None = None) -> None:
+    async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the glass-box files + stream (REQ-022)."""
-        IndexRebuilder(
+        await IndexRebuilder(
             self._db,
             self._workspace,
             self._scope(session_id),

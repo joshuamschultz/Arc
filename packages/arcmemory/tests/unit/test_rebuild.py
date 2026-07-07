@@ -52,25 +52,29 @@ def _seed_agent(workspace: Path, db: MemoryDB, scope: Scope) -> None:
         episodic.append_bullet(ev)
 
 
-def test_wipe_rebuild_is_byte_identical(workspace: Path, db: MemoryDB, scope: Scope, embedder):
+async def test_wipe_rebuild_is_byte_identical(
+    workspace: Path, db: MemoryDB, scope: Scope, embedder
+):
     _seed_agent(workspace, db, scope)
     rebuilder = IndexRebuilder(
         db, workspace, scope, config=MemoryConfig(), embedder=embedder, seed_vocabulary=_VOCAB
     )
 
-    rebuilder.rebuild()
+    await rebuilder.rebuild()
     first = _snapshot(db)
 
     db.wipe_derived()
-    rebuilder.rebuild()
+    await rebuilder.rebuild()
     second = _snapshot(db)
 
     assert first == second, "rebuild must reproduce every derived table identically"
 
 
-def test_rebuild_produces_a_retrievable_set(workspace: Path, db: MemoryDB, scope: Scope, embedder):
+async def test_rebuild_produces_a_retrievable_set(
+    workspace: Path, db: MemoryDB, scope: Scope, embedder
+):
     _seed_agent(workspace, db, scope)
-    IndexRebuilder(db, workspace, scope, embedder=embedder, seed_vocabulary=_VOCAB).rebuild()
+    await IndexRebuilder(db, workspace, scope, embedder=embedder, seed_vocabulary=_VOCAB).rebuild()
 
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0] > 0
@@ -82,10 +86,12 @@ def test_rebuild_produces_a_retrievable_set(workspace: Path, db: MemoryDB, scope
         assert conn.execute("SELECT COUNT(*) FROM vec0").fetchone()[0] > 0
 
 
-def test_rebuild_without_embedder_degrades(workspace: Path, db: MemoryDB, scope: Scope) -> None:
+async def test_rebuild_without_embedder_degrades(
+    workspace: Path, db: MemoryDB, scope: Scope
+) -> None:
     _seed_agent(workspace, db, scope)
     # No embedder injected -> vec table stays empty, but fts + edges still build.
-    IndexRebuilder(db, workspace, scope, embedder=None, seed_vocabulary=_VOCAB).rebuild()
+    await IndexRebuilder(db, workspace, scope, embedder=None, seed_vocabulary=_VOCAB).rebuild()
 
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0] > 0

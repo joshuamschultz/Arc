@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-07
+
+arcmemory embedder + distiller wiring (SPEC-041, Phase 10). The `Brain` seam now
+lights up arcmemory's arcllm-backed embedder and distiller so semantic recall and
+consolidation are live in production.
+
+### Changed
+- **`select_brain` wires the arcllm-backed seams.** When `brain="arcmemory"`/`"auto"`
+  is selected and arcmemory is importable, `select_brain` builds an
+  `arcmemory.ArcLLMEmbedder` (unless `embed_backend="none"`) and, when a
+  `distill_provider` is configured, an `arcmemory.ArcLLMDistiller` (fresh provider per
+  consolidation via `arcllm.load_model`), and injects both into `ArcMemoryBrain`.
+  `embed_backend="none"` / an empty `distill_provider` leaves the respective seam
+  unwired — recall degrades to BM25 + graph, consolidation is a no-op, never a crash.
+- **`modules.memory.config`** gains `embed_backend`, `embed_model`, `distill_provider`,
+  and `distill_model` knobs (threaded through `_runtime.configure` → `select_brain`).
+- **`Brain.rebuild_index` is now async** (matching arcmemory's async embedder seam);
+  `NullBrain.rebuild_index` updated in lockstep.
+
+### Fixed
+- Synced `arcagent.__version__` with the packaged version (was drifting at `0.12.0`).
+
 ## [0.13.0] - 2026-07-07
 
 arcmemory integration (SPEC-041, Phases 8/9): the memory-less `Brain` seam, thin wiring, deletion of both old memory backends (no-legacy), and grounded reflection into the existing ACE curator. A `pip install arc-agent` alone runs fully memory-less; adding `arcmemory` (or a BYO Brain) activates capture/recall.

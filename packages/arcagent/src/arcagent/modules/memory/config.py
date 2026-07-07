@@ -20,6 +20,16 @@ class MemoryConfig(ModuleConfig):
     brain: str = "none"
     tier: str = "personal"
 
+    # Embedder seam (arcmemory semantic + analogical-trigger channels). ``local``
+    # wires arcllm's offline model; ``none`` degrades recall to BM25 + graph.
+    embed_backend: str = "local"
+    embed_model: str = ""  # empty -> arcllm default (all-MiniLM-L6-v2)
+
+    # Distiller seam (arcmemory consolidation: fact extraction + insight minting).
+    # Empty ``distill_provider`` leaves distillation off (consolidation is a no-op).
+    distill_provider: str = ""
+    distill_model: str = ""
+
     # Recall (agent:assemble_prompt @ priority 50)
     top_k: int = 5
     budget: int = 1024

@@ -36,7 +36,7 @@ class _StubEmbedder:
     def __init__(self) -> None:
         self.calls = 0
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.calls += len(texts)
         out: list[list[float]] = []
         for text in texts:
@@ -55,9 +55,11 @@ def _write_entity(workspace: Path, slug: str, classification: str, body: str) ->
     )
 
 
-def _retriever(workspace: Path, db: MemoryDB, scope: Scope, sink: _RecordingSink) -> Retriever:
+async def _retriever(
+    workspace: Path, db: MemoryDB, scope: Scope, sink: _RecordingSink
+) -> Retriever:
     rv = Retriever(db, workspace, scope, embedder=_StubEmbedder(), audit_sink=sink)
-    rv.index()  # embed + FTS the curated files
+    await rv.index()  # embed + FTS the curated files
     return rv
 
 
@@ -68,7 +70,7 @@ async def test_secret_memory_dropped_for_unclassified_caller(workspace, db, scop
     _write_entity(workspace, "public-note", "unclassified", "the widget shipping cadence")
     _write_entity(workspace, "black-project", "SECRET", "the widget launch codes")
     sink = _RecordingSink()
-    rv = _retriever(workspace, db, scope, sink)
+    rv = await _retriever(workspace, db, scope, sink)
 
     bundle = await rv.retrieve(
         Situation(text="widget"), clearance=Classification.UNCLASSIFIED, top_k=5, budget=10_000
@@ -86,7 +88,7 @@ async def test_secret_memory_dropped_for_unclassified_caller(workspace, db, scop
 async def test_cui_memory_kept_for_secret_caller(workspace, db, scope) -> None:
     _write_entity(workspace, "cui-note", "CUI", "the controlled widget roster")
     sink = _RecordingSink()
-    rv = _retriever(workspace, db, scope, sink)
+    rv = await _retriever(workspace, db, scope, sink)
 
     bundle = await rv.retrieve(
         Situation(text="widget"), clearance=Classification.SECRET, top_k=5, budget=10_000
@@ -115,7 +117,7 @@ async def test_unlabeled_rejected_at_federal(workspace, db, scope) -> None:
         embedder=_StubEmbedder(),
         audit_sink=sink,
     )
-    rv.index()
+    await rv.index()
 
     bundle = await rv.retrieve(
         Situation(text="widget"), clearance=Classification.TOP_SECRET, top_k=5, budget=10_000
@@ -130,7 +132,7 @@ async def test_unlabeled_defaulted_at_personal(workspace, db, scope) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("the widget of unknown provenance\n", encoding="utf-8")
     sink = _RecordingSink()
-    rv = _retriever(workspace, db, scope, sink)  # personal by default
+    rv = await _retriever(workspace, db, scope, sink)  # personal by default
 
     bundle = await rv.retrieve(
         Situation(text="widget"), clearance=Classification.UNCLASSIFIED, top_k=5, budget=10_000
@@ -146,7 +148,7 @@ async def test_bundle_items_are_boundary_wrapped(workspace, db, scope) -> None:
     _write_entity(workspace, "note-a", "unclassified", "the widget cadence report")
     _write_entity(workspace, "note-b", "unclassified", "the widget roster memo")
     sink = _RecordingSink()
-    rv = _retriever(workspace, db, scope, sink)
+    rv = await _retriever(workspace, db, scope, sink)
 
     bundle = await rv.retrieve(
         Situation(text="widget"), clearance=Classification.UNCLASSIFIED, top_k=5, budget=10_000
@@ -160,7 +162,7 @@ async def test_over_budget_bundle_truncates_from_the_bottom(workspace, db, scope
     for i in range(5):
         _write_entity(workspace, f"note-{i}", "unclassified", f"the widget fact number {i}")
     sink = _RecordingSink()
-    rv = _retriever(workspace, db, scope, sink)
+    rv = await _retriever(workspace, db, scope, sink)
 
     bundle = await rv.retrieve(
         Situation(text="widget"), clearance=Classification.UNCLASSIFIED, top_k=5, budget=80

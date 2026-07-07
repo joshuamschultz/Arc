@@ -57,7 +57,7 @@ class ConceptEmbedder:
     def __init__(self) -> None:
         self.calls = 0
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.calls += len(texts)
         out: list[list[float]] = []
         for text in texts:
@@ -132,7 +132,7 @@ async def test_planted_structural_probe_retrieved_both_channels_then_enriched(
     assert result.insights_minted == 2
 
     structural = StructuralIndex(db, workspace, scope, embedder=emb)
-    structural.trigger_index()
+    await structural.trigger_index()
 
     # --- the present situation: a DIFFERENT domain, same abstract structure --
     situation = Situation(
@@ -151,7 +151,7 @@ async def test_planted_structural_probe_retrieved_both_channels_then_enriched(
     _assert_zero_overlap("claims-without-enforcement", _EPISODES)
 
     # --- channel (a): trigger-embedding ------------------------------------
-    trig_ranked = structural.trigger_match(situation, top_k=5)
+    trig_ranked = await structural.trigger_match(situation, top_k=5)
     assert trig_ranked is not None
     assert trig_ranked[0][0] == "silent-noop", "trigger-embedding channel must retrieve the probe"
 
@@ -189,7 +189,7 @@ async def test_never_recurring_guessed_insight_decays_out(
     consolidator = Consolidator(db, workspace, scope, distiller=PlantingDistiller(), embedder=emb)
     await consolidator.run()
     structural = StructuralIndex(db, workspace, scope, embedder=emb)
-    structural.trigger_index()
+    await structural.trigger_index()
 
     g_situation = Situation(
         text="a widget waits on a click that can never arrive",

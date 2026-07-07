@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.index.rebuild import Embedder
+from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import _cosine
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
@@ -109,7 +109,7 @@ class StructuralIndex:
 
     # -- T-060: trigger index (kept apart from surface vec0) ----------------
 
-    def trigger_index(self) -> int:
+    async def trigger_index(self) -> int:
         """Embed each insight ``trigger`` into the separate table; content-gated.
 
         Only new or changed triggers are re-embedded (LLM10 budget), so re-indexing a
@@ -136,7 +136,9 @@ class StructuralIndex:
         if not pending:
             return 0
 
-        vectors = self._embedder.embed_texts([trigger for _, trigger in pending])
+        vectors = await embed_or_none(self._embedder, [trigger for _, trigger in pending])
+        if vectors is None:
+            return 0
         for (insight_id, trigger), vector in zip(pending, vectors, strict=True):
             conn.execute(
                 "INSERT OR REPLACE INTO insight_trigger "
@@ -148,7 +150,7 @@ class StructuralIndex:
 
     # -- T-061: channel (a) trigger-embedding -------------------------------
 
-    def trigger_match(
+    async def trigger_match(
         self, situation: Situation, *, top_k: int = 5
     ) -> list[tuple[str, float]] | None:
         """Cosine-match the abstracted situation against insight triggers.
@@ -157,9 +159,10 @@ class StructuralIndex:
         ``None`` when no embedder is available (the caller then falls back to the
         cue-graph channel only — SDD degrade).
         """
-        if self._embedder is None:
+        vectors = await embed_or_none(self._embedder, [_abstract(situation)])
+        if not vectors:
             return None
-        query = self._embedder.embed_texts([_abstract(situation)])[0]
+        query = vectors[0]
         conn = self._db.connect()
         rows = conn.execute(
             "SELECT insight_id, embedding FROM insight_trigger WHERE scope=?",
@@ -215,7 +218,7 @@ class StructuralIndex:
         guessed insight whose cue edges have decayed below the floor no longer clears
         the cue channel, and conjunctive gating drops it.
         """
-        trig = self.trigger_match(situation, top_k=max(top_k * 4, top_k))
+        trig = await self.trigger_match(situation, top_k=max(top_k * 4, top_k))
         cue = self.cue_match(situation, top_k=max(top_k * 4, top_k))
         degraded = trig is None
 

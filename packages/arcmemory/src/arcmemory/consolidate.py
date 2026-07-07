@@ -34,7 +34,7 @@ from arcmemory import distill
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.index.rebuild import Embedder, IndexRebuilder
+from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _cosine
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
@@ -117,8 +117,8 @@ class Consolidator:
         insights = await self._mint_insights(events, [f for _, f in facts])
         procedures = self._promote_procedures(events)
         decayed = self._decay(now)
-        self._merge_cues_audited()
-        self._surface.index_if_needed()
+        await self._merge_cues_audited()
+        await self._surface.index_if_needed()
         self._commit_manifest()
 
         return ConsolidationResult(
@@ -172,19 +172,20 @@ class Consolidator:
         self._emit("memory.edges_decayed", "graph", extra={"forgotten": decayed})
         return decayed
 
-    def merge_cues(self) -> list[tuple[str, str]]:
+    async def merge_cues(self) -> list[tuple[str, str]]:
         """Merge near-duplicate cues (embedding-cluster); repoint their links.
 
         Returns the ``(merged_from, merged_into)`` pairs. Cues are embedded through
         the injected seam; when no embedder is available this is a no-op (drift is
         bounded elsewhere by the controlled vocabulary).
         """
-        if self._embedder is None:
-            return []
         cues = self._all_cues()
         if len(cues) < 2:
             return []
-        vectors = dict(zip(cues, self._embedder.embed_texts(cues), strict=True))
+        embedded = await embed_or_none(self._embedder, cues)
+        if embedded is None:
+            return []
+        vectors = dict(zip(cues, embedded, strict=True))
         canonical_of = self._cluster_cues(cues, vectors)
 
         merges: list[tuple[str, str]] = []
@@ -238,9 +239,9 @@ class Consolidator:
             self._insights.write(card)
         self._graph.rename_node(self._scope.key, cue, canonical)
 
-    def _merge_cues_audited(self) -> None:
+    async def _merge_cues_audited(self) -> None:
         """Run cue merge and audit each (part of the nightly hygiene, T-054)."""
-        for merged_from, merged_into in self.merge_cues():
+        for merged_from, merged_into in await self.merge_cues():
             self._emit("memory.cue_merged", f"{merged_from}->{merged_into}")
 
     # -- crash-safe manifest ----------------------------------------------
@@ -264,7 +265,7 @@ class Consolidator:
         """Clear the marker on a clean run."""
         self._manifest_path.unlink(missing_ok=True)
 
-    def recover(self) -> bool:
+    async def recover(self) -> bool:
         """Recover from an interrupted run: rebuild the index from truth, clear marker.
 
         Truth is the curated markdown + raw stream; the SQLite index is disposable,
@@ -273,7 +274,7 @@ class Consolidator:
         """
         if not self.pending_recovery:
             return False
-        IndexRebuilder(
+        await IndexRebuilder(
             self._db,
             self._workspace,
             self._scope,
