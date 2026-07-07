@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-07
+
+SPEC-039 quality pass: arcskill now passes `mypy --strict` like the other packages.
+
+### Changed
+- Added a minimal `[tool.mypy]` config with a module override (`ignore_missing_imports` for the optional `sigstore` / `sigstore.*` `[hub]` extras), so `mypy --strict src/arcskill` is clean whether or not the optional extras are installed.
+- `hub/_docker.py` now declares `__all__` so its aliased optional import `_DockerBackend` is an explicit re-export (fixes a strict no-implicit-reexport `attr-defined` in `dry_run.py`).
+- Removed two dead `# type: ignore[import-untyped]` on `import yaml` (types-PyYAML is present, so the ignores were unused under strict).
+
 ## [0.1.1] - 2026-07-06
 
 SPEC-033 C1/REQ-011: re-verify installed hub skills at load time, not just install time.

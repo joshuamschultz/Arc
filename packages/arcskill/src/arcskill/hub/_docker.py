@@ -32,6 +32,12 @@ except ImportError:
     _DockerBackend = None  # type: ignore[assignment,misc]  # reason: optional import — _run_docker checks for None and returns a skipped result when arcrun isn't installed
 
 
+# Explicit re-export surface: dry_run imports these three names from here.
+# _DockerBackend is an aliased import, so it needs listing for strict
+# no-implicit-reexport to allow the re-export through dry_run.
+__all__ = ["_DockerBackend", "_docker_available", "_run_docker"]
+
+
 _DRY_RUN_TIMEOUT_SECONDS = 10
 
 
