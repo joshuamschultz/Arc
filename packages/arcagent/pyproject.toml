@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arc-agent"
-version = "0.12.0"
+version = "0.13.1"
 description = "Enterprise-grade autonomous agent nucleus"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Dual-speed analogical memory. arcagent runs memory-less by default (NullBrain);
+# installing this extra + setting [modules.memory] brain = "arcmemory" activates it.
+memory = [
+    "arcmemory",
+]
 telegram = [
     "python-telegram-bot>=20.0,<22",
 ]

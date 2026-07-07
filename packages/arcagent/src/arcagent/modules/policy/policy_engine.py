@@ -130,6 +130,9 @@ class PolicyEngine:
         self._workspace = workspace
         self._telemetry = telemetry
         self._policy_path = workspace / "policy.md"
+        # Federal write-approval staging target (SPEC-041 Phase 9). Never
+        # identity.md — the engine has no code path to the immutable goal file.
+        self._pending_path = workspace / "policy.pending"
         self._next_bullet_id: int = 0
 
     async def evaluate(
@@ -138,16 +141,28 @@ class PolicyEngine:
         model: Any,
         *,
         session_id: str = "",
+        stage: bool = False,
     ) -> None:
         """ACE Reflector: evaluate recent agent behavior.
 
         Calls eval model for structured evaluation, then curator merges
-        the delta into policy.md. Raises on error — caller handles
-        fallback behavior.
+        the delta into policy.md (or ``policy.pending`` when ``stage`` is set —
+        federal write-approval, SPEC-041 Phase 9). Raises on error — caller
+        handles fallback behavior.
         """
         delta, current_policy = await self._reflect(messages, model, session_id=session_id)
         if delta:
-            await self._curate(delta, current_policy=current_policy)
+            self._audit("policy.reflected", {"session_id": session_id, "staged": stage})
+            await self._curate(delta, current_policy=current_policy, stage=stage)
+
+    def _audit(self, event: str, detail: dict[str, Any]) -> None:
+        """Emit a policy-mutation audit event (best-effort; never breaks curation)."""
+        if self._telemetry is None:
+            return
+        try:
+            self._telemetry.audit_event(event, detail)
+        except Exception:  # reason: AU-5 — audit failure must not break curation
+            _logger.warning("policy audit emission failed for %s", event, exc_info=True)
 
     async def _reflect(
         self,
@@ -239,6 +254,7 @@ class PolicyEngine:
         delta: PolicyDelta,
         *,
         current_policy: str = "",
+        stage: bool = False,
     ) -> None:
         """Deterministic merge of delta into policy.md.
 
@@ -248,7 +264,7 @@ class PolicyEngine:
         3. Auto-remove bullets with score <= 2
         4. Enforce max bullet count
         5. Sort by score descending
-        6. Atomic write
+        6. Atomic write (to ``policy.pending`` when ``stage`` — federal approval)
         """
         if not current_policy and self._policy_path.exists():
             current_policy = self._policy_path.read_text(encoding="utf-8")
@@ -307,10 +323,12 @@ class PolicyEngine:
         # Enforce max bullet count (keep highest-scored)
         bullets = bullets[: self._config.max_bullets]
 
-        # Atomic write
+        # Atomic write — policy.md, or policy.pending when staged for approval.
+        target = self._pending_path if stage else self._policy_path
         content = self._serialize_policy(bullets)
-        atomic_write_text(self._policy_path, content)
-        _logger.info("policy.curate: wrote %d bullet(s) to %s", len(bullets), self._policy_path)
+        atomic_write_text(target, content)
+        self._audit("policy.curated", {"bullets": len(bullets), "target": target.name})
+        _logger.info("policy.curate: wrote %d bullet(s) to %s", len(bullets), target)
 
     def _parse_policy(self, content: str) -> list[PolicyBullet]:
         """Parse policy.md into structured bullets."""

@@ -203,6 +203,21 @@ class TestAssemblePromptEvent:
         assert "sections" in events_received[0].data
         assert "workspace" in events_received[0].data
 
+    async def test_query_threaded_into_payload(
+        self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
+    ) -> None:
+        """The turn query is carried in the agent:assemble_prompt payload (T-080)."""
+        seen: list[EventContext] = []
+
+        async def handler(ctx: EventContext) -> None:
+            seen.append(ctx)
+
+        mock_bus.subscribe("agent:assemble_prompt", handler)
+        (tmp_path / "identity.md").write_text("I am agent")
+
+        await ctx_mgr_with_bus.assemble_system_prompt(tmp_path, query="who owns payments")
+        assert seen[0].data["query"] == "who owns payments"
+
     async def test_handler_injects_notes_section(
         self, ctx_mgr_with_bus: ContextManager, mock_bus: ModuleBus, tmp_path: Path
     ) -> None:

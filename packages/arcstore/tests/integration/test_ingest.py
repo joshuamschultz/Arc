@@ -205,6 +205,7 @@ class TestWormIngest:
         """AC — a verifiable WORM ingests as verified; a tampered one flags rows unverified."""
         from arctrust.audit import WormSink
         from arctrust.keypair import generate_keypair
+        from arctrust.signer import InProcessSigner
 
         from arcstore.records import SpoolRecord  # noqa: F401  (kept for symmetry)
 
@@ -213,7 +214,7 @@ class TestWormIngest:
         worm_dir.mkdir(parents=True, exist_ok=True)
         worm_path = worm_dir / "audit-chain.jsonl"
         kp = generate_keypair()
-        sink = WormSink(worm_path, kp.private_key)
+        sink = WormSink(worm_path, InProcessSigner(kp.private_key))
         from arctrust.audit import AuditEvent
 
         for i in range(3):

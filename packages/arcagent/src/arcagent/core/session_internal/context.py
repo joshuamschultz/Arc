@@ -76,6 +76,8 @@ class ContextManager:
         self,
         workspace: Path,
         extra_sections: dict[str, str] | None = None,
+        *,
+        query: str = "",
     ) -> str:
         """Build system prompt from workspace files.
 
@@ -100,6 +102,10 @@ class ContextManager:
             workspace: Path to the agent workspace directory.
             extra_sections: Additional named sections to include.
                 Merged after bus event handlers run.
+            query: The current turn/task text, threaded into the
+                ``agent:assemble_prompt`` payload so memory (and any other
+                subscriber) can do query-conditioned retrieval. Empty on the
+                resume path where no live turn text exists.
         """
         sections: dict[str, str] = {}
         for filename in _CORE_PROMPT_FILES:
@@ -113,7 +119,7 @@ class ContextManager:
         if self._bus is not None:
             await self._bus.emit(
                 "agent:assemble_prompt",
-                {"sections": sections, "workspace": str(workspace)},
+                {"sections": sections, "workspace": str(workspace), "query": query},
             )
 
         # Merge caller-supplied sections (strategy guidance, etc.)

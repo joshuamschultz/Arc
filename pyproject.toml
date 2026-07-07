@@ -68,6 +68,7 @@ arcteam = { workspace = true }
 arcmas = { workspace = true }
 arctrust = { workspace = true }
 arcstore = { workspace = true }
+arcmemory = { workspace = true }
 arcskill = { workspace = true }
 arctui = { workspace = true }
 arcui = { workspace = true }
@@ -118,6 +119,8 @@ module = [
     "dateparser.*",
     "azure.*",
     "opentelemetry.exporter.otlp.*",
+    "sqlite_vec",
+    "sqlite_vec.*",
 ]
 ignore_missing_imports = true
 

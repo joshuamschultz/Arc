@@ -39,6 +39,9 @@ jobs:
       - name: Mypy (arcagent)
         run: uv run mypy packages/arcagent/src/arcagent/ --strict
 
+      - name: Mypy (arcmemory)
+        run: uv run mypy packages/arcmemory/src/arcmemory/ --strict
+
   test:
     name: Test (Python ${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -93,6 +96,12 @@ jobs:
         # is a Unix-only module — Windows would fail at module-load.
         if: runner.os != 'Windows'
         run: uv run pytest packages/arcteam/tests/ -v --tb=short
+
+      - name: Run tests (arcmemory)
+        # arcmemory uses os.replace for atomic markdown writes and the optional
+        # sqlite-vec extension. Both work cross-platform; the vec extension load
+        # is guarded so the suite runs with or without the [vec] extra.
+        run: uv run pytest packages/arcmemory/tests/ -v --tb=short
 
   security:
     name: Security & SBOM

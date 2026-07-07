@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-07-07
+
+arcmemory embedder + distiller wiring (SPEC-041, Phase 10). The `Brain` seam now
+lights up arcmemory's arcllm-backed embedder and distiller so semantic recall and
+consolidation are live in production.
+
+### Changed
+- **`select_brain` wires the arcllm-backed seams.** When `brain="arcmemory"`/`"auto"`
+  is selected and arcmemory is importable, `select_brain` builds an
+  `arcmemory.ArcLLMEmbedder` (unless `embed_backend="none"`) and, when a
+  `distill_provider` is configured, an `arcmemory.ArcLLMDistiller` (fresh provider per
+  consolidation via `arcllm.load_model`), and injects both into `ArcMemoryBrain`.
+  `embed_backend="none"` / an empty `distill_provider` leaves the respective seam
+  unwired — recall degrades to BM25 + graph, consolidation is a no-op, never a crash.
+- **`modules.memory.config`** gains `embed_backend`, `embed_model`, `distill_provider`,
+  and `distill_model` knobs (threaded through `_runtime.configure` → `select_brain`).
+- **`Brain.rebuild_index` is now async** (matching arcmemory's async embedder seam);
+  `NullBrain.rebuild_index` updated in lockstep.
+
+### Fixed
+- Synced `arcagent.__version__` with the packaged version (was drifting at `0.12.0`).
+
+## [0.13.0] - 2026-07-07
+
+arcmemory integration (SPEC-041, Phases 8/9): the memory-less `Brain` seam, thin wiring, deletion of both old memory backends (no-legacy), and grounded reflection into the existing ACE curator. A `pip install arc-agent` alone runs fully memory-less; adding `arcmemory` (or a BYO Brain) activates capture/recall.
+
+### Added
+- **The `Brain` seam (`arcagent/brain/`, outside core).** A structural `Brain` Protocol (primitives only — arcagent imports no memory package) + a no-op `NullBrain` default. `select_brain(setting, ...)` config-selects the impl: `"none"` → NullBrain (memory off, zero files), `"arcmemory"`/`"auto"` → the `arcmemory.ArcMemoryBrain` plug-in (lazy import; missing install degrades to NullBrain, never crashes), or a dotted `module:Class` path for a bring-your-own Brain. This is the SPEC-047 pluggable-brain seam.
+- **Query-conditioned assembly (T-080, core seam).** `assemble_system_prompt(..., *, query="")` threads the turn text into the `agent:assemble_prompt` payload so recall is query-conditioned. Signature/payload only — core NCLOC unchanged (3498).
+- **Thin `modules/memory` wiring (T-081/082/083) — the only arcagent-side memory code.** `Brain.capture()` on `agent:post_tool` + `agent:post_respond` (zero-LLM); `Brain.retrieve()` on `agent:assemble_prompt` @ priority 50 → `sections["recall"]`, query-conditioned with a once-per-turn cache (spawn double-assembly retrieves once); one de-duplicated `memory_search` tool; a `@background_task` that polls an event-count / idle trigger and calls `Brain.consolidate()`, emitting `memory.consolidated`. Every Brain read/write is routed through the priority-10 `memory_acl` veto first. With `NullBrain` selected the module is a silent no-op (writes nothing).
+- **Grounded reflection → existing ACE (`modules/policy/reflection.py`, Phase 9).** `ReflectionGrounding{episode_summary, step_results, failures}` + `reflect_and_curate()` feed the EXISTING `PolicyEngine._reflect`→`_curate` (no second curation algorithm). A `memory.consolidated` policy hook grounds a session-less automated run on the consolidation episode (closes the automated-run gap). Writes only `policy.md`/`policy.pending`, never `identity.md` (ASI01); federal stages `policy.pending` for approval, personal/enterprise auto-apply; every mutation audited (`policy.reflected`/`policy.curated`). Reuses the engine's score-clamp/prune/cap/sanitize.
+
+### Removed
+- **No-legacy deletion of both old memory backends.** Deleted `modules/bio_memory/` and the old `modules/memory/` internals (`MarkdownMemoryModule`, `HybridSearch`, `EntityExtractor`, the duplicate `memory_search` tool, the dead `ctx.data["memory_context"]` path, and the dead `embedding_model`/`search_weight_vector`/`context_budget_tokens` config). Their salvageable logic was already absorbed into `arcmemory`. `memory_acl` is retained wholesale.
+
 ## [0.12.0] - 2026-07-07
 
 SPEC-043 SOTA loop controls (arcagent half): arcrun executes concurrently; arcagent keeps its own accounting atomic. The guards live next to the state they protect — never in the loop.

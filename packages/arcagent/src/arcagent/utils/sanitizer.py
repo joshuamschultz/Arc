@@ -1,9 +1,9 @@
-"""Shared text sanitization for memory modules.
+"""Shared text sanitization utilities.
 
 Provides NFKC normalization, zero-width character stripping, control
 character removal, wiki-link target validation, and slug generation.
-Used by both bio_memory and markdown_memory modules to prevent memory
-poisoning (OWASP ASI-06).
+Used across modules (session compaction, skill improver, messaging) to
+prevent memory/context poisoning (OWASP ASI-06).
 """
 
 from __future__ import annotations

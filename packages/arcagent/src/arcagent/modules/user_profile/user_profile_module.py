@@ -9,7 +9,7 @@ Responsibilities:
 - Emit audit events on every read/write/tombstone via telemetry.
 
 Boundary rules (SDD §3.6):
-- This module does NOT touch ``bio_memory`` or ``memory`` — different layers.
+- This module does NOT touch the ``memory`` module or its Brain — different layers.
 - GDPR FTS5 reindex is triggered via event emission only (no direct import
   of SessionIndex).
 - ACL enforcement lives in ``memory_acl`` module (priority 10); this

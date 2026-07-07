@@ -21,3 +21,8 @@ class PolicyConfig(ModuleConfig):
     eval_interval_turns: int = 20
     max_bullets: int = 200
     max_bullet_text_length: int = 500
+
+    # Grounded-reflection write approval (SPEC-041 Phase 9). Federal stages the
+    # curated bullets to ``policy.pending`` for human review; personal/enterprise
+    # auto-apply to ``policy.md``.
+    tier: str = "personal"

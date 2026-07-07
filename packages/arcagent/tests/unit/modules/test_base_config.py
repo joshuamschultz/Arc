@@ -19,11 +19,12 @@ class TestModuleConfigForbidsExtra:
 
     def test_memory_rejects_typo(self) -> None:
         with pytest.raises(ValidationError):
-            MemoryConfig(contex_budget_tokens=2000)  # type: ignore[call-arg]
+            MemoryConfig(brai="arcmemory")  # type: ignore[call-arg]
 
     def test_memory_accepts_valid(self) -> None:
-        cfg = MemoryConfig(context_budget_tokens=3000)
-        assert cfg.context_budget_tokens == 3000
+        cfg = MemoryConfig(brain="arcmemory", top_k=7)
+        assert cfg.brain == "arcmemory"
+        assert cfg.top_k == 7
 
     def test_policy_rejects_typo(self) -> None:
         with pytest.raises(ValidationError):
