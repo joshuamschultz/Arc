@@ -11,6 +11,7 @@ from arcstore.spool import request_context
 
 from arcrun._messages import system_message, user_message
 from arcrun.capabilities import CapabilityProvider, provider_tools
+from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 from arcrun.sandbox import Sandbox
@@ -39,6 +40,13 @@ def _build_state(
     sample_rate: float = 1.0,
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
+    on_checkpoint: Callable[[LoopCheckpoint], None] | None = None,
+    approval_provider: Callable[..., Any] | None = None,
+    approval_required_tools: frozenset[str] = frozenset(),
+    max_parallel: int = 10,
+    max_repeat: int | None = None,
+    max_consecutive_errors: int | None = None,
+    resume_from: LoopCheckpoint | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     run_id = str(uuid.uuid4())
@@ -77,7 +85,21 @@ def _build_state(
         tool_choice=tool_choice,
         max_tokens=max_tokens,
         max_cost_usd=max_cost_usd,
+        on_checkpoint=on_checkpoint,
+        approval_provider=approval_provider,
+        approval_required_tools=approval_required_tools,
+        max_parallel=max_parallel,
+        max_repeat=max_repeat,
+        max_consecutive_errors=max_consecutive_errors,
     )
+
+    # SPEC-043 REQ-003/004 — deterministic resume. The registry is rebuilt from
+    # the live capabilities (fresh, frozen); apply_checkpoint verifies its tool
+    # set equals the checkpoint's (fail-closed on mismatch) and restores the
+    # resumable fields so the loop re-enters at the saved turn without redoing
+    # completed work.
+    if resume_from is not None:
+        apply_checkpoint(state, resume_from)
 
     return state, sandbox_obj
 
@@ -115,8 +137,15 @@ async def run(
     sample_rate: float = 1.0,
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
+    on_checkpoint: Callable[[LoopCheckpoint], None] | None = None,
+    approval_provider: Callable[..., Any] | None = None,
+    approval_required_tools: frozenset[str] = frozenset(),
+    max_parallel: int = 10,
+    max_repeat: int | None = None,
+    max_consecutive_errors: int | None = None,
+    resume_from: LoopCheckpoint | None = None,
 ) -> LoopResult:
-    """Blocking entry point. Runs until task complete or max_turns."""
+    """Blocking entry point. Runs until task complete, a breaker trip, or resume."""
     state, sandbox_obj = _build_state(
         capabilities,
         system_prompt,
@@ -134,6 +163,13 @@ async def run(
         sample_rate=sample_rate,
         max_tokens=max_tokens,
         max_cost_usd=max_cost_usd,
+        on_checkpoint=on_checkpoint,
+        approval_provider=approval_provider,
+        approval_required_tools=approval_required_tools,
+        max_parallel=max_parallel,
+        max_repeat=max_repeat,
+        max_consecutive_errors=max_consecutive_errors,
+        resume_from=resume_from,
     )
 
     # Bind the run id as the spool correlation id so every record emitted inside
@@ -165,6 +201,13 @@ async def run_async(
     sample_rate: float = 1.0,
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
+    on_checkpoint: Callable[[LoopCheckpoint], None] | None = None,
+    approval_provider: Callable[..., Any] | None = None,
+    approval_required_tools: frozenset[str] = frozenset(),
+    max_parallel: int = 10,
+    max_repeat: int | None = None,
+    max_consecutive_errors: int | None = None,
+    resume_from: LoopCheckpoint | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -184,6 +227,13 @@ async def run_async(
         sample_rate=sample_rate,
         max_tokens=max_tokens,
         max_cost_usd=max_cost_usd,
+        on_checkpoint=on_checkpoint,
+        approval_provider=approval_provider,
+        approval_required_tools=approval_required_tools,
+        max_parallel=max_parallel,
+        max_repeat=max_repeat,
+        max_consecutive_errors=max_consecutive_errors,
+        resume_from=resume_from,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

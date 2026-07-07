@@ -44,9 +44,10 @@ STRATEGIES: dict[str, Strategy] = {}
 
 def _load_strategies() -> None:
     from arcrun.strategies.code import CodeExecStrategy
+    from arcrun.strategies.plan_execute import PlanExecuteStrategy
     from arcrun.strategies.react import ReactStrategy
 
-    for s in (ReactStrategy(), CodeExecStrategy()):
+    for s in (ReactStrategy(), CodeExecStrategy(), PlanExecuteStrategy()):
         STRATEGIES[s.name] = s
 
 

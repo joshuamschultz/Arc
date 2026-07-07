@@ -3,9 +3,9 @@
 Two entry points:
 
 - ``run_stream(...)`` wraps the full ReAct loop and yields ``StreamEvent``
-  objects (token, tool start/end, turn end). Token text is derived from
-  the final ``LoopResult.content`` via word splitting — convenient when
-  the underlying model adapter doesn't expose a real streaming wire.
+  objects (tool start/end, one final content token, turn end). It emits the
+  loop's real final content as a single block — there is no synthetic
+  progressive-token effect (SPEC-043 §3.5 cut it as misleading dead code).
 
 - ``stream_llm_response(model, messages, ...)`` streams a single
   ``model.invoke_stream`` call as ``TokenEvent`` then ``TurnEndEvent``.
@@ -180,6 +180,13 @@ async def run_stream(
     ui_reporter: Any | None = None,
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
+    on_checkpoint: Callable[[Any], None] | None = None,
+    approval_provider: Callable[..., Any] | None = None,
+    approval_required_tools: frozenset[str] = frozenset(),
+    max_parallel: int = 10,
+    max_repeat: int | None = None,
+    max_consecutive_errors: int | None = None,
+    resume_from: Any | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -296,6 +303,13 @@ async def run_stream(
                 store_raw_bodies=store_raw_bodies,
                 max_tokens=max_tokens,
                 max_cost_usd=max_cost_usd,
+                on_checkpoint=on_checkpoint,
+                approval_provider=approval_provider,
+                approval_required_tools=approval_required_tools,
+                max_parallel=max_parallel,
+                max_repeat=max_repeat,
+                max_consecutive_errors=max_consecutive_errors,
+                resume_from=resume_from,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue
@@ -336,23 +350,20 @@ async def _stream_generator(
     loop_result = loop_future.result()
     content = loop_result.content or ""
 
-    # Emit token events by splitting content into words to simulate streaming.
-    # We emit at least one TokenEvent so the content is always streamed.
+    # SPEC-043 §3.5 — streaming CUT. The prior synthetic word-split fabricated
+    # per-word TokenEvents from already-complete content (fake progressive
+    # tokens). For an agentic harness the deliverable is the output, not a typing
+    # effect, so we emit the real final content as ONE block. The structured
+    # events (tool start/end, turn end) and collect()/RunResult contract are
+    # unchanged — one-shot consumers keep working. Real per-token streaming
+    # stays only in ``stream_llm_response`` (out of loop, touches no gate).
     if content:
-        words = content.split(" ")
-        for i, word in enumerate(words):
-            # Re-add the space between words (not before the first word)
-            text = (" " + word) if i > 0 else word
-            yield TokenEvent(text=text)
-            # Mirror each token chunk to the UI reporter for live display
-            _emit_ui_run_event(
-                reporter=ui_reporter,
-                event_type="stream_token",
-                data={"text": text, "stream_run_id": stream_run_id},
-            )
-    else:
-        # Empty content: no token events; TurnEndEvent carries final_text=""
-        pass
+        yield TokenEvent(text=content)
+        _emit_ui_run_event(
+            reporter=ui_reporter,
+            event_type="stream_token",
+            data={"text": content, "stream_run_id": stream_run_id},
+        )
 
     turn_end = TurnEndEvent(
         final_text=content,

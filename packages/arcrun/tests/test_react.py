@@ -263,7 +263,7 @@ class TestParallelSafeDispatch:
                 "required": ["n"],
             },
             execute=slow,
-            parallel_safe=True,
+            classification="read_only",
         )
         bus = EventBus(run_id="test")
         state = _make_state(bus, tools=[tool])
@@ -284,7 +284,8 @@ class TestParallelSafeDispatch:
         result = await react_loop(model, state, sandbox, max_turns=5)
         elapsed = time.monotonic() - start
 
-        # Sequential would be ~0.3s; parallel should be ~0.1s + overhead.
+        # SPEC-043 REQ-030 — read_only batch dispatches through the wired
+        # parallel_dispatch. Sequential would be ~0.3s; parallel ~0.1s + overhead.
         assert elapsed < 0.25, f"expected parallel dispatch, took {elapsed:.3f}s"
         assert result.content == "all done"
 
@@ -303,7 +304,7 @@ class TestParallelSafeDispatch:
                 "required": ["n"],
             },
             execute=slow,
-            parallel_safe=False,
+            classification="state_modifying",
         )
         bus = EventBus(run_id="test")
         state = _make_state(bus, tools=[tool])

@@ -30,6 +30,7 @@ from arcagent.core.session_internal import SessionManager
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
+from arcagent.tools.approval_policy import build_loop_controls
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -210,6 +211,7 @@ async def dispatch_stream(
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
                 max_tokens=run_max_tokens,
                 max_cost_usd=run_max_cost_usd,
+                **build_loop_controls(agent, session),
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
@@ -280,6 +282,7 @@ async def start_tracked_run(
             store_raw_bodies=agent._config.telemetry.capture_tool_io,
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
+            **build_loop_controls(agent, session),
         )
     finally:
         reset_session_id(session_token)

@@ -2,22 +2,91 @@
 
 from __future__ import annotations
 
-import asyncio
+import hashlib
+import json
+import logging
 import os
 import time
 from typing import Any
 
 from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
 from arcrun.builtins.task_complete import BudgetBreachReason, make_budget_breach_args
+from arcrun.checkpoint import to_checkpoint
 from arcrun.executor import execute_tool_call
+from arcrun.parallel_dispatch import BatchClassifier, dispatch_batch
 from arcrun.sandbox import Sandbox
 from arcrun.state import Injection, RunState
 from arcrun.strategies import Strategy
 from arcrun.types import LoopResult
 
+_logger = logging.getLogger("arcrun.strategies.react")
+
 # Longest injection preview carried in the audit event. The full message rides
 # the message list as user-role data; the audit event keeps a bounded preview.
 _PREVIEW_LEN = 120
+
+
+def _call_signature(tc: Any) -> str:
+    """Stable signature of a tool call: sha256(name + canonical args).
+
+    Reuses the executor's canonical-JSON convention so the runaway detector
+    compares *semantic* identity, not object identity (SPEC-043 REQ-020).
+    """
+    raw = json.dumps(
+        {"name": getattr(tc, "name", ""), "args": getattr(tc, "arguments", {})},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def check_breaker(state: RunState) -> BudgetBreachReason | None:
+    """Unified top-of-turn circuit breaker (SPEC-043 REQ-020..024).
+
+    One hook point, one terminator vocabulary: token/cost/turn caps plus the
+    runaway-loop and error-cascade detectors. O(1) — a handful of comparisons.
+    Returns the breach reason (halt) or ``None`` (continue). Thresholds are
+    ``None`` when disabled; federal supplies non-relaxable floors (REQ-024).
+    """
+    if state.max_cost_usd is not None and state.cost_usd >= state.max_cost_usd:
+        return "max_cost"
+    if state.max_tokens is not None and state.tokens_used["total"] >= state.max_tokens:
+        return "max_tokens"
+    if state.max_turns and state.turn_count >= state.max_turns:
+        return "max_turns"
+    if state.max_repeat is not None and state.runaway_count >= state.max_repeat:
+        return "runaway_loop"
+    if (
+        state.max_consecutive_errors is not None
+        and state.consecutive_tool_errors >= state.max_consecutive_errors
+    ):
+        return "error_cascade"
+    return None
+
+
+def _update_runaway(state: RunState, tool_calls: list[Any]) -> None:
+    """Track the repeated-signature streak for the runaway breaker (REQ-020/025).
+
+    A turn issuing a single distinct signature identical to the last extends the
+    streak; a turn issuing *distinct* signatures (a legitimate parallel fan-out)
+    counts as progress and resets it (REQ-025). No tool calls also resets.
+    """
+    if not tool_calls:
+        state.runaway_signature = None
+        state.runaway_count = 0
+        return
+    signatures = {_call_signature(tc) for tc in tool_calls}
+    if len(signatures) != 1:
+        state.runaway_signature = None
+        state.runaway_count = 0
+        return
+    only = next(iter(signatures))
+    if only == state.runaway_signature:
+        state.runaway_count += 1
+    else:
+        state.runaway_signature = only
+        state.runaway_count = 1
 
 
 def _inject(state: RunState, injection: Injection, event_type: str) -> None:
@@ -103,67 +172,80 @@ class ReactStrategy(Strategy):
         return await react_loop(model, state, sandbox, max_turns)
 
 
+async def _resolve_approval(tc: Any, state: RunState) -> bool:
+    """Proactive HITL gate — SPEC-043 REQ-010..012.
+
+    When ``tc.name`` is flagged approval-required and a provider is injected, the
+    loop SUSPENDS (an ``await``) before dispatch and asks the provider. A grant
+    → proceed with the single call; ``None`` → fail closed (do not dispatch).
+    arcrun mints/verifies nothing — the grant is opaque; only its presence is
+    read. The provider is bound to SPEC-035 ``HumanGate`` by arcagent (REQ-012).
+    """
+    if state.approval_provider is None or tc.name not in state.approval_required_tools:
+        return True
+    state.event_bus.emit("approval.required", {"tool": tc.name, "tool_call_id": tc.id})
+    grant = await state.approval_provider(tc)
+    outcome = "granted" if grant is not None else "denied"
+    state.event_bus.emit(f"approval.{outcome}", {"tool": tc.name, "tool_call_id": tc.id})
+    return grant is not None
+
+
 async def _execute_tool_calls(
     tool_calls: list[Any],
     state: RunState,
     sandbox: Sandbox,
 ) -> tuple[list[Any], set[str]]:
-    """Execute tool calls. Tools flagged ``parallel_safe`` run concurrently.
+    """Execute a turn's tool calls through the ONE gated dispatch path.
 
-    The loop has no knowledge of specific tool names. Concurrency is a
-    declared property of the tool — any tool that opts in via
-    ``Tool.parallel_safe`` is queued and dispatched in one
-    ``asyncio.gather``. All other calls run sequentially in submission
-    order. Returns ``(result_messages_in_order, succeeded_tool_call_ids)``;
-    the set is consumed by completion-payload extraction so a tool whose
-    args failed schema validation does NOT terminate the loop with
-    unvalidated args (SPEC-017 R-030 — strict completion).
+    All calls flow through ``parallel_dispatch.dispatch_batch``: a ``read_only``
+    batch with no shared resource runs concurrently (semaphore-bounded), anything
+    state-modifying or unclassified runs sequentially (fail-closed) — one
+    implementation, no ad-hoc gather (REQ-030..035). Each call still passes the
+    full per-tool pipeline via ``execute_tool_call``; concurrency never skips a
+    gate. Proactive HITL (REQ-010/011) resolves before dispatch: a denied call is
+    not dispatched. Returns ``(result_messages_in_order, succeeded_tool_call_ids)``
+    — the set gates strict completion-payload extraction (SPEC-017 R-030).
     """
     tool_results_map: dict[int, Any] = {}
-    parallel_queue: dict[int, Any] = {}
     succeeded_ids: set[str] = set()
-    steered = False
 
+    if state.cancel_event.is_set():
+        cancelled = [tool_result(tc.id, "operation cancelled: steered") for tc in tool_calls]
+        return cancelled, succeeded_ids
+
+    # Resolve proactive approvals before dispatch; a denied call is excluded.
+    dispatchable: list[tuple[int, Any]] = []
     for idx, tc in enumerate(tool_calls):
-        if steered or state.cancel_event.is_set():
-            tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
-            continue
-
-        tool = state.registry.get(tc.name)
-        if tool is not None and tool.parallel_safe:
-            parallel_queue[idx] = tc
+        if await _resolve_approval(tc, state):
+            dispatchable.append((idx, tc))
         else:
-            result_msg, ok = await execute_tool_call(tc, state, sandbox)
-            tool_results_map[idx] = result_msg
+            tool_results_map[idx] = tool_result(tc.id, "operation denied: approval required")
+
+    if dispatchable:
+        calls = [tc for _, tc in dispatchable]
+        results = await dispatch_batch(
+            calls,
+            runner=lambda tc: execute_tool_call(tc, state, sandbox),
+            classifier=BatchClassifier(state.registry),
+            max_parallel=state.max_parallel,
+        )
+        for (idx, tc), res in zip(dispatchable, results, strict=True):
+            msg, ok = res
+            if not isinstance(ok, bool):
+                # runner raised (should not happen — execute_tool_call is total)
+                tool_results_map[idx] = tool_result(tc.id, f"Error: {res[1]}")
+                state.consecutive_tool_errors += 1
+                continue
+            tool_results_map[idx] = msg
             if ok:
                 succeeded_ids.add(tc.id)
-
-            if not state.steer_queue.empty():
-                _inject(state, state.steer_queue.get_nowait(), "steer.injected")
-                steered = True
-
-    # Execute queued parallel-safe calls concurrently
-    if parallel_queue and not steered:
-        indices = list(parallel_queue.keys())
-        coros = [execute_tool_call(parallel_queue[i], state, sandbox) for i in indices]
-        results = await asyncio.gather(*coros, return_exceptions=True)
-
-        for idx, result in zip(indices, results, strict=False):
-            if isinstance(result, tuple):
-                tool_results_map[idx] = result[0]
-                if result[1]:
-                    succeeded_ids.add(parallel_queue[idx].id)
+                state.consecutive_tool_errors = 0
             else:
-                tc = parallel_queue[idx]
-                tool_results_map[idx] = tool_result(tc.id, f"Error: {result}")
+                state.consecutive_tool_errors += 1
 
-        if not state.steer_queue.empty():
-            _inject(state, state.steer_queue.get_nowait(), "steer.injected")
-    elif parallel_queue and steered:
-        for idx, tc in parallel_queue.items():
-            tool_results_map[idx] = tool_result(tc.id, "operation cancelled: steered")
+    if not state.steer_queue.empty():
+        _inject(state, state.steer_queue.get_nowait(), "steer.injected")
 
-    # Return results in original order
     ordered = [tool_results_map[idx] for idx in sorted(tool_results_map.keys())]
     return ordered, succeeded_ids
 
@@ -174,8 +256,9 @@ async def react_loop(
     sandbox: Sandbox,
     max_turns: int,
 ) -> LoopResult:
-    """Run the ReAct loop until end_turn, max_turns, or cancel."""
+    """Run the ReAct loop until end_turn, a breaker trip, or cancel."""
     bus = state.event_bus
+    state.max_turns = max_turns
     bus.emit(
         "loop.start",
         {
@@ -185,29 +268,16 @@ async def react_loop(
         },
     )
 
-    while state.turn_count < max_turns:
+    while True:
         if state.cancel_event.is_set():
             break
 
-        # SPEC-038 REQ-001/003 — token+cost circuit-breaker. Enforced at the
-        # top of each turn so we never start a turn already over budget. Token
-        # is the primary ceiling (present on both paths); cost is secondary.
-        over_cost = state.max_cost_usd is not None and state.cost_usd >= state.max_cost_usd
-        over_tok = state.max_tokens is not None and state.tokens_used["total"] >= state.max_tokens
-        if over_cost or over_tok:
-            reason: BudgetBreachReason = "max_cost" if over_cost else "max_tokens"
-            state.completion_payload = make_budget_breach_args(reason=reason).model_dump(
-                exclude_none=True
-            )
-            bus.emit(
-                "loop.completed",
-                {
-                    "reason": reason,
-                    "cost_usd": state.cost_usd,
-                    "tokens": state.tokens_used.copy(),
-                },
-            )
-            return _build_result(state, None)
+        # SPEC-043 REQ-020..024 — ONE top-of-turn circuit breaker folds
+        # token/cost/turn caps and the runaway/error-cascade detectors into a
+        # single hook + terminator vocabulary. No separate tail max_turns check.
+        breach = check_breaker(state)
+        if breach is not None:
+            return _halt_on_breach(state, breach)
 
         bus.emit("turn.start", {"turn_number": state.turn_count + 1})
 
@@ -266,11 +336,13 @@ async def react_loop(
             _end_turn(state, bus)
             return _build_result(state, response.content)
 
-        # Process tool calls (parallel_safe tools dispatched concurrently)
+        # Dispatch this turn's tool calls through the one gated dispatch path.
         result_messages, succeeded_ids = await _execute_tool_calls(
             response.tool_calls, state, sandbox
         )
         state.messages.extend(result_messages)
+        # Feed the runaway detector with THIS turn's signatures (REQ-020/025).
+        _update_runaway(state, response.tool_calls)
 
         # SPEC-017 R-030/R-031 — any tool flagged ``signals_completion``
         # whose ``execute`` actually fired successfully (args passed
@@ -292,22 +364,25 @@ async def react_loop(
 
         _end_turn(state, bus)
 
-    if state.turn_count >= max_turns:
-        # SPEC-017 R-032 — max_turns breach synthesizes a failed
-        # task_complete so consumers see a structured terminator,
-        # not silent truncation.
-        state.completion_payload = make_budget_breach_args(reason="max_turns").model_dump(
-            exclude_none=True
-        )
-        bus.emit(
-            "loop.max_turns",
-            {
-                "turns_used": state.turn_count,
-                "max_turns": max_turns,
-            },
-        )
-        bus.emit("loop.completed", dict(state.completion_payload))
+    return _build_result(state, None)
 
+
+def _halt_on_breach(state: RunState, reason: BudgetBreachReason) -> LoopResult:
+    """Terminate the loop on a breaker trip with a structured payload (REQ-023).
+
+    Every breaker reason flows through the one terminator factory and emits
+    ``loop.completed`` carrying the reason so consumers distinguish reasons
+    without re-scanning the event chain. ``max_turns`` additionally emits the
+    legacy ``loop.max_turns`` event for existing consumers (SPEC-017 R-032).
+    """
+    bus = state.event_bus
+    state.completion_payload = make_budget_breach_args(reason=reason).model_dump(exclude_none=True)
+    if reason == "max_turns":
+        bus.emit("loop.max_turns", {"turns_used": state.turn_count, "max_turns": state.max_turns})
+    bus.emit(
+        "loop.completed",
+        {"reason": reason, "cost_usd": state.cost_usd, "tokens": state.tokens_used.copy()},
+    )
     return _build_result(state, None)
 
 
@@ -350,9 +425,20 @@ def _accumulate_usage(state: RunState, response: Any) -> None:
 
 
 def _end_turn(state: RunState, bus: Any) -> None:
-    """Increment turn count and emit turn.end event."""
+    """Increment turn count, emit turn.end, and emit a checkpoint (REQ-001/002).
+
+    The turn boundary is the deterministic checkpoint point. When an
+    ``on_checkpoint`` hook is injected the loop hands it a serializable
+    :class:`LoopCheckpoint`; it never persists (that is the caller's job). With
+    no hook the branch is skipped — zero hot-path overhead (AC-Sc2).
+    """
     state.turn_count += 1
     bus.emit("turn.end", {"turn_number": state.turn_count})
+    if state.on_checkpoint is not None:
+        try:
+            state.on_checkpoint(to_checkpoint(state))
+        except Exception:  # reason: persistence must never break the loop
+            _logger.warning("checkpoint hook raised; continuing", exc_info=True)
 
 
 def _build_result(state: RunState, content: str | None) -> LoopResult:
