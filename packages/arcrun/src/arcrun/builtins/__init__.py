@@ -16,6 +16,7 @@ from arcrun.builtins.execute import (
     IsolationUnavailableError,
     make_execute_tool,
     resolve_execution_backend,
+    run_shell,
 )
 from arcrun.builtins.task_complete import (
     TaskCompleteArgs,
@@ -39,4 +40,5 @@ __all__ = [
     "make_execute_tool",
     "make_task_complete_tool",
     "resolve_execution_backend",
+    "run_shell",
 ]

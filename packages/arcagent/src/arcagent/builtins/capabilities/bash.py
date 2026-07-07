@@ -24,8 +24,17 @@ _MAX_OUTPUT_CHARS = 30_000
     version="1.0.0",
 )
 async def bash(command: str, timeout: int = 120) -> str:
-    """Run ``command`` in the workspace; return combined stdout+stderr."""
+    """Run ``command`` in the workspace; return combined stdout+stderr.
+
+    SPEC-035 REQ-020/024: enterprise/federal run the command inside arcrun's
+    tier-routed isolation backend (container/VM) — never host ``bash`` — so the
+    shell cannot reach ``~/.arc/operator/**`` or ``.audit/**``. Personal keeps
+    host bash with the advisory goal-lock guard.
+    """
     ws = _runtime.workspace()
+    if _runtime.tier() in ("enterprise", "federal"):
+        return await _runtime.run_sandboxed_bash(command, timeout=timeout)
+    _runtime.check_shell_command(command, tool_name="bash")
     process = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,

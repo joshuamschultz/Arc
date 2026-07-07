@@ -57,6 +57,25 @@ _Tier = Literal["federal", "enterprise", "personal"]
 # ---------------------------------------------------------------------------
 
 
+class ApprovalGrant(BaseModel):
+    """Operator-signed, one-shot approval unlocking a forbidden composition.
+
+    An operator/human mints this over the hash of exactly one ToolCall
+    (``call_hash``) with their OWN identity. It travels on ``ToolCall.approval``
+    and is verified by :func:`verify_approval`, which rejects any grant whose
+    ``approver_did`` equals the agent's DID (ASI09 — no self-approval). The
+    signature covers only ``call_hash`` + ``approver_did`` so the grant binds to
+    one call and one approver and nothing else.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    call_hash: str
+    approver_did: str
+    public_key: bytes
+    signature: bytes
+
+
 class ToolCall(BaseModel):
     """Immutable request to invoke a tool.
 
@@ -81,6 +100,20 @@ class ToolCall(BaseModel):
     parent_call_id: str | None = None
     public_key: bytes | None = None
     signature: bytes | None = None
+    capability_tags: frozenset[str] = frozenset()
+    """Resolved trifecta legs for THIS call (e.g. ``{"private_data"}``).
+
+    Attestation/routing metadata carried alongside the agent's signature —
+    deliberately excluded from :meth:`signing_bytes`, exactly as
+    ``public_key``/``signature`` are.
+    """
+
+    approval: ApprovalGrant | None = None
+    """Operator-signed one-shot approval that unlocks a forbidden composition.
+
+    Like ``capability_tags``, this rides alongside the signed payload and is
+    NOT part of :meth:`signing_bytes` — it carries its own operator signature.
+    """
 
     def signing_bytes(self) -> bytes:
         """Canonical bytes the signature covers — every field except the auth pair.
@@ -172,6 +205,13 @@ class PolicyContext(BaseModel):
     provider_usage: ProviderUsage | None = None
     team_scope: TeamScope | None = None
     tool_runtime: ToolRuntimeStatus | None = None
+    session_capabilities: frozenset[str] | None = None
+    """Trifecta legs accumulated from prior allowed calls this session.
+
+    The GlobalLayer unions this with the call's ``capability_tags`` to test
+    ``forbidden_compositions``. Defaults ``None`` so existing 3-field
+    constructions stay valid; populated by the session's capability accumulator.
+    """
 
 
 class Decision(BaseModel):
@@ -280,6 +320,59 @@ def verify_call(call: ToolCall) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Operator approval — sign / verify a one-shot ApprovalGrant
+# ---------------------------------------------------------------------------
+
+
+def _approval_signing_bytes(call_hash: str, approver_did: str) -> bytes:
+    """Canonical bytes an approval signature covers: the bound call + approver."""
+    payload = json.dumps(
+        {"call_hash": call_hash, "approver_did": approver_did},
+        sort_keys=True,
+    )
+    return payload.encode("utf-8")
+
+
+def sign_approval(call: ToolCall, operator: AgentIdentity) -> ApprovalGrant:
+    """Mint an operator-signed approval bound to exactly this ``call``.
+
+    Signed by ``operator`` — a human/operator identity, NEVER the agent's own.
+    :func:`verify_approval` rejects a grant whose approver DID equals the agent
+    DID, so an agent cannot self-approve even if it calls this with itself.
+    """
+    call_hash = _hash_call(call)
+    signature = operator.sign(_approval_signing_bytes(call_hash, operator.did))
+    return ApprovalGrant(
+        call_hash=call_hash,
+        approver_did=operator.did,
+        public_key=operator.public_key,
+        signature=signature,
+    )
+
+
+def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
+    """Whether ``approval`` is a valid one-shot operator grant for ``call``.
+
+    Four conditions, all required (fail-closed — any failure returns False):
+      1. ``approver_did`` is NOT the agent's DID (ASI09 — no self-approval).
+      2. ``call_hash`` binds to exactly this call (one-shot).
+      3. ``public_key``'s fingerprint matches the claimed approver DID.
+      4. ``signature`` is a valid Ed25519 signature over the grant's bytes.
+    """
+    if approval.approver_did == call.agent_did:
+        return False
+    if approval.call_hash != _hash_call(call):
+        return False
+    if not did_matches_pubkey(approval.approver_did, approval.public_key):
+        return False
+    return _ed25519_verify(
+        _approval_signing_bytes(approval.call_hash, approval.approver_did),
+        approval.signature,
+        approval.public_key,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Concrete layer implementations
 # ---------------------------------------------------------------------------
 
@@ -352,6 +445,13 @@ class GlobalLayer:
         self._deny_rules = deny_rules
         self._forbidden_compositions = forbidden_compositions
 
+    def _first_forbidden(self, union: set[str]) -> frozenset[str] | None:
+        """First configured composition fully contained in ``union``, else None."""
+        for combo in self._forbidden_compositions:
+            if combo.issubset(union):
+                return combo
+        return None
+
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         reason = self._deny_rules.get(call.tool_name)
         now_us = _now_us()
@@ -363,6 +463,23 @@ class GlobalLayer:
                 input_hash=_hash_call(call),
                 evaluated_at_us=now_us,
             )
+
+        union = set(call.capability_tags) | set(ctx.session_capabilities or frozenset())
+        matched = self._first_forbidden(union)
+        if matched is not None and not (
+            call.approval is not None and verify_approval(call, call.approval)
+        ):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="global.forbidden_composition",
+                reason=(
+                    f"forbidden capability composition {sorted(matched)} "
+                    "requires human approval"
+                ),
+                input_hash=_hash_call(call),
+                evaluated_at_us=now_us,
+            )
+
         return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=now_us)
 
 
@@ -734,8 +851,12 @@ class PolicyPipeline:
 
         # 3. Cache hit — the key is bound to the call's signature fingerprint, so
         #    a cached ALLOW is never served across a different (or absent) signer.
-        cache_key = self._cache_key(call)
-        cached = self._cache_get(cache_key)
+        #    An approval-bearing call is a one-shot, security-relevant input whose
+        #    approval is (correctly) excluded from the cache key; it must never be
+        #    served from cache nor pollute it, or a cached composition DENY would
+        #    defeat the human-approval flow (SPEC-035).
+        cache_key = self._cache_key(call, ctx)
+        cached = self._cache_get(cache_key) if call.approval is None else None
         if cached is not None:
             self._emit_audit(call, ctx, cached, started_at, cache_hit=True)
             return self._shadow_override(cached)
@@ -753,7 +874,8 @@ class PolicyPipeline:
         if decision is None:
             decision = Decision.allow(input_hash=_hash_call(call), evaluated_at_us=_now_us())
 
-        self._cache_put(cache_key, decision)
+        if call.approval is None:
+            self._cache_put(cache_key, decision)
         self._emit_audit(call, ctx, decision, started_at)
         return self._shadow_override(decision)
 
@@ -811,14 +933,19 @@ class PolicyPipeline:
             evaluated_at_us=decision.evaluated_at_us,
         )
 
-    def _cache_key(self, call: ToolCall) -> str:
+    def _cache_key(self, call: ToolCall, ctx: PolicyContext) -> str:
         # sig_fingerprint binds the cached decision to the exact signer: an
         # unsigned call (empty signature) and a signed call can never collide,
         # so a cache-hit ALLOW is never replayed across identities (Finding 2).
         sig_fingerprint = hashlib.sha256(call.signature or b"").hexdigest()[:16]
+        # session_capabilities feeds the GlobalLayer composition check, so it is
+        # part of the decision's inputs. Omitting it lets a fixed-argument call
+        # ALLOWed under a partial ledger replay that ALLOW after the ledger
+        # completes a forbidden set — skipping the DENY (SPEC-035 stale replay).
+        caps = ",".join(sorted(ctx.session_capabilities or ()))
         return (
             f"{call.agent_did}|{call.tool_name}|{call.classification}"
-            f"|{sig_fingerprint}|{_hash_call(call)}"
+            f"|{sig_fingerprint}|{caps}|{_hash_call(call)}"
         )
 
     def _cache_get(self, key: str) -> Decision | None:
@@ -1002,6 +1129,7 @@ def _hash_call(call: ToolCall) -> str:
 
 __all__ = [
     "AgentLayer",
+    "ApprovalGrant",
     "AuditSink",
     "Decision",
     "GlobalLayer",
@@ -1019,6 +1147,8 @@ __all__ = [
     "ToolCall",
     "ToolRuntimeStatus",
     "build_pipeline",
+    "sign_approval",
     "sign_call",
+    "verify_approval",
     "verify_call",
 ]

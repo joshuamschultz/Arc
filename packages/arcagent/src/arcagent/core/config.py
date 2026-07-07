@@ -101,6 +101,13 @@ class ToolConfig(BaseModel):
     deny: list[str] = []
     timeout_seconds: int = 30
     allowed_paths: list[str] = []
+    # SPEC-035 REQ-002 — operator-declared paths that are read-only to the
+    # agent's mutating tools, unioned with the goal-file defaults. Resolved once
+    # at agent start; the agent has no tool that can edit this config.
+    protected_paths: list[str] = []
+    # SPEC-035 REQ-013 — origins external-comms tools may reach through the
+    # EgressProxy (deny-by-default). ``scheme://host[:port]`` entries.
+    egress_allowlist: list[str] = []
 
 
 class MCPServerEntry(BaseModel):
@@ -129,6 +136,19 @@ class ProcessToolEntry(BaseModel):
     timeout_seconds: int = 30
 
 
+class HumanGatePolicy(BaseModel):
+    """SPEC-035 REQ-014/016 — lethal-trifecta human-approval gate config.
+
+    ``auto_approve`` lists named low-risk leg-compositions that personal/
+    enterprise may approve without a human (each an explicit, audited leg list,
+    e.g. ``[["private_data", "external_comms", "untrusted_input"]]``). Federal
+    ignores it — the gate can never be auto-satisfied at federal (ADR-019).
+    """
+
+    timeout_seconds: float = 300.0
+    auto_approve: list[list[str]] = []
+
+
 class ToolsConfig(BaseModel):
     """All tool configurations by transport."""
 
@@ -136,6 +156,7 @@ class ToolsConfig(BaseModel):
     http: dict[str, HTTPToolEntry] = {}
     process: dict[str, ProcessToolEntry] = {}
     policy: ToolConfig = ToolConfig()
+    human_gate: HumanGatePolicy = HumanGatePolicy()
     allowed_module_prefixes: list[str] = Field(default=["arcagent."])
     preamble: str = ""
 

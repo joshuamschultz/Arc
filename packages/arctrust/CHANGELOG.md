@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-06
+
+SPEC-035: forbidden-composition enforcement goes live in the policy engine, plus operator-signed approval tokens.
+
+### Added
+- `GlobalLayer.forbidden_compositions` is now enforced: `evaluate` unions `ToolCall.capability_tags` with `PolicyContext.session_capabilities` and DENYs (`rule_id="global.forbidden_composition"`) when any configured forbidden set is a subset — the subset check is inlined (no arcagent dependency).
+- `ToolCall.capability_tags` and `ToolCall.approval` (both frozen, optional, excluded from `signing_bytes()`); `PolicyContext.session_capabilities`.
+- `ApprovalGrant` + `sign_approval` / `verify_approval`: operator/human-signed, one-shot, call-hash-bound approval tokens. `verify_approval` fails closed and rejects self-approval (approver DID == agent DID) — ASI09.
+- Approval-bearing calls bypass the decision cache (read + write) so a one-shot approval is always freshly evaluated and never served a cached DENY.
+
 ## [0.6.0] - 2026-07-06
 
 SPEC-053: audit-authority independence. The audited subject can no longer be its own audit authority.

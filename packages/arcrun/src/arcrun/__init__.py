@@ -1,6 +1,6 @@
 """arcrun — async execution engine for autonomous agents."""
 
-__version__ = "0.5.0"
+__version__ = "0.7.0"
 
 from arcrun.builtins import (
     SandboxError,
@@ -9,6 +9,7 @@ from arcrun.builtins import (
     SandboxTimeoutError,
     SandboxUnavailableError,
     make_execute_tool,
+    run_shell,
 )
 from arcrun.capabilities import (
     CapabilityProvider,
@@ -71,6 +72,7 @@ __all__ = [
     "provider_tools",
     "run",
     "run_async",
+    "run_shell",
     "run_stream",
     "stream_llm_response",
     "verify_chain",

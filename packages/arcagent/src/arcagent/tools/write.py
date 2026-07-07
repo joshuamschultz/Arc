@@ -9,7 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
-from arcagent.tools._validation import resolve_workspace_path
+from arcagent.tools._validation import (
+    enforce_protected_path,
+    resolve_protected_paths,
+    resolve_workspace_path,
+)
 
 INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -37,6 +41,7 @@ def create_tool(
     """Create a workspace-scoped write tool."""
     ws = workspace.resolve()
     _allowed = allowed_paths
+    _protected = resolve_protected_paths(ws, [])
 
     async def execute(
         *,
@@ -46,6 +51,7 @@ def create_tool(
     ) -> str:
         """Write content to a file, creating parent directories as needed."""
         resolved = resolve_workspace_path(file_path, ws, allowed_paths=_allowed)
+        enforce_protected_path(resolved, _protected, tool_name="write", file_path=file_path)
 
         if resolved.exists() and not resolved.is_file():
             return f"Error: Not a file: {file_path}"

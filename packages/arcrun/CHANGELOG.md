@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-06
+
+SPEC-035 sub-scope C: workspace bind-mount for the execution backends + a shell entry point, so a confined agent shell keeps workspace access while the operator seed and WORM chains stay unreachable.
+
+### Added
+- `run_shell(command, *, tier, workspace, readonly_subpaths, caller_did, audit_sink, ...)` — routes a shell command through `resolve_execution_backend` (enterprise→container, federal→VM), emits `code_exec.backend.selected`, and fails closed (`IsolationUnavailableError`) at federal with no VM. Exported at the top level.
+- `DockerBackend` / `VmBackend` now honor `workspace_mount` + `readonly_subpaths`: the workspace is bind-mounted `:rw` at `/workspace` (workdir), protected sub-paths are mounted `:ro`, and host `~/.arc`/`.audit` are never mounted. Implements the previously-declared-but-absent `supports_bind_mount`.
+
+### Fixed
+- `__version__` corrected (was stale at `0.5.0` while package metadata was ahead).
+
 ## [0.6.0] - 2026-07-05
 
 SPEC-036: real tier-enforced code-execution sandbox, closing ASI05.

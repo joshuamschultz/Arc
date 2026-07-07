@@ -21,7 +21,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from arcrun.backends import SupportsSeparatedRun, load_backend
+from arcrun.backends import (
+    DockerBackend,
+    LocalBackend,
+    SupportsSeparatedRun,
+    VmBackend,
+    load_backend,
+)
 from arcrun.backends._audit import emit_backend_selected, emit_isolation_downgraded
 from arcrun.backends.vm import VmUnavailableError
 from arcrun.types import Tool, ToolContext
@@ -114,6 +120,11 @@ def platform_supports_vm(kvm_path: str = "/dev/kvm") -> bool:
     Kept out of the pure router so the routing decision stays side-effect-free.
     """
     return sys.platform.startswith("linux") and Path(kvm_path).exists()
+
+
+# Private alias so run_shell can probe the host without its ``platform_supports_vm``
+# parameter shadowing the module-level probe function of the same name.
+_probe_platform_vm = platform_supports_vm
 
 
 def _downgrade_reason(relax: str | None) -> str | None:
@@ -264,6 +275,140 @@ def make_execute_tool(
     )
 
 
+_DEFAULT_SHELL_MAX_OUTPUT = 65536
+
+
+def _build_workspace_backend(
+    backend_name: str,
+    *,
+    workspace: Path,
+    readonly_subpaths: list[Path] | None,
+    max_stdout_bytes: int,
+) -> DockerBackend | VmBackend | LocalBackend:
+    """Construct the resolved backend WITH the workspace mount + protected subpaths.
+
+    Unlike ``load_backend`` (which builds no-arg built-ins for execute_python),
+    run_shell needs the backend bound to the agent's workspace. The three names
+    ``resolve_execution_backend`` returns are all trusted built-ins.
+    """
+    if backend_name == "vm":
+        return VmBackend(
+            max_stdout_bytes=max_stdout_bytes,
+            workspace_mount=workspace,
+            readonly_subpaths=readonly_subpaths,
+        )
+    if backend_name == "docker":
+        return DockerBackend(
+            max_stdout_bytes=max_stdout_bytes,
+            workspace_mount=workspace,
+            readonly_subpaths=readonly_subpaths,
+        )
+    # Personal-off (sandbox off): the host subprocess runs directly in the
+    # workspace; there is no mount to apply.
+    return LocalBackend(max_stdout_bytes=max_stdout_bytes)
+
+
+async def run_shell(
+    command: str,
+    *,
+    tier: str,
+    workspace: Path,
+    readonly_subpaths: list[Path] | None = None,
+    caller_did: str | None = None,
+    audit_sink: Any | None = None,
+    platform_supports_vm: bool | None = None,
+    relax: str | None = None,
+    timeout: float = 30.0,
+) -> str:
+    """Run a shell ``command`` inside the tier-routed isolation backend.
+
+    Mirrors ``make_execute_tool``'s selection + audit shape but runs a shell
+    command against the agent's workspace instead of piping ``python3 -``:
+    the backend is bound to ``workspace`` (rw at ``/workspace``, protected
+    subpaths read-only, host ``~/.arc`` absent) and the command runs with
+    ``cwd=/workspace``.
+
+    ``tier`` and ``platform_supports_vm`` are parameters — arcrun never sources
+    them. Personal (host bash) is arcagent's job; run_shell is invoked for
+    enterprise/federal, but a personal call still routes through
+    ``resolve_execution_backend`` rather than being special-cased.
+
+    Returns the same JSON result shape as execute_python: ``stdout``, ``stderr``,
+    ``exit_code``, ``duration_ms``.
+
+    Raises:
+        IsolationUnavailableError: federal tier on a host with no VM support.
+        IsolationRelaxationError:  a relax value below the tier floor.
+    """
+    supports_vm = _probe_platform_vm() if platform_supports_vm is None else platform_supports_vm
+    try:
+        backend_name = resolve_execution_backend(
+            tier, relax=relax, platform_supports_vm=supports_vm
+        )
+    except ExecutionIsolationError:
+        emit_backend_selected(
+            tier=tier,
+            resolved="<refused>",
+            isolation="none",
+            caller_did=caller_did,
+            relax=relax,
+            relax_reason=relax or "",
+            platform_supports_vm=supports_vm,
+            outcome="refuse",
+            sink=audit_sink,
+        )
+        raise
+
+    isolation = _ISOLATION[backend_name]
+    emit_backend_selected(
+        tier=tier,
+        resolved=backend_name,
+        isolation=isolation,
+        caller_did=caller_did,
+        relax=relax,
+        relax_reason=relax or "",
+        platform_supports_vm=supports_vm,
+        outcome="allow",
+        sink=audit_sink,
+    )
+    reason = _downgrade_reason(relax)
+    if reason is not None:
+        emit_isolation_downgraded(
+            tier=tier,
+            resolved=backend_name,
+            reason=reason,
+            caller_did=caller_did,
+            sink=audit_sink,
+        )
+
+    backend = _build_workspace_backend(
+        backend_name,
+        workspace=workspace,
+        readonly_subpaths=readonly_subpaths,
+        max_stdout_bytes=_DEFAULT_SHELL_MAX_OUTPUT,
+    )
+    # Guests run under /workspace; the personal-off host subprocess uses the real path.
+    cwd = str(workspace) if backend_name == "local" else "/workspace"
+
+    start = time.time()
+    try:
+        result = await backend.run_separated(
+            command, cwd=cwd, env=_DEFAULT_ENV, timeout=timeout
+        )
+    finally:
+        await backend.close()
+
+    duration_ms = (time.time() - start) * 1000
+    return json.dumps(
+        {
+            "stdout": result.stdout.decode(errors="replace"),
+            "stderr": result.stderr.decode(errors="replace"),
+            "exit_code": result.exit_code,
+            "duration_ms": round(duration_ms, 1),
+        }
+    )
+
+
 __all__ = [
     "ExecutionIsolationError",
     "IsolationRelaxationError",
@@ -272,4 +417,5 @@ __all__ = [
     "make_execute_tool",
     "platform_supports_vm",
     "resolve_execution_backend",
+    "run_shell",
 ]

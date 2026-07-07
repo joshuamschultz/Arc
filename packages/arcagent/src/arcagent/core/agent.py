@@ -51,11 +51,16 @@ from arcagent.core.model_manager import (
 )
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import ContextManager, SessionManager
+from arcagent.core.session_internal.capability_ledger import (
+    LETHAL_TRIFECTA,
+    SessionCapabilityLedger,
+)
 from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
+from arcagent.tools.human_gate import HumanGate, HumanGateConfig
 
 if TYPE_CHECKING:
     from arcrun import RunHandle, StreamEvent
@@ -129,6 +134,9 @@ class ArcAgent:
         # The arctrust policy pipeline (built in startup) — reused to authorize
         # mid-turn steering (REQ-041), the only steering caller in the system.
         self._policy_pipeline: PolicyPipeline | None = None
+        # SPEC-035 — per-session lethal-trifecta ledger + human-approval gate.
+        self._capability_ledger: SessionCapabilityLedger | None = None
+        self._human_gate: HumanGate | None = None
         # Durable WORM sink for policy-decision audit records (SPEC-034). Holds
         # an exclusive lock for its lifetime; closed in shutdown().
         self._policy_worm: WormSink | None = None
@@ -277,12 +285,34 @@ class ArcAgent:
         # DID — the audited subject must not be its own audit authority.
         worm = WormSink(self._policy_audit_log_path(), self._operator_key.seed)
         self._policy_worm = worm
+        policy_sink = worm_policy_sink(worm)
+        # SPEC-035 REQ-011 — the lethal-trifecta forbidden composition is LIVE in
+        # GlobalLayer at every tier. arcagent owns the deployment set; arctrust
+        # receives the resolved frozenset.
         pipeline = build_pipeline(
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
             agent_registry={self._identity.did: self._identity.public_key},
-            audit_sink=worm_policy_sink(worm),
+            forbidden_compositions=[LETHAL_TRIFECTA],
+            audit_sink=policy_sink,
         )
         self._policy_pipeline = pipeline
+        # SPEC-035 REQ-012/014 — per-session capability ledger + human-approval
+        # gate for trifecta completion. The gate signs one-shot approvals with
+        # the OPERATOR key (SPEC-053 authority), never the agent DID (ASI09); no
+        # channel is wired by default → fail-closed unless personal auto-approve.
+        self._capability_ledger = SessionCapabilityLedger()
+        gate_cfg = self._config.tools.human_gate
+        human_gate = HumanGate(
+            operator_seed=self._operator_key.seed,
+            agent_did=self._identity.did,
+            tier=tier,
+            config=HumanGateConfig(
+                timeout_seconds=gate_cfg.timeout_seconds,
+                auto_approve=[frozenset(legs) for legs in gate_cfg.auto_approve],
+            ),
+            audit_sink=policy_sink,
+        )
+        self._human_gate = human_gate
         self._tool_registry = ToolRegistry(
             config=self._config.tools,
             bus=self._bus,
@@ -290,6 +320,8 @@ class ArcAgent:
             policy_pipeline=pipeline,
             identity=self._identity,
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
+            capability_ledger=self._capability_ledger,
+            human_gate=human_gate,
         )
 
         workspace = self._workspace

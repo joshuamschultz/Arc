@@ -51,7 +51,7 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 from arctrust.artifact import (
     ArtifactSignature,
