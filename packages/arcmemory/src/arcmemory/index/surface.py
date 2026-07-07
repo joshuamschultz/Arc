@@ -135,7 +135,10 @@ class SurfaceIndex:
                         chunk_id=f"file:{rel}",
                         source_path=rel,
                         text=text,
-                        classification=str(fm.get("classification", "unclassified")),
+                        # A genuinely missing label passes through empty — the
+                        # no-read-up gate decides fail-closed (federal) vs default
+                        # (personal), never the index (SDD §8).
+                        classification=str(fm.get("classification") or ""),
                         mtime=path.stat().st_mtime,
                         content_hash=content_hash(text),
                     )

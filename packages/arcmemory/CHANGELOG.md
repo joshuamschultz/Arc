@@ -4,6 +4,48 @@ All notable changes to the `arcmemory` package are documented here. Format follo
 [Keep a Changelog](https://keepachangelog.com/); this package adheres to semantic
 versioning.
 
+## [0.4.0] — 2026-07-07
+
+Retrieve orchestration + classification-gated recall (SPEC-041, Phase 7). The single
+bounded read path that fuses both channels, enforces no-read-up, and hands back a
+boundary-marked, budget-capped bundle safe to inject.
+
+### Added
+
+- **`retrieve.Retriever`** (T-070) — the one bounded read path (`retrieve.py`). A
+  single pass (no agentic loop, LLM10): fuse the surface channel (Phase 4) and the
+  structural channel (Phase 6) with **RRF** (`1/(k+rank)`, k=60), confidence-gate
+  (`guessed` → "verify first", `known` → actionable), then apply the no-read-up gate,
+  then bound to top-k + token budget. Returns a `Bundle` whose `text` is the
+  injectable, boundary-marked rendering.
+- **No-read-up gate** `security.gate_no_read_up` (T-070/071) — **reuses**
+  `arctrust.dominates` / `arctrust.parse_classification`; arcmemory defines **no
+  comparator of its own** (enforced by `tests/architecture/test_reuses_arctrust_comparator.py`
+  — runtime identity + static AST scan). Each memory's `classification` label is
+  mapped onto the arctrust ladder and dropped when the caller's clearance does not
+  dominate it (Bell-LaPadula, NIST 800-53 AC-4). A `SECRET` memory is dropped for an
+  `UNCLASSIFIED` caller; a `CUI` memory is kept for a `SECRET` caller.
+- **Fail-closed labeling** (T-071) — federal (`strict`) **rejects** an unlabeled or
+  unknown-labeled memory; personal warns and defaults `UNCLASSIFIED` (ADR-019). Every
+  drop emits a `recall.dropped` audit event (AU-2) carrying only a content **hash** —
+  never plaintext. The gate filters **before assembly**, so a dropped memory leaks
+  nothing via the returned bundle's rank, count, `text`, or any error.
+- **Boundary marking + budget** `security.boundary_mark` / `render_recalls` /
+  `enforce_budget` (T-072) — each injected memory is wrapped in a `<memory-result>`
+  block carrying source + score + confidence, framed as untrusted **DATA, never
+  instructions** (LLM01). Forged boundary markers inside stored text are defanged, so
+  a prompt-injection-laden memory cannot break out of its own block — rendered inert.
+  Top-k + token budget are enforced by truncating the **lowest-ranked first**, never
+  overflowing.
+- `Bundle.text` — the injectable boundary-marked rendering of the kept recalls.
+
+### Changed
+
+- `index/surface.py` — a source file with a **genuinely missing** `classification`
+  frontmatter now passes an empty label through to the gate (was silently defaulted
+  to `unclassified`). The index no longer makes the security decision; the no-read-up
+  gate does — so federal fail-closed actually triggers on an unlabeled file (SDD §8).
+
 ## [0.3.0] — 2026-07-07
 
 Structural / analogical retrieval — the centerpiece (SPEC-041, Phase 6). This is the

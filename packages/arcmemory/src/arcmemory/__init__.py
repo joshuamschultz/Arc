@@ -31,6 +31,12 @@ from arcmemory.index.structural import (
     StructuralResult,
 )
 from arcmemory.index.surface import SurfaceIndex, SurfaceResult
+from arcmemory.retrieve import Retriever
+from arcmemory.security import (
+    boundary_mark,
+    gate_no_read_up,
+    render_recalls,
+)
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
@@ -51,7 +57,7 @@ from arcmemory.types import (
     TimeWindow,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "Bundle",
@@ -80,6 +86,7 @@ __all__ = [
     "Procedure",
     "Recall",
     "Reranker",
+    "Retriever",
     "Scope",
     "SemanticStore",
     "Situation",
@@ -91,7 +98,10 @@ __all__ = [
     "TimeWindow",
     "WeightedGraph",
     "__version__",
+    "boundary_mark",
     "confidence_from_hits",
     "extract_facts",
+    "gate_no_read_up",
     "mint_insights",
+    "render_recalls",
 ]

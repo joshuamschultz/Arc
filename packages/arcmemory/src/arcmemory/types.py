@@ -198,12 +198,17 @@ class Recall(BaseModel):
 
 
 class Bundle(BaseModel):
-    """The bounded, boundary-marked result of a single retrieval pass."""
+    """The bounded, boundary-marked result of a single retrieval pass.
+
+    ``text`` is the injectable rendering: each kept recall wrapped in a
+    ``<memory-result>`` block and framed as untrusted DATA (never instructions).
+    """
 
     recalls: list[Recall] = Field(default_factory=list)
     degraded: bool = False
     truncated: bool = False
     budget: int = 0
+    text: str = ""
 
 
 class ConsolidationResult(BaseModel):
