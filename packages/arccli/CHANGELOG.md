@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-06
+
+SPEC-037: WORM/audit signing goes through the arctrust `Signer` seam.
+
+### Changed
+- `arc run` direct-audit WORM sink and the `arc team` `AuditLogger` build a `Signer` from the operator key (`load_operator_key().into_signer()`) instead of a raw seed / shared HMAC key.
+- `arc team init` now bootstraps the operator audit key (asymmetric authority) instead of generating a `.hmac_key`; `arc team status` reports operator-key presence.
+
 ## [0.5.0] - 2026-07-06
 
 SPEC-053: `arc init` generates the deployment operator key (audit authority).

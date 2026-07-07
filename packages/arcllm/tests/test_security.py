@@ -59,11 +59,53 @@ def _base_config(**overrides: Any) -> dict[str, Any]:
         "pii_detector": "regex",
         "pii_custom_patterns": [],
         "signing_enabled": True,
-        "signing_algorithm": "hmac-sha256",
+        "signing_algorithm": "ed25519",
         "signing_key_env": "TEST_SIGNING_KEY",
     }
     cfg.update(overrides)
     return cfg
+
+
+class TestRequestSigningFipsGate:
+    """Secondary (SPEC-037) — request signing runs the arctrust FIPS gate."""
+
+    def test_federal_rejects_non_fips_ed25519(self) -> None:
+        """require_fips=true + Ed25519 fails closed before any signer is built."""
+        from arctrust.fips import ArcTrustFipsError
+
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
+            with pytest.raises(ArcTrustFipsError):
+                SecurityModule(
+                    _base_config(require_fips=True, signing_algorithm="ed25519"),
+                    _make_inner(),
+                )
+
+    def test_federal_rejects_non_fips_backend_even_for_ecdsa(self) -> None:
+        """require_fips=true + ecdsa-p256 still fails on this non-FIPS dev backend."""
+        from arctrust.fips import ArcTrustFipsError
+
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
+            with pytest.raises(ArcTrustFipsError):
+                SecurityModule(
+                    _base_config(require_fips=True, signing_algorithm="ecdsa-p256"),
+                    _make_inner(),
+                )
+
+    def test_federal_allows_ecdsa_on_validated_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("arctrust.fips.fips_backend_active", lambda: True)
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
+            module = SecurityModule(
+                _base_config(require_fips=True, signing_algorithm="ecdsa-p256"),
+                _make_inner(),
+            )
+        assert module._signer is not None
+
+    def test_personal_default_ungated(self) -> None:
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
+            module = SecurityModule(_base_config(), _make_inner())
+        assert module._signer is not None
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +116,7 @@ def _base_config(**overrides: Any) -> dict[str, Any]:
 class TestPiiOutboundText:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_redacts_pii_from_text_message(self):
@@ -110,7 +152,7 @@ class TestPiiOutboundText:
 class TestPiiOutboundContentBlocks:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_redacts_pii_from_text_block(self):
@@ -233,7 +275,7 @@ class TestPiiOutboundContentBlocks:
 class TestPiiInbound:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_redacts_pii_from_response_content(self):
@@ -303,7 +345,7 @@ class TestPiiInbound:
 class TestSigning:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_signature_attached_to_metadata(self):
@@ -316,7 +358,8 @@ class TestSigning:
         assert result.metadata is not None
         assert "request_signature" in result.metadata
         assert "signing_algorithm" in result.metadata
-        assert result.metadata["signing_algorithm"] == "hmac-sha256"
+        assert result.metadata["signing_algorithm"] == "ed25519"
+        assert "signing_public_key" in result.metadata
 
     async def test_signature_is_hex_string(self):
         inner = _make_inner()
@@ -326,7 +369,7 @@ class TestSigning:
         result = await module.invoke(messages)
 
         sig = result.metadata["request_signature"]
-        assert len(sig) == 64
+        assert len(sig) == 128
         assert all(c in "0123456789abcdef" for c in sig)
 
     async def test_signature_deterministic(self):
@@ -339,6 +382,33 @@ class TestSigning:
 
         assert r1.metadata["request_signature"] == r2.metadata["request_signature"]
 
+    async def test_signed_label_is_config_model_not_response_field(self):
+        """REQ-011 — the model bound into the signed payload is the trusted,
+        config-resolved model_name, never an attacker-suppliable response field."""
+        from arctrust.signer import ED25519, verify_signature
+
+        from arcllm._signing import canonical_payload
+
+        # The inner provider (config authority) is 'test-model'; the RESPONSE
+        # claims a different model an attacker could try to bind instead.
+        forged = _make_response(content="ok").model_copy(
+            update={"model": "attacker-swapped-model"}
+        )
+        inner = _make_inner(forged)
+        module = SecurityModule(_base_config(), inner)
+        messages = [Message(role="user", content="hello")]
+
+        result = await module.invoke(messages)
+        signature = bytes.fromhex(result.metadata["request_signature"])
+        public_key = bytes.fromhex(result.metadata["signing_public_key"])
+
+        # Verifies ONLY against the config model_name payload; the response
+        # model does not verify.
+        trusted = canonical_payload(messages, None, "test-model")
+        attacker = canonical_payload(messages, None, "attacker-swapped-model")
+        assert verify_signature(ED25519, trusted, signature, public_key)
+        assert not verify_signature(ED25519, attacker, signature, public_key)
+
 
 # ---------------------------------------------------------------------------
 # Combined PII + signing
@@ -348,7 +418,7 @@ class TestSigning:
 class TestCombined:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_pii_redacted_and_signed(self):
@@ -376,7 +446,7 @@ class TestCombined:
 class TestFeatureToggles:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_pii_disabled_signing_only(self):
@@ -428,7 +498,7 @@ class TestFeatureToggles:
 class TestOtelSpans:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_creates_security_span(self):
@@ -449,7 +519,7 @@ class TestOtelSpans:
 
 class TestConfigValidation:
     def test_invalid_signing_algorithm(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             with pytest.raises(ArcLLMConfigError, match="Unsupported"):
                 SecurityModule(
                     _base_config(signing_algorithm="rsa-2048"),
@@ -481,7 +551,7 @@ class TestConfigValidation:
         coverage). A `pii_detector` string other than "regex" now simply
         falls through to the built-in RegexPiiDetector.
         """
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             module = SecurityModule(
                 _base_config(pii_detector="spacy"),
                 _make_inner(),
@@ -491,7 +561,7 @@ class TestConfigValidation:
         assert isinstance(module._pii_detector, RegexPiiDetector)
 
     def test_unknown_config_keys_raises(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             with pytest.raises(ArcLLMConfigError, match="Unknown SecurityModule"):
                 SecurityModule(
                     {**_base_config(), "bogus_key": True},
@@ -507,7 +577,7 @@ class TestConfigValidation:
 class TestCustomDetector:
     @pytest.fixture(autouse=True)
     def _set_signing_key(self):
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "test-key"}):
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "11" * 32}):
             yield
 
     async def test_custom_detector_class(self):

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-06
+
+SPEC-037: the audit chain's chained HMAC is replaced by a per-record asymmetric signature.
+
+### Changed
+- **`AuditLogger(backend, signer: Signer)`** — each record is signed over `prev_signature || canonical(record)` with an arctrust `Signer` (Ed25519). `verify_chain` verifies each record against the operator public key (not the key embedded in the record), so a record re-signed under a substituted key fails. `_compute_record_hmac`, `load_hmac_key`, the `hmac`/`hashlib` imports, and the `ARCTEAM_HMAC_KEY` fallback are **deleted** (REQ-002). Legitimate non-signing HMAC is unaffected (there is none in arcteam signing paths).
+- **`AuditRecord`** drops `hmac_sha256`; adds `signature`, `public_key`, `algorithm`, `key_ref`.
+- `TeamConfig.hmac_key_env` removed (vestigial — the audit chain no longer uses a shared secret).
+
 ## [0.3.0] - 2026-04-26
 
 Audit migration to arctrust, UI reporter wiring, and README refresh.

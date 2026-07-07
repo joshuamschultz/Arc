@@ -217,4 +217,6 @@ class TestAuditRecordModel:
             detail="sent message",
         )
         assert r.classification == "UNCLASSIFIED"
-        assert r.hmac_sha256 == ""
+        assert r.signature == ""
+        assert r.public_key == ""
+        assert r.algorithm == "ed25519"

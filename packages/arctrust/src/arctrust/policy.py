@@ -42,6 +42,7 @@ from pydantic import BaseModel, ConfigDict
 
 from arctrust.identity import AgentIdentity, did_matches_pubkey
 from arctrust.keypair import verify as _ed25519_verify
+from arctrust.signer import verify_signature
 
 _logger = logging.getLogger("arctrust.policy")
 
@@ -73,6 +74,10 @@ class ApprovalGrant(BaseModel):
     call_hash: str
     approver_did: str
     public_key: bytes
+    # Signing algorithm of ``signature`` (ed25519 default; ecdsa-p256 when the
+    # operator authority signs out-of-process at federal). Drives verification
+    # so a federal ECDSA grant verifies without the verifier assuming Ed25519.
+    algorithm: str = "ed25519"
     signature: bytes
 
 
@@ -333,12 +338,35 @@ def _approval_signing_bytes(call_hash: str, approver_did: str) -> bytes:
     return payload.encode("utf-8")
 
 
-def sign_approval(call: ToolCall, operator: AgentIdentity) -> ApprovalGrant:
+@runtime_checkable
+class ApprovalAuthority(Protocol):
+    """The operator authority that mints approvals — did + asymmetric signer.
+
+    Satisfied by :class:`arctrust.identity.AgentIdentity` (in-process Ed25519)
+    and by an out-of-process operator signer wrapper (VaultSigner + derived DID)
+    alike, so the human-approval gate signs the same way at every custody tier.
+    """
+
+    @property
+    def did(self) -> str: ...
+
+    @property
+    def public_key(self) -> bytes: ...
+
+    @property
+    def algorithm(self) -> str: ...
+
+    def sign(self, message: bytes) -> bytes: ...
+
+
+def sign_approval(call: ToolCall, operator: ApprovalAuthority) -> ApprovalGrant:
     """Mint an operator-signed approval bound to exactly this ``call``.
 
-    Signed by ``operator`` — a human/operator identity, NEVER the agent's own.
+    Signed by ``operator`` — a human/operator authority, NEVER the agent's own.
     :func:`verify_approval` rejects a grant whose approver DID equals the agent
-    DID, so an agent cannot self-approve even if it calls this with itself.
+    DID, so an agent cannot self-approve even if it calls this with itself. The
+    grant records the operator's ``algorithm`` so ECDSA-P256 (federal
+    out-of-process) grants verify without the verifier assuming Ed25519.
     """
     call_hash = _hash_call(call)
     signature = operator.sign(_approval_signing_bytes(call_hash, operator.did))
@@ -346,6 +374,7 @@ def sign_approval(call: ToolCall, operator: AgentIdentity) -> ApprovalGrant:
         call_hash=call_hash,
         approver_did=operator.did,
         public_key=operator.public_key,
+        algorithm=operator.algorithm,
         signature=signature,
     )
 
@@ -357,7 +386,8 @@ def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
       1. ``approver_did`` is NOT the agent's DID (ASI09 — no self-approval).
       2. ``call_hash`` binds to exactly this call (one-shot).
       3. ``public_key``'s fingerprint matches the claimed approver DID.
-      4. ``signature`` is a valid Ed25519 signature over the grant's bytes.
+      4. ``signature`` is a valid signature (per ``approval.algorithm``) over
+         the grant's bytes.
     """
     if approval.approver_did == call.agent_did:
         return False
@@ -365,7 +395,8 @@ def verify_approval(call: ToolCall, approval: ApprovalGrant) -> bool:
         return False
     if not did_matches_pubkey(approval.approver_did, approval.public_key):
         return False
-    return _ed25519_verify(
+    return verify_signature(
+        approval.algorithm,
         _approval_signing_bytes(approval.call_hash, approval.approver_did),
         approval.signature,
         approval.public_key,
@@ -1129,6 +1160,7 @@ def _hash_call(call: ToolCall) -> str:
 
 __all__ = [
     "AgentLayer",
+    "ApprovalAuthority",
     "ApprovalGrant",
     "AuditSink",
     "Decision",

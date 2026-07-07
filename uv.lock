@@ -294,7 +294,7 @@ tutorial = [
 
 [[package]]
 name = "arc-agent"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
@@ -378,7 +378,7 @@ dev = [
 
 [[package]]
 name = "arccmd"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "packages/arccli" }
 dependencies = [
     { name = "arc-agent", extra = ["telegram"] },
@@ -483,10 +483,11 @@ requires-dist = [
 
 [[package]]
 name = "arcllm"
-version = "0.5.1"
+version = "0.6.0"
 source = { editable = "packages/arcllm" }
 dependencies = [
     { name = "arcstore" },
+    { name = "arctrust" },
     { name = "httpx" },
     { name = "jcs" },
     { name = "opentelemetry-api" },
@@ -505,9 +506,6 @@ otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
-signing = [
-    { name = "cryptography" },
-]
 trace-encryption = [
     { name = "cryptography" },
 ]
@@ -515,7 +513,7 @@ trace-encryption = [
 [package.metadata]
 requires-dist = [
     { name = "arcstore", editable = "packages/arcstore" },
-    { name = "cryptography", marker = "extra == 'signing'", specifier = ">=46.0.7" },
+    { name = "arctrust", editable = "packages/arctrust" },
     { name = "cryptography", marker = "extra == 'trace-encryption'", specifier = ">=46.0.7,<47.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jcs", specifier = ">=0.2.1" },
@@ -527,7 +525,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20" },
     { name = "pydantic", specifier = ">=2.0" },
 ]
-provides-extras = ["otel", "signing", "trace-encryption", "injection-semantic", "guardrails-schema"]
+provides-extras = ["otel", "trace-encryption", "injection-semantic", "guardrails-schema"]
 
 [[package]]
 name = "arcmas"
@@ -621,7 +619,7 @@ dev = [
 
 [[package]]
 name = "arcteam"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "packages/arcteam" }
 dependencies = [
     { name = "arctrust" },
@@ -642,9 +640,10 @@ requires-dist = [
 
 [[package]]
 name = "arctrust"
-version = "0.7.0"
+version = "0.8.0"
 source = { editable = "packages/arctrust" }
 dependencies = [
+    { name = "cryptography" },
     { name = "pydantic" },
     { name = "pynacl" },
 ]
@@ -658,6 +657,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=46.0.7" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pynacl", specifier = ">=1.5,<2" },
 ]

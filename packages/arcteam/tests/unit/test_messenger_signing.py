@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from arctrust import generate_keypair
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner
@@ -19,7 +20,7 @@ DID_A1 = "did:arc:local:agent/a1"
 
 async def _service_with_signer() -> tuple[MessagingService, EntityRegistry, MessageSigner]:
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"k" * 32)
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     kp = generate_keypair()
@@ -95,7 +96,7 @@ class TestUnsignedSendIsRejectedOnConsume:
 
     async def test_unsigned_message_never_delivered(self) -> None:
         backend = MemoryBackend()
-        audit = AuditLogger(backend, hmac_key=b"k" * 32)
+        audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
         await audit.initialize()
         registry = EntityRegistry(backend, audit)
         await registry.register(

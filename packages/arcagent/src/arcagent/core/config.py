@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ConfigError
 
@@ -364,6 +364,43 @@ class SecurityConfig(BaseModel):
         ),
     )
 
+    # SPEC-037 — asymmetric + FIPS signing + out-of-process key custody.
+    signing_algorithm: str = Field(
+        default="ed25519",
+        description=(
+            "Operator/WORM signing algorithm: 'ed25519' (default, "
+            "personal/enterprise) or 'ecdsa-p256' (FIPS/federal path). "
+            "SPEC-037 REQ-004."
+        ),
+    )
+    custody: str = Field(
+        default="in_process",
+        description=(
+            "Operator key custody: 'in_process' (on-disk 0600 seed, "
+            "personal default) or 'vault_transit' (sign by reference; the seed "
+            "never enters the agent process — enterprise default, federal "
+            "mandatory). SPEC-037 REQ-006/007."
+        ),
+    )
+    notary_keystore: str = Field(
+        default="",
+        description=(
+            "vault_transit only: keystore for the reference out-of-process "
+            "FileNotaryTransit signer (dev/CI without an HSM). Empty → "
+            "<operator_key_dir>/notary. A real deployment swaps this seam for a "
+            "Vault Transit / PKCS#11 HSM adapter. SPEC-037 REQ-006."
+        ),
+    )
+    require_fips: bool = Field(
+        default=False,
+        description=(
+            "Federal floor: when true, startup fails closed unless the crypto "
+            "backend is FIPS-validated AND the algorithm is FIPS-approved "
+            "(forces ecdsa-p256). Tier is stringency, not a gate. SPEC-037 "
+            "REQ-008/009."
+        ),
+    )
+
     # SPEC-053 — federal witness anchor (REQ-009/010). Federal tier submits each
     # operator-signed checkpoint head to an EXTERNAL append-only witness so a
     # rollback past the last anchor is detectable even by a holder of the
@@ -389,6 +426,44 @@ class SecurityConfig(BaseModel):
         default="",
         description="Transparency-log endpoint when witness_mode='transparency_log'.",
     )
+
+    @model_validator(mode="after")
+    def _enforce_tier_crypto_floor(self) -> SecurityConfig:
+        """Couple the crypto posture to the tier (SPEC-037 F2, ADR-019).
+
+        Federal MUST sign out-of-process with FIPS-approved ECDSA-P256 — the
+        composite audit-forgery defense requires all three together, so the tier
+        forces them. An explicit weaker value fails closed rather than being
+        silently honored. Enterprise defaults to vault_transit (REQ-007) but may
+        relax to in_process; personal stays in_process.
+        """
+        if self.tier == "federal":
+            self._reject_weaker_federal_override()
+            self.require_fips = True
+            self.custody = "vault_transit"
+            self.signing_algorithm = "ecdsa-p256"
+        elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
+            self.custody = "vault_transit"
+        return self
+
+    def _reject_weaker_federal_override(self) -> None:
+        """Fail closed if a federal config explicitly set a weaker crypto value."""
+        set_fields = self.model_fields_set
+        if "require_fips" in set_fields and not self.require_fips:
+            raise ValueError(
+                "federal tier requires require_fips=true (SC-13/IA-7) — refusing "
+                "to run a federal deployment with the FIPS floor disabled"
+            )
+        if "custody" in set_fields and self.custody != "vault_transit":
+            raise ValueError(
+                "federal tier requires custody=vault_transit (SPEC-037 REQ-006) — "
+                "the operator seed must never enter the agent process at federal"
+            )
+        if "signing_algorithm" in set_fields and self.signing_algorithm != "ecdsa-p256":
+            raise ValueError(
+                "federal tier requires signing_algorithm=ecdsa-p256 (Arc's Ed25519 "
+                "is PyNaCl/libsodium with no CMVP validation path)"
+            )
 
 
 class CapabilitiesConfig(BaseModel):

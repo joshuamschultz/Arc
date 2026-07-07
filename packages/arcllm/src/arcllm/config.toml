@@ -136,8 +136,8 @@ pii_detector = "regex"
 pii_custom_patterns = []
 pii_detector_class = ""     # "" = built-in RegexPiiDetector; else "module:Class"
 signing_enabled = false
-signing_algorithm = "hmac-sha256"
-signing_key_env = "ARCLLM_SIGNING_KEY"
+signing_algorithm = "ed25519"             # asymmetric: ed25519 (default) | ecdsa-p256 (FIPS)
+signing_key_env = "ARCLLM_SIGNING_KEY"    # holds a hex-encoded 32-byte seed
 
 # [modules.security.pii_entities]
 # allow = ["SSN", "EMAIL", "SECRETS"]   # if present, only these scan

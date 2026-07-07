@@ -21,6 +21,7 @@ from arctrust.policy import (
     build_pipeline,
     sign_call,
 )
+from arctrust.signer import InProcessSigner
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -108,7 +109,7 @@ class TestWormPolicySink:
         """REQ-017: adapter writes a WORM chain whose verify_chain() passes."""
         kp = generate_keypair()
         path = tmp_path / "policy-chain.jsonl"
-        worm = WormSink(path, kp.private_key)
+        worm = WormSink(path, InProcessSigner(kp.private_key))
         sink = worm_policy_sink(worm)
         for outcome in ("allow", "deny", "allow"):
             sink(
@@ -208,7 +209,7 @@ class TestPipelineToWorm:
     ) -> None:
         kp = generate_keypair()
         path = tmp_path / "chain.jsonl"
-        worm = WormSink(path, kp.private_key)
+        worm = WormSink(path, InProcessSigner(kp.private_key))
         ident = AgentIdentity.generate(org="test", agent_type="exec")
         pipeline = build_pipeline(
             tier="personal",

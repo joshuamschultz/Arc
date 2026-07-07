@@ -361,7 +361,10 @@ class TestEncryptionWiring:
         assert events[0].request_body is not None
 
     def test_require_fips_true_fails_closed_without_fips_provider(self):
-        with pytest.raises(ArcLLMConfigError, match="FIPS-140-3-approved"):
+        # The FIPS gate now lives in arctrust (single source of truth).
+        from arctrust.fips import ArcTrustFipsError
+
+        with pytest.raises(ArcTrustFipsError, match="FIPS-140-3-validated"):
             TelemetryModule(
                 {
                     "encryption": {

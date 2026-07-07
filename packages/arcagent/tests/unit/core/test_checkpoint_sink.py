@@ -26,7 +26,7 @@ def test_checkpoint_lands_in_operator_signed_worm(tmp_path: Path) -> None:
     agent_root.mkdir()
     operator = OperatorKey.generate()
 
-    sink = build_checkpoint_sink(agent_root, operator, actor_did="did:arc:test:exec/aa")
+    sink = build_checkpoint_sink(agent_root, operator.into_signer(), actor_did="did:arc:test:exec/aa")
     cp = _checkpoint("f" * 64)
     sink(cp)
 
@@ -54,7 +54,7 @@ def test_federal_checkpoint_submitted_to_witness(tmp_path: Path) -> None:
 
     witness = _RecordingWitness()
     sink = build_checkpoint_sink(
-        agent_root, operator, actor_did="did:arc:test:exec/aa", witness=witness
+        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/aa", witness=witness
     )
     cp = _checkpoint("e" * 64)
     sink(cp)

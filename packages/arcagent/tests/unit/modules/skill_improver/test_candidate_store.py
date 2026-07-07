@@ -114,10 +114,11 @@ class TestAuditLog:
     def _worm_store(self, tmp_path: Path, workspace: Path) -> tuple[CandidateStore, Path, bytes]:
         from arctrust import WormSink
         from arctrust.keypair import generate_keypair
+        from arctrust.signer import InProcessSigner
 
         kp = generate_keypair()
         chain = tmp_path / "audit_store" / "skill_improver.worm"
-        sink = WormSink(chain, kp.private_key)
+        sink = WormSink(chain, InProcessSigner(kp.private_key))
         return CandidateStore(workspace, audit_sink=sink), chain, kp.public_key
 
     def test_append_audit_writes_signed_chain(self, tmp_path: Path, workspace: Path) -> None:

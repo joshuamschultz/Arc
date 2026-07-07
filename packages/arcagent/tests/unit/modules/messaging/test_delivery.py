@@ -20,7 +20,7 @@ from arcagent.modules.messaging.capabilities import (
     _interrupt_for,
     messaging_bind_run_fn,
 )
-from tests.unit.modules.messaging.conftest import make_config_dict
+from tests.unit.modules.messaging.conftest import make_config_dict, make_operator_signer
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +75,7 @@ class TestInterruptDecision:
 class TestBindDeliverFn:
     @pytest.mark.asyncio
     async def test_bind_stores_deliver_fn(self, tmp_path: Path) -> None:
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=_identity())
+        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=_identity(), operator_signer=make_operator_signer())
         run_fn = AsyncMock()
         deliver_fn = AsyncMock()
         ctx = MagicMock()
@@ -89,13 +89,13 @@ class TestBindDeliverFn:
 class TestSignerInjection:
     def test_configure_injects_signer(self, tmp_path: Path) -> None:
         ident = _identity()
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=ident)
+        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=ident, operator_signer=make_operator_signer())
         signer = _runtime.state().svc._signer
         assert signer is not None
         assert signer.did == ident.did
 
     def test_configure_without_identity_has_no_signer(self, tmp_path: Path) -> None:
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=None)
+        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=None, operator_signer=make_operator_signer())
         assert _runtime.state().svc._signer is None
 
 
@@ -108,6 +108,7 @@ class TestHandleIncoming:
             config=make_config_dict(entity_id="agent://me"),
             workspace=tmp_path,
             identity=ident,
+            operator_signer=make_operator_signer(),
         )
         st = _runtime.state()
         calls: list[dict[str, Any]] = []
@@ -132,6 +133,7 @@ class TestHandleIncoming:
             config=make_config_dict(entity_id="agent://me"),
             workspace=tmp_path,
             identity=_identity(),
+            operator_signer=make_operator_signer(),
         )
         st = _runtime.state()
         st.deliver_fn = None
@@ -166,6 +168,7 @@ class TestInboxLoopPush:
             config=make_config_dict(entity_id="agent://me", entity_name="Me"),
             workspace=tmp_path,
             identity=ident,
+            operator_signer=make_operator_signer(),
         )
         st = _runtime.state()
         await st.registry.register(
@@ -208,6 +211,7 @@ class TestInboxLoopPush:
             config=make_config_dict(entity_id="agent://me", entity_name="Me"),
             workspace=tmp_path,
             identity=_identity(),
+            operator_signer=make_operator_signer(),
         )
         st = _runtime.state()
 
@@ -222,7 +226,7 @@ class TestInboxLoopPush:
 class TestEnsureLiveBackend:
     @pytest.mark.asyncio
     async def test_noop_without_url(self, tmp_path: Path) -> None:
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=_identity())
+        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=_identity(), operator_signer=make_operator_signer())
         before = _runtime.state().svc
         await _runtime.ensure_live_backend()
         assert _runtime.state().svc is before

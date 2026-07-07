@@ -32,13 +32,20 @@ from arcrun import collect
 from arctrust import (
     AgentIdentity,
     AppendOnlyMediumWitness,
+    FileNotaryTransit,
     OperatorKey,
+    Signer,
+    SignerConfig,
+    SignerError,
     WitnessAnchor,
     WormSink,
+    assert_fips_if_required,
+    build_signer,
     read_verified_anchor,
     verify_local_head_witnessed,
     worm_policy_sink,
 )
+from arctrust.signer import VAULT_TRANSIT
 
 from arcagent.capabilities.capability_registry import SkillEntry
 from arcagent.core.agent_dispatch import dispatch_stream
@@ -69,6 +76,10 @@ if TYPE_CHECKING:
 
 
 _logger = logging.getLogger("arcagent.agent")
+
+# key_ref the operator seed is stored under in a vault_transit keystore/HSM
+# (mirrors arctrust.operator's vault operator id). SPEC-037 REQ-006.
+_OPERATOR_KEY_REF = "operator"
 
 
 __all__ = [
@@ -107,6 +118,10 @@ class ArcAgent:
         # every WORM chain so the audited agent is never its own audit
         # authority. Distinct from _identity (which attests ToolCalls only).
         self._operator_key: OperatorKey | None = None
+        # SPEC-037 — the operator key resolved through the arctrust Signer seam.
+        # Every WORM/checkpoint signature goes through this, so a federal
+        # vault-transit deployment signs by reference (seed never in-process).
+        self._operator_signer: Signer | None = None
         # SPEC-053 — federal external witness for trace-checkpoint anchors. None
         # at personal/enterprise (tier = stringency: federal only ADDS this).
         self._witness: WitnessAnchor | None = None
@@ -167,6 +182,68 @@ class ArcAgent:
         """
         return Path(self._config.security.operator_key_dir).expanduser() / "operator.key"
 
+    def _resolve_operator_signer(self, sec: Any) -> Signer:
+        """Resolve the operator audit/approval signer from custody config (F1).
+
+        Federal FIPS floor (SC-13/IA-7) is asserted first: fail closed before any
+        signing key is used if the backend/algorithm are not FIPS-approved.
+
+        - ``in_process``: load the read-only on-disk (or vault-resolved) operator
+          seed and sign in-process (personal default).
+        - ``vault_transit``: sign BY REFERENCE through a transit boundary; the
+          seed never enters this process. ``self._operator_key`` stays ``None``.
+          A transit that cannot be resolved fails closed — never a silent
+          in-process fallback (NFR-3).
+        """
+        assert_fips_if_required(require_fips=sec.require_fips, algorithm=sec.signing_algorithm)
+        if sec.custody == VAULT_TRANSIT:
+            self._operator_key = None
+            transit = self._resolve_transit(sec)
+            return build_signer(
+                SignerConfig(
+                    custody=VAULT_TRANSIT,
+                    algorithm=sec.signing_algorithm,
+                    key_ref=_OPERATOR_KEY_REF,
+                ),
+                vault_transit=transit,
+            )
+        # in_process — auto-bootstrapped ONLY on a genuine first-ever start
+        # (REQ-006); a missing key with a prior chain/record fails closed rather
+        # than regenerate (covert-erasure defense, SPEC-053 #3).
+        self._operator_key = OperatorKey.load(
+            self._operator_key_path(),
+            vault_resolver=self._vault_resolver,
+            vault_path=sec.operator_vault_path,
+            generate_if_absent=True,
+            prior_chain_exists=self._prior_audit_chains_exist(),
+        )
+        return self._operator_key.into_signer(sec.signing_algorithm)
+
+    def _resolve_transit(self, sec: Any) -> FileNotaryTransit:
+        """Resolve the out-of-process signing transit for vault_transit custody.
+
+        Defaults to the reference ``FileNotaryTransit`` (dev/CI without an HSM);
+        a real deployment swaps this seam for a Vault Transit / PKCS#11 adapter.
+        Fails closed if the transit cannot serve the operator key — the composite
+        must never degrade to in-process signing.
+        """
+        keystore = (
+            Path(sec.notary_keystore).expanduser()
+            if sec.notary_keystore
+            else Path(sec.operator_key_dir).expanduser() / "notary"
+        )
+        transit = FileNotaryTransit(keystore, algorithm=sec.signing_algorithm)
+        try:
+            transit.public_key(_OPERATOR_KEY_REF)
+        except OSError as exc:
+            raise SignerError(
+                f"custody=vault_transit but the transit at {keystore} cannot serve "
+                f"the operator key {_OPERATOR_KEY_REF!r} — refusing to fall back to "
+                "in-process signing (fail-closed, NFR-3). Provision the notary "
+                "keystore (or configure a production Vault Transit/HSM adapter)."
+            ) from exc
+        return transit
+
     def _build_witness(self) -> WitnessAnchor | None:
         """Build the external witness for trace-checkpoint anchors (federal only).
 
@@ -212,10 +289,10 @@ class ArcAgent:
         the operator key, or a missing/unavailable witness — federal fails
         closed; other tiers warn. A deployment with nothing anchored yet passes.
         """
-        if self._witness is None or self._operator_key is None:
+        if self._witness is None or self._operator_signer is None:
             return
         local = read_verified_anchor(
-            self._trace_checkpoint_chain_path(), self._operator_key.public_key
+            self._trace_checkpoint_chain_path(), self._operator_signer.public_key
         )
         verify_local_head_witnessed(
             local, self._witness, federal=self._config.security.tier == "federal"
@@ -254,18 +331,11 @@ class ArcAgent:
         # Update telemetry with real DID (avoids full reconstruction)
         self._telemetry.set_agent_did(self._identity.did)
 
-        # 3.5 Operator key (audit authority) — loaded read-only, from outside
-        # the workspace. Auto-bootstrapped ONLY on a genuine first-ever start
-        # (REQ-006); a missing key with a prior chain/record fails closed rather
-        # than regenerate (covert-erasure defense, SPEC-053 #3). Resolved via the
-        # vault seam when configured (REQ-005).
-        self._operator_key = OperatorKey.load(
-            self._operator_key_path(),
-            vault_resolver=self._vault_resolver,
-            vault_path=self._config.security.operator_vault_path,
-            generate_if_absent=True,
-            prior_chain_exists=self._prior_audit_chains_exist(),
-        )
+        # 3.5 Operator signing authority (audit authority) — resolved by custody.
+        # in_process loads the read-only on-disk seed; vault_transit signs by
+        # reference and NEVER loads the seed into this process (SPEC-037 F1).
+        sec = self._config.security
+        self._operator_signer = self._resolve_operator_signer(sec)
         self._witness = self._build_witness()
         # Fail closed at federal if the local head diverged from the witness.
         self._verify_witness_consistency()
@@ -283,7 +353,7 @@ class ArcAgent:
         # (SPEC-034). arcagent owns the file path; arctrust owns the adapter and
         # the chain. Signed with the OPERATOR key (SPEC-053), never the agent
         # DID — the audited subject must not be its own audit authority.
-        worm = WormSink(self._policy_audit_log_path(), self._operator_key.seed)
+        worm = WormSink(self._policy_audit_log_path(), self._operator_signer)
         self._policy_worm = worm
         policy_sink = worm_policy_sink(worm)
         # SPEC-035 REQ-011 — the lethal-trifecta forbidden composition is LIVE in
@@ -303,7 +373,7 @@ class ArcAgent:
         self._capability_ledger = SessionCapabilityLedger()
         gate_cfg = self._config.tools.human_gate
         human_gate = HumanGate(
-            operator_seed=self._operator_key.seed,
+            operator_signer=self._operator_signer,
             agent_did=self._identity.did,
             tier=tier,
             config=HumanGateConfig(
@@ -399,7 +469,7 @@ class ArcAgent:
                 config=self._config,
                 workspace=self._workspace,
                 bus=self._bus,
-                operator_key=self._operator_key,
+                operator_signer=self._operator_signer,
                 actor_did=self._identity.did if self._identity is not None else "",
                 witness=self._witness,
             )

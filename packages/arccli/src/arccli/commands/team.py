@@ -125,10 +125,14 @@ async def _build_service(
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
 
+    from arccli.commands.operator import resolve_operator_signer
+
     if backend is None:
         backend = await _connect_backend()
-    hmac_key = AuditLogger.load_hmac_key()
-    audit = AuditLogger(backend, hmac_key=hmac_key)
+    # The audit chain is signed by the OPERATOR key (audit authority), never a
+    # team member's DID (SPEC-053/037) — asymmetric, non-repudiable — at the
+    # config-resolved custody + algorithm (F3), not a bare Ed25519 default.
+    audit = AuditLogger(backend, resolve_operator_signer())
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     svc = MessagingService(backend, registry, audit, signer=signer)
@@ -204,15 +208,17 @@ def _status(args: argparse.Namespace) -> None:
             await _shutdown(backend)
         return len(entities), len(channels), len(teams)
 
+    from arccli.commands.operator import operator_key_path
+
     entity_count, channel_count, team_count = asyncio.run(_run())
-    hmac_exists = (root / ".hmac_key").exists()
+    operator_key_exists = operator_key_path(Path("~/.arc")).exists()
 
     data = {
         "root": str(root),
         "entities": entity_count,
         "channels": channel_count,
         "teams": team_count,
-        "hmac_key": hmac_exists,
+        "operator_key": operator_key_exists,
     }
 
     if use_json:
@@ -225,7 +231,7 @@ def _status(args: argparse.Namespace) -> None:
                 ("Entities", str(entity_count)),
                 ("Channels", str(channel_count)),
                 ("Teams", str(team_count)),
-                ("HMAC key", "present" if hmac_exists else "MISSING"),
+                ("Operator key", "present" if operator_key_exists else "MISSING"),
             ]
         )
 
@@ -249,25 +255,19 @@ def _config_cmd(args: argparse.Namespace) -> None:
 
 def _init_cmd(args: argparse.Namespace) -> None:
     """Initialize team data directory."""
-    import secrets
-
     from arcteam.config import TeamConfig
+
+    from arccli.commands.operator import load_operator_key, operator_key_path
 
     root_path: str | None = getattr(args, "root_path", None)
     root = Path(root_path) if root_path else TeamConfig().root
 
     # The message/audit store is NATS JetStream — init only needs the root and
-    # the HMAC key that the audit chain (AuditLogger) and `status` consume.
+    # the OPERATOR key that signs the audit chain asymmetrically (SPEC-037).
     root.mkdir(parents=True, exist_ok=True)
 
-    hmac_path = root / ".hmac_key"
-    if not hmac_path.exists():
-        hmac_path.write_bytes(secrets.token_bytes(32))
-        hmac_path.chmod(0o600)
-        _write(f"Generated HMAC key: {hmac_path}")
-    else:
-        _write(f"HMAC key already exists: {hmac_path}")
-
+    load_operator_key()  # bootstrap the audit authority (idempotent)
+    _write(f"Operator audit key: {operator_key_path(Path('~/.arc'))}")
     _write(f"Team initialized at: {root}")
 
 

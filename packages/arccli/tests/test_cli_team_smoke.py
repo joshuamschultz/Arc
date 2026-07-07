@@ -84,10 +84,12 @@ class TestTeamInit:
         assert not (target / "messages").exists()
         assert not (target / "audit").exists()
 
-    def test_init_creates_hmac_key(self, tmp_path: Path) -> None:
-        """arc team init creates .hmac_key file."""
+    def test_init_bootstraps_operator_key(self, tmp_path: Path) -> None:
+        """arc team init bootstraps the operator audit key (asymmetric signing)."""
+        from arccli.commands.operator import operator_key_path
+
         _arc("team", "init", "--root", str(tmp_path))
-        assert (tmp_path / ".hmac_key").exists()
+        assert operator_key_path(Path("~/.arc")).exists()
 
 
 # ---------------------------------------------------------------------------

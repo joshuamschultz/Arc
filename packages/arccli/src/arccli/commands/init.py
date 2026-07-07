@@ -61,7 +61,7 @@ _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
             "pii_enabled": True,
             "pii_detector": "regex",
             "signing_enabled": True,
-            "signing_algorithm": "hmac-sha256",
+            "signing_algorithm": "ed25519",
             "signing_key_env": "ARCLLM_SIGNING_KEY",
         },
     },

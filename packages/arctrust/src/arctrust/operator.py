@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from arctrust.keypair import KeyPair, generate_keypair
+from arctrust.signer import ED25519, InProcessSigner, Signer
 
 _logger = logging.getLogger("arctrust.operator")
 
@@ -90,8 +91,8 @@ class OperatorKey:
     """Ed25519 audit-signing credential for a deployment.
 
     Attributes:
-        seed: 32-byte Ed25519 private key seed. Feeds
-            ``WormSink(operator_private_key=...)``.
+        seed: 32-byte Ed25519 private key seed. Feeds :meth:`into_signer`, whose
+            ``Signer`` signs every ``WormSink`` chain.
         public_key: 32-byte Ed25519 verify key. Feeds ``verify_chain`` /
             ``read_verified_anchor``.
     """
@@ -104,6 +105,16 @@ class OperatorKey:
         """Generate a fresh operator keypair using a secure RNG."""
         kp = generate_keypair()
         return cls(seed=kp.private_key, public_key=kp.public_key)
+
+    def into_signer(self, algorithm: str = ED25519) -> Signer:
+        """Adapt this on-disk operator key into an in-process :class:`Signer`.
+
+        The in-process custody path (personal / enterprise): the seed signs in
+        this process. Under vault-transit custody the caller builds a
+        ``VaultSigner`` directly and never constructs an ``OperatorKey`` at all
+        (SPEC-037 REQ-006) — there is no seed to hold.
+        """
+        return InProcessSigner(self.seed, algorithm)
 
     @classmethod
     def load(

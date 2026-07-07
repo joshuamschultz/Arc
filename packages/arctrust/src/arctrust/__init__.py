@@ -51,7 +51,7 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 from arctrust.artifact import (
     ArtifactSignature,
@@ -68,6 +68,12 @@ from arctrust.audit import (
     read_verified_anchor,
     verify_chain,
     worm_policy_sink,
+)
+from arctrust.fips import (
+    ArcTrustFipsError,
+    algorithm_is_fips_approved,
+    assert_fips_if_required,
+    fips_backend_active,
 )
 from arctrust.identity import (
     AgentIdentity,
@@ -88,6 +94,19 @@ from arctrust.policy import (
     ToolCall,
     build_pipeline,
 )
+from arctrust.signer import (
+    ECDSA_P256,
+    ED25519,
+    FileNotaryTransit,
+    InProcessSigner,
+    Signer,
+    SignerConfig,
+    SignerError,
+    VaultSigner,
+    VaultTransit,
+    build_signer,
+    verify_signature,
+)
 from arctrust.trust_store import (
     TrustStoreError,
     invalidate_cache,
@@ -103,13 +122,18 @@ from arctrust.witness import (
 )
 
 __all__ = [
+    "ECDSA_P256",
+    "ED25519",
     "AgentIdentity",
     "AppendOnlyMediumWitness",
+    "ArcTrustFipsError",
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
     "ChildIdentity",
     "Decision",
+    "FileNotaryTransit",
+    "InProcessSigner",
     "KeyPair",
     "NullSink",
     "OperatorKey",
@@ -117,18 +141,27 @@ __all__ = [
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
+    "Signer",
+    "SignerConfig",
+    "SignerError",
     "TierConfig",
     "ToolCall",
     "TransparencyLogWitness",
     "TrustStoreError",
+    "VaultSigner",
+    "VaultTransit",
     "WitnessAnchor",
     "WitnessDivergenceError",
     "WormSink",
     "__version__",
+    "algorithm_is_fips_approved",
+    "assert_fips_if_required",
     "build_pipeline",
+    "build_signer",
     "content_sha256",
     "derive_child_identity",
     "emit",
+    "fips_backend_active",
     "generate_did",
     "generate_keypair",
     "invalidate_cache",
@@ -143,5 +176,6 @@ __all__ = [
     "verify_artifact",
     "verify_chain",
     "verify_local_head_witnessed",
+    "verify_signature",
     "worm_policy_sink",
 ]

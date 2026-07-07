@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from arctrust.identity import AgentIdentity
+from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
 from arcagent.core.config import ToolsConfig
@@ -86,8 +87,8 @@ def _registry(*, human_gate: HumanGate | None, identity: AgentIdentity) -> ToolR
     return reg
 
 
-def _op_seed() -> bytes:
-    return bytes(SigningKey.generate())
+def _op_signer() -> InProcessSigner:
+    return InProcessSigner(bytes(SigningKey.generate()))
 
 
 async def _dispatch(reg: ToolRegistry, name: str) -> Any:
@@ -129,7 +130,7 @@ class TestTrifectaDispatch:
 
     async def test_human_gate_fail_closed_without_channel(self) -> None:
         identity = AgentIdentity.generate("org", "agent")
-        gate = HumanGate(operator_seed=_op_seed(), agent_did=identity.did, tier="personal")
+        gate = HumanGate(operator_signer=_op_signer(), agent_did=identity.did, tier="personal")
         reg = _registry(human_gate=gate, identity=identity)
         await _dispatch(reg, "reader")
         await _dispatch(reg, "fetch")
@@ -139,7 +140,7 @@ class TestTrifectaDispatch:
     async def test_human_gate_auto_approve_admits_the_call(self) -> None:
         identity = AgentIdentity.generate("org", "agent")
         gate = HumanGate(
-            operator_seed=_op_seed(),
+            operator_signer=_op_signer(),
             agent_did=identity.did,
             tier="personal",
             config=HumanGateConfig(auto_approve=[LETHAL_TRIFECTA]),
@@ -175,7 +176,7 @@ class TestTrifectaDispatch:
 
         identity = AgentIdentity.generate("org", "agent")
         gate = HumanGate(
-            operator_seed=_op_seed(),
+            operator_signer=_op_signer(),
             agent_did=identity.did,
             tier="enterprise",
             channel=approve,

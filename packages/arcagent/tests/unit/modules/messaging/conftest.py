@@ -51,9 +51,19 @@ def make_config_dict(
         "poll_interval_seconds": poll_interval_seconds,
         "auto_register": True,
         "auto_ack": auto_ack,
-        "audit_hmac_key": "test-key",
         "max_messages_per_poll": 20,
     }
+
+
+def make_operator_signer() -> Any:
+    """Build a deployment operator ``Signer`` for the messaging audit chain.
+
+    Distinct from any agent identity — the audited subject must not be its own
+    audit authority (SPEC-037 F4).
+    """
+    from arctrust import OperatorKey
+
+    return OperatorKey.generate().into_signer()
 
 
 def make_team_config(team_root: str) -> MagicMock:

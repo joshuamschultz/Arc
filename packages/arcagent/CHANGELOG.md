@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+SPEC-037: the operator key resolves through the arctrust `Signer` seam; config selects custody / algorithm / FIPS.
+
+### Added
+- `[security]` config: `signing_algorithm` (`ed25519` default | `ecdsa-p256`), `custody` (`in_process` | `vault_transit`), `require_fips` (federal floor). SPEC-037 REQ-004/007/008/009.
+- Startup runs `arctrust.assert_fips_if_required(...)` before any signing key is used — fail-closed at federal (SC-13/IA-7).
+- `ArcAgent._operator_signer`: the operator key resolved through the `Signer` seam; every WORM/checkpoint signature goes through it.
+
+### Changed
+- Every WORM construction site now passes a `Signer` (raw seed deleted): the policy WORM chain, `model_manager.build_checkpoint_sink` / `ensure_model` (`operator_signer`), the checkpoint witness-head signing, and `skill_improver` audit. The messaging audit chain (`AuditLogger`) takes an asymmetric `Signer` built from the agent identity (`_bootstrap.audit_signer`); `MessagingConfig.audit_hmac_key` removed.
+
 ## [0.7.0] - 2026-07-06
 
 SPEC-035: lock goals, break the lethal trifecta, and confine bash. Three confinement floors wired at every tier (ADR-019).

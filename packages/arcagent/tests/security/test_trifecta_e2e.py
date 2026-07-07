@@ -24,6 +24,7 @@ from typing import Any
 
 import pytest
 from arctrust.identity import AgentIdentity
+from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
 from arcagent.builtins.capabilities import _runtime
@@ -164,8 +165,8 @@ async def _dispatch(reg: ToolRegistry, name: str, session_id: str) -> Any:
         reset_session_id(token)
 
 
-def _op_seed() -> bytes:
-    return bytes(SigningKey.generate())
+def _op_signer() -> InProcessSigner:
+    return InProcessSigner(bytes(SigningKey.generate()))
 
 
 @pytest.mark.asyncio
@@ -202,7 +203,7 @@ class TestTrifectaRealE2E:
 
         identity = AgentIdentity.generate("org", "agent")
         gate = HumanGate(
-            operator_seed=_op_seed(),
+            operator_signer=_op_signer(),
             agent_did=identity.did,
             tier="enterprise",
             channel=approve,
@@ -221,7 +222,7 @@ class TestTrifectaRealE2E:
         two_legs = frozenset({"private_data", "external_comms"})
         identity = AgentIdentity.generate("org", "agent")
         gate = HumanGate(
-            operator_seed=_op_seed(),
+            operator_signer=_op_signer(),
             agent_did=identity.did,
             tier="personal",
             config=HumanGateConfig(auto_approve=[two_legs]),
