@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-07
+
+SPEC-041 Phase 1: an embeddings capability. arcllm now owns embedding *inference* (arcmemory and other consumers obtain vectors only through it; arcllm persists/indexes/ranks nothing).
+
+### Added
+- **`embed(texts, *, model, ...) -> EmbeddingResponse`** — the public embeddings API, plus the `EmbeddingResponse` model (`vectors`, `dims`, `model`, `usage`). Lazily exported so `import arcllm` never pulls httpx or torch. T-010, REQ-041.
+- **Budget-routed through the existing SPEC-038 plumbing.** An embed call debits the shared per-scope `BudgetAccumulator` (embed spend aggregates against the same budget as completions), reuses `calculate_cost`, emits one `llm_call` telemetry record to the arcstore spool, and raises the standard `ArcLLMBudgetError` on breach — no parallel budget path. T-011, LLM10.
+- **Three backends** (`resolve_embedder`): local `all-MiniLM-L6-v2` default (offline, deterministic, unit-normalized; via the new `arcllm[local]` extra), an optional OpenAI-wire provider endpoint (`ProviderEmbedder`), and a `none` sentinel (`NoneEmbedder`). T-012, LLM08.
+- **Graceful `none` degrade.** The local backend is an *optional* extra — arcllm imports and functions without `sentence-transformers` installed; `embed()` with no embedder available raises the typed `ArcLLMEmbeddingUnavailableError` (the 'none' signal) so a consumer degrades to BM25 + graph, never a hard `ImportError` crash. REQ-041.
+
 ## [0.6.0] - 2026-07-06
 
 SPEC-037: request-signing HMAC replaced by asymmetric attestation; the FIPS gate moved to arctrust.

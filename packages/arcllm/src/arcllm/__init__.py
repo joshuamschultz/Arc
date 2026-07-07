@@ -1,6 +1,6 @@
 """ArcLLM — Unified LLM abstraction layer for autonomous agents."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 import importlib
 from pathlib import Path
@@ -27,6 +27,7 @@ from arcllm.config import (
 from arcllm.exceptions import (
     ArcLLMAPIError,
     ArcLLMConfigError,
+    ArcLLMEmbeddingUnavailableError,
     ArcLLMError,
     ArcLLMGuardrailError,
     ArcLLMInjectionError,
@@ -101,6 +102,16 @@ _LAZY_IMPORTS: dict[str, str] = {
     "TraceStore": "arcllm.trace_store",
     "ReplayRequest": "arcllm.trace_query",
     "load_for_replay": "arcllm.trace_query",
+    # Embeddings (SPEC-041) — lazy so `import arcllm` never pulls httpx/torch.
+    "DEFAULT_EMBED_MODEL": "arcllm.embeddings",
+    "EmbeddingProvider": "arcllm.embeddings",
+    "EmbeddingResponse": "arcllm.embeddings",
+    "LocalEmbedder": "arcllm.embeddings",
+    "NoneEmbedder": "arcllm.embeddings",
+    "ProviderEmbedder": "arcllm.embeddings",
+    "clear_embedder_cache": "arcllm.embeddings",
+    "embed": "arcllm.embeddings",
+    "resolve_embedder": "arcllm.embeddings",
 }
 
 
@@ -114,10 +125,12 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
+    "DEFAULT_EMBED_MODEL",
     "MODULE_NAMES",
     "AnthropicAdapter",
     "ArcLLMAPIError",
     "ArcLLMConfigError",
+    "ArcLLMEmbeddingUnavailableError",
     "ArcLLMError",
     "ArcLLMGuardrailError",
     "ArcLLMInjectionError",
@@ -134,6 +147,8 @@ __all__ = [
     "DeepseekAdapter",
     "DefaultsConfig",
     "Delta",
+    "EmbeddingProvider",
+    "EmbeddingResponse",
     "EncryptedEnvelope",
     "EndpointConfig",
     "FallbackModule",
@@ -150,16 +165,19 @@ __all__ = [
     "LLMProvider",
     "LLMResponse",
     "LoadBalancerModule",
+    "LocalEmbedder",
     "Message",
     "MistralAdapter",
     "ModelMetadata",
     "ModuleConfig",
     "MoonshotAdapter",
+    "NoneEmbedder",
     "OllamaAdapter",
     "OpenaiAdapter",
     "OtelModule",
     "PoolExhaustedError",
     "ProviderConfig",
+    "ProviderEmbedder",
     "ProviderSettings",
     "QueueFullError",
     "QueueModule",
@@ -189,11 +207,14 @@ __all__ = [
     "XaiAdapter",
     "__version__",
     "clear_cache",
+    "clear_embedder_cache",
+    "embed",
     "load_for_replay",
     "load_global_config",
     "load_model",
     "load_provider_config",
     "load_telemetry_retention_config",
+    "resolve_embedder",
     "supports_tools",
     "tool_capable_models",
 ]
