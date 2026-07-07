@@ -27,6 +27,15 @@ class Tool:
         summary, etc.). Used for structured terminators like
         ``task_complete`` without the loop needing to know the tool's
         name. Default False.
+
+    classification:
+        Dispatch classification consumed by ``parallel_dispatch``'s
+        ``BatchClassifier`` to decide whether a turn's calls may run
+        concurrently. ``"read_only"`` tools with no shared resource may
+        parallelize; anything else forces sequential dispatch. Default
+        ``"state_modifying"`` — fail-closed so an unclassified tool never
+        runs concurrently by accident (SPEC-043 REQ-034). The owning
+        deployment (arcagent) sets the real value when it builds the tool.
     """
 
     name: str
@@ -36,6 +45,7 @@ class Tool:
     timeout_seconds: float | None = None
     parallel_safe: bool = False
     signals_completion: bool = False
+    classification: str = "state_modifying"
 
 
 @dataclass

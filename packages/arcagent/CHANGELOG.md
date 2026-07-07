@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.11.0] - 2026-07-07
+## [0.12.0] - 2026-07-07
+
+SPEC-043 SOTA loop controls (arcagent half): arcrun executes concurrently; arcagent keeps its own accounting atomic. The guards live next to the state they protect — never in the loop.
+
+### Added
+- **Concurrency-safe trifecta ledger (REQ-032, the hard part).** `SessionCapabilityLedger.admission_lock(session_id)` — a per-session `asyncio.Lock`. `tool_registry.wrapped_execute` now holds it across the `snapshot → await pipeline.evaluate → record` critical section so concurrent dispatch cannot interleave the TOCTOU window: two calls whose capability-leg *union* completes a forbidden composition are evaluated in sequence and the second is DENIED (no lost update). The lock covers only the O(1) admission decision — `tool.execute` and the HumanGate approval await run OUTSIDE it (no over-locking, no human timeout under the lock). Proven by an interleaving-forced `asyncio.Barrier` test that FAILS on the unguarded ledger and PASSES guarded.
+- **Plan aggregate reserve-then-settle (REQ-053).** `Plan.reserved_tokens`/`reserved_cost` + `available_budget()` (remaining − reservations); `ConcurrentStepExecutor` reserves each branch's cap from the shared budget before launch (under a plan-level lock) and settles actual spend on completion, so `Σ(reservations + spend) ≤ Plan.budget` — N concurrent branches can never overspend. Proven by an interleaving-forced test (guarded: no overspend + over-budget branch deferred; control: the naive read-then-run pattern overspends).
+- **Concurrent Plan-Execute (REQ-050..056).** `ConcurrentStepExecutor` (satisfies the SPEC-040 `StepExecutor` seam) dispatches the ready DAG frontier concurrently via arcrun's wired `PlanExecuteStrategy` — one gather path, not a second. `PlanOrchestrator` swaps to concurrent frontier dispatch by injection; the `Plan` model + `ready_steps`/replan are unchanged. A failing branch is captured as a `FAILED` outcome and never crashes siblings.
+- **Checkpoint persistence (REQ-005).** `SessionManager.persist_checkpoint()` writes each arcrun `LoopCheckpoint` (scalar metadata only — the transcript is already durable) as one append-only JSONL line under the existing lock, emits a `loop.checkpoint` audit event, and segregates checkpoint records from the model transcript on resume (`latest_checkpoint()`).
+- **Proactive HITL wiring (REQ-010b/c, ADR-019).** `tools/approval_policy.py` resolves the tier approval ladder — personal empty, enterprise all plain tools, federal every skill+tool (`RegisteredTool.skill_backed`) — and binds `approval_provider` to SPEC-035 `HumanGate` (operator-signed one-shot grant). arcrun enforces the resolved name-set as a dumb predicate. `build_loop_controls` assembles the loop-control kwargs for the streaming run.
+- **Federal circuit-breaker floors (REQ-024).** `SecurityConfig` gains `runaway_max_repeat`/`error_cascade_max`/`loop_max_parallel`; the tier validator pins non-relaxable federal floors and fails closed on a looser/disabled override.
+- `Tool.classification` is stamped onto arcrun tools in `to_arcrun_tools()` so the wired parallel dispatcher can classify batches.
 
 SPEC-040 real planner: the planning module is now a Plan-Execute planner, not a to-do notebook. Given a goal it produces a durable, dependency-aware DAG plan, executes each step as one bounded, policy- and budget-gated arcrun run, resumes cleanly after a restart, and replans a failed step — bounded so it can never run away.
 

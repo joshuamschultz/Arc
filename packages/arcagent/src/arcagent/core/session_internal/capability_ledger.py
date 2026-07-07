@@ -16,6 +16,7 @@ across agents (REQ-012 AC2).
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 from collections.abc import Iterable
 
@@ -103,6 +104,17 @@ class SessionCapabilityLedger:
         # keyed by session id. The no-exfil egress gate reads this so a SECRET
         # read this session bars an UNCLASSIFIED-cleared destination.
         self._read_class_by_session: dict[str, Classification] = {}
+        # SPEC-043 REQ-032 — per-session admission lock. Concurrent tool dispatch
+        # interleaves the ``snapshot → await evaluate → record`` critical section
+        # (a TOCTOU window); this lock serializes only that O(1) decision so two
+        # calls whose union completes a forbidden composition are evaluated in
+        # sequence and the second sees the completed union. tool.execute and any
+        # human-approval await stay OUTSIDE the lock (held to microseconds).
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def admission_lock(self, session_id: str) -> asyncio.Lock:
+        """Return the per-session admission lock (created on first use)."""
+        return self._locks.setdefault(session_id, asyncio.Lock())
 
     def snapshot(self, session_id: str) -> frozenset[str]:
         """Return the accumulated legs for a session (empty if none yet)."""

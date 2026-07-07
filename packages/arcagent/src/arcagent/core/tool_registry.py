@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import nullcontext
 from typing import Any, Literal
 from xml.sax.saxutils import escape as xml_escape
 
@@ -302,9 +303,35 @@ class ToolRegistry:
                     execute=arcrun_execute,
                     timeout_seconds=None,
                     signals_completion=tool.signals_completion,
+                    # SPEC-043 REQ-034 — carry the deployment's classification onto
+                    # the arcrun tool so parallel_dispatch's BatchClassifier can
+                    # decide concurrency; unclassified stays state_modifying (the
+                    # arcrun default), i.e. sequential (fail-closed).
+                    classification=tool.classification,
                 )
             )
         return result
+
+    @staticmethod
+    def _record_admission(
+        ledger: SessionCapabilityLedger | None,
+        session_id: str,
+        tool_legs: frozenset[str],
+        clearance_ctx: Any,
+    ) -> None:
+        """Record an admitted call's legs + max-read class under the lock (REQ-032).
+
+        The atomic read-modify-write half of the admission critical section: on
+        ALLOW (or a granted one-shot) the tool's trifecta legs join the session
+        union so the NEXT call sees them, and the session's max-read
+        classification is raised for the no-exfil egress gate (SPEC-038 F2).
+        """
+        if ledger is None:
+            return
+        if tool_legs:
+            ledger.record(session_id, tool_legs)
+        if clearance_ctx is not None:
+            ledger.record_read(session_id, clearance_ctx.resource_classification)
 
     async def _resolve_forbidden_composition(
         self,
@@ -383,8 +410,15 @@ class ToolRegistry:
             # caught by the pipeline and returned as DENY (fail-closed).
             if pipeline is not None:
                 session_id = current_session_id()
-                accumulated = (
-                    ledger.snapshot(session_id) if ledger is not None else frozenset()
+                # SPEC-038 REQ-004/010 — bridge the live arcrun usage onto the
+                # ProviderLayer seam with a TRUSTED config-sourced provider label
+                # (never response.model). Lights up SPEC-034's inert layer.
+                provider_usage = build_provider_usage(parent_state, provider_label)
+                # SPEC-038 REQ-023 — no-read-up labels for the ClassificationLayer:
+                # caller clearance from identity, resource classification from the
+                # per-tool config label. None when either is absent (layer no-ops).
+                clearance_ctx = build_clearance_context(
+                    identity, resource_label, classification_strict
                 )
                 call = ToolCall(
                     tool_name=tool.name,
@@ -399,40 +433,44 @@ class ToolRegistry:
                 # an injected call). No identity → call stays unsigned → denied.
                 if identity is not None:
                     call = sign_call(call, identity)
-                # SPEC-038 REQ-004/010 — bridge the live arcrun usage onto the
-                # ProviderLayer seam with a TRUSTED config-sourced provider label
-                # (never response.model). Lights up SPEC-034's inert layer.
-                provider_usage = build_provider_usage(parent_state, provider_label)
-                # SPEC-038 REQ-023 — no-read-up labels for the ClassificationLayer:
-                # caller clearance from identity, resource classification from the
-                # per-tool config label. None when either is absent (layer no-ops).
-                clearance_ctx = build_clearance_context(
-                    identity, resource_label, classification_strict
+                # SPEC-043 REQ-032 — snapshot→evaluate→record is atomic per
+                # session under the admission lock: concurrent dispatch cannot
+                # interleave the TOCTOU window, so two calls whose union completes
+                # a forbidden composition are evaluated in sequence (the second
+                # sees the union → GlobalLayer denies). The lock covers ONLY the
+                # O(1) decision; tool.execute and the human-approval await below
+                # run outside it (no over-locking, no human timeout under lock).
+                lock = (
+                    ledger.admission_lock(session_id)
+                    if ledger is not None
+                    else nullcontext()
                 )
-                # session_capabilities carries the accumulated trifecta legs so
-                # GlobalLayer sees the cross-call union (SPEC-035 REQ-012).
-                ctx_pol = PolicyContext(
-                    tier=tier,
-                    policy_version=policy_version,
-                    bundle_age_seconds=0.0,
-                    session_capabilities=accumulated,
-                    provider_usage=provider_usage,
-                    clearance=clearance_ctx,
-                )
-                decision = await pipeline.evaluate(call, ctx_pol)
-                if decision.is_deny():
+                async with lock:
+                    accumulated = (
+                        ledger.snapshot(session_id) if ledger is not None else frozenset()
+                    )
+                    # session_capabilities carries the accumulated trifecta legs
+                    # so GlobalLayer sees the cross-call union (SPEC-035 REQ-012).
+                    ctx_pol = PolicyContext(
+                        tier=tier,
+                        policy_version=policy_version,
+                        bundle_age_seconds=0.0,
+                        session_capabilities=accumulated,
+                        provider_usage=provider_usage,
+                        clearance=clearance_ctx,
+                    )
+                    decision = await pipeline.evaluate(call, ctx_pol)
+                    denied = decision.is_deny()
+                    if not denied:
+                        self._record_admission(ledger, session_id, tool_legs, clearance_ctx)
+                if denied:
+                    # Human approval awaits OUTSIDE the lock (REQ-032): a granted
+                    # one-shot re-evaluates and, on ALLOW, records the legs.
                     call = await self._resolve_forbidden_composition(
                         call, ctx_pol, decision, human_gate, tool_legs, accumulated
                     )
-                # On ALLOW (or after a granted one-shot approval), record the
-                # legs so the next call sees the updated union.
-                if ledger is not None and tool_legs:
-                    ledger.record(session_id, tool_legs)
-                # SPEC-038 F2 — track the max classification of data read this
-                # session so the no-exfil egress gate has a real data label
-                # (reuses the already-parsed resource classification).
-                if ledger is not None and clearance_ctx is not None:
-                    ledger.record_read(session_id, clearance_ctx.resource_classification)
+                    async with lock:
+                        self._record_admission(ledger, session_id, tool_legs, clearance_ctx)
 
             # 2. Pre-tool event (may veto)
             ctx = await bus.emit(

@@ -63,6 +63,12 @@ class RegisteredTool:
     # SDD §5.2). Examples: "file_read", "file_write", "network_egress",
     # "subprocess", "state_mutation". Empty = no declared capabilities.
     capability_tags: list[str] = field(default_factory=list)
+    # SPEC-043 REQ-010c — whether this model-callable capability is skill-backed.
+    # arcrun sees every capability as a plain Tool with no skill notion; this
+    # marker lets arcagent's tier resolver widen the federal approval set to the
+    # full effecting-capability surface (skills + tools), while enterprise covers
+    # tools only. Set when a skill is registered as a callable tool.
+    skill_backed: bool = False
     # SPEC-017 R-030 — when True, an invocation of this tool ends the
     # ReAct turn and its (validated) arguments become the loop's
     # completion payload. Preserved through ``ToolRegistry.to_arcrun_tools``

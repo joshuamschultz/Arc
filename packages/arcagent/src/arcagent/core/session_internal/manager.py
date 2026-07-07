@@ -53,6 +53,10 @@ class SessionManager:
         self._lock = asyncio.Lock()
         self._jsonl_path: Path | None = None
         self._context_manager = context_manager
+        # SPEC-043 REQ-005 — last persisted loop checkpoint record (metadata
+        # only). Kept out of the message list so it never re-enters the model
+        # transcript; a resume rebuilds RunState from it + the transcript.
+        self._last_checkpoint: dict[str, Any] | None = None
 
     @property
     def session_id(self) -> str:
@@ -145,6 +149,12 @@ class SessionManager:
                 continue
             try:
                 entry = json.loads(line)
+                # Checkpoint records are loop metadata, not conversation — keep
+                # them out of the transcript (they are not valid Messages) and
+                # retain only the latest for a possible resume (REQ-003/005).
+                if entry.get("type") == "checkpoint":
+                    self._last_checkpoint = entry
+                    continue
                 self._messages.append(entry)
             except json.JSONDecodeError:
                 _logger.warning(
@@ -200,6 +210,42 @@ class SessionManager:
     def get_messages(self) -> list[dict[str, Any]]:
         """Return a snapshot of the current message list (not a reference)."""
         return list(self._messages)
+
+    async def persist_checkpoint(self, checkpoint: Any, *, signature: str | None = None) -> None:
+        """Persist an arcrun ``LoopCheckpoint`` as one JSONL line (SPEC-043 REQ-005).
+
+        arcrun emits the checkpoint at each turn boundary; arcagent persists it.
+        Only the scalar metadata (``to_record()``) is written — the transcript is
+        already the durable session content on this same JSONL, so resume rebuilds
+        the message list from the transcript and the checkpoint carries no inline
+        duplicate (OQ-4). Written under the existing append lock (append-only). The
+        operator ``signature`` (SPEC-043 F3) rides the record so resume can refuse
+        a tampered/unsigned checkpoint fail-closed.
+        """
+        record = {
+            "type": "checkpoint",
+            **checkpoint.to_record(),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "signature": signature,
+        }
+        async with self._lock:
+            self._last_checkpoint = record
+            if self._jsonl_path is not None:
+                with open(self._jsonl_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record) + "\n")
+        if self._telemetry is not None:
+            self._telemetry.audit_event(
+                "loop.checkpoint",
+                {
+                    "session_id": self._session_id,
+                    "turn_count": record.get("turn_count"),
+                    "run_id": record.get("run_id"),
+                },
+            )
+
+    def latest_checkpoint(self) -> dict[str, Any] | None:
+        """Return the most recent persisted checkpoint record, or None (REQ-003)."""
+        return self._last_checkpoint
 
     async def compact(self, model: Any, workspace: Path) -> None:
         """Discrete, persisted compaction (SPEC-029 D-396/398/399/400).

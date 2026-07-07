@@ -188,3 +188,82 @@ class TestOutcomeType:
         assert out.status is StepStatus.SUCCEEDED
         assert out.result == "x"
         assert out.failure_reason is None
+
+
+class TestBuildArcrunRunFnForwardsLoopControls:
+    """SPEC-043 F2 — a plan-step run is gated identically to the main loop.
+
+    ``build_arcrun_run_fn`` binds directly to ``arcrun.run`` (bypassing
+    ``dispatch_stream``). Before the fix it forwarded NO loop controls, so a
+    federal-flagged tool inside a plan branch ran un-gated when a
+    ``ConcurrentStepExecutor`` was injected. The controls now live in the run_fn
+    closure, so BOTH the sequential and concurrent executors inherit them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_run_fn_forwards_approval_set_breakers_and_checkpoint(self) -> None:
+        from unittest.mock import patch
+
+        from arcagent.modules.planning.executor import build_arcrun_run_fn
+
+        captured: dict[str, Any] = {}
+
+        async def _fake_run(*args: Any, **kwargs: Any) -> LoopResult:
+            captured.update(kwargs)
+            return _loop_result()
+
+        async def _provider(_tc: Any) -> None:
+            return None  # deny — no grant
+
+        def _hook(_cp: Any) -> None:
+            return None
+
+        with patch("arcrun.run", side_effect=_fake_run):
+            run_fn = build_arcrun_run_fn(
+                model=object(),
+                capabilities=object(),
+                system_prompt="sp",
+                approval_provider=_provider,
+                approval_required_tools=frozenset({"send_email"}),
+                max_repeat=8,
+                max_consecutive_errors=5,
+                on_checkpoint=_hook,
+            )
+            await run_fn(task="t", max_tokens=100, max_cost_usd=None, actor_did="did:arc:x")
+
+        # A federal-flagged tool in a plan step is gated: the approval set + a
+        # bound provider reach arcrun.run, plus the runaway/cascade breakers.
+        assert captured["approval_required_tools"] == frozenset({"send_email"})
+        assert captured["approval_provider"] is _provider
+        assert captured["max_repeat"] == 8
+        assert captured["max_consecutive_errors"] == 5
+        assert captured["on_checkpoint"] is _hook
+
+    @pytest.mark.asyncio
+    async def test_concurrent_executor_inherits_gated_run_fn(self) -> None:
+        """The controls ride the run_fn closure, so the concurrent path is gated too."""
+        from unittest.mock import patch
+
+        from arcagent.modules.planning.executor import (
+            ConcurrentStepExecutor,
+            build_arcrun_run_fn,
+        )
+
+        seen: dict[str, Any] = {}
+
+        async def _fake_run(*args: Any, **kwargs: Any) -> LoopResult:
+            seen.update(kwargs)
+            return _loop_result()
+
+        plan = _plan(steps=1, max_tokens=1000)
+        with patch("arcrun.run", side_effect=_fake_run):
+            run_fn = build_arcrun_run_fn(
+                model=object(),
+                capabilities=object(),
+                system_prompt="sp",
+                approval_required_tools=frozenset({"send_email"}),
+            )
+            ex = ConcurrentStepExecutor(run_fn, step_max_tokens=100)
+            await ex.run_ready(plan.steps, plan=plan)
+
+        assert seen["approval_required_tools"] == frozenset({"send_email"})

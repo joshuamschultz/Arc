@@ -101,6 +101,13 @@ class Plan(BaseModel):
     # so the aggregate ceiling survives a resume (REQ-022, LLM10).
     tokens_spent: int = 0
     cost_spent: float = 0.0
+    # SPEC-043 REQ-053 — outstanding reservations for in-flight concurrent
+    # branches. Reserve-then-settle: a branch reserves its cap from the shared
+    # budget BEFORE launch and settles actual spend on completion, so
+    # ``Σ(reservations + spend) ≤ budget`` and N concurrent branches can never
+    # overspend the aggregate. Zero when no branch is in flight (sequential).
+    reserved_tokens: int = 0
+    reserved_cost: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -215,6 +222,24 @@ class Plan(BaseModel):
         return (
             None if b.max_tokens is None else max(0, b.max_tokens - self.tokens_spent),
             None if b.max_cost_usd is None else max(0.0, b.max_cost_usd - self.cost_spent),
+        )
+
+    def available_budget(self) -> tuple[int | None, float | None]:
+        """Budget available to RESERVE now: remaining minus outstanding reservations.
+
+        The admission signal for concurrent branch dispatch (REQ-053): each
+        in-flight branch's reservation is already subtracted, so a later branch
+        sees less headroom and the (N+1)-th branch that would breach gets zero.
+        Floored at zero; ``None`` on a dimension stays unbounded.
+        """
+        b = self.budget
+        return (
+            None
+            if b.max_tokens is None
+            else max(0, b.max_tokens - self.tokens_spent - self.reserved_tokens),
+            None
+            if b.max_cost_usd is None
+            else max(0.0, b.max_cost_usd - self.cost_spent - self.reserved_cost),
         )
 
     def touch(self) -> None:

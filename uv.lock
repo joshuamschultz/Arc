@@ -294,7 +294,7 @@ tutorial = [
 
 [[package]]
 name = "arc-agent"
-version = "0.11.0"
+version = "0.12.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
@@ -550,7 +550,7 @@ source = { editable = "packages/arcprompt" }
 
 [[package]]
 name = "arcrun"
-version = "0.8.0"
+version = "0.9.0"
 source = { editable = "packages/arcrun" }
 dependencies = [
     { name = "arcllm" },

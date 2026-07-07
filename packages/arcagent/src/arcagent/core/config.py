@@ -325,6 +325,13 @@ class ValidatorsConfig(BaseModel):
     )
 
 
+# SPEC-043 REQ-024 — non-relaxable federal circuit-breaker floors. When a federal
+# deployment leaves a breaker unset it is pinned to these; an explicit looser
+# (larger, or disabled) value fails closed in the tier validator.
+_FEDERAL_RUNAWAY_FLOOR = 8
+_FEDERAL_CASCADE_FLOOR = 5
+
+
 class SecurityConfig(BaseModel):
     """Security and tier configuration.
 
@@ -353,6 +360,14 @@ class SecurityConfig(BaseModel):
     # clearance context (federal posture); off by default so it never bricks.
     clearance: str = "UNCLASSIFIED"
     classification_enforced: bool = False
+
+    # SPEC-043 REQ-020/021/024/035 — unified loop circuit-breaker thresholds.
+    # ``None`` disables a breaker (personal free-run default); federal pins
+    # non-relaxable floors in the tier validator below. ``loop_max_parallel``
+    # bounds concurrent in-flight tool calls.
+    runaway_max_repeat: int | None = None  # identical tool-call signatures → trip
+    error_cascade_max: int | None = None  # consecutive tool failures → trip
+    loop_max_parallel: int = 10  # semaphore ceiling on concurrent tool calls
 
     # SPEC-021 — TOFU approvals for self-executing agent code.
     validators: ValidatorsConfig = Field(default_factory=ValidatorsConfig)
@@ -467,9 +482,32 @@ class SecurityConfig(BaseModel):
             self.require_fips = True
             self.custody = "vault_transit"
             self.signing_algorithm = "ecdsa-p256"
+            self._apply_federal_breaker_floors()
         elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
             self.custody = "vault_transit"
         return self
+
+    def _apply_federal_breaker_floors(self) -> None:
+        """Pin the loop circuit breaker to non-relaxable federal floors (REQ-024).
+
+        A federal deployment that leaves a breaker unset gets the floor; one that
+        explicitly disables it (``None``) or sets a looser (larger) cap fails
+        closed — an agent-supplied param can never exceed the floor.
+        """
+        if self.runaway_max_repeat is None or self.runaway_max_repeat > _FEDERAL_RUNAWAY_FLOOR:
+            if "runaway_max_repeat" in self.model_fields_set:
+                raise ValueError(
+                    "federal tier caps runaway_max_repeat at "
+                    f"{_FEDERAL_RUNAWAY_FLOOR} (SC-5) — refusing a looser/disabled value"
+                )
+            self.runaway_max_repeat = _FEDERAL_RUNAWAY_FLOOR
+        if self.error_cascade_max is None or self.error_cascade_max > _FEDERAL_CASCADE_FLOOR:
+            if "error_cascade_max" in self.model_fields_set:
+                raise ValueError(
+                    "federal tier caps error_cascade_max at "
+                    f"{_FEDERAL_CASCADE_FLOOR} (SC-5) — refusing a looser/disabled value"
+                )
+            self.error_cascade_max = _FEDERAL_CASCADE_FLOOR
 
     def _reject_weaker_federal_override(self) -> None:
         """Fail closed if a federal config explicitly set a weaker crypto value."""

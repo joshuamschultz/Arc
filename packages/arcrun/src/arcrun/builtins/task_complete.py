@@ -103,20 +103,26 @@ def make_task_complete_tool() -> Tool:
     )
 
 
-BudgetBreachReason = Literal["max_turns", "max_cost", "max_tokens"]
+BudgetBreachReason = Literal[
+    "max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade"
+]
 
 _BREACH_SUMMARIES: dict[str, str] = {
     "max_turns": "Turn limit reached before task completed.",
     "max_cost": "Cost limit reached before task completed.",
     "max_tokens": "Token limit reached before task completed.",
+    "runaway_loop": "Repeated identical tool call detected — halted as a runaway loop.",
+    "error_cascade": "Consecutive tool failures exceeded the cascade threshold — halted.",
 }
 
 
 def make_budget_breach_args(*, reason: BudgetBreachReason) -> TaskCompleteArgs:
-    """Synthesize a ``task_complete`` payload when the loop hits a cap.
+    """Synthesize a ``task_complete`` payload when the loop trips the breaker.
 
-    Keeps the breach vocabulary consistent across sites that enforce
-    turn/token/cost limits (SPEC-017 R-032, SPEC-038 REQ-003).
+    Keeps the breach vocabulary consistent across every site that halts the
+    loop — token/cost/turn caps (SPEC-017 R-032, SPEC-038 REQ-003) and the
+    SPEC-043 runaway-loop / error-cascade breakers. One terminator factory,
+    one reason vocabulary (AC-S2).
     """
     return TaskCompleteArgs(status="failed", summary=_BREACH_SUMMARIES[reason], error=reason)
 
