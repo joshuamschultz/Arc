@@ -34,6 +34,11 @@ from arctrust import AgentIdentity
 from arcagent.core.config import ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import ModuleBus
+from arcagent.core.session_internal.capability_ledger import (
+    SessionCapabilityLedger,
+    current_session_id,
+    legs_for_tags,
+)
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import (
     PolicyContext,
@@ -58,6 +63,7 @@ from arcagent.core.tool_transport import (
     _validate_tool_args,
     native_tool,
 )
+from arcagent.tools.human_gate import HumanGate
 
 _logger = logging.getLogger("arcagent.tool_registry")
 
@@ -102,11 +108,18 @@ class ToolRegistry:
         agent_did: str = "did:arc:unknown",
         tier: Literal["federal", "enterprise", "personal"] = "personal",
         policy_version: str = "v0",
+        capability_ledger: SessionCapabilityLedger | None = None,
+        human_gate: HumanGate | None = None,
     ) -> None:
         self._config = config
         self._bus = bus
         self._telemetry = telemetry
         self._policy_pipeline = policy_pipeline
+        # SPEC-035 — lethal-trifecta accumulation + human-approval gate. Both
+        # optional so bootstrap/tests can register tools without them; ArcAgent
+        # wires them in production. When absent, dispatch behaves as before.
+        self._capability_ledger = capability_ledger
+        self._human_gate = human_gate
         # Signing identity for tool dispatch. When a policy pipeline is
         # configured, every ToolCall is signed with this key so the pipeline's
         # IdentityLayer can authenticate it — an unsigned call is denied
@@ -278,6 +291,38 @@ class ToolRegistry:
             )
         return result
 
+    async def _resolve_forbidden_composition(
+        self,
+        call: ToolCall,
+        ctx_pol: PolicyContext,
+        decision: Any,
+        human_gate: HumanGate | None,
+        tool_legs: frozenset[str],
+        accumulated: frozenset[str],
+    ) -> ToolCall:
+        """Pause a trifecta-completing deny for human approval, or fail closed.
+
+        SPEC-035 REQ-014/015. On any non-composition deny, or when no gate is
+        wired, the deny stands. On a forbidden-composition deny the gate is
+        asked for a one-shot, operator-signed approval; a granted token is
+        re-evaluated (arctrust honors it exactly once) and lets the single call
+        through. Denial/timeout → deny (fail closed).
+        """
+        if decision.rule_id != "global.forbidden_composition" or human_gate is None:
+            raise PolicyDenied(decision)
+        union = frozenset(tool_legs) | frozenset(accumulated)
+        approval = await human_gate.request(call, legs=union)
+        if approval is None:
+            raise PolicyDenied(decision)
+        approved_call = call.model_copy(update={"approval": approval})
+        pipeline = self._policy_pipeline
+        if pipeline is None:  # unreachable in practice — fail closed defensively
+            raise PolicyDenied(decision)
+        decision2 = await pipeline.evaluate(approved_call, ctx_pol)
+        if decision2.is_deny():
+            raise PolicyDenied(decision2)
+        return approved_call
+
     def _create_wrapped_execute(self, tool: RegisteredTool) -> Any:
         """Create a wrapped execute function for a tool.
 
@@ -297,6 +342,10 @@ class ToolRegistry:
         agent_did = self._agent_did
         tier = self._tier
         policy_version = self._policy_version
+        ledger = self._capability_ledger
+        human_gate = self._human_gate
+        # Session-scoped trifecta legs this tool contributes (deployment map).
+        tool_legs = legs_for_tags(tool.capability_tags)
 
         async def wrapped_execute(args: dict[str, Any] | None = None, **kwargs: Any) -> Any:
             if args is None:
@@ -310,32 +359,43 @@ class ToolRegistry:
             # No sudo mode, no bypass flag. Exceptions in layers are
             # caught by the pipeline and returned as DENY (fail-closed).
             if pipeline is not None:
+                session_id = current_session_id()
+                accumulated = (
+                    ledger.snapshot(session_id) if ledger is not None else frozenset()
+                )
                 call = ToolCall(
                     tool_name=tool.name,
                     arguments=args,
                     agent_did=agent_did,
-                    session_id="",
+                    session_id=session_id,
                     classification="unclassified",
+                    capability_tags=tool_legs,
                 )
                 # Sign the call so the pipeline's IdentityLayer can authenticate
                 # it (proves this dispatch came from the key-holding agent, not
                 # an injected call). No identity → call stays unsigned → denied.
                 if identity is not None:
                     call = sign_call(call, identity)
-                # provider_usage / team_scope / tool_runtime are populated by
-                # their owning producers (SPEC-038 / arcteam / SPEC-033+036).
-                # Until those land they stay None: the Provider/Sandbox layers are
-                # no-ops when their policy is unconfigured, so default config
-                # allows; a configured budget with missing usage fails closed
-                # (SPEC-034 configured-gate).
+                # session_capabilities carries the accumulated trifecta legs so
+                # GlobalLayer sees the cross-call union (SPEC-035 REQ-012).
+                # provider_usage / team_scope / tool_runtime stay None until
+                # their owning producers populate them (SPEC-038 / arcteam /
+                # SPEC-033+036) — their layers no-op when unconfigured.
                 ctx_pol = PolicyContext(
                     tier=tier,
                     policy_version=policy_version,
                     bundle_age_seconds=0.0,
+                    session_capabilities=accumulated,
                 )
                 decision = await pipeline.evaluate(call, ctx_pol)
                 if decision.is_deny():
-                    raise PolicyDenied(decision)
+                    call = await self._resolve_forbidden_composition(
+                        call, ctx_pol, decision, human_gate, tool_legs, accumulated
+                    )
+                # On ALLOW (or after a granted one-shot approval), record the
+                # legs so the next call sees the updated union.
+                if ledger is not None and tool_legs:
+                    ledger.record(session_id, tool_legs)
 
             # 2. Pre-tool event (may veto)
             ctx = await bus.emit(

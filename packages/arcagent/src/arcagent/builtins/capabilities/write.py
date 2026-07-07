@@ -29,6 +29,7 @@ async def write(file_path: str, content: str) -> str:
         _runtime.workspace(),
         allowed_paths=_runtime.allowed_paths(),
     )
+    _runtime.check_protected(resolved, file_path, tool_name="write")
     if resolved.exists() and not resolved.is_file():
         return f"Error: Not a file: {file_path}"
     resolved.parent.mkdir(parents=True, exist_ok=True)

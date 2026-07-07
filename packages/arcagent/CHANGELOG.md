@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-06
+
+SPEC-035: lock goals, break the lethal trifecta, and confine bash. Three confinement floors wired at every tier (ADR-019).
+
+### Added
+- **Goal-lock (REQ-001..004).** `is_protected_path` / `enforce_protected_path` / `resolve_protected_paths` in `tools/_validation.py`. `write`, `edit`, and `bash` consult one shared guard before any mutation; the default protected set (`identity.md`, `policy.md`, `context.md`) is unioned with operator `tools.policy.protected_paths`, resolved once at agent start and immutable for the session. Denials raise `TOOL_PROTECTED_PATH` and emit `tool.protected_path.denied` (tool + caller DID + path).
+- **Lethal-trifecta gate (REQ-010..016).** `SessionCapabilityLedger` + tag→leg map (`core/session_internal/capability_ledger.py`) accumulate `{private_data, external_comms, untrusted_input}` legs across calls and inject them as `PolicyContext.session_capabilities`; the trifecta forbidden set is passed into `build_pipeline(forbidden_compositions=...)`. `HumanGate` (`tools/human_gate.py`) pauses a trifecta-completing call for an operator-signed one-shot approval (never the agent DID — ASI09), fails closed on timeout/denial, and never auto-approves at federal. `[tools.human_gate]` config (timeout + named auto-approve compositions).
+- **EgressProxy wiring (REQ-013).** One per-agent `EgressProxy` (deny-by-default `tools.policy.egress_allowlist`) is the single external-comms mediation point; a successful egress records the `external_comms` leg.
+- **Sandboxed bash (REQ-020..025).** At enterprise/federal, `bash` delegates to arcrun's tier-routed isolation backend with the workspace bind-mounted read-write, protected files read-only (goal-lock survives sandboxing), and host `~/.arc`/`.audit` never mounted. Personal keeps host bash with an advisory goal-lock guard.
+
+### Removed
+- `ForbiddenCompositionChecker` (arcagent duplicate) — the subset check is now LIVE inside arctrust's `GlobalLayer`; arcagent supplies only the tag→leg mapping.
+
 ## [0.6.0] - 2026-07-06
 
 SPEC-053: wire the operator key (audit authority) into every WORM sink; the agent DID seed no longer signs any audit chain.

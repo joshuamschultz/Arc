@@ -39,6 +39,7 @@ async def edit(
         _runtime.workspace(),
         allowed_paths=_runtime.allowed_paths(),
     )
+    _runtime.check_protected(resolved, file_path, tool_name="edit")
     if not resolved.exists():
         return f"Error: File not found: {file_path}"
     if not resolved.is_file():

@@ -43,7 +43,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from arcrun.backends.base import (
     BackendCapabilities,
@@ -169,16 +169,22 @@ class VmBackend:
         kvm_path: str = _DEFAULT_KVM_PATH,
         chroot_base: str = "/srv/jailer",
         policy: VmGuestPolicy | None = None,
+        workspace_mount: Path | None = None,
+        readonly_subpaths: list[Path] | None = None,
     ) -> None:
         self._engine: VmEngine = engine or FirecrackerEngine()
         self._kvm_path = kvm_path
         self._chroot_base = chroot_base
         self._policy = policy or VmGuestPolicy()
+        self._workspace_mount = workspace_mount
+        self._readonly_subpaths = readonly_subpaths
         self.capabilities = BackendCapabilities(
             supports_file_copy=False,
             supports_persistent_workspace=False,
             supports_port_forward=False,
-            supports_bind_mount=False,
+            # A workspace share is a bind-mount-equivalent virtio-fs mount into
+            # the guest; without one the guest is container-only (no share).
+            supports_bind_mount=workspace_mount is not None,
             supports_separated_streams=True,
             # Cold Firecracker boot ~125-200ms; below the container backend's 800ms.
             # A pre-warmed snapshot pool drops this to ~10-30ms (fleet follow-up).
@@ -317,7 +323,7 @@ class VmBackend:
         policy = self._policy
         root = Path(self._chroot_base) / jailer_id / "root"
         root.mkdir(parents=True, exist_ok=True)
-        config = {
+        config: dict[str, Any] = {
             "boot-source": {
                 "kernel_image_path": "vmlinux",
                 "boot_args": _guest_boot_args(
@@ -343,9 +349,34 @@ class VmBackend:
                 [] if not policy.network else [{"iface_id": "eth0", "host_dev_name": "arc-tap0"}]
             ),
         }
+        share = self._workspace_share()
+        if share is not None:
+            config["workspace"] = share
         config_path = root / "vmconfig.json"
         config_path.write_text(json.dumps(config, indent=2, sort_keys=True))
         return str(config_path)
+
+    def _workspace_share(self) -> dict[str, Any] | None:
+        """Render the guest workspace share spec, or None when no workspace is set.
+
+        Parity with the container backend (REQ-021): the workspace is shared
+        read-write at ``/workspace``, host ``~/.arc`` is never shared (absent in
+        the guest), and each existing protected subpath is listed read-only.
+        """
+        workspace = self._workspace_mount
+        if workspace is None:
+            return None
+        readonly = [
+            str(sub)
+            for sub in (self._readonly_subpaths or [])
+            if (workspace / sub).exists()
+        ]
+        return {
+            "host_path": str(workspace),
+            "guest_path": "/workspace",
+            "read_only": False,
+            "readonly_subpaths": readonly,
+        }
 
 
 def _guest_boot_args(

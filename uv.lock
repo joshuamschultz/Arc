@@ -294,7 +294,7 @@ tutorial = [
 
 [[package]]
 name = "arc-agent"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
@@ -552,7 +552,7 @@ source = { editable = "packages/arcprompt" }
 
 [[package]]
 name = "arcrun"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/arcrun" }
 dependencies = [
     { name = "arcllm" },
@@ -642,7 +642,7 @@ requires-dist = [
 
 [[package]]
 name = "arctrust"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "packages/arctrust" }
 dependencies = [
     { name = "pydantic" },

@@ -467,6 +467,28 @@ RESTRICTED_BUILTINS: dict[str, object] = {
 }
 
 
+def _egress_accessor() -> Any:
+    """Return the per-agent EgressProxy — the sandbox's ONLY outbound path.
+
+    Injected as the bare name ``egress`` into the restricted namespace so
+    agent-authored source reaches the network only through the allowlist-gated,
+    audited proxy (SPEC-017 R-055 / SPEC-035 REQ-013). This is the real caller
+    of :func:`_runtime.egress`; direct sockets/imports are blocked by the AST
+    gate and restricted ``__import__``. Raises when no proxy is wired — outbound
+    network is denied by absence, not silently no-op.
+    """
+    from arcagent.builtins.capabilities import _runtime
+
+    proxy = _runtime.egress()
+    if proxy is None:
+        raise ToolError(
+            code="EGRESS_UNAVAILABLE",
+            message="No egress proxy is configured; outbound network is disabled",
+            details={},
+        )
+    return proxy
+
+
 def build_restricted_builtins(
     *,
     allow_all_imports: bool = False,
@@ -488,6 +510,7 @@ def build_restricted_builtins(
     return {
         **RESTRICTED_BUILTINS,
         "__build_class__": _builtins.__build_class__,
+        "egress": _egress_accessor,
         "__import__": _make_denylist_import(
             allow_all_imports=allow_all_imports,
             allowed_imports=allowed_imports,
@@ -663,6 +686,7 @@ class DynamicToolLoader:
             "__name__": f"_agent_tools.{name}_{content_hash}",
             "__builtins__": {
                 **RESTRICTED_BUILTINS,
+                "egress": _egress_accessor,
                 "__import__": _make_restricted_import(),
             },
         }

@@ -34,6 +34,10 @@ _allowed_paths: list[Path] | None = None
 _loader: CapabilityLoader | None = None
 _vault_resolver: Any = None
 _identity: AgentIdentity | None = None
+_protected_paths: frozenset[Path] = frozenset()
+_audit_sink: Any = None
+_egress_proxy: Any = None
+_tier: str = "personal"
 
 
 def configure(
@@ -43,6 +47,10 @@ def configure(
     loader: CapabilityLoader | None = None,
     vault_resolver: Any = None,
     identity: AgentIdentity | None = None,
+    protected_paths: frozenset[Path] | None = None,
+    audit_sink: Any = None,
+    egress_proxy: Any = None,
+    tier: str | None = None,
 ) -> None:
     """Bind per-agent runtime state. Called once at agent startup.
 
@@ -50,11 +58,20 @@ def configure(
     runs. Production agents should call exactly once during startup.
     """
     global _workspace, _allowed_paths, _loader, _vault_resolver, _identity
+    global _protected_paths, _audit_sink, _egress_proxy, _tier
     _workspace = workspace.resolve()
     _allowed_paths = allowed_paths
     _loader = loader
     _vault_resolver = vault_resolver
     _identity = identity
+    if protected_paths is not None:
+        _protected_paths = protected_paths
+    if audit_sink is not None:
+        _audit_sink = audit_sink
+    if egress_proxy is not None:
+        _egress_proxy = egress_proxy
+    if tier is not None:
+        _tier = tier
 
 
 def sign_artifact_file(artifact: Path, content: bytes) -> None:
@@ -94,6 +111,144 @@ def allowed_paths() -> list[Path] | None:
     return _allowed_paths
 
 
+def protected_paths() -> frozenset[Path]:
+    """Return the session-immutable operator-protected path set (SPEC-035)."""
+    return _protected_paths
+
+
+def egress() -> Any:
+    """Return the per-agent :class:`EgressProxy` (REQ-013), or None if unwired.
+
+    The single mediation point for outbound network calls: external-comms tools
+    must route through this proxy so egress is allowlist-gated and audited. No
+    tool opens its own socket.
+    """
+    return _egress_proxy
+
+
+def tier() -> str:
+    """Return the deployment tier (personal/enterprise/federal)."""
+    return _tier
+
+
+class _ArcRunAuditAdapter:
+    """Adapt arcrun's ``AuditSink.write(AuditEvent)`` to the (event, payload) sink.
+
+    arcrun emits backend-selection audit as ``arctrust.AuditEvent`` objects via a
+    ``.write`` sink; arcagent's telemetry consumes ``(action, payload)``. This
+    thin adapter bridges the two so REQ-025 backend-selection records reach the
+    agent's audit trail without arcrun learning about arcagent telemetry.
+    """
+
+    def __init__(self, sink: Any) -> None:
+        self._sink = sink
+
+    def write(self, event: Any) -> None:
+        payload = {
+            "actor_did": getattr(event, "actor_did", ""),
+            "target": getattr(event, "target", ""),
+            "outcome": getattr(event, "outcome", ""),
+            "tier": getattr(event, "tier", None),
+            **dict(getattr(event, "extra", {}) or {}),
+        }
+        self._sink(getattr(event, "action", "code_exec.backend.selected"), payload)
+
+
+def _readonly_protected_subpaths() -> list[Path]:
+    """Protected files inside the workspace, as workspace-RELATIVE paths.
+
+    arcrun's backend mounts each as ``{workspace}/{sub}:/workspace/{sub}:ro``, so
+    ``sub`` must be relative to the workspace root (REQ-023 read-only mounts).
+    """
+    ws = workspace()
+    subs: list[Path] = []
+    for path in _protected_paths:
+        try:
+            relative = path.relative_to(ws)
+        except ValueError:
+            continue
+        if path.exists():
+            subs.append(relative)
+    return subs
+
+
+async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
+    """Run a shell command through arcrun's tier-routed isolation backend.
+
+    SPEC-035 REQ-020/022/023/025. Enterprise → container, federal → VM (SPEC-036).
+    The workspace is bind-mounted read-write; protected files are mounted
+    read-only (goal-lock survives the sandbox); host ``~/.arc``/``.audit`` are
+    never mounted (operator seed + WORM chains unreachable). Fails closed when
+    the required isolation is unavailable.
+    """
+    import json
+
+    from arcrun import run_shell
+    from arcrun.builtins import ExecutionIsolationError
+
+    from arcagent.core.errors import ToolError
+
+    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    audit = _ArcRunAuditAdapter(_audit_sink) if _audit_sink is not None else None
+    try:
+        raw = await run_shell(
+            command,
+            tier=_tier,
+            workspace=workspace(),
+            readonly_subpaths=_readonly_protected_subpaths(),
+            caller_did=caller,
+            audit_sink=audit,
+            timeout=float(timeout),
+        )
+    except ExecutionIsolationError as exc:
+        raise ToolError(
+            code="TOOL_SANDBOX_UNAVAILABLE",
+            message=f"Sandboxed bash refused: {exc}",
+            details={"tier": _tier, "reason": str(exc)},
+        ) from exc
+
+    result = json.loads(raw)
+    stdout = result.get("stdout", "")
+    stderr = result.get("stderr", "")
+    output = "\n".join(part for part in (stdout, stderr) if part)
+    exit_code = result.get("exit_code", 0)
+    if exit_code != 0:
+        return f"Exit code: {exit_code}\n{output}"
+    return output if output else "(no output)"
+
+
+def check_protected(resolved: Path, file_path: str, *, tool_name: str) -> None:
+    """Deny + audit a mutation of a protected path (REQ-001/004).
+
+    Thin binding of :func:`arcagent.tools._validation.enforce_protected_path`
+    to the per-agent runtime state (protected set, identity, audit sink).
+    """
+    from arcagent.tools._validation import enforce_protected_path
+
+    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    enforce_protected_path(
+        resolved,
+        _protected_paths,
+        tool_name=tool_name,
+        file_path=file_path,
+        caller_did=caller,
+        audit_sink=_audit_sink,
+    )
+
+
+def check_shell_command(command: str, *, tool_name: str = "bash") -> None:
+    """Advisory host-bash goal-lock: deny obvious writes to protected paths.
+
+    Best-effort only (OQ-2) — a host shell can evade naive parsing. Real
+    enforcement at enterprise/federal is the sandbox read-only mount (REQ-023).
+    """
+    from arcagent.tools._validation import scan_shell_for_protected_writes
+
+    hit = scan_shell_for_protected_writes(command, workspace(), _protected_paths)
+    if hit is not None:
+        check_protected(hit, str(hit), tool_name=tool_name)
+
+
 def loader() -> CapabilityLoader:
     """Return the agent's :class:`CapabilityLoader`.
 
@@ -128,19 +283,30 @@ def get_secret(name: str) -> str | None:
 def reset() -> None:
     """Clear all runtime state. Test-only helper."""
     global _workspace, _allowed_paths, _loader, _vault_resolver, _identity
+    global _protected_paths, _audit_sink, _egress_proxy, _tier
     _workspace = None
     _allowed_paths = None
     _loader = None
     _vault_resolver = None
     _identity = None
+    _protected_paths = frozenset()
+    _audit_sink = None
+    _egress_proxy = None
+    _tier = "personal"
 
 
 __all__ = [
     "allowed_paths",
+    "check_protected",
+    "check_shell_command",
     "configure",
+    "egress",
     "get_secret",
     "loader",
+    "protected_paths",
     "reset",
+    "run_sandboxed_bash",
     "sign_artifact_file",
+    "tier",
     "workspace",
 ]

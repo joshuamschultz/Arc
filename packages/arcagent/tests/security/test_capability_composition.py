@@ -1,87 +1,73 @@
-"""SPEC-017 R-012 / SDD §5.2 — non-compositional safety.
+"""SPEC-035 — non-compositional safety (the lethal trifecta), arcagent side.
 
 Two individually-safe tools can compose into a forbidden capability
-(e.g. ``read_file + http_request = data exfiltration``). Capability
-composition is checked at batch dispatch time: if the union of the
-batch's ``capability_tags`` intersects any ``forbidden_compositions``
-set, the dispatcher rejects the batch.
-
-This file verifies the :class:`ForbiddenCompositionChecker` helper.
-Integration into the tool registry's batch path will land with the
-final end-to-end wiring.
+(``read_private + egress = exfiltration``). The subset-check that DECIDES this
+is LIVE in arctrust's ``GlobalLayer`` (see arctrust tests). arcagent's job is
+the *deployment mapping*: turn a tool's ``capability_tags`` into the three
+trifecta legs and accumulate them per session. This file verifies that arcagent
+side — the tag→leg map and the :class:`SessionCapabilityLedger`.
 """
 
 from __future__ import annotations
 
-import pytest
+from arcagent.core.session_internal.capability_ledger import (
+    EXTERNAL_COMMS,
+    LETHAL_TRIFECTA,
+    PRIVATE_DATA,
+    UNTRUSTED_INPUT,
+    SessionCapabilityLedger,
+    legs_for_tags,
+)
 
 
-class TestEmptyForbiddenList:
-    def test_empty_never_rejects(self) -> None:
-        from arcagent.core.tool_policy import ForbiddenCompositionChecker
+class TestTagToLegMapping:
+    def test_file_read_maps_to_private_data(self) -> None:
+        assert legs_for_tags(["file_read"]) == frozenset({PRIVATE_DATA})
 
-        checker = ForbiddenCompositionChecker(forbidden=[])
-        assert checker.is_forbidden({"file_read", "network_egress"}) is False
+    def test_network_egress_maps_to_external_comms(self) -> None:
+        assert legs_for_tags(["network_egress"]) == frozenset({EXTERNAL_COMMS})
 
+    def test_web_read_maps_to_both_egress_and_untrusted(self) -> None:
+        # OQ-1 proxy: a web/browser read both egresses and ingests untrusted input.
+        assert legs_for_tags(["web"]) == frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT})
 
-class TestBasicComposition:
-    def test_exact_match_rejected(self) -> None:
-        from arcagent.core.tool_policy import ForbiddenCompositionChecker
+    def test_subprocess_maps_to_untrusted_input(self) -> None:
+        # A shell/subprocess ingests untrusted content (command output, fetched
+        # files, network responses via curl), so bash contributes the
+        # untrusted-input leg. It is NOT tagged external_comms — at ent/fed bash
+        # runs --network=none, so tagging egress would spuriously trip the gate.
+        assert legs_for_tags(["subprocess"]) == frozenset({UNTRUSTED_INPUT})
 
-        checker = ForbiddenCompositionChecker(
-            forbidden=[frozenset({"file_read", "network_egress"})]
+    def test_bash_tags_yield_only_untrusted_input(self) -> None:
+        # bash's full tag set contributes exactly the untrusted-input leg.
+        assert legs_for_tags(["subprocess", "file_write", "state_mutation"]) == frozenset(
+            {UNTRUSTED_INPUT}
         )
-        assert checker.is_forbidden({"file_read", "network_egress"}) is True
 
-    def test_superset_also_rejected(self) -> None:
-        """If a batch contains {a, b, c} and {a, b} is forbidden, reject."""
-        from arcagent.core.tool_policy import ForbiddenCompositionChecker
-
-        checker = ForbiddenCompositionChecker(
-            forbidden=[frozenset({"file_read", "network_egress"})]
-        )
-        caps = {"file_read", "network_egress", "file_write"}
-        assert checker.is_forbidden(caps) is True
-
-    def test_partial_subset_allowed(self) -> None:
-        from arcagent.core.tool_policy import ForbiddenCompositionChecker
-
-        checker = ForbiddenCompositionChecker(
-            forbidden=[frozenset({"file_read", "network_egress"})]
-        )
-        assert checker.is_forbidden({"file_read"}) is False
-        assert checker.is_forbidden({"network_egress"}) is False
+    def test_unknown_tag_maps_to_nothing(self) -> None:
+        assert legs_for_tags(["file_write", "state_mutation"]) == frozenset()
 
 
-class TestMultipleForbiddenSets:
-    def test_any_matching_set_rejects(self) -> None:
-        from arcagent.core.tool_policy import ForbiddenCompositionChecker
+class TestSessionAccumulation:
+    def test_read_then_egress_completes_trifecta_across_calls(self) -> None:
+        ledger = SessionCapabilityLedger()
+        sid = "s1"
+        # Turn 1: read a private file + ingest untrusted web content.
+        ledger.record(sid, legs_for_tags(["file_read"]))
+        ledger.record(sid, legs_for_tags(["extract"]))
+        # Not yet forbidden — egress leg missing.
+        assert not LETHAL_TRIFECTA.issubset(ledger.snapshot(sid))
+        # Turn 3: attempt egress. Now the union completes the trifecta.
+        after = ledger.snapshot(sid) | legs_for_tags(["network_egress"])
+        assert LETHAL_TRIFECTA.issubset(after)
 
-        checker = ForbiddenCompositionChecker(
-            forbidden=[
-                frozenset({"file_read", "network_egress"}),
-                frozenset({"bash", "file_write"}),
-            ]
-        )
-        assert checker.is_forbidden({"bash", "file_write"}) is True
-        assert checker.is_forbidden({"file_read", "file_write"}) is False
+    def test_sessions_are_isolated(self) -> None:
+        ledger = SessionCapabilityLedger()
+        ledger.record("a", frozenset({PRIVATE_DATA}))
+        assert ledger.snapshot("b") == frozenset()
 
-
-class TestReasonReporting:
-    def test_reason_identifies_the_forbidden_set(self) -> None:
-        from arcagent.core.tool_policy import ForbiddenCompositionChecker
-
-        forbidden_a = frozenset({"file_read", "network_egress"})
-        checker = ForbiddenCompositionChecker(forbidden=[forbidden_a])
-        reason = checker.first_forbidden({"file_read", "network_egress"})
-        assert reason == forbidden_a
-
-        # Not forbidden → None
-        assert checker.first_forbidden({"file_read"}) is None
-
-
-# --- sanity check: reference docs ----------------------------------------
-
-
-def test_module_is_importable() -> None:
-    pytest.importorskip("arcagent.core.tool_policy")
+    def test_reset_clears_session(self) -> None:
+        ledger = SessionCapabilityLedger()
+        ledger.record("a", frozenset({PRIVATE_DATA}))
+        ledger.reset("a")
+        assert ledger.snapshot("a") == frozenset()

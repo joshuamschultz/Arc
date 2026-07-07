@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from arcrun.backends.base import (
     TRUNCATION_MARKER,
@@ -66,6 +67,15 @@ class DockerBackend:
         Docker network name.  "none" disables all networking.
     max_stdout_bytes:
         Hard cap on captured output before TRUNCATION_MARKER is appended.
+    workspace_mount:
+        Host directory bind-mounted read-write at ``/workspace`` inside the
+        container.  When None the container has NO workspace access (tmpfs /tmp
+        only).  Host ``~/.arc`` and ``.audit`` are never mounted — they are
+        simply absent inside the sandbox (REQ-021).
+    readonly_subpaths:
+        Paths INSIDE the workspace (e.g. identity.md/policy.md/context.md) that
+        are mounted read-only OVER the rw workspace so the shell cannot rewrite
+        them.  Only subpaths that exist on the host are mounted.
     """
 
     name: str = "docker"
@@ -77,6 +87,9 @@ class DockerBackend:
         pids_limit: int = 64,
         network: str = "none",
         max_stdout_bytes: int = _DEFAULT_MAX_STDOUT,
+        *,
+        workspace_mount: Path | None = None,
+        readonly_subpaths: list[Path] | None = None,
     ) -> None:
         self.capabilities = BackendCapabilities(
             supports_file_copy=True,
@@ -91,6 +104,8 @@ class DockerBackend:
         self._image = image
         self._pids_limit = pids_limit
         self._network = network
+        self._workspace_mount = workspace_mount
+        self._readonly_subpaths = readonly_subpaths
         self._container_id: str | None = None
 
         # exec_pid tracks in-container PIDs for cancellation.
@@ -283,6 +298,8 @@ class DockerBackend:
             image=self._image,
             pids_limit=self._pids_limit,
             network=self._network,
+            workspace_mount=self._workspace_mount,
+            readonly_subpaths=self._readonly_subpaths,
         )
         return self._container_id
 
@@ -292,13 +309,39 @@ class DockerBackend:
 # ---------------------------------------------------------------------------
 
 
+def _workspace_mount_args(
+    workspace_mount: Path | None,
+    readonly_subpaths: list[Path] | None,
+) -> list[str]:
+    """Build the ``-v``/``--workdir`` argv for the workspace bind mount.
+
+    The rw workspace mount comes first; each existing protected subpath is then
+    mounted read-only over it so the shell cannot rewrite identity/policy files.
+    """
+    if workspace_mount is None:
+        return []
+    args = ["-v", f"{workspace_mount}:/workspace:rw", "--workdir", "/workspace"]
+    for sub in readonly_subpaths or []:
+        host_path = workspace_mount / sub
+        if host_path.exists():
+            args += ["-v", f"{host_path}:/workspace/{sub}:ro"]
+    return args
+
+
 async def _docker_run_detached(
     image: str,
     pids_limit: int,
     network: str,
+    workspace_mount: Path | None = None,
+    readonly_subpaths: list[Path] | None = None,
 ) -> str:
-    """docker run -d …; returns the container ID."""
-    proc = await asyncio.create_subprocess_exec(
+    """docker run -d …; returns the container ID.
+
+    When ``workspace_mount`` is set the host workspace is bind-mounted rw at
+    ``/workspace`` (with ``--read-only`` still rooting the rest of the container
+    FS), and each existing protected subpath is mounted read-only over it.
+    """
+    args = [
         "docker",
         "run",
         "-d",
@@ -308,9 +351,11 @@ async def _docker_run_detached(
         "--read-only",
         f"--network={network}",
         "--tmpfs=/tmp:noexec,nosuid,size=64m",
-        image,
-        "sleep",
-        "infinity",
+    ]
+    args += _workspace_mount_args(workspace_mount, readonly_subpaths)
+    args += [image, "sleep", "infinity"]
+    proc = await asyncio.create_subprocess_exec(
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
+from arcagent.tools._validation import (
+    enforce_protected_path,
+    resolve_protected_paths,
+    scan_shell_for_protected_writes,
+)
 
 _MAX_OUTPUT_CHARS = 30_000
 
@@ -34,6 +39,7 @@ INPUT_SCHEMA: dict[str, Any] = {
 def create_tool(workspace: Path) -> RegisteredTool:
     """Create a workspace-scoped bash tool."""
     ws = workspace.resolve()
+    _protected = resolve_protected_paths(ws, [])
 
     async def execute(
         *,
@@ -42,6 +48,9 @@ def create_tool(workspace: Path) -> RegisteredTool:
         **_kwargs: Any,
     ) -> str:
         """Execute a shell command in the workspace directory."""
+        hit = scan_shell_for_protected_writes(command, ws, _protected)
+        if hit is not None:
+            enforce_protected_path(hit, _protected, tool_name="bash", file_path=str(hit))
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
