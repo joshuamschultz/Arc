@@ -44,10 +44,6 @@ class MessagingConfig(ModuleConfig):
     # Auto-ack messages after the agent reads them via tool.
     auto_ack: bool = True
 
-    # HMAC key for audit chain integrity.
-    # In production: pulled from vault. For local dev: a static key.
-    audit_hmac_key: str = "arcteam-local-dev"
-
     # Maximum messages per poll cycle per stream.
     max_messages_per_poll: int = 20
 

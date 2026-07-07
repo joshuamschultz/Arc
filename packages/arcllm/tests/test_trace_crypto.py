@@ -8,9 +8,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from pydantic import ValidationError
 
 from arcllm._trace_crypto import (
-    assert_fips_provider_if_required,
     decode_wrapping_key,
-    fips_provider_active,
     seal,
     unseal,
 )
@@ -187,13 +185,6 @@ class TestMissingExtra:
             with pytest.raises(ArcLLMConfigError, match="arcllm\\[trace-encryption\\]"):
                 _import_crypto_primitives()
 
-    def test_fips_provider_active_false_when_backend_module_absent(self):
-        """Exercises the real ImportError branch inside fips_provider_active()."""
-        import sys
-
-        with patch.dict(sys.modules, {"cryptography.hazmat.backends.openssl.backend": None}):
-            assert fips_provider_active() is False
-
 
 class TestDecodeWrappingKey:
     def test_valid_base64_32_bytes(self):
@@ -211,23 +202,8 @@ class TestDecodeWrappingKey:
             decode_wrapping_key(secret)
 
 
-class TestFipsSelfCheck:
-    def test_require_fips_false_never_checks(self):
-        """Personal/enterprise tiers (require_fips=False) never gate on FIPS."""
-        assert_fips_provider_if_required(require_fips=False)  # must not raise
-
-    def test_require_fips_true_with_non_fips_provider_fails_closed(self):
-        with patch("arcllm._trace_crypto.fips_provider_active", return_value=False):
-            with pytest.raises(ArcLLMConfigError, match="FIPS-140-3-approved"):
-                assert_fips_provider_if_required(require_fips=True)
-
-    def test_require_fips_true_with_fips_provider_passes(self):
-        with patch("arcllm._trace_crypto.fips_provider_active", return_value=True):
-            assert_fips_provider_if_required(require_fips=True)  # must not raise
-
-    def test_fips_provider_active_returns_bool(self):
-        """Dev environment's vendored OpenSSL is not FIPS-validated."""
-        assert fips_provider_active() is False
+# The FIPS gate moved to arctrust (single source of truth for signing +
+# encryption). Its behaviour is covered by packages/arctrust/tests/test_fips.py.
 
 
 class TestEncryptedEnvelopeSchema:

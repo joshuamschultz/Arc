@@ -43,7 +43,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from arctrust.keypair import KeyPair, sign, verify
+from arctrust.signer import ED25519, Signer, verify_signature
 
 _logger = logging.getLogger("arctrust.audit")
 
@@ -194,7 +194,10 @@ class WormSink:
 
     Args:
         path: Active chain file. Rotated segments live beside it.
-        operator_private_key: 32-byte Ed25519 seed used to sign each record.
+        signer: The operator :class:`~arctrust.signer.Signer` (in-process or
+            vault-transit) that signs each record's ``event_hash``. Under
+            vault-transit custody the operator seed never enters this process
+            (SPEC-037 REQ-006).
         genesis_tip: Expected ``prev_hash`` of the very first record. Defaults
             to the all-zero genesis anchor; supply an out-of-band value to
             detect head replacement (anti-genesis-substitution).
@@ -208,15 +211,16 @@ class WormSink:
     def __init__(
         self,
         path: Path,
-        operator_private_key: bytes,
+        signer: Signer,
         *,
         genesis_tip: str = GENESIS_PREV_HASH,
         max_records: int = 100_000,
         max_bytes: int = 50 * 1024 * 1024,
     ) -> None:
         self._path = Path(path)
-        self._private_key = operator_private_key
-        self._public_key = KeyPair.from_seed(operator_private_key).public_key
+        self._signer = signer
+        self._public_key = signer.public_key
+        self._algorithm = signer.algorithm
         self._genesis_tip = genesis_tip
         self._max_records = max_records
         self._max_bytes = max_bytes
@@ -273,12 +277,13 @@ class WormSink:
         prev_hash = self._chain_tip or self._genesis_tip
         event_dump = event.model_dump(mode="json")
         event_hash = _canonical_event_hash(seq=seq, prev_hash=prev_hash, event=event_dump)
-        signature = sign(event_hash.encode("utf-8"), self._private_key).hex()
+        signature = self._signer.sign(event_hash.encode("utf-8")).hex()
         record = {
             "seq": seq,
             "event": event_dump,
             "prev_hash": prev_hash,
             "event_hash": event_hash,
+            "algorithm": self._algorithm,
             "signature": signature,
         }
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":")) + "\n"
@@ -408,13 +413,16 @@ def verify_chain(
     Streams records across all rotated segments + the active file (no
     all-in-RAM list), checking for each record:
     - ``event_hash`` recomputes from ``(seq, prev_hash, event)`` (AU-9 links),
-    - the Ed25519 ``signature`` verifies against ``public_key`` (AU-10),
+    - the ``signature`` verifies against ``public_key`` under the record's
+      ``algorithm`` (Ed25519 or ECDSA-P256; AU-10 non-repudiation),
     - ``seq`` is contiguous from 0 (no gap / mid-deletion),
     - ``prev_hash`` chains to the previous record's ``event_hash``,
     - the first record's ``prev_hash`` equals the expected genesis tip.
 
     Returns False on any violation. This is the read path used by
-    ``arc store verify`` and by store-ingest tamper flagging.
+    ``arc store verify`` and by store-ingest tamper flagging. Records written
+    before SPEC-037 carry no ``algorithm`` field and are Ed25519 by definition,
+    so the field defaults to ``ed25519`` (existing chains verify unchanged).
     """
     prev_hash = genesis_tip
     expected_seq = 0
@@ -433,7 +441,8 @@ def verify_chain(
                 sig = bytes.fromhex(record.get("signature", ""))
             except ValueError:
                 return False
-            if not verify(event_hash.encode("utf-8"), sig, public_key):
+            algorithm = record.get("algorithm", ED25519)
+            if not verify_signature(algorithm, event_hash.encode("utf-8"), sig, public_key):
                 return False
             prev_hash = event_hash
             expected_seq += 1

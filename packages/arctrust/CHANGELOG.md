@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+SPEC-037: the `Signer` seam — asymmetric signing with pluggable, out-of-process key custody, plus a generalised FIPS gate. Additive: Ed25519 stays the default everywhere; existing DIDs, WORM chains, and operator keys are unchanged.
+
+### Added
+- `arctrust.signer` — `Signer` Protocol (`public_key`, `algorithm`, `sign`); `InProcessSigner` (Ed25519 via PyNaCl, ECDSA-P256 via PyCA `cryptography`); `VaultSigner` that signs BY REFERENCE through a `VaultTransit` boundary so the seed never enters the process (REQ-006, closes the SPEC-053 in-process-seed residual); reference `FileNotaryTransit` (out-of-process notary subprocess) for dev/CI; `SignerConfig` + `build_signer` (fail-closed — `vault_transit` with no transit client is an error, never an in-process fallback); `verify_signature` (algorithm-dispatched, never raises).
+- `arctrust.fips` — one generalised FIPS gate for signing AND encryption: `fips_backend_active`, `algorithm_is_fips_approved` (`ecdsa-p256`/`aes-256-gcm` approved; `ed25519` rejected under FIPS since Arc's is libsodium), `assert_fips_if_required` (raises `ArcTrustFipsError` fail-closed at federal), `ArcTrustFipsError`.
+- `OperatorKey.into_signer(algorithm)` — adapt the on-disk operator key into an in-process `Signer`.
+- `cryptography>=46.0.7` dependency (ECDSA-P256 + the FIPS backend probe).
+
+### Changed
+- **`WormSink.__init__` takes `signer: Signer` instead of `operator_private_key: bytes`** — the raw-seed constructor path is deleted. Records now carry `algorithm`; `verify_chain` dispatches per record (defaults to `ed25519` for pre-SPEC-037 records, so existing chains verify unchanged). `verify_chain`'s public-key call shape is unchanged (REQ-003).
+
 ## [0.7.0] - 2026-07-06
 
 SPEC-035: forbidden-composition enforcement goes live in the policy engine, plus operator-signed approval tokens.

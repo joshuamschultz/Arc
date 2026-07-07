@@ -17,7 +17,11 @@ from arctrust import AgentIdentity
 
 from arcagent.modules.messaging import _bootstrap, _runtime
 from arcagent.modules.messaging.tools import create_messaging_tools
-from tests.unit.modules.messaging.conftest import make_config_dict, make_peer_entity
+from tests.unit.modules.messaging.conftest import (
+    make_config_dict,
+    make_operator_signer,
+    make_peer_entity,
+)
 
 
 def _find_tool(tools: list, name: str):
@@ -48,6 +52,7 @@ async def messaging_tools(tmp_path: Path) -> AsyncIterator[tuple[list, object]]:
         team_root=team_root,
         agent_name="tool_tester",
         identity=identity,
+        operator_signer=make_operator_signer(),
     )
     st = _runtime.state()
     # Register the agent itself so it can send and appears in the roster.

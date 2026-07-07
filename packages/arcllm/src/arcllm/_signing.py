@@ -1,32 +1,25 @@
-"""Request signing — HMAC-SHA256 default, ECDSA P-256 optional."""
+"""Request signing — asymmetric attestation via arctrust's ``Signer``.
+
+Outbound-request attestation is NON-REPUDIABLE (AU-10): the signature verifies
+with the public key alone, so a verifier never holds signing material. The
+primitive lives in arctrust (Ed25519 default, ECDSA-P256 for the FIPS/federal
+path); arcllm only decides *what* to sign (:func:`canonical_payload`) and
+consumes the seam — it defines no signing primitive of its own (SPEC-037
+REQ-001, boundary).
+"""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import os
-from typing import Any, Protocol
+from typing import Any
+
+from arctrust.signer import ECDSA_P256, ED25519, InProcessSigner, Signer
 
 from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import Message, Tool
 
-
-class RequestSigner(Protocol):
-    """Protocol for request signing backends."""
-
-    def sign(self, payload: bytes) -> str: ...
-
-
-class HmacSigner:
-    """HMAC-SHA256 request signer using stdlib."""
-
-    def __init__(self, key: bytes) -> None:
-        self._key = key
-
-    def sign(self, payload: bytes) -> str:
-        """Return hex-encoded HMAC-SHA256 signature."""
-        return hmac.new(self._key, payload, hashlib.sha256).hexdigest()
+_SEED_BYTES = 32
 
 
 def canonical_payload(
@@ -46,31 +39,40 @@ def canonical_payload(
     return json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def create_signer(algorithm: str, signing_key_env: str) -> RequestSigner:
-    """Factory: create signer from algorithm name and env var.
+def _decode_seed(value: str) -> bytes:
+    """Decode a signing-key env value into a 32-byte Ed25519/ECDSA seed.
+
+    The env var holds a hex-encoded 32-byte seed — the same shape a vault or
+    KMS export uses. Symmetric secrets are no longer accepted.
+    """
+    try:
+        seed = bytes.fromhex(value)
+    except ValueError as e:
+        raise ArcLLMConfigError(
+            "signing key must be a hex-encoded 32-byte seed for asymmetric signing"
+        ) from e
+    if len(seed) != _SEED_BYTES:
+        raise ArcLLMConfigError(
+            f"signing key must decode to {_SEED_BYTES} bytes, got {len(seed)}"
+        )
+    return seed
+
+
+def create_signer(algorithm: str, signing_key_env: str) -> Signer:
+    """Factory: build an arctrust :class:`Signer` from algorithm + env seed.
 
     Raises:
-        ArcLLMConfigError: On missing env var, unsupported algorithm,
-            or missing optional dependency.
+        ArcLLMConfigError: On missing env var or an unsupported (e.g. symmetric)
+            algorithm. Only asymmetric ``ed25519`` / ``ecdsa-p256`` are valid.
     """
     key_value = os.environ.get(signing_key_env)
     if key_value is None:
         raise ArcLLMConfigError(f"Signing key environment variable '{signing_key_env}' not set")
 
-    if algorithm == "hmac-sha256":
-        return HmacSigner(key=key_value.encode("utf-8"))
+    if algorithm not in (ED25519, ECDSA_P256):
+        raise ArcLLMConfigError(
+            f"Unsupported signing algorithm: '{algorithm}'. "
+            f"Supported: '{ED25519}', '{ECDSA_P256}' (asymmetric only — HMAC is removed)"
+        )
 
-    if algorithm == "ecdsa-p256":
-        try:
-            import cryptography  # noqa: F401
-        except ImportError as e:
-            raise ArcLLMConfigError(
-                f"signing_algorithm='{algorithm}' requires arcllm[signing] "
-                "(pip install arcllm[signing])"
-            ) from e
-        # ECDSA implementation would go here once cryptography is available
-        raise ArcLLMConfigError("ECDSA signing is available but not yet fully implemented")
-
-    raise ArcLLMConfigError(
-        f"Unsupported signing algorithm: '{algorithm}'. Supported: 'hmac-sha256', 'ecdsa-p256'"
-    )
+    return InProcessSigner(_decode_seed(key_value), algorithm)

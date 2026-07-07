@@ -78,16 +78,17 @@ def _create_otlp_exporter(config: dict[str, Any]) -> Any:
             **tls_kwargs,
         )
 
-    # HTTP protocol
+    # HTTP protocol. Aliased so its type never collides with the gRPC exporter
+    # name above when both optional exporters happen to be installed.
     try:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
+            OTLPSpanExporter as HTTPOTLPSpanExporter,
         )
     except ImportError as e:
         raise ArcLLMConfigError(
             "OTLP HTTP exporter not installed. Run: pip install arcllm[otel]"
         ) from e
-    return OTLPSpanExporter(
+    return HTTPOTLPSpanExporter(
         endpoint=endpoint,
         headers=headers or None,
         timeout=timeout_ms // 1000,

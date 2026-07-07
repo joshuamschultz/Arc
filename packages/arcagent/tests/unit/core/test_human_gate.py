@@ -11,6 +11,7 @@ import asyncio
 
 import pytest
 from arctrust.policy import PolicyContext, ToolCall, verify_approval
+from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
 from arcagent.tools.human_gate import ApprovalRequest, HumanGate, HumanGateConfig
@@ -18,8 +19,8 @@ from arcagent.tools.human_gate import ApprovalRequest, HumanGate, HumanGateConfi
 _TRIFECTA = frozenset({"private_data", "external_comms", "untrusted_input"})
 
 
-def _operator_seed() -> bytes:
-    return bytes(SigningKey.generate())
+def _operator_signer() -> InProcessSigner:
+    return InProcessSigner(bytes(SigningKey.generate()))
 
 
 def _call(agent_did: str = "did:arc:example:org:agent:abc") -> ToolCall:
@@ -37,7 +38,7 @@ def _call(agent_did: str = "did:arc:example:org:agent:abc") -> ToolCall:
 class TestHumanGate:
     async def test_fail_closed_when_no_channel(self) -> None:
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did="did:arc:example:org:agent:abc",
             tier="federal",
         )
@@ -46,7 +47,7 @@ class TestHumanGate:
     async def test_operator_grant_is_not_self_approval(self) -> None:
         agent_did = "did:arc:example:org:agent:abc"
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did=agent_did,
             tier="personal",
             config=HumanGateConfig(auto_approve=[_TRIFECTA]),
@@ -63,7 +64,7 @@ class TestHumanGate:
         # the agent's own key can never satisfy the gate.
         agent_did = "did:arc:example:org:agent:abc"
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did=agent_did,
             tier="personal",
             config=HumanGateConfig(auto_approve=[_TRIFECTA]),
@@ -76,7 +77,7 @@ class TestHumanGate:
 
     async def test_federal_never_auto_approves(self) -> None:
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did="did:arc:example:org:agent:abc",
             tier="federal",
             config=HumanGateConfig(auto_approve=[_TRIFECTA]),
@@ -90,11 +91,11 @@ class TestHumanGate:
         async def deny(_req: ApprovalRequest) -> bool:
             return False
 
-        seed = _operator_seed()
+        signer = _operator_signer()
         agent_did = "did:arc:example:org:agent:abc"
-        approving = HumanGate(operator_seed=seed, agent_did=agent_did, tier="enterprise",
+        approving = HumanGate(operator_signer=signer, agent_did=agent_did, tier="enterprise",
                               channel=approve)
-        denying = HumanGate(operator_seed=seed, agent_did=agent_did, tier="enterprise",
+        denying = HumanGate(operator_signer=signer, agent_did=agent_did, tier="enterprise",
                             channel=deny)
         assert await approving.request(_call(), legs=_TRIFECTA) is not None
         assert await denying.request(_call(), legs=_TRIFECTA) is None
@@ -105,7 +106,7 @@ class TestHumanGate:
             return True
 
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did="did:arc:example:org:agent:abc",
             tier="enterprise",
             config=HumanGateConfig(timeout_seconds=0.05),
@@ -115,9 +116,9 @@ class TestHumanGate:
 
     async def test_grant_binds_to_the_one_call(self) -> None:
         # REQ-015: a grant for one call does not validate a different call.
-        seed = _operator_seed()
+        signer = _operator_signer()
         agent_did = "did:arc:example:org:agent:abc"
-        gate = HumanGate(operator_seed=seed, agent_did=agent_did, tier="personal",
+        gate = HumanGate(operator_signer=signer, agent_did=agent_did, tier="personal",
                          config=HumanGateConfig(auto_approve=[_TRIFECTA]))
         call_a = _call(agent_did)
         call_b = call_a.model_copy(update={"arguments": {"url": "https://different"}})
@@ -139,7 +140,7 @@ class TestAutoApproveExactMatch:
     async def test_two_leg_entry_does_not_auto_approve_full_trifecta(self) -> None:
         two_legs = frozenset({"private_data", "external_comms"})
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did="did:arc:example:org:agent:abc",
             tier="personal",
             config=HumanGateConfig(auto_approve=[two_legs]),
@@ -149,7 +150,7 @@ class TestAutoApproveExactMatch:
 
     async def test_exact_entry_auto_approves(self) -> None:
         gate = HumanGate(
-            operator_seed=_operator_seed(),
+            operator_signer=_operator_signer(),
             agent_did="did:arc:example:org:agent:abc",
             tier="personal",
             config=HumanGateConfig(auto_approve=[_TRIFECTA]),

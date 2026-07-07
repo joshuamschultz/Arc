@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from arctrust.keypair import generate_keypair
+from arctrust.signer import InProcessSigner
 
 from arcagent.modules.skill_improver._runtime import _build_worm_sink
 
@@ -26,7 +27,7 @@ def _workspace(tmp_path: Path) -> Path:
 def test_worm_store_is_outside_workspace(tmp_path: Path) -> None:
     ws = _workspace(tmp_path)
     key = generate_keypair().private_key
-    sink = _build_worm_sink(ws, key, MagicMock())
+    sink = _build_worm_sink(ws, InProcessSigner(key), MagicMock())
     assert sink is not None
     try:
         chain = Path(sink._path)
@@ -46,7 +47,7 @@ def test_tampered_chain_emits_alert_at_load(tmp_path: Path) -> None:
 
     # Seed a real, valid chain with two records, then release the flock.
     chain = ws.parent / ".audit" / "skill_improver.worm"
-    seed = WormSink(chain, key)
+    seed = WormSink(chain, InProcessSigner(key))
     for i in range(2):
         seed.write(
             AuditEvent(
@@ -64,7 +65,7 @@ def test_tampered_chain_emits_alert_at_load(tmp_path: Path) -> None:
     lines[0] = lines[0].replace("skill-0", "skill-X")
     chain.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    reopened = _build_worm_sink(ws, key, telemetry)
+    reopened = _build_worm_sink(ws, InProcessSigner(key), telemetry)
     if reopened is not None:
         reopened.close()
     assert telemetry.audit_event.called

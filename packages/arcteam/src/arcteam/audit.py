@@ -1,15 +1,22 @@
-"""Tamper-evident audit logger with chained HMACs for ArcTeam messaging."""
+"""Tamper-evident audit logger with a chained asymmetric signature per record.
+
+Each record is signed with an arctrust :class:`~arctrust.signer.Signer` over
+``prev_signature || canonical(record)`` — a per-record Ed25519 (or ECDSA-P256)
+signature, NOT a symmetric HMAC. This is non-repudiable (AU-10): the verifier
+holds only the operator public key, so it can prove a record's origin without
+ever possessing signing material (the HMAC scheme could not — the verifier held
+the same secret it would need to forge). arcteam owns *what* to sign and *when*;
+the primitive lives in arctrust (SPEC-037 REQ-002, boundary).
+"""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
-import os
-import secrets
 from datetime import UTC, datetime
 from typing import Any
+
+from arctrust.signer import Signer, verify_signature
 
 from arcteam.storage import StorageBackend
 from arcteam.types import AuditRecord
@@ -22,42 +29,47 @@ AUDIT_STREAM_KEY = "audit"
 # Batch size for chunked chain verification (limits memory per iteration)
 _VERIFY_BATCH_SIZE = 1000
 
-# Fields excluded from HMAC computation (not part of audit content)
-_HMAC_EXCLUDE = frozenset({"hmac_sha256", "seq"})
+# Fields excluded from the signed payload: the signature triad (set after
+# signing) and the transport ``seq`` mirror. ``audit_seq`` stays IN the payload
+# so record reordering is detectable.
+_SIGN_EXCLUDE = frozenset({"signature", "public_key", "algorithm", "key_ref", "seq"})
 
 
-def _compute_record_hmac(record_dict: dict[str, Any], prev_hmac: str, hmac_key: bytes) -> str:
-    """Compute chained HMAC: prev_hmac + json.dumps(record_without_hmac, sort_keys=True)."""
-    clean = {k: v for k, v in record_dict.items() if k not in _HMAC_EXCLUDE}
-    payload = prev_hmac + json.dumps(clean, sort_keys=True)
-    return hmac.new(hmac_key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+def _canonical_record(record_dict: dict[str, Any]) -> str:
+    """Deterministic JSON over the audit-content fields (signature excluded)."""
+    clean = {k: v for k, v in record_dict.items() if k not in _SIGN_EXCLUDE}
+    return json.dumps(clean, sort_keys=True)
+
+
+def _signing_input(record_dict: dict[str, Any], prev_signature: str) -> bytes:
+    """The chained signing input: ``prev_signature || canonical(record)``."""
+    return (prev_signature + _canonical_record(record_dict)).encode("utf-8")
 
 
 class AuditLogger:
-    """Append-only audit trail with chained HMACs. NIST 800-53 AU-2/AU-9."""
+    """Append-only audit trail with a chained per-record signature. AU-2/AU-9/AU-10.
 
-    def __init__(self, backend: StorageBackend, hmac_key: bytes | None = None) -> None:
+    Args:
+        backend: Durable stream storage.
+        signer: The arctrust :class:`~arctrust.signer.Signer` (in-process or
+            vault-transit) that signs each record. Verification uses this
+            signer's public key — a forger cannot re-sign the chain under a key
+            it substitutes, because ``verify_chain`` checks against the known
+            operator public key, not the key embedded in a record.
+    """
+
+    def __init__(self, backend: StorageBackend, signer: Signer) -> None:
         self._backend = backend
+        self._signer = signer
         self._seq = 0
-        self._prev_hmac = ""
-
-        if hmac_key:
-            self._hmac_key = hmac_key
-        else:
-            # Generate a random session key instead of a hardcoded fallback.
-            # Chain will only verify within the same session unless a persistent key is provided.
-            self._hmac_key = secrets.token_bytes(32)
-            logger.warning(
-                "HMAC key not provided; using random session key. "
-                "Set ARCTEAM_HMAC_KEY for persistent chain verification."
-            )
+        self._prev_signature = ""
 
     async def _load_last(self) -> None:
-        """Load the last audit seq and HMAC via O(1) read_last."""
+        """Load the last audit seq and signature via O(1) read_last."""
         last = await self._backend.read_last(AUDIT_COLLECTION, AUDIT_STREAM_KEY)
         if last:
             self._seq = last.get("audit_seq", 0)
-            self._prev_hmac = last.get("hmac_sha256", "")
+            self._prev_signature = last.get("signature", "")
 
     async def initialize(self) -> None:
         """Load state from existing audit stream. Call once after construction."""
@@ -74,7 +86,7 @@ class AuditLogger:
         target_id: str | None = None,
         classification: str = "UNCLASSIFIED",
     ) -> None:
-        """Append an audit record with chained HMAC."""
+        """Append an audit record with a chained asymmetric signature."""
         self._seq += 1
         record = AuditRecord(
             audit_seq=self._seq,
@@ -89,18 +101,28 @@ class AuditLogger:
             detail=detail,
         )
         record_dict = record.model_dump()
-        record_dict["hmac_sha256"] = _compute_record_hmac(
-            record_dict, self._prev_hmac, self._hmac_key
-        )
-        self._prev_hmac = record_dict["hmac_sha256"]
+        signature = self._signer.sign(
+            _signing_input(record_dict, self._prev_signature)
+        ).hex()
+        record_dict["signature"] = signature
+        record_dict["public_key"] = self._signer.public_key.hex()
+        record_dict["algorithm"] = self._signer.algorithm
+        self._prev_signature = signature
         # Add seq for read_stream compatibility (mirrors audit_seq)
         record_dict["seq"] = self._seq
 
         await self._backend.append(AUDIT_COLLECTION, AUDIT_STREAM_KEY, record_dict)
 
     async def verify_chain(self) -> tuple[bool, int]:
-        """Verify HMAC chain integrity in batches. Returns (valid, last_verified_seq)."""
-        prev_hmac = ""
+        """Verify the signature chain in batches. Returns (valid, last_verified_seq).
+
+        Each record's signature is checked against the KNOWN operator public key
+        (this logger's signer), never the key embedded in the record — so a
+        record re-signed under a substituted key fails verification.
+        """
+        public_key = self._signer.public_key
+        algorithm = self._signer.algorithm
+        prev_signature = ""
         last_verified = 0
         expected_seq = 1
         after_seq = 0
@@ -121,14 +143,20 @@ class AuditLogger:
                     logger.warning("Audit sequence gap: expected %d, got %d", expected_seq, seq)
                     return False, last_verified
 
-                stored_hmac = record.get("hmac_sha256", "")
-                expected_hmac = _compute_record_hmac(record, prev_hmac, self._hmac_key)
-
-                if not hmac.compare_digest(stored_hmac, expected_hmac):
-                    logger.warning("Audit HMAC mismatch at seq %d", seq)
+                stored_sig = record.get("signature", "")
+                try:
+                    signature = bytes.fromhex(stored_sig)
+                except ValueError:
+                    logger.warning("Audit signature not hex at seq %d", seq)
                     return False, last_verified
 
-                prev_hmac = stored_hmac
+                if not verify_signature(
+                    algorithm, _signing_input(record, prev_signature), signature, public_key
+                ):
+                    logger.warning("Audit signature mismatch at seq %d", seq)
+                    return False, last_verified
+
+                prev_signature = stored_sig
                 last_verified = seq
                 expected_seq += 1
                 after_seq = seq
@@ -138,11 +166,3 @@ class AuditLogger:
                 break
 
         return True, last_verified
-
-    @staticmethod
-    def load_hmac_key(env_var: str = "ARCTEAM_HMAC_KEY") -> bytes | None:
-        """Load HMAC key from environment variable."""
-        key = os.environ.get(env_var)
-        if key:
-            return key.encode("utf-8")
-        return None

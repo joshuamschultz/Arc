@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcrun import Event
-from arctrust import AuditEvent, OperatorKey, WormSink, emit, sign
+from arctrust import AuditEvent, Signer, WormSink, emit
 
 from arcagent.core.config import ArcAgentConfig
 from arcagent.core.module_bus import ModuleBus
@@ -39,7 +39,7 @@ def _canonical_checkpoint_bytes(checkpoint: dict[str, Any]) -> bytes:
 
 def build_checkpoint_sink(
     agent_root: Path,
-    operator_key: OperatorKey,
+    signer: Signer,
     *,
     actor_did: str,
     witness: WitnessAnchor | None = None,
@@ -68,18 +68,18 @@ def build_checkpoint_sink(
     chain = agent_root / ".audit" / "trace-checkpoint.worm"
 
     def _sink(checkpoint: dict[str, Any]) -> None:
-        _anchor_local(chain, operator_key, actor_did, checkpoint)
-        _submit_witness(witness, operator_key, checkpoint, federal=federal)
+        _anchor_local(chain, signer, actor_did, checkpoint)
+        _submit_witness(witness, signer, checkpoint, federal=federal)
 
     return _sink
 
 
 def _anchor_local(
-    chain: Path, operator_key: OperatorKey, actor_did: str, checkpoint: dict[str, Any]
+    chain: Path, signer: Signer, actor_did: str, checkpoint: dict[str, Any]
 ) -> None:
     """Append the operator-signed checkpoint to the local WORM chain (fail-open)."""
     try:
-        worm = WormSink(chain, operator_key.seed)
+        worm = WormSink(chain, signer)
         try:
             emit(
                 AuditEvent(
@@ -99,7 +99,7 @@ def _anchor_local(
 
 def _submit_witness(
     witness: WitnessAnchor | None,
-    operator_key: OperatorKey,
+    signer: Signer,
     checkpoint: dict[str, Any],
     *,
     federal: bool,
@@ -111,7 +111,7 @@ def _submit_witness(
     """
     if witness is None:
         return
-    signature = sign(_canonical_checkpoint_bytes(checkpoint), operator_key.seed)
+    signature = signer.sign(_canonical_checkpoint_bytes(checkpoint))
     try:
         witness.submit(checkpoint, signature)
     except Exception:
@@ -213,7 +213,7 @@ def ensure_model(
     config: ArcAgentConfig,
     workspace: Path,
     bus: ModuleBus | None,
-    operator_key: OperatorKey | None = None,
+    operator_signer: Signer | None = None,
     actor_did: str = "",
     witness: WitnessAnchor | None = None,
 ) -> tuple[Any, Any]:
@@ -225,9 +225,10 @@ def ensure_model(
     the workspace tool sandbox — the trace store wants the agent
     root, not the workspace subdirectory.
 
-    When an ``operator_key`` is supplied, the store's rotation checkpoints are
-    anchored in an operator-signed WORM chain (SPEC-053); at federal tier the
-    ``witness`` externally witnesses each head (REQ-009).
+    When an ``operator_signer`` is supplied, the store's rotation checkpoints
+    are anchored in an operator-signed WORM chain (SPEC-053) via the arctrust
+    ``Signer`` seam; at federal tier the ``witness`` externally witnesses each
+    head (REQ-009).
 
     Returns ``(model, trace_store)``. The caller is responsible for
     caching both — this helper is intentionally stateless so it can
@@ -239,12 +240,12 @@ def ensure_model(
     checkpoint_sink = (
         build_checkpoint_sink(
             agent_root,
-            operator_key,
+            operator_signer,
             actor_did=actor_did,
             witness=witness,
             federal=config.security.tier == "federal",
         )
-        if operator_key is not None
+        if operator_signer is not None
         else None
     )
     trace_store = JSONLTraceStore(agent_root, checkpoint_sink=checkpoint_sink)

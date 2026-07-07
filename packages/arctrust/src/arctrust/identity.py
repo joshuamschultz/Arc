@@ -55,7 +55,17 @@ def generate_did(verify_key: VerifyKey, *, org: str, agent_type: str) -> str:
     Returns:
         DID string in the form ``did:arc:{org}:{type}/{hash}``.
     """
-    key_hash = hashlib.sha256(bytes(verify_key)).hexdigest()[:8]
+    return did_from_public_key(bytes(verify_key), org=org, agent_type=agent_type)
+
+
+def did_from_public_key(public_key: bytes, *, org: str, agent_type: str) -> str:
+    """Derive a DID from raw public-key bytes (algorithm-agnostic).
+
+    Same fingerprint rule as :func:`generate_did` — ``sha256(public_key)[:8]`` —
+    but takes bytes so an ECDSA-P256 (DER) operator key derives a DID exactly
+    like an Ed25519 one (SPEC-037: the approval authority may sign with either).
+    """
+    key_hash = hashlib.sha256(public_key).hexdigest()[:8]
     return f"did:arc:{org}:{agent_type}/{key_hash}"
 
 
@@ -177,6 +187,16 @@ class AgentIdentity:
     def can_sign(self) -> bool:
         """Whether this identity has a private key for signing."""
         return self._signing_key is not None
+
+    @property
+    def algorithm(self) -> str:
+        """Signing algorithm — always Ed25519 for an agent identity.
+
+        Present so an :class:`AgentIdentity` satisfies the ``Signer`` /
+        approval-authority contract (public_key + algorithm + sign) uniformly
+        with :class:`arctrust.signer.VaultSigner` (SPEC-037).
+        """
+        return "ed25519"
 
     @property
     def signing_seed(self) -> bytes:

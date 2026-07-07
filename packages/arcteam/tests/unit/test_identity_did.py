@@ -8,6 +8,7 @@ by handle/URI — the `sender_unauthorized` DLQ bug is gone.
 from __future__ import annotations
 
 import pytest
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.messenger import MessagingService
@@ -19,7 +20,7 @@ from arcteam.types import Channel, Entity, EntityType, Message
 @pytest.fixture
 async def registry() -> EntityRegistry:
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"test-key")
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     return EntityRegistry(backend, audit)
 

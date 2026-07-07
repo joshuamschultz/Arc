@@ -52,43 +52,6 @@ def _import_crypto_primitives() -> tuple[Any, Any, Any]:
     return AESGCM, aes_key_wrap, aes_key_unwrap
 
 
-def fips_provider_active() -> bool:
-    """Return True when the loaded OpenSSL provider is FIPS-140-3-approved.
-
-    There is no public ``cryptography`` API for this (pyca/cryptography
-    #7722) — the vendored PyPI-wheel OpenSSL is never CMVP-validated. This
-    reads the internal backend flag, which reflects the FIPS status of
-    whichever OpenSSL build is actually loaded (a system OpenSSL swapped
-    in via ``CRYPTOGRAPHY_OPENSSL_NO_LEGACY``/build config is what
-    federal deployments must supply, per SDD Research Insights SC-13).
-    """
-    try:
-        from cryptography.hazmat.backends.openssl.backend import backend as _ossl_backend
-    except ImportError:
-        return False
-    return bool(getattr(_ossl_backend, "_fips_enabled", False))
-
-
-def assert_fips_provider_if_required(*, require_fips: bool) -> None:
-    """Fail-closed startup self-check for the federal tier (SC-13, D-438).
-
-    Args:
-        require_fips: When True, refuse to proceed unless the loaded
-            crypto provider is FIPS-140-3-approved. Personal/enterprise
-            tiers leave this False.
-
-    Raises:
-        ArcLLMConfigError: When ``require_fips`` is True and the provider
-            is not FIPS-approved.
-    """
-    if require_fips and not fips_provider_active():
-        raise ArcLLMConfigError(
-            "encryption.require_fips=true but the loaded cryptography/OpenSSL "
-            "provider is not FIPS-140-3-approved — refusing to seal trace "
-            "bodies under a non-validated crypto module (SC-13 fail-closed)"
-        )
-
-
 def decode_wrapping_key(secret: str) -> bytes:
     """Decode a resolved vault/env secret into 32 raw wrapping-key bytes.
 
@@ -211,9 +174,7 @@ def unseal(
 
 
 __all__ = [
-    "assert_fips_provider_if_required",
     "decode_wrapping_key",
-    "fips_provider_active",
     "seal",
     "unseal",
 ]

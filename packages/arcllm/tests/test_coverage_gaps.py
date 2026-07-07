@@ -73,21 +73,21 @@ def _make_inner_mock(**overrides: Any) -> MagicMock:
 
 
 class TestSigningEcdsaAvailable:
-    def test_ecdsa_raises_not_implemented_when_cryptography_available(self):
-        """Line 72: ECDSA branch when cryptography import succeeds."""
+    def test_ecdsa_signer_builds_and_verifies(self):
+        """ECDSA-P256 is fully implemented (the FIPS/federal path)."""
         import os
+
+        from arctrust.keypair import generate_keypair
+        from arctrust.signer import ECDSA_P256, verify_signature
 
         from arcllm._signing import create_signer
 
-        # Ensure cryptography can actually be imported; if not, skip gracefully
-        try:
-            import cryptography  # noqa: F401
-        except ImportError:
-            pytest.skip("cryptography package not installed")
-
-        with patch.dict(os.environ, {"TEST_SIGNING_KEY": "key"}):
-            with pytest.raises(ArcLLMConfigError, match="not yet fully implemented"):
-                create_signer("ecdsa-p256", "TEST_SIGNING_KEY")
+        seed_hex = generate_keypair().private_key.hex()
+        with patch.dict(os.environ, {"TEST_SIGNING_KEY": seed_hex}):
+            signer = create_signer("ecdsa-p256", "TEST_SIGNING_KEY")
+        message = b"federal-payload"
+        assert signer.algorithm == ECDSA_P256
+        assert verify_signature(ECDSA_P256, message, signer.sign(message), signer.public_key)
 
 
 # ---------------------------------------------------------------------------

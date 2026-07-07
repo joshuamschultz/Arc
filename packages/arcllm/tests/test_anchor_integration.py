@@ -28,6 +28,7 @@ from pathlib import Path
 
 from arctrust.audit import AuditEvent, WormSink, emit, read_verified_anchor
 from arctrust.keypair import generate_keypair
+from arctrust.signer import InProcessSigner
 
 from arcllm.trace_retention import verify_against_anchor
 from arcllm.trace_store import JSONLTraceStore, TraceRecord
@@ -53,7 +54,7 @@ class TestTraceCheckpointSignedAnchorIntegration:
     ) -> None:
         chain_path = tmp_path / "audit" / "chain.jsonl"
         kp = generate_keypair()
-        sink = WormSink(chain_path, kp.private_key)
+        sink = WormSink(chain_path, InProcessSigner(kp.private_key))
 
         def _anchor(checkpoint: dict[str, object]) -> None:
             emit(

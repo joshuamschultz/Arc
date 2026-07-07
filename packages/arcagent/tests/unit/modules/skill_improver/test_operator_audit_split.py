@@ -41,7 +41,7 @@ def test_audit_chain_uses_operator_key_skill_signing_uses_agent_did(tmp_path: Pa
             skill_registry=None,
             agent_name="a",
             identity=agent,
-            operator_key=operator,
+            operator_signer=operator.into_signer(),
         )
         st = _runtime.state()
 

@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from arctrust.audit import AuditEvent, NullSink, WormSink, emit, read_verified_anchor, verify_chain
-from arctrust.keypair import generate_keypair
+from arctrust.keypair import KeyPair, generate_keypair
+from arctrust.keypair import sign as _kp_sign
+from arctrust.signer import InProcessSigner
 
 # ---------------------------------------------------------------------------
 # AuditEvent schema
@@ -115,7 +117,7 @@ def _evt(i: int = 0) -> AuditEvent:
 class TestEmit:
     def test_emit_writes_to_worm(self, tmp_path: Path) -> None:
         kp = generate_keypair()
-        sink = WormSink(tmp_path / "audit.jsonl", kp.private_key)
+        sink = WormSink(tmp_path / "audit.jsonl", InProcessSigner(kp.private_key))
         emit(_evt(), sink)
         assert sink.verify_chain()
         assert sink.chain_tip != ""
@@ -142,14 +144,14 @@ class TestWormSink:
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
 
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         for i in range(5):
             sink.write(_evt(i))
         original_tip = sink.chain_tip
         del sink
 
         # Fresh instance over the same file restores the tip and verifies.
-        restored = WormSink(path, kp.private_key)
+        restored = WormSink(path, InProcessSigner(kp.private_key))
         assert restored.chain_tip == original_tip
         assert restored.verify_chain()
 
@@ -160,13 +162,13 @@ class TestWormSink:
 
     def test_empty_chain_verifies(self, tmp_path: Path) -> None:
         kp = generate_keypair()
-        sink = WormSink(tmp_path / "audit.jsonl", kp.private_key)
+        sink = WormSink(tmp_path / "audit.jsonl", InProcessSigner(kp.private_key))
         assert sink.verify_chain()
         assert sink.chain_tip == ""
 
     def test_intact_chain_verifies(self, tmp_path: Path) -> None:
         kp = generate_keypair()
-        sink = WormSink(tmp_path / "audit.jsonl", kp.private_key)
+        sink = WormSink(tmp_path / "audit.jsonl", InProcessSigner(kp.private_key))
         for i in range(8):
             sink.write(_evt(i))
         assert sink.verify_chain()
@@ -175,7 +177,7 @@ class TestWormSink:
         """AC-1.2 — mutating any persisted byte breaks verification."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         for i in range(3):
             sink.write(_evt(i))
 
@@ -191,7 +193,7 @@ class TestWormSink:
         """AC-1.3 / AC-1.6 — recomputed event_hash with an invalid signature fails."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         for i in range(3):
             sink.write(_evt(i))
 
@@ -219,7 +221,7 @@ class TestWormSink:
         """AC-1.6 — a valid hash link with an invalid signature fails verification."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         sink.write(_evt(0))
 
         lines = path.read_text().splitlines()
@@ -234,7 +236,7 @@ class TestWormSink:
         """AC-1.7 / C4 — removing a record creates a seq gap that verification catches."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         for i in range(4):
             sink.write(_evt(i))
 
@@ -247,7 +249,7 @@ class TestWormSink:
     def test_emit_worm_fail_open(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """AC-1.4 — a write IO error is swallowed; emit() never raises."""
         kp = generate_keypair()
-        sink = WormSink(tmp_path / "audit.jsonl", kp.private_key)
+        sink = WormSink(tmp_path / "audit.jsonl", InProcessSigner(kp.private_key))
 
         def boom(*_a: object, **_k: object) -> int:
             raise OSError("disk full")
@@ -259,7 +261,7 @@ class TestWormSink:
         """NFR-5 — durable WORM file is created 0600."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         sink.write(_evt())
         assert (path.stat().st_mode & 0o777) == 0o600
 
@@ -267,16 +269,16 @@ class TestWormSink:
         """C-2.11 — a second WormSink on the same active file is rejected (flock)."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        first = WormSink(path, kp.private_key)
+        first = WormSink(path, InProcessSigner(kp.private_key))
         first.write(_evt())
         with pytest.raises(Exception):  # noqa: B017 — contention → raise
-            WormSink(path, kp.private_key)
+            WormSink(path, InProcessSigner(kp.private_key))
 
     def test_torn_line_recovery_and_signed_record(self, tmp_path: Path) -> None:
         """C-2.11 — a torn final line is truncated and a signed recovery record appended."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         for i in range(3):
             sink.write(_evt(i))
         del sink
@@ -285,7 +287,7 @@ class TestWormSink:
         with path.open("a", encoding="utf-8") as fh:
             fh.write('{"seq": 3, "event": {"actor_did": "x"')  # torn, no newline
 
-        recovered = WormSink(path, kp.private_key)
+        recovered = WormSink(path, InProcessSigner(kp.private_key))
         assert recovered.verify_chain()
         # The recovery is explicit, not silent: a recovery record was appended.
         actions = [json.loads(line)["event"]["action"] for line in path.read_text().splitlines()]
@@ -295,7 +297,7 @@ class TestWormSink:
         """C-2.13 — head replacement is caught against the expected genesis tip."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         for i in range(3):
             sink.write(_evt(i))
 
@@ -312,7 +314,7 @@ class TestWormSink:
         """C-2.12 — rotation across segments preserves one verifiable chain."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key, max_records=5)
+        sink = WormSink(path, InProcessSigner(kp.private_key), max_records=5)
         for i in range(17):
             sink.write(_evt(i))
         # Rotation produced extra segment files alongside the active file.
@@ -321,7 +323,7 @@ class TestWormSink:
         assert sink.verify_chain()
         sink.close()
         # A fresh instance restores tip across segments and continues to verify.
-        assert WormSink(path, kp.private_key).verify_chain()
+        assert WormSink(path, InProcessSigner(kp.private_key)).verify_chain()
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +350,7 @@ class TestChainAnchor:
         """Two checkpoints emitted; the newest one's extra is returned."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         emit(_checkpoint_evt(1, "a" * 64), sink)
         emit(_checkpoint_evt(2, "b" * 64), sink)
 
@@ -362,7 +364,7 @@ class TestChainAnchor:
         """A mutated line fails verify_chain(), so no anchor can be trusted."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         emit(_checkpoint_evt(1, "a" * 64), sink)
 
         lines = path.read_text().splitlines()
@@ -376,7 +378,7 @@ class TestChainAnchor:
         """A verifiable chain with no matching action yields no anchor."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         emit(_evt(0), sink)  # action="tool.call" — not a checkpoint
 
         assert read_verified_anchor(path, kp.public_key) is None
@@ -385,7 +387,7 @@ class TestChainAnchor:
         """Non-checkpoint events interleaved with checkpoints are skipped."""
         path = tmp_path / "audit.jsonl"
         kp = generate_keypair()
-        sink = WormSink(path, kp.private_key)
+        sink = WormSink(path, InProcessSigner(kp.private_key))
         emit(_checkpoint_evt(1, "a" * 64), sink)
         emit(_evt(1), sink)
         emit(_checkpoint_evt(2, "c" * 64), sink)
@@ -417,7 +419,7 @@ class TestAuditAuthorityIndependence:
         agent = generate_keypair()  # a legitimate, distinct agent DID keypair
 
         chain = tmp_path / "audit" / "policy.worm"
-        sink = WormSink(chain, operator.seed)
+        sink = WormSink(chain, InProcessSigner(operator.seed))
         for i in range(3):
             sink.write(
                 AuditEvent(
@@ -432,3 +434,52 @@ class TestAuditAuthorityIndependence:
         assert verify_chain(chain, operator.public_key) is True
         assert verify_chain(chain, agent.public_key) is False
         assert operator.public_key != agent.public_key
+
+
+class TestOutOfProcessAuditCustody:
+    """SPEC-037 REQ-006 — the WORM chain signs by reference under vault-transit;
+    the operator seed NEVER materialises in the agent process."""
+
+    def test_chain_signed_by_reference_seed_never_materialises(
+        self, tmp_path: Path
+    ) -> None:
+        from arctrust.signer import VaultSigner
+
+        operator = generate_keypair()
+
+        class _SeedGuardTransit:
+            """Signs by reference; raises if anyone reaches for the raw seed."""
+
+            def __init__(self, seed: bytes) -> None:
+                self._kp = KeyPair.from_seed(seed)
+                self.sign_calls = 0
+
+            def sign(self, key_ref: str, message: bytes) -> bytes:
+                self.sign_calls += 1
+                return _kp_sign(message, self._kp.private_key)
+
+            def public_key(self, key_ref: str) -> bytes:
+                return self._kp.public_key
+
+            @property
+            def seed(self) -> bytes:  # pragma: no cover - must never be reached
+                raise AssertionError("WORM sink reached for the operator seed (REQ-006)")
+
+        transit = _SeedGuardTransit(operator.private_key)
+        chain = tmp_path / "audit" / "policy.worm"
+        sink = WormSink(chain, VaultSigner(transit, key_ref="operator"))
+        for i in range(3):
+            sink.write(
+                AuditEvent(
+                    actor_did="did:arc:test:exec/aabbccdd",
+                    action="policy.evaluate",
+                    target=f"tool-{i}",
+                    outcome="allow",
+                )
+            )
+        sink.close()
+
+        # The chain verifies under the operator public key the transit exposed,
+        # and every record was signed via the out-of-process boundary.
+        assert verify_chain(chain, operator.public_key) is True
+        assert transit.sign_calls == 3

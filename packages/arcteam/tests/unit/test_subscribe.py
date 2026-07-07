@@ -13,6 +13,7 @@ import asyncio
 
 import pytest
 from arctrust import generate_keypair
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner
@@ -29,7 +30,7 @@ DID_A2 = "did:arc:local:agent/a2"
 
 async def _signed_service() -> MessagingService:
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"k" * 32)
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     kp = generate_keypair()
@@ -185,7 +186,7 @@ async def test_subscribe_pushes_over_real_nats() -> None:
 
     backend = await NatsBackend.connect(f"nats://127.0.0.1:{port}")
     try:
-        audit = AuditLogger(backend, hmac_key=b"k" * 32)
+        audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
         await audit.initialize()
         registry = EntityRegistry(backend, audit)
         kp = generate_keypair()

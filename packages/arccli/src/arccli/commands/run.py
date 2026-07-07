@@ -73,10 +73,12 @@ def _worm_sink(identity: Any) -> Any | None:
     try:
         from arctrust import WormSink
 
-        from arccli.commands.operator import load_operator_key
+        from arccli.commands.operator import resolve_operator_signer
 
         _DIRECT_RUN_AUDIT.parent.mkdir(parents=True, exist_ok=True)
-        return WormSink(_DIRECT_RUN_AUDIT, load_operator_key().seed)
+        # Config-resolved operator signer (custody + algorithm) — never a bare
+        # Ed25519 default (SPEC-037 F3).
+        return WormSink(_DIRECT_RUN_AUDIT, resolve_operator_signer())
     except Exception:  # reason: audit is best-effort — never break the run (AU-5)
         return None
 

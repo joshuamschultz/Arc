@@ -68,7 +68,7 @@ def test_no_witness_below_federal(tmp_path: Path) -> None:
 
 def _anchor_head(agent_root: Path, operator: OperatorKey, head: str) -> dict[str, Any]:
     checkpoint = {"head_hash": head, "record_count": 1, "files": ["t.jsonl"]}
-    sink = build_checkpoint_sink(agent_root, operator, actor_did="did:arc:test:exec/a")
+    sink = build_checkpoint_sink(agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a")
     sink(checkpoint)
     return checkpoint
 
@@ -78,6 +78,7 @@ def test_witness_divergence_detected_at_federal_fails_closed(tmp_path: Path) -> 
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     operator = OperatorKey.generate()
     agent._operator_key = operator
+    agent._operator_signer = operator.into_signer()
     agent._witness = agent._build_witness()
     # A local operator-signed anchor exists, but the witness medium is empty —
     # exactly the state after a rollback + re-anchor by the operator-key holder.
@@ -91,6 +92,7 @@ def test_witness_consistency_passes_when_head_witnessed(tmp_path: Path) -> None:
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     operator = OperatorKey.generate()
     agent._operator_key = operator
+    agent._operator_signer = operator.into_signer()
     witness = agent._build_witness()
     agent._witness = witness
     checkpoint = _anchor_head(agent._workspace.parent, operator, "e" * 64)
@@ -103,6 +105,7 @@ def test_fresh_federal_startup_has_no_false_divergence(tmp_path: Path) -> None:
     cfg = _config(tmp_path, tier="federal")
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     agent._operator_key = OperatorKey.generate()
+    agent._operator_signer = agent._operator_key.into_signer()
     agent._witness = agent._build_witness()
     # Nothing anchored yet — a clean bootstrap must not fail closed.
     agent._verify_witness_consistency()
@@ -126,7 +129,7 @@ def test_federal_witness_submit_failure_fails_closed(tmp_path: Path) -> None:
     agent_root.mkdir()
     operator = OperatorKey.generate()
     sink = build_checkpoint_sink(
-        agent_root, operator, actor_did="did:arc:test:exec/a",
+        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a",
         witness=_FailingWitness(), federal=True,
     )
     with pytest.raises(OSError, match="witness medium unavailable"):
@@ -138,7 +141,7 @@ def test_nonfederal_witness_submit_failure_is_swallowed(tmp_path: Path) -> None:
     agent_root.mkdir()
     operator = OperatorKey.generate()
     sink = build_checkpoint_sink(
-        agent_root, operator, actor_did="did:arc:test:exec/a",
+        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a",
         witness=_FailingWitness(), federal=False,
     )
     sink({"head_hash": "0" * 64, "record_count": 1, "files": []})  # no raise (AU-5)
@@ -178,35 +181,38 @@ def _fake_agent_for_modules(tmp_path: Path, module_name: str, captured: dict[str
     cfg = _config(tmp_path)
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     agent._operator_key = OperatorKey.generate()
+    agent._operator_signer = agent._operator_key.into_signer()
     agent._identity = None
     agent._telemetry = None
     agent._bus = None
     agent._config.modules = {module_name: types.SimpleNamespace(enabled=True, config={})}  # type: ignore[assignment]
 
-    def _fake_configure(*, operator_key: Any = None, config: Any = None, **_: Any) -> None:
-        captured["operator_key"] = operator_key
+    def _fake_configure(*, operator_signer: Any = None, config: Any = None, **_: Any) -> None:
+        captured["operator_signer"] = operator_signer
 
     fake_mod = types.SimpleNamespace(configure=_fake_configure)
     return agent, fake_mod
 
 
-def test_operator_key_not_offered_to_generic_module(tmp_path: Path, monkeypatch: Any) -> None:
+def test_operator_signer_not_offered_to_generic_module(tmp_path: Path, monkeypatch: Any) -> None:
     from arcagent.core import agent_lifecycle
 
     captured: dict[str, Any] = {}
     agent, fake_mod = _fake_agent_for_modules(tmp_path, "evil", captured)
     monkeypatch.setattr(agent_lifecycle.importlib, "import_module", lambda _name: fake_mod)
     agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
-    # A module NOT on the WORM-sink allowlist must never be handed the seed,
-    # even if its configure() declares an operator_key parameter.
-    assert captured["operator_key"] is None
+    # A module NOT on the WORM-sink allowlist must never be handed signing
+    # authority, even if its configure() declares an operator_signer parameter.
+    assert captured["operator_signer"] is None
 
 
-def test_operator_key_offered_to_worm_sink_module(tmp_path: Path, monkeypatch: Any) -> None:
+def test_operator_signer_offered_to_worm_sink_module(tmp_path: Path, monkeypatch: Any) -> None:
     from arcagent.core import agent_lifecycle
 
     captured: dict[str, Any] = {}
     agent, fake_mod = _fake_agent_for_modules(tmp_path, "skill_improver", captured)
     monkeypatch.setattr(agent_lifecycle.importlib, "import_module", lambda _name: fake_mod)
     agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
-    assert captured["operator_key"] is agent._operator_key
+    # WORM-sink modules receive the config-resolved operator SIGNER (seedless
+    # under vault_transit), never the raw key/seed.
+    assert captured["operator_signer"] is agent._operator_signer

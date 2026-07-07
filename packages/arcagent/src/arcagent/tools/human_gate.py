@@ -26,9 +26,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from arctrust.identity import AgentIdentity, generate_did
+from arctrust.identity import did_from_public_key
 from arctrust.policy import ApprovalGrant, ToolCall, sign_approval
-from nacl.signing import SigningKey
+from arctrust.signer import Signer
 
 _logger = logging.getLogger("arcagent.human_gate")
 
@@ -65,9 +65,11 @@ class HumanGate:
 
     Parameters
     ----------
-    operator_seed:
-        The deployment's 32-byte operator Ed25519 seed (SPEC-053 audit/approval
-        authority). Used to mint approval tokens — NOT the agent key (ASI09).
+    operator_signer:
+        The deployment's operator :class:`~arctrust.signer.Signer` (SPEC-053
+        audit/approval authority — in-process or vault_transit). Mints approval
+        tokens — NOT the agent key (ASI09). Under vault_transit the operator seed
+        never enters this process; approvals sign by reference (SPEC-037 F1).
     agent_did:
         The subject agent's DID (audit labeling + self-approval guard).
     tier:
@@ -84,7 +86,7 @@ class HumanGate:
     def __init__(
         self,
         *,
-        operator_seed: bytes,
+        operator_signer: Signer,
         agent_did: str,
         tier: str,
         config: HumanGateConfig | None = None,
@@ -96,7 +98,7 @@ class HumanGate:
         self._config = config or HumanGateConfig()
         self._audit_sink = audit_sink
         self._channel = channel
-        self._operator = _operator_identity(operator_seed)
+        self._operator = _OperatorApprovalAuthority(operator_signer)
 
     async def request(self, call: ToolCall, *, legs: frozenset[str]) -> ApprovalGrant | None:
         """Obtain a one-shot approval for ``call`` or return None (fail closed).
@@ -177,17 +179,35 @@ class HumanGate:
             _logger.exception("Human-gate audit sink raised; continuing")
 
 
-def _operator_identity(seed: bytes) -> AgentIdentity:
-    """Build the operator's signing identity from its seed (approval authority).
+@dataclass(frozen=True)
+class _OperatorApprovalAuthority:
+    """Adapt an operator :class:`~arctrust.signer.Signer` to the approval authority.
 
-    The DID is derived from the operator verify key, so
+    Satisfies ``arctrust.policy.ApprovalAuthority`` (did + public_key + algorithm
+    + sign). The DID is derived from the operator public key so
     ``did_matches_pubkey`` holds inside ``verify_approval`` and the approver DID
-    is provably distinct from any agent DID (ASI09 self-approval guard).
+    is provably distinct from any agent DID (ASI09 self-approval guard) — for
+    Ed25519 (in-process) and ECDSA-P256 (vault_transit/federal) alike.
     """
-    signing_key = SigningKey(seed)
-    public_key = bytes(signing_key.verify_key)
-    did = generate_did(signing_key.verify_key, org="operator", agent_type="approver")
-    return AgentIdentity(did, public_key, _signing_key=signing_key)
+
+    _signer: Signer
+
+    @property
+    def did(self) -> str:
+        return did_from_public_key(
+            self._signer.public_key, org="operator", agent_type="approver"
+        )
+
+    @property
+    def public_key(self) -> bytes:
+        return self._signer.public_key
+
+    @property
+    def algorithm(self) -> str:
+        return self._signer.algorithm
+
+    def sign(self, message: bytes) -> bytes:
+        return self._signer.sign(message)
 
 
 __all__ = [

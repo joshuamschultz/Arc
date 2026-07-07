@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arctrust"
-version = "0.7.0"
+version = "0.8.0"
 description = "Identity, keypair, audit, and policy primitives for Arc — leaf shared library"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
     "pynacl>=1.5,<2",
     "pydantic>=2.0,<3",
+    "cryptography>=46.0.7",
 ]
 
 [project.urls]

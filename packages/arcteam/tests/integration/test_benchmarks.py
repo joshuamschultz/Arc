@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from arctrust.signer import InProcessSigner
 
 from arcteam.audit import AuditLogger
 from arcteam.messenger import MessagingService
@@ -17,7 +18,7 @@ from arcteam.types import Channel, Entity, EntityType, Message
 async def svc() -> MessagingService:
     """Full service stack with MemoryBackend for benchmarking."""
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"bench-key")
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     svc = MessagingService(backend, registry, audit)

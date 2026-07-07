@@ -44,7 +44,7 @@ def test_rollback_past_witnessed_anchor_is_detected(tmp_path: Path) -> None:
     assert honest_cp["head_hash"] == "bbb"
 
     # 2. Operator-anchors the honest head in the WORM chain + external witness.
-    sink = build_checkpoint_sink(agent_root, operator, actor_did="did:arc:test:exec/aa")
+    sink = build_checkpoint_sink(agent_root, operator.into_signer(), actor_did="did:arc:test:exec/aa")
     sink(honest_cp)
     anchored = read_verified_anchor(chain, operator.public_key)
     assert anchored is not None and anchored["head_hash"] == "bbb"
