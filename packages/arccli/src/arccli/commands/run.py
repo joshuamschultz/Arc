@@ -61,14 +61,22 @@ def _machine_isolation() -> tuple[str, str | None]:
 
 
 def _worm_sink(identity: Any) -> Any | None:
-    """Build the operator's tamper-evident WORM audit sink, or None if unavailable."""
+    """Build the operator-signed tamper-evident WORM audit sink (SPEC-053).
+
+    The chain is signed by the deployment OPERATOR key (the audit authority),
+    never the caller's DID seed — the audited subject must not be its own audit
+    authority. ``identity`` still gates whether a direct run is attributed at
+    all. Best-effort (AU-5): audit degrades to disabled, never breaks the run.
+    """
     if not identity.can_sign:
         return None
     try:
         from arctrust import WormSink
 
+        from arccli.commands.operator import load_operator_key
+
         _DIRECT_RUN_AUDIT.parent.mkdir(parents=True, exist_ok=True)
-        return WormSink(_DIRECT_RUN_AUDIT, identity.signing_seed)
+        return WormSink(_DIRECT_RUN_AUDIT, load_operator_key().seed)
     except Exception:  # reason: audit is best-effort — never break the run (AU-5)
         return None
 

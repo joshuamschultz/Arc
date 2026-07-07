@@ -11,6 +11,7 @@ from arcagent.core.config import (
     EvalConfig,
     IdentityConfig,
     LLMConfig,
+    SecurityConfig,
     SessionConfig,
     TelemetryConfig,
     ToolConfig,
@@ -460,3 +461,41 @@ class TestUIConfig:
         )
         with pytest.raises(ConfigError):
             load_config(config)
+
+
+class TestSecurityConfigOperatorKey:
+    """SPEC-053 T-06 — operator-key custody config (REQ-004/005)."""
+
+    def test_operator_key_defaults(self) -> None:
+        sec = SecurityConfig()
+        assert sec.operator_key_dir == "~/.arc/operator"
+        assert sec.operator_vault_path == ""
+        assert sec.witness_mode == "offline"
+        assert sec.witness_log_url == ""
+
+    def test_operator_fields_round_trip_through_toml(self, tmp_path: Path) -> None:
+        toml = tmp_path / "arcagent.toml"
+        toml.write_text(
+            textwrap.dedent(
+                """
+                [agent]
+                name = "a"
+
+                [llm]
+                model = "test/model"
+
+                [security]
+                tier = "federal"
+                operator_key_dir = "/etc/arc/operator"
+                operator_vault_path = "secret/arc/operator"
+                witness_mode = "transparency_log"
+                witness_log_url = "https://rekor.example.gov"
+                """
+            ),
+            encoding="utf-8",
+        )
+        cfg = load_config(toml)
+        assert cfg.security.operator_key_dir == "/etc/arc/operator"
+        assert cfg.security.operator_vault_path == "secret/arc/operator"
+        assert cfg.security.witness_mode == "transparency_log"
+        assert cfg.security.witness_log_url == "https://rekor.example.gov"

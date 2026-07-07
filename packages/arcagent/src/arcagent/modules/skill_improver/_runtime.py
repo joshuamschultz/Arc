@@ -71,6 +71,7 @@ def configure(
     skill_registry: Any = None,
     agent_name: str = "",
     identity: Any = None,
+    operator_key: Any = None,
 ) -> None:
     """Bind module state. Called once at agent startup.
 
@@ -80,16 +81,22 @@ def configure(
     the TraceCollector once a registry is available.
 
     ``identity`` (arctrust ``AgentIdentity``) supplies the DID key used to
-    sign mutated skills (SPEC-033 D3) and to sign the tamper-evident WORM
-    audit chain (D4). When it can sign, the candidate store is wired to a
-    ``WormSink`` in a store separate from skill code (AU-9(2)).
+    sign mutated SKILLS (SPEC-033 D3) — an agent-authored artifact provenance
+    attestation.
+
+    ``operator_key`` (arctrust ``OperatorKey``) signs the tamper-evident WORM
+    AUDIT chain (SPEC-053). These are deliberately different authorities: the
+    audited subject (the agent) must not hold the audit authority, so the audit
+    chain is signed by the operator key, never the agent DID seed. The chain
+    lives in a store separate from skill code (AU-9(2)).
     """
     global _state
     cfg = SkillImproverConfig(**(config or {}))
     ec = eval_config or EvalConfig()
     ws = workspace.resolve()
     signer_did, signing_key = _resolve_signer(identity)
-    worm_sink = _build_worm_sink(ws, signing_key, telemetry)
+    operator_seed = operator_key.seed if operator_key is not None else None
+    worm_sink = _build_worm_sink(ws, operator_seed, telemetry)
     _state = _State(
         config=cfg,
         eval_config=ec,
@@ -116,19 +123,21 @@ def _resolve_signer(identity: Any) -> tuple[str | None, bytes | None]:
         return None, None
 
 
-def _build_worm_sink(workspace: Path, signing_key: bytes | None, telemetry: Any) -> Any:
+def _build_worm_sink(workspace: Path, operator_seed: bytes | None, telemetry: Any) -> Any:
     """Build a WORM audit sink in an operator-owned store (AU-9(2), SI-7(7)).
 
-    The chain lives in ``<agent_root>/.audit`` — beside the workspace, not
-    inside it — so the agent's workspace-confined file tools cannot truncate or
-    forge their own audit record. On load a pre-existing chain is integrity-
-    checked; a failure emits a ``skill_improver.audit.chain_verify_failed`` alert
-    (SI-7(7)) so tampering is surfaced rather than silently trusted.
+    Signed with the OPERATOR seed (SPEC-053), never the agent DID — the audited
+    subject must not be its own audit authority. The chain lives in
+    ``<agent_root>/.audit`` — beside the workspace, not inside it — so the
+    agent's workspace-confined file tools cannot truncate or forge their own
+    audit record. On load a pre-existing chain is integrity-checked; a failure
+    emits a ``skill_improver.audit.chain_verify_failed`` alert (SI-7(7)) so
+    tampering is surfaced rather than silently trusted.
 
     Fail-open (AU-5): if the sink cannot be opened (e.g. a lock is already
     held), audit degrades to disabled rather than breaking module startup.
     """
-    if signing_key is None:
+    if operator_seed is None:
         return None
     try:
         from arctrust import WormSink
@@ -136,7 +145,7 @@ def _build_worm_sink(workspace: Path, signing_key: bytes | None, telemetry: Any)
         # agent root = the workspace's parent; operator-owned, agent cannot write here.
         chain = workspace.parent / ".audit" / "skill_improver.worm"
         preexisting = chain.exists()
-        sink = WormSink(chain, signing_key)
+        sink = WormSink(chain, operator_seed)
     except Exception:  # reason: fail-open — never break startup on audit setup
         _logger.warning("skill_improver WORM audit sink unavailable; audit disabled")
         return None
