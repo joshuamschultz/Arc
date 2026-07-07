@@ -81,17 +81,29 @@ class ToolEndEvent(StreamEvent):
 class TurnEndEvent(StreamEvent):
     """Emitted exactly once, as the final event in the stream.
 
+    Carries the terminal outcome so a one-shot consumer knows WHY the run
+    ended, not just the final text (SPEC-040 F1): ``completion_payload`` /
+    ``completion_tool`` mirror ``LoopResult`` (a terminator tool sets both;
+    a synthesized budget/turn breach sets only the payload; a clean end
+    leaves both None), and ``tokens_used`` carries the observed token totals.
+
     Attributes:
         final_text: The complete response text from the loop.
         turns: Number of turns executed.
         tool_calls_made: Number of tool calls during the run.
         cost_usd: Estimated cost in USD.
+        tokens_used: Observed token totals (``{"input"/"output"/"total": n}``).
+        completion_payload: Structured terminator arguments, or None.
+        completion_tool: Name of the terminator tool, or None.
     """
 
     final_text: str
     turns: int = 0
     tool_calls_made: int = 0
     cost_usd: float = 0.0
+    tokens_used: dict[str, Any] = field(default_factory=dict)
+    completion_payload: dict[str, Any] | None = None
+    completion_tool: str | None = None
 
 
 @dataclass
@@ -101,14 +113,19 @@ class RunResult:
     The streaming entry (``agent.run``) is the single way to drive an agent;
     one-shot callers (CLI, scheduler, module callbacks) that only want the
     final answer drain the stream through ``collect()`` to get this. Carries
-    exactly what the terminal ``TurnEndEvent`` reports — no loop internals
-    (``tokens_used``/``strategy_used`` stay inside ``LoopResult``).
+    exactly what the terminal ``TurnEndEvent`` reports — including the terminal
+    outcome (``completion_payload`` / ``completion_tool``) and observed
+    ``tokens_used`` so a consumer can tell success from a policy DENY, tool
+    error, or budget breach (SPEC-040 F1).
     """
 
     content: str
     turns: int = 0
     tool_calls_made: int = 0
     cost_usd: float = 0.0
+    tokens_used: dict[str, Any] = field(default_factory=dict)
+    completion_payload: dict[str, Any] | None = None
+    completion_tool: str | None = None
 
 
 async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
@@ -132,6 +149,9 @@ async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
             turns=turn_end.turns,
             tool_calls_made=turn_end.tool_calls_made,
             cost_usd=turn_end.cost_usd,
+            tokens_used=turn_end.tokens_used,
+            completion_payload=turn_end.completion_payload,
+            completion_tool=turn_end.completion_tool,
         )
     return RunResult(content="".join(token_text))
 
@@ -339,6 +359,9 @@ async def _stream_generator(
         turns=loop_result.turns,
         tool_calls_made=loop_result.tool_calls_made,
         cost_usd=loop_result.cost_usd,
+        tokens_used=dict(loop_result.tokens_used),
+        completion_payload=loop_result.completion_payload,
+        completion_tool=loop_result.completion_tool,
     )
     yield turn_end
 
