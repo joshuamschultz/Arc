@@ -158,6 +158,8 @@ async def run_stream(
     store_raw_bodies: bool = False,
     audit_sink: Any | None = None,
     ui_reporter: Any | None = None,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -191,6 +193,11 @@ async def run_stream(
         ui_reporter: Optional duck-typed UIEventReporter. When provided,
             emit_run_event() is called for stream lifecycle and tool events.
             No arcui import occurs — caller injects; if None, zero overhead.
+        max_tokens: Optional per-run token ceiling forwarded to the loop's
+            circuit-breaker (SPEC-038 LLM10). When set, the loop halts before
+            starting a turn that would cross it.
+        max_cost_usd: Optional per-run cost ceiling forwarded likewise
+            (best-effort secondary — priced, non-streaming responses only).
 
     Returns:
         An async iterator of StreamEvent objects.
@@ -267,6 +274,8 @@ async def run_stream(
                 tool_choice=tool_choice,
                 actor_did=actor_did,
                 store_raw_bodies=store_raw_bodies,
+                max_tokens=max_tokens,
+                max_cost_usd=max_cost_usd,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue

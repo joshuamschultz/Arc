@@ -40,6 +40,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from arctrust.classification import Classification, dominates
 from arctrust.identity import AgentIdentity, did_matches_pubkey
 from arctrust.keypair import verify as _ed25519_verify
 from arctrust.signer import verify_signature
@@ -159,6 +160,22 @@ class ProviderUsage(BaseModel):
     requests_in_window: int
 
 
+class ClearanceContext(BaseModel):
+    """Caller clearance + resource classification for a call — filled by arcagent.
+
+    The two labels + direction the ``ClassificationLayer`` needs to enforce
+    Bell-LaPadula "no read up" at the tool surface (SPEC-038 REQ-023). arctrust
+    owns the ladder and the predicate; arcagent binds the caller clearance to
+    identity and resolves the resource classification (per-tool config label
+    and/or the touched memory entity).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    caller_clearance: Classification
+    resource_classification: Classification
+
+
 class TeamScope(BaseModel):
     """Team role + delegation grant for the calling agent — filled by arcteam.
 
@@ -210,6 +227,14 @@ class PolicyContext(BaseModel):
     provider_usage: ProviderUsage | None = None
     team_scope: TeamScope | None = None
     tool_runtime: ToolRuntimeStatus | None = None
+    clearance: ClearanceContext | None = None
+    """Caller clearance + resource classification for the no-read-up check.
+
+    Defaults ``None`` so existing constructions stay valid; populated by
+    arcagent at dispatch. The ClassificationLayer fails closed above personal
+    when this is absent under a configured pipeline (SPEC-038 REQ-023).
+    """
+
     session_capabilities: frozenset[str] | None = None
     """Trifecta legs accumulated from prior allowed calls this session.
 
@@ -514,6 +539,63 @@ class GlobalLayer:
         return Decision.allow(input_hash=_hash_call(call), evaluated_at_us=now_us)
 
 
+class ClassificationLayer:
+    """No-read-up gate at the tool surface — a pure predicate (SPEC-038 REQ-023).
+
+    Realizes Bell-LaPadula "simple security" over the ladder arctrust owns: a
+    call is denied when the resource classification is not dominated by the
+    caller's clearance. Both labels arrive on ``PolicyContext.clearance``
+    (filled by arcagent); this layer computes nothing and reads no I/O.
+
+    Configured-gate semantics mirror ProviderLayer/SandboxLayer: when a call
+    carries clearance labels the layer always enforces no-read-up. When the
+    labels are ABSENT the layer is a no-op ALLOW unless the deployment turned on
+    ``enforced`` classification (federal fail-closed, REQ-026), in which case a
+    missing clearance context denies — relaxable to allow only at personal
+    (NIST 800-53 AC-4). The default (``enforced=False``) never bricks a blind
+    pipeline.
+    """
+
+    name = "classification"
+
+    def __init__(self, *, enforced: bool = False, relaxable: bool = False) -> None:
+        self._enforced = enforced
+        self._relaxable = relaxable
+
+    async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
+        now_us = _now_us()
+        input_hash = _hash_call(call)
+
+        cc = ctx.clearance
+        if cc is None:
+            if self._enforced and not self._relaxable:
+                return Decision.deny(
+                    layer=self.name,
+                    rule_id="classification.state_missing",
+                    reason=(
+                        "Classification is enforced but no clearance context is "
+                        "present; fail closed on the missing labels (SPEC-038)."
+                    ),
+                    input_hash=input_hash,
+                    evaluated_at_us=now_us,
+                )
+            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+        if not dominates(cc.caller_clearance, cc.resource_classification):
+            return Decision.deny(
+                layer=self.name,
+                rule_id="classification.read_up",
+                reason=(
+                    f"Caller clearance {cc.caller_clearance.name} does not dominate "
+                    f"resource classification {cc.resource_classification.name} (no read up)."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
+
+        return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+
+
 class ProviderLimit(BaseModel):
     """Per-provider budget + rate ceiling — a deployment-policy floor (LLM10)."""
 
@@ -544,8 +626,10 @@ class ProviderLayer:
         self,
         *,
         limits_by_provider: dict[str, ProviderLimit] | None = None,
+        relaxable: bool = False,
     ) -> None:
         self._limits = limits_by_provider or {}
+        self._relaxable = relaxable
 
     async def evaluate(self, call: ToolCall, ctx: PolicyContext) -> Decision:
         now_us = _now_us()
@@ -569,7 +653,21 @@ class ProviderLayer:
 
         limit = self._limits.get(usage.provider)
         if limit is None:
-            return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+            # SPEC-038 REQ-011 — an unknown provider label under an active limit
+            # regime is a budget-dodge-by-label. Fail closed (deny) at
+            # enterprise/federal; personal (relaxable) allows + audits.
+            if self._relaxable:
+                return Decision.allow(input_hash=input_hash, evaluated_at_us=now_us)
+            return Decision.deny(
+                layer=self.name,
+                rule_id="provider.unknown_label",
+                reason=(
+                    f"Provider {usage.provider!r} is not in the configured budget "
+                    "map; fail closed on the unrecognized label."
+                ),
+                input_hash=input_hash,
+                evaluated_at_us=now_us,
+            )
 
         if usage.tokens_used >= limit.max_tokens or usage.cost_used >= limit.max_cost:
             return Decision.deny(
@@ -783,12 +881,12 @@ class TierConfig(BaseModel):
             "federal": cls(
                 tier="federal",
                 max_parallel_tools=4,  # R-025: FIPS cap
-                layer_names=("global", "provider", "agent", "team", "sandbox"),
+                layer_names=("global", "classification", "provider", "agent", "team", "sandbox"),
             ),
             "enterprise": cls(
                 tier="enterprise",
                 max_parallel_tools=10,
-                layer_names=("global", "provider", "agent", "sandbox"),
+                layer_names=("global", "classification", "provider", "agent", "sandbox"),
             ),
             "personal": cls(
                 tier="personal",
@@ -1046,6 +1144,7 @@ def build_pipeline(
     agent_allowlists: dict[str, set[str]] | None = None,
     provider_limits: dict[str, ProviderLimit] | None = None,
     team_roles: dict[str, frozenset[str]] | None = None,
+    classification_enforced: bool = False,
     forbidden_compositions: list[frozenset[str]] | None = None,
     cache_ttl_seconds: float = 30.0,
     max_bundle_age_seconds: float | None = None,
@@ -1093,11 +1192,23 @@ def build_pipeline(
         deny_rules=global_deny_rules or {},
         forbidden_compositions=forbidden_compositions or [],
     )
+    # SPEC-038 F5 — tier is stringency, not a gate (ADR-019). Federal forces
+    # classification enforcement to a non-relaxable fail-closed floor regardless
+    # of the operator flag; personal is the only relaxable tier (unknown provider
+    # label / missing clearance ALLOW+audit). Enterprise honors the operator flag
+    # and denies unknown labels. This is the single authority for the floor — it
+    # never depends on an operator remembering to set the flag.
+    relaxable = tier == "personal"
+    enforced = classification_enforced or tier == "federal"
     # Provider/Sandbox are built only for enterprise/federal. Each is a no-op
     # when its policy is unconfigured (empty limits / no runtime state) and only
     # fails closed once a configured policy meets missing telemetry (SPEC-034).
-    provider = ProviderLayer(limits_by_provider=provider_limits or {})
+    provider = ProviderLayer(limits_by_provider=provider_limits or {}, relaxable=relaxable)
     sandbox = SandboxLayer()
+    # No-read-up gate (SPEC-038). Like Provider/Sandbox it is a no-op when its
+    # clearance context is absent at personal (not wired there) and fails closed
+    # only at enterprise/federal once a call carries clearance labels.
+    classification = ClassificationLayer(enforced=enforced, relaxable=relaxable)
     layers: list[PolicyLayer]
 
     if tier == "personal":
@@ -1106,6 +1217,7 @@ def build_pipeline(
         layers = [
             identity,
             g,
+            classification,
             provider,
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
             sandbox,
@@ -1114,6 +1226,7 @@ def build_pipeline(
         layers = [
             identity,
             g,
+            classification,
             provider,
             AgentLayer(allowlist_by_agent=agent_allowlists or {}),
             TeamLayer(roles=team_roles or {}),
@@ -1163,6 +1276,8 @@ __all__ = [
     "ApprovalAuthority",
     "ApprovalGrant",
     "AuditSink",
+    "ClassificationLayer",
+    "ClearanceContext",
     "Decision",
     "GlobalLayer",
     "IdentityLayer",

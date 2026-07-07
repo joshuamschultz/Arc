@@ -51,7 +51,7 @@ Trust store:
     invalidate_cache    — Flush the in-process TTL cache
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from arctrust.artifact import (
     ArtifactSignature,
@@ -68,6 +68,11 @@ from arctrust.audit import (
     read_verified_anchor,
     verify_chain,
     worm_policy_sink,
+)
+from arctrust.classification import (
+    Classification,
+    dominates,
+    parse_classification,
 )
 from arctrust.fips import (
     ArcTrustFipsError,
@@ -86,6 +91,8 @@ from arctrust.identity import (
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
 from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
 from arctrust.policy import (
+    ClassificationLayer,
+    ClearanceContext,
     Decision,
     PolicyContext,
     PolicyLayer,
@@ -131,6 +138,9 @@ __all__ = [
     "AuditEvent",
     "AuditSink",
     "ChildIdentity",
+    "Classification",
+    "ClassificationLayer",
+    "ClearanceContext",
     "Decision",
     "FileNotaryTransit",
     "InProcessSigner",
@@ -160,6 +170,7 @@ __all__ = [
     "build_signer",
     "content_sha256",
     "derive_child_identity",
+    "dominates",
     "emit",
     "fips_backend_active",
     "generate_did",
@@ -167,6 +178,7 @@ __all__ = [
     "invalidate_cache",
     "load_issuer_pubkey",
     "load_operator_pubkey",
+    "parse_classification",
     "parse_did",
     "read_verified_anchor",
     "sign",

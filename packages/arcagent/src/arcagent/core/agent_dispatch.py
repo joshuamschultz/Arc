@@ -29,6 +29,7 @@ from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import SessionManager
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
+from arcagent.tools._policy_fill import resolve_run_budget
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -172,6 +173,9 @@ async def dispatch_stream(
     )
     history = [Message(**m) for m in session.get_messages()]
     transform = agent._context.transform_context if agent._context else None
+    # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
+    # circuit-breaker (LLM10) is reachable through the real streaming path.
+    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
 
     final_text = ""
     # Bind the session id for this dispatch so the capability ledger (and the
@@ -191,6 +195,8 @@ async def dispatch_stream(
                 tool_choice=tool_choice,
                 actor_did=agent._identity.did if agent._identity else None,
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
+                max_tokens=max_tokens,
+                max_cost_usd=max_cost_usd,
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
@@ -243,6 +249,7 @@ async def start_tracked_run(
     )
     history = [Message(**m) for m in session.get_messages()]
     transform = agent._context.transform_context if agent._context else None
+    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
 
     # Bind the session id before the loop task is created so the background run
     # (and its tool dispatches) inherit it in their copied context (SPEC-035).
@@ -258,6 +265,8 @@ async def start_tracked_run(
             transform_context=transform,
             actor_did=agent._identity.did if agent._identity else None,
             store_raw_bodies=agent._config.telemetry.capture_tool_io,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
         )
     finally:
         reset_session_id(session_token)

@@ -19,6 +19,8 @@ from __future__ import annotations
 import contextvars
 from collections.abc import Iterable
 
+from arctrust.classification import Classification
+
 # The three legs of the lethal trifecta (REQ-011).
 PRIVATE_DATA = "private_data"
 EXTERNAL_COMMS = "external_comms"
@@ -44,6 +46,10 @@ TAG_TO_LEGS: dict[str, frozenset[str]] = {
     # web/browser reads egress AND ingest untrusted content (both legs)
     "web": frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT}),
     "browser": frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT}),
+    # SPEC-038 REQ-030 — the browser_navigate tool declares this tag; without
+    # a map entry it produced no leg (dormant). Navigation both egresses and
+    # ingests untrusted page content.
+    "browser_navigate": frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT}),
     "extract": frozenset({UNTRUSTED_INPUT}),
     # a shell ingests untrusted content (command output, fetched files, curl
     # responses). NOT external_comms: at ent/fed bash runs --network=none, so
@@ -93,6 +99,10 @@ class SessionCapabilityLedger:
 
     def __init__(self) -> None:
         self._by_session: dict[str, set[str]] = {}
+        # SPEC-038 F2 — the highest classification of data READ this session,
+        # keyed by session id. The no-exfil egress gate reads this so a SECRET
+        # read this session bars an UNCLASSIFIED-cleared destination.
+        self._read_class_by_session: dict[str, Classification] = {}
 
     def snapshot(self, session_id: str) -> frozenset[str]:
         """Return the accumulated legs for a session (empty if none yet)."""
@@ -104,9 +114,24 @@ class SessionCapabilityLedger:
             return
         self._by_session.setdefault(session_id, set()).update(legs)
 
+    def record_read(self, session_id: str, classification: Classification) -> None:
+        """Raise the session's max-read classification (monotone, SPEC-038 F2).
+
+        Called when an ALLOWED tool touches labeled data; the running maximum is
+        the data classification the egress gate must protect against exfil.
+        """
+        current = self._read_class_by_session.get(session_id, Classification.UNCLASSIFIED)
+        if classification > current:
+            self._read_class_by_session[session_id] = classification
+
+    def max_read_classification(self, session_id: str) -> Classification:
+        """Return the highest classification read this session (default UNCLASSIFIED)."""
+        return self._read_class_by_session.get(session_id, Classification.UNCLASSIFIED)
+
     def reset(self, session_id: str) -> None:
         """Drop a session's accumulated legs (e.g. on session close)."""
         self._by_session.pop(session_id, None)
+        self._read_class_by_session.pop(session_id, None)
 
 
 __all__ = [

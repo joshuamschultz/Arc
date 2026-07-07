@@ -26,6 +26,7 @@ from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
+from arcagent.tools._egress_build import build_egress_proxy
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -90,8 +91,14 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         tier=agent._config.security.tier,
     )
 
+    # Build the single per-agent egress proxy up front so module runtimes (e.g.
+    # telegram) receive it and route their outbound comms through it (REQ-031).
+    egress_proxy = build_egress_proxy(
+        config=agent._config, ledger=agent._capability_ledger, telemetry=telemetry
+    )
+
     # Configure each enabled module's runtime via signature dispatch.
-    configure_module_runtimes(agent, workspace)
+    configure_module_runtimes(agent, workspace, egress_proxy=egress_proxy)
 
     # Scan roots per SPEC-021 R-001 precedence:
     # 1. builtins + builtin skills (always)
@@ -161,7 +168,6 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         require_signature=tier in ("enterprise", "federal"),
         trusted_public_key=trusted_pubkey,
     )
-    egress_proxy = _build_egress_proxy(agent, telemetry)
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,
@@ -186,47 +192,9 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     await agent._capability_loader.start_lifecycles()
 
 
-async def _httpx_send(url: str, method: str, **kwargs: Any) -> Any:
-    """Default egress transport — a real async HTTP request via httpx.
-
-    Injected into the per-agent :class:`EgressProxy` so external-comms tools
-    reach the network only through the allowlist-gated, audited proxy.
-    """
-    import httpx
-
-    async with httpx.AsyncClient() as client:
-        return await client.request(method, url, **kwargs)
-
-
-def _build_egress_proxy(agent: ArcAgent, telemetry: Any) -> Any:
-    """Instantiate the single per-agent EgressProxy (SPEC-035 REQ-013).
-
-    Deny-by-default origin allowlist from ``tools.policy.egress_allowlist``; every
-    allow/deny is audited, and a successful ``egress.allowed`` records the
-    ``external_comms`` trifecta leg into the session ledger so egress counts
-    toward the lethal-trifecta union even without a tag-declared network tool.
-    """
-    from arcagent.core.session_internal.capability_ledger import (
-        EXTERNAL_COMMS,
-        current_session_id,
-    )
-    from arcagent.tools._egress import EgressProxy
-
-    ledger = agent._capability_ledger
-
-    def _egress_audit(event: str, payload: dict[str, Any]) -> None:
-        if telemetry is not None:
-            telemetry.audit_event(event, payload)
-        if event == "egress.allowed" and ledger is not None:
-            # Key the external-comms leg to the session that made the request so
-            # it composes with that session's reads/untrusted-input, not a global bucket.
-            ledger.record(current_session_id(), frozenset({EXTERNAL_COMMS}))
-
-    allowlist = set(agent._config.tools.policy.egress_allowlist)
-    return EgressProxy(allowlist=allowlist, send_fn=_httpx_send, audit_sink=_egress_audit)
-
-
-def configure_module_runtimes(agent: ArcAgent, workspace: Path) -> None:
+def configure_module_runtimes(
+    agent: ArcAgent, workspace: Path, *, egress_proxy: Any = None
+) -> None:
     """Call ``_runtime.configure(...)`` on every enabled module.
 
     Each module's configure() declares the kwargs it needs; we
@@ -263,6 +231,7 @@ def configure_module_runtimes(agent: ArcAgent, workspace: Path) -> None:
             "bus": agent._bus,
             "agent_did": identity.did if identity else "",
             "identity": identity,
+            "egress_proxy": egress_proxy,
         }
         # SPEC-053/037 — the operator authority is NOT broadcast to every module.
         # Only modules that actually build a WORM audit sink receive the resolved

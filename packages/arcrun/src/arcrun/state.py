@@ -55,8 +55,6 @@ class RunState:
     depth: int = 0
     max_depth: int = 3
     parent_run_id: str = ""
-    token_budget: int | None = None
-    cost_budget: float | None = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     steer_queue: asyncio.Queue[Injection] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     followup_queue: asyncio.Queue[Injection] = field(
@@ -81,5 +79,8 @@ class RunState:
     # loop. Surfaces on LoopResult so callers can distinguish multiple
     # terminator tools without re-scanning the event chain.
     completion_tool: str | None = None
-    # Hard caps from config; enforced at the top of each turn.
+    # Hard caps from config; enforced at the top of each turn. Token is the
+    # primary ceiling (present on both streaming and non-streaming paths);
+    # cost is the best-effort secondary (non-streaming, priced models only).
     max_cost_usd: float | None = None
+    max_tokens: int | None = None

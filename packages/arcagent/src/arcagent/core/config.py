@@ -57,6 +57,17 @@ class LLMConfig(BaseModel):
     modules: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
+class BudgetConfig(BaseModel):
+    """SPEC-038 REQ-001/004/005 — per-run token/cost/request ceilings (LLM10)."""
+
+    # Tier-resolved at dispatch: personal relaxable/unbounded-when-unset;
+    # enterprise/federal treat a set ceiling as a non-relaxable floor. ``None`` =
+    # unbounded. Feeds both the arcrun circuit-breaker and the ProviderLayer.
+    max_tokens: int | None = None
+    max_cost_usd: float | None = None
+    max_requests: int | None = None
+
+
 class UIConfig(BaseModel):
     """ArcUI display metadata — read by arcui's Fleet/Team Chat surfaces.
 
@@ -108,6 +119,13 @@ class ToolConfig(BaseModel):
     # SPEC-035 REQ-013 — origins external-comms tools may reach through the
     # EgressProxy (deny-by-default). ``scheme://host[:port]`` entries.
     egress_allowlist: list[str] = []
+    # SPEC-038 REQ-023 — per-tool resource classification label (no-read-up).
+    # Tool name → classification string (e.g. ``{"read_secret" = "SECRET"}``).
+    # Unlabeled tools default to UNCLASSIFIED (no gating).
+    classifications: dict[str, str] = {}
+    # SPEC-038 REQ-025 — per-origin destination clearance (no-exfil). Allowlisted
+    # origin → clearance string. Missing → UNCLASSIFIED (external = lowest).
+    egress_clearances: dict[str, str] = {}
 
 
 class MCPServerEntry(BaseModel):
@@ -329,6 +347,13 @@ class SecurityConfig(BaseModel):
         ),
     )
 
+    # SPEC-038 REQ-021 — the agent's max clearance, bound to identity at
+    # construction (operator-authored; no agent tool can raise it). REQ-026 —
+    # classification_enforced fails the ClassificationLayer closed on a missing
+    # clearance context (federal posture); off by default so it never bricks.
+    clearance: str = "UNCLASSIFIED"
+    classification_enforced: bool = False
+
     # SPEC-021 — TOFU approvals for self-executing agent code.
     validators: ValidatorsConfig = Field(default_factory=ValidatorsConfig)
 
@@ -528,6 +553,7 @@ class ArcAgentConfig(BaseModel):
     capabilities: CapabilitiesConfig = CapabilitiesConfig()
     spawn: SpawnConfig = SpawnConfig()
     ui: UIConfig = UIConfig()
+    budget: BudgetConfig = BudgetConfig()
 
 
 _ENV_PREFIX = "ARCAGENT_"

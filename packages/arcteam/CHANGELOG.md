@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-06
+
+SPEC-038 sub-scope C: the messenger enforces Bell-LaPadula "no write down", and the duplicate classification ladder is consolidated into arctrust.
+
+### Added
+- `Message.classification` (defaults `UNCLASSIFIED`); `Entity.clearance` / `Channel.clearance`.
+- `MessagingService.send` refuses delivery when the recipient/channel clearance does not dominate the message classification (`message.classification_refused` + audit + DLQ). `MessagingService(strict_classification=...)` fails closed on an unresolvable recipient clearance / unknown label at federal.
+
+### Changed
+- `arcteam.memory` now imports the canonical `Classification` from arctrust; the duplicate IntEnum in `arcteam.memory.types` is deleted (single lattice, no divergence).
+
 ## [0.4.0] - 2026-07-06
 
 SPEC-037: the audit chain's chained HMAC is replaced by a per-record asymmetric signature.

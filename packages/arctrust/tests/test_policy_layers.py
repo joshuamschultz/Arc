@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import pytest
 
+from arctrust.classification import Classification
 from arctrust.identity import AgentIdentity
 from arctrust.policy import (
+    ClearanceContext,
     PolicyContext,
     ProviderLayer,
     ProviderLimit,
@@ -22,6 +24,15 @@ from arctrust.policy import (
     ToolRuntimeStatus,
     build_pipeline,
     sign_call,
+)
+
+# Federal forces classification enforcement (SPEC-038 F5), so a federal pipeline
+# denies any call lacking clearance labels. Tests that exercise OTHER federal
+# layers supply this cleared context so the ClassificationLayer allows and the
+# layer under test is the decider.
+_CLEARED = ClearanceContext(
+    caller_clearance=Classification.UNCLASSIFIED,
+    resource_classification=Classification.UNCLASSIFIED,
 )
 
 # ---------------------------------------------------------------------------
@@ -363,7 +374,15 @@ class TestBuildPipelineConfig:
             tier="federal", provider_limits=limits, team_roles=roles
         )
         names = [layer.name for layer in pipeline.layers]
-        assert names == ["identity", "global", "provider", "agent", "team", "sandbox"]
+        assert names == [
+            "identity",
+            "global",
+            "classification",
+            "provider",
+            "agent",
+            "team",
+            "sandbox",
+        ]
         provider = next(layer for layer in pipeline.layers if layer.name == "provider")
         team = next(layer for layer in pipeline.layers if layer.name == "team")
         assert provider._limits == limits  # type: ignore[attr-defined]
@@ -403,6 +422,7 @@ class TestFullPipelineFirstDenyWins:
             bundle_age_seconds=0.0,
             provider_usage=usage,
             tool_runtime=rt,
+            clearance=_CLEARED,
         )
         d = await pipeline.evaluate(self._signed(ident), ctx)
         assert d.outcome == "deny"
@@ -427,6 +447,7 @@ class TestFullPipelineFirstDenyWins:
             bundle_age_seconds=0.0,
             provider_usage=usage,
             tool_runtime=rt,
+            clearance=_CLEARED,
         )
         d = await pipeline.evaluate(self._signed(ident), ctx)
         assert d.outcome == "allow"
@@ -458,15 +479,35 @@ class TestDefaultConfigDoesNotBrick:
         d = await pipeline.evaluate(self._signed(ident), ctx)
         assert d.outcome == "allow"
 
-    async def test_federal_default_config_allows_with_blind_state(self) -> None:
-        """Federal pipeline built with default (empty) config, same blind context,
-        must ALLOW — Provider/Sandbox are no-ops when unconfigured."""
+    async def test_federal_default_config_denies_blind_clearance(self) -> None:
+        """Federal FORCES classification enforcement from the tier (SPEC-038 F5):
+        a call carrying no clearance labels fails closed even with otherwise
+        default config — the fail-closed floor never depends on an operator flag.
+        Provider/Sandbox stay no-ops when unconfigured; ClassificationLayer does
+        not."""
         ident = AgentIdentity.generate(org="test", agent_type="exec")
         pipeline = build_pipeline(
             tier="federal", agent_registry={ident.did: ident.public_key}
         )
         ctx = PolicyContext(
             tier="federal", policy_version="1.0", bundle_age_seconds=0.0
+        )
+        d = await pipeline.evaluate(self._signed(ident), ctx)
+        assert d.outcome == "deny"
+        assert d.rule_id == "classification.state_missing"
+
+    async def test_federal_allows_when_clearance_present(self) -> None:
+        """With a cleared context the federal default pipeline allows — the floor
+        gates on MISSING labels, not on federal per se."""
+        ident = AgentIdentity.generate(org="test", agent_type="exec")
+        pipeline = build_pipeline(
+            tier="federal", agent_registry={ident.did: ident.public_key}
+        )
+        ctx = PolicyContext(
+            tier="federal",
+            policy_version="1.0",
+            bundle_age_seconds=0.0,
+            clearance=_CLEARED,
         )
         d = await pipeline.evaluate(self._signed(ident), ctx)
         assert d.outcome == "allow"
