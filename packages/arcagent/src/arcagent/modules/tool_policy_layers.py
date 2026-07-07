@@ -1,15 +1,13 @@
-"""Tool policy data types, layer protocol, and layer implementations.
+"""Superseded pre-SPEC-034 policy layer implementation — not wired into anything.
 
-Extracted from arcagent.core.tool_policy to keep the core LOC budget within
-limits (ADR-004 / G1.5). Re-exported from arcagent.core.tool_policy for API
-stability — callers using ``from arcagent.core.tool_policy import Decision``
-continue to work unchanged.
-
-Contents:
-  - Data models: ToolCall, PolicyContext, Decision, PolicyDenied
-  - Layer Protocol: PolicyLayer
-  - Concrete layers: GlobalLayer, ProviderLayer, AgentLayer, TeamLayer, SandboxLayer
-  - Shared utilities: _monotonic_us, _hash_call
+Nothing imports this module. The real, enforced policy engine
+(``PolicyPipeline``, ``GlobalLayer``, ``ProviderLayer``, ``AgentLayer``,
+``TeamLayer``, ``SandboxLayer``, ``ClassificationLayer``) lives in
+``arctrust.policy`` and is re-exported for arcagent call sites via
+``arcagent.core.tool_policy`` — that is what ``core/tool_registry.py`` and
+``core/agent.py`` actually use. The types below (including the
+``ProviderLayer``/``TeamLayer``/``SandboxLayer`` allow-everything stand-ins)
+predate that consolidation and are kept only as historical reference.
 """
 
 from __future__ import annotations
@@ -171,7 +169,10 @@ class GlobalLayer:
 
 
 class ProviderLayer:
-    """LLM provider budget, rate-limits, circuit-breaker gates. Stubbed — Phase 2."""
+    """Unused stand-in — always allows.
+
+    Superseded by ``arctrust.policy.ProviderLayer``, which is real.
+    """
 
     name = "provider"
 
@@ -205,7 +206,10 @@ class AgentLayer:
 
 
 class TeamLayer:
-    """Team-scoped delegation rules. Stubbed — Phase 6 wiring."""
+    """Unused stand-in — always allows.
+
+    Superseded by ``arctrust.policy.TeamLayer``, which is real.
+    """
 
     name = "team"
 
@@ -214,7 +218,10 @@ class TeamLayer:
 
 
 class SandboxLayer:
-    """Dynamic-tool runtime constraints. Stubbed — Phase 7 wiring."""
+    """Unused stand-in — always allows.
+
+    Superseded by ``arctrust.policy.SandboxLayer``, which is real.
+    """
 
     name = "sandbox"
 

@@ -54,7 +54,7 @@ The deployment tier only changes how *strict* the verification is — not whethe
 | 🤖 [**arcagent**](../arcagent/) | The agent — DID-required, skills, extensions, persistent sessions, module bus |
 | 📡 [**arcgateway**](../arcgateway/) | Multi-platform daemon — Telegram, Slack, Discord with operator-approved pairing |
 | 🔧 [**arcskill**](../arcskill/) | Verified skill install (Sigstore + Rekor), scan, lock, CRL lifecycle |
-| 🤝 [**arcteam**](../arcteam/) | Multi-agent messaging — entity registry, channels, HMAC-signed audit |
+| 🤝 [**arcteam**](../arcteam/) | Multi-agent messaging — entity registry, channels, Ed25519-signed audit |
 | 📊 [**arcui**](../arcui/) | Real-time dashboard — live WebSocket telemetry, three-token auth |
 | ⌨️ [**arccli**](../arccli/) | Unified `arc` command-line tool |
 

@@ -9,12 +9,13 @@ arcagent.core.tool_policy). What lives here:
   - PolicyPipeline: the ordered, short-circuiting, fail-closed evaluator
   - TierConfig: deployment tier metadata consumed by build_pipeline
   - build_pipeline(): factory that assembles the correct layer set per tier
-  - Concrete layers: GlobalLayer, ProviderLayer, AgentLayer, TeamLayer,
-    SandboxLayer — kept here so build_pipeline can assemble them without
-    importing arcagent.
+  - Concrete layers: IdentityLayer, GlobalLayer, ClassificationLayer,
+    ProviderLayer, AgentLayer, TeamLayer, SandboxLayer — kept here so
+    build_pipeline can assemble them without importing arcagent.
 
-SPEC-017 R-010 through R-018:
-- R-010: 5-layer ordering (Global → Provider → Agent → Team → Sandbox)
+SPEC-017 R-010 through R-018 (layer set later extended by SPEC-038/ADR-019
+with IdentityLayer and ClassificationLayer — see tier matrix below):
+- R-010: layered ordering, tier-scoped composition (see matrix)
 - R-011: First-DENY-wins, structured deny reasons
 - R-012: Exception → DENY (fail-closed)
 - R-013: LRU cache keyed on (agent_did, tool_name, classification)
@@ -22,10 +23,17 @@ SPEC-017 R-010 through R-018:
 - R-017: Shadow mode — evaluate and log but always return ALLOW
 - R-018: Restricted mode — stale bundle → deny all except safe_set
 
-Tier matrix (R-010):
-  federal:    Global + Provider + Agent + Team + Sandbox (5 layers)
-  enterprise: Global + Provider + Agent + Sandbox        (4 layers)
-  personal:   Global                                     (1 layer)
+Tier matrix (current, SPEC-017 R-010 + SPEC-038 F5/ADR-019):
+  federal:    Identity + Global + Classification + Provider + Agent
+              + Team + Sandbox                            (7 layers)
+  enterprise: Identity + Global + Classification + Provider + Agent
+              + Sandbox                                   (6 layers)
+  personal:   Identity + Global                            (2 layers)
+
+Identity runs first at every tier (authentication is universal, ADR-019).
+Classification, Provider, and Sandbox are real (not stubs) but relaxable
+and no-op-safe at personal/unconfigured state; they fail closed once a
+call actually carries the policy/telemetry they gate (SPEC-034, SPEC-038).
 """
 
 from __future__ import annotations
@@ -1154,15 +1162,17 @@ def build_pipeline(
 ) -> PolicyPipeline:
     """Build a tier-specific policy pipeline.
 
-    Tier matrix (SPEC-017 R-010):
+    Tier matrix (SPEC-017 R-010, extended by SPEC-038 F5/ADR-019):
 
-    =========== ==================================================
+    =========== ==========================================================
     Tier        Layers
-    =========== ==================================================
-    federal     global, provider, agent, team, sandbox  (5 layers)
-    enterprise  global, provider, agent, sandbox        (4 layers)
-    personal    global                                  (1 layer)
-    =========== ==================================================
+    =========== ==========================================================
+    federal     identity, global, classification, provider, agent,
+                team, sandbox                                (7 layers)
+    enterprise  identity, global, classification, provider, agent,
+                sandbox                                       (6 layers)
+    personal    identity, global                              (2 layers)
+    =========== ==========================================================
 
     Args:
         tier: Deployment tier.

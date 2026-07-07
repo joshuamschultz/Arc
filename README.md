@@ -86,8 +86,8 @@ A few self-hosted agent projects get mentioned in the same breath as Arc. They'r
 | **Authorization** | ✅ Deny-by-default 5-layer policy, parameter-level | Container mount isolation | App-level | Gateway = trust boundary (config-driven) |
 | **Audit trail** | ✅ Dual, hash-chained (tamper-evident) | App logs | App logs | App logs |
 | **PII redaction** | ✅ Bidirectional at the trust boundary | ❌ | ❌ | ❌ |
-| **Supply-chain integrity** | ✅ Signed skills (Sigstore + Rekor), AST scan, no SDKs | Container sandbox | — | `THIRD_PARTY_NOTICES`, hardening guide |
-| **Code-exec sandbox** | AST validator + stripped subprocess + egress proxy | Linux container | Docker | Docker + loopback-by-default |
+| **Supply-chain integrity** | ✅ Signed skills (Sigstore + Rekor), signed agent-authored capabilities (SPEC-033), AST scan, no SDKs | Container sandbox | — | `THIRD_PARTY_NOTICES`, hardening guide |
+| **Code-exec sandbox** | Tier-routed: Firecracker microVM (federal) → Docker container (enterprise/personal default) → stripped local subprocess (personal, explicit opt-in) | Linux container | Docker | Docker + loopback-by-default |
 | **Air-gapped / on-prem** | ✅ Ollama · vLLM · TGI, no API key | ❌ needs Anthropic API | Partial (local models) | Partial (needs model API) |
 | **Compliance mapping** | ✅ NIST 800-53 · FedRAMP · CMMC · OWASP LLM/Agentic | ❌ | ❌ | ❌ |
 
@@ -555,7 +555,7 @@ Out of the box: SSN, credit card, email, phone, IP. The detector is a Protocol �
 
 ### Request Signing
 
-Every LLM request can be cryptographically signed. Messages, tools, and model name are serialized to canonical JSON (`sort_keys=True`, compact separators), hashed, and signed with HMAC-SHA256. The signature and algorithm are attached to the response metadata so downstream systems can verify what was actually asked. ECDSA P-256 support is in progress.
+Every LLM request can be cryptographically signed. Messages, tools, and model name are serialized to canonical JSON (`sort_keys=True`, compact separators), hashed, and signed through an arctrust `Signer` — asymmetric, not symmetric: Ed25519 by default, ECDSA-P256 on the FIPS/federal path. Symmetric (HMAC) signing has been removed; selecting it is a hard config error. The signature and algorithm are attached to the response metadata so downstream systems can verify what was actually asked. Key custody is `in_process` at personal (dev) and `vault_transit` (out-of-process — the seed never enters the agent process) by default at enterprise/federal; `FileNotaryTransit` is the local dev/CI reference notary, swapped for a real HSM or vault backend (Vault Transit, PKCS#11, cloud KMS) in production.
 
 ### Cryptographic Agent Identity
 
@@ -567,21 +567,31 @@ did:arc:{org}:{agent_type}/{sha256_prefix}
 
 Private keys live on disk with `0600` permissions. Loading a key file with group- or world-readable bits is a hard error. Identity changes are tracked through a dual audit trail — OpenTelemetry spans **and** an append-only JSONL file. If one is tampered with, the other catches it.
 
-### Deny-by-Default Tool Sandbox (5-Layer Policy Pipeline)
+### Deny-by-Default Tool Sandbox (Layered Policy Pipeline)
 
-Tools aren't callable unless explicitly allowed. Every tool call flows through a 5-layer policy pipeline:
+Tools aren't callable unless explicitly allowed. Every tool call flows through arctrust's `PolicyPipeline` — a real, tier-scoped stack of layers (not stubs):
 
-1. **Global layer** — tenant-wide denylist + check for forbidden capability combinations (e.g., "read sensitive file" + "send external email" in the same turn).
-2. **Provider layer** — LLM provider budget and rate limit gates.
-3. **Agent layer** — per-agent allowlist (keyed on the agent's DID).
-4. **Team layer** *(Federal tier)* — team-scoped delegation rules.
-5. **Sandbox layer** *(Federal tier)* — runtime constraints on dynamically-created tools.
+1. **Identity layer** — runs at every tier; enterprise/federal additionally deny agents outside the admitted-agent registry.
+2. **Global layer** — tenant-wide denylist + check for forbidden capability combinations (the lethal-trifecta gate — see below).
+3. **Classification layer** *(enterprise/federal)* — Bell-LaPadula no-read-up / no-write-down / no-exfil enforcement on labeled data; federal forces this to a non-relaxable, fail-closed floor.
+4. **Provider layer** *(enterprise/federal)* — LLM provider budget (token/cost circuit-breaker) and rate-limit gates; default-on above personal tier.
+5. **Agent layer** *(enterprise/federal)* — per-agent allowlist (keyed on the agent's DID).
+6. **Team layer** *(federal only)* — team-scoped delegation rules.
+7. **Sandbox layer** *(enterprise/federal)* — runtime constraints on dynamically-created tools.
 
 Evaluation is **first-DENY-wins** with **fail-closed** exception handling. If a layer crashes, the call is denied. Sub-1 ms p95 latency thanks to an LRU cache keyed on `(agent_did, tool_name, classification, input_hash)`.
 
 A **shadow mode** lets operators stage a new rule set without enforcing it (so you can see what *would* have been denied before flipping the switch). A **restricted mode** kicks in automatically when the policy bundle ages past its freshness window — important for air-gapped deployments where you can't always pull a fresh bundle on demand.
 
-Per-tier composition: **Federal** uses all 5. **Enterprise** drops Team. **Personal** runs Global alone.
+Per-tier composition: **Personal** runs Identity + Global (2 layers). **Enterprise** adds Classification, Provider, Agent, Sandbox (6). **Federal** adds Team on top (7, all layers). Classification, Provider, and Sandbox are real, wired implementations that are no-op-safe when unconfigured — not development stubs — and fail closed the moment a call actually carries the state they gate.
+
+#### The Lethal-Trifecta Gate (SPEC-035)
+
+Private-data-read + external-comms + untrusted-input must never co-occur in a session without human approval. arcagent tags every tool with capability legs (`private_data`, `external_comms`, `untrusted_input`) and accumulates the session-wide union; arctrust's `GlobalLayer` denies the call that would complete the forbidden set. **This is armed and enforced today, but it only fires on tools that are actually tagged** — currently file/memory reads, network egress, web/browser fetches and navigation, and subprocess output. Tools added by future network-facing features (e.g. the gateway/messaging surface, SPEC-045) get covered as they're tagged, not automatically.
+
+#### Goal-Lock (SPEC-035)
+
+An agent's `identity.md`, its policy configuration, and `context.md` are immutable to the agent itself — enforced at the filesystem level (inode identity checks catch swap-and-replace tricks, not just content diffs). At enterprise/federal tiers, shell execution (`bash`) is additionally confined to the workspace sandbox.
 
 ### Dynamic Tool Safety (Four Defense Layers)
 
@@ -594,9 +604,18 @@ The four defenses gate the **untrusted scan root only** — `<workspace>/.capabi
 
 Tier gates sit on top: **Federal** refuses agent-authored capabilities entirely. **Enterprise** allows them only after a human records approval via `arc trust approve` (persisted under `[security.validators.approved]`). **Personal** allows them with `[security.validators] auto_run_agent_code = true`.
 
-### Sandboxed Code Execution
+### Sandboxed Code Execution (SPEC-036)
 
-The built-in `execute_python` tool runs code in a stripped subprocess:
+The built-in `execute_python` tool is **tier-routed** — the deployment tier picks the isolation floor, and arcrun's `resolve_execution_backend()` maps it to a concrete backend. This is a real, enforced sandbox, not a subprocess-only story:
+
+| Tier | Backend | Isolation |
+|---|---|---|
+| `federal` | Firecracker microVM (`VmBackend`), jailer + seccomp-L2 | Own guest kernel behind a KVM boundary. Refuses to run (never downgrades) if `/dev/kvm` isn't available |
+| `enterprise` | Docker container (`DockerBackend`) | Container boundary — cannot be relaxed below this floor |
+| `personal` (default) | Docker container (`DockerBackend`) | Container boundary |
+| `personal` (`relax_isolation` opted down) | Local stripped subprocess (`LocalBackend`) | No container/VM boundary — full host access on the operator's own machine, explicit opt-in only |
+
+Every backend selection, and every tier-permitted downgrade, emits an audit event before the first line of agent code runs. `LocalBackend` — used at `isolation="none"` and as the container backend's underlying process model — still hardens the process itself:
 
 - **Minimal environment** — only `PATH=/usr/bin:/bin`, `HOME=/tmp`, `LANG=en_US.UTF-8`. The host environment is never inherited.
 - **Process group isolation** — `start_new_session=True`, two-phase timeout (SIGTERM, 5-second grace, then SIGKILL).
@@ -660,14 +679,15 @@ This isn't a marketing checklist. Every line below corresponds to actual code in
 | Control | Family | Arc Implementation |
 |---------|--------|-------------------|
 | **AC-3** Access Enforcement | Access Control | Deny-by-default sandbox; per-agent tool allowlists keyed on DID |
-| **AC-4** Information Flow Enforcement | Access Control | PII redaction on input and output; isolated context transforms |
+| **AC-4** Information Flow Enforcement | Access Control | PII redaction on input and output; isolated context transforms; Bell-LaPadula classification layer (no-read-up / no-write-down / no-exfil) on labeled calls at enterprise/federal |
 | **AC-6** Least Privilege | Access Control | Explicit tool allowlists; extension sandbox modes; no privilege inheritance |
 | **AU-2** Event Logging | Audit | Non-optional event emission on every action |
 | **AU-3** Content of Audit Records | Audit | Events carry timestamp, run_id, actor DID, tool name, arguments, duration, outcome |
 | **AU-4** Audit Storage Capacity | Audit | Output truncation (64 KB), structured JSONL rotation |
 | **AU-5** Response to Audit Failures | Audit | Sink failures swallowed by `emit()` so a broken sink can't crash an agent |
 | **AU-8** Time Stamps | Audit | `time.time()` on every event; UTC ISO in session records |
-| **AU-9** Protection of Audit Information | Audit | Dual audit trail (OpenTelemetry spans + independent JSONL); hash-chained `SignedChainSink` for tamper-evidence |
+| **AU-9** Protection of Audit Information | Audit | Dual audit trail (OpenTelemetry spans + independent JSONL); operator-signed, hash-chained `WormSink` for tamper-evidence |
+| **AU-10** Non-Repudiation | Audit | WORM chain is signed with the **operator's** key, never the agent's own DID — an agent cannot forge or re-sign its own audit trail (SPEC-053); federal adds an external witness anchor over the chain head |
 | **AU-12** Audit Generation | Audit | Events emitted inline, cannot be deferred or skipped |
 | **CM-5** Access Restrictions for Change | Configuration Management | Federal tier refuses dynamic tool/extension creation |
 | **CM-7** Least Functionality | Configuration Management | Tools are opt-in; minimal subprocess environment |
@@ -676,7 +696,7 @@ This isn't a marketing checklist. Every line below corresponds to actual code in
 | **IA-5** Authenticator Management | Identification & Authentication | Vault-backed secrets, TTL caching, no plaintext keys on disk |
 | **SC-8** Transmission Confidentiality | System & Comms Protection | HTTPS enforcement; mTLS supported on internal channels |
 | **SC-12** Cryptographic Key Establishment | System & Comms Protection | Ed25519 via libsodium; HKDF-SHA256 for child identity derivation |
-| **SC-13** Cryptographic Protection | System & Comms Protection | Ed25519, HMAC-SHA256, hash-chained audit |
+| **SC-13** Cryptographic Protection | System & Comms Protection | Ed25519 (default) / ECDSA-P256 (FIPS/federal) asymmetric signing, hash-chained audit |
 | **SC-28** Protection of Information at Rest | System & Comms Protection | Ephemeral run state; `0600` key file permissions enforced |
 | **SI-4** System Monitoring | System & Information Integrity | Full event bus, token/cost tracking, OpenTelemetry export |
 | **SI-7** Software, Firmware, Information Integrity | System & Information Integrity | Sigstore + Rekor signature verification on skills; CRL lifecycle |
@@ -697,19 +717,19 @@ This isn't a marketing checklist. Every line below corresponds to actual code in
 | **LLM07** | System Prompt Leakage | No secrets in prompts; vault-backed credentials; security-sensitive config paths blocked from env var override |
 | **LLM08** | Vector and Embedding Weaknesses | Skills carry frontmatter and verified signatures; per-agent skill workspaces prevent cross-tenant leakage |
 | **LLM09** | Misinformation | Audit trail makes it possible to trace any agent claim back to the LLM call that produced it; metadata-only logging captures provenance |
-| **LLM10** | Unbounded Consumption | Token budget tracking; per-call USD cost calculation; rate limiting; circuit breakers; two-phase timeouts on subprocess execution |
+| **LLM10** | Unbounded Consumption | Token/cost circuit-breaker, default-on above personal tier; per-call USD cost calculation; rate limiting; two-phase timeouts on code execution |
 
 ### OWASP Top 10 for Agentic Applications (2026)
 
 | Code | Threat | Arc Mitigation |
 |------|--------|----------------|
-| **ASI01** | Agent Goal Hijack | Immutable identity card (`identity.md`) is read-only to the agent; policy engine enforces behavioral boundaries; kill switches via DID revocation |
+| **ASI01** | Agent Goal Hijack | Goal-lock (SPEC-035): `identity.md`, policy config, and `context.md` are read-only to the agent, enforced via inode identity checks (not just content diffs); policy engine enforces behavioral boundaries; kill switches via DID revocation |
 | **ASI02** | Tool Misuse & Exploitation | Tool-level allowlists; parameter validation on every call; 5-layer policy pipeline; full audit on every tool invocation |
 | **ASI03** | Identity & Privilege Abuse | Per-agent DID; HKDF-derived child identities for spawned subagents; no shared credentials; no privilege inheritance without explicit grant |
 | **ASI04** | Agentic Supply Chain | Sigstore + Rekor verified skill installs; static scan (regex + AST + semgrep + bandit); sandboxed dry-run before activation; CRL lifecycle |
 | **ASI05** | Unexpected Code Execution (RCE) | Sandboxed subprocess; restricted builtins (no `eval`/`exec`/`compile`/`__import__`/`open`); AST validator rejects 9 bypass categories; egress proxy |
 | **ASI06** | Memory & Context Poisoning | Workspace boundary enforcement; symlink traversal guards; null byte injection guards; observation masking with protected recent-message window |
-| **ASI07** | Insecure Inter-Agent Communication | Ed25519-signed messages; HMAC audit chain; replay protection via nonce + timestamp; mTLS on internal channels |
+| **ASI07** | Insecure Inter-Agent Communication | Ed25519-signed messages; operator-signed (not agent-DID-signed) asymmetric audit chain so no agent can forge its own trail; replay protection via nonce + timestamp; mTLS on internal channels |
 | **ASI08** | Cascading Failures | TaskGroup isolation in the gateway (one adapter crash doesn't kill siblings); circuit breakers; shared-nothing per agent |
 | **ASI09** | Human-Agent Trust Exploitation | Agents never impersonate humans; dashboard surfaces every action with attribution; pairing requires operator approval |
 | **ASI10** | Rogue Agents | Behavioral monitoring via telemetry; policy violations trigger high-priority audit events; agent revocation via identity service; anomaly detection on action patterns |
