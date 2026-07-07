@@ -91,7 +91,7 @@ async def build_run_context(
         strategy_sections = {**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE}
 
     system_prompt = await context.assemble_system_prompt(
-        agent._workspace, extra_sections=strategy_sections
+        agent._workspace, extra_sections=strategy_sections, query=task
     )
     bridge = create_arcrun_bridge(
         bus,

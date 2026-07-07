@@ -157,8 +157,7 @@ allow_imports = []
 enabled = true
 
 [modules.memory.config]
-context_budget_tokens = 2000
-entity_extraction_enabled = true
+brain = "none"
 
 [modules.policy]
 enabled = true

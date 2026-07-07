@@ -305,7 +305,7 @@ tutorial = [
 
 [[package]]
 name = "arc-agent"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
@@ -332,6 +332,9 @@ azure = [
     { name = "azure-identity" },
     { name = "azure-keyvault-secrets" },
 ]
+memory = [
+    { name = "arcmemory" },
+]
 slack = [
     { name = "aiohttp" },
     { name = "slack-bolt" },
@@ -355,6 +358,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.14.1,<4" },
     { name = "aiorwlock", specifier = ">=1.4,<2" },
     { name = "arcllm", editable = "packages/arcllm" },
+    { name = "arcmemory", marker = "extra == 'memory'", editable = "packages/arcmemory" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arctrust", editable = "packages/arctrust" },
     { name = "arcui", editable = "packages/arcui" },
@@ -375,7 +379,7 @@ requires-dist = [
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.20.0" },
     { name = "websockets", specifier = ">=13.0,<16" },
 ]
-provides-extras = ["telegram", "slack", "azure"]
+provides-extras = ["memory", "telegram", "slack", "azure"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -555,7 +559,7 @@ requires-dist = [{ name = "arccmd", editable = "packages/arccli" }]
 
 [[package]]
 name = "arcmemory"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "packages/arcmemory" }
 dependencies = [
     { name = "arcllm" },

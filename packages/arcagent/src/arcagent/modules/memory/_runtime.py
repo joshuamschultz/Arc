@@ -1,61 +1,49 @@
-"""Per-agent memory module runtime context.
+"""Per-agent runtime state for the thin memory (Brain) wiring.
 
-The memory module's hooks, tools, and the entity-extractor background
-task share state (workspace path, internal helpers, eval model cache,
-per-trace before-snapshots, semaphore, background tasks). Decorator-
-stamped functions can't carry that state in a closure, so it lives in
-a module-level :class:`_State` instance configured by the agent at
-startup.
+The memory hooks/tool/background-task share the config-selected
+:class:`~arcagent.brain.Brain`, the bus (for ACL gating), and small per-turn
+bookkeeping (a once-per-turn recall cache; a capture counter + last-activity
+clock that trigger consolidation). Decorator-stamped functions read this lazily
+via :func:`state` after :func:`configure` runs once at agent startup.
 
-Mirrors the pattern in :mod:`arcagent.modules.policy._runtime` and
-:mod:`arcagent.builtins.capabilities._runtime`. Single-agent-per-
-process is the assumption; this is shared mutable state for one agent.
+Mirrors :mod:`arcagent.modules.memory_acl._runtime`. When the selected brain is a
+:class:`~arcagent.brain.NullBrain`, ``active`` is ``False`` and every hook
+short-circuits — memory is a truly silent no-op (no events, no files).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from arcagent.core.config import EvalConfig
+from arcagent.brain import Brain, NullBrain, select_brain
 from arcagent.modules.memory.config import MemoryConfig
-from arcagent.modules.memory.entity_extractor import EntityExtractor
-from arcagent.modules.memory.hybrid_search import HybridSearch
-from arcagent.modules.memory.markdown_memory import (
-    ContextGuard,
-    IdentityAuditor,
-    NoteManager,
-)
 
 _logger = logging.getLogger("arcagent.modules.memory._runtime")
+
+_RECALL_CACHE_CAP = 8
 
 
 @dataclass
 class _State:
-    """Mutable runtime state shared across memory hooks/tools/task."""
+    """Mutable runtime state shared across the memory hooks/tool/task."""
 
     config: MemoryConfig
-    eval_config: EvalConfig
+    brain: Brain
     workspace: Path
     telemetry: Any
-    llm_config: Any
-    notes: NoteManager
-    context_guard: ContextGuard
-    identity_auditor: IdentityAuditor
-    entity_extractor: EntityExtractor
-    hybrid_search: HybridSearch
-    eval_label: str
-    eval_model: Any = None
-    # Latest assistant/user pair captured by post_respond — drained by
-    # the background entity-extractor task. Treated as a single-slot
-    # mailbox: writers overwrite, the task reads-and-clears.
-    pending_messages: list[dict[str, Any]] = field(default_factory=list)
-    background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
-    semaphore: asyncio.Semaphore | None = None
-    hook_active: bool = False
+    bus: Any
+    agent_did: str
+    active: bool
+    # Once-per-turn recall cache: query-hash -> injectable text (bounds the
+    # spawn double-assembly to a single retrieve).
+    recall_cache: dict[int, str] = field(default_factory=dict)
+    # Consolidation trigger bookkeeping.
+    events_since_consolidate: int = 0
+    last_activity: float = field(default_factory=time.monotonic)
 
 
 _state: _State | None = None
@@ -64,31 +52,28 @@ _state: _State | None = None
 def configure(
     *,
     config: dict[str, Any] | None = None,
-    eval_config: EvalConfig | None = None,
     telemetry: Any = None,
     workspace: Path = Path("."),
-    llm_config: Any = None,
+    bus: Any = None,
+    agent_did: str = "",
     agent_name: str = "",
 ) -> None:
-    """Bind module state. Called once at agent startup."""
+    """Bind module state; select the Brain. Called once at agent startup."""
     global _state
+    del agent_name  # accepted for signature-dispatch parity; unused here
     cfg = MemoryConfig(**(config or {}))
-    ec = eval_config or EvalConfig()
-    ws = workspace.resolve()
+    ws = Path(workspace).resolve()
+    brain = select_brain(cfg.brain, workspace=ws, agent_did=agent_did, tier=cfg.tier)
     _state = _State(
         config=cfg,
-        eval_config=ec,
+        brain=brain,
         workspace=ws,
         telemetry=telemetry,
-        llm_config=llm_config,
-        notes=NoteManager(ws, cfg),
-        context_guard=ContextGuard(cfg.context_budget_tokens),
-        identity_auditor=IdentityAuditor(ws, telemetry),
-        entity_extractor=EntityExtractor(eval_config=ec, workspace=ws, telemetry=telemetry),
-        hybrid_search=HybridSearch(ws, cfg),
-        eval_label=f"{agent_name}/memory" if agent_name else "memory",
-        semaphore=asyncio.Semaphore(ec.max_concurrent),
+        bus=bus,
+        agent_did=agent_did,
+        active=not isinstance(brain, NullBrain),
     )
+    _logger.info("memory module configured (brain=%s, active=%s)", cfg.brain, _state.active)
 
 
 def state() -> _State:

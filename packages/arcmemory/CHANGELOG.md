@@ -4,6 +4,25 @@ All notable changes to the `arcmemory` package are documented here. Format follo
 [Keep a Changelog](https://keepachangelog.com/); this package adheres to semantic
 versioning.
 
+## [0.5.0] — 2026-07-07
+
+The `Brain` plug-in for arcagent (SPEC-041, Phase 8). arcagent defines a structural
+`Brain` Protocol + no-op `NullBrain` and depends on no memory package; this release
+adds the concrete implementation that satisfies it.
+
+### Added
+
+- **`brain.ArcMemoryBrain`** — the concrete Brain that wraps the three FERNme speeds
+  behind arcagent's structural Protocol: `capture` → `FastCapture` (zero-LLM),
+  `retrieve` → `Retriever` (single-pass, clearance-gated, boundary-marked, returns
+  injectable text), `consolidate` → `Consolidator` (slow sleep path; returns mutation
+  counts + an `episode_summary` for grounded reflection), and `rebuild_index`. Bound
+  to one `agent_did` + workspace; a per-call `session_id` narrows the shared-nothing
+  scope. The embedder/distiller are injected seams — with neither present capture is
+  still zero-LLM, recall degrades to BM25 + graph, and consolidation is a no-op, so
+  the Brain never errors on a bare install. Speaks only primitives at its edge and
+  imports nothing from arcagent (the architecture boundary test stays green).
+
 ## [0.4.0] — 2026-07-07
 
 Retrieve orchestration + classification-gated recall (SPEC-041, Phase 7). The single

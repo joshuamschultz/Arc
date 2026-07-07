@@ -70,7 +70,6 @@ def _configure_all_modules(workspace: Path, telemetry: AgentTelemetry) -> None:
 
     memory_runtime.configure(
         workspace=workspace,
-        eval_config=eval_config,
         telemetry=telemetry,
         agent_name="test",
     )
@@ -190,8 +189,11 @@ async def test_full_loader_registers_builtins_and_modules(
     policy_hooks = await reg.get_hooks("agent:assemble_prompt")
     assert any(h.meta.name == "inject_policy_md" for h in policy_hooks)
 
-    memory_hooks = await reg.get_hooks("agent:pre_tool")
-    assert len(memory_hooks) >= 1  # memory subscribes to pre_tool
+    assert (await reg.get_tool("memory_search")) is not None  # thin memory tool
+    recall_hooks = await reg.get_hooks("agent:assemble_prompt")
+    assert any(h.meta.name == "inject_recall" for h in recall_hooks)
+    capture_hooks = await reg.get_hooks("agent:post_tool")
+    assert any(h.meta.name == "capture_tool" for h in capture_hooks)
 
     # No registration failures expected on this clean wiring.
     assert not diff.errors, f"unexpected errors during full-loader scan: {diff.errors}"

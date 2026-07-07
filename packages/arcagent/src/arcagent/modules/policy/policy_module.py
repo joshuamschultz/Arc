@@ -24,8 +24,8 @@ _logger = logging.getLogger("arcagent.modules.policy")
 class PolicyModule:
     """Module Bus subscriber for self-learning adaptation policy.
 
-    Extracted from MarkdownMemoryModule to allow independent
-    loading, disabling, and swapping of adaptation strategies.
+    A standalone module so adaptation strategies can be loaded,
+    disabled, and swapped independently of memory.
     """
 
     def __init__(

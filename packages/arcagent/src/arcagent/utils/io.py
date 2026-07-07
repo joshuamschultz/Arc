@@ -13,7 +13,6 @@ import re
 from pathlib import Path
 
 # Approximate characters per token for budget estimation.
-# Used by ContextGuard, NoteManager, and HybridSearch.
 CHARS_PER_TOKEN = 4
 
 # FTS5 special characters that must be stripped before MATCH queries.

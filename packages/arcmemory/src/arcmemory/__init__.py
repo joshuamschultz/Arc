@@ -8,6 +8,7 @@ rebuilder, and the zero-LLM fast-capture path. Retrieval, consolidation, and the
 
 from __future__ import annotations
 
+from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig, Tier
 from arcmemory.consolidate import Consolidator
@@ -57,9 +58,10 @@ from arcmemory.types import (
     TimeWindow,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
+    "ArcMemoryBrain",
     "Bundle",
     "Confidence",
     "ConsolidationResult",

@@ -1,8 +1,7 @@
 """Shared eval model and background task utilities.
 
-Eliminates DRY violation between PolicyModule and MarkdownMemoryModule.
-Both modules use identical patterns for lazy eval model loading and
-fire-and-forget background task management.
+Shared by modules that lazily load an eval model and manage
+fire-and-forget background tasks (e.g. the policy engine).
 """
 
 from __future__ import annotations

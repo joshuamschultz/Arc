@@ -3,7 +3,7 @@
 Subcommand dispatch is argparse-based so the top-level
 `arc agent <sub> [args]` contract is preserved exactly.
 
-Module CLIs (bio-memory, memory, policy, browser) are Click groups
+Module CLIs (policy, browser) are Click groups
 delegated via ``_run_module_cli`` before argparse parsing.
 """
 
@@ -158,8 +158,6 @@ _SUBCOMMAND_MAP = {
 
 
 _MODULE_CLI_MAP = {
-    "bio-memory": "arcagent.modules.bio_memory.cli",
-    "memory": "arcagent.modules.memory.cli",
     "policy": "arcagent.modules.policy.cli",
     "browser": "arcagent.modules.browser.cli",
 }
@@ -191,7 +189,7 @@ def agent_handler(args: list[str]) -> None:
     """Top-level handler for `arc agent <sub> [args]`.
 
     Called by arccli.commands.registry when the user runs `arc agent ...`.
-    Module CLIs (bio-memory, memory, policy, browser) are delegated to
+    Module CLIs (policy, browser) are delegated to
     their Click groups before argparse parsing.
     """
     if args and args[0] in _MODULE_CLI_MAP:
