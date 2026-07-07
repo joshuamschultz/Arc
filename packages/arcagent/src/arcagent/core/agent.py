@@ -523,6 +523,8 @@ class ArcAgent:
         *,
         session: SessionManager,
         tool_choice: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+        max_cost_usd: float | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -537,6 +539,11 @@ class ArcAgent:
         pass ``{"type": "required"}`` from pipeline orchestrators that need
         the first turn to emit a tool call (typically a ``signals_completion``
         terminator).
+
+        ``max_tokens`` / ``max_cost_usd`` are an optional per-run budget the
+        caller pins (e.g. a planner step's slice of the plan aggregate). When
+        set they tighten the config-resolved run budget (the lower ceiling
+        wins) so a sub-task can never exceed either (SPEC-040 F2, LLM10).
         """
         self._ensure_started()
         async for event in dispatch_stream(
@@ -544,6 +551,8 @@ class ArcAgent:
             input_text,
             session=session,
             tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
         ):
             yield event
 
@@ -553,16 +562,29 @@ class ArcAgent:
         *,
         session_key: str,
         tool_choice: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+        max_cost_usd: float | None = None,
     ) -> Any:
         """Run a turn on the ``session_key`` session and collect to a result.
 
         The single callback every non-streaming surface binds (scheduler,
-        pulse, slack, telegram, messaging): open-or-resume the keyed session,
-        stream the turn, and return the final ``RunResult``. ``tool_choice``
-        is forwarded to the loop (see :meth:`run`).
+        pulse, slack, telegram, messaging, planner steps): open-or-resume the
+        keyed session, stream the turn, and return the final ``RunResult``.
+        ``tool_choice`` is forwarded to the loop (see :meth:`run`).
+        ``max_tokens`` / ``max_cost_usd`` pin a per-run budget the planner uses
+        to slice a step off the plan aggregate (SPEC-040 F2) — the shared
+        session (and its trifecta ledger) is preserved either way.
         """
         session = await self.session(session_key)
-        return await collect(self.run(input_text, session=session, tool_choice=tool_choice))
+        return await collect(
+            self.run(
+                input_text,
+                session=session,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                max_cost_usd=max_cost_usd,
+            )
+        )
 
     def active_run(self, session_key: str) -> RunHandle | None:
         """Return the live steerable run for ``session_key``, or None if idle."""

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-07
+
+SPEC-040 real planner: the planning module is now a Plan-Execute planner, not a to-do notebook. Given a goal it produces a durable, dependency-aware DAG plan, executes each step as one bounded, policy- and budget-gated arcrun run, resumes cleanly after a restart, and replans a failed step — bounded so it can never run away.
+
+### Added
+- `arcagent/modules/planning/models.py` — `Plan`/`PlanStep` DAG model (LLMCompiler-style `depends_on` edges) with typed `StepStatus`/`PlanStatus`, cycle/dangling/duplicate validation, and a frontier (`ready_steps`) re-derived from `depends_on` + the succeeded set (no separate cursor, so resume reconstructs progress from the plan file alone).
+- `decomposer.py` — goal → DAG via arcllm's portable tool-forced structured output (ReWOO-style single upfront decomposition); a grounding gate rejects ungrounded plans and any step targeting a protected identity path (`identity.md`/`policy.md`, ASI01) before persistence; `replan` preserves the succeeded prefix, feeds the model the real results + failure reason (Reflexion-lite), and bumps `version`.
+- `store.py` — durable `plans/<id>.json` via the existing atomic-write helper, integrity-checked on read, with a single audit emission point per transition through the arctrust sink (WormSink where configured) + telemetry mirror.
+- `executor.py` — the `StepExecutor` Protocol (the SPEC-043 swap point) + interim `ArcRunStepExecutor` driving one bounded react run per step through `arcrun.run`; a policy DENY, SPEC-038 budget breach, or tool error is captured as a `FAILED` step, never a crash.
+- `orchestrator.py` — deterministic DAG walk (one ready step at a time; parallel dispatch deferred to SPEC-043), checkpoint-before-proceed, bounded replan with a structured terminator on `max_replans` exhaustion, and crash-safe resume.
+- Planner tools `plan_create` / `plan_status` / `plan_replan` / `plan_abandon` (SPEC-021) and an `agent:assemble_prompt` hook injecting the active plan frontier.
+
+### Removed
+- The four to-do CRUD tools (`task_create`/`task_list`/`task_update`/`task_complete`), `tasks.json` handling, the redundant `tools.py`, and the dead `PlanningModule` class (no-legacy, OQ-4).
+
+### Notes
+- Zero `arcagent/core` LOC added (core NCLOC unchanged at 3411/3500); the planner is entirely a module and drives, never re-implements, the loop.
+
 ## [0.10.0] - 2026-07-07
 
 SPEC-039 quality pass: core back under budget, and per-tier default budget ceilings so token/cost/request limits are ON by default (SPEC-038 OQ-3).

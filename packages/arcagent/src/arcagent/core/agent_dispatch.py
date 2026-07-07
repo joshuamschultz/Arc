@@ -144,12 +144,20 @@ def _workspace_authored(agent: ArcAgent) -> frozenset[str]:
     return frozenset(names)
 
 
+def _tighter(a: float | None, b: float | None) -> float | None:
+    """The lower of two ceilings; None means unbounded on that side."""
+    vals = [v for v in (a, b) if v is not None]
+    return min(vals) if vals else None
+
+
 async def dispatch_stream(
     agent: ArcAgent,
     input_text: str,
     *,
     session: SessionManager,
     tool_choice: dict[str, Any] | None = None,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
@@ -175,7 +183,12 @@ async def dispatch_stream(
     transform = agent._context.transform_context if agent._context else None
     # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
     # circuit-breaker (LLM10) is reachable through the real streaming path.
-    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
+    # SPEC-040 F2 — a caller-pinned per-run budget (a planner step's slice of
+    # the plan aggregate) tightens it; the lower ceiling always wins.
+    cfg_tokens, cfg_cost = resolve_run_budget(agent._config)
+    run_max_tokens = _tighter(cfg_tokens, max_tokens)
+    run_max_tokens = int(run_max_tokens) if run_max_tokens is not None else None
+    run_max_cost_usd = _tighter(cfg_cost, max_cost_usd)
 
     final_text = ""
     # Bind the session id for this dispatch so the capability ledger (and the
@@ -195,8 +208,8 @@ async def dispatch_stream(
                 tool_choice=tool_choice,
                 actor_did=agent._identity.did if agent._identity else None,
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
-                max_tokens=max_tokens,
-                max_cost_usd=max_cost_usd,
+                max_tokens=run_max_tokens,
+                max_cost_usd=run_max_cost_usd,
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
