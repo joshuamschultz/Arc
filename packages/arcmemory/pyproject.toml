@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcmemory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Arc's memory substrate — dual-speed analogical memory (four stores, zero-LLM fast capture, glass-box brain)"
 readme = "README.md"
 requires-python = ">=3.11"

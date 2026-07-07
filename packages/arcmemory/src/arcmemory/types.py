@@ -163,6 +163,24 @@ class Situation(BaseModel):
     cues: list[str] = Field(default_factory=list)
 
 
+class TimeWindow(BaseModel):
+    """The slice of the raw stream one consolidation run reads.
+
+    ``start``/``end`` are inclusive ISO-8601 bounds; either may be ``None`` to
+    mean "unbounded on that side" (a ``None``/``None`` window is the whole stream).
+    Capping the window is what makes each consolidation's cost bounded (LLM10).
+    """
+
+    start: str | None = None
+    end: str | None = None
+
+    def contains(self, ts: str) -> bool:
+        """Whether ``ts`` falls within the (inclusive) window bounds."""
+        if self.start is not None and ts < self.start:
+            return False
+        return not (self.end is not None and ts > self.end)
+
+
 class Recall(BaseModel):
     """One retrieved item, ready to be boundary-marked and injected.
 
@@ -212,4 +230,5 @@ __all__ = [
     "Recall",
     "Scope",
     "Situation",
+    "TimeWindow",
 ]

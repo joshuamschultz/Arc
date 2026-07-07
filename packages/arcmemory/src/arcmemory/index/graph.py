@@ -137,6 +137,35 @@ class WeightedGraph:
         ).fetchall()
         return [(r[0], float(r[1])) for r in rows]
 
+    def rename_node(self, scope: str, old: str, new: str) -> int:
+        """Repoint every edge touching ``old`` onto ``new`` (cue-merge, T-054).
+
+        Weights/hits of any edge that collides with an existing ``new`` edge are
+        summed; self-loops created by the merge are dropped. Returns the number of
+        edges repointed. This is how a merged cue's instance links follow it.
+        """
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT src, dst, kind, weight, salience, last_hit, hits FROM edges "
+            "WHERE scope=? AND (src=? OR dst=?)",
+            (scope, old, old),
+        ).fetchall()
+        conn.execute("DELETE FROM edges WHERE scope=? AND (src=? OR dst=?)", (scope, old, old))
+        for src, dst, kind, weight, salience, last_hit, hits in rows:
+            new_src = new if src == old else src
+            new_dst = new if dst == old else dst
+            if new_src == new_dst:
+                continue  # a merge that would create a self-loop is dropped
+            conn.execute(
+                "INSERT INTO edges (scope, src, dst, kind, weight, salience, last_hit, hits) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(scope, src, dst, kind) DO UPDATE SET "
+                "weight=edges.weight+excluded.weight, hits=edges.hits+excluded.hits",
+                (scope, new_src, new_dst, kind, weight, salience, last_hit, hits),
+            )
+        conn.commit()
+        return len(rows)
+
     # -- decay -------------------------------------------------------------
 
     def decay(self, scope: str, *, now: datetime | None = None, lam: float | None = None) -> int:

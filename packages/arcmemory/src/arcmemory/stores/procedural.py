@@ -7,10 +7,14 @@ to a card and each reuse bumps the count) and the body is the numbered steps.
 
 from __future__ import annotations
 
+import hashlib
+from collections import Counter
 from pathlib import Path
 
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
-from arcmemory.types import Procedure
+from arcmemory.types import Event, Procedure
+
+_ACTION_KIND = "action"
 
 
 class ProceduralStore:
@@ -56,6 +60,47 @@ class ProceduralStore:
             classification=str(fm.get("classification", "unclassified")),
         )
 
+    def promote(
+        self, events: list[Event], *, threshold: int = 2, min_len: int = 2
+    ) -> list[Procedure]:
+        """Promote action-sequences seen >= ``threshold`` times to how-to cards.
+
+        The action stream (events of kind ``action``) is split into runs at every
+        non-action boundary; an identical run of length >= ``min_len`` that recurs
+        at least ``threshold`` times becomes (or reinforces) a procedure whose
+        ``use_count`` is the number of occurrences. Zero-LLM and deterministic.
+        """
+        counts = Counter(self._action_runs(events, min_len=min_len))
+        promoted: list[Procedure] = []
+        for steps, occurrences in counts.items():
+            if occurrences < threshold:
+                continue
+            procedure = Procedure(
+                slug=_steps_slug(steps),
+                title=" then ".join(steps),
+                steps=list(steps),
+                use_count=occurrences,
+            )
+            self.write(procedure)
+            promoted.append(procedure)
+        return promoted
+
+    @staticmethod
+    def _action_runs(events: list[Event], *, min_len: int) -> list[tuple[str, ...]]:
+        """Contiguous runs of action-event texts, split at non-action boundaries."""
+        runs: list[tuple[str, ...]] = []
+        current: list[str] = []
+        for event in events:
+            if event.kind == _ACTION_KIND:
+                current.append(event.text)
+                continue
+            if len(current) >= min_len:
+                runs.append(tuple(current))
+            current = []
+        if len(current) >= min_len:
+            runs.append(tuple(current))
+        return runs
+
     def increment_use(self, slug: str) -> int:
         """Bump a card's use-count; return the new count (0 if the card is absent)."""
         procedure = self.read(slug)
@@ -64,6 +109,12 @@ class ProceduralStore:
         procedure.use_count += 1
         self.write(procedure)
         return procedure.use_count
+
+
+def _steps_slug(steps: tuple[str, ...]) -> str:
+    """Stable slug for a step-sequence (deterministic across runs)."""
+    digest = hashlib.sha256("\n".join(steps).encode("utf-8")).hexdigest()[:12]
+    return f"proc-{digest}"
 
 
 __all__ = ["ProceduralStore"]

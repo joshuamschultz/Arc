@@ -4,6 +4,43 @@ All notable changes to the `arcmemory` package are documented here. Format follo
 [Keep a Changelog](https://keepachangelog.com/); this package adheres to semantic
 versioning.
 
+## [0.2.0] — 2026-07-07
+
+Surface retrieval + slow-path consolidation (SPEC-041, Phases 4/5).
+
+### Added
+
+- **Surface retrieval** `index/surface.py` (T-040/041/042) — the easy channel.
+  `index_if_needed()` is incremental and content-gated: only new/changed chunks are
+  embedded (via the injected `Embedder` seam over `arcllm.embed`), so re-indexing an
+  unchanged workspace is free. `search()` fuses three ranked lists — vec cosine
+  (brute-force over `vec0`), BM25 (FTS5), and a graph spreading-activation signal —
+  with Reciprocal Rank Fusion (k=60), plus **recency as a fourth ranked list** (not
+  a score multiplier, preserving RRF's scale-free property). A no-lexical-overlap
+  but semantically-related query retrieves the right chunk (embeddings, not
+  substrings), and fusion beats BM25-alone. **Degrades** to BM25 + graph with a
+  `recall.degraded` audit signal (never raises) when `sqlite-vec` or the embedder
+  is unavailable.
+- **Distillation** `distill.py` (T-050/051) — the one LLM path, an injected
+  `Distiller` structured-completion seam (deterministic-testable; production wires
+  `arcllm`, tests inject a fake). `extract_facts` applies facts **additively** —
+  a contradiction folds the prior into a `was:` trail rather than overwriting — with
+  confidence `1 − e^(−γ·hits)` that rises with corroboration. `mint_insights` mints
+  abstraction cards `{statement, trigger, cues[], instances[]}`, `guessed` on first
+  mint, wiring each cue as a graph node. A cluster of structurally-similar but
+  lexically-different episodes mints one insight whose trigger is surface-stripped.
+- **Consolidation** `consolidate.py` (T-052/053/054) — the "sleep" orchestrator.
+  `run(window)` extracts facts, mints insights, promotes repeated action-sequences
+  to procedures (`ProceduralStore.promote`, zero-LLM), decays unreinforced edges
+  (salience-slowed — a rare-but-vital edge survives while neutral noise fades),
+  merges near-duplicate cues (`merge_cues`, embedding-cluster, repointing links via
+  `WeightedGraph.rename_node`), and reindexes touched chunks. Every mutation emits an
+  `AuditEvent` (fact / insight / procedure / decay / file-write / cue-merge); the
+  chain verifies. A write-ahead `.consolidate-manifest.json` makes an interrupted run
+  crash-safe: `recover()` rebuilds the disposable index from the curated files and
+  clears the marker.
+- **`TimeWindow`** type — the bounded slice of the raw stream one run reads.
+
 ## [0.1.0] — 2026-07-07
 
 Foundation of Arc's dual-speed analogical memory substrate (SPEC-041, Phases 0/2/3).

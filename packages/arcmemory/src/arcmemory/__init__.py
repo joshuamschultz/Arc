@@ -10,9 +10,21 @@ from __future__ import annotations
 
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig, Tier
+from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
+from arcmemory.distill import (
+    Distiller,
+    FactCandidate,
+    FactExtraction,
+    InsightCandidate,
+    InsightMint,
+    confidence_from_hits,
+    extract_facts,
+    mint_insights,
+)
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
+from arcmemory.index.surface import SurfaceIndex, SurfaceResult
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
@@ -30,23 +42,30 @@ from arcmemory.types import (
     Recall,
     Scope,
     Situation,
+    TimeWindow,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Bundle",
     "Confidence",
     "ConsolidationResult",
+    "Consolidator",
     "Cue",
+    "Distiller",
     "Embedder",
     "Entity",
     "EpisodicStore",
     "Event",
     "Fact",
+    "FactCandidate",
+    "FactExtraction",
     "FastCapture",
     "IndexRebuilder",
     "Insight",
+    "InsightCandidate",
+    "InsightMint",
     "InsightStore",
     "MemoryConfig",
     "MemoryDB",
@@ -56,7 +75,13 @@ __all__ = [
     "Scope",
     "SemanticStore",
     "Situation",
+    "SurfaceIndex",
+    "SurfaceResult",
     "Tier",
+    "TimeWindow",
     "WeightedGraph",
     "__version__",
+    "confidence_from_hits",
+    "extract_facts",
+    "mint_insights",
 ]
