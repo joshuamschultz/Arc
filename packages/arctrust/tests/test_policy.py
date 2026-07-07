@@ -373,15 +373,28 @@ class TestBuildPipeline:
         pipeline = build_pipeline(tier="personal")
         assert [layer.name for layer in pipeline.layers] == ["identity", "global"]
 
-    async def test_enterprise_pipeline_has_five_layers(self) -> None:
+    async def test_enterprise_pipeline_has_six_layers(self) -> None:
         pipeline = build_pipeline(tier="enterprise")
-        assert len(pipeline.layers) == 5
-        assert pipeline.layers[0].name == "identity"
+        assert [layer.name for layer in pipeline.layers] == [
+            "identity",
+            "global",
+            "classification",
+            "provider",
+            "agent",
+            "sandbox",
+        ]
 
-    async def test_federal_pipeline_has_six_layers(self) -> None:
+    async def test_federal_pipeline_has_seven_layers(self) -> None:
         pipeline = build_pipeline(tier="federal")
-        assert len(pipeline.layers) == 6
-        assert pipeline.layers[0].name == "identity"
+        assert [layer.name for layer in pipeline.layers] == [
+            "identity",
+            "global",
+            "classification",
+            "provider",
+            "agent",
+            "team",
+            "sandbox",
+        ]
 
     async def test_personal_allows_signed_call_by_default(self) -> None:
         ident = AgentIdentity.generate(org="test", agent_type="exec")

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-06
+
+SPEC-038 sub-scope A: the per-run budget is now a real circuit-breaker. Token is the primary ceiling (present on both streaming and non-streaming paths); cost is the best-effort secondary.
+
+### Added
+- `RunState.max_tokens` — per-run token ceiling, enforced at the top of each turn beside the existing `max_cost_usd` check.
+- `run()`/`run_async()` gain `max_tokens` / `max_cost_usd` parameters, threaded through `_build_state` onto `RunState` (the budget is now reachable via the public API).
+- `make_budget_breach_args` supports a `max_tokens` reason; both breach sites (`max_turns`, budget) route through the single terminator (no inline payload dicts). A budget halt emits one `loop.completed` carrying the breached metric + observed tokens/cost.
+
+### Removed
+- Dead `RunState.token_budget` / `RunState.cost_budget` fields (zero readers; `cost_budget` duplicated `max_cost_usd`).
+
 ## [0.7.0] - 2026-07-06
 
 SPEC-035 sub-scope C: workspace bind-mount for the execution backends + a shell entry point, so a confined agent shell keeps workspace access while the operator seed and WORM chains stay unreachable.

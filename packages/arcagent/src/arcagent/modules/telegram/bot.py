@@ -111,6 +111,11 @@ def split_message(text: str, max_length: int = 4096) -> list[str]:
     return chunks
 
 
+# The single external origin the Telegram Bot API talks to; the egress proxy
+# allowlist must include it for notifications to leave (SPEC-038 REQ-031).
+_TELEGRAM_API_ORIGIN = "https://api.telegram.org"
+
+
 class TelegramBot:
     """Manages polling loop, message routing, and response delivery.
 
@@ -123,10 +128,15 @@ class TelegramBot:
         config: TelegramConfig,
         telemetry: AgentTelemetry | None = None,
         workspace: Path = Path("."),
+        egress: Any = None,
     ) -> None:
         self._config = config
         self._telemetry = telemetry
         self._workspace = workspace
+        # SPEC-038 REQ-031 — outbound notifications are mediated by the shared
+        # EgressProxy (allowlist api.telegram.org, no-exfil, external_comms leg).
+        # None → unmediated (legacy standalone bot / tests); wired agents inject.
+        self._egress = egress
         self._agent_run_fn: Callable[..., Awaitable[Any]] | None = None
         self._message_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queue_task: asyncio.Task[None] | None = None
@@ -304,6 +314,13 @@ class TelegramBot:
         if self._application is None:
             _logger.warning("Bot not running; cannot send notification")
             return
+
+        # SPEC-038 REQ-031 — mediate the outbound comm through the shared egress
+        # proxy before the bot library delivers it: allowlist api.telegram.org,
+        # enforce no-exfil against the session's read classification, and record
+        # the external_comms trifecta leg. A refusal raises and blocks the send.
+        if self._egress is not None:
+            await self._egress.authorize(_TELEGRAM_API_ORIGIN)
 
         chunks = split_message(text, self._config.max_message_length)
         for chunk in chunks:

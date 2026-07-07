@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-06
+
+SPEC-038 sub-scopes A/C/D wiring: arcagent bridges arcrun budget usage onto the policy pipeline, binds clearance to identity, enforces no-exfil at egress, and tags outbound-comms tools so the SPEC-035 trifecta gate fires.
+
+### Added
+- Dispatch now fills `PolicyContext.provider_usage` from the live arcrun `RunState` (`ctx.parent_state`) with a TRUSTED, config-sourced provider label (`llm.model`, never `LLMResponse.model`), lighting up the previously-inert SPEC-034 `ProviderLayer`.
+- Dispatch fills `PolicyContext.clearance` (caller clearance from identity + per-tool resource classification from `[tools.policy] classifications`), driving the no-read-up `ClassificationLayer`.
+- `[security] clearance` + `classification_enforced` and `[tools.policy] classifications` / `egress_clearances` config.
+- `EgressProxy` refuses above-ceiling data (`egress.classification_refused`, `EgressClassificationDenied`) — no-exfil with a single external ceiling (`UNCLASSIFIED`) plus per-origin overrides.
+- `messaging_send` / Telegram `notify_user` now declare the `external_comms` leg; `messaging_check_inbox` / `messaging_read_thread` declare `untrusted_input`; `browser_navigate` maps to both legs. The lethal-trifecta gate now has real leg producers.
+- `spawn()` propagates clearance monotone-non-increasing (child clamped to the parent's clearance).
+
 ## [0.8.0] - 2026-07-06
 
 SPEC-037: the operator key resolves through the arctrust `Signer` seam; config selects custody / algorithm / FIPS.

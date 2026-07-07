@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-06
+
+SPEC-038 sub-scopes B + C: arctrust becomes the canonical owner of the classification ladder and gains a no-read-up policy layer; the provider-budget layer now fails closed on an unknown label.
+
+### Added
+- `arctrust.classification` — the single ordered `Classification` ladder (`UNCLASSIFIED < CUI < CONFIDENTIAL < SECRET < TOP_SECRET`), a `dominates()` total-order comparator, and `parse_classification(value, *, strict)` (federal `strict=True` fails closed on unknown/empty; personal warns + defaults `UNCLASSIFIED`). NOFORN/SCI compartments are out of scope.
+- `ClassificationLayer` — a thin no-read-up predicate slotted after `GlobalLayer` (enterprise/federal). Enforces `dominates(caller_clearance, resource_classification)` from `PolicyContext.clearance` (new `ClearanceContext`); no-ops when unlabeled, fails closed (`classification.state_missing`) when `enforced`.
+- `AgentIdentity.clearance` (immutable, defaults `UNCLASSIFIED`); `derive_child_identity` narrows clearance monotone-non-increasing (`min(requested, parent)`) and carries it on `ChildIdentity`.
+- `build_pipeline(classification_enforced=...)`.
+
+### Changed
+- `ProviderLayer` — an unknown provider label under configured limits now DENYs (`provider.unknown_label`) at enterprise/federal (`relaxable=True` allows only at personal). Closes the SPEC-034 budget-dodge-by-label fail-open.
+
 ## [0.8.0] - 2026-07-06
 
 SPEC-037: the `Signer` seam — asymmetric signing with pluggable, out-of-process key custody, plus a generalised FIPS gate. Additive: Ed25519 stays the default everywhere; existing DIDs, WORM chains, and operator keys are unchanged.

@@ -102,6 +102,57 @@ def _make_bot(tmp_path: Path, **config_overrides: object) -> TelegramBot:
     return TelegramBot(config=config, telemetry=telemetry, workspace=tmp_path)
 
 
+class TestNotifyRoutesThroughEgress:
+    """SPEC-038 REQ-031 — notifications are mediated by the injected EgressProxy
+    (allowlist api.telegram.org, no-exfil, external_comms leg), not sent raw."""
+
+    @staticmethod
+    def _bot_with_egress(tmp_path: Path, egress: object) -> TelegramBot:
+        bot = TelegramBot(config=_make_config(), telemetry=MagicMock(), workspace=tmp_path, egress=egress)
+        bot._chat_id = 123
+        app = MagicMock()
+        app.bot = MagicMock()
+        app.bot.send_message = AsyncMock()
+        bot._application = app
+        return bot
+
+    @pytest.mark.asyncio
+    async def test_allowlisted_send_authorizes_then_delivers(self, tmp_path: Path) -> None:
+        from arcagent.tools._egress import EgressProxy
+
+        legs: list[str] = []
+
+        async def _send(url: str, method: str, **_k: object) -> object:
+            raise AssertionError("send_fn must not run for a mediated (authorize) send")
+
+        def _sink(event: str, _payload: dict) -> None:
+            if event == "egress.allowed":
+                legs.append("external_comms")
+
+        proxy = EgressProxy(
+            allowlist={"https://api.telegram.org"}, send_fn=_send, audit_sink=_sink
+        )
+        bot = self._bot_with_egress(tmp_path, proxy)
+        await bot.send_notification("hello human")
+
+        bot._application.bot.send_message.assert_called_once()
+        assert legs == ["external_comms"]  # the trifecta leg was recorded
+
+    @pytest.mark.asyncio
+    async def test_non_allowlisted_destination_blocks_send(self, tmp_path: Path) -> None:
+        from arcagent.tools._egress import EgressDenied, EgressProxy
+
+        async def _send(url: str, method: str, **_k: object) -> object:
+            return MagicMock(status_code=200)
+
+        proxy = EgressProxy(allowlist=set(), send_fn=_send)  # nothing allowlisted
+        bot = self._bot_with_egress(tmp_path, proxy)
+        with pytest.raises(EgressDenied):
+            await bot.send_notification("secret leak")
+
+        bot._application.bot.send_message.assert_not_called()
+
+
 def _make_update(chat_id: int = 123, text: str = "hello") -> MagicMock:
     """Create a mock Telegram Update object."""
     update = MagicMock()

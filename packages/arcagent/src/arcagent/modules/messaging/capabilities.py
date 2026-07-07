@@ -279,6 +279,10 @@ async def messaging_shutdown(ctx: Any) -> None:
         "role://name for role-based broadcast."
     ),
     classification="state_modifying",
+    # SPEC-038 REQ-030 — an outbound comms tool is an external_comms leg
+    # producer, so the SPEC-035 lethal-trifecta gate fires on a real
+    # read-private -> comms sequence.
+    capability_tags=["network_egress"],
     when_to_use="Send a message to a teammate, channel, or role.",
 )
 async def messaging_send(
@@ -303,6 +307,15 @@ async def messaging_send(
         if not targets:
             return json.dumps({"error": "No recipients specified"})
 
+        # SPEC-038 F4/REQ-024 — stamp the message classification at the tool
+        # boundary from the SENDER's clearance (bound to identity, not a
+        # free-form sender claim). No-read-up guarantees nothing the sender read
+        # this session exceeds its clearance, so the clearance is the honest
+        # floor; the messenger's no-write-down gate then refuses any recipient
+        # who cannot receive it. Default UNCLASSIFIED clearance = no change.
+        sender_floor = (
+            st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
+        )
         msg = Message(
             sender=st.config.entity_id,
             to=targets,
@@ -311,6 +324,7 @@ async def messaging_send(
             priority=Priority(priority),
             thread_id=thread_id,
             action_required=action_required,
+            classification=sender_floor,
         )
         sent = await st.svc.send(msg)
         _logger.info("Sent message %s to %s", sent.id, to)
@@ -334,6 +348,9 @@ async def messaging_send(
         "and message summaries."
     ),
     classification="state_modifying",
+    # SPEC-038 REQ-030 — inbound messages are untrusted content (peer/user
+    # authored); tag the untrusted_input trifecta leg.
+    capability_tags=["extract"],
     when_to_use="Check for new messages from teammates or channels.",
 )
 async def messaging_check_inbox() -> str:
@@ -404,6 +421,8 @@ async def messaging_check_inbox() -> str:
         "Returns all messages in chronological order."
     ),
     classification="read_only",
+    # SPEC-038 REQ-030 — thread content is peer-authored untrusted input.
+    capability_tags=["extract"],
     when_to_use="Read all messages in a thread to understand context before replying.",
 )
 async def messaging_read_thread(stream: str, thread_id: str) -> str:

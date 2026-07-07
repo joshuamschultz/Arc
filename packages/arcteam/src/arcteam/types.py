@@ -106,6 +106,7 @@ class Message(BaseModel):
     mentions: list[str] = Field(default_factory=list)
     refs: list[str] = Field(default_factory=list)
     status: str = "sent"
+    classification: str = "UNCLASSIFIED"
     sig: str = ""
     nonce: str = ""
     signer_did: str = ""
@@ -159,6 +160,7 @@ class Entity(BaseModel):
     created: str = ""
     status: EntityStatus = EntityStatus.active
     workspace_path: str | None = None
+    clearance: str = "UNCLASSIFIED"
 
 
 class Channel(BaseModel):
@@ -168,6 +170,7 @@ class Channel(BaseModel):
     description: str = ""
     members: list[str] = Field(default_factory=list)
     created: str = ""
+    clearance: str = "UNCLASSIFIED"
 
 
 class Cursor(BaseModel):

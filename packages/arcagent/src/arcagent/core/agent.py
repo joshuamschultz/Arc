@@ -41,6 +41,7 @@ from arctrust import (
     WormSink,
     assert_fips_if_required,
     build_signer,
+    parse_classification,
     read_verified_anchor,
     verify_local_head_witnessed,
     worm_policy_sink,
@@ -67,6 +68,7 @@ from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
+from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import HumanGate, HumanGateConfig
 
 if TYPE_CHECKING:
@@ -359,10 +361,18 @@ class ArcAgent:
         # SPEC-035 REQ-011 — the lethal-trifecta forbidden composition is LIVE in
         # GlobalLayer at every tier. arcagent owns the deployment set; arctrust
         # receives the resolved frozenset.
+        # SPEC-038 REQ-021 — bind the operator-declared clearance to identity.
+        # Federal parses strict (unknown/empty label → fail closed).
+        strict_classification = tier == "federal"
+        self._identity.clearance = parse_classification(
+            self._config.security.clearance, strict=strict_classification
+        )
         pipeline = build_pipeline(
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
             agent_registry={self._identity.did: self._identity.public_key},
             forbidden_compositions=[LETHAL_TRIFECTA],
+            classification_enforced=self._config.security.classification_enforced,
+            provider_limits=resolve_provider_limits(self._config),
             audit_sink=policy_sink,
         )
         self._policy_pipeline = pipeline
@@ -392,6 +402,9 @@ class ArcAgent:
             tier=tier,  # type: ignore[arg-type]  # str vs Literal
             capability_ledger=self._capability_ledger,
             human_gate=human_gate,
+            provider_label=self._config.llm.model,
+            resource_classifications=dict(self._config.tools.policy.classifications),
+            classification_strict=strict_classification,
         )
 
         workspace = self._workspace

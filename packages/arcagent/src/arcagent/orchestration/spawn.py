@@ -38,6 +38,7 @@ from arcrun.types import SandboxConfig, Tool, ToolContext
 from arcstore.records import SpoolRecord as _SpoolRecord
 from arcstore.spool import record as _spool_record
 from arctrust import ChildIdentity
+from arctrust.classification import Classification
 
 from arcagent.orchestration.spawn_handle import (
     _DEFAULT_SPAWN_TIMEOUT_SECONDS,
@@ -434,6 +435,7 @@ async def spawn(
     context: str | None = None,
     role: str | None = None,
     max_turns: int = _DEFAULT_MAX_CHILD_TURNS,
+    parent_clearance: Classification = Classification.UNCLASSIFIED,
     token_budget: int | None = None,
     wallclock_timeout_s: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
     sandbox: SandboxConfig | None = None,
@@ -473,7 +475,10 @@ async def spawn(
 
     child_run_id = str(uuid.uuid4())
 
-    # Resolve identity first so error results carry the correct DID
+    # Resolve identity first so error results carry the correct DID. SPEC-038
+    # REQ-022 — a delegated child's clearance is monotone-non-increasing: it can
+    # never exceed the delegator's. Clamp both the derived and any caller-
+    # supplied identity down to the parent's clearance (no privilege escalation).
     if identity is None:
         seed = uuid.uuid4().bytes[:32]
         hex_suffix = seed[:4].hex()
@@ -481,6 +486,11 @@ async def spawn(
             did=f"did:arc:delegate:child/{hex_suffix}",
             sk_bytes=seed,
             ttl_s=int(wallclock_timeout_s),
+            clearance=parent_clearance,
+        )
+    else:
+        identity = identity.model_copy(
+            update={"clearance": min(identity.clearance, parent_clearance)}
         )
 
     child_did = identity.did

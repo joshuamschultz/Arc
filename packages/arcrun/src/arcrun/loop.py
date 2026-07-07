@@ -37,6 +37,8 @@ def _build_state(
     actor_did: str | None = None,
     store_raw_bodies: bool = False,
     sample_rate: float = 1.0,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
     run_id = str(uuid.uuid4())
@@ -73,6 +75,8 @@ def _build_state(
         depth=depth,
         max_depth=max_depth,
         tool_choice=tool_choice,
+        max_tokens=max_tokens,
+        max_cost_usd=max_cost_usd,
     )
 
     return state, sandbox_obj
@@ -109,6 +113,8 @@ async def run(
     actor_did: str | None = None,
     store_raw_bodies: bool = False,
     sample_rate: float = 1.0,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete or max_turns."""
     state, sandbox_obj = _build_state(
@@ -126,6 +132,8 @@ async def run(
         actor_did=actor_did,
         store_raw_bodies=store_raw_bodies,
         sample_rate=sample_rate,
+        max_tokens=max_tokens,
+        max_cost_usd=max_cost_usd,
     )
 
     # Bind the run id as the spool correlation id so every record emitted inside
@@ -155,6 +163,8 @@ async def run_async(
     actor_did: str | None = None,
     store_raw_bodies: bool = False,
     sample_rate: float = 1.0,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -172,6 +182,8 @@ async def run_async(
         actor_did=actor_did,
         store_raw_bodies=store_raw_bodies,
         sample_rate=sample_rate,
+        max_tokens=max_tokens,
+        max_cost_usd=max_cost_usd,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

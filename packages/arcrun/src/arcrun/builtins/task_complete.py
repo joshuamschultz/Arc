@@ -103,20 +103,26 @@ def make_task_complete_tool() -> Tool:
     )
 
 
-def make_budget_breach_args(*, reason: Literal["max_turns", "max_cost"]) -> TaskCompleteArgs:
+BudgetBreachReason = Literal["max_turns", "max_cost", "max_tokens"]
+
+_BREACH_SUMMARIES: dict[str, str] = {
+    "max_turns": "Turn limit reached before task completed.",
+    "max_cost": "Cost limit reached before task completed.",
+    "max_tokens": "Token limit reached before task completed.",
+}
+
+
+def make_budget_breach_args(*, reason: BudgetBreachReason) -> TaskCompleteArgs:
     """Synthesize a ``task_complete`` payload when the loop hits a cap.
 
     Keeps the breach vocabulary consistent across sites that enforce
-    turn/cost limits. R-032.
+    turn/token/cost limits (SPEC-017 R-032, SPEC-038 REQ-003).
     """
-    if reason == "max_turns":
-        summary = "Turn limit reached before task completed."
-    else:
-        summary = "Cost limit reached before task completed."
-    return TaskCompleteArgs(status="failed", summary=summary, error=reason)
+    return TaskCompleteArgs(status="failed", summary=_BREACH_SUMMARIES[reason], error=reason)
 
 
 __all__ = [
+    "BudgetBreachReason",
     "TaskCompleteArgs",
     "TaskStatus",
     "make_budget_breach_args",

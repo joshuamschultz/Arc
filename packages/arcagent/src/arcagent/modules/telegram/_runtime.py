@@ -41,17 +41,21 @@ def configure(
     config: dict[str, Any] | None = None,
     telemetry: Any = None,
     workspace: Path = Path("."),
+    egress_proxy: Any = None,
 ) -> None:
     """Bind module state. Called once at agent startup.
 
     Constructs the :class:`TelegramBot` but does not start polling —
     the ``telegram_poll`` background task drives bot lifecycle so the
     capability loader's drain-then-replace semantics (R-062) apply.
+
+    ``egress_proxy`` is the agent's shared EgressProxy; outbound notifications
+    are mediated through it (SPEC-038 REQ-031).
     """
     global _state
     cfg = TelegramConfig(**(config or {}))
     ws = workspace.resolve()
-    bot = TelegramBot(config=cfg, telemetry=telemetry, workspace=ws)
+    bot = TelegramBot(config=cfg, telemetry=telemetry, workspace=ws, egress=egress_proxy)
     _state = _State(
         config=cfg,
         workspace=ws,

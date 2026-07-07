@@ -65,6 +65,8 @@ async def telegram_poll(ctx: Any) -> None:
         "or 'task completed with no findings'."
     ),
     classification="state_modifying",
+    # SPEC-038 REQ-030 — Telegram notify is an external_comms leg producer.
+    capability_tags=["network_egress"],
 )
 async def notify_user(message: str = "") -> str:
     """Send a proactive Telegram notification to the user."""

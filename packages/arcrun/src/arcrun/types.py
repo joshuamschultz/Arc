@@ -45,7 +45,7 @@ class ToolContext:
     Attributes:
         parent_state: Live RunState from the parent execution. Set by the
             executor when the tool is called so tools (e.g., delegate) can
-            read depth, max_depth, and token_budget without importing RunState
+            read depth, max_depth, and budget usage without importing RunState
             directly. None for tools called outside a running loop (tests,
             standalone invocations).
     """
