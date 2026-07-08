@@ -1,7 +1,6 @@
 """Decorator-form user_profile module — SPEC-021.
 
-Two ``@hook`` functions mirror :class:`UserProfileModule`'s ``startup``
-bus registrations:
+Two ``@hook`` functions register the module's bus subscriptions:
 
   * ``agent:post_respond`` (priority 120) — log durable-fact extraction
     hints emitted by the LLM.  Observation-only; never auto-writes
@@ -35,8 +34,7 @@ from arcagent.tools._decorator import hook, tool
 
 _logger = logging.getLogger("arcagent.modules.user_profile.capabilities")
 
-# Module bus priority — after memory_acl (10) and after default (100),
-# mirroring UserProfileModule._MODULE_PRIORITY.
+# Module bus priority — after memory_acl (10) and after default (100).
 _MODULE_PRIORITY = 120
 
 

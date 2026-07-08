@@ -21,9 +21,6 @@ Design notes:
 - FTS5 reindex is triggered via event emission ONLY — this module does
   not import or call the SessionIndex directly.  Keeps concern
   separation clean (see SDD §3.6 constraint).
-- The Derived section of the user profile is wiped, but the hook
-  ``_mark_derived_regeneratable`` is called to signal that a
-  regeneration pipeline may rebuild it from surviving session data.
 """
 
 from __future__ import annotations
@@ -31,13 +28,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
-import stat
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arcagent.modules.user_profile._fsutil import atomic_write
 from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.store import ProfileStore
 
@@ -207,7 +202,7 @@ def _redact_jsonl_file(path: Path, user_did: str) -> bool:
         return False
 
     new_text = "\n".join(lines_out) + "\n"
-    _atomic_write_text(path, new_text)
+    atomic_write(path, new_text)
     return True
 
 
@@ -256,41 +251,5 @@ def _persist_tombstone(
     tombstone_dir = workspace / config.tombstone_dir
     tombstone_dir.mkdir(parents=True, exist_ok=True)
     path = tombstone_dir / f"{tombstone.user_did_hash}.json"
-    _atomic_write_text(path, json.dumps(tombstone.to_dict(), indent=2) + "\n")
+    atomic_write(path, json.dumps(tombstone.to_dict(), indent=2) + "\n")
     _logger.info("tombstone.record_persisted path=%s", path)
-
-
-def _mark_derived_regeneratable(user_did: str, workspace: Path) -> None:
-    """Hook that signals the Derived section can be rebuilt post-tombstone.
-
-    This is called after the profile file is deleted to indicate that
-    a regeneration pipeline (e.g. dialectic deriver) may reconstruct
-    Derived content from surviving (non-redacted) session data.
-
-    Currently a no-op; exists so the regeneration pipeline can hook in
-    without requiring a structural change to tombstone.py.
-    """
-    _logger.debug(
-        "tombstone.derived_regeneratable user_did=%s workspace=%s",
-        user_did,
-        workspace,
-    )
-
-
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Atomically write *text* to *path* using temp-file + os.replace()."""
-    dir_ = path.parent
-    dir_.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(dir=dir_, suffix=".tmp", prefix=path.stem + ".")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-        os.replace(tmp_path, path)
-    except Exception:  # reason: re-raise after log
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
