@@ -32,6 +32,22 @@ class ChangeBoundConfig(BaseModel):
     max_prose_edit_distance: float | None = Field(default=None, gt=0.0, le=1.0)
 
 
+class LifecycleConfig(BaseModel):
+    """Curator usage-sweep + retire/revive settings (SPEC-044 REQ-043, Josh-locked).
+
+    Every sweep setting is adjustable in ``config.toml`` (via ``[modules.skills.improver.
+    lifecycle]``). Default inactivity window = **30 days** (Josh's call). Retire is
+    reversible: disable + retain lineage, never a destructive delete (D-8).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    inactivity_window_days: float = Field(default=30.0, gt=0.0)
+    failure_floor: float = Field(default=0.5, ge=0.0, le=1.0)  # success-rate floor
+    improve_attempts_before_retire: int = Field(default=3, ge=1)
+    min_uses_before_retire: int = Field(default=5, ge=1)
+
+
 class ImproverConfig(BaseModel):
     """Skill improver configuration.
 
@@ -77,5 +93,8 @@ class ImproverConfig(BaseModel):
     # these fields only tighten them (federal floor non-relaxable).
     change_bound: ChangeBoundConfig = Field(default_factory=ChangeBoundConfig)
 
+    # Curator usage-sweep + retire/revive lifecycle (REQ-041..045).
+    lifecycle: LifecycleConfig = Field(default_factory=LifecycleConfig)
 
-__all__ = ["ChangeBoundConfig", "ImproverConfig"]
+
+__all__ = ["ChangeBoundConfig", "ImproverConfig", "LifecycleConfig"]

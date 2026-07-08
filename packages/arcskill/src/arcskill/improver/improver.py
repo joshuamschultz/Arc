@@ -29,7 +29,14 @@ from arcskill.improver.engine import SkillOptimizer
 from arcskill.improver.evalgate import EvalGate, GateDecision, load_suite, no_suite_policy
 from arcskill.improver.evaluator import SkillEvaluator
 from arcskill.improver.guardrails import ChangeBound, Guardrails
-from arcskill.improver.models import BundlePatch, BundleView, MutationEvent, SkillTrace
+from arcskill.improver.lifecycle import SkillLifecycle
+from arcskill.improver.models import (
+    BundlePatch,
+    BundleView,
+    LifecycleEvent,
+    MutationEvent,
+    SkillTrace,
+)
 from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
 from arcskill.improver.seams import EvalRunner, LLMInvoker, Mutator, Signer
@@ -81,6 +88,12 @@ class ArcSkillImprover:
         self._change_bound = ChangeBound(tier, self._config.change_bound)
         self._audit_sink = audit_sink
         self._candidate_store = CandidateStore(workspace, audit_sink=audit_sink)
+        self._lifecycle = SkillLifecycle(
+            self._candidate_store,
+            self._config.lifecycle,
+            load_traces=self._store.load_traces,
+            generation_of=self._guardrails.get_generation,
+        )
         self._tasks: set[asyncio.Task[None]] = set()
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -114,8 +127,13 @@ class ArcSkillImprover:
                 self._spawn(self._optimize(skill_name, insight))
 
     async def review_lifecycle(self, *, turn: int) -> None:
-        # Lifecycle retire/revive sweep lands in Phase 6.
-        return None
+        """Curator sweep: retire inactive/failing skills, each an audited transition (AC-5)."""
+        for event in self._lifecycle.sweep():
+            self._emit_lifecycle_audit(event)
+
+    def revive(self, skill_name: str) -> None:
+        """Operator-initiated revive of a retired skill (REQ-044); audited transition."""
+        self._emit_lifecycle_audit(self._lifecycle.revive(skill_name))
 
     # -- internals -----------------------------------------------------------
 
@@ -312,6 +330,15 @@ class ArcSkillImprover:
             ),
             self._audit_sink,
         )
+
+    def _emit_lifecycle_audit(self, event: LifecycleEvent) -> None:
+        """Emit a tier-stamped lifecycle-transition audit event (operator-signed WORM)."""
+        action = (
+            "skill.lifecycle.revived"
+            if event.to_state == "active"
+            else "skill.lifecycle.retired"
+        )
+        self._emit_audit(event.skill_name, action, event.to_state, extra=event.to_dict())
 
     def _skill_override(self, skill_name: str) -> ChangeBoundConfig | None:
         """Read a per-skill change-bound override from the skill's frontmatter, if any."""

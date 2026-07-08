@@ -296,6 +296,31 @@ class OptimizeResult:
 
 
 @dataclass(frozen=True)
+class LifecycleEvent:
+    """Append-only audit record for a skill lifecycle transition (SPEC-044 REQ-045).
+
+    Every state-machine edge (active → underperforming → retired → revived) emits one.
+    Operator-signed on the WORM chain (SPEC-053) — audit authority is the operator key,
+    never the agent DID that authored the skill.
+    """
+
+    timestamp: datetime
+    skill_name: str
+    from_state: str
+    to_state: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timestamp": self.timestamp.isoformat(),
+            "skill_name": self.skill_name,
+            "from_state": self.from_state,
+            "to_state": self.to_state,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
 class MutationEvent:
     """Append-only audit record for a skill mutation (NIST AU-3)."""
 

@@ -165,6 +165,33 @@ class CandidateStore:
             return
         emit(_mutation_audit_event(skill_name, event), self._audit_sink)
 
+    def list_skills(self) -> list[str]:
+        """Enumerate skills that have a trace/candidate directory under the workspace."""
+        base = (self._workspace / "skill_traces").resolve()
+        if not base.is_dir():
+            return []
+        return sorted(p.name for p in base.iterdir() if p.is_dir())
+
+    def lifecycle_state(self, skill_name: str) -> str:
+        """Current lifecycle state (``active`` when unset)."""
+        return str(self.load_manifest(skill_name).get("lifecycle_state", "active"))
+
+    def set_lifecycle_state(self, skill_name: str, state: str, *, reason: str = "") -> str:
+        """Persist a lifecycle-state transition; return the previous state.
+
+        Retire is non-destructive (D-8): the candidates/lineage are retained and the
+        prior active id is recorded so :meth:`revive` can restore it.
+        """
+        _validate_skill_name(skill_name)
+        manifest = self.load_manifest(skill_name)
+        previous = str(manifest.get("lifecycle_state", "active"))
+        manifest["lifecycle_state"] = state
+        if state == "retired":
+            manifest["retire_reason"] = reason
+            manifest.setdefault("prior_active_id", manifest.get("active_candidate_id"))
+        self._save_manifest(skill_name, manifest)
+        return previous
+
     def rollback(self, skill_name: str, candidate_id: str) -> None:
         """Revert to a previous candidate version."""
         _validate_candidate_id(candidate_id)
