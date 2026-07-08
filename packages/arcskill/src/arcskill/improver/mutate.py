@@ -7,18 +7,20 @@ specific sections and must preserve the immutable intent header.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import Counter
 
 from arcskill.improver._util import sanitize_text
 from arcskill.improver.config import ImproverConfig
-from arcskill.improver.models import DimensionScore, SkillTrace
+from arcskill.improver.models import BundlePatch, BundleView, DimensionScore, SkillTrace
 from arcskill.improver.seams import LLMInvoker
 
 _logger = logging.getLogger("arcskill.improver.mutate")
 
 _MARKDOWN_FENCE_RE = re.compile(r"```(?:markdown)?\s*\n(.*?)\n```", re.DOTALL)
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 
 
 class SkillReflector:
@@ -131,3 +133,77 @@ Then produce an improved version of the skill inside ```markdown``` fences."""
             _logger.exception("LLM error during reflection")
             return ""
         return self.extract_candidate(response)
+
+
+class LLMCodeMutator:
+    """Default code-repair :class:`~arcskill.improver.seams.Mutator` (REQ-010/011, GEPA).
+
+    Turns failing-trace error signals into a multi-file :class:`BundlePatch` over the
+    skill's *existing* script files via one bounded LLM call. Least-privilege: the patch
+    may only replace files already in the bundle — it can never create new files or paths
+    (ASI05). Provider-free: the LLM enters through the injected :class:`LLMInvoker` seam.
+    """
+
+    def __init__(self, llm: LLMInvoker) -> None:
+        self._llm = llm
+
+    async def propose(
+        self, *, kind: str, current: BundleView, failures: str, insight: str
+    ) -> BundlePatch | None:
+        if kind != "code" or not current.scripts:
+            return None
+        prompt = self._build_prompt(current.scripts, failures, insight)
+        try:
+            response = await self._llm.invoke(prompt)
+        except (OSError, TimeoutError, ConnectionError, RuntimeError):
+            _logger.exception("LLM error during code repair")
+            return None
+        return self._parse_patch(response, current.scripts)
+
+    def _build_prompt(self, scripts: dict[str, bytes], failures: str, insight: str) -> str:
+        files_text = "\n\n".join(
+            f"### {rel}\n```python\n{data.decode('utf-8', 'replace')}\n```"
+            for rel, data in scripts.items()
+        )
+        insight_block = f"\nRECURRING-FAILURE INSIGHT:\n{insight}\n" if insight else ""
+        return f"""\
+You are repairing the CODE of an agent skill. Fix the root cause of the failures below.
+
+RULES:
+- Only modify the files shown; do NOT add new files or paths.
+- Return ONLY a JSON object:
+  {{"files": {{"<path>": "<full new file content>"}}, "summary": "<why>"}}
+- Include a file only if you changed it. Preserve behavior that already works.
+
+FAILURES (from execution traces):
+{failures}
+{insight_block}
+CURRENT FILES:
+{files_text}
+"""
+
+    def _parse_patch(self, response: str, scripts: dict[str, bytes]) -> BundlePatch | None:
+        if not response:
+            return None
+        match = _JSON_FENCE_RE.search(response)
+        raw = match.group(1) if match else response
+        try:
+            payload = json.loads(raw)
+        except (ValueError, TypeError):
+            _logger.warning("code mutator returned unparseable JSON")
+            return None
+        files_raw = payload.get("files") if isinstance(payload, dict) else None
+        if not isinstance(files_raw, dict) or not files_raw:
+            return None
+        files: dict[str, bytes] = {}
+        for rel, content in files_raw.items():
+            if rel not in scripts or not isinstance(content, str):
+                continue  # least-privilege: never create files outside the bundle
+            files[rel] = sanitize_text(content, max_length=100_000).encode("utf-8")
+        if not files:
+            return None
+        summary = str(payload.get("summary", "")) if isinstance(payload, dict) else ""
+        return BundlePatch(files=files, summary=summary[:500])
+
+
+__all__ = ["LLMCodeMutator", "SkillReflector"]

@@ -244,3 +244,77 @@ class TestReflect:
         failures = [(_make_trace(), {"accuracy": _make_dim_score("accuracy", 1)})]
         result = await r.reflect(SKILL_TEXT, failures, "intent", token_budget=100)
         assert result == ""  # Empty on error
+
+
+# ---------------------------------------------------------------------------
+# LLMCodeMutator — code-repair patch proposer (SPEC-044 P4)
+# ---------------------------------------------------------------------------
+
+
+class TestLLMCodeMutator:
+    """The default code-repair Mutator parses a bounded, least-privilege patch."""
+
+    def _view(self):
+        from arcskill.improver.models import BundleView
+
+        return BundleView(
+            "calc",
+            "# Calc\n",
+            None,
+            scripts={"scripts/calc.py": b"def add(a, b):\n    return a - b\n"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_parses_json_patch_over_existing_file(self):
+        from unittest.mock import AsyncMock
+
+        from arcskill.improver.mutate import LLMCodeMutator
+
+        mock_llm = AsyncMock()
+        mock_llm.invoke.return_value = (
+            '```json\n{"files": {"scripts/calc.py": "def add(a, b):\\n    return a + b\\n"},'
+            ' "summary": "fix"}\n```'
+        )
+        patch = await LLMCodeMutator(mock_llm).propose(
+            kind="code", current=self._view(), failures="AssertionError", insight=""
+        )
+        assert patch is not None
+        assert patch.files["scripts/calc.py"] == b"def add(a, b):\n    return a + b\n"
+        assert patch.summary == "fix"
+
+    @pytest.mark.asyncio
+    async def test_rejects_files_outside_bundle(self):
+        from unittest.mock import AsyncMock
+
+        from arcskill.improver.mutate import LLMCodeMutator
+
+        mock_llm = AsyncMock()
+        mock_llm.invoke.return_value = '{"files": {"/etc/passwd": "x", "new.py": "y"}}'
+        patch = await LLMCodeMutator(mock_llm).propose(
+            kind="code", current=self._view(), failures="e", insight=""
+        )
+        assert patch is None  # least-privilege: no existing file touched
+
+    @pytest.mark.asyncio
+    async def test_non_code_kind_returns_none(self):
+        from unittest.mock import AsyncMock
+
+        from arcskill.improver.mutate import LLMCodeMutator
+
+        patch = await LLMCodeMutator(AsyncMock()).propose(
+            kind="prose", current=self._view(), failures="e", insight=""
+        )
+        assert patch is None
+
+    @pytest.mark.asyncio
+    async def test_unparseable_response_returns_none(self):
+        from unittest.mock import AsyncMock
+
+        from arcskill.improver.mutate import LLMCodeMutator
+
+        mock_llm = AsyncMock()
+        mock_llm.invoke.return_value = "not json at all"
+        patch = await LLMCodeMutator(mock_llm).propose(
+            kind="code", current=self._view(), failures="e", insight=""
+        )
+        assert patch is None

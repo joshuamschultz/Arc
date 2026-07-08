@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from arcskill.improver.models import BundleView, EvalCase, EvalOutcome
+    from arcskill.improver.models import BundlePatch, BundleView, EvalCase, EvalOutcome
 
 
 @runtime_checkable
@@ -26,6 +26,20 @@ class LLMInvoker(Protocol):
     """Structural contract for the LLM the judge + mutator drive (arcllm-backed)."""
 
     async def invoke(self, prompt: str) -> str: ...
+
+
+@runtime_checkable
+class Mutator(Protocol):
+    """Proposes a code-repair patch from failing traces (REQ-010/011, D-1c GEPA).
+
+    The default production impl is :class:`~arcskill.improver.mutate.LLMCodeMutator`
+    (arcllm-backed via :class:`LLMInvoker`); deterministic fakes satisfy it in tests.
+    Returns ``None`` when no safe patch is proposed — the code path then no-ops.
+    """
+
+    async def propose(
+        self, *, kind: str, current: BundleView, failures: str, insight: str
+    ) -> BundlePatch | None: ...
 
 
 @runtime_checkable
@@ -53,4 +67,4 @@ class Signer(Protocol):
     def sign(self, path: Path, content: bytes) -> None: ...
 
 
-__all__ = ["EvalRunner", "LLMInvoker", "Signer"]
+__all__ = ["EvalRunner", "LLMInvoker", "Mutator", "Signer"]

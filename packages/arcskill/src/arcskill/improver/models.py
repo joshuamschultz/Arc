@@ -54,6 +54,37 @@ class BundleView:
 
 
 @dataclass(frozen=True)
+class BundlePatch:
+    """A validated multi-file code patch over a skill bundle (SPEC-044 REQ-010/011).
+
+    ``files`` maps a bundle-relative path (e.g. ``scripts/calc.py``) to its full new
+    bytes — the code-repair path proposes whole-file replacements, not hunks, so the
+    patch is inert data the sandboxed :class:`~arcskill.improver.seams.EvalRunner`
+    validates and the agent-DID :class:`~arcskill.improver.seams.Signer` re-signs.
+    """
+
+    files: dict[str, bytes]
+    summary: str = ""
+
+    @property
+    def files_touched(self) -> int:
+        return len(self.files)
+
+    def lines_changed(self, base: dict[str, bytes]) -> int:
+        """Total added+removed lines vs ``base`` (bundle-relative path → current bytes)."""
+        import difflib
+
+        total = 0
+        for rel, new in self.files.items():
+            old_lines = base.get(rel, b"").decode("utf-8", "replace").splitlines()
+            new_lines = new.decode("utf-8", "replace").splitlines()
+            for line in difflib.ndiff(old_lines, new_lines):
+                if line.startswith(("+ ", "- ")):
+                    total += 1
+        return total
+
+
+@dataclass(frozen=True)
 class ToolCallRecord:
     """Single tool invocation within a skill execution span."""
 
