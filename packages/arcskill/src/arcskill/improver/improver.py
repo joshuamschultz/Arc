@@ -135,6 +135,17 @@ class ArcSkillImprover:
         """Operator-initiated revive of a retired skill (REQ-044); audited transition."""
         self._emit_lifecycle_audit(self._lifecycle.revive(skill_name))
 
+    def rollback(self, skill_name: str, candidate_id: str) -> None:
+        """Revert to a prior candidate, cool off, and operator-audit the reversal (REQ-052)."""
+        self._candidate_store.rollback(skill_name, candidate_id)
+        self._guardrails.set_cooloff(
+            skill_name, self._store.turn_number + self._config.cooloff_turns
+        )
+        self._emit_audit(
+            skill_name, "skill.mutation.rolled_back", "rolled_back",
+            extra={"candidate_id": candidate_id},
+        )
+
     # -- internals -----------------------------------------------------------
 
     def _spawn(self, coro: Any) -> None:
