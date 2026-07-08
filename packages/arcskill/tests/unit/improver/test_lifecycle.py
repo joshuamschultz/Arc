@@ -50,33 +50,40 @@ def test_usage_stats_success_rate(tmp_path: Path) -> None:
     assert abs(stats.success_rate - 2 / 3) < 1e-9
 
 
-def test_sweep_retires_inactive_skill(tmp_path: Path) -> None:
+def test_pending_retirements_flags_inactive_skill(tmp_path: Path) -> None:
     old = datetime.now(UTC) - timedelta(days=45)  # older than the 30-day window
     lc, store = _lifecycle(tmp_path, {"stale": [_trace("stale", "success", old)]})
-    events = lc.sweep()
-    assert len(events) == 1
-    assert events[0].to_state == STATE_RETIRED
-    assert "inactive" in events[0].reason
+    pending = lc.pending_retirements()
+    assert len(pending) == 1
+    name, reason = pending[0]
+    assert name == "stale"
+    assert "inactive" in reason
+    # pending_retirements is pure — nothing committed until the caller retires.
+    assert store.lifecycle_state("stale") == "active"
+    event = lc.retire(name, reason=reason)
+    assert event.to_state == STATE_RETIRED
     assert store.lifecycle_state("stale") == STATE_RETIRED
 
 
-def test_sweep_keeps_recently_used_skill(tmp_path: Path) -> None:
+def test_pending_retirements_keeps_recently_used_skill(tmp_path: Path) -> None:
     recent = datetime.now(UTC) - timedelta(days=2)
     lc, store = _lifecycle(tmp_path, {"fresh": [_trace("fresh", "success", recent)]})
-    assert lc.sweep() == []
+    assert lc.pending_retirements() == []
     assert store.lifecycle_state("fresh") == "active"
 
 
-def test_sweep_retires_exhausted_underperformer(tmp_path: Path) -> None:
+def test_pending_retirements_flags_exhausted_underperformer(tmp_path: Path) -> None:
     now = datetime.now(UTC)
     failing = [_trace("bad", "failure", now) for _ in range(6)]
     lc, store = _lifecycle(
         tmp_path, {"bad": failing}, gen=3,
         config=LifecycleConfig(min_uses_before_retire=5, improve_attempts_before_retire=3),
     )
-    events = lc.sweep()
-    assert len(events) == 1
-    assert "success floor" in events[0].reason
+    pending = lc.pending_retirements()
+    assert len(pending) == 1
+    name, reason = pending[0]
+    assert "success floor" in reason
+    lc.retire(name, reason=reason)
     assert store.lifecycle_state("bad") == STATE_RETIRED
 
 
@@ -91,7 +98,9 @@ def test_revive_restores_from_retired(tmp_path: Path) -> None:
     assert store.lifecycle_state("x") == "active"
 
 
-# --- AC-5: facade sweep retires + operator revive restores, both audited ---------
+# --- improver lifecycle + approval gate (federal): retire/revive gated + audited --------
+# The true AC-5 E2E (proactive tick → sweep → retire) lives in the arcagent extension test
+# (drives the real producer); this exercises the improver's own gated-transition mechanics.
 
 
 class _Sink:
@@ -102,26 +111,63 @@ class _Sink:
         self.events.append(event)
 
 
-@pytest.mark.asyncio
-async def test_ac5_sweep_retire_then_operator_revive_are_audited(tmp_path: Path) -> None:
+class _AutoApprover:
+    """Approver seam that always grants — the wired-and-approved federal path."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def request(self, *, action: str, skill_name: str, detail: str) -> bool:
+        self.calls.append((action, skill_name))
+        return True
+
+
+def _seed_inactive_skill(ws: Path) -> None:
     old = datetime.now(UTC) - timedelta(days=60)
-    # Persist a real trace via the improver's own store so list_skills discovers it.
-    ws = tmp_path / "ws"
     traces_dir = ws / "skill_traces" / "old-skill"
     traces_dir.mkdir(parents=True)
     (traces_dir / "traces-2020-01.jsonl").write_text(
         json.dumps(_trace("old-skill", "success", old).to_dict(), default=str) + "\n",
         encoding="utf-8",
     )
+
+
+@pytest.mark.asyncio
+async def test_federal_sweep_retire_then_revive_gated_and_audited(tmp_path: Path) -> None:
+    ws = tmp_path / "ws"
+    _seed_inactive_skill(ws)
+    sink = _Sink()
+    approver = _AutoApprover()
+    imp = ArcSkillImprover(
+        ws, config=ImproverConfig(), tier="federal", audit_sink=sink, approver=approver
+    )
+
+    await imp.review_lifecycle(turn=1)
+    retired = [e for e in sink.events if getattr(e, "action", "") == "skill.lifecycle.retired"]
+    assert retired, "sweep should retire the inactive skill once approved"
+    assert getattr(retired[0], "tier", None) == "federal"
+    assert imp._candidate_store.lifecycle_state("old-skill") == STATE_RETIRED
+
+    await imp.revive("old-skill")
+    revived = [e for e in sink.events if getattr(e, "action", "") == "skill.lifecycle.revived"]
+    assert revived, "approved operator revive should emit an audit event"
+    # Both transitions passed through the operator-approval seam (federal, D-10).
+    assert ("skill.lifecycle.retire", "old-skill") in approver.calls
+    assert ("skill.lifecycle.revive", "old-skill") in approver.calls
+
+
+@pytest.mark.asyncio
+async def test_federal_retire_blocked_without_approver(tmp_path: Path) -> None:
+    """Federal retire fails closed when no approver is wired: state stays active, audited."""
+    ws = tmp_path / "ws"
+    _seed_inactive_skill(ws)
     sink = _Sink()
     imp = ArcSkillImprover(ws, config=ImproverConfig(), tier="federal", audit_sink=sink)
 
     await imp.review_lifecycle(turn=1)
-    retired = [e for e in sink.events if getattr(e, "action", "") == "skill.lifecycle.retired"]
-    assert retired, "sweep should retire the inactive skill"
-    assert getattr(retired[0], "tier", None) == "federal"
 
-    imp.revive("old-skill")
-    revived = [e for e in sink.events if getattr(e, "action", "") == "skill.lifecycle.revived"]
-    assert revived, "operator revive should emit an audit event"
-    assert getattr(revived[0], "tier", None) == "federal"
+    assert imp._candidate_store.lifecycle_state("old-skill") == "active"  # NOT retired
+    retired = [e for e in sink.events if getattr(e, "action", "") == "skill.lifecycle.retired"]
+    assert not retired
+    denied = [e for e in sink.events if getattr(e, "outcome", "") == "denied_no_approver"]
+    assert denied, "the blocked retirement must be audited"

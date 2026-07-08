@@ -56,6 +56,20 @@ class EvalRunner(Protocol):
 
 
 @runtime_checkable
+class Approver(Protocol):
+    """Operator-approval seam for consequential transitions (D-10, SPEC-043 ladder).
+
+    arcskill declares it; arcagent injects a real approver that reuses the SPEC-043
+    tier HITL mechanism. ``request`` returns ``True`` to proceed, ``False`` to block.
+    The improver decides *when* approval is required (per-tier ladder) — federal gates
+    every mutation + retire/revive, enterprise gates code mutations, personal auto —
+    and fails closed (blocks) when approval is required but no approver is wired.
+    """
+
+    async def request(self, *, action: str, skill_name: str, detail: str) -> bool: ...
+
+
+@runtime_checkable
 class Signer(Protocol):
     """Agent-DID sidecar signer (SPEC-033): sign ``content`` for ``path`` on write.
 
@@ -67,4 +81,4 @@ class Signer(Protocol):
     def sign(self, path: Path, content: bytes) -> None: ...
 
 
-__all__ = ["EvalRunner", "LLMInvoker", "Mutator", "Signer"]
+__all__ = ["Approver", "EvalRunner", "LLMInvoker", "Mutator", "Signer"]

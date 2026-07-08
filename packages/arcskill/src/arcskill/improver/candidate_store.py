@@ -25,10 +25,15 @@ _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$")
 _SAFE_CANDIDATE_ID_RE = re.compile(r"^[a-f0-9-]{1,40}$|^seed$")
 
 
-def _mutation_audit_event(skill_name: str, event: MutationEvent) -> AuditEvent:
-    """Map a :class:`MutationEvent` onto the arctrust audit schema."""
+def _mutation_audit_event(skill_name: str, event: MutationEvent, actor_did: str) -> AuditEvent:
+    """Map a :class:`MutationEvent` onto the arctrust audit schema.
+
+    ``actor_did`` is the constructed **agent** DID (who authored the mutation); the WORM
+    chain itself is signed by the operator key (SPEC-053) — actor identity and chain
+    signing authority are deliberately distinct (REQ-050).
+    """
     return AuditEvent(
-        actor_did="did:arc:skill-improver",
+        actor_did=actor_did or "did:arc:skill-improver",
         action="skill.mutation.applied",
         target=skill_name,
         outcome=event.stop_reason,
@@ -54,8 +59,11 @@ def _validate_candidate_id(cid: str) -> None:
 class CandidateStore:
     """Persist skill optimization candidates and audit trail."""
 
-    def __init__(self, workspace: Path, *, audit_sink: AuditSink | None = None) -> None:
+    def __init__(
+        self, workspace: Path, *, audit_sink: AuditSink | None = None, actor_did: str = ""
+    ) -> None:
         self._workspace = workspace
+        self._actor_did = actor_did
         # SPEC-033 D4/REQ-022 — mutation audit routes through the tamper-evident
         # WORM chain (a ``WormSink`` in production), stored separately from the
         # mutable skill code (AU-9(2)). No plaintext JSONL: it can be silently
@@ -163,7 +171,7 @@ class CandidateStore:
         _validate_skill_name(skill_name)
         if self._audit_sink is None:
             return
-        emit(_mutation_audit_event(skill_name, event), self._audit_sink)
+        emit(_mutation_audit_event(skill_name, event, self._actor_did), self._audit_sink)
 
     def list_skills(self) -> list[str]:
         """Enumerate skills that have a trace/candidate directory under the workspace."""

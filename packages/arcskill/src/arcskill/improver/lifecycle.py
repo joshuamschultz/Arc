@@ -70,25 +70,30 @@ class SkillLifecycle:
         ended = [t.ended_at for t in traces if t.ended_at is not None]
         return UsageStats(len(traces), success, failure, partial, max(ended) if ended else None)
 
-    def sweep(self, *, now: datetime | None = None) -> list[LifecycleEvent]:
-        """Grade every skill; retire the inactive or persistently-failing (REQ-043)."""
+    def pending_retirements(self, *, now: datetime | None = None) -> list[tuple[str, str]]:
+        """Grade every skill; return ``(skill_name, reason)`` for each that should retire.
+
+        Pure — commits nothing. The caller (``ArcSkillImprover.review_lifecycle``) gates
+        each proposed retirement through the tier approval ladder (federal requires
+        operator approval, D-10) before committing it via :meth:`retire` (REQ-043).
+        """
         moment = now or datetime.now(UTC)
-        events: list[LifecycleEvent] = []
+        pending: list[tuple[str, str]] = []
         for skill_name in self._store.list_skills():
             if self.state(skill_name) == STATE_RETIRED:
                 continue
-            event = self._evaluate(skill_name, moment)
-            if event is not None:
-                events.append(event)
-        return events
+            reason = self._retire_reason(skill_name, moment)
+            if reason is not None:
+                pending.append((skill_name, reason))
+        return pending
 
-    def _evaluate(self, skill_name: str, now: datetime) -> LifecycleEvent | None:
-        """Return a retire event if the skill is inactive or failing past its budget."""
+    def _retire_reason(self, skill_name: str, now: datetime) -> str | None:
+        """The reason a skill should retire (inactive / exhausted), or ``None`` to keep."""
         stats = self.usage_stats(self._load_traces(skill_name))
         if self._is_inactive(stats, now):
-            return self.retire(skill_name, reason="inactive past window")
+            return "inactive past window"
         if self._is_exhausted_underperformer(skill_name, stats):
-            return self.retire(skill_name, reason="below success floor after retry budget")
+            return "below success floor after retry budget"
         return None
 
     def _is_inactive(self, stats: UsageStats, now: datetime) -> bool:

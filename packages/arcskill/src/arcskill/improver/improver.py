@@ -39,10 +39,14 @@ from arcskill.improver.models import (
 )
 from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
-from arcskill.improver.seams import EvalRunner, LLMInvoker, Mutator, Signer
+from arcskill.improver.seams import Approver, EvalRunner, LLMInvoker, Mutator, Signer
 from arcskill.improver.trace_store import TraceStore
 
 _logger = logging.getLogger("arcskill.improver.improver")
+
+# SkillOpt rejected-edit buffer: how many prior rejected patches per skill are fed back
+# to the mutator as negative feedback (bounded — the convergence lever SkillOpt credits).
+_REJECTED_BUFFER_MAX = 5
 
 
 def _fingerprint(content: bytes) -> str:
@@ -63,7 +67,9 @@ class ArcSkillImprover:
         signer: Signer | None = None,
         eval_runner: EvalRunner | None = None,
         mutator: Mutator | None = None,
+        approver: Approver | None = None,
         audit_sink: Any = None,
+        agent_did: str = "",
         skill_path: Callable[[str], Path | None] | None = None,
         reload: Callable[[], None] | None = None,
         session_id: str = "",
@@ -75,6 +81,14 @@ class ArcSkillImprover:
         self._tier = tier
         self._llm = llm
         self._signer = signer
+        # Operator-approval seam (D-10). The improver decides *when* approval is required
+        # per the tier ladder; the injected approver decides the answer. Fail-closed when
+        # required but unwired (federal/enterprise), so a missing approver blocks, never
+        # silently applies.
+        self._approver = approver
+        # Constructed agent DID — the audit *actor* (who authored the mutation), distinct
+        # from the operator key that signs the WORM chain (REQ-050).
+        self._agent_did = agent_did
         # Default to the concrete sandboxed runner (SPEC-044 P3.3) when none is injected —
         # this is the production wiring; unit tests inject deterministic fakes.
         self._eval_runner: EvalRunner = eval_runner or HubEvalRunner(tier=tier)
@@ -87,7 +101,12 @@ class ArcSkillImprover:
         self._guardrails = Guardrails(self._config)
         self._change_bound = ChangeBound(tier, self._config.change_bound)
         self._audit_sink = audit_sink
-        self._candidate_store = CandidateStore(workspace, audit_sink=audit_sink)
+        self._candidate_store = CandidateStore(
+            workspace, audit_sink=audit_sink, actor_did=agent_did
+        )
+        # Per-skill bounded buffer of prior rejected patches (SkillOpt rejected-edit buffer),
+        # threaded back into the mutator prompt as negative feedback on the next attempt.
+        self._rejected: dict[str, list[str]] = {}
         self._lifecycle = SkillLifecycle(
             self._candidate_store,
             self._config.lifecycle,
@@ -127,12 +146,23 @@ class ArcSkillImprover:
                 self._spawn(self._optimize(skill_name, insight))
 
     async def review_lifecycle(self, *, turn: int) -> None:
-        """Curator sweep: retire inactive/failing skills, each an audited transition (AC-5)."""
-        for event in self._lifecycle.sweep():
-            self._emit_lifecycle_audit(event)
+        """Curator sweep: retire inactive/failing skills, each an audited transition (AC-5).
 
-    def revive(self, skill_name: str) -> None:
-        """Operator-initiated revive of a retired skill (REQ-044); audited transition."""
+        Each proposed retirement is gated through the tier approval ladder (federal
+        requires operator approval; fail-closed if unwired) before it commits (D-10).
+        """
+        for skill_name, reason in self._lifecycle.pending_retirements():
+            if not await self._authorize("skill.lifecycle.retire", "retire", skill_name, reason):
+                continue
+            self._emit_lifecycle_audit(self._lifecycle.retire(skill_name, reason=reason))
+
+    async def revive(self, skill_name: str) -> None:
+        """Operator-initiated revive of a retired skill (REQ-044); gated + audited.
+
+        Federal requires operator approval even for revive (D-10); fail-closed if unwired.
+        """
+        if not await self._authorize("skill.lifecycle.revive", "revive", skill_name, "revive"):
+            return
         self._emit_lifecycle_audit(self._lifecycle.revive(skill_name))
 
     def rollback(self, skill_name: str, candidate_id: str) -> None:
@@ -218,6 +248,11 @@ class ArcSkillImprover:
             )
             return
 
+        # Operator-approval gate (D-10): federal approves every mutation. Fail-closed if
+        # required but unwired — a prose candidate never applies unapproved at federal.
+        if not await self._authorize("skill.mutation", "prose", skill_name, decision.reason):
+            return
+
         engine.apply_result(
             skill_name,
             candidate,
@@ -248,19 +283,29 @@ class ArcSkillImprover:
             return
         skill_dir = skill_path.parent
         current = build_bundle_view(skill_name, skill_path)
-        failures = self._summarize_failures(traces)
+        failures = self._compose_failures(skill_name, traces)
         patch = await self._mutator.propose(
             kind="code", current=current, failures=failures, insight=insight
         )
         if patch is None or not patch.files:
             return
         # Change-bound (SkillOpt): reject an over-budget patch BEFORE the costly sandbox
-        # eval, and audit the rejection (AC-4). tier flows from construction.
+        # eval, and audit the rejection (AC-4). tier flows from construction. The per-attempt
+        # edit budget decays on a cosine schedule across the improve-attempts budget, so
+        # early attempts explore and late ones consolidate before retirement (SDD §7.3).
+        edit_budget = self._change_bound.scheduled_edits(
+            self._guardrails.get_generation(skill_name),
+            self._config.lifecycle.improve_attempts_before_retire,
+        )
         ok, reason = self._change_bound.check(
-            patch, current.scripts, skill_override=self._skill_override(skill_name)
+            patch,
+            current.scripts,
+            skill_override=self._skill_override(skill_name),
+            edit_budget=edit_budget,
         )
         if not ok:
             _logger.info("skill %s code patch over change-bound: %s", skill_name, reason)
+            self._record_rejection(skill_name, patch, reason)
             self._emit_audit(skill_name, "skill.mutation.bound_rejected", reason)
             return
         cases = load_suite(skill_dir)
@@ -271,6 +316,11 @@ class ArcSkillImprover:
         )
         if not decision.accepted:
             _logger.info("skill %s code patch rejected: %s", skill_name, decision.reason)
+            self._record_rejection(skill_name, patch, decision.reason)
+            return
+        # Operator-approval gate (D-10): enterprise + federal approve code mutations.
+        # Fail-closed if required but unwired — never apply model-authored code unapproved.
+        if not await self._authorize("skill.mutation", "code", skill_name, patch.summary):
             return
         apply_bundle_patch(skill_dir, patch, signer=self._signer)
         self._audit_code_mutation(skill_name, current, patch, [t.trace_id for t in traces])
@@ -280,6 +330,64 @@ class ArcSkillImprover:
         if self._reload is not None:
             self._reload()
         _logger.info("skill %s code patch applied: %s", skill_name, patch.summary)
+
+    def _compose_failures(self, skill_name: str, traces: list[SkillTrace]) -> str:
+        """Failure summary for the mutator, augmented with the rejected-edit buffer (MED-5b).
+
+        Feeding prior rejected patches back as negative feedback is the SkillOpt mechanism
+        that stops the mutator re-proposing losing edits — the credited convergence lever.
+        """
+        failures = self._summarize_failures(traces)
+        rejected = self._rejected.get(skill_name)
+        if rejected:
+            failures += "\n\nPREVIOUSLY-REJECTED EDITS (do NOT repeat these):\n" + "\n".join(
+                rejected
+            )
+        return failures
+
+    def _record_rejection(self, skill_name: str, patch: BundlePatch, reason: str) -> None:
+        """Buffer a rejected patch as bounded negative feedback for the next attempt."""
+        buf = self._rejected.setdefault(skill_name, [])
+        summary = patch.summary or ", ".join(sorted(patch.files))
+        buf.append(f"- tried: {summary[:160]} -> rejected: {reason}")
+        del buf[:-_REJECTED_BUFFER_MAX]
+
+    def _approval_required(self, kind: str) -> bool:
+        """Whether the tier ladder (D-10 / PRD §7) requires operator approval for ``kind``.
+
+        federal → every mutation + retire/revive; enterprise → code mutations only;
+        personal → never (auto + audit). ``kind`` ∈ {code, prose, retire, revive}.
+        """
+        if self._tier == "federal":
+            return True
+        if self._tier == "enterprise":
+            return kind == "code"
+        return False
+
+    async def _authorize(self, action: str, kind: str, skill_name: str, detail: str) -> bool:
+        """Gate a consequential transition through the operator-approval ladder (D-10).
+
+        Returns ``True`` to proceed. **Fail-closed**: when approval is required but no
+        approver is wired, the action is blocked. Every decision that reaches an approver
+        (or is blocked for lack of one) is an operator-signed audit event.
+        """
+        if not self._approval_required(kind):
+            return True
+        if self._approver is None:
+            self._emit_audit(
+                skill_name, f"{action}.approval", "denied_no_approver", extra={"detail": detail}
+            )
+            return False
+        approved = await self._approver.request(
+            action=action, skill_name=skill_name, detail=detail
+        )
+        self._emit_audit(
+            skill_name,
+            f"{action}.approval",
+            "approved" if approved else "denied",
+            extra={"detail": detail},
+        )
+        return approved
 
     def _summarize_failures(self, traces: list[SkillTrace]) -> str:
         """A compact error-signal summary fed to the code mutator (GEPA reflection seed)."""
@@ -331,7 +439,7 @@ class ArcSkillImprover:
 
         emit(
             AuditEvent(
-                actor_did="did:arc:skill-improver",
+                actor_did=self._agent_did or "did:arc:skill-improver",
                 action=action,
                 target=skill_name,
                 outcome=outcome,

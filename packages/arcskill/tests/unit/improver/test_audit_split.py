@@ -43,6 +43,11 @@ class _AgentSigner:
         path.with_name(path.name + ".arcsig").write_text(manifest.to_json(), encoding="utf-8")
 
 
+class _AutoApprover:
+    async def request(self, *, action: str, skill_name: str, detail: str) -> bool:
+        return True
+
+
 def _skill(root: Path) -> Path:
     sk = root / "s"
     (sk / "scripts").mkdir(parents=True)
@@ -70,7 +75,9 @@ async def test_ac6_operator_audit_vs_agent_did_artifact(tmp_path: Path) -> None:
         mutator=_FixMutator(),
         eval_runner=_Runner(),
         signer=_AgentSigner(agent.did, agent.signing_seed),
+        approver=_AutoApprover(),  # enterprise code mutation requires operator approval (D-10)
         audit_sink=sink,
+        agent_did=agent.did,
         skill_path=lambda name: skill_md,
     )
     await imp.observe(skill_name="s", tool_name="run", status="error", error_type="AssertionError")

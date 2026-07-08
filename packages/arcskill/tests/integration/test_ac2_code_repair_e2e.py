@@ -67,6 +67,13 @@ class _CaptureSink:
         self.events.append(event)
 
 
+class _AutoApprover:
+    """Operator-approval seam — grants the enterprise code mutation (D-10)."""
+
+    async def request(self, *, action: str, skill_name: str, detail: str) -> bool:
+        return True
+
+
 def _seed_skill(root: Path) -> Path:
     sk = root / "skills" / "calc-skill"
     (sk / "scripts").mkdir(parents=True)
@@ -90,7 +97,9 @@ async def test_ac2_seeded_bug_repaired_through_real_path(tmp_path: Path) -> None
         tier="enterprise",  # real Docker sandbox; NOT injecting eval_runner
         mutator=_FixMutator(),
         signer=_AgentSigner(ident.did, ident.signing_seed),
+        approver=_AutoApprover(),  # enterprise code mutation requires operator approval
         audit_sink=sink,
+        agent_did=ident.did,
         skill_path=lambda name: skill_md,
         reload=lambda: reloaded.append(True),
     )
