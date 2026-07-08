@@ -32,15 +32,16 @@ class BoundLimits:
     max_files_touched: int
     max_lines_changed: int
     max_ast_distance: float  # convergence regularizer, NOT a security gate (§8)
-    max_prose_edit_distance: float
 
 
 # PINNED per-tier defaults (SDD §7 / OQ-1). Federal is the tightest and non-relaxable:
 # the resolver only ever tightens via min(), so config/skill overrides cannot loosen it.
+# Prose-candidate drift is bounded separately by ``anchor_distance_threshold`` in
+# :class:`Guardrails` (validate_candidate), not here — ChangeBound gates code patches.
 TIER_BOUNDS: dict[str, BoundLimits] = {
-    "personal": BoundLimits(8, "constant", 2, 3, 80, 0.0, 0.25),
-    "enterprise": BoundLimits(4, "cosine", 2, 2, 40, 0.30, 0.15),
-    "federal": BoundLimits(2, "cosine", 2, 1, 15, 0.20, 0.15),
+    "personal": BoundLimits(8, "constant", 2, 3, 80, 0.0),
+    "enterprise": BoundLimits(4, "cosine", 2, 2, 40, 0.30),
+    "federal": BoundLimits(2, "cosine", 2, 1, 15, 0.20),
 }
 
 
@@ -220,11 +221,6 @@ def _resolve(base: BoundLimits, override: ChangeBoundConfig | None) -> BoundLimi
             else base.max_lines_changed
         ),
         max_ast_distance=_tighten_distance(base.max_ast_distance, o.max_ast_distance),
-        max_prose_edit_distance=(
-            min(base.max_prose_edit_distance, o.max_prose_edit_distance)
-            if o.max_prose_edit_distance is not None
-            else base.max_prose_edit_distance
-        ),
     )
 
 

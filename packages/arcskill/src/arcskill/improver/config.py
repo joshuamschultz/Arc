@@ -29,7 +29,6 @@ class ChangeBoundConfig(BaseModel):
     max_files_touched: int | None = Field(default=None, ge=1)
     max_lines_changed: int | None = Field(default=None, ge=1)  # [DEEPEN-pinned §7]
     max_ast_distance: float | None = Field(default=None, ge=0.0, le=1.0)  # regularizer
-    max_prose_edit_distance: float | None = Field(default=None, gt=0.0, le=1.0)
 
 
 class LifecycleConfig(BaseModel):
