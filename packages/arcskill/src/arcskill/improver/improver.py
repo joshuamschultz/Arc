@@ -23,10 +23,12 @@ from arcskill.improver._util import read_frontmatter
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.engine import SkillOptimizer
+from arcskill.improver.evalgate import EvalGate, GateDecision, load_suite, no_suite_policy
 from arcskill.improver.evaluator import SkillEvaluator
 from arcskill.improver.guardrails import Guardrails
+from arcskill.improver.models import BundleView
 from arcskill.improver.mutate import SkillReflector
-from arcskill.improver.seams import LLMInvoker, Signer
+from arcskill.improver.seams import EvalRunner, LLMInvoker, Signer
 from arcskill.improver.trace_store import TraceStore
 
 _logger = logging.getLogger("arcskill.improver.improver")
@@ -43,6 +45,7 @@ class ArcSkillImprover:
         tier: str = "personal",
         llm: LLMInvoker | None = None,
         signer: Signer | None = None,
+        eval_runner: EvalRunner | None = None,
         audit_sink: Any = None,
         skill_path: Callable[[str], Path | None] | None = None,
         reload: Callable[[], None] | None = None,
@@ -55,6 +58,7 @@ class ArcSkillImprover:
         self._tier = tier
         self._llm = llm
         self._signer = signer
+        self._eval_runner = eval_runner
         self._skill_path = skill_path
         self._reload = reload
         self._store = TraceStore(workspace, session_id=session_id)
@@ -146,16 +150,46 @@ class ArcSkillImprover:
         result = await engine.optimize(skill_name, current_text, traces)
         if result is None or result.best_candidate.id == "seed":
             return
+
+        # HARD GATE (REQ-022): the golden-task suite decides acceptance; the judge only
+        # ranked the frontier above. A candidate applies only on strict improvement.
+        candidate = result.best_candidate
+        decision = await self._gate(skill_name, skill_path, current_text, candidate.text)
+        if not decision.accepted:
+            _logger.info(
+                "skill %s candidate rejected by eval gate: %s", skill_name, decision.reason
+            )
+            return
+
         engine.apply_result(
             skill_name,
-            result.best_candidate,
+            candidate,
             skill_path=skill_path,
             seed_scores=result.seed_scores,
             trace_ids=[t.trace_id for t in traces],
         )
-        self._guardrails.set_generation(skill_name, result.best_candidate.generation)
+        self._guardrails.set_generation(skill_name, candidate.generation)
         if self._reload is not None:
             self._reload()
+
+    async def _gate(
+        self, skill_name: str, skill_path: Path, before_text: str, after_text: str
+    ) -> GateDecision:
+        """Run the golden-task gate for a prose candidate (code path lands Phase 4)."""
+        skill_dir = skill_path.parent
+        cases = load_suite(skill_dir)
+        if not cases:
+            return no_suite_policy(self._tier, "prose")
+        if self._eval_runner is None:
+            return GateDecision(accepted=False, reason="no sandbox eval runner; fail-closed")
+        gate = EvalGate(self._eval_runner, min_golden_cases=self._config.min_golden_cases)
+        return await gate.decide(
+            before=BundleView(skill_name, before_text, skill_dir),
+            after=BundleView(skill_name, after_text, skill_dir),
+            cases=cases,
+            tier=self._tier,
+            kind="prose",
+        )
 
     def _skill_tags(self, skill_name: str) -> list[str]:
         if self._skill_path is None:

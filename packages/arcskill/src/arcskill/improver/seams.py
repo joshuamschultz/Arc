@@ -15,7 +15,10 @@ richer ``Mutator``/``Judge``/``EvalRunner``/``AuditSink`` Protocols over
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from arcskill.improver.models import BundleView, EvalCase, EvalOutcome
 
 
 @runtime_checkable
@@ -23,6 +26,19 @@ class LLMInvoker(Protocol):
     """Structural contract for the LLM the judge + mutator drive (arcllm-backed)."""
 
     async def invoke(self, prompt: str) -> str: ...
+
+
+@runtime_checkable
+class EvalRunner(Protocol):
+    """Runs a skill's golden-task suite in isolation; the security boundary (REQ-023).
+
+    The default production impl is a thin adapter over ``arcskill.hub.dry_run``
+    (Firecracker federal / Docker fallback, ``SandboxRequired`` fail-closed — DC-5).
+    Returns one :class:`EvalOutcome` per :class:`EvalCase`. Deterministic fakes
+    satisfy it in unit tests — the injected boundary, not a rigged fixture.
+    """
+
+    async def run(self, view: BundleView, cases: list[EvalCase]) -> list[EvalOutcome]: ...
 
 
 @runtime_checkable
@@ -37,4 +53,4 @@ class Signer(Protocol):
     def sign(self, path: Path, content: bytes) -> None: ...
 
 
-__all__ = ["LLMInvoker", "Signer"]
+__all__ = ["EvalRunner", "LLMInvoker", "Signer"]

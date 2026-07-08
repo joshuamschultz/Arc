@@ -39,6 +39,9 @@ class ImproverConfig(BaseModel):
     )
     eval_scale: int = Field(default=5, ge=2, le=10)
 
+    # Golden-task gate (REQ-020/022). Minimum suite size to unlock code mutation (OQ-3).
+    min_golden_cases: int = Field(default=3, ge=1)
+
     # Safety guardrails
     max_token_ratio: float = Field(default=1.5, gt=1.0, le=5.0)
     max_generations: int = Field(default=10, ge=1, le=100)

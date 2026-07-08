@@ -1,7 +1,7 @@
-"""Data models for the skill_improver module.
+"""Data models for the arcskill improver.
 
-Immutable trace records, candidate versions, evaluation results,
-and audit events. All serializable to JSON for JSONL storage.
+Immutable trace records, candidate versions, evaluation results, golden-task
+eval cases/outcomes, and audit events. All serializable to JSON for JSONL storage.
 """
 
 from __future__ import annotations
@@ -9,7 +9,48 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class EvalCase:
+    """One deterministic golden-task case: an id + the pytest node that runs it.
+
+    ``node`` is the pytest node-id inside the skill's ``evals/`` suite (e.g.
+    ``evals/test_golden.py::test_happy_path``). The suite is the hard acceptance gate
+    (REQ-020/022); a case's identity lets the strict-improvement gate compare which
+    cases a candidate flips from fail→pass without regressing any pass→fail.
+    """
+
+    id: str
+    node: str = ""
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class EvalOutcome:
+    """Pass/fail result of one :class:`EvalCase` against a specific bundle view."""
+
+    case_id: str
+    passed: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class BundleView:
+    """Read model of a skill bundle the mutator/eval-gate operate over.
+
+    Value type owned by arcskill (no arcagent import). ``scripts`` holds the
+    executable script bytes for the code-repair path (SPEC-044 Phase 4); Phase 3
+    uses ``skill_dir`` (to locate ``evals/``) + ``text`` (the SKILL.md prose).
+    """
+
+    skill_name: str
+    text: str
+    skill_dir: Path | None = None
+    scripts: dict[str, bytes] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
