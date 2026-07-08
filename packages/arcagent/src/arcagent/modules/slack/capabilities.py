@@ -1,7 +1,6 @@
 """Decorator-form slack module — SPEC-021 task 3.6.
 
-Replaces :class:`SlackModule`'s lifecycle and three subscriptions with
-the unified capability surface:
+Exposes the slack module through the unified capability surface:
 
   * ``@capability(name="slack")`` class — owns the
     :class:`SlackBot` Socket Mode WebSocket; ``setup`` connects,
@@ -18,10 +17,6 @@ the unified capability surface:
 State is shared via :mod:`arcagent.modules.slack._runtime`. The agent
 configures it once at startup; the capability + hooks read state
 lazily.
-
-The legacy :class:`SlackModule` class still exists alongside this
-module to keep the existing Module-Bus test surface working; both
-forms route through the same :class:`SlackBot` semantics.
 """
 
 from __future__ import annotations
@@ -56,6 +51,7 @@ class SlackCapability:
             config=st.config,
             telemetry=st.telemetry,
             workspace=st.workspace,
+            egress=st.egress,
         )
         await bot.start()
         st.bot = bot
@@ -80,7 +76,9 @@ class SlackCapability:
         "or 'task completed with no findings'."
     ),
     classification="state_modifying",
-    capability_tags=["slack_notify"],
+    # SPEC-038 REQ-030 — slack notify is an external_comms leg producer,
+    # mediated through the shared egress proxy like telegram's notify_user.
+    capability_tags=["slack_notify", "network_egress"],
     when_to_use=(
         "When you need to proactively message the user with a finding, "
         "question, or action item via Slack."
