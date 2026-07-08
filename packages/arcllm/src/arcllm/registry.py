@@ -2,16 +2,16 @@
 
 import importlib
 import logging
-import re
 import threading
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from arcllm.adapters.base import BaseAdapter
 from arcllm.config import (
     EndpointConfig,
     GlobalConfig,
     ProviderConfig,
+    _validate_provider_name,
     load_global_config,
     load_provider_config,
 )
@@ -19,10 +19,6 @@ from arcllm.exceptions import ArcLLMConfigError
 from arcllm.types import LLMProvider
 
 logger = logging.getLogger(__name__)
-
-# ASI04 / NIST SI-10: Validate provider names to prevent path traversal
-# and arbitrary module import via naming convention adapter discovery.
-_VALID_PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 # Module-level caches: loaded once per provider, reused across calls.
 # Lock protects cache-miss writes for thread safety (PEP 703 ready).
@@ -58,18 +54,6 @@ def clear_cache() -> None:
 
     clear_budgets()
     clear_global_defaults()
-
-
-def _validate_provider_name(provider_name: str) -> None:
-    """Reject provider names that could cause path traversal or code injection.
-
-    Only lowercase alphanumeric + underscore allowed, max 64 chars.
-    Blocks: '../evil', 'os.system', 'builtins', etc.
-    """
-    if not _VALID_PROVIDER_RE.match(provider_name):
-        raise ArcLLMConfigError(
-            f"Invalid provider name '{provider_name}'. Must match [a-z][a-z0-9_]{{0,63}}."
-        )
 
 
 def _get_adapter_class(provider_name: str) -> type[BaseAdapter]:
@@ -274,6 +258,121 @@ MODULE_NAMES: frozenset[str] = frozenset(
 )
 
 
+# Single-config module wrappers: every one is constructed uniformly as
+# ``Module(resolved_config_dict, wrapped)``. Only circuit_breaker (on_event
+# threading) and telemetry (pricing/budget/encryption prep) are bespoke and
+# stay explicit in load_model. The STACKING ORDER is load-bearing and lives
+# in load_model's call sequence, not here (ADR-422, ADR-430).
+_GENERIC_MODULES: dict[str, tuple[str, str]] = {
+    "rate_limit": ("arcllm.modules.rate_limit", "RateLimitModule"),
+    "fallback": ("arcllm.modules.fallback", "FallbackModule"),
+    "retry": ("arcllm.modules.retry", "RetryModule"),
+    "security": ("arcllm.modules.security", "SecurityModule"),
+    "injection": ("arcllm.modules.injection", "InjectionModule"),
+    "guardrails": ("arcllm.modules.guardrails", "GuardrailsModule"),
+    "audit": ("arcllm.modules.audit", "AuditModule"),
+    "queue": ("arcllm.modules.queue", "QueueModule"),
+    "otel": ("arcllm.modules.otel", "OtelModule"),
+}
+
+
+def _wrap_generic(
+    result: LLMProvider,
+    config_name: str,
+    kwarg_value: bool | dict[str, Any] | None,
+) -> LLMProvider:
+    """Wrap *result* in the named single-config module when it is enabled.
+
+    Lazy-imports the module so unused wrappers are never loaded, then
+    constructs ``Module(resolved_config, wrapped)``. No-op (returns
+    *result* unchanged) when the module resolves to disabled.
+    """
+    cfg = _resolve_module_config(config_name, kwarg_value)
+    if cfg is None:
+        return result
+    module_path, class_name = _GENERIC_MODULES[config_name]
+    module = importlib.import_module(module_path)
+    module_cls = cast(
+        Callable[[dict[str, Any], LLMProvider], LLMProvider],
+        getattr(module, class_name),
+    )
+    return module_cls(cfg, result)
+
+
+def _apply_telemetry(
+    result: LLMProvider,
+    telemetry_config: dict[str, Any],
+    config: ProviderConfig,
+    model_name: str,
+    *,
+    budget_scope: str | None,
+    on_event: Callable[[Any], None] | None,
+    trace_store: Any | None,
+    agent_label: str | None,
+    lineage: dict[str, Any] | None,
+    vault_cfg: Any,
+) -> LLMProvider:
+    """Build and stack the TelemetryModule with pricing/budget/encryption prep.
+
+    Kept out of ``load_model`` because its config threading (pricing from
+    model metadata, budget scope, trace wiring, one-time encryption-key
+    resolution) is genuinely bespoke, unlike the uniform generic wrappers.
+    """
+    from arcllm.modules.telemetry import TelemetryModule
+
+    # Inject pricing from provider model metadata
+    model_meta = config.models.get(model_name)
+    if model_meta is not None:
+        telemetry_config.setdefault("cost_input_per_1m", model_meta.cost_input_per_1m)
+        telemetry_config.setdefault("cost_output_per_1m", model_meta.cost_output_per_1m)
+        telemetry_config.setdefault("cost_cache_read_per_1m", model_meta.cost_cache_read_per_1m)
+        telemetry_config.setdefault("cost_cache_write_per_1m", model_meta.cost_cache_write_per_1m)
+
+    # Inject budget_scope from load_model() kwarg into telemetry config
+    if budget_scope is not None:
+        telemetry_config["budget_scope"] = budget_scope
+
+    # Source default_max_tokens from global config defaults
+    telemetry_config.setdefault("default_max_tokens", _ensure_global_config().defaults.max_tokens)
+
+    # Thread trace_store, on_event, agent_label, and lineage into config
+    if on_event is not None:
+        telemetry_config["on_event"] = on_event
+    if trace_store is not None:
+        telemetry_config["trace_store"] = trace_store
+    if agent_label is not None:
+        telemetry_config["agent_label"] = agent_label
+    if lineage is not None:
+        telemetry_config["lineage"] = lineage
+
+    # SPEC-016 D-440: retention purge operates on a JSONLTraceStore's
+    # directory, constructed independently of load_model() (the store
+    # owns agent_root). TelemetryModule doesn't consume it — drop it
+    # here rather than teaching TelemetryModule an unused config key.
+    # Callers read arcllm.config.load_telemetry_retention_config() and
+    # wire it into their own JSONLTraceStore construction.
+    telemetry_config.pop("retention", None)
+
+    # SPEC-016 D-438/D-447: resolve the wrapping key ONCE, at
+    # construction (AU-2 — tier posture must flow through construction,
+    # never be re-resolved per call). Reuses the shared VaultResolver
+    # (with its TTL cache) when one is already configured; falls back to
+    # an env-only resolver otherwise (dev/personal, no vault backend).
+    encryption_cfg = telemetry_config.get("encryption") or {}
+    if encryption_cfg.get("enabled"):
+        from arcllm.vault import VaultResolver
+
+        wrap_resolver = _vault_resolver_cache or VaultResolver(
+            backend=None, cache_ttl_seconds=vault_cfg.cache_ttl_seconds
+        )
+        telemetry_config["encryption_key_secret"] = wrap_resolver.resolve_api_key(
+            encryption_cfg.get("key_env", "ARCLLM_TRACE_WRAP_KEY"),
+            encryption_cfg.get("key_ref") or None,
+        )
+
+    return TelemetryModule(telemetry_config, result)
+
+
 def load_model(
     provider: str,
     model: str | None = None,
@@ -453,24 +552,14 @@ def load_model(
                 )
             result = _build_adapter(provider, model_name, vault_cfg, _vault_resolver_cache)
 
-    # Apply module wrapping (innermost first): RateLimit, Fallback, Retry
-    rate_limit_config = _resolve_module_config("rate_limit", rate_limit)
-    if rate_limit_config is not None:
-        from arcllm.modules.rate_limit import RateLimitModule
-
-        result = RateLimitModule(rate_limit_config, result)
-
-    fallback_config = _resolve_module_config("fallback", fallback)
-    if fallback_config is not None:
-        from arcllm.modules.fallback import FallbackModule
-
-        result = FallbackModule(fallback_config, result)
-
-    retry_config = _resolve_module_config("retry", retry)
-    if retry_config is not None:
-        from arcllm.modules.retry import RetryModule
-
-        result = RetryModule(retry_config, result)
+    # Apply module wrapping, innermost first. The STACKING ORDER below is
+    # load-bearing: injection sits ABOVE security so it scans the ORIGINAL
+    # inbound text before PII/secret redaction can obscure encoded attack
+    # signal (ADR-422); guardrails sits just inside audit so it validates the
+    # response the audit trail also records (ADR-430). Do not reorder.
+    result = _wrap_generic(result, "rate_limit", rate_limit)
+    result = _wrap_generic(result, "fallback", fallback)
+    result = _wrap_generic(result, "retry", retry)
 
     cb_config = _resolve_module_config("circuit_breaker", circuit_breaker)
     if cb_config is not None:
@@ -480,106 +569,27 @@ def load_model(
             cb_config["on_event"] = on_event
         result = CircuitBreakerModule(cb_config, result)
 
-    security_config = _resolve_module_config("security", security)
-    if security_config is not None:
-        from arcllm.modules.security import SecurityModule
-
-        result = SecurityModule(security_config, result)
-
-    # Injection sits ABOVE Security so it scans the ORIGINAL inbound text,
-    # before PII/secret redaction can obscure encoded attack signal
-    # (ADR-422). Guardrails sits above Injection so it validates the
-    # response Audit will also see (ADR-430).
-    injection_config = _resolve_module_config("injection", injection)
-    if injection_config is not None:
-        from arcllm.modules.injection import InjectionModule
-
-        result = InjectionModule(injection_config, result)
-
-    guardrails_config = _resolve_module_config("guardrails", guardrails)
-    if guardrails_config is not None:
-        from arcllm.modules.guardrails import GuardrailsModule
-
-        result = GuardrailsModule(guardrails_config, result)
-
-    audit_config = _resolve_module_config("audit", audit)
-    if audit_config is not None:
-        from arcllm.modules.audit import AuditModule
-
-        result = AuditModule(audit_config, result)
+    result = _wrap_generic(result, "security", security)
+    result = _wrap_generic(result, "injection", injection)
+    result = _wrap_generic(result, "guardrails", guardrails)
+    result = _wrap_generic(result, "audit", audit)
 
     telemetry_config = _resolve_module_config("telemetry", telemetry)
     if telemetry_config is not None:
-        from arcllm.modules.telemetry import TelemetryModule
-
-        # Inject pricing from provider model metadata
-        model_meta = config.models.get(model_name)
-        if model_meta is not None:
-            telemetry_config.setdefault("cost_input_per_1m", model_meta.cost_input_per_1m)
-            telemetry_config.setdefault("cost_output_per_1m", model_meta.cost_output_per_1m)
-            telemetry_config.setdefault(
-                "cost_cache_read_per_1m", model_meta.cost_cache_read_per_1m
-            )
-            telemetry_config.setdefault(
-                "cost_cache_write_per_1m", model_meta.cost_cache_write_per_1m
-            )
-
-        # Inject budget_scope from load_model() kwarg into telemetry config
-        if budget_scope is not None:
-            telemetry_config["budget_scope"] = budget_scope
-
-        # Source default_max_tokens from global config defaults
-        telemetry_config.setdefault(
-            "default_max_tokens", _ensure_global_config().defaults.max_tokens
+        result = _apply_telemetry(
+            result,
+            telemetry_config,
+            config,
+            model_name,
+            budget_scope=budget_scope,
+            on_event=on_event,
+            trace_store=trace_store,
+            agent_label=agent_label,
+            lineage=lineage,
+            vault_cfg=vault_cfg,
         )
 
-        # Thread trace_store, on_event, agent_label, and lineage into config
-        if on_event is not None:
-            telemetry_config["on_event"] = on_event
-        if trace_store is not None:
-            telemetry_config["trace_store"] = trace_store
-        if agent_label is not None:
-            telemetry_config["agent_label"] = agent_label
-        if lineage is not None:
-            telemetry_config["lineage"] = lineage
-
-        # SPEC-016 D-440: retention purge operates on a JSONLTraceStore's
-        # directory, constructed independently of load_model() (the store
-        # owns agent_root). TelemetryModule doesn't consume it — drop it
-        # here rather than teaching TelemetryModule an unused config key.
-        # Callers read arcllm.config.load_telemetry_retention_config() and
-        # wire it into their own JSONLTraceStore construction.
-        telemetry_config.pop("retention", None)
-
-        # SPEC-016 D-438/D-447: resolve the wrapping key ONCE, at
-        # construction (AU-2 — tier posture must flow through construction,
-        # never be re-resolved per call). Reuses the shared VaultResolver
-        # (with its TTL cache) when one is already configured; falls back to
-        # an env-only resolver otherwise (dev/personal, no vault backend).
-        encryption_cfg = telemetry_config.get("encryption") or {}
-        if encryption_cfg.get("enabled"):
-            from arcllm.vault import VaultResolver
-
-            wrap_resolver = _vault_resolver_cache or VaultResolver(
-                backend=None, cache_ttl_seconds=vault_cfg.cache_ttl_seconds
-            )
-            telemetry_config["encryption_key_secret"] = wrap_resolver.resolve_api_key(
-                encryption_cfg.get("key_env", "ARCLLM_TRACE_WRAP_KEY"),
-                encryption_cfg.get("key_ref") or None,
-            )
-
-        result = TelemetryModule(telemetry_config, result)
-
-    queue_config = _resolve_module_config("queue", queue)
-    if queue_config is not None:
-        from arcllm.modules.queue import QueueModule
-
-        result = QueueModule(queue_config, result)
-
-    otel_config = _resolve_module_config("otel", otel)
-    if otel_config is not None:
-        from arcllm.modules.otel import OtelModule
-
-        result = OtelModule(otel_config, result)
+    result = _wrap_generic(result, "queue", queue)
+    result = _wrap_generic(result, "otel", otel)
 
     return result

@@ -30,6 +30,36 @@ _STOP_REASON_MAP: dict[str, StopReason] = {
 }
 
 
+def _parse_stream_usage(chunk: dict[str, Any]) -> Usage | None:
+    """Build a Usage from a streaming chunk's ``usage`` frame, if present."""
+    usage_data = chunk.get("usage")
+    if not usage_data:
+        return None
+    prompt_details = usage_data.get("prompt_tokens_details")
+    cache_read = prompt_details.get("cached_tokens") if prompt_details else None
+    return Usage(
+        input_tokens=usage_data.get("prompt_tokens", 0),
+        output_tokens=usage_data.get("completion_tokens", 0),
+        total_tokens=usage_data.get("total_tokens", 0),
+        cache_read_tokens=cache_read,
+    )
+
+
+def _parse_stream_tool_call(delta: dict[str, Any]) -> ToolCallDelta | None:
+    """Build a ToolCallDelta from a streaming delta's first tool-call partial."""
+    tool_calls = delta.get("tool_calls") or []
+    if not tool_calls:
+        return None
+    tc = tool_calls[0]
+    func = tc.get("function") or {}
+    return ToolCallDelta(
+        index=tc.get("index", 0),
+        id=tc.get("id"),
+        name=func.get("name"),
+        arguments=func.get("arguments"),
+    )
+
+
 def _parse_openai_sse_line(line: str) -> Delta | None:
     """Map one SSE line from an OpenAI streaming response to a Delta.
 
@@ -49,17 +79,7 @@ def _parse_openai_sse_line(line: str) -> Delta | None:
         return None
 
     # Usage frames arrive with empty choices in the final tick.
-    usage_data = chunk.get("usage")
-    usage: Usage | None = None
-    if usage_data:
-        prompt_details = usage_data.get("prompt_tokens_details")
-        cache_read = prompt_details.get("cached_tokens") if prompt_details else None
-        usage = Usage(
-            input_tokens=usage_data.get("prompt_tokens", 0),
-            output_tokens=usage_data.get("completion_tokens", 0),
-            total_tokens=usage_data.get("total_tokens", 0),
-            cache_read_tokens=cache_read,
-        )
+    usage = _parse_stream_usage(chunk)
 
     choices = chunk.get("choices") or []
     if not choices:
@@ -74,21 +94,8 @@ def _parse_openai_sse_line(line: str) -> Delta | None:
         _STOP_REASON_MAP.get(finish_reason, "end_turn") if finish_reason else None
     )
 
-    # Text delta — most common case.
     text = delta.get("content")
-
-    # Tool-call deltas come as a list of partials; emit the first if present.
-    tool_call: ToolCallDelta | None = None
-    tool_calls = delta.get("tool_calls") or []
-    if tool_calls:
-        tc = tool_calls[0]
-        func = tc.get("function") or {}
-        tool_call = ToolCallDelta(
-            index=tc.get("index", 0),
-            id=tc.get("id"),
-            name=func.get("name"),
-            arguments=func.get("arguments"),
-        )
+    tool_call = _parse_stream_tool_call(delta)
 
     if text is None and tool_call is None and usage is None and stop_reason is None:
         return None
@@ -319,6 +326,10 @@ class OpenaiAdapter(BaseAdapter):
 
     # -- Public API -----------------------------------------------------------
 
+    def _completions_url(self) -> str:
+        """Chat-completions endpoint URL. Subclasses override the path only."""
+        return f"{self._config.provider.base_url}/v1/chat/completions"
+
     async def invoke(
         self,
         messages: list[Message],
@@ -328,7 +339,7 @@ class OpenaiAdapter(BaseAdapter):
         self._check_tool_capability(tools)
         headers = self._build_headers()
         body = self._build_request_body(messages, tools, **kwargs)
-        url = f"{self._config.provider.base_url}/v1/chat/completions"
+        url = self._completions_url()
 
         response = await self._client.post(url, headers=headers, json=body)
 
@@ -359,7 +370,7 @@ class OpenaiAdapter(BaseAdapter):
         body = self._build_request_body(messages, tools, **kwargs)
         body["stream"] = True
         body["stream_options"] = {"include_usage": True}
-        url = f"{self._config.provider.base_url}/v1/chat/completions"
+        url = self._completions_url()
 
         async with self._client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:

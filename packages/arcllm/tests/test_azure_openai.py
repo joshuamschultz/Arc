@@ -192,6 +192,37 @@ class TestAzureOpenaiURL:
         assert "//" not in url.replace("https://", "")
 
 
+    @pytest.mark.asyncio
+    async def test_stream_uses_v1_path(self, monkeypatch):
+        """invoke_stream() must hit the same Azure v1 path as invoke().
+
+        Regression guard: base ``invoke_stream`` hardcoded
+        ``/v1/chat/completions``; the ``_completions_url()`` hook now routes
+        streaming through Azure's ``/openai/v1/chat/completions``.
+        """
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key")
+        from arcllm.adapters.azure_openai import Azure_OpenaiAdapter
+
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            body = 'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n'
+            return httpx.Response(
+                200, content=body.encode(), headers={"content-type": "text/event-stream"}
+            )
+
+        config = _make_azure_config(base_url="https://myresource.openai.azure.us")
+        adapter = Azure_OpenaiAdapter(config, "my-gpt4o-deployment")
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        async for _ in adapter.invoke_stream([Message(role="user", content="Hi")]):
+            pass
+
+        assert seen["url"] == "https://myresource.openai.azure.us/openai/v1/chat/completions"
+
+
 class TestAzureOpenaiDeploymentName:
     """Model field in request body maps to deployment name."""
 
