@@ -7,7 +7,6 @@ any other tool.
 
 from __future__ import annotations
 
-from arcagent.modules.browser.browser_module import BrowserModule
 from arcagent.modules.browser.config import BrowserConfig
 from arcagent.modules.browser.errors import (
     BrowserError,
@@ -20,7 +19,6 @@ from arcagent.modules.browser.errors import (
 __all__ = [
     "BrowserConfig",
     "BrowserError",
-    "BrowserModule",
     "BrowserTimeoutError",
     "CDPConnectionError",
     "ElementNotFoundError",

@@ -1,84 +1,97 @@
-"""Integration test: federal tier + local config → LocalBrowserNotAllowedError.
+"""Integration test: federal tier forces a remote browser on the LIVE path.
 
-Covers PRD §Epic I3 AC2: "Sandbox mode `strict` forces BROWSERBASE_REMOTE
-config; local headless disabled."
+Covers PRD §Epic I3 AC2: "Sandbox mode `strict` forces a remote browser;
+local headless disabled."
 
-Gate G4 equivalent — verifies that the policy layer correctly rejects
-any attempt to use a local headless browser at federal tier, regardless
-of what the PlaywrightConfig says.
+This exercises the real launch path — ``BrowserCapability.setup()`` — not
+just the pure policy function. At federal tier with no remote CDP
+endpoint configured, setup must raise ``LocalBrowserNotAllowedError``
+*before* any Chrome process is launched (fail-closed). With a remote
+``cdp_url`` set, setup proceeds and connects.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from arcagent.modules.browser.config import PlaywrightConfig
+from arcagent.modules.browser import _runtime
+from arcagent.modules.browser.capabilities import BrowserCapability
+from arcagent.modules.browser.config import BrowserConfig
 from arcagent.modules.browser.errors import LocalBrowserNotAllowedError
-from arcagent.modules.browser.policy import enforce_sandbox_policy
+
+_REMOTE = "ws://remote-browser.internal:9222/devtools/browser/abc"
 
 
+@pytest.fixture(autouse=True)
+def _reset_runtime() -> Iterator[None]:
+    _runtime.reset()
+    yield
+    _runtime.reset()
+
+
+def _configure(config: BrowserConfig) -> None:
+    bus = MagicMock()
+    bus.emit = AsyncMock()
+    _runtime.configure(config=config, bus=bus)
+
+
+@pytest.mark.asyncio
 class TestFederalTierLocalBrowserForbidden:
-    """Federal tier + local mode → LocalBrowserNotAllowedError regardless of config."""
+    """Federal tier + local config → setup raises, no Chrome launched."""
 
-    def test_federal_local_loose_raises(self) -> None:
-        """Federal overrides loose config to strict; local still forbidden."""
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("federal", cfg)
+    async def test_federal_local_setup_raises_before_launch(self) -> None:
+        _configure(BrowserConfig(tier="federal"))  # empty cdp_url → local launch
+
+        with patch(
+            "arcagent.modules.browser.capabilities.CDPClientManager"
+        ) as mock_cdp_cls:
+            with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
+                await BrowserCapability().setup(None)
+
+            # Fail-closed: the CDP client must never be constructed/launched.
+            mock_cdp_cls.assert_not_called()
 
         err = exc_info.value
         assert err.code == "BROWSER_LOCAL_NOT_ALLOWED"
         assert err.details["tier"] == "federal"
+        assert _runtime.state().cdp_client is None
 
-    def test_federal_local_strict_raises(self) -> None:
-        """Federal + strict config + local mode → raises."""
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        with pytest.raises(LocalBrowserNotAllowedError):
-            enforce_sandbox_policy("federal", cfg)
+    async def test_federal_remote_setup_connects(self) -> None:
+        _configure(BrowserConfig(tier="federal", connection={"cdp_url": _REMOTE}))  # type: ignore[arg-type]
 
-    def test_federal_remote_loose_config_allowed(self) -> None:
-        """Federal + remote mode → allowed even with loose config (remote is safe)."""
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="loose",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com?apiKey=test",
-        )
-        enforce_sandbox_policy("federal", cfg)  # must not raise
+        with patch(
+            "arcagent.modules.browser.capabilities.CDPClientManager"
+        ) as mock_cdp_cls:
+            mock_cdp = AsyncMock()
+            mock_cdp.connect = AsyncMock()
+            mock_cdp.url = _REMOTE
+            mock_cdp_cls.return_value = mock_cdp
 
-    def test_federal_remote_strict_config_allowed(self) -> None:
-        """Federal + remote + strict → allowed."""
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="strict",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com?apiKey=test",
-        )
-        enforce_sandbox_policy("federal", cfg)  # must not raise
+            await BrowserCapability().setup(None)
 
-    def test_error_contains_actionable_message(self) -> None:
-        """Error message tells the operator what to configure."""
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("federal", cfg)
-        assert "remote" in exc_info.value.message.lower()
-        assert "remote_provider" in exc_info.value.message or "endpoint" in exc_info.value.message
-
-    def test_error_component_is_browser(self) -> None:
-        """Error component is 'browser' for consistent audit trail routing."""
-        cfg = PlaywrightConfig(mode="local")
-        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("federal", cfg)
-        assert exc_info.value.component == "browser"
+            mock_cdp.connect.assert_awaited_once()
+            assert _runtime.state().cdp_client is mock_cdp
 
 
+@pytest.mark.asyncio
 class TestNonFederalLocalBrowserAllowed:
-    """Non-federal loose tier allows local headless."""
+    """Non-federal tiers may launch a local headless browser."""
 
-    def test_enterprise_loose_local_allowed(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        enforce_sandbox_policy("enterprise", cfg)  # must not raise
+    async def test_personal_local_setup_connects(self) -> None:
+        _configure(BrowserConfig(tier="personal"))
 
-    def test_personal_loose_local_allowed(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        enforce_sandbox_policy("personal", cfg)  # must not raise
+        with patch(
+            "arcagent.modules.browser.capabilities.CDPClientManager"
+        ) as mock_cdp_cls:
+            mock_cdp = AsyncMock()
+            mock_cdp.connect = AsyncMock()
+            mock_cdp.url = "ws://localhost:9222/devtools/browser/local"
+            mock_cdp_cls.return_value = mock_cdp
+
+            await BrowserCapability().setup(None)
+
+            mock_cdp.connect.assert_awaited_once()
+            assert _runtime.state().cdp_client is mock_cdp

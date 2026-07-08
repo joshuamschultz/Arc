@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 
+from arcagent.modules.browser._runtime import _State
+from arcagent.modules.browser.accessibility import AccessibilityManager
+from arcagent.modules.browser.capabilities import (
+    browser_get_element_text,
+    browser_read_page,
+)
 from arcagent.modules.browser.config import BrowserConfig
 from arcagent.modules.browser.errors import ElementNotFoundError
 
-# Reuse the sample AX tree from test_accessibility
 _SAMPLE_AX_TREE = {
     "nodes": [
         {
@@ -46,85 +52,63 @@ def _make_cdp() -> AsyncMock:
     return cdp
 
 
-def _make_bus() -> MagicMock:
-    bus = MagicMock()
-    bus.emit = AsyncMock()
-    return bus
-
-
 class TestBrowserReadPage:
     """browser_read_page tool."""
 
-    async def test_read_page_returns_snapshot(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.read import create_read_tools
-
+    async def test_read_page_returns_snapshot(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = _make_cdp()
         config = BrowserConfig()
         ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_read_tools(cdp, ax, config, bus)
-        read_tool = next(t for t in tools if t.name == "browser_read_page")
-
-        result = await read_tool.execute()
+        result = await browser_read_page()
         assert "[EXTERNAL WEB CONTENT]" in result
         assert "heading" in result
         assert "Hello World" in result
         assert "button" in result
         assert "Click Me" in result
 
-    async def test_read_page_marks_content_as_external(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.read import create_read_tools
-
+    async def test_read_page_marks_content_as_external(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = _make_cdp()
         config = BrowserConfig()
         ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_read_tools(cdp, ax, config, bus)
-        read_tool = next(t for t in tools if t.name == "browser_read_page")
-
-        result = await read_tool.execute()
+        result = await browser_read_page()
         assert result.startswith("[EXTERNAL WEB CONTENT]")
 
 
 class TestBrowserGetElementText:
     """browser_get_element_text tool."""
 
-    async def test_get_element_text_by_ref(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.read import create_read_tools
-
+    async def test_get_element_text_by_ref(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = _make_cdp()
         config = BrowserConfig()
         ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_read_tools(cdp, ax, config, bus)
         # First read page to populate refs
-        read_tool = next(t for t in tools if t.name == "browser_read_page")
-        await read_tool.execute()
+        await browser_read_page()
 
-        text_tool = next(t for t in tools if t.name == "browser_get_element_text")
-        result = await text_tool.execute(ref=1)
+        result = await browser_get_element_text(ref=1)
         assert "Hello World" in result
 
-    async def test_get_element_text_invalid_ref(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.read import create_read_tools
-
+    async def test_get_element_text_invalid_ref(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = _make_cdp()
         config = BrowserConfig()
         ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_read_tools(cdp, ax, config, bus)
         # Read page first to populate refs
-        read_tool = next(t for t in tools if t.name == "browser_read_page")
-        await read_tool.execute()
+        await browser_read_page()
 
-        text_tool = next(t for t in tools if t.name == "browser_get_element_text")
         with pytest.raises(ElementNotFoundError):
-            await text_tool.execute(ref=999)
+            await browser_get_element_text(ref=999)

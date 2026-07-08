@@ -54,7 +54,7 @@ def cli_group(workspace: Path) -> click.Group:
 
         from arcagent.modules.browser.cdp_client import CDPClientManager
         from arcagent.modules.browser.config import BrowserConfig
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig()
 
@@ -90,7 +90,7 @@ def cli_group(workspace: Path) -> click.Group:
 
         from arcagent.modules.browser.cdp_client import CDPClientManager
         from arcagent.modules.browser.config import BrowserConfig
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig()
 

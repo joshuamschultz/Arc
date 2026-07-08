@@ -58,24 +58,6 @@ class BrowserConnectionConfig(ModuleConfig):
     startup_timeout_seconds: int = 10
 
 
-class BrowserTimeoutConfig(ModuleConfig):
-    """Per-tool timeout defaults (seconds).
-
-    These values are set on ``RegisteredTool.timeout_seconds`` at
-    registration time. ArcRun enforces them via ``asyncio.wait_for``.
-    """
-
-    navigate: int = 30
-    click: int = 5
-    # ``type`` is a Python builtin — use ``type_`` with alias
-    type_: int = Field(default=5, alias="type")
-    screenshot: int = 10
-    read_page: int = 15
-    execute_js: int = 10
-    fill_form: int = 30
-    default: int = 10
-
-
 class BrowserCookieConfig(ModuleConfig):
     """Cookie persistence settings.
 
@@ -95,25 +77,12 @@ class BrowserConfig(ModuleConfig):
     out-of-the-box with zero configuration.
     """
 
+    # Deployment tier — drives the federal remote-browser requirement
+    # (see policy.enforce_sandbox_policy). Federal forbids launching a
+    # local headless Chrome; it must attach to a remote CDP endpoint.
+    tier: str = "personal"
     security: BrowserSecurityConfig = Field(default_factory=BrowserSecurityConfig)
     connection: BrowserConnectionConfig = Field(default_factory=BrowserConnectionConfig)
-    timeouts: BrowserTimeoutConfig = Field(default_factory=BrowserTimeoutConfig)
     cookies: BrowserCookieConfig = Field(default_factory=BrowserCookieConfig)
     accessibility_tree_depth: int = 10
     chrome_memory_limit_mb: int = 512
-
-
-class PlaywrightConfig(ModuleConfig):
-    """Playwright browser provider configuration.
-
-    Controls sandbox isolation mode and whether the browser runs locally
-    (headless in the same process) or via a remote provider (e.g., Browserbase).
-
-    Used by ``enforce_sandbox_policy()`` to validate tier-specific rules before
-    any browser session is created.
-    """
-
-    mode: Literal["local", "remote"] = "local"
-    sandbox: Literal["loose", "strict"] = "loose"
-    remote_provider: str = ""
-    remote_endpoint: str = ""
