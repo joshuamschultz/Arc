@@ -74,8 +74,6 @@ class AgentCapabilityProvider:
         # its live ToolContext — they read depth/budget from it, so they cannot
         # route through the context-free invoke() path.
         self._ctx_tools: list[Tool] = list(ctx_tools or [])
-        self._tier = tier
-        self._caller_did = caller_did
 
     def raw_tools(self) -> list[Tool]:
         """Tools the loop must dispatch directly (live ToolContext preserved)."""
