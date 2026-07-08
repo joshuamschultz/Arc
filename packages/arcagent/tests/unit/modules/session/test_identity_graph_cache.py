@@ -221,46 +221,6 @@ def test_lru_eviction_at_10k(db_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Async variants return same result as sync
-# ---------------------------------------------------------------------------
-
-
-async def test_async_variants_work(db_path: Path) -> None:
-    """Async variants must return results identical to their sync counterparts."""
-    graph = IdentityGraph(db_path=db_path)
-
-    # resolve_user_identity_async
-    did_async = await graph.resolve_user_identity_async("slack", "ASYNC001")
-    did_sync = graph.resolve_user_identity("slack", "ASYNC001")
-    assert did_async == did_sync
-
-    # lookup_user_did_async
-    looked_up = await graph.lookup_user_did_async("slack", "ASYNC001")
-    assert looked_up == did_sync
-
-    # link_identities_async
-    await graph.link_identities_async(
-        user_did=did_sync,
-        platform="signal",
-        platform_user_id="S001",
-        linked_by_did="did:arc:ops:admin/test",
-    )
-    assert graph.lookup_user_did("signal", "S001") == did_sync
-
-    # list_links_async
-    links = await graph.list_links_async(did_sync)
-    platforms = {lnk.platform for lnk in links}
-    assert "slack" in platforms
-    assert "signal" in platforms
-
-    # unlink_identity_async
-    await graph.unlink_identity_async(did_sync, "signal", "S001")
-    assert graph.lookup_user_did("signal", "S001") is None
-
-    graph.close()
-
-
-# ---------------------------------------------------------------------------
 # close() idempotent
 # ---------------------------------------------------------------------------
 

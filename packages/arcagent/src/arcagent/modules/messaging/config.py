@@ -10,8 +10,6 @@ in ``[team] root`` so all team modules share one setting.
 
 from __future__ import annotations
 
-from pydantic import Field
-
 from arcagent.modules.base_config import ModuleConfig
 
 
@@ -26,11 +24,6 @@ class MessagingConfig(ModuleConfig):
     # Entity identity — how this agent appears in the registry.
     entity_id: str = ""
     entity_name: str = ""
-    roles: list[str] = Field(default_factory=list)
-    capabilities: list[str] = Field(default_factory=list)
-
-    # Auto-register this agent in the entity registry on startup.
-    auto_register: bool = True
 
     # NATS JetStream url for the shared, push-capable substrate (REQ-020/021).
     # Empty selects the dependency-free in-memory backend (local/dev/test).
