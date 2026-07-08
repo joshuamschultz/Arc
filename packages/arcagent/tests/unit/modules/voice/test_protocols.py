@@ -149,7 +149,6 @@ class TestModulePublicSurface:
             TTSProvider,
             UnsupportedProvider,
             VoiceConfig,
-            VoiceModule,
         )
 
     def test_transcription_result_in_namespace(self) -> None:

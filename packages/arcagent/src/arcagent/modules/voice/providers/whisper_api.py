@@ -5,8 +5,8 @@ dependency surface minimal and respect Arc's "no vendor SDKs in core"
 policy. The API key is read from environment at call time — never
 cached in memory or written to disk.
 
-Federal tier: this provider MUST NOT be used. VoiceModule enforces
-AirGapProviderRequired at construction time.
+Federal tier: this provider MUST NOT be used. ``_runtime.configure``
+enforces AirGapProviderRequired at configuration time.
 
 Performance (SPEC-018 Wave B1):
   A single ``httpx.AsyncClient`` is created lazily on first use and
@@ -141,13 +141,16 @@ class WhisperApiProvider:
         language: str | None,
     ) -> TranscriptionResult:
         """POST to Whisper API and parse response."""
-        # Read file bytes — size check to prevent accidental huge uploads
-        audio_bytes = audio_path.read_bytes()
-        if len(audio_bytes) > 25 * 1024 * 1024:  # 25MB OpenAI limit
+        # Reject oversized files by stat() before reading them into memory,
+        # so a multi-gigabyte file can't be materialised past the guard
+        # (LLM10 unbounded consumption).
+        size_bytes = audio_path.stat().st_size
+        if size_bytes > 25 * 1024 * 1024:  # 25MB OpenAI limit
             raise STTFailed(
-                f"Audio file exceeds 25MB limit: {len(audio_bytes)} bytes",
-                details={"size_bytes": len(audio_bytes)},
+                f"Audio file exceeds 25MB limit: {size_bytes} bytes",
+                details={"size_bytes": size_bytes},
             )
+        audio_bytes = audio_path.read_bytes()
 
         # Log content hash for audit trail (never log raw bytes or text)
         _logger.debug(

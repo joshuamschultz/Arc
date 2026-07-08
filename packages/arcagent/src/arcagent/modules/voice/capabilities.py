@@ -1,7 +1,6 @@
 """Decorator-form voice module — SPEC-021 task 3.4.
 
-Two ``@tool`` functions and two ``@hook`` subscribers that mirror the
-legacy :class:`VoiceModule` surface:
+Two ``@tool`` functions and two ``@hook`` subscribers:
 
   * ``@tool transcribe(audio_path, language=None)`` — STT call,
     PII redaction at federal/enterprise tiers, audit on completion.
@@ -14,10 +13,6 @@ legacy :class:`VoiceModule` surface:
 
 State is shared via :mod:`arcagent.modules.voice._runtime`. The agent
 configures it once at startup; the tools and hooks read state lazily.
-
-The legacy :class:`VoiceModule` class still exists alongside this
-module to keep its existing test surface working; both forms route
-to the same provider plugins and audit semantics.
 """
 
 from __future__ import annotations
@@ -121,6 +116,13 @@ async def on_synthesize_request(ctx: Any) -> None:
         output_path = Path(tempfile.gettempdir()) / out_name
     result = await _synthesize(text, voice_id=voice_id, output_path=output_path)
     data["result"] = result
+
+
+@hook(event="agent:shutdown", trylast=True)
+async def on_agent_shutdown(ctx: Any) -> None:
+    """Drain voice provider connection pools on agent shutdown."""
+    del ctx
+    await _runtime.aclose()
 
 
 # --- Internal pipelines (shared by tools and hooks) ----------------------

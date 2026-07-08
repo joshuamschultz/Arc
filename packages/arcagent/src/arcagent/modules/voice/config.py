@@ -8,7 +8,7 @@ Tier-driven defaults (per AUTO-8 + SDD §2):
   - personal:   air_gap=False, redact_pii=False  (opt-in)
 
 Cloud providers on a federal deployment raise AirGapProviderRequired
-at module construction — this is validated in VoiceModule.__init__.
+at configuration time — this is validated in ``_runtime.configure``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any
 from arcagent.modules.base_config import ModuleConfig
 
 # Providers that require network access (not air-gap safe).
-# Validated against tier in VoiceModule.
+# Validated against tier in _runtime.configure.
 _CLOUD_STT_PROVIDERS: frozenset[str] = frozenset({"whisper_api", "openai_whisper"})
 _CLOUD_TTS_PROVIDERS: frozenset[str] = frozenset({"elevenlabs"})
 

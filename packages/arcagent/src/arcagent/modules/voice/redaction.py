@@ -82,24 +82,14 @@ def redact_transcript(text: str) -> tuple[str, bool]:
     Returns:
         Tuple of (redacted_text, redaction_applied).
         ``redaction_applied`` is True if at least one pattern matched.
-
-    Note:
-        This function never raises. If a regex fails for any reason,
-        the original text is returned with redaction_applied=False and
-        the error is silently suppressed. Callers at federal tier should
-        treat redaction_applied=False as a warning and log it.
     """
-    try:
-        current = text
-        applied = False
+    current = text
+    applied = False
 
-        for pattern, token in _REDACTION_RULES:
-            replaced, count = pattern.subn(token, current)
-            if count > 0:
-                applied = True
-                current = replaced
+    for pattern, token in _REDACTION_RULES:
+        replaced, count = pattern.subn(token, current)
+        if count > 0:
+            applied = True
+            current = replaced
 
-        return current, applied
-
-    except Exception:  # reason: fail-open — continue
-        return text, False
+    return current, applied

@@ -5,8 +5,8 @@ dependency surface minimal and respect Arc's "no vendor SDKs in core"
 policy. The API key is read from environment at call time — never
 cached in memory or written to disk.
 
-Federal tier: this provider MUST NOT be used. VoiceModule enforces
-AirGapProviderRequired at construction time.
+Federal tier: this provider MUST NOT be used. ``_runtime.configure``
+enforces AirGapProviderRequired at configuration time.
 
 Performance (SPEC-018 Wave B1):
   A single ``httpx.AsyncClient`` is created lazily on first use and
