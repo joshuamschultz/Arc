@@ -1,18 +1,14 @@
 """Decorator-form policy module — SPEC-021 task 3.7.
 
-Three ``@hook`` functions that mirror :class:`PolicyModule`'s
-``startup`` registrations:
+Four ``@hook`` functions implementing the self-learning adaptation policy:
 
   * ``agent:assemble_prompt``  (priority 60) — inject ``policy.md``.
   * ``agent:post_respond``     (priority 110) — periodic policy eval.
+  * ``memory.consolidated``    (priority 60) — grounded reflection (REQ-072).
   * ``agent:shutdown``         (priority 60) — terminal eval + drain.
 
 State is shared via :mod:`arcagent.modules.policy._runtime`. The agent
 configures it once at startup; the hooks read state lazily.
-
-The legacy :class:`PolicyModule` class still exists alongside this
-module to keep its existing test surface working; both forms route to
-the same :class:`PolicyEngine` instance internally.
 """
 
 from __future__ import annotations

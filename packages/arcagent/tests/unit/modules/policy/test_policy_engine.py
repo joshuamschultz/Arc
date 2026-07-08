@@ -333,7 +333,7 @@ class TestEvalModelFailure:
         model = _mock_model(side_effect=RuntimeError("model down"))
         messages = [{"role": "user", "content": "test"}]
 
-        # PolicyEngine now raises — caller (PolicyModule) handles fallback
+        # PolicyEngine raises — the caller (_safe_evaluate hook) handles fallback
         with pytest.raises(RuntimeError):
             await engine.evaluate(messages, model)
 

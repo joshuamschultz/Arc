@@ -1,23 +1,19 @@
 """memory_acl — Module Bus ACL guard for memory operations.
 
-Public surface:
-- MemoryACLModule: the bus subscriber class
-- Capability: per-turn signed grant model
-- CapabilityStore: issues, verifies, revokes capabilities
+The live gate is the three ``@hook`` functions in
+:mod:`arcagent.modules.memory_acl.capabilities` (memory.read / write /
+search at priority 10), auto-registered by the capability loader and
+reading shared state from :mod:`arcagent.modules.memory_acl._runtime`.
 
-Usage:
-    from arcagent.modules.memory_acl import MemoryACLModule, Capability, CapabilityStore
+Public surface:
+- SessionACL: per-session access-control model with frontmatter parsing
+- ACLViolation: raised when a memory operation violates the session ACL
 """
 
-from arcagent.modules.memory_acl.capability_tokens import Capability, CapabilityStore
-from arcagent.modules.memory_acl.errors import ACLViolation, CapabilityExpired, CapabilityInvalid
-from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule
+from arcagent.modules.memory_acl.acl import SessionACL
+from arcagent.modules.memory_acl.errors import ACLViolation
 
 __all__ = [
     "ACLViolation",
-    "Capability",
-    "CapabilityExpired",
-    "CapabilityInvalid",
-    "CapabilityStore",
-    "MemoryACLModule",
+    "SessionACL",
 ]
