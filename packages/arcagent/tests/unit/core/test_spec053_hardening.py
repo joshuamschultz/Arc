@@ -210,7 +210,7 @@ def test_operator_signer_offered_to_worm_sink_module(tmp_path: Path, monkeypatch
     from arcagent.core import agent_lifecycle
 
     captured: dict[str, Any] = {}
-    agent, fake_mod = _fake_agent_for_modules(tmp_path, "skill_improver", captured)
+    agent, fake_mod = _fake_agent_for_modules(tmp_path, "skills", captured)
     monkeypatch.setattr(agent_lifecycle.importlib, "import_module", lambda _name: fake_mod)
     agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
     # WORM-sink modules receive the config-resolved operator SIGNER (seedless

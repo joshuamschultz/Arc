@@ -278,7 +278,7 @@ class ArcAgent:
         candidates = (
             self._policy_audit_log_path(),
             self._trace_checkpoint_chain_path(),
-            audit_dir / "skill_improver.worm",
+            audit_dir / "skills.worm",
         )
         return any(p.exists() for p in candidates)
 
