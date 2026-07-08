@@ -11,6 +11,27 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ChangeBoundConfig(BaseModel):
+    """Per-deployment change-bound overrides (SPEC-044 §7, SkillOpt-pinned).
+
+    Every field is optional: ``None`` means "use the tier default" from
+    :data:`~arcskill.improver.guardrails.TIER_BOUNDS`. A supplied value can only
+    **tighten** a bound (the resolver takes ``min`` with the tier ceiling), so the
+    federal floor is non-relaxable by construction (REQ-031). ``max_ast_distance`` is a
+    convergence **regularizer, not a security gate** (§8 — the sandbox decides safety).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_edits: int | None = Field(default=None, ge=1)  # SkillOpt Lt (edit ops/step)
+    edit_schedule: str | None = None  # constant | linear | cosine
+    min_edits_floor: int | None = Field(default=None, ge=1)
+    max_files_touched: int | None = Field(default=None, ge=1)
+    max_lines_changed: int | None = Field(default=None, ge=1)  # [DEEPEN-pinned §7]
+    max_ast_distance: float | None = Field(default=None, ge=0.0, le=1.0)  # regularizer
+    max_prose_edit_distance: float | None = Field(default=None, gt=0.0, le=1.0)
+
+
 class ImproverConfig(BaseModel):
     """Skill improver configuration.
 
@@ -52,5 +73,9 @@ class ImproverConfig(BaseModel):
         default=["security-critical", "compliance", "auth"],
     )
 
+    # SkillOpt bounded-edit step (REQ-030/031). Tier defaults live in guardrails.TIER_BOUNDS;
+    # these fields only tighten them (federal floor non-relaxable).
+    change_bound: ChangeBoundConfig = Field(default_factory=ChangeBoundConfig)
 
-__all__ = ["ImproverConfig"]
+
+__all__ = ["ChangeBoundConfig", "ImproverConfig"]

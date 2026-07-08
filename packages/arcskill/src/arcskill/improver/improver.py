@@ -24,11 +24,11 @@ from typing import Any
 from arcskill.improver._util import read_frontmatter
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.codepatch import apply_bundle_patch, build_bundle_view
-from arcskill.improver.config import ImproverConfig
+from arcskill.improver.config import ChangeBoundConfig, ImproverConfig
 from arcskill.improver.engine import SkillOptimizer
 from arcskill.improver.evalgate import EvalGate, GateDecision, load_suite, no_suite_policy
 from arcskill.improver.evaluator import SkillEvaluator
-from arcskill.improver.guardrails import Guardrails
+from arcskill.improver.guardrails import ChangeBound, Guardrails
 from arcskill.improver.models import BundlePatch, BundleView, MutationEvent, SkillTrace
 from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
@@ -78,6 +78,8 @@ class ArcSkillImprover:
         self._reload = reload
         self._store = TraceStore(workspace, session_id=session_id)
         self._guardrails = Guardrails(self._config)
+        self._change_bound = ChangeBound(tier, self._config.change_bound)
+        self._audit_sink = audit_sink
         self._candidate_store = CandidateStore(workspace, audit_sink=audit_sink)
         self._tasks: set[asyncio.Task[None]] = set()
         self._semaphore = asyncio.Semaphore(max_concurrent)
@@ -223,6 +225,15 @@ class ArcSkillImprover:
         )
         if patch is None or not patch.files:
             return
+        # Change-bound (SkillOpt): reject an over-budget patch BEFORE the costly sandbox
+        # eval, and audit the rejection (AC-4). tier flows from construction.
+        ok, reason = self._change_bound.check(
+            patch, current.scripts, skill_override=self._skill_override(skill_name)
+        )
+        if not ok:
+            _logger.info("skill %s code patch over change-bound: %s", skill_name, reason)
+            self._emit_audit(skill_name, "skill.mutation.bound_rejected", reason)
+            return
         cases = load_suite(skill_dir)
         after = BundleView(skill_name, current.text, skill_dir, scripts=patch.files)
         gate = EvalGate(self._eval_runner, min_golden_cases=self._config.min_golden_cases)
@@ -256,13 +267,12 @@ class ArcSkillImprover:
     def _audit_code_mutation(
         self, skill_name: str, before: BundleView, patch: BundlePatch, trace_ids: list[str]
     ) -> None:
-        """Emit a mutation audit event for an applied code patch (WORM chain)."""
-        before_hash = _fingerprint(before.text.encode("utf-8"))
+        """Emit a tier-stamped mutation audit event for an applied code patch (WORM chain)."""
         new_hash = _fingerprint(b"".join(sorted(patch.files.values())))
         event = MutationEvent(
             timestamp=datetime.now(UTC),
             skill_name=skill_name,
-            previous_hash=before_hash,
+            previous_hash=_fingerprint(before.text.encode("utf-8")),
             new_hash=new_hash,
             candidate_id="code-patch",
             generation=self._guardrails.get_generation(skill_name) + 1,
@@ -271,7 +281,52 @@ class ArcSkillImprover:
             stop_reason="applied",
             trace_ids=trace_ids,
         )
-        self._candidate_store.append_audit(skill_name, event)
+        self._emit_audit(
+            skill_name, "skill.mutation.applied", "applied", payload_hash=new_hash,
+            extra=event.to_dict(),
+        )
+
+    def _emit_audit(
+        self,
+        skill_name: str,
+        action: str,
+        outcome: str,
+        *,
+        payload_hash: str = "",
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a tier-stamped audit event (tier flows from construction — §8)."""
+        if self._audit_sink is None:
+            return
+        from arctrust import AuditEvent, emit
+
+        emit(
+            AuditEvent(
+                actor_did="did:arc:skill-improver",
+                action=action,
+                target=skill_name,
+                outcome=outcome,
+                tier=self._tier,
+                payload_hash=payload_hash,
+                extra=extra or {},
+            ),
+            self._audit_sink,
+        )
+
+    def _skill_override(self, skill_name: str) -> ChangeBoundConfig | None:
+        """Read a per-skill change-bound override from the skill's frontmatter, if any."""
+        if self._skill_path is None:
+            return None
+        path = self._skill_path(skill_name)
+        if path is None:
+            return None
+        fm = read_frontmatter(path)
+        if not fm or not isinstance(fm.get("improver"), dict):
+            return None
+        try:
+            return ChangeBoundConfig(**fm["improver"])
+        except Exception:  # reason: a malformed per-skill override is ignored (tier ceiling holds)
+            return None
 
     async def _gate(
         self, skill_name: str, skill_path: Path, before_text: str, after_text: str
