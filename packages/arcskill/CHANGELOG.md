@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-08
+
+SPEC-044 — arcskill becomes the optional **skill self-improvement** supercharger. The
+`arcskill.improver` subpackage (relocated from `arcagent/modules/skill_improver` and
+expanded) turns a prose-only, judge-gated optimizer into a code-repairing,
+golden-task-gated, bounded, reversible self-modification system. Provider-free: all
+LLM / sandbox / signing / audit dependencies enter through injected Protocol seams
+(imports no arcagent/arcllm/arcmemory/arcrun — enforced by an architecture test).
+
+### Added
+- **Code-repair mutation** (`BundlePatch`, `mutate.LLMCodeMutator`): failing-trace error
+  signals → a least-privilege multi-file patch over the skill's existing scripts.
+- **Golden-task eval gate** as the hard acceptance gate (`evalgate`, judge only ranks):
+  a candidate applies only on strict improvement (≥1 previously-failing case flips, no
+  regression). `sandbox_runner.HubEvalRunner` runs the suite in the tier sandbox
+  (Firecracker federal / Docker fallback via `arcskill.hub`; personal host-fallback with
+  audit-warn; fail-closed at enterprise/federal).
+- **Change-bound** (`guardrails.ChangeBound`, SkillOpt Lt): per-tier edit budgets
+  (8/4/2), cosine decay, federal floor non-relaxable, per-skill override within the tier
+  ceiling; enforced before the eval and audited (AC-4).
+- **Lifecycle** (`lifecycle.SkillLifecycle`): Curator usage-sweep retires inactive
+  (30-day default) or persistently-failing skills (disable + retain lineage, reversible);
+  operator revive; every transition audited.
+- **Integrity chain**: `codepatch.apply_bundle_patch` re-signs each patched file with the
+  agent DID and re-verifies (fail-closed with rollback) before reload; audit events are
+  operator-key signed (authority split, AC-6).
+- Optional arcmemory insight enrichment consumed as a primitive string (REQ-060).
+
 ## [0.1.2] - 2026-07-07
 
 SPEC-039 quality pass: arcskill now passes `mypy --strict` like the other packages.
