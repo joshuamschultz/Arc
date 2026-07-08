@@ -27,13 +27,13 @@ from arctrust.classification import Classification
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
+from arcmemory.fusion import rrf_fuse
 from arcmemory.index.rebuild import Embedder
 from arcmemory.index.structural import Reranker, StructuralIndex
 from arcmemory.index.surface import SurfaceIndex
 from arcmemory.security import enforce_budget, gate_no_read_up, render_recalls
 from arcmemory.types import Bundle, Confidence, Recall, Scope, Situation
 
-_RRF_K = 60
 _DEFAULT_BUDGET = 1024
 
 
@@ -119,20 +119,16 @@ class Retriever:
 def _rrf_fuse(channels: list[list[Recall]]) -> list[Recall]:
     """Reciprocal-rank-fuse the channels into one descending recall list (REQ-040).
 
-    Each channel is already ranked best-first; RRF (``1/(k+rank)``, k=60) is
-    scale-free so a surface score and a structural score combine without
-    calibration. Sources are namespace-disjoint (surface chunk ids vs insight
-    ids), so each recall object is carried through once, restamped with its fused
-    score for the downstream budget/margin logic.
+    Sources are namespace-disjoint (surface chunk ids vs insight ids), so each recall
+    object is carried through once and restamped with its fused score (from the shared
+    scale-free ``rrf_fuse``) for the downstream budget/margin logic.
     """
-    scores: dict[str, float] = {}
     objects: dict[str, Recall] = {}
     for ranked in channels:
-        for rank, recall in enumerate(ranked):
-            scores[recall.source] = scores.get(recall.source, 0.0) + 1.0 / (_RRF_K + rank)
+        for recall in ranked:
             objects.setdefault(recall.source, recall)
-    order = sorted(scores, key=lambda source: (-scores[source], source))
-    return [objects[source].model_copy(update={"score": scores[source]}) for source in order]
+    fused = rrf_fuse([[recall.source for recall in ranked] for ranked in channels])
+    return [objects[source].model_copy(update={"score": score}) for source, score in fused]
 
 
 def _confidence_gate(recalls: list[Recall]) -> list[Recall]:

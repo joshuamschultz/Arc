@@ -121,17 +121,6 @@ class Procedure(BaseModel):
     classification: str = "unclassified"
 
 
-class Cue(BaseModel):
-    """An abstract feature tag drawn from the controlled cue vocabulary.
-
-    Each cue is a node in the graph; insights link to their cues with weighted
-    edges strengthened Hebbian-style when they co-fire at match time.
-    """
-
-    name: str
-    aliases: list[str] = Field(default_factory=list)
-
-
 class Insight(BaseModel):
     """A minted abstraction — the centerpiece store.
 
@@ -228,7 +217,6 @@ __all__ = [
     "Bundle",
     "Confidence",
     "ConsolidationResult",
-    "Cue",
     "Entity",
     "Event",
     "Fact",
