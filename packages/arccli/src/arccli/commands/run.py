@@ -3,17 +3,57 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import json
+import operator
 import os
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from arccli.commands._shared import dispatch
+from arccli.commands._shared import print_json as _print_json
+from arccli.commands._shared import print_kv as _print_kv
+from arccli.commands._shared import write as _write
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+# Safe arithmetic for the `--with-calc` demo tool. Pow is deliberately excluded:
+# the expression source is the LLM, and `9**9**9**9` is an unbounded-compute DoS
+# (LLM10). The advertised surface is only + - * / ( ) %.
+_ARITH_OPS: dict[type[ast.AST], Callable[..., float]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Mod: operator.mod,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _eval_arith(node: ast.AST) -> float:
+    """Evaluate a whitelisted arithmetic AST node; reject everything else."""
+    if isinstance(node, ast.Expression):
+        return _eval_arith(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp):
+        op_fn = _ARITH_OPS.get(type(node.op))
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        return op_fn(_eval_arith(node.left), _eval_arith(node.right))
+    if isinstance(node, ast.UnaryOp):
+        op_fn = _ARITH_OPS.get(type(node.op))
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        return op_fn(_eval_arith(node.operand))
+    raise ValueError("Unsupported expression")
 
 _ENV_PATHS = [
     Path.cwd() / ".env",
@@ -108,28 +148,6 @@ def _load_env() -> None:
     for env_path in _ENV_PATHS:
         if env_path.exists():
             load_dotenv(env_path)
-
-
-def _write(msg: str = "") -> None:
-    """Write a line to stdout."""
-    sys.stdout.write(msg + "\n")
-
-
-def _print_json(data: Any) -> None:
-    """Print data as indented JSON."""
-    sys.stdout.write(json.dumps(data, indent=2, default=str) + "\n")
-
-
-def _print_kv(pairs: list[tuple[str, str]]) -> None:
-    """Print key-value pairs in aligned format."""
-    try:
-        from arccli.formatting import print_kv
-
-        print_kv(pairs)
-    except ImportError:
-        width = max(len(k) for k, _ in pairs) if pairs else 0
-        for k, v in pairs:
-            sys.stdout.write(f"  {k:<{width}}  {v}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -337,12 +355,9 @@ async def _execute_task(
 
         async def calculate(params: dict[str, Any], ctx: ToolContext) -> str:
             expr = params["expression"]
-            allowed = set("0123456789+-*/().% ")
-            if not all(c in allowed for c in expr):
-                return "Error: disallowed characters"
             try:
-                return str(eval(expr))  # noqa: S307
-            except Exception as e:  # reason: fail-open — continue
+                return str(_eval_arith(ast.parse(expr, mode="eval")))
+            except (ValueError, SyntaxError, TypeError, ZeroDivisionError) as e:
                 return f"Error: {e}"
 
         tools.append(
@@ -547,21 +562,4 @@ def run_handler(args: list[str]) -> None:
 
     Called by arccli.commands.registry when the user runs `arc run ...`.
     """
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc run: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

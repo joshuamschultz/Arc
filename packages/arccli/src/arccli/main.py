@@ -12,18 +12,11 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
+from arccli.commands._shared import err as _err
+from arccli.commands._shared import write as _out
+
 if TYPE_CHECKING:
     from prompt_toolkit.completion import Completer
-
-
-def _out(msg: str = "") -> None:
-    """Write a line to stdout (avoids T201 lint on print statements)."""
-    sys.stdout.write(msg + "\n")
-
-
-def _err(msg: str) -> None:
-    """Write a line to stderr."""
-    sys.stderr.write(msg + "\n")
 
 
 # ---------------------------------------------------------------------------
