@@ -46,17 +46,32 @@ def _docker_available() -> bool:
     return bool(shutil.which("docker"))
 
 
-async def _run_docker(fixture_cmd: str, skill_dir: Path) -> DryRunResult:
-    """Execute the fixture inside a Docker container via DockerBackend."""
+async def _run_docker(
+    fixture_cmd: str,
+    skill_dir: Path,
+    *,
+    mount: bool = False,
+    timeout_s: int = _DRY_RUN_TIMEOUT_SECONDS,
+) -> DryRunResult:
+    """Execute the fixture inside a Docker container via DockerBackend.
+
+    When ``mount`` is set the skill directory is bind-mounted read-write at
+    ``/workspace`` (with the rest of the container FS read-only) and the command
+    runs there — required for the golden-task eval runner, which must see the
+    materialized bundle (SPEC-044 P3.3). The install dry-run keeps ``mount=False``
+    (a smoke-import check that needs no bundle on disk).
+    """
     backend_cls = _DockerBackend
     if backend_cls is None:
         logger.warning("arcrun.backends.docker not available (arcrun not installed)")
         return DryRunResult(passed=True, skipped=True, backend_used="skipped")
 
+    workdir = "/workspace" if mount else "/skill"
     backend = backend_cls(
         image="python:3.11-slim",
         network="none",
         pids_limit=32,
+        workspace_mount=skill_dir if mount else None,
     )
     stdout_chunks: list[str] = []
     exit_code: int | None = None
@@ -66,11 +81,11 @@ async def _run_docker(fixture_cmd: str, skill_dir: Path) -> DryRunResult:
         handle = await asyncio.wait_for(
             backend.run(
                 fixture_cmd,
-                cwd="/skill",
-                env={"PYTHONPATH": "/skill"},
-                timeout=float(_DRY_RUN_TIMEOUT_SECONDS),
+                cwd=workdir,
+                env={"PYTHONPATH": workdir, "PYTHONDONTWRITEBYTECODE": "1"},
+                timeout=float(timeout_s),
             ),
-            timeout=_DRY_RUN_TIMEOUT_SECONDS + 2.0,
+            timeout=timeout_s + 2.0,
         )
 
         async for chunk in backend.stream(handle):
@@ -80,7 +95,7 @@ async def _run_docker(fixture_cmd: str, skill_dir: Path) -> DryRunResult:
 
         exit_code = 0  # stream completion implies success
     except TimeoutError:
-        logger.warning("Skill dry-run timed out after %ds", _DRY_RUN_TIMEOUT_SECONDS)
+        logger.warning("Skill dry-run timed out after %ds", timeout_s)
         exit_code = -1
     finally:
         await backend.close()

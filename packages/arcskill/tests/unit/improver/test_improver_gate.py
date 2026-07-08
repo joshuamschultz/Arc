@@ -55,12 +55,25 @@ async def test_no_suite_allows_prose_at_personal(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_has_suite_no_runner_fails_closed(tmp_path: Path) -> None:
+async def test_has_suite_default_runner_is_wired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No injected runner → the concrete HubEvalRunner is the default (P3.3 wiring).
+
+    Forced onto the personal host-fallback, the trivially-passing suite passes both
+    before and after, so the strict-improvement gate rejects (no previously-failing
+    case flips) — proving the real runner ran, not an unwired fail-closed stub.
+    """
+    from arcskill.improver.sandbox_runner import HubEvalRunner
+
+    monkeypatch.setattr("arcskill.improver.sandbox_runner.is_firecracker_available", lambda: False)
+    monkeypatch.setattr("arcskill.improver.sandbox_runner.docker_available", lambda: False)
     path = _skill(tmp_path, with_evals=True)
     imp = ArcSkillImprover(tmp_path, config=ImproverConfig(), tier="personal", eval_runner=None)
+    assert isinstance(imp._eval_runner, HubEvalRunner)
     dec = await imp._gate("my-skill", path, "before", "after")
     assert dec.accepted is False
-    assert "fail-closed" in dec.reason
+    assert "no strict improvement" in dec.reason
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ from arcskill.improver.evaluator import SkillEvaluator
 from arcskill.improver.guardrails import Guardrails
 from arcskill.improver.models import BundleView
 from arcskill.improver.mutate import SkillReflector
+from arcskill.improver.sandbox_runner import HubEvalRunner
 from arcskill.improver.seams import EvalRunner, LLMInvoker, Signer
 from arcskill.improver.trace_store import TraceStore
 
@@ -58,7 +59,9 @@ class ArcSkillImprover:
         self._tier = tier
         self._llm = llm
         self._signer = signer
-        self._eval_runner = eval_runner
+        # Default to the concrete sandboxed runner (SPEC-044 P3.3) when none is injected —
+        # this is the production wiring; unit tests inject deterministic fakes.
+        self._eval_runner: EvalRunner = eval_runner or HubEvalRunner(tier=tier)
         self._skill_path = skill_path
         self._reload = reload
         self._store = TraceStore(workspace, session_id=session_id)
@@ -180,8 +183,6 @@ class ArcSkillImprover:
         cases = load_suite(skill_dir)
         if not cases:
             return no_suite_policy(self._tier, "prose")
-        if self._eval_runner is None:
-            return GateDecision(accepted=False, reason="no sandbox eval runner; fail-closed")
         gate = EvalGate(self._eval_runner, min_golden_cases=self._config.min_golden_cases)
         return await gate.decide(
             before=BundleView(skill_name, before_text, skill_dir),
