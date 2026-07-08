@@ -47,20 +47,8 @@ def canonical_json_payload(*, meta: dict[str, Any], backends: list[Any]) -> byte
     ).encode("utf-8")
 
 
-def verify_allowed_backends_signature(
-    manifest_path: Path,
-    *,
-    federal: bool,
-    trust_dir: Path | None = None,
-    sink: Any | None = None,
-) -> dict[str, dict[str, Any]]:
-    """Verify the Ed25519 signature on an ``allowed_backends`` TOML manifest.
-
-    Loads the manifest, reconstructs the canonical-JSON signed payload, and
-    verifies the signature against the issuer DID's pubkey from the trust
-    store. On success returns a dict keyed by backend ``name`` with the
-    full backend entry (including ``module`` and ``content_hash``).
-    """
+def _load_manifest(manifest_path: Path) -> dict[str, Any]:
+    """Read + parse the TOML manifest, raising on any I/O or decode failure."""
     if not manifest_path.exists():
         raise BackendSignatureError(f"allowed_backends manifest not found: {manifest_path}")
 
@@ -70,10 +58,15 @@ def verify_allowed_backends_signature(
         raise BackendSignatureError(f"Cannot read manifest {manifest_path}: {exc}") from exc
 
     try:
-        data = tomllib.loads(raw.decode("utf-8"))
+        return tomllib.loads(raw.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise BackendSignatureError(f"Manifest {manifest_path} has invalid TOML: {exc}") from exc
 
+
+def _extract_signed_parts(
+    data: dict[str, Any],
+) -> tuple[dict[str, Any], list[Any], bytes, str]:
+    """Validate manifest structure and return (meta, backends, sig_bytes, issuer_did)."""
     meta = data.get("meta")
     backends = data.get("backends")
     sig_block = data.get("signature")
@@ -106,8 +99,24 @@ def verify_allowed_backends_signature(
             f"Manifest [signature].signature is not valid base64: {exc}"
         ) from exc
 
-    payload = canonical_json_payload(meta=meta, backends=backends)
+    return meta, backends, sig_bytes, issuer_did
 
+
+def _verify_signature(
+    payload: bytes,
+    sig_bytes: bytes,
+    issuer_did: str,
+    *,
+    manifest_path: Path,
+    trust_dir: Path | None,
+    sink: Any | None,
+) -> None:
+    """Ed25519-verify ``payload`` against the issuer's trust-store pubkey.
+
+    Fail-closed: any resolution or verification failure emits a sig-invalid
+    audit event and raises :class:`BackendSignatureError`. This is the single
+    isolated crypto step.
+    """
     try:
         from arctrust.trust_store import (
             TrustStoreError,
@@ -144,8 +153,9 @@ def verify_allowed_backends_signature(
             f"Manifest signature did not verify against issuer {issuer_did!r}"
         ) from exc
 
-    emit_sig_verified(manifest_path=manifest_path, issuer_did=issuer_did, sink=sink)
 
+def _build_verified_map(backends: list[Any]) -> dict[str, dict[str, Any]]:
+    """Build the name/module-keyed map from validated backend entries."""
     verified: dict[str, dict[str, Any]] = {}
     for entry in backends:
         if not isinstance(entry, dict):
@@ -169,6 +179,35 @@ def verify_allowed_backends_signature(
         verified[module] = verified[name]
 
     return verified
+
+
+def verify_allowed_backends_signature(
+    manifest_path: Path,
+    *,
+    federal: bool,
+    trust_dir: Path | None = None,
+    sink: Any | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Verify the Ed25519 signature on an ``allowed_backends`` TOML manifest.
+
+    Loads the manifest, reconstructs the canonical-JSON signed payload, and
+    verifies the signature against the issuer DID's pubkey from the trust
+    store. On success returns a dict keyed by backend ``name`` with the
+    full backend entry (including ``module`` and ``content_hash``).
+    """
+    data = _load_manifest(manifest_path)
+    meta, backends, sig_bytes, issuer_did = _extract_signed_parts(data)
+    payload = canonical_json_payload(meta=meta, backends=backends)
+    _verify_signature(
+        payload,
+        sig_bytes,
+        issuer_did,
+        manifest_path=manifest_path,
+        trust_dir=trust_dir,
+        sink=sink,
+    )
+    emit_sig_verified(manifest_path=manifest_path, issuer_did=issuer_did, sink=sink)
+    return _build_verified_map(backends)
 
 
 def verify_backend_content_hash(

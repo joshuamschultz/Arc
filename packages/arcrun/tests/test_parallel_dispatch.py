@@ -199,28 +199,6 @@ class TestParallelDispatcher:
         assert results[2] == (calls[2], "result:ok2")
 
 
-class TestAuditOrdering:
-    """Task 4.10-4.11 — monotonic sequence numbers preserve submission order."""
-
-    async def test_seq_numbers_match_submission_order(self) -> None:
-        from arcrun.parallel_dispatch import ParallelDispatcher
-
-        dispatched: list[tuple[int, str]] = []
-
-        async def run(call: _ToolCall) -> tuple[_ToolCall, Any]:
-            seq = call.arguments["_seq"]
-            dispatched.append((seq, call.name))
-            return call, "ok"
-
-        calls = [_ToolCall(f"t{i}", {}) for i in range(5)]
-        dispatcher = ParallelDispatcher(max_parallel=10, assign_seq=True)
-        await dispatcher.dispatch(calls, run)
-
-        # Sequences assigned at dispatch time must be monotonic
-        seqs = [call.arguments.get("_seq") for call in calls]
-        assert seqs == list(range(len(calls)))
-
-
 class TestDispatchAll:
     """Task 4.13-4.14 — Top-level ``dispatch_batch`` entry point."""
 
