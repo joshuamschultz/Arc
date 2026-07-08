@@ -11,7 +11,6 @@ to do ``from arcskill.hub.dry_run import _docker_available, _run_docker``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import shutil
 import time
@@ -73,40 +72,29 @@ async def _run_docker(
         pids_limit=32,
         workspace_mount=skill_dir if mount else None,
     )
-    stdout_chunks: list[str] = []
-    exit_code: int | None = None
     start = time.monotonic()
 
+    # run_separated returns the container's REAL exit code (and -1 on timeout), so a
+    # failing dry-run fixture is never silently reported as passed. The streaming API
+    # cannot observe the exit code, which is why it used to hardcode 0.
     try:
-        handle = await asyncio.wait_for(
-            backend.run(
-                fixture_cmd,
-                cwd=workdir,
-                env={"PYTHONPATH": workdir, "PYTHONDONTWRITEBYTECODE": "1"},
-                timeout=float(timeout_s),
-            ),
-            timeout=timeout_s + 2.0,
+        result = await backend.run_separated(
+            fixture_cmd,
+            cwd=workdir,
+            env={"PYTHONPATH": workdir, "PYTHONDONTWRITEBYTECODE": "1"},
+            timeout=float(timeout_s),
         )
-
-        async for chunk in backend.stream(handle):
-            stdout_chunks.append(chunk.decode("utf-8", errors="replace"))
-            if sum(len(c) for c in stdout_chunks) > 4096:
-                break
-
-        exit_code = 0  # stream completion implies success
-    except TimeoutError:
-        logger.warning("Skill dry-run timed out after %ds", timeout_s)
-        exit_code = -1
     finally:
         await backend.close()
 
     duration = time.monotonic() - start
-    stdout = "".join(stdout_chunks)[:4096]
-    passed = exit_code == 0
+    if result.exit_code == -1:
+        logger.warning("Skill dry-run timed out after %ds", timeout_s)
+    stdout = result.stdout.decode("utf-8", errors="replace")[:4096]
     return DryRunResult(
-        passed=passed,
+        passed=result.exit_code == 0,
         stdout=stdout,
-        exit_code=exit_code,
+        exit_code=result.exit_code,
         backend_used="docker",
         duration_s=duration,
     )
