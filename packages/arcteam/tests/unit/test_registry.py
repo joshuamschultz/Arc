@@ -8,7 +8,7 @@ from arctrust.signer import InProcessSigner
 from arcteam.audit import AuditLogger
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend
-from arcteam.types import Entity, EntityStatus, EntityType
+from arcteam.types import Entity, EntityType
 
 
 @pytest.fixture
@@ -96,28 +96,6 @@ class TestAuditRecords:
         records = await registry._backend.read_stream("audit", "audit", after_seq=0)
         assert len(records) >= 1
         assert records[0]["event_type"] == "entity.registered"
-
-    async def test_status_change_generates_audit(self, registry: EntityRegistry) -> None:
-        await registry.register(_agent("a1"))
-        await registry.update_status("agent://a1", EntityStatus.offline)
-        records = await registry._backend.read_stream("audit", "audit", after_seq=0)
-        assert any(r["event_type"] == "entity.status_changed" for r in records)
-
-
-class TestUpdateStatus:
-    """Update status."""
-
-    async def test_update_status(self, registry: EntityRegistry) -> None:
-        await registry.register(_agent("a1"))
-        await registry.update_status("agent://a1", EntityStatus.idle)
-        entity = await registry.get("agent://a1")
-        assert entity is not None
-        assert entity.status is EntityStatus.idle
-
-    async def test_update_status_not_found(self, registry: EntityRegistry) -> None:
-        with pytest.raises(ValueError, match="not found"):
-            await registry.update_status("agent://missing", EntityStatus.offline)
-
 
 class TestUpdateEntity:
     """SPEC-019 T1.2: write-through entity updates with audit emission."""

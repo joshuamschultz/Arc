@@ -49,10 +49,14 @@ class SearchEngine:
         self._storage = memory_storage
         self._index_mgr = index_manager
         self._config = config
-        # Corpus cache: invalidated when index entity set or content changes
+        # Corpus cache: invalidated when index entity set or content changes.
+        # The BM25Plus index (doc frequencies + IDF over the whole corpus) is
+        # cached alongside it under the same fingerprint — that O(corpus) build
+        # is the expensive part and must not repeat per query.
         self._corpus_cache: list[list[str]] | None = None
         self._entity_ids_cache: list[str] | None = None
         self._contents_cache: dict[str, str] | None = None
+        self._bm25_cache: BM25Plus | None = None
         self._cached_index_fingerprint: frozenset[tuple[str, str]] | None = None
 
     async def search(
@@ -138,6 +142,7 @@ class SearchEngine:
         self._corpus_cache = corpus
         self._entity_ids_cache = entity_ids
         self._contents_cache = contents
+        self._bm25_cache = BM25Plus(corpus) if corpus else None
         self._cached_index_fingerprint = fingerprint
         return corpus, entity_ids, contents
 
@@ -150,13 +155,16 @@ class SearchEngine:
     ) -> list[tuple[str, float]]:
         """BM25Plus scoring. Returns (entity_id, score) pairs.
 
+        Reuses the cached BM25Plus index built in :meth:`_get_corpus`; only
+        ``get_scores(query)`` (read-only, query-dependent) runs per call.
+
         Requires at least one query token to appear in the document
         (BM25Plus assigns positive scores even to non-matching docs).
         """
-        if not corpus:
+        if not corpus or self._bm25_cache is None:
             return []
 
-        bm25 = BM25Plus(corpus)
+        bm25 = self._bm25_cache
         query_tokens = self._tokenize(query)
         query_token_set = set(query_tokens)
         scores = bm25.get_scores(query_tokens)

@@ -16,15 +16,17 @@ from typing import Any
 
 _logger = logging.getLogger("arcteam.files")
 
-# Reject anything that could escape the team root
-_SAFE_NAME = re.compile(r"^[a-zA-Z0-9_\-./]+$")
+# A single path segment only: alphanumerics, underscore, dot, hyphen — no
+# separators and no leading dot, so ``..``, ``.``, ``/etc``, and ``../evil``
+# are all rejected before the name is ever joined onto the team root.
+_SAFE_NAME = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_.\-]*$")
 
 
 def _validate_path_within(path: Path, root: Path) -> None:
     """Ensure resolved path is inside root. Prevents path traversal."""
     resolved = path.resolve()
     root_resolved = root.resolve()
-    if not str(resolved).startswith(str(root_resolved)):
+    if not resolved.is_relative_to(root_resolved):
         raise ValueError(f"Path escapes team root: {path}")
 
 
@@ -79,8 +81,8 @@ class TeamFileStore:
             raise FileNotFoundError(f"Source file not found: {source}")
 
         dest_dir = self._shared_dir / agent_name
-        dest_dir.mkdir(parents=True, exist_ok=True)
         _validate_path_within(dest_dir, self._team_root)
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
         dest = dest_dir / source.name
 
@@ -126,6 +128,7 @@ class TeamFileStore:
             if not _SAFE_NAME.match(agent_name):
                 raise ValueError(f"Unsafe agent name: {agent_name!r}")
             search_dir = self._shared_dir / agent_name
+            _validate_path_within(search_dir, self._team_root)
             if not search_dir.exists():
                 return []
             for f in sorted(search_dir.iterdir()):

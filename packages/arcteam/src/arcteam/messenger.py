@@ -9,16 +9,18 @@ from datetime import UTC, datetime
 from typing import Any, NoReturn  # used for DLQ entry dicts
 
 from arctrust.classification import Classification, dominates, parse_classification
+from pydantic import ValidationError
 
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner, ReplayCache, new_nonce, sign_message, verify_message
 from arcteam.mentions import apply_mentions
-from arcteam.registry import EntityRegistry, UnknownHandle, resolve
+from arcteam.registry import EntityRegistry, UnknownHandle, resolve_ref
 from arcteam.storage import Consumer, Delivery, StorageBackend
 from arcteam.types import (
     MAX_BODY_BYTES,
     Channel,
     Cursor,
+    Entity,
     Message,
     generate_message_id,
     parse_uri,
@@ -144,41 +146,80 @@ class MessagingService:
         entry["seq"] = await self._next_dlq_seq()
         await self._backend.append(DLQ_COLLECTION, DLQ_KEY, entry)
 
+    # --- Snapshot-based entity lookup ---
+
+    @staticmethod
+    def _entity_by_ref(entities: list[Entity], ref: str) -> Entity | None:
+        """Look up a full entity by any address ref against one snapshot.
+
+        The synchronous, snapshot-backed counterpart to
+        :meth:`EntityRegistry.get`: the caller fetches the entity list once per
+        message and every clearance/signer lookup reads from it, so a single
+        send resolves every ref with one backend query instead of one per ref.
+        """
+        try:
+            did = resolve_ref(entities, ref)
+        except UnknownHandle:
+            return None
+        if not did.startswith("did:"):
+            return None
+        for entity in entities:
+            if entity.did == did:
+                return entity
+        return None
+
     # --- Channel membership check ---
 
-    async def _check_channel_membership(self, sender: str, channel_name: str) -> bool:
+    @staticmethod
+    def _member_dids(channel: Channel, entities: list[Entity]) -> set[str]:
+        """Resolve a channel's stored member refs to DIDs against one snapshot.
+
+        The single membership-comparison primitive: every stored ref (handle,
+        URI, or DID) collapses to a DID so membership matches regardless of the
+        form a member joined under. Resolving all members against one entity
+        snapshot keeps a membership check O(N+M), not O(N*M).
+        """
+        dids: set[str] = set()
+        for member in channel.members:
+            try:
+                dids.add(resolve_ref(entities, member))
+            except UnknownHandle:
+                continue
+        return dids
+
+    async def _check_channel_membership(
+        self, sender: str, channel_name: str, entities: list[Entity]
+    ) -> bool:
         """Verify sender is a member of the target channel (FR-7).
 
-        Both the sender and the stored members are run through ``resolve`` so
-        membership is compared by DID — an entity matches whether it was added
-        by handle, URI, or DID.
+        Both the sender and the stored members are compared by DID — an entity
+        matches whether it was added by handle, URI, or DID. Resolves against
+        the caller's per-send entity snapshot rather than re-querying.
         """
         data = await self._backend.read(CHANNELS_COLLECTION, channel_name)
         if data is None:
             return False
         channel = Channel.model_validate(data)
         try:
-            sender_did = await resolve(self._registry, sender)
+            sender_did = resolve_ref(entities, sender)
         except UnknownHandle:
             return False
-        member_dids: set[str] = set()
-        for member in channel.members:
-            try:
-                member_dids.add(await resolve(self._registry, member))
-            except UnknownHandle:
-                continue
-        return sender_did in member_dids
+        return sender_did in self._member_dids(channel, entities)
 
     # --- Classification (no-write-down) ---
 
-    async def _resolve_recipient_clearance(self, scheme: str, name: str) -> Classification | None:
+    async def _resolve_recipient_clearance(
+        self, scheme: str, name: str, entities: list[Entity]
+    ) -> Classification | None:
         """Resolve a recipient/channel/role clearance, or None if unresolvable.
 
         Role targets fan out to members; the strictest (lowest) member clearance
         governs — a role message may only go as low as its least-cleared member.
+        Entity/role clearances read from the caller's per-send snapshot; only a
+        channel clearance touches the (non-registry) channel store.
         """
         if scheme in ("agent", "user"):
-            entity = await self._registry.get(f"{scheme}://{name}")
+            entity = self._entity_by_ref(entities, f"{scheme}://{name}")
             if entity is None:
                 return None
             return parse_classification(entity.clearance, strict=self._strict_classification)
@@ -189,7 +230,7 @@ class MessagingService:
             channel = Channel.model_validate(data)
             return parse_classification(channel.clearance, strict=self._strict_classification)
         if scheme == "role":
-            members = await self._registry.by_role(name)
+            members = [e for e in entities if name in e.roles]
             if not members:
                 return None
             levels = [
@@ -200,7 +241,7 @@ class MessagingService:
         return None
 
     async def _enforce_no_write_down(
-        self, message: Message, scheme: str, name: str, uri: str
+        self, message: Message, scheme: str, name: str, uri: str, entities: list[Entity]
     ) -> None:
         """Refuse a send whose classification the recipient cannot receive.
 
@@ -210,7 +251,7 @@ class MessagingService:
         msg_level = parse_classification(
             message.classification, strict=self._strict_classification
         )
-        recipient_level = await self._resolve_recipient_clearance(scheme, name)
+        recipient_level = await self._resolve_recipient_clearance(scheme, name, entities)
         if recipient_level is None:
             if not self._strict_classification:
                 recipient_level = Classification.UNCLASSIFIED
@@ -245,9 +286,14 @@ class MessagingService:
         Auto-assigns seq, id, ts, thread_id. Validates body size.
         Enforces channel membership for channel:// targets (FR-7).
         """
+        # One registry snapshot serves every resolve in this message — sender,
+        # @-targets, body mentions, and recipient/role clearance. Resolving each
+        # ref against its own backend query would be O(N*M) reads per send.
+        entities = await self._registry.list_entities()
+
         # Validate sender is a registered entity. An unknown sender raises
         # UnknownHandle (REQ-002) — never a silent sender_unauthorized DLQ.
-        sender_did = await resolve(self._registry, message.sender)
+        sender_did = resolve_ref(entities, message.sender)
         if not sender_did.startswith("did:"):
             raise UnknownHandle(f"Sender is not a registered entity: {message.sender}")
 
@@ -266,7 +312,7 @@ class MessagingService:
             message.thread_id = message.id
 
         # Record @mentions from the body and raise attention flags (REQ-004).
-        await apply_mentions(self._registry, message)
+        apply_mentions(entities, message)
 
         # Sign the finalized envelope (REQ-030). The signature covers the body
         # and mentions, so it must run after they are set and before routing.
@@ -286,7 +332,7 @@ class MessagingService:
             # (raising UnknownHandle for an unknown handle, e.g. @ghost) and
             # normalize to the agent URI so routing stays name-based.
             if target.startswith("@"):
-                await resolve(self._registry, target)
+                resolve_ref(entities, target)
                 uri = f"agent://{target[1:]}"
             else:
                 uri = target
@@ -299,7 +345,7 @@ class MessagingService:
 
             # FR-7: Enforce channel membership
             if scheme == "channel":
-                is_member = await self._check_channel_membership(message.sender, name)
+                is_member = await self._check_channel_membership(message.sender, name, entities)
                 if not is_member:
                     await self._to_dlq(message, "not_channel_member")
                     raise ValueError(
@@ -308,7 +354,7 @@ class MessagingService:
 
             # SPEC-038 REQ-024 — no-write-down: the recipient/channel clearance
             # must dominate the message classification, or the send is refused.
-            await self._enforce_no_write_down(message, scheme, name, uri)
+            await self._enforce_no_write_down(message, scheme, name, uri, entities)
 
             msg_dict = {**base_dict}
             seq, _offset = await self._backend.append_auto_seq(
@@ -372,13 +418,17 @@ class MessagingService:
             return {}
 
         streams = self.resolve_subscriptions(entity_id, entity.roles)
-        # Also include channels the entity is a member of
+        # Also include channels the entity is a member of. Membership is decided
+        # by DID (via _member_dids) exactly as the send-side check, so an entity
+        # that joined under one address form still matches when polling by another.
         channels = await self.list_channels()
-        for ch in channels:
-            if entity_id in ch.members:
-                stream = f"arc.channel.{ch.name}"
-                if stream not in streams:
-                    streams.append(stream)
+        if channels:
+            entities = await self._registry.list_entities()
+            for ch in channels:
+                if entity.did in self._member_dids(ch, entities):
+                    stream = f"arc.channel.{ch.name}"
+                    if stream not in streams:
+                        streams.append(stream)
 
         # Parallel poll all streams
         async def _poll_one(stream: str) -> tuple[str, list[Message]]:
@@ -435,13 +485,14 @@ class MessagingService:
         ``subscribe`` dedups by message id), so this method is state-free and
         safe to run once per delivery on either path.
         """
-        signer = await self._registry.get(message.signer_did)
+        entities = await self._registry.list_entities()
+        signer = self._entity_by_ref(entities, message.signer_did)
         if signer is None or not signer.public_key:
             return "bad_signature"
         if not verify_message(message, bytes.fromhex(signer.public_key)):
             return "bad_signature"
         try:
-            if await resolve(self._registry, message.sender) != message.signer_did:
+            if resolve_ref(entities, message.sender) != message.signer_did:
                 return "bad_signature"
         except UnknownHandle:
             return "bad_signature"
@@ -473,11 +524,14 @@ class MessagingService:
         entity = await self._registry.get(entity_id)
         roles = entity.roles if entity is not None else []
         streams = self.resolve_subscriptions(entity_id, roles)
-        for channel in await self.list_channels():
-            if entity_id in channel.members:
-                stream = f"arc.channel.{channel.name}"
-                if stream not in streams:
-                    streams.append(stream)
+        channels = await self.list_channels()
+        if entity is not None and channels:
+            entities = await self._registry.list_entities()
+            for channel in channels:
+                if entity.did in self._member_dids(channel, entities):
+                    stream = f"arc.channel.{channel.name}"
+                    if stream not in streams:
+                        streams.append(stream)
 
         base = durable_name or entity_id
         # Shared across this subscription's consume loops: message ids already
@@ -529,7 +583,15 @@ class MessagingService:
         other handler failure is logged (fail-open) and acked to avoid a
         poison-message loop.
         """
-        message = Message.model_validate(delivery.data)
+        try:
+            message = Message.model_validate(delivery.data)
+        except ValidationError:
+            # Untrusted stream data — a malformed payload must not escape the
+            # consume loop and kill the unsupervised task. Log and ack so the
+            # poison message is dropped rather than crashing the subscription.
+            logger.exception("dropping unparseable delivery (poison message)")
+            await delivery.ack()
+            return
         reason = await self._verify_origin(message)
         if reason is not None:
             await self._to_dlq(message, reason)
