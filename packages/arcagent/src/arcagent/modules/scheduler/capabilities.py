@@ -36,18 +36,6 @@ from arcagent.tools._decorator import capability, hook, tool
 
 _logger = logging.getLogger("arcagent.modules.scheduler.capabilities")
 
-# Fields that schedule_update is allowed to modify. Mirrors tools.py.
-_UPDATABLE_FIELDS = frozenset(
-    {
-        "prompt",
-        "enabled",
-        "expression",
-        "every_seconds",
-        "timeout_seconds",
-        "active_hours",
-    }
-)
-
 
 @capability(name="scheduler")
 class Scheduler:
@@ -132,7 +120,7 @@ async def schedule_create(
     at: str | None = None,
     every_seconds: int | None = None,
     active_hours: dict[str, Any] | None = None,
-    timeout_seconds: int = 300,
+    timeout_seconds: int | None = None,
 ) -> str:
     """Create a new schedule. Enforces quota and prompt validation."""
     st = _runtime.state()
@@ -145,6 +133,9 @@ async def schedule_create(
 
         validate_prompt(prompt, max_length=st.config.max_prompt_length)
 
+        resolved_timeout = (
+            timeout_seconds if timeout_seconds is not None else st.config.default_timeout_seconds
+        )
         entry = ScheduleEntry.model_validate(
             {
                 "id": generate_schedule_id(),
@@ -154,8 +145,9 @@ async def schedule_create(
                 "at": at,
                 "every_seconds": every_seconds,
                 "active_hours": active_hours,
-                "timeout_seconds": timeout_seconds,
-            }
+                "timeout_seconds": resolved_timeout,
+            },
+            context=st.config.validation_context(),
         )
         st.store.add(entry)
         _logger.info("Created schedule %s (type=%s)", entry.id, type)
@@ -202,13 +194,13 @@ async def schedule_update(
         "timeout_seconds": timeout_seconds,
         "active_hours": active_hours,
     }
-    updates = {k: v for k, v in candidates.items() if v is not None and k in _UPDATABLE_FIELDS}
+    updates = {k: v for k, v in candidates.items() if v is not None}
     if not updates:
         return json.dumps({"error": "No updatable fields provided"})
     try:
         if "prompt" in updates:
             validate_prompt(updates["prompt"], max_length=st.config.max_prompt_length)
-        updated = st.store.update(id, updates)
+        updated = st.store.update(id, updates, context=st.config.validation_context())
         _logger.info("Updated schedule %s", id)
         return updated.model_dump_json()
     except KeyError:
