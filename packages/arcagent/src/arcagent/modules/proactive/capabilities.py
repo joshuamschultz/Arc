@@ -85,8 +85,7 @@ class ProactiveEngineCapability:
 
         # 2. Cancel the asyncio task so the sleep(poll_interval) wakes
         #    immediately rather than waiting for the next polling cycle.
-        _cancel_and_wait = _cancel_tick_task  # local alias for clarity
-        await _cancel_and_wait(st._tick_task)
+        await _cancel_tick_task(st._tick_task)
         st._tick_task = None
 
         # 3. Drain all in-flight handler tasks before releasing resources.

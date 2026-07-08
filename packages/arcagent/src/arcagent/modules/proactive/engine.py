@@ -21,19 +21,22 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from arcagent.modules.proactive.circuit_breaker import CircuitBreaker
+from arcagent.modules.proactive.timezone import ActiveHours
 
 _logger = logging.getLogger("arcagent.proactive.engine")
 
 _SCHED_OVERHEAD_SHIM = 0.010  # 10ms per-tick scheduling overhead (Celery Beat pattern)
 
 MonotonicClock = Callable[[], float]
+WallClock = Callable[[], datetime]
 ScheduleHandler = Callable[["Schedule"], Awaitable[None]]
 EventSink = Callable[[str, dict[str, Any]], None]
 
-ScheduleKind = Literal["cron", "heartbeat"]
+ScheduleKind = Literal["cron"]
 
 
 @dataclass(order=False)
@@ -54,99 +57,28 @@ class Schedule:
     jitter_seconds: float = 0.0
     in_flight: bool = False
     last_actual_run_monotonic: float | None = None
+    # Optional active-hours window (R-049). When set, the engine skips ticks
+    # that fall outside the window (deferring to the next tick) instead of
+    # dispatching the handler — quiet-hours suppression enforced by the engine,
+    # not left to each handler.
+    active_hours: ActiveHours | None = None
     # Callers can stash arbitrary metadata (human-facing name, TZ,
     # cron expression, etc.) without the engine needing to know.
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
-class HeartbeatContext:
-    """Minimal context for heartbeat decisions — R-044.
-
-    Crucially carries NO session state, NO conversation history, NO
-    tool results. Heartbeat runs as a stateless side channel; mixing
-    its outputs with the main agent context causes behavioural
-    inconsistencies (SDD §3.4).
-    """
-
-    now_iso: str
-    idle_since_seconds: float
-
-
-# ---------------------------------------------------------------------------
-# Heartbeat driver — cheap-model invocation with strict decision boundary.
-# ---------------------------------------------------------------------------
-
-# Prompt shape is deliberately minimal: the model decides IDLE or
-# NOT_IDLE. Anything more granular bleeds into the main agent's
-# decision space, which SPEC-017 R-044 forbids.
-_HEARTBEAT_PROMPT = """\
-You are a silent watchdog. Decide whether the agent should wake up.
-
-State:
-- Current time (UTC): {now_iso}
-- Seconds idle since last user interaction: {idle_since_seconds:.0f}
-
-Respond with exactly one token: ``IDLE`` or ``NOT_IDLE``.
-Nothing else. No punctuation, no explanation, no prose.
-"""
-
-
-async def evaluate_heartbeat(
-    model: Any,
-    ctx: HeartbeatContext,
-    *,
-    max_output_tokens: int = 4,
-) -> bool:
-    """Run a single heartbeat decision. Returns True if NOT_IDLE.
-
-    The model's output is strictly parsed — anything other than the
-    literal tokens ``IDLE`` / ``NOT_IDLE`` is treated as IDLE
-    (conservative). This prevents model hallucination from triggering
-    spurious wake events.
-
-    Parameters
-    ----------
-    model:
-        Any object with an async ``invoke(messages, ...)``-shaped call
-        returning an object whose ``content`` attribute is the model's
-        reply. Matches the arcllm provider contract.
-    ctx:
-        The heartbeat context (no session state).
-    max_output_tokens:
-        Bound on model output — defense against runaway generation.
-    """
-    from arcllm import Message  # late import; avoids startup cost
-
-    prompt = _HEARTBEAT_PROMPT.format(
-        now_iso=ctx.now_iso, idle_since_seconds=ctx.idle_since_seconds
-    )
-    try:
-        response = await model.invoke(
-            [Message(role="user", content=prompt)],
-            max_tokens=max_output_tokens,
-        )
-    except Exception:  # reason: fail-open — log + continue
-        _logger.exception("Heartbeat model invocation failed; treating as IDLE")
-        return False
-
-    content = str(getattr(response, "content", "") or "").strip()
-    # Normalize — accept uppercase / title / with trailing chars.
-    token = content.split()[0].upper() if content else "IDLE"
-    return token == "NOT_IDLE"  # noqa: S105 — NOT_IDLE is a sentinel string, not a credential
-
-
 class ProactiveEngine:
-    """Unified heartbeat + cron scheduler. Replaces pulse + scheduler.
+    """Cron scheduler. Replaces the legacy pulse + scheduler modules.
 
     Parameters
     ----------
     handler:
-        Async callable invoked for each due schedule. Implementations
-        dispatch cron-type schedules to the agent and heartbeat-type
-        schedules to the side-channel path.
+        Async callable invoked for each due schedule.
     monotonic:
         Injectable clock. Defaults to :func:`time.monotonic`.
+    wall_clock:
+        Injectable UTC wall clock used for active-hours gating. Defaults
+        to ``datetime.now(UTC)``; tests inject a fixed instant.
     poll_interval_seconds:
         How long :meth:`start_tick_loop` sleeps between ticks. Unit
         tests drive :meth:`tick` directly and ignore this.
@@ -163,12 +95,14 @@ class ProactiveEngine:
         *,
         handler: ScheduleHandler,
         monotonic: MonotonicClock | None = None,
+        wall_clock: WallClock | None = None,
         poll_interval_seconds: float = 1.0,
         event_sink: EventSink | None = None,
         clock_warp_threshold_seconds: float = 5.0,
     ) -> None:
         self._handler = handler
         self._monotonic = monotonic or time.monotonic
+        self._wall_clock = wall_clock or (lambda: datetime.now(UTC))
         self._poll_interval = poll_interval_seconds
         self._event_sink = event_sink
         self._clock_warp_threshold = clock_warp_threshold_seconds
@@ -271,7 +205,16 @@ class ProactiveEngine:
         heapq.heappush(self._heap, (schedule.next_run_monotonic, self._heap_seq, schedule.id))
 
     async def _dispatch(self, schedule: Schedule, now: float) -> None:
-        """Run one schedule tick — circuit, concurrency, handler, reschedule."""
+        """Run one schedule tick — active-hours, circuit, concurrency, handler."""
+        # 0. Active-hours gating (R-049) — outside the window the tick is
+        #    suppressed and deferred to the next interval; the handler never
+        #    runs and this is not a failure (no circuit-breaker impact).
+        active_hours = schedule.active_hours
+        if active_hours is not None and not active_hours.is_active(self._wall_clock()):
+            self._emit("skipped_inactive_hours", {"schedule_id": schedule.id})
+            self._reschedule_from_now(schedule, now)
+            return
+
         # 1. Circuit breaker
         breaker = schedule.circuit_breaker
         if breaker is not None and not breaker.allow_request():
@@ -361,7 +304,6 @@ class ProactiveEngine:
 
 
 __all__ = [
-    "HeartbeatContext",
     "ProactiveEngine",
     "Schedule",
     "ScheduleKind",

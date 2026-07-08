@@ -15,11 +15,9 @@ from arcagent.modules.proactive.circuit_breaker import (
     CircuitState,
 )
 from arcagent.modules.proactive.engine import (
-    HeartbeatContext,
     ProactiveEngine,
     Schedule,
     ScheduleKind,
-    evaluate_heartbeat,
 )
 from arcagent.modules.proactive.leader import (
     InMemoryElection,
@@ -32,13 +30,11 @@ __all__ = [
     "ActiveHours",
     "CircuitBreaker",
     "CircuitState",
-    "HeartbeatContext",
     "InMemoryElection",
     "LeaderElection",
     "NoOpLeaderElection",
     "ProactiveEngine",
     "Schedule",
     "ScheduleKind",
-    "evaluate_heartbeat",
     "next_occurrence",
 ]

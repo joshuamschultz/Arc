@@ -6,7 +6,7 @@ Covers:
   * Clock warp detection (``time.time()`` vs ``time.monotonic()``)
   * Concurrency policy: in-flight tick skips new dispatch
   * Wake-event idempotency (timestamp-based discard)
-  * Heartbeat isolation (dedicated HeartbeatContext, no session)
+  * Active-hours gating (R-049 — out-of-window ticks are suppressed)
   * Circuit-breaker integration per schedule
 
 Tests drive a fake monotonic clock so timing is deterministic.
@@ -239,98 +239,87 @@ class TestCircuitBreakerIntegration:
         assert any(e[0] == "skipped_circuit_open" for e in events)
 
 
-class TestHeartbeatContext:
-    """Task 6.13-6.15 — heartbeat runs with a stateless, minimal context."""
+class TestActiveHoursGating:
+    """R-049 — a schedule carrying ActiveHours is suppressed outside its window.
 
-    def test_heartbeat_context_carries_no_session(self) -> None:
-        from arcagent.modules.proactive.engine import HeartbeatContext
+    Drives the real ``_dispatch`` path (via ``tick``) with a fixed injected wall
+    clock so the ActiveHours implementation from ``timezone.py`` is actually
+    consulted on the engine's dispatch path, not just in isolation.
+    """
 
-        ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=42.0)
-        # Attributes intentionally minimal — no session history, no tool results
-        assert ctx.now_iso.startswith("2026")
-        assert ctx.idle_since_seconds == 42.0
-        # Belt-and-braces: assert no disallowed attributes leaked in
-        for forbidden in ("session", "messages", "tool_results", "conversation"):
-            assert not hasattr(ctx, forbidden)
+    async def test_out_of_window_tick_is_suppressed_and_rescheduled(self) -> None:
+        from datetime import UTC, datetime, time
 
+        from arcagent.modules.proactive.engine import ProactiveEngine, Schedule
+        from arcagent.modules.proactive.timezone import ActiveHours
 
-class TestEvaluateHeartbeat:
-    """SPEC-017 R-044 — heartbeat invokes a cheap model, parses strict tokens."""
+        clock = _FakeClock()
+        fired: list[str] = []
+        events: list[tuple[str, dict[str, Any]]] = []
 
-    async def test_not_idle_response_returns_true(self) -> None:
-        from unittest.mock import AsyncMock, MagicMock
+        async def handler(sched: Schedule) -> None:
+            fired.append(sched.id)
 
-        from arcagent.modules.proactive.engine import (
-            HeartbeatContext,
-            evaluate_heartbeat,
+        # 03:00 UTC is outside a 09:00–17:00 UTC window.
+        wall = datetime(2026, 4, 18, 3, 0, tzinfo=UTC)
+        engine = ProactiveEngine(
+            handler=handler,
+            monotonic=clock,
+            wall_clock=lambda: wall,
+            event_sink=lambda ev, data: events.append((ev, data)),
+        )
+        engine.add(
+            Schedule(
+                id="quiet",
+                interval_seconds=10,
+                next_run_monotonic=5,
+                kind="cron",
+                active_hours=ActiveHours(tz="UTC", start=time(9, 0), end=time(17, 0)),
+            )
         )
 
-        model = MagicMock()
-        model.invoke = AsyncMock(return_value=MagicMock(content="NOT_IDLE"))
-        ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=10)
+        clock.advance(6)
+        await engine.tick()
+        await asyncio.sleep(0)
 
-        assert await evaluate_heartbeat(model, ctx) is True
+        assert fired == []
+        assert any(e[0] == "skipped_inactive_hours" for e in events)
+        # Suppressed tick is deferred, not dropped — rescheduled past ``now``
+        # (now=6 + interval=10 - overhead shim).
+        sched = engine.get("quiet")
+        assert sched is not None
+        assert sched.next_run_monotonic == pytest.approx(16.0 - 0.010)
 
-    async def test_idle_response_returns_false(self) -> None:
-        from unittest.mock import AsyncMock, MagicMock
+    async def test_in_window_tick_dispatches(self) -> None:
+        from datetime import UTC, datetime, time
 
-        from arcagent.modules.proactive.engine import (
-            HeartbeatContext,
-            evaluate_heartbeat,
+        from arcagent.modules.proactive.engine import ProactiveEngine, Schedule
+        from arcagent.modules.proactive.timezone import ActiveHours
+
+        clock = _FakeClock()
+        fired: list[str] = []
+
+        async def handler(sched: Schedule) -> None:
+            fired.append(sched.id)
+
+        # 12:00 UTC is inside the 09:00–17:00 UTC window.
+        wall = datetime(2026, 4, 18, 12, 0, tzinfo=UTC)
+        engine = ProactiveEngine(handler=handler, monotonic=clock, wall_clock=lambda: wall)
+        engine.add(
+            Schedule(
+                id="active",
+                interval_seconds=10,
+                next_run_monotonic=5,
+                kind="cron",
+                active_hours=ActiveHours(tz="UTC", start=time(9, 0), end=time(17, 0)),
+            )
         )
 
-        model = MagicMock()
-        model.invoke = AsyncMock(return_value=MagicMock(content="IDLE"))
-        ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=10)
+        clock.advance(6)
+        await engine.tick()
+        await asyncio.sleep(0)
 
-        assert await evaluate_heartbeat(model, ctx) is False
-
-    async def test_hallucinated_output_treated_as_idle(self) -> None:
-        """Model says something weird → conservative IDLE."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from arcagent.modules.proactive.engine import (
-            HeartbeatContext,
-            evaluate_heartbeat,
-        )
-
-        model = MagicMock()
-        model.invoke = AsyncMock(return_value=MagicMock(content="I think the user is probably..."))
-        ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=10)
-
-        assert await evaluate_heartbeat(model, ctx) is False
-
-    async def test_model_exception_treated_as_idle(self) -> None:
-        """Model invoke raises → conservative IDLE, no wake."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from arcagent.modules.proactive.engine import (
-            HeartbeatContext,
-            evaluate_heartbeat,
-        )
-
-        model = MagicMock()
-        model.invoke = AsyncMock(side_effect=RuntimeError("model down"))
-        ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=10)
-
-        assert await evaluate_heartbeat(model, ctx) is False
-
-    async def test_token_bound_on_output(self) -> None:
-        """Invoke must cap ``max_tokens`` to prevent runaway generation."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from arcagent.modules.proactive.engine import (
-            HeartbeatContext,
-            evaluate_heartbeat,
-        )
-
-        model = MagicMock()
-        model.invoke = AsyncMock(return_value=MagicMock(content="IDLE"))
-        ctx = HeartbeatContext(now_iso="2026-04-18T00:00:00Z", idle_since_seconds=0)
-
-        await evaluate_heartbeat(model, ctx, max_output_tokens=8)
-        _args, kwargs = model.invoke.await_args
-        assert kwargs["max_tokens"] == 8
+        assert fired == ["active"]
 
 
 # --- helpers --------------------------------------------------------------
