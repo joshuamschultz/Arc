@@ -13,6 +13,8 @@ from arctrust.policy import (
     PolicyContext,
     PolicyLayer,
     PolicyPipeline,
+    ProviderLayer,
+    ProviderLimit,
     ProviderUsage,
     TierConfig,
     ToolCall,
@@ -287,6 +289,45 @@ class TestPipelineCache:
         await pipeline.evaluate(make_call(tool_name="tool_a"), ctx)
         await pipeline.evaluate(make_call(tool_name="tool_b"), ctx)
         assert call_count == 2
+
+    async def test_crossing_provider_budget_misses_stale_allow(self) -> None:
+        """A repeated identical call must re-evaluate — never replay a cached
+        ALLOW — once the provider budget is crossed within the cache TTL.
+
+        The ProviderLayer decides purely from ``ctx.provider_usage``, which
+        accumulates over the window. Two identical signed calls 30s apart share
+        one cache entry unless the mutable ctx state is bound into the key.
+        """
+        layer = ProviderLayer(
+            limits_by_provider={
+                "anthropic": ProviderLimit(max_tokens=1000, max_cost=10.0, max_requests=100)
+            }
+        )
+        pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
+        call = make_call()
+
+        under_budget = PolicyContext(
+            tier="federal",  # type: ignore[arg-type]
+            policy_version="1.0",
+            bundle_age_seconds=0.0,
+            provider_usage=ProviderUsage(
+                provider="anthropic", tokens_used=500, cost_used=1.0, requests_in_window=1
+            ),
+        )
+        first = await pipeline.evaluate(call, under_budget)
+        assert first.outcome == "allow"
+
+        over_budget = PolicyContext(
+            tier="federal",  # type: ignore[arg-type]
+            policy_version="1.0",
+            bundle_age_seconds=0.0,
+            provider_usage=ProviderUsage(
+                provider="anthropic", tokens_used=2000, cost_used=1.0, requests_in_window=1
+            ),
+        )
+        second = await pipeline.evaluate(call, over_budget)
+        assert second.outcome == "deny"
+        assert second.rule_id == "provider.budget_exceeded"
 
 
 class TestPipelineAuditSink:

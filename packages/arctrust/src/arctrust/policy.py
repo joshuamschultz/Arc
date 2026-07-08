@@ -1080,9 +1080,16 @@ class PolicyPipeline:
         # ALLOWed under a partial ledger replay that ALLOW after the ledger
         # completes a forbidden set — skipping the DENY (SPEC-035 stale replay).
         caps = ",".join(sorted(ctx.session_capabilities or ()))
+        # The provider/classification/sandbox/team layers decide purely from the
+        # mutable ctx state (accumulating provider budget, clearance labels,
+        # isolation status, team scope). Folding a digest of that state into the
+        # key makes a repeated signed call whose budget/clearance context has
+        # moved miss the cache and re-evaluate, instead of replaying a stale
+        # ALLOW past a now-exceeded budget for the TTL window (LLM10).
+        ctx_digest = _ctx_state_digest(ctx)
         return (
             f"{call.agent_did}|{call.tool_name}|{call.classification}"
-            f"|{sig_fingerprint}|{caps}|{_hash_call(call)}"
+            f"|{sig_fingerprint}|{caps}|{ctx_digest}|{_hash_call(call)}"
         )
 
     def _cache_get(self, key: str) -> Decision | None:
@@ -1278,6 +1285,35 @@ def _hash_call(call: ToolCall) -> str:
         sort_keys=True,
         default=str,
     )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _ctx_state_digest(ctx: PolicyContext) -> str:
+    """Canonical digest of the mutable ctx state the layers decide from.
+
+    The provider/classification/sandbox/team layers read accumulating or
+    session-varying state off the context, not the signed call. Binding a
+    digest of that state to the decision-cache key keeps a stale ALLOW from
+    being replayed once the budget/clearance/isolation/scope has moved.
+    """
+    state: dict[str, Any] = {}
+    if ctx.provider_usage is not None:
+        pu = ctx.provider_usage
+        state["provider"] = [pu.provider, pu.tokens_used, pu.cost_used, pu.requests_in_window]
+    if ctx.clearance is not None:
+        cc = ctx.clearance
+        state["clearance"] = [int(cc.caller_clearance), int(cc.resource_classification)]
+    if ctx.tool_runtime is not None:
+        rt = ctx.tool_runtime
+        state["runtime"] = [rt.verified, rt.required_isolation, rt.available_isolation]
+    if ctx.team_scope is not None:
+        ts = ctx.team_scope
+        state["team"] = [
+            ts.role,
+            sorted(ts.authorized_tools),
+            sorted(ts.delegation_grant) if ts.delegation_grant is not None else None,
+        ]
+    payload = json.dumps(state, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
