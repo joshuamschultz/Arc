@@ -1,6 +1,6 @@
 """arcrun — async execution engine for autonomous agents."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from arcrun.builtins import (
     SandboxError,
@@ -19,6 +19,7 @@ from arcrun.capabilities import (
     detached_context,
     provider_tools,
 )
+from arcrun.checkpoint import LoopCheckpoint, apply_checkpoint, to_checkpoint
 from arcrun.events import GENESIS_PREV_HASH, ChainVerificationResult, Event, EventBus, verify_chain
 from arcrun.loop import RunHandle, run, run_async
 from arcrun.prompts import get_strategy_prompts
@@ -45,6 +46,7 @@ __all__ = [
     "ChainVerificationResult",
     "Event",
     "EventBus",
+    "LoopCheckpoint",
     "LoopResult",
     "RunHandle",
     "RunResult",
@@ -65,6 +67,7 @@ __all__ = [
     "ToolStartEvent",
     "TurnEndEvent",
     "__version__",
+    "apply_checkpoint",
     "collect",
     "detached_context",
     "get_strategy_prompts",
@@ -75,5 +78,6 @@ __all__ = [
     "run_shell",
     "run_stream",
     "stream_llm_response",
+    "to_checkpoint",
     "verify_chain",
 ]

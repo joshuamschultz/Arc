@@ -150,7 +150,7 @@ def _register_in_fleet(app: Any, agent_did: str, agent: Any) -> None:
         return
     name = _agent_name(agent, agent_did)
     if registry.get(name) is not None:
-        return  # already registered (e.g. via /api/agent/connect WS)
+        return  # already registered
 
     registration = AgentRegistration(
         agent_id=name,
@@ -160,7 +160,7 @@ def _register_in_fleet(app: Any, agent_did: str, agent: Any) -> None:
         connected_at=datetime.now(tz=UTC).isoformat(),
         meta={"source": "embedded_chat"},
     )
-    registry.register(name, ws=None, registration=registration)
+    registry.register(name, registration=registration)
     logger.info("embedded_agents: registered %s as LIVE", name)
 
 

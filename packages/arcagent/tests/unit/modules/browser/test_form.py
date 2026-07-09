@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
+from arcagent.modules.browser._runtime import _State
+from arcagent.modules.browser.accessibility import AccessibilityManager
+from arcagent.modules.browser.capabilities import browser_fill_form
 from arcagent.modules.browser.config import BrowserConfig
 
 _FORM_AX_TREE = {
@@ -47,64 +51,38 @@ _FORM_AX_TREE = {
 }
 
 
-def _make_cdp() -> AsyncMock:
+async def _snapshot(config: BrowserConfig) -> tuple[AsyncMock, AccessibilityManager]:
     cdp = AsyncMock()
     cdp.send = AsyncMock(return_value=_FORM_AX_TREE)
-    return cdp
-
-
-def _make_bus() -> MagicMock:
-    bus = MagicMock()
-    bus.emit = AsyncMock()
-    return bus
+    ax = AccessibilityManager(cdp, config)
+    await ax.snapshot()
+    cdp.send.reset_mock()
+    cdp.send.return_value = {}
+    return cdp, ax
 
 
 class TestBrowserFillForm:
     """browser_fill_form compound tool."""
 
-    async def test_fill_multiple_fields(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.form import create_form_tools
-
-        cdp = _make_cdp()
+    async def test_fill_multiple_fields(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
+        cdp, ax = await _snapshot(config)
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        # Snapshot first to populate refs
-        await ax.snapshot()
-
-        # Reset mock for form interactions
-        # Each field: DOM.focus + Input.insertText
-        cdp.send.reset_mock()
-        cdp.send.return_value = {}
-
-        tools = create_form_tools(cdp, ax, config, bus)
-        fill_tool = next(t for t in tools if t.name == "browser_fill_form")
-
-        result = await fill_tool.execute(fields={"First Name": "John", "Last Name": "Doe"})
+        result = await browser_fill_form(fields={"First Name": "John", "Last Name": "Doe"})
         assert "2" in result  # Reports 2 fields filled
 
-        # Verify Input.insertText was used (not char-by-char)
         cdp.send.assert_any_call("Input", "insertText", {"text": "John"})
         cdp.send.assert_any_call("Input", "insertText", {"text": "Doe"})
 
-    async def test_fill_reports_not_found_fields(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.form import create_form_tools
-
-        cdp = _make_cdp()
+    async def test_fill_reports_not_found_fields(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
+        cdp, ax = await _snapshot(config)
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        await ax.snapshot()
-
-        cdp.send.reset_mock()
-        cdp.send.return_value = {}
-
-        tools = create_form_tools(cdp, ax, config, bus)
-        fill_tool = next(t for t in tools if t.name == "browser_fill_form")
-
-        result = await fill_tool.execute(fields={"Nonexistent Field": "value"})
+        result = await browser_fill_form(fields={"Nonexistent Field": "value"})
         assert "not found" in result.lower() or "failed" in result.lower()

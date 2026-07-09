@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
+from arcagent.modules.browser._runtime import _State
+from arcagent.modules.browser.capabilities import browser_screenshot
 from arcagent.modules.browser.config import BrowserConfig
 
 
@@ -14,51 +17,34 @@ def _make_cdp() -> AsyncMock:
     return cdp
 
 
-def _make_bus() -> MagicMock:
-    bus = MagicMock()
-    bus.emit = AsyncMock()
-    return bus
-
-
 class TestBrowserScreenshot:
     """browser_screenshot tool."""
 
-    async def test_screenshot_returns_base64(self) -> None:
-        from arcagent.modules.browser.tools.screenshot import create_screenshot_tools
-
+    async def test_screenshot_returns_base64(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = _make_cdp()
-        config = BrowserConfig()
-        bus = _make_bus()
-
-        # Mock Page.captureScreenshot response
         fake_png = base64.b64encode(b"fake-png-data").decode()
         cdp.send.return_value = {"data": fake_png}
+        configure_browser(cdp=cdp)
 
-        tools = create_screenshot_tools(cdp, config, bus)
-        screenshot_tool = next(t for t in tools if t.name == "browser_screenshot")
-
-        result = await screenshot_tool.execute()
+        result = await browser_screenshot()
         assert fake_png in result
         assert "[EXTERNAL WEB CONTENT]" in result
 
-    async def test_screenshot_sends_clip_for_resolution_cap(self) -> None:
-        from arcagent.modules.browser.tools.screenshot import create_screenshot_tools
-
+    async def test_screenshot_sends_clip_for_resolution_cap(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = _make_cdp()
+        fake_png = base64.b64encode(b"fake").decode()
+        cdp.send.return_value = {"data": fake_png}
         config = BrowserConfig(
             security={"max_screenshot_width": 800, "max_screenshot_height": 600}  # type: ignore[arg-type]
         )
-        bus = _make_bus()
+        configure_browser(config, cdp=cdp)
 
-        fake_png = base64.b64encode(b"fake").decode()
-        cdp.send.return_value = {"data": fake_png}
+        await browser_screenshot()
 
-        tools = create_screenshot_tools(cdp, config, bus)
-        screenshot_tool = next(t for t in tools if t.name == "browser_screenshot")
-
-        await screenshot_tool.execute()
-
-        # Verify captureScreenshot was called with clip params
         call_args = cdp.send.call_args
         assert call_args[0][0] == "Page"
         assert call_args[0][1] == "captureScreenshot"

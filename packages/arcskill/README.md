@@ -6,8 +6,8 @@
 *Sigstore + Rekor signature verification. Static scan. Sandboxed dry-run. Atomic activation. Revocation list.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-342-0055BC.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-86%25-003B82.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-622-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Sigstore](https://img.shields.io/badge/Sigstore-verified-0073FE.svg)](#-the-install-pipeline)
 
@@ -28,6 +28,46 @@ Skills can be three things:
 `arcskill` manages the lifecycle for all three targets: validate → fetch → verify → scan → sandbox → activate → lock.
 
 > 🛡️ **No skill activates without passing every gate. CRL-checked at boot. Tamper-evident lock file.**
+
+---
+
+## 🧬 Optional: skill self-improvement (`arcskill.improver`)
+
+Installing `arcskill` also unlocks the optional **self-improvement supercharger** (SPEC-044).
+arcagent runs skills fine without it; enable it and the agent quietly gets *better* skills.
+
+- **Code repair, not just prose.** From failing execution traces it proposes a
+  least-privilege multi-file patch to a skill's scripts (LLM behind an injected seam).
+- **Golden-task gate decides; the judge only ranks.** A patch applies only on *strict
+  improvement* — it must flip a previously-failing golden case to pass and regress none —
+  proven in the tier sandbox (Firecracker federal / Docker fallback; fail-closed at
+  enterprise/federal; personal host-fallback with an audit warning).
+- **Bounded edits (SkillOpt).** Per-tier edit budgets `Lt` 8/4/2 (personal/enterprise/
+  federal), cosine decay, federal floor non-relaxable, per-skill override within the
+  ceiling — over-budget patches are rejected *before* the eval and audited.
+- **Reversible lifecycle.** A Curator sweep retires inactive (30-day default) or
+  persistently-failing skills — disable + retain lineage, never delete — and an operator
+  can revive them.
+- **Two authorities.** The mutated bundle is re-signed by the **agent DID** and
+  re-verified (fail-closed) before reload; every audit event is signed by the
+  **operator key** on the WORM chain — the audited subject can't forge its own trail.
+
+Enable it from arcagent config (`[modules.skills]`, forwarded to `[modules.skills.improver]`):
+
+```toml
+[modules.skills]
+adapter = "arcskill"                 # none (default) | arcskill | "pkg.mod:Class" (signed BYO)
+tier = "enterprise"                  # personal | enterprise | federal
+
+[modules.skills.improver.change_bound]
+max_edits = 4                        # SkillOpt Lt (only ever tightens the tier ceiling)
+max_lines_changed = 40
+[modules.skills.improver.lifecycle]
+inactivity_window_days = 30          # Curator retire window (all sweep settings tunable)
+```
+
+Provider-free by construction: LLM / sandbox / signing / audit all enter `arcskill.improver`
+through injected Protocol seams — it imports no `arcagent`/`arcllm`/`arcmemory` (arch-tested).
 
 ---
 
@@ -278,11 +318,11 @@ Federal tier additionally requires:
 - ✅ Validate, signed install, scan, partial version-control via lock, CRL lifecycle
 - ✅ Sigstore + Rekor verification
 - ✅ Sandboxed dry-run
+- ✅ Skill self-improvement (`arcskill.improver`, SPEC-044) — code-repair mutation, golden-task gate, bounded edits, Curator lifecycle
+- ✅ Eval harness for golden-task quality scoring (`arcskill.improver.evalgate`, sandboxed via `hub.dry_run`)
 
 **Wave-3 (deferred):**
 
-- ⏳ GEPA skill-improvement loop (currently in arcagent — relocating)
-- ⏳ Eval harness for automated skill quality scoring
 - ⏳ Three-target skill loaders exposed as public API
 - ⏳ `arc skill upgrade` workflow
 - ⏳ Full version control beyond lock file (semver history, rollback)
@@ -291,8 +331,8 @@ Federal tier additionally requires:
 uv run --no-sync pytest packages/arcskill/tests
 ```
 
-- **Tests:** 342 (5 skipped)
-- **Coverage:** 86%
+- **Tests:** 622 (5 skipped)
+- **Coverage:** 90%
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
 

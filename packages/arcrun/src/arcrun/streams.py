@@ -3,9 +3,9 @@
 Two entry points:
 
 - ``run_stream(...)`` wraps the full ReAct loop and yields ``StreamEvent``
-  objects (token, tool start/end, turn end). Token text is derived from
-  the final ``LoopResult.content`` via word splitting — convenient when
-  the underlying model adapter doesn't expose a real streaming wire.
+  objects (tool start/end, one final content token, turn end). It emits the
+  loop's real final content as a single block — there is no synthetic
+  progressive-token effect (SPEC-043 §3.5 cut it as misleading dead code).
 
 - ``stream_llm_response(model, messages, ...)`` streams a single
   ``model.invoke_stream`` call as ``TokenEvent`` then ``TurnEndEvent``.
@@ -81,17 +81,29 @@ class ToolEndEvent(StreamEvent):
 class TurnEndEvent(StreamEvent):
     """Emitted exactly once, as the final event in the stream.
 
+    Carries the terminal outcome so a one-shot consumer knows WHY the run
+    ended, not just the final text (SPEC-040 F1): ``completion_payload`` /
+    ``completion_tool`` mirror ``LoopResult`` (a terminator tool sets both;
+    a synthesized budget/turn breach sets only the payload; a clean end
+    leaves both None), and ``tokens_used`` carries the observed token totals.
+
     Attributes:
         final_text: The complete response text from the loop.
         turns: Number of turns executed.
         tool_calls_made: Number of tool calls during the run.
         cost_usd: Estimated cost in USD.
+        tokens_used: Observed token totals (``{"input"/"output"/"total": n}``).
+        completion_payload: Structured terminator arguments, or None.
+        completion_tool: Name of the terminator tool, or None.
     """
 
     final_text: str
     turns: int = 0
     tool_calls_made: int = 0
     cost_usd: float = 0.0
+    tokens_used: dict[str, Any] = field(default_factory=dict)
+    completion_payload: dict[str, Any] | None = None
+    completion_tool: str | None = None
 
 
 @dataclass
@@ -101,14 +113,19 @@ class RunResult:
     The streaming entry (``agent.run``) is the single way to drive an agent;
     one-shot callers (CLI, scheduler, module callbacks) that only want the
     final answer drain the stream through ``collect()`` to get this. Carries
-    exactly what the terminal ``TurnEndEvent`` reports — no loop internals
-    (``tokens_used``/``strategy_used`` stay inside ``LoopResult``).
+    exactly what the terminal ``TurnEndEvent`` reports — including the terminal
+    outcome (``completion_payload`` / ``completion_tool``) and observed
+    ``tokens_used`` so a consumer can tell success from a policy DENY, tool
+    error, or budget breach (SPEC-040 F1).
     """
 
     content: str
     turns: int = 0
     tool_calls_made: int = 0
     cost_usd: float = 0.0
+    tokens_used: dict[str, Any] = field(default_factory=dict)
+    completion_payload: dict[str, Any] | None = None
+    completion_tool: str | None = None
 
 
 async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
@@ -132,6 +149,9 @@ async def collect(stream: AsyncIterator[StreamEvent]) -> RunResult:
             turns=turn_end.turns,
             tool_calls_made=turn_end.tool_calls_made,
             cost_usd=turn_end.cost_usd,
+            tokens_used=turn_end.tokens_used,
+            completion_payload=turn_end.completion_payload,
+            completion_tool=turn_end.completion_tool,
         )
     return RunResult(content="".join(token_text))
 
@@ -160,6 +180,13 @@ async def run_stream(
     ui_reporter: Any | None = None,
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
+    on_checkpoint: Callable[[Any], None] | None = None,
+    approval_provider: Callable[..., Any] | None = None,
+    approval_required_tools: frozenset[str] = frozenset(),
+    max_parallel: int = 10,
+    max_repeat: int | None = None,
+    max_consecutive_errors: int | None = None,
+    resume_from: Any | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -276,6 +303,13 @@ async def run_stream(
                 store_raw_bodies=store_raw_bodies,
                 max_tokens=max_tokens,
                 max_cost_usd=max_cost_usd,
+                on_checkpoint=on_checkpoint,
+                approval_provider=approval_provider,
+                approval_required_tools=approval_required_tools,
+                max_parallel=max_parallel,
+                max_repeat=max_repeat,
+                max_consecutive_errors=max_consecutive_errors,
+                resume_from=resume_from,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue
@@ -316,29 +350,29 @@ async def _stream_generator(
     loop_result = loop_future.result()
     content = loop_result.content or ""
 
-    # Emit token events by splitting content into words to simulate streaming.
-    # We emit at least one TokenEvent so the content is always streamed.
+    # SPEC-043 §3.5 — streaming CUT. The prior synthetic word-split fabricated
+    # per-word TokenEvents from already-complete content (fake progressive
+    # tokens). For an agentic harness the deliverable is the output, not a typing
+    # effect, so we emit the real final content as ONE block. The structured
+    # events (tool start/end, turn end) and collect()/RunResult contract are
+    # unchanged — one-shot consumers keep working. Real per-token streaming
+    # stays only in ``stream_llm_response`` (out of loop, touches no gate).
     if content:
-        words = content.split(" ")
-        for i, word in enumerate(words):
-            # Re-add the space between words (not before the first word)
-            text = (" " + word) if i > 0 else word
-            yield TokenEvent(text=text)
-            # Mirror each token chunk to the UI reporter for live display
-            _emit_ui_run_event(
-                reporter=ui_reporter,
-                event_type="stream_token",
-                data={"text": text, "stream_run_id": stream_run_id},
-            )
-    else:
-        # Empty content: no token events; TurnEndEvent carries final_text=""
-        pass
+        yield TokenEvent(text=content)
+        _emit_ui_run_event(
+            reporter=ui_reporter,
+            event_type="stream_token",
+            data={"text": content, "stream_run_id": stream_run_id},
+        )
 
     turn_end = TurnEndEvent(
         final_text=content,
         turns=loop_result.turns,
         tool_calls_made=loop_result.tool_calls_made,
         cost_usd=loop_result.cost_usd,
+        tokens_used=dict(loop_result.tokens_used),
+        completion_payload=loop_result.completion_payload,
+        completion_tool=loop_result.completion_tool,
     )
     yield turn_end
 

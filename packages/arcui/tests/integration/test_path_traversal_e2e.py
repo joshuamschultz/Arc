@@ -20,7 +20,6 @@ in the path validator can't silently re-open any of these.
 from __future__ import annotations
 
 import os
-from collections import deque
 from pathlib import Path
 
 import pytest
@@ -75,9 +74,7 @@ def _build_app(team_root: Path) -> tuple[Starlette, AuthConfig]:
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.agent_registry = registry
-    app.state.pending_controls = {}
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.audit_buffer = deque(maxlen=1000)
     app.state.team_root = team_root
     app.state.trace_store = None
 

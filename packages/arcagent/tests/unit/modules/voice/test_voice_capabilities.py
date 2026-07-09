@@ -15,9 +15,6 @@ This file verifies:
      provider plugins and emit the expected audit events.
   4. Federal-tier cloud-provider misconfiguration is rejected at
      ``_runtime.configure()`` time.
-
-Legacy :class:`VoiceModule` tests in ``test_voice_module.py`` continue
-to verify behaviour at the wrapper level.
 """
 
 from __future__ import annotations

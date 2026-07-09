@@ -1,37 +1,48 @@
-"""Configuration for the memory module.
+"""Thin memory-module config — the Brain seam's knobs (SPEC-041 §4.6).
 
-Owned by the memory module — not part of core config.
-Loaded from ``[modules.memory.config]`` in arcagent.toml.
-Validated internally by the module on construction.
+The memory module is *wiring only*: it owns no memory logic (that lives in the
+selected :class:`~arcagent.brain.Brain`). These fields pick the brain and bound
+recall + consolidation scheduling. ``brain`` is the SPEC-047 selector:
+
+* ``"none"`` (default) — :class:`~arcagent.brain.NullBrain`; memory off, zero files.
+* ``"arcmemory"`` / ``"auto"`` — the ``arcmemory`` plug-in if installed.
+* a dotted ``module:Class`` path — a bring-your-own Brain.
 """
 
 from __future__ import annotations
+
+from pydantic import Field
 
 from arcagent.modules.base_config import ModuleConfig
 
 
 class MemoryConfig(ModuleConfig):
-    """Memory module configuration.
+    """Configuration for the thin memory (Brain) wiring module."""
 
-    All fields have defaults so the module works out-of-the-box
-    with zero configuration. Inherits ``extra="forbid"`` from
-    ModuleConfig for typo detection.
-    """
+    brain: str = "none"
+    tier: str = "personal"
 
-    context_budget_tokens: int = 2000
-    notes_budget_today_tokens: int = 1000
-    notes_budget_yesterday_tokens: int = 500
-    search_weight_bm25: float = 0.7
-    search_weight_vector: float = 0.3
-    # Default embedding model for hybrid search. Override via config
-    # for environments where this model is unavailable (e.g., air-gapped).
-    embedding_model: str = "all-MiniLM-L6-v2"
-    entity_extraction_enabled: bool = True
+    # Operator-vetted BYO brain class-paths. Above the personal tier a dotted
+    # ``module:Class`` brain is refused unless it appears here (ASI04 sign gate).
+    brain_allowlist: list[str] = Field(default_factory=list)
 
-    # SPEC-030 — ongoing daily notes (decoupled from compaction).
-    # Tier 1: cheap per-turn raw append (crash-safety, no LLM).
-    raw_capture_enabled: bool = True
-    # Tier 2b: one eval-model dedupe/tidy pass at session end.
-    session_consolidation_enabled: bool = True
-    # Tier 3: lazy background rollup of the previous day on a new-day boundary.
-    daily_rollup_enabled: bool = True
+    # Embedder seam (arcmemory semantic + analogical-trigger channels). ``local``
+    # wires arcllm's offline model; ``none`` degrades recall to BM25 + graph.
+    embed_backend: str = "local"
+    embed_model: str = ""  # empty -> arcllm default (all-MiniLM-L6-v2)
+
+    # Distiller seam (arcmemory consolidation: fact extraction + insight minting).
+    # Empty ``distill_provider`` leaves distillation off (consolidation is a no-op).
+    distill_provider: str = ""
+    distill_model: str = ""
+
+    # Recall (agent:assemble_prompt @ priority 50)
+    top_k: int = 5
+    budget: int = 1024
+
+    # Consolidation scheduling (event-count / idle trigger, DC-5)
+    consolidate_event_threshold: int = 20
+    consolidate_idle_seconds: float = 900.0
+
+
+__all__ = ["MemoryConfig"]

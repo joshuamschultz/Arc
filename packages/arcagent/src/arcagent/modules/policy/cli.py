@@ -6,21 +6,13 @@ bullets, config, and eval history without booting a full agent session.
 
 from __future__ import annotations
 
-import re
 import tomllib
 from pathlib import Path
 from typing import Any
 
 import click
 
-# Duplicated from PolicyEngine to avoid importing engine + its heavy deps.
-# Must stay in sync with policy_engine._BULLET_RE.
-_BULLET_RE = re.compile(
-    r"^-\s+\[(?P<id>P\d+)\]\s+(?P<text>.+?)\s+"
-    r"\{score:(?P<score>\d+),\s*uses:(?P<uses>\d+),\s*"
-    r"reviewed:(?P<reviewed>[^,]+),\s*created:(?P<created>[^,]+),\s*"
-    r"source:(?P<source>[^}]*)\}",
-)
+from arcagent.modules.policy._bullet_parse import parse_bullets
 
 
 def cli_group(workspace: Path) -> click.Group:
@@ -53,7 +45,7 @@ def cli_group(workspace: Path) -> click.Group:
             return
 
         content = policy_path.read_text(encoding="utf-8")
-        parsed = _parse_bullets(content)
+        parsed = parse_bullets(content)
 
         if not parsed:
             click_echo("No structured bullets found in policy.md.")
@@ -165,23 +157,3 @@ def cli_group(workspace: Path) -> click.Group:
         click_echo(f"Sessions available: {len(session_files)}")
 
     return policy
-
-
-def _parse_bullets(content: str) -> list[dict[str, str]]:
-    """Parse structured bullets from policy.md content."""
-    results: list[dict[str, str]] = []
-    for line in content.split("\n"):
-        match = _BULLET_RE.match(line.strip())
-        if match:
-            results.append(
-                {
-                    "id": match.group("id"),
-                    "text": match.group("text").strip(),
-                    "score": match.group("score"),
-                    "uses": match.group("uses"),
-                    "reviewed": match.group("reviewed").strip(),
-                    "created": match.group("created").strip(),
-                    "source": match.group("source").strip(),
-                }
-            )
-    return results

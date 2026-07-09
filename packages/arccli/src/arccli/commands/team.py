@@ -11,6 +11,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from arccli.commands._shared import dispatch
+from arccli.commands._shared import print_json as _print_json
+from arccli.commands._shared import print_kv as _print_kv
+from arccli.commands._shared import print_table as _print_table
+from arccli.commands._shared import write as _write
+
 _DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
 _PREFLIGHT_TIMEOUT = 0.5
 _CONNECT_TIMEOUT = 3.0
@@ -18,42 +24,6 @@ _CONNECT_TIMEOUT = 3.0
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _write(msg: str = "") -> None:
-    """Write a line to stdout."""
-    sys.stdout.write(msg + "\n")
-
-
-def _print_table(headers: list[str], rows: list[list[str]]) -> None:
-    """Print a table with headers."""
-    try:
-        from arccli.formatting import print_table
-
-        print_table(headers, rows)
-    except ImportError:
-        sys.stdout.write("  " + "  ".join(headers) + "\n")
-        for row in rows:
-            sys.stdout.write("  " + "  ".join(row) + "\n")
-
-
-def _print_kv(pairs: list[tuple[str, str]]) -> None:
-    """Print key-value pairs in aligned format."""
-    try:
-        from arccli.formatting import print_kv
-
-        print_kv(pairs)
-    except ImportError:
-        width = max(len(k) for k, _ in pairs) if pairs else 0
-        for k, v in pairs:
-            sys.stdout.write(f"  {k:<{width}}  {v}\n")
-
-
-def _print_json(data: Any) -> None:
-    """Print data as indented JSON."""
-    import json
-
-    sys.stdout.write(json.dumps(data, indent=2, default=str) + "\n")
 
 
 def _get_root(args: argparse.Namespace) -> Path:
@@ -1096,21 +1066,4 @@ def team_handler(args: list[str]) -> None:
 
     Called by arccli.commands.registry when the user runs `arc team ...`.
     """
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc team: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

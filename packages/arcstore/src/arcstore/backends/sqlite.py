@@ -180,11 +180,12 @@ class SqliteBackend:
         table: str,
         *,
         where: dict[str, Any] | None = None,
+        ts_gte: str | None = None,
         order_by: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         columns = _columns_for(table)
-        return await asyncio.to_thread(self._read, table, columns, where, order_by, limit)
+        return await asyncio.to_thread(self._read, table, columns, where, ts_gte, order_by, limit)
 
     # -- cursor ------------------------------------------------------------
 
@@ -254,17 +255,23 @@ class SqliteBackend:
         table: str,
         columns: tuple[str, ...],
         where: dict[str, Any] | None,
+        ts_gte: str | None,
         order_by: str | None,
         limit: int | None,
     ) -> list[dict[str, Any]]:
         sql = f"SELECT {','.join(columns)} FROM {table}"  # noqa: S608 — table/columns are allowlisted
         params: list[Any] = []
+        clauses = []
         if where:
-            clauses = []
             for col, val in where.items():
                 _require_column(table, columns, col)
                 clauses.append(f"{col}=?")
                 params.append(_encode(col, val))
+        if ts_gte is not None:
+            _require_column(table, columns, "ts")
+            clauses.append("ts>=?")
+            params.append(ts_gte)
+        if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         if order_by:
             sql += " ORDER BY " + _safe_order_by(table, columns, order_by)

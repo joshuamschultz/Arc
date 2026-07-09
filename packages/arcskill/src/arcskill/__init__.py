@@ -5,4 +5,9 @@ and LLM contexts. Public surface is exposed under ``arcskill.hub`` and
 ``arcskill.lock``.
 """
 
-__version__ = "0.1.1"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("arcskill")
+except PackageNotFoundError:  # reason: source checkout without an installed distribution
+    __version__ = "0.2.0"

@@ -40,7 +40,7 @@ def test_full_chat_turn_with_real_agent(tmp_path: Path) -> None:
         pytest.skip("no concierge_agent in team/; set up local team to run this test")
 
     cfg = GatewayConfig.from_toml_str("[platforms.web]\nenabled = true\n")
-    auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": "op", "agent_token": "ag"})
+    auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": "op"})
     app = create_app(team_root=team_root, auth_config=auth, gateway_config=cfg)
     with TestClient(app) as client:
         with client.websocket_connect("/ws/chat/concierge") as ws:

@@ -36,7 +36,7 @@ _logger = logging.getLogger("arcagent.agent_lifecycle")
 # SPEC-053/037 — modules that construct an operator-signed WORM audit sink and so
 # receive the config-RESOLVED operator Signer (same custody + algorithm as the
 # policy chain). No other module is handed it, and none is handed the raw seed.
-_WORM_SINK_MODULE_NAMES = frozenset({"skill_improver", "messaging"})
+_WORM_SINK_MODULE_NAMES = frozenset({"skills", "messaging", "planning"})
 
 # Per D-346/D-347 — short skill-usage instruction injected at priority 91.
 _SKILL_USAGE_INSTRUCTION = (
@@ -232,6 +232,7 @@ def configure_module_runtimes(
             "agent_did": identity.did if identity else "",
             "identity": identity,
             "egress_proxy": egress_proxy,
+            "human_gate": agent._human_gate,
         }
         # SPEC-053/037 — the operator authority is NOT broadcast to every module.
         # Only modules that actually build a WORM audit sink receive the resolved

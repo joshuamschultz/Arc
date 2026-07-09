@@ -25,13 +25,8 @@ from pathlib import Path
 
 from arcstore import ArcStoreConfig, resolve_data_dir
 
-
-def _out(msg: str = "") -> None:
-    sys.stdout.write(msg + "\n")
-
-
-def _err(msg: str) -> None:
-    sys.stderr.write(msg + "\n")
+from arccli.commands._shared import err as _err
+from arccli.commands._shared import write as _out
 
 
 def _resolve_dir(args: argparse.Namespace) -> Path:

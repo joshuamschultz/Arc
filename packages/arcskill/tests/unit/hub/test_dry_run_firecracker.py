@@ -289,18 +289,13 @@ async def test_enterprise_falls_back_to_docker_when_firecracker_missing(
     We mock DockerBackend to avoid real Docker calls and assert the result
     reports backend_used='docker'.
     """
+    from arcrun.backends.base import SeparatedResult
+
     mock_docker = MagicMock()
-    mock_handle = MagicMock()
-    mock_handle.handle_id = "test-handle"
-
-    # run() is an async function returning a handle
-    mock_docker.run = AsyncMock(return_value=mock_handle)
-
-    # stream() is an async generator yielding chunks
-    async def fake_stream(_handle: object) -> object:
-        yield b"1 passed"
-
-    mock_docker.stream = fake_stream
+    # run_separated() returns the container's stdout/stderr + real exit code.
+    mock_docker.run_separated = AsyncMock(
+        return_value=SeparatedResult(stdout=b"1 passed", stderr=b"", exit_code=0)
+    )
     mock_docker.close = AsyncMock()
 
     config = _enterprise_config()
@@ -323,15 +318,12 @@ async def test_personal_falls_back_to_docker_when_firecracker_missing(
     tmp_path: Path,
 ) -> None:
     """At personal tier, DockerBackend is tried when Firecracker is absent."""
+    from arcrun.backends.base import SeparatedResult
+
     mock_docker = MagicMock()
-    mock_handle = MagicMock()
-    mock_handle.handle_id = "test-handle"
-    mock_docker.run = AsyncMock(return_value=mock_handle)
-
-    async def fake_stream(_handle: object) -> object:
-        yield b"ok"
-
-    mock_docker.stream = fake_stream
+    mock_docker.run_separated = AsyncMock(
+        return_value=SeparatedResult(stdout=b"ok", stderr=b"", exit_code=0)
+    )
     mock_docker.close = AsyncMock()
 
     mock_docker_class = MagicMock(return_value=mock_docker)

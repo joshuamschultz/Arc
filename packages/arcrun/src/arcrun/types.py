@@ -15,18 +15,21 @@ if TYPE_CHECKING:
 class Tool:
     """A tool the model can call.
 
-    parallel_safe:
-        When True, the loop may dispatch multiple calls to this tool in
-        the same turn concurrently via asyncio.gather. The tool MUST be
-        safe to run alongside itself — independent state per call,
-        no shared mutable resource. Default False (serial dispatch).
-
     signals_completion:
         When True, an invocation of this tool terminates the loop. The
         tool's call arguments become the completion payload (status,
         summary, etc.). Used for structured terminators like
         ``task_complete`` without the loop needing to know the tool's
         name. Default False.
+
+    classification:
+        Dispatch classification consumed by ``parallel_dispatch``'s
+        ``BatchClassifier`` to decide whether a turn's calls may run
+        concurrently. ``"read_only"`` tools with no shared resource may
+        parallelize; anything else forces sequential dispatch. Default
+        ``"state_modifying"`` — fail-closed so an unclassified tool never
+        runs concurrently by accident (SPEC-043 REQ-034). The owning
+        deployment (arcagent) sets the real value when it builds the tool.
     """
 
     name: str
@@ -34,8 +37,8 @@ class Tool:
     input_schema: dict[str, Any]
     execute: Callable[[dict[str, Any], ToolContext], Awaitable[str]]
     timeout_seconds: float | None = None
-    parallel_safe: bool = False
     signals_completion: bool = False
+    classification: str = "state_modifying"
 
 
 @dataclass

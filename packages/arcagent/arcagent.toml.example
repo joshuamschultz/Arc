@@ -86,19 +86,22 @@ estimate_multiplier = 1.1  # Conservative token estimate buffer
 # Each module has [modules.NAME] for enable/priority and
 # [modules.NAME.config] for module-specific settings.
 
-# Memory module
+# Memory module (thin Brain wiring — SPEC-041)
+# Memory-less by default: brain = "none" runs a no-op NullBrain (zero memory files).
+# Install the `arcmemory` package and set brain = "arcmemory" to activate
+# dual-speed analogical memory, or point brain at a dotted `module:Class` path
+# for a bring-your-own Brain.
 # [modules.memory]
 # enabled = true
 # priority = 100
 #
 # [modules.memory.config]
-# context_budget_tokens = 2000
-# notes_budget_today_tokens = 1000
-# notes_budget_yesterday_tokens = 500
-# search_weight_bm25 = 0.7
-# search_weight_vector = 0.3
-# embedding_model = "all-MiniLM-L6-v2"
-# entity_extraction_enabled = true
+# brain = "none"                    # none | arcmemory | auto | module:Class
+# tier = "personal"
+# top_k = 5
+# budget = 1024
+# consolidate_event_threshold = 20
+# consolidate_idle_seconds = 900.0
 
 # Policy module
 # [modules.policy]

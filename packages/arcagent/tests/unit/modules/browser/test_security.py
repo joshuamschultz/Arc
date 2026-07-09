@@ -3,19 +3,28 @@ redirect bypass prevention, JS toggle, content marking as external."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 
+from arcagent.modules.browser._runtime import _State
+from arcagent.modules.browser.accessibility import AccessibilityManager
+from arcagent.modules.browser.capabilities import (
+    browser_download_file,
+    browser_execute_js,
+    browser_navigate,
+    browser_read_page,
+)
 from arcagent.modules.browser.config import BrowserConfig
-from arcagent.modules.browser.errors import URLBlockedError
+from arcagent.modules.browser.errors import CapabilityDisabledError, URLBlockedError
 
 
 class TestURLAllowlist:
     """Allowlist mode: only allowed domains pass."""
 
     def test_allows_listed_domain(self) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig(
             security={  # type: ignore[arg-type]
@@ -26,7 +35,7 @@ class TestURLAllowlist:
         _check_url_policy("https://agency.gov/portal", config.security)
 
     def test_blocks_unlisted_domain(self) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig(
             security={  # type: ignore[arg-type]
@@ -38,7 +47,7 @@ class TestURLAllowlist:
             _check_url_policy("https://evil.com", config.security)
 
     def test_wildcard_matches_subdomain(self) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig(
             security={  # type: ignore[arg-type]
@@ -54,7 +63,7 @@ class TestURLDenylist:
     """Denylist mode: blocked domains rejected."""
 
     def test_blocks_listed_domain(self) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig(
             security={  # type: ignore[arg-type]
@@ -66,7 +75,7 @@ class TestURLDenylist:
             _check_url_policy("https://payload.malware.com", config.security)
 
     def test_allows_unlisted_domain(self) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig(
             security={  # type: ignore[arg-type]
@@ -91,7 +100,7 @@ class TestSchemeBlocking:
         ],
     )
     def test_blocks_dangerous_schemes(self, url: str) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig()
         with pytest.raises(URLBlockedError, match="Scheme"):
@@ -99,102 +108,95 @@ class TestSchemeBlocking:
 
     @pytest.mark.parametrize("scheme", ["https", "http"])
     def test_allows_safe_schemes(self, scheme: str) -> None:
-        from arcagent.modules.browser.tools.navigate import _check_url_policy
+        from arcagent.modules.browser.url_policy import _check_url_policy
 
         config = BrowserConfig()
         _check_url_policy(f"{scheme}://example.com", config.security)
 
 
 class TestJSExecutionToggle:
-    """JS execution controlled by config toggle."""
+    """JS execution controlled by config toggle, honoured on the live path."""
 
-    def test_js_tools_included_when_enabled(self) -> None:
-        from arcagent.modules.browser.tools import create_browser_tools
-
+    async def test_js_runs_when_enabled(self, configure_browser: Callable[..., _State]) -> None:
+        cdp = AsyncMock()
+        cdp.send = AsyncMock(return_value={"result": {"type": "string", "value": "ok"}})
         config = BrowserConfig(security={"allow_js_execution": True})  # type: ignore[arg-type]
+        configure_browser(config, cdp=cdp)
+
+        result = await browser_execute_js("'ok'")
+        assert "ok" in result
+
+    async def test_js_refused_when_disabled(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = AsyncMock()
-        ax = MagicMock()
-        bus = MagicMock()
-
-        tools = create_browser_tools(cdp, ax, config, bus)
-        tool_names = [t.name for t in tools]
-        assert "browser_execute_js" in tool_names
-
-    def test_js_tools_excluded_when_disabled(self) -> None:
-        from arcagent.modules.browser.tools import create_browser_tools
-
+        cdp.send = AsyncMock()
         config = BrowserConfig(security={"allow_js_execution": False})  # type: ignore[arg-type]
-        cdp = AsyncMock()
-        ax = MagicMock()
-        bus = MagicMock()
+        configure_browser(config, cdp=cdp)
 
-        tools = create_browser_tools(cdp, ax, config, bus)
-        tool_names = [t.name for t in tools]
-        assert "browser_execute_js" not in tool_names
+        with pytest.raises(CapabilityDisabledError):
+            await browser_execute_js("'blocked'")
+        cdp.send.assert_not_called()
 
 
 class TestDownloadToggle:
-    """Download tools controlled by config toggle."""
+    """Download controlled by config toggle, honoured on the live path."""
 
-    def test_download_tools_included_when_enabled(self) -> None:
-        from arcagent.modules.browser.tools import create_browser_tools
-
+    async def test_download_runs_when_enabled(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
+        cdp = AsyncMock()
+        cdp.send = AsyncMock(return_value={})
         config = BrowserConfig(security={"allow_downloads": True})  # type: ignore[arg-type]
+        configure_browser(config, cdp=cdp)
+
+        result = await browser_download_file("https://example.com/file.pdf")
+        assert "download" in result.lower()
+
+    async def test_download_refused_when_disabled(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = AsyncMock()
-        ax = MagicMock()
-        bus = MagicMock()
-
-        tools = create_browser_tools(cdp, ax, config, bus)
-        tool_names = [t.name for t in tools]
-        assert "browser_download_file" in tool_names
-
-    def test_download_tools_excluded_when_disabled(self) -> None:
-        from arcagent.modules.browser.tools import create_browser_tools
-
+        cdp.send = AsyncMock()
         config = BrowserConfig(security={"allow_downloads": False})  # type: ignore[arg-type]
-        cdp = AsyncMock()
-        ax = MagicMock()
-        bus = MagicMock()
+        configure_browser(config, cdp=cdp)
 
-        tools = create_browser_tools(cdp, ax, config, bus)
-        tool_names = [t.name for t in tools]
-        assert "browser_download_file" not in tool_names
+        with pytest.raises(CapabilityDisabledError):
+            await browser_download_file("https://example.com/file.pdf")
+        cdp.send.assert_not_called()
 
 
 class TestExternalContentMarking:
     """All browser content must be marked as external/untrusted."""
 
-    async def test_read_page_marks_external(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.read import create_read_tools
-
+    async def test_read_page_marks_external(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = AsyncMock()
-        cdp.send.return_value = {
-            "nodes": [
-                {
-                    "nodeId": "1",
-                    "role": {"value": "heading"},
-                    "name": {"value": "Test"},
-                    "backendDOMNodeId": 1,
-                    "childIds": [],
-                    "ignored": False,
-                },
-            ]
-        }
+        cdp.send = AsyncMock(
+            return_value={
+                "nodes": [
+                    {
+                        "nodeId": "1",
+                        "role": {"value": "heading"},
+                        "name": {"value": "Test"},
+                        "backendDOMNodeId": 1,
+                        "childIds": [],
+                        "ignored": False,
+                    },
+                ]
+            }
+        )
         config = BrowserConfig()
         ax = AccessibilityManager(cdp, config)
-        bus = MagicMock()
-        bus.emit = AsyncMock()
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_read_tools(cdp, ax, config, bus)
-        read_tool = next(t for t in tools if t.name == "browser_read_page")
-
-        result = await read_tool.execute()
+        result = await browser_read_page()
         assert "[EXTERNAL WEB CONTENT]" in result
 
-    async def test_navigate_marks_external(self) -> None:
-        from arcagent.modules.browser.tools.navigate import create_navigate_tools
-
+    async def test_navigate_marks_external(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = AsyncMock()
         cdp.send.side_effect = [
             {"frameId": "f1"},  # Page.navigate
@@ -202,27 +204,17 @@ class TestExternalContentMarking:
             {"result": {"value": "https://example.com"}},  # Runtime.evaluate (URL)
             {"result": {"value": "Test Page"}},  # Runtime.evaluate (title)
         ]
-        config = BrowserConfig()
-        bus = MagicMock()
-        bus.emit = AsyncMock()
+        configure_browser(cdp=cdp)
 
-        tools = create_navigate_tools(cdp, config, bus)
-        nav_tool = next(t for t in tools if t.name == "browser_navigate")
-
-        result = await nav_tool.execute(url="https://example.com")
+        result = await browser_navigate("https://example.com")
         assert "[EXTERNAL WEB CONTENT]" in result
 
-    async def test_js_result_marks_external(self) -> None:
-        from arcagent.modules.browser.tools.javascript import create_javascript_tools
-
+    async def test_js_result_marks_external(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         cdp = AsyncMock()
-        cdp.send.return_value = {"result": {"type": "string", "value": "injected"}}
-        config = BrowserConfig()
-        bus = MagicMock()
-        bus.emit = AsyncMock()
+        cdp.send = AsyncMock(return_value={"result": {"type": "string", "value": "injected"}})
+        configure_browser(cdp=cdp)
 
-        tools = create_javascript_tools(cdp, config, bus)
-        js_tool = next(t for t in tools if t.name == "browser_execute_js")
-
-        result = await js_tool.execute(expression="'injected'")
+        result = await browser_execute_js("'injected'")
         assert "[EXTERNAL WEB CONTENT]" in result

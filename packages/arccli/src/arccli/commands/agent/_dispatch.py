@@ -3,7 +3,7 @@
 Subcommand dispatch is argparse-based so the top-level
 `arc agent <sub> [args]` contract is preserved exactly.
 
-Module CLIs (bio-memory, memory, policy, browser) are Click groups
+Module CLIs (policy, browser) are Click groups
 delegated via ``_run_module_cli`` before argparse parsing.
 """
 
@@ -13,6 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from arccli.commands._shared import dispatch
 from arccli.commands.agent.build import _build
 from arccli.commands.agent.chat import _chat
 from arccli.commands.agent.config import _config
@@ -158,8 +159,6 @@ _SUBCOMMAND_MAP = {
 
 
 _MODULE_CLI_MAP = {
-    "bio-memory": "arcagent.modules.bio_memory.cli",
-    "memory": "arcagent.modules.memory.cli",
     "policy": "arcagent.modules.policy.cli",
     "browser": "arcagent.modules.browser.cli",
 }
@@ -191,28 +190,11 @@ def agent_handler(args: list[str]) -> None:
     """Top-level handler for `arc agent <sub> [args]`.
 
     Called by arccli.commands.registry when the user runs `arc agent ...`.
-    Module CLIs (bio-memory, memory, policy, browser) are delegated to
+    Module CLIs (policy, browser) are delegated to
     their Click groups before argparse parsing.
     """
     if args and args[0] in _MODULE_CLI_MAP:
         _run_module_cli(_MODULE_CLI_MAP[args[0]], args[1:])
         return
 
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc agent: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

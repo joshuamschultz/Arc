@@ -245,11 +245,11 @@ class TestReactLoop:
         assert len(calls) >= 1
 
 
-class TestParallelSafeDispatch:
-    """Tools with parallel_safe=True dispatch concurrently in one turn."""
+class TestClassificationDispatch:
+    """read_only tools dispatch concurrently in one turn; others run serially."""
 
     @pytest.mark.asyncio
-    async def test_parallel_safe_calls_run_concurrently(self):
+    async def test_read_only_calls_run_concurrently(self):
         async def slow(params: dict, ctx: object) -> str:
             await asyncio.sleep(0.1)
             return f"ok:{params['n']}"
@@ -263,7 +263,7 @@ class TestParallelSafeDispatch:
                 "required": ["n"],
             },
             execute=slow,
-            parallel_safe=True,
+            classification="read_only",
         )
         bus = EventBus(run_id="test")
         state = _make_state(bus, tools=[tool])
@@ -284,12 +284,13 @@ class TestParallelSafeDispatch:
         result = await react_loop(model, state, sandbox, max_turns=5)
         elapsed = time.monotonic() - start
 
-        # Sequential would be ~0.3s; parallel should be ~0.1s + overhead.
+        # SPEC-043 REQ-030 — read_only batch dispatches through the wired
+        # parallel_dispatch. Sequential would be ~0.3s; parallel ~0.1s + overhead.
         assert elapsed < 0.25, f"expected parallel dispatch, took {elapsed:.3f}s"
         assert result.content == "all done"
 
     @pytest.mark.asyncio
-    async def test_non_parallel_safe_calls_run_serially(self):
+    async def test_state_modifying_calls_run_serially(self):
         async def slow(params: dict, ctx: object) -> str:
             await asyncio.sleep(0.05)
             return f"ok:{params['n']}"
@@ -303,7 +304,7 @@ class TestParallelSafeDispatch:
                 "required": ["n"],
             },
             execute=slow,
-            parallel_safe=False,
+            classification="state_modifying",
         )
         bus = EventBus(run_id="test")
         state = _make_state(bus, tools=[tool])

@@ -119,7 +119,7 @@ Run tasks directly with arcrun — no agent directory required.
 
 The agent has two ways to fan out work across multiple `arcrun` loops:
 
-- **LLM-driven decomposition** — the model decides at runtime to split a task into N sub-tasks, calling `spawn_task` multiple times in one response. The arcrun loop dispatches `parallel_safe` tools (which `spawn_task` is) concurrently via `asyncio.gather`. This is what `arc run task` exposes.
+- **LLM-driven decomposition** — the model decides at runtime to split a task into N sub-tasks, calling `spawn_task` multiple times in one response. The arcrun loop dispatches same-turn tool calls per their `classification` — `read_only` calls concurrently via `asyncio.gather`, everything else serially. This is what `arc run task` exposes.
 - **Code-level fan-out** — Python code (an embedding agent) calls `arcrun.run()` N times via `asyncio.gather` directly. The model never sees the decomposition; the agent collects results and synthesizes them. Use this when the shape of the work is known ahead of time and the LLM doesn't need to choose.
 
 `arcrun` itself has zero spawn knowledge — `spawn_task` is owned by `arcagent.orchestration` and registered by the CLI on the user's behalf when `--no-spawn` is not set.

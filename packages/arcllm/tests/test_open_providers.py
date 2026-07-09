@@ -557,6 +557,59 @@ class TestBaseAdapterEdgeCases:
 # ---------------------------------------------------------------------------
 
 
+class TestCustomUrlProviders:
+    """Google/Azure override only the completions-URL path, incl. streaming.
+
+    Regression guard: before the ``_completions_url()`` hook, these adapters
+    overrode ``invoke()`` for the URL but inherited base ``invoke_stream()``,
+    which hardcoded ``/v1/chat/completions`` — the wrong path for both. These
+    tests drive the REAL inherited streaming path and assert the wire URL.
+    """
+
+    @pytest.mark.asyncio
+    async def test_google_invoke_uses_bare_completions_path(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+        from arcllm.adapters.google import GoogleAdapter
+
+        config = _make_fake_config(
+            "google", api_key_env="GOOGLE_API_KEY", base_url="https://gemini.example.com"
+        )
+        adapter = GoogleAdapter(config, "test-model")
+        adapter._client.post = AsyncMock(
+            return_value=httpx.Response(200, json=_make_openai_text_response())
+        )
+        await adapter.invoke([Message(role="user", content="Hi")])
+
+        url = adapter._client.post.call_args[0][0]
+        assert url == "https://gemini.example.com/chat/completions"
+
+    @pytest.mark.asyncio
+    async def test_google_stream_uses_bare_completions_path(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+        from arcllm.adapters.google import GoogleAdapter
+
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            body = 'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n'
+            return httpx.Response(
+                200, content=body.encode(), headers={"content-type": "text/event-stream"}
+            )
+
+        config = _make_fake_config(
+            "google", api_key_env="GOOGLE_API_KEY", base_url="https://gemini.example.com"
+        )
+        adapter = GoogleAdapter(config, "test-model")
+        await adapter._client.aclose()
+        adapter._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        async for _ in adapter.invoke_stream([Message(role="user", content="Hi")]):
+            pass
+
+        assert seen["url"] == "https://gemini.example.com/chat/completions"
+
+
 class TestEmptyContentFallback:
     """Cover the empty content block path in OpenAI format_message."""
 

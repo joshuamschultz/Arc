@@ -7,7 +7,10 @@ push wire involved.
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from arcstore.records import SpoolRecord
@@ -16,7 +19,35 @@ from arcstore.spool import record as spool_record
 from arcui.observe import Observe
 
 
-def _write_call(data_dir: Path, rid: str, *, model: str = "claude", outcome: str = "ok") -> None:
+def _write_audit(data_dir: Path, *, seq: int, actor_did: str, action: str = "gateway.fs.read") -> None:
+    """Append one signed-chain record to the durable WORM file arcstore mirrors."""
+    worm = data_dir / "worm"
+    worm.mkdir(parents=True, exist_ok=True)
+    line = {
+        "seq": seq,
+        "event_hash": f"hash-{seq}",
+        "prev_hash": f"hash-{seq - 1}" if seq else "",
+        "signature": "sig",
+        "event": {
+            "ts": f"2026-05-31T00:00:0{seq}+00:00",
+            "actor_did": actor_did,
+            "action": action,
+            "target": "tool:x",
+            "outcome": "allow",
+        },
+    }
+    with (worm / "audit-chain.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
+
+
+def _write_call(
+    data_dir: Path,
+    rid: str,
+    *,
+    model: str = "claude",
+    outcome: str = "ok",
+    ts: str | None = None,
+) -> None:
     spool = data_dir / "spool"
     spool.mkdir(parents=True, exist_ok=True)
     spool_record(
@@ -30,6 +61,7 @@ def _write_call(data_dir: Path, rid: str, *, model: str = "claude", outcome: str
             cost_usd=0.0015,
             latency_ms=42.0,
             outcome=outcome,
+            ts=ts,
         ),
         path=spool / "operational-2026-05-31.jsonl",
     )
@@ -76,10 +108,51 @@ async def test_stats_rolls_up_from_store(tmp_path: Path) -> None:
         await observe.stop()
 
 
+@pytest.mark.asyncio
+async def test_stats_excludes_rows_outside_window(tmp_path: Path) -> None:
+    """The ``ts_gte`` push-down drops rows older than the window cutoff.
+
+    Two calls land now; one is stamped an hour before the 1h window opens.
+    Only the two recent calls must roll up — proving the store applies the
+    ``ts >= cutoff`` bound rather than counting the whole table.
+    """
+    now = datetime.now(UTC)
+    _write_call(tmp_path, "recent-0", ts=now.isoformat())
+    _write_call(tmp_path, "recent-1", ts=now.isoformat())
+    _write_call(tmp_path, "stale-0", ts=(now - timedelta(hours=2)).isoformat())
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        stats = await observe.stats("1h")
+        assert stats["request_count"] == 2
+        assert stats["total_tokens"] == 300
+    finally:
+        await observe.stop()
+
+
+@pytest.mark.asyncio
+async def test_audit_reads_worm_chain(tmp_path: Path) -> None:
+    """Observe.audit surfaces the durable signed chain, filtered by actor DID."""
+    _write_audit(tmp_path, seq=0, actor_did="did:arc:alpha")
+    _write_audit(tmp_path, seq=1, actor_did="did:arc:beta")
+    observe = Observe(data_dir=tmp_path)
+    await observe.start()
+    try:
+        alpha = await observe.audit(agent="did:arc:alpha")
+        assert [e["actor_did"] for e in alpha] == ["did:arc:alpha"]
+        assert alpha[0]["action"] == "gateway.fs.read"
+        assert {e["actor_did"] for e in await observe.audit()} == {
+            "did:arc:alpha",
+            "did:arc:beta",
+        }
+    finally:
+        await observe.stop()
+
+
 # SPEC-028 — tool/code timeline + spawn lineage + per-identity cost (FR-4)
 
 
-def _spool(data_dir: Path):
+def _spool(data_dir: Path) -> Path:
     spool = data_dir / "spool"
     spool.mkdir(parents=True, exist_ok=True)
     return spool / "operational-2026-05-31.jsonl"
@@ -87,59 +160,6 @@ def _spool(data_dir: Path):
 
 def _write(data_dir: Path, rec: SpoolRecord) -> None:
     spool_record(rec, path=_spool(data_dir))
-
-
-async def test_tool_events_query(tmp_path: Path) -> None:
-    """Task 4.1 — Observe.tool_events(run_id) returns ordered tool/code events."""
-    _write(
-        tmp_path,
-        SpoolRecord(
-            kind="tool_event",
-            actor_did="did:c",
-            request_id="run-1",
-            ts="2026-05-31T00:00:01+00:00",
-            tool_name="web.fetch",
-            phase="start",
-            args_digest="a" * 64,
-            args_size=10,
-        ),
-    )
-    _write(
-        tmp_path,
-        SpoolRecord(
-            kind="tool_event",
-            actor_did="did:c",
-            request_id="run-1",
-            ts="2026-05-31T00:00:02+00:00",
-            tool_name="web.fetch",
-            phase="end",
-            outcome="ok",
-            latency_ms=12.0,
-            result_digest="b" * 64,
-            result_size=99,
-        ),
-    )
-    # A different run's event must not leak in.
-    _write(
-        tmp_path,
-        SpoolRecord(
-            kind="tool_event",
-            actor_did="did:c",
-            request_id="run-2",
-            ts="2026-05-31T00:00:03+00:00",
-            tool_name="other",
-            phase="start",
-        ),
-    )
-    observe = Observe(data_dir=tmp_path)
-    await observe.start()
-    try:
-        events = await observe.tool_events(run_id="run-1")
-        assert [e["phase"] for e in events] == ["start", "end"]
-        assert events[0]["tool_name"] == "web.fetch"
-        assert events[1]["result_digest"] == "b" * 64
-    finally:
-        await observe.stop()
 
 
 async def test_timeline_joins_on_run_id(tmp_path: Path) -> None:
@@ -358,7 +378,7 @@ async def test_spawn_tree_auto_root_and_cycle_guard(tmp_path: Path) -> None:
         assert tree["did"] == "did:root"  # the only node never seen as a child
         seen: list[str] = []
 
-        def _walk(n: dict) -> None:
+        def _walk(n: dict[str, Any]) -> None:
             seen.append(n["did"])
             for c in n["children"]:
                 _walk(c)

@@ -68,6 +68,23 @@ def _agent_root(request: Request, agent_id: str) -> Path | None:
     return None
 
 
+def _agent_did(request: Request, agent_id: str) -> str | None:
+    """Resolve an agent's DID (audit actor) from the injected roster provider.
+
+    The audit chain filters on ``actor_did`` (a DID), but the agent-detail
+    routes key on the human agent label; this bridges label -> DID so the
+    per-agent audit tab reads the durable chain instead of nothing.
+    """
+    provider = getattr(request.app.state, "roster_provider", None)
+    if provider is None:
+        return None
+    for entry in provider():
+        if entry.agent_id == agent_id:
+            did: str = entry.did
+            return did
+    return None
+
+
 def _resolve_root_path(agent_root: Path, root_arg: str) -> Path:
     """Map ``root_arg`` to the resolved filesystem path."""
     if root_arg == "workspace":

@@ -23,13 +23,6 @@ def test_app_state_has_observe():
     assert isinstance(app.state.observe, Observe)
 
 
-def test_app_state_has_pending_controls():
-    """create_app() should store a pending_controls dict on app.state."""
-    app = create_app()
-    assert hasattr(app.state, "pending_controls")
-    assert isinstance(app.state.pending_controls, dict)
-
-
 def test_app_state_has_circuit_breakers_list():
     """create_app() should store an empty circuit_breakers list on app.state."""
     app = create_app()
@@ -50,7 +43,6 @@ def test_agent_routes_registered():
     paths = [r.path for r in app.routes if hasattr(r, "path")]
     assert "/api/agents" in paths
     assert "/api/agents/{id}" in paths
-    assert "/api/agents/{id}/control" in paths
 
 
 # --- SPEC-022 Phase 2: arcgateway integration -------------------------------
@@ -78,8 +70,6 @@ def test_app_state_roster_provider_returns_empty_when_no_team_root():
 
 def test_app_state_roster_provider_overlays_online_status(tmp_path):
     """roster_provider walks team_root and overlays online flag from registry."""
-    from unittest.mock import MagicMock
-
     from arcui.types import AgentRegistration
 
     # Synthetic team dir with two agents
@@ -108,7 +98,7 @@ def test_app_state_roster_provider_overlays_online_status(tmp_path):
         provider="openai",
         connected_at="2026-04-29T12:00:00+00:00",
     )
-    app.state.agent_registry.register("alpha", MagicMock(), reg)
+    app.state.agent_registry.register("alpha", reg)
 
     roster = app.state.roster_provider()
     by_id = {r.agent_id: r for r in roster}

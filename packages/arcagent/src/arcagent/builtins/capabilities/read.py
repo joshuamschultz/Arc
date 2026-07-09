@@ -1,4 +1,4 @@
-"""Built-in ``read`` tool — SPEC-021 port of arcagent.tools.read.
+"""Built-in ``read`` tool.
 
 Reads a file from the workspace and returns the contents in
 ``cat -n`` line-numbered form. Supports ``offset`` + ``limit`` for

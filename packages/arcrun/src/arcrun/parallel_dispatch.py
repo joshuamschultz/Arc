@@ -16,11 +16,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-# Sequence key injected into each tool call at dispatch time so audit
-# events can reconstruct submission order regardless of completion
-# order. Underscore prefix signals "reserved internal metadata".
-_SEQ_KEY = "_seq"
-
 
 @runtime_checkable
 class ClassificationRegistry(Protocol):
@@ -110,23 +105,17 @@ class ParallelDispatcher:
     max_parallel:
         Upper bound on concurrent in-flight calls. Enforced by
         ``asyncio.Semaphore``.
-    assign_seq:
-        When ``True``, each call's ``arguments`` dict is annotated
-        with an ``_seq`` key (monotonic int) at dispatch time. Audit
-        events downstream use this to reconstruct submission order.
     """
 
     def __init__(
         self,
         *,
         max_parallel: int = 10,
-        assign_seq: bool = False,
     ) -> None:
         if max_parallel < 1:
             msg = f"max_parallel must be >= 1, got {max_parallel}"
             raise ValueError(msg)
         self._max_parallel = max_parallel
-        self._assign_seq = assign_seq
 
     async def dispatch(
         self,
@@ -142,10 +131,6 @@ class ParallelDispatcher:
         """
         if not calls:
             return []
-
-        if self._assign_seq:
-            for idx, call in enumerate(calls):
-                call.arguments[_SEQ_KEY] = idx
 
         semaphore = asyncio.Semaphore(self._max_parallel)
 
@@ -207,6 +192,3 @@ __all__ = [
     "SequentialDispatcher",
     "dispatch_batch",
 ]
-
-# Silence unused import in case ``Any`` used only via Protocol
-_ = Any

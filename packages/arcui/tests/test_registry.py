@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from arcui.registry import AgentEntry, AgentRegistry
 from arcui.types import AgentRegistration
 
@@ -24,22 +22,15 @@ class TestAgentRegistryRegister:
     def test_register_and_get(self):
         registry = AgentRegistry()
         reg = _make_registration()
-        ws = MagicMock()
-        entry = registry.register("agent-001", ws, reg)
+        entry = registry.register("agent-001", reg)
         assert isinstance(entry, AgentEntry)
         assert entry.registration.agent_id == "agent-001"
         assert registry.get("agent-001") is entry
 
-    def test_register_assigns_ws(self):
-        registry = AgentRegistry()
-        ws = MagicMock()
-        entry = registry.register("agent-001", ws, _make_registration())
-        assert entry.ws is ws
-
     def test_list_agents(self):
         registry = AgentRegistry()
-        registry.register("a1", MagicMock(), _make_registration("a1"))
-        registry.register("a2", MagicMock(), _make_registration("a2"))
+        registry.register("a1", _make_registration("a1"))
+        registry.register("a2", _make_registration("a2"))
         agents = registry.list_agents()
         assert len(agents) == 2
         ids = {a.agent_id for a in agents}
@@ -49,7 +40,7 @@ class TestAgentRegistryRegister:
 class TestAgentRegistryUnregister:
     def test_unregister_removes_agent(self):
         registry = AgentRegistry()
-        registry.register("a1", MagicMock(), _make_registration("a1"))
+        registry.register("a1", _make_registration("a1"))
         registry.unregister("a1")
         assert registry.get("a1") is None
 
@@ -59,8 +50,8 @@ class TestAgentRegistryUnregister:
 
     def test_unregister_decrements_count(self):
         registry = AgentRegistry()
-        registry.register("a1", MagicMock(), _make_registration("a1"))
-        registry.register("a2", MagicMock(), _make_registration("a2"))
+        registry.register("a1", _make_registration("a1"))
+        registry.register("a2", _make_registration("a2"))
         assert len(registry.list_agents()) == 2
         registry.unregister("a1")
         assert len(registry.list_agents()) == 1
@@ -69,13 +60,13 @@ class TestAgentRegistryUnregister:
 class TestAgentRegistryCapacity:
     def test_is_full_when_at_capacity(self):
         registry = AgentRegistry(max_agents=2)
-        registry.register("a1", MagicMock(), _make_registration("a1"))
-        registry.register("a2", MagicMock(), _make_registration("a2"))
+        registry.register("a1", _make_registration("a1"))
+        registry.register("a2", _make_registration("a2"))
         assert registry.is_full() is True
 
     def test_not_full_under_capacity(self):
         registry = AgentRegistry(max_agents=10)
-        registry.register("a1", MagicMock(), _make_registration("a1"))
+        registry.register("a1", _make_registration("a1"))
         assert registry.is_full() is False
 
     def test_default_capacity_100(self):

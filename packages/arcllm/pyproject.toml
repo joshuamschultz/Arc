@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcllm"
-version = "0.6.0"
+version = "0.7.0"
 description = "Unified LLM abstraction layer for autonomous agents"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +52,12 @@ injection-semantic = [
 guardrails-schema = [
     "jsonschema>=4.0",
 ]
+local = [
+    # On-device embeddings (SPEC-041): all-MiniLM-L6-v2 via sentence-transformers.
+    # Heavy (pulls torch) — arcllm imports + functions WITHOUT it, degrading
+    # embed() to the 'none' signal when absent.
+    "sentence-transformers>=2.2",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcllm"]
@@ -80,4 +86,10 @@ ignore_missing_imports = true
 # jsonschema is imported lazily inside GuardrailsModule (behind
 # arcllm[guardrails-schema]) — not a hard runtime dependency.
 module = ["jsonschema", "jsonschema.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# sentence-transformers is imported lazily inside LocalEmbedder (behind
+# arcllm[local]) — not a hard runtime dependency, no published stubs.
+module = ["sentence_transformers", "sentence_transformers.*"]
 ignore_missing_imports = true

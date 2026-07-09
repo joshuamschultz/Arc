@@ -1,24 +1,17 @@
-"""Integration tests: Hermes-pattern bounded-retries-then-escalate behavior.
+"""Integration tests: polling-conflict / NetworkError hand-off behavior.
 
-These tests exercise the full polling-conflict and NetworkError retry paths
-in TelegramAdapter._run_polling_loop() without requiring python-telegram-bot
+These tests exercise the polling-conflict and NetworkError paths in
+TelegramAdapter._run_polling_loop() without requiring python-telegram-bot
 to be installed — we mock the internal application object and error types.
 
 Key test contracts (PLAN T1.10):
     test_polling_conflict_bounded_retries:
-        3 conflict errors → 3 retry cycles → 4th triggers fatal-retryable
-        (the runner then restarts the adapter cleanly).
+        A conflict error backs off once then sets fatal-retryable so the
+        runner restarts the adapter cleanly.
 
     test_network_error_reconnects:
         1 NetworkError → fatal-retryable set → runner restarts adapter;
         on restart the connection succeeds.
-
-    test_polling_conflict_escalates_after_max_retries:
-        After _CONFLICT_MAX_RETRIES conflicts the error is escalated with
-        retryable=True so GatewayRunner can restart rather than silently loop.
-
-    test_network_error_escalates_after_max_retries:
-        After _NETWORK_MAX_RETRIES network failures the error is escalated.
 """
 
 from __future__ import annotations
@@ -29,11 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from arcgateway_telegram.adapter import (
-    _CONFLICT_MAX_RETRIES,
-    _NETWORK_MAX_RETRIES,
-    TelegramAdapter,
-)
+from arcgateway_telegram.adapter import TelegramAdapter
 
 # ── Fake exception classes (no library needed) ────────────────────────────────
 
@@ -142,67 +131,6 @@ async def test_polling_conflict_bounded_retries() -> None:
 
 
 @pytest.mark.asyncio
-async def test_polling_conflict_escalates_after_max_retries() -> None:
-    """After _CONFLICT_MAX_RETRIES+1 conflict errors, escalate as fatal-retryable.
-
-    We simulate the adapter being restarted (conflict_attempts incremented
-    externally) past the threshold, then verify the error is still retryable=True
-    (runner keeps restarting, with backoff, until ops resolves the conflict).
-    """
-    adapter = _make_adapter()
-    mock_app = _make_mock_application()
-    adapter._application = mock_app
-    adapter._running = True
-    adapter._bot_id = 77
-
-    mock_app.updater.start_polling.side_effect = _FakeConflictError(
-        "Conflict: terminated by other getUpdates request"
-    )
-
-    conflict_call_count = 0
-
-    def _conflict_side_effect(e: Any) -> bool:
-        nonlocal conflict_call_count
-        if isinstance(e, _FakeConflictError):
-            conflict_call_count += 1
-            return True
-        return False
-
-    with (
-        patch(
-            "arcgateway_telegram.adapter._is_conflict_error",
-            side_effect=_conflict_side_effect,
-        ),
-        patch(
-            "arcgateway_telegram.adapter._is_network_error",
-            return_value=False,
-        ),
-        patch(
-            "arcgateway_telegram.adapter.asyncio.sleep",
-            new_callable=AsyncMock,
-        ),
-        patch.dict(
-            "sys.modules",
-            {
-                "telegram": MagicMock(),
-                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-            },
-        ),
-    ):
-        # Simulate running the loop _CONFLICT_MAX_RETRIES + 1 times
-        # by resetting conflict_attempts between runs (as the runner restarts)
-        for _ in range(_CONFLICT_MAX_RETRIES + 1):
-            adapter._fatal_error = None
-            adapter._fatal_retryable = False
-            adapter._application = mock_app
-            await adapter._run_polling_loop()
-
-    # Every iteration must have escalated to retryable=True
-    assert adapter._fatal_retryable is True
-    assert adapter._fatal_error is not None
-
-
-@pytest.mark.asyncio
 async def test_network_error_reconnects() -> None:
     """1 NetworkError → fatal-retryable=True (runner restarts adapter).
 
@@ -243,55 +171,6 @@ async def test_network_error_reconnects() -> None:
     # NetworkError should set fatal_retryable=True (runner will restart)
     assert adapter._fatal_retryable is True
     assert adapter._fatal_error is not None
-
-
-@pytest.mark.asyncio
-async def test_network_error_escalates_after_max_retries() -> None:
-    """After _NETWORK_MAX_RETRIES network failures, escalate to fatal-retryable."""
-    adapter = _make_adapter()
-    mock_app = _make_mock_application()
-    adapter._bot_id = 77
-
-    call_count = 0
-
-    def _network_side_effect(e: Any) -> bool:
-        nonlocal call_count
-        if isinstance(e, _FakeNetworkError):
-            call_count += 1
-            return True
-        return False
-
-    mock_app.updater.start_polling.side_effect = _FakeNetworkError("timeout")
-
-    with (
-        patch(
-            "arcgateway_telegram.adapter._is_conflict_error",
-            return_value=False,
-        ),
-        patch(
-            "arcgateway_telegram.adapter._is_network_error",
-            side_effect=_network_side_effect,
-        ),
-        patch(
-            "arcgateway_telegram.adapter.asyncio.sleep",
-            new_callable=AsyncMock,
-        ),
-        patch.dict(
-            "sys.modules",
-            {
-                "telegram": MagicMock(),
-                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
-            },
-        ),
-    ):
-        for _ in range(_NETWORK_MAX_RETRIES):
-            adapter._fatal_error = None
-            adapter._fatal_retryable = False
-            adapter._application = mock_app
-            adapter._running = True
-            await adapter._run_polling_loop()
-
-    assert adapter._fatal_retryable is True
 
 
 @pytest.mark.asyncio

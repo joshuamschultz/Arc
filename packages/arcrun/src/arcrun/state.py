@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from arcrun.checkpoint import LoopCheckpoint
 from arcrun.events import EventBus
 from arcrun.registry import ToolRegistry
 
@@ -84,3 +85,33 @@ class RunState:
     # cost is the best-effort secondary (non-streaming, priced models only).
     max_cost_usd: float | None = None
     max_tokens: int | None = None
+    # SPEC-043 — turn cap, mirrored onto state so the unified breaker
+    # (check_breaker) and the checkpoint emitter can read it without threading
+    # the loop parameter through every call site. Set by the strategy at start.
+    max_turns: int = 0
+    # SPEC-043 REQ-001/002 — turn-boundary checkpoint hook. When set, the loop
+    # calls it at each turn boundary with a serializable LoopCheckpoint. arcrun
+    # never persists; the caller does. None ⇒ zero hot-path overhead.
+    on_checkpoint: Callable[[LoopCheckpoint], None] | None = None
+    # SPEC-043 REQ-010..012 — proactive HITL pause. Before dispatching a call to
+    # a tool named in ``approval_required_tools``, the loop awaits
+    # ``approval_provider(tc)``; a returned grant is attached to the call, ``None``
+    # fails closed (call not dispatched). arcrun mints/verifies nothing — the
+    # provider is bound to SPEC-035 HumanGate by arcagent.
+    approval_provider: Callable[[Any], Awaitable[Any]] | None = None
+    approval_required_tools: frozenset[str] = frozenset()
+    # SPEC-043 REQ-035 — semaphore ceiling on concurrent in-flight tool calls.
+    max_parallel: int = 10
+    # SPEC-043 REQ-020/021/024 — unified circuit-breaker thresholds. ``None``
+    # disables a breaker (personal may relax; federal supplies non-relaxable
+    # floors). ``max_repeat``: identical tool-call signatures before a runaway
+    # trip. ``max_consecutive_errors``: consecutive tool failures before a
+    # cascade trip.
+    max_repeat: int | None = None
+    max_consecutive_errors: int | None = None
+    # Breaker running state (REQ-020/021/025). ``runaway_signature`` is the last
+    # single-call signature seen; ``runaway_count`` its consecutive-turn streak
+    # (a distinct-signature batch resets it — that is progress, REQ-025).
+    runaway_signature: str | None = None
+    runaway_count: int = 0
+    consecutive_tool_errors: int = 0

@@ -25,3 +25,12 @@ class SchedulerConfig(ModuleConfig):
     circuit_breaker_threshold: int = 3
     check_interval_seconds: int = 30
     store_path: str = "schedules.json"
+
+    def validation_context(self) -> dict[str, int]:
+        """Limits threaded into ScheduleEntry validation so operator config
+        (not hardcoded defaults) decides the interval floor and timeout ceiling.
+        """
+        return {
+            "min_interval_seconds": self.min_interval_seconds,
+            "max_timeout_seconds": self.max_timeout_seconds,
+        }

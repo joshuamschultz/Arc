@@ -186,6 +186,7 @@ def slack_adapter(spy_router: _SpyRouter) -> SlackAdapter:
         bot_token=_BOT_TOKEN,
         app_token=_APP_TOKEN,
         allowed_user_ids=["U_TEST_USER"],
+        agent_did=_AGENT_DID,
         on_message=spy_router.handle,
         dedup_db_path=None,  # in-memory SQLite
     )
@@ -296,11 +297,10 @@ async def test_slack_and_web_events_share_session_router(
         f"Slack event session key {s_event.session_key!r} != {expected_slack_key!r}"
     )
 
-    # Both events belong to the same agent.
+    # Both events belong to the same agent — SlackAdapter threads the
+    # configured agent_did into every InboundEvent, mirroring Telegram.
     assert web_event.agent_did == _AGENT_DID
-    # SlackAdapter sets agent_did="" — agent routing happens upstream via the
-    # gateway config's effective_agent_did; the adapter itself leaves it blank.
-    assert s_event.agent_did == ""
+    assert s_event.agent_did == _AGENT_DID
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,6 @@ from __future__ import annotations
 import io
 import tarfile
 import tempfile
-from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -433,18 +432,23 @@ async def test_run_docker_returns_skipped_when_no_docker_backend() -> None:
     assert result.backend_used == "skipped"
 
 
+def _separated(*, stdout: bytes = b"", exit_code: int = 0) -> object:
+    """Build a SeparatedResult-shaped return for the run_separated mock."""
+    from arcrun.backends.base import SeparatedResult
+
+    return SeparatedResult(stdout=stdout, stderr=b"", exit_code=exit_code)
+
+
 @pytest.mark.asyncio
 async def test_run_docker_success_with_mock_backend() -> None:
-    """_run_docker returns passed result when backend runs successfully."""
+    """_run_docker returns passed result when the container exits 0."""
 
     skill_dir = Path(tempfile.mkdtemp())
 
-    async def _fake_stream(_handle: object) -> AsyncIterator[bytes]:
-        yield b"all tests passed\n"
-
     mock_backend = AsyncMock()
-    mock_backend.run = AsyncMock(return_value="handle-123")
-    mock_backend.stream = _fake_stream
+    mock_backend.run_separated = AsyncMock(
+        return_value=_separated(stdout=b"all tests passed\n", exit_code=0)
+    )
     mock_backend.close = AsyncMock()
 
     mock_backend_cls = MagicMock(return_value=mock_backend)
@@ -455,15 +459,38 @@ async def test_run_docker_success_with_mock_backend() -> None:
     assert result.passed is True
     assert result.backend_used == "docker"
     assert result.exit_code == 0
+    assert "all tests passed" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_run_docker_captures_real_failure_exit_code() -> None:
+    """A container that exits non-zero yields passed=False — the real exit code is
+    captured, never hardcoded to 0 (the masked-failure bug this fix closes)."""
+    skill_dir = Path(tempfile.mkdtemp())
+
+    mock_backend = AsyncMock()
+    mock_backend.run_separated = AsyncMock(
+        return_value=_separated(stdout=b"AssertionError\n", exit_code=1)
+    )
+    mock_backend.close = AsyncMock()
+
+    mock_backend_cls = MagicMock(return_value=mock_backend)
+
+    with patch("arcskill.hub._docker._DockerBackend", mock_backend_cls):
+        result = await _run_docker("pytest", skill_dir)
+
+    assert result.passed is False
+    assert result.exit_code == 1
+    assert result.backend_used == "docker"
 
 
 @pytest.mark.asyncio
 async def test_run_docker_timeout_sets_exit_code_minus_one() -> None:
-    """_run_docker TimeoutError sets exit_code=-1 and passed=False."""
+    """A timed-out run (run_separated reports exit_code=-1) is passed=False."""
     skill_dir = Path(tempfile.mkdtemp())
 
     mock_backend = AsyncMock()
-    mock_backend.run = AsyncMock(side_effect=TimeoutError("timed out"))
+    mock_backend.run_separated = AsyncMock(return_value=_separated(exit_code=-1))
     mock_backend.close = AsyncMock()
 
     mock_backend_cls = MagicMock(return_value=mock_backend)

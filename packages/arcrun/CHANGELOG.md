@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-07
+
+SPEC-043 SOTA loop controls: arcrun gains the six loop-control mechanisms as pure mechanism (the guards and persistence live in arcagent). Every wired seam deletes its dead predecessor in the same change — no two implementations.
+
+### Added
+- `checkpoint.py` — `LoopCheckpoint` + `to_checkpoint`/`apply_checkpoint`. The loop emits a serializable checkpoint at each turn boundary through an injected `RunState.on_checkpoint` hook (arcrun never persists). `run()`/`run_async()` gain `resume_from`: the registry is rebuilt fresh + frozen, the checkpoint's frozen tool-name set is verified (fail-closed on mismatch — a changed surface is a poisoned resume), and the loop re-enters at the saved turn without re-executing completed work (REQ-001..004).
+- Unified circuit breaker — `check_breaker(state)` folds token/cost/turn caps and two new detectors into one top-of-turn hook + one terminator vocabulary: **runaway_loop** (identical tool-call signature repeated past `max_repeat`; a distinct-signature parallel batch counts as progress) and **error_cascade** (consecutive tool failures past `max_consecutive_errors`). `make_budget_breach_args` widened with both reasons (REQ-020..025).
+- Wired `parallel_dispatch` — the react loop dispatches every turn's tool calls through `BatchClassifier` + `dispatch_batch` (read-only batches run concurrently, semaphore-bounded; state-modifying/unclassified run sequential, fail-closed). `Tool.classification` + `ToolRegistry.get_classification` feed the classifier (REQ-030..035).
+- `PlanExecuteStrategy` (registered in `STRATEGIES`) — runs a flat list of independent ready items concurrently via the wired `ParallelDispatcher` and returns per-item outcomes, submission-order preserved, failures isolated. Never sees a DAG (REQ-050/051/055/056).
+- Proactive HITL pause — `RunState.approval_provider` + `approval_required_tools`; before dispatching a flagged call the loop `await`s the provider (a grant proceeds, `None` fails closed). arcrun mints/verifies nothing — the predicate is a dumb membership test; tier policy is resolved by the caller (REQ-010..013).
+- `run()`/`run_async()`/`run_stream()` thread `on_checkpoint`, `approval_provider`, `approval_required_tools`, `max_parallel`, `max_repeat`, `max_consecutive_errors`, `resume_from`.
+
+### Removed
+- The ad-hoc `parallel_safe` + raw `asyncio.gather` path in `react._execute_tool_calls` (replaced by the wired `dispatch_batch` — one dispatch path).
+- The separate tail `max_turns` check (folded into `check_breaker`).
+- The synthetic post-hoc word-split in `run_stream` that fabricated per-word `TokenEvent`s from already-complete content (SPEC-043 §3.5 streaming cut). `run_stream` now emits the real final content as one block; `TurnEndEvent`/`collect()`/`RunResult` are byte-for-byte unchanged. The real single-call `stream_llm_response` primitive is untouched.
+
 ## [0.8.0] - 2026-07-06
 
 SPEC-038 sub-scope A: the per-run budget is now a real circuit-breaker. Token is the primary ceiling (present on both streaming and non-streaming paths); cost is the best-effort secondary.

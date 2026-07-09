@@ -30,6 +30,7 @@ from arcagent.core.session_internal import SessionManager
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.tools._policy_fill import resolve_run_budget
+from arcagent.tools.approval_policy import build_loop_controls
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -71,26 +72,31 @@ async def build_run_context(
     # context-free invoke() path. Children inherit spawn + the invoke tools.
     ctx_tools: list[Any] = []
     if agent._config.spawn.enabled:
-        from arcagent.orchestration import SPAWN_GUIDANCE, make_spawn_tool
+        from arcagent.orchestration import SPAWN_GUIDANCE, RootTokenBudget, make_spawn_tool
 
         child_system_prompt = await context.assemble_system_prompt(
             agent._workspace,
             extra_sections={**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE},
         )
         child_tools = list(invoke_tools)  # closure ref — append makes children see spawn
+        # Shared cross-child token pool (LLM10) — one per run, capping the
+        # aggregate spend of every child the model spawns this turn.
+        pool_total = agent._config.spawn.max_total_tokens
+        root_token_budget = RootTokenBudget(pool_total) if pool_total else None
         spawn_tool = make_spawn_tool(
             model=model,
             tools=child_tools,
             system_prompt=child_system_prompt,
             spawn_timeout_seconds=agent._config.spawn.timeout_seconds,
             max_concurrent_spawns=agent._config.spawn.max_concurrent,
+            root_token_budget=root_token_budget,
         )
         child_tools.append(spawn_tool)
         ctx_tools = [spawn_tool]
         strategy_sections = {**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE}
 
     system_prompt = await context.assemble_system_prompt(
-        agent._workspace, extra_sections=strategy_sections
+        agent._workspace, extra_sections=strategy_sections, query=task
     )
     bridge = create_arcrun_bridge(
         bus,
@@ -112,18 +118,13 @@ async def build_run_context(
 
 
 def _agent_skills(agent: ArcAgent) -> list[_Skill]:
-    """Snapshot the agent's registered skills as lean, loadable specs."""
+    """Registered skills as lean specs — retired ones are already suppressed from _skills."""
     registry = agent._capability_registry
     if registry is None:
         return []
     return [
-        _Skill(
-            name=entry.name,
-            description=entry.description,
-            location=entry.location,
-            scan_root=entry.scan_root,
-        )
-        for entry in registry._skills.values()
+        _Skill(name=e.name, description=e.description, location=e.location, scan_root=e.scan_root)
+        for e in registry._skills.values()
     ]
 
 
@@ -144,12 +145,20 @@ def _workspace_authored(agent: ArcAgent) -> frozenset[str]:
     return frozenset(names)
 
 
+def _tighter(a: float | None, b: float | None) -> float | None:
+    """The lower of two ceilings; None means unbounded on that side."""
+    vals = [v for v in (a, b) if v is not None]
+    return min(vals) if vals else None
+
+
 async def dispatch_stream(
     agent: ArcAgent,
     input_text: str,
     *,
     session: SessionManager,
     tool_choice: dict[str, Any] | None = None,
+    max_tokens: int | None = None,
+    max_cost_usd: float | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
@@ -175,7 +184,12 @@ async def dispatch_stream(
     transform = agent._context.transform_context if agent._context else None
     # SPEC-038 F1 — resolve the tier-resolved per-run budget so the arcrun
     # circuit-breaker (LLM10) is reachable through the real streaming path.
-    max_tokens, max_cost_usd = resolve_run_budget(agent._config)
+    # SPEC-040 F2 — a caller-pinned per-run budget (a planner step's slice of
+    # the plan aggregate) tightens it; the lower ceiling always wins.
+    cfg_tokens, cfg_cost = resolve_run_budget(agent._config)
+    run_max_tokens = _tighter(cfg_tokens, max_tokens)
+    run_max_tokens = int(run_max_tokens) if run_max_tokens is not None else None
+    run_max_cost_usd = _tighter(cfg_cost, max_cost_usd)
 
     final_text = ""
     # Bind the session id for this dispatch so the capability ledger (and the
@@ -195,8 +209,9 @@ async def dispatch_stream(
                 tool_choice=tool_choice,
                 actor_did=agent._identity.did if agent._identity else None,
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
-                max_tokens=max_tokens,
-                max_cost_usd=max_cost_usd,
+                max_tokens=run_max_tokens,
+                max_cost_usd=run_max_cost_usd,
+                **build_loop_controls(agent, session),
             )
             async for event in raw_stream:
                 if isinstance(event, TurnEndEvent):
@@ -267,6 +282,7 @@ async def start_tracked_run(
             store_raw_bodies=agent._config.telemetry.capture_tool_io,
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
+            **build_loop_controls(agent, session),
         )
     finally:
         reset_session_id(session_token)

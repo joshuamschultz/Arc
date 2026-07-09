@@ -47,3 +47,32 @@ async def test_collect_falls_back_to_token_text_without_turn_end() -> None:
 
     assert result.content == "partial"
     assert result.turns == 0
+
+
+@pytest.mark.asyncio
+async def test_collect_carries_terminal_outcome() -> None:
+    """collect() surfaces the terminal completion payload/tool + token totals.
+
+    A one-shot consumer must know WHY the run ended (clean end, terminator
+    tool, or budget breach) — not just the final text. Without this the
+    planner classifier is blind to failure (SPEC-040 F1).
+    """
+    payload = {"status": "failed", "summary": "policy denied the required tool"}
+    stream = _stream(
+        TokenEvent(text="done"),
+        TurnEndEvent(
+            final_text="done",
+            turns=2,
+            tool_calls_made=1,
+            cost_usd=0.25,
+            tokens_used={"total": 321},
+            completion_payload=payload,
+            completion_tool="finish",
+        ),
+    )
+
+    result = await collect(stream)
+
+    assert result.completion_payload == payload
+    assert result.completion_tool == "finish"
+    assert result.tokens_used == {"total": 321}

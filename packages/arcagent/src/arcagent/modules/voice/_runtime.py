@@ -81,6 +81,25 @@ def reset() -> None:
     _state = None
 
 
+async def aclose() -> None:
+    """Drain provider connection pools at agent shutdown.
+
+    Cloud providers (WhisperApiProvider, ElevenLabsProvider) hold a
+    long-lived ``httpx.AsyncClient``; air-gap providers hold none. Await
+    each provider's ``close()`` when present so the pool is released
+    rather than leaked for the life of the process. Terminal — clears
+    state so a later call is a safe no-op.
+    """
+    global _state
+    if _state is None:
+        return
+    for provider in (_state.stt, _state.tts):
+        close = getattr(provider, "close", None)
+        if close is not None:
+            await close()
+    _state = None
+
+
 def get_stt_provider() -> STTProvider:
     """Return (and lazily create) the configured STT provider."""
     st = state()
@@ -235,6 +254,7 @@ def _build_tts_provider(cfg: VoiceConfig) -> TTSProvider:
 
 
 __all__ = [
+    "aclose",
     "configure",
     "get_stt_provider",
     "get_tts_provider",

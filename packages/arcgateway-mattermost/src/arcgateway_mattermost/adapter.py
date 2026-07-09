@@ -157,6 +157,7 @@ class MattermostAdapter:
         bot_token: str,
         on_message: Callable[[InboundEvent], Awaitable[None]],
         *,
+        agent_did: str = "did:arc:agent:default",
         allowed_channel_ids: list[str] | None = None,
         bot_user_id: str = "",
         tier: str = "personal",
@@ -165,6 +166,7 @@ class MattermostAdapter:
         self._server_url = server_url.rstrip("/")
         self._bot_token = bot_token  # private -- never in repr
         self._on_message = on_message
+        self._agent_did = agent_did
         self._allowed_channel_ids: set[str] = (
             set(allowed_channel_ids) if allowed_channel_ids else set()
         )
@@ -499,7 +501,7 @@ class MattermostAdapter:
                 chat_id=channel_id,
                 thread_id=None,
                 user_did=f"mattermost:{user_id}",
-                agent_did="",
+                agent_did=self._agent_did,
                 session_key=f"mattermost:{channel_id}:{user_id}",
                 message=message,
                 raw_payload=dict(post),

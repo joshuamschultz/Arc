@@ -60,6 +60,10 @@ CLAUDE.md
 # Work files
 architecture/
 **/architecture/
+# ...but package architecture TEST suites are real tests (import-graph / DAG
+# guards) and must be tracked — re-include them and their contents (ALL packages).
+!packages/**/tests/architecture/
+!packages/**/tests/architecture/**
 
 # Agent playground
 Basic_Agent/

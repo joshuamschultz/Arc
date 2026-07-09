@@ -1,18 +1,14 @@
 """Decorator-form policy module — SPEC-021 task 3.7.
 
-Three ``@hook`` functions that mirror :class:`PolicyModule`'s
-``startup`` registrations:
+Four ``@hook`` functions implementing the self-learning adaptation policy:
 
   * ``agent:assemble_prompt``  (priority 60) — inject ``policy.md``.
   * ``agent:post_respond``     (priority 110) — periodic policy eval.
+  * ``memory.consolidated``    (priority 60) — grounded reflection (REQ-072).
   * ``agent:shutdown``         (priority 60) — terminal eval + drain.
 
 State is shared via :mod:`arcagent.modules.policy._runtime`. The agent
 configures it once at startup; the hooks read state lazily.
-
-The legacy :class:`PolicyModule` class still exists alongside this
-module to keep its existing test surface working; both forms route to
-the same :class:`PolicyEngine` instance internally.
 """
 
 from __future__ import annotations
@@ -22,6 +18,7 @@ import logging
 from typing import Any
 
 from arcagent.modules.policy import _runtime
+from arcagent.modules.policy.reflection import ReflectionGrounding, reflect_and_curate
 from arcagent.tools._decorator import hook
 from arcagent.utils.model_helpers import get_eval_model, spawn_background
 
@@ -96,6 +93,32 @@ async def periodic_policy_eval(ctx: Any) -> None:
         audit_event_name="policy.background_error",
         logger=_logger,
     )
+
+
+@hook(event="memory.consolidated", priority=60, name="policy_reflect_on_consolidation")
+async def reflect_on_consolidation(ctx: Any) -> None:
+    """Session-less grounded reflection off the memory consolidation episode.
+
+    Closes the automated-run learning gap (REQ-072): with no chat transcript,
+    ground the ACE Reflector on the consolidation episode and route the result
+    through the EXISTING engine (federal stages ``policy.pending``). Fail-open —
+    a reflection error must never disturb the consolidation path.
+    """
+    st = _runtime.state()
+    grounding = ReflectionGrounding(
+        episode_summary=str(ctx.data.get("episode_summary", "")),
+        step_results=list(ctx.data.get("step_results", []) or []),
+        failures=list(ctx.data.get("failures", []) or []),
+    )
+    if grounding.is_empty:
+        return
+    model = _eval_model()
+    if model is None:
+        return
+    try:
+        await reflect_and_curate(st.engine, model, grounding, tier=st.config.tier)
+    except Exception:  # reason: fail-open — reflection must not break consolidation
+        _logger.warning("grounded reflection failed", exc_info=True)
 
 
 @hook(event="agent:shutdown", priority=60)

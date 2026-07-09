@@ -46,8 +46,9 @@ did:arc:research/alpha; agent has ['grep', 'read']
 ```
 
 The same information is emitted as a `policy.evaluate` audit event
-and rendered into the `arc_policy_decisions_total{layer,outcome}`
-counter (Prometheus).
+through the pipeline's `audit_sink` callback. Operators wire that
+callback to their own metrics/telemetry backend to derive counters
+(the pipeline ships no bundled metric registry).
 
 ### Tier construction
 
@@ -70,11 +71,11 @@ pipeline = build_pipeline(
 ### Shadow-mode rollout
 
 New policy bundles should be staged with `shadow=True` for at least
-one scrape cycle (60s). In shadow mode the pipeline evaluates every
+one evaluation cycle. In shadow mode the pipeline evaluates every
 call, emits the would-be decision to the audit trail, and always
-returns ALLOW. Operators watch `arc_policy_decisions_total{...,
-outcome="deny"}` increment under shadow; if the count is reasonable
-the bundle is promoted with `shadow=False`.
+returns ALLOW. Operators watch the `policy.evaluate` audit stream for
+`deny` decisions under shadow; if the count is reasonable the bundle
+is promoted with `shadow=False`.
 
 ---
 
@@ -149,48 +150,46 @@ at-least-once semantics across failover.
 | Dynamic egress allowlist | signed bundle | deny-by-default | deny + warn |
 | Turn/cost limits | hard cap | auto-approve 2× | always approve |
 
-Federal denial for `create_tool` is enforced BEFORE the
-`DynamicToolLoader` is consulted — no code path can reach the AST
-validator + compile stage. The denial emits
-`self_mod.tool_create_denied` with `tier="federal"`.
+Federal denial for `create_tool` is enforced BEFORE any dynamic
+source reaches the capability loader's AST validator +
+restricted-builtins compile stage — no code path can reach it. The
+denial emits `self_mod.tool_create_denied` with `tier="federal"`.
 
 ---
 
 ## Metrics and observability
 
-All metrics are Prometheus-compatible. The in-process
-`MetricRegistry` exposes the standard text format via
-`registry.render_prometheus()`; wire this to a `/metrics` endpoint.
+Observability is sink-based. The policy pipeline and proactive engine
+emit structured `(event, payload)` tuples through operator-supplied
+callbacks — there is no bundled metric registry or `/metrics`
+renderer. Wire the callbacks to whatever telemetry backend you run
+(OpenTelemetry, Prometheus client, log pipeline) and derive counters
+from the event stream.
 
-### Key counters
+### Key event streams
 
-| Metric | Labels | Purpose |
-|--------|--------|---------|
-| `arc_policy_decisions_total` | `layer`, `outcome` | Policy decisions — spike in `deny` = potential regression |
-| `arc_policy_evaluation_duration_us` | `layer` | Latency — p95 should be < 1000 (1ms) |
-| `arc_policy_cache_hits_total` | `layer` | Cache effectiveness |
-| `arc_policy_cache_misses_total` | `layer` | Cache effectiveness |
-| `arc_policy_exceptions_total` | `layer` | **MUST be zero** in healthy state |
-| `arc_schedule_circuit_breaker_state` | `schedule_id`, `state` | Gauge — 1 when state is active |
-| `arc_schedule_missed_concurrency_total` | `schedule_id` | Ticks skipped because prior run in-flight |
-| `arc_schedule_circuit_skipped_total` | `schedule_id` | Ticks skipped because circuit open |
-| `arc_dynamic_tool_creations_total` | `tier`, `outcome` | Self-mod attempts |
+| Source | Sink | Events | Purpose |
+|--------|------|--------|---------|
+| `PolicyPipeline` | `audit_sink` | `policy.evaluate` | Every decision (carries `layer`, `outcome`, `rule_id`, `reason`, timing). Spike in `deny` = potential regression; any exception surfaces as a fail-closed `deny`. |
+| `ProactiveEngine` | `event_sink` | `clock_warp`, `missed_concurrency`, `skipped_inactive_hours`, `handler_error` | Schedule health — skipped ticks, warps, handler failures. |
+| Self-mod dispatch | audit trail | `self_mod.tool_create_denied`, `dynamic_tool.rejected` | Dynamic tool creation attempts (carry `tier` / AST category). |
 
-### Wiring metric sinks
+### Wiring the sinks
 
 ```python
-from arcagent.core.metrics import (
-    MetricRegistry, policy_audit_to_metrics, proactive_audit_to_metrics,
-)
+def policy_sink(event: str, payload: dict) -> None:
+    ...  # forward to your metrics/telemetry backend
 
-registry = MetricRegistry()
+def proactive_sink(event: str, payload: dict) -> None:
+    ...  # forward to your metrics/telemetry backend
+
 pipeline = build_pipeline(
     tier="federal",
-    audit_sink=policy_audit_to_metrics(registry),
+    audit_sink=policy_sink,
 )
 engine = ProactiveEngine(
     handler=handler,
-    event_sink=proactive_audit_to_metrics(registry),
+    event_sink=proactive_sink,
 )
 ```
 
@@ -200,8 +199,8 @@ engine = ProactiveEngine(
 
 ### Policy pipeline reporting many denies
 
-1. Check `arc_policy_decisions_total{outcome="deny"}` by layer —
-   narrow down which layer is denying.
+1. Filter the `policy.evaluate` audit stream for `deny` decisions by
+   layer — narrow down which layer is denying.
 2. Inspect the associated audit events (`policy.evaluate` with
    `decision="deny"`). Each carries `layer`, `rule_id`, and
    `reason`.
@@ -210,7 +209,8 @@ engine = ProactiveEngine(
 
 ### Clock warp detected
 
-1. Check `arc_schedule_*` counters around the warp timestamp.
+1. Check the `clock_warp` events from the proactive `event_sink`
+   around the warp timestamp.
 2. Confirm with platform team — VM suspend, NTP adjust, container
    migration all produce warps.
 3. Engine keeps running; no action required unless warps are
@@ -218,9 +218,9 @@ engine = ProactiveEngine(
 
 ### Circuit breaker stuck OPEN
 
-1. Check `arc_schedule_circuit_breaker_state` gauge — confirms
-   state.
-2. Review handler-error events to see why the breaker opened.
+1. Inspect the breaker state via `breaker.state` — confirms whether
+   it is OPEN.
+2. Review `handler_error` events to see why the breaker opened.
 3. Use `breaker.force_close()` for manual recovery if the underlying
    issue is confirmed resolved. `force_open()` exists for intentional
    disabling.
@@ -247,8 +247,8 @@ release. Before deletion:
 4. Disable the legacy modules in `arcagent.toml` by setting
    `[modules.pulse].enabled = false` and
    `[modules.scheduler].enabled = false`.
-5. Confirm `arc_schedule_*` metrics continue firing from the new
-   engine.
+5. Confirm the proactive `event_sink` continues emitting schedule
+   events from the new engine.
 6. Delete the legacy module directories in a dedicated commit.
 
 This is documented as a **deferred migration** — not blocking for

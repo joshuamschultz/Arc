@@ -63,7 +63,6 @@ from arcagent.core.session_internal.capability_ledger import (
     LETHAL_TRIFECTA,
     SessionCapabilityLedger,
 )
-from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
@@ -139,7 +138,6 @@ class ArcAgent:
         self._sessions_lock = asyncio.Lock()
         self._capability_registry: Any = None
         self._capability_loader: Any = None
-        self._settings: SettingsManager | None = None
         self._vault_resolver: Any = None
         self._model: Any = None
         self._trace_store: Any = None
@@ -278,7 +276,7 @@ class ArcAgent:
         candidates = (
             self._policy_audit_log_path(),
             self._trace_checkpoint_chain_path(),
-            audit_dir / "skill_improver.worm",
+            audit_dir / "skills.worm",
         )
         return any(p.exists() for p in candidates)
 
@@ -420,15 +418,7 @@ class ArcAgent:
         # 7. Session pool starts empty; managers are built on demand by
         # ``session(key)`` so concurrent conversations stay isolated.
 
-        # 8. Settings Manager
-        self._settings = SettingsManager(
-            config=self._config,
-            telemetry=self._telemetry,
-            bus=self._bus,
-            config_path=self._config_path,
-        )
-
-        # 9. Capability subsystem (replaces SkillRegistry, ExtensionLoader,
+        # 8. Capability subsystem (replaces SkillRegistry, ExtensionLoader,
         # MODULE.yaml-based module loading, and the hardcoded built-in
         # tool list — SPEC-021 unified capability surface).
         await setup_capabilities(self, workspace)
@@ -445,7 +435,11 @@ class ArcAgent:
         # collects it to a final result.
         await self._bus.emit(
             "agent:ready",
-            {"run_fn": self.run_collected, "deliver_fn": self.deliver_message},
+            {
+                "run_fn": self.run_collected,
+                "deliver_fn": self.deliver_message,
+                "skill_registry": self._capability_registry,
+            },
         )
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})
@@ -523,6 +517,8 @@ class ArcAgent:
         *,
         session: SessionManager,
         tool_choice: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+        max_cost_usd: float | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -537,6 +533,11 @@ class ArcAgent:
         pass ``{"type": "required"}`` from pipeline orchestrators that need
         the first turn to emit a tool call (typically a ``signals_completion``
         terminator).
+
+        ``max_tokens`` / ``max_cost_usd`` are an optional per-run budget the
+        caller pins (e.g. a planner step's slice of the plan aggregate). When
+        set they tighten the config-resolved run budget (the lower ceiling
+        wins) so a sub-task can never exceed either (SPEC-040 F2, LLM10).
         """
         self._ensure_started()
         async for event in dispatch_stream(
@@ -544,6 +545,8 @@ class ArcAgent:
             input_text,
             session=session,
             tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            max_cost_usd=max_cost_usd,
         ):
             yield event
 
@@ -553,16 +556,29 @@ class ArcAgent:
         *,
         session_key: str,
         tool_choice: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+        max_cost_usd: float | None = None,
     ) -> Any:
         """Run a turn on the ``session_key`` session and collect to a result.
 
         The single callback every non-streaming surface binds (scheduler,
-        pulse, slack, telegram, messaging): open-or-resume the keyed session,
-        stream the turn, and return the final ``RunResult``. ``tool_choice``
-        is forwarded to the loop (see :meth:`run`).
+        pulse, slack, telegram, messaging, planner steps): open-or-resume the
+        keyed session, stream the turn, and return the final ``RunResult``.
+        ``tool_choice`` is forwarded to the loop (see :meth:`run`).
+        ``max_tokens`` / ``max_cost_usd`` pin a per-run budget the planner uses
+        to slice a step off the plan aggregate (SPEC-040 F2) — the shared
+        session (and its trifecta ledger) is preserved either way.
         """
         session = await self.session(session_key)
-        return await collect(self.run(input_text, session=session, tool_choice=tool_choice))
+        return await collect(
+            self.run(
+                input_text,
+                session=session,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                max_cost_usd=max_cost_usd,
+            )
+        )
 
     def active_run(self, session_key: str) -> RunHandle | None:
         """Return the live steerable run for ``session_key``, or None if idle."""
@@ -725,11 +741,6 @@ class ArcAgent:
             return []
         return list(self._capability_registry._skills.values())
 
-    @property
-    def settings(self) -> SettingsManager | None:
-        """Runtime settings manager."""
-        return self._settings
-
     async def shutdown(self) -> None:
         """Reverse-order teardown of all components.
 
@@ -753,7 +764,6 @@ class ArcAgent:
             await self._capability_loader.shutdown()
 
         # Reverse-order cleanup
-        await bus.shutdown()
         await tool_registry.shutdown()
 
         # Release the WORM chain lock (SPEC-034).

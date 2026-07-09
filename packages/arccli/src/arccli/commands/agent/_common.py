@@ -23,6 +23,9 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from arccli.commands._shared import print_kv as _print_kv
+from arccli.commands._shared import print_table as _print_table
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -157,8 +160,7 @@ allow_imports = []
 enabled = true
 
 [modules.memory.config]
-context_budget_tokens = 2000
-entity_extraction_enabled = true
+brain = "none"
 
 [modules.policy]
 enabled = true
@@ -176,7 +178,6 @@ check_interval_seconds = 30
 enabled = true
 
 [modules.messaging.config]
-poll_interval_seconds = 5.0
 # Join the shared team bus. ensure_live_backend degrades to an in-memory
 # backend (with a warning) if no server is reachable, so a solo agent still runs.
 nats_url = "nats://127.0.0.1:4222"
@@ -379,35 +380,6 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
     sys.stdout.write("Next steps:\n")
     sys.stdout.write(f"  arc agent build {agent_dir}\n")
     sys.stdout.write(f"  arc agent chat {agent_dir}\n")
-
-
-# ---------------------------------------------------------------------------
-# Output formatting
-# ---------------------------------------------------------------------------
-
-
-def _print_kv(pairs: list[tuple[str, str]]) -> None:
-    """Print key-value pairs in aligned format."""
-    try:
-        from arccli.formatting import print_kv
-
-        print_kv(pairs)
-    except ImportError:
-        width = max(len(k) for k, _ in pairs) if pairs else 0
-        for k, v in pairs:
-            sys.stdout.write(f"  {k:<{width}}  {v}\n")
-
-
-def _print_table(headers: list[str], rows: list[list[str]]) -> None:
-    """Print a table with headers."""
-    try:
-        from arccli.formatting import print_table
-
-        print_table(headers, rows)
-    except ImportError:
-        sys.stdout.write("  " + "  ".join(headers) + "\n")
-        for row in rows:
-            sys.stdout.write("  " + "  ".join(row) + "\n")
 
 
 # ---------------------------------------------------------------------------

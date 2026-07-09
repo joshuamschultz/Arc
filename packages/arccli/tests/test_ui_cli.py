@@ -30,7 +30,6 @@ class TestUIGroup:
         assert "--host" in result.stdout
         assert "--viewer-token" in result.stdout
         assert "--operator-token" in result.stdout
-        assert "--agent-token" in result.stdout
         assert "--max-agents" in result.stdout
 
     def test_ui_start_default_port(self):

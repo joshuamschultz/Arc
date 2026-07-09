@@ -1,5 +1,7 @@
 """ArcAgent: Enterprise-grade autonomous agent nucleus."""
 
+from importlib.metadata import PackageNotFoundError, version
+
 from arcagent.core.errors import (
     ArcAgentError,
     ConfigError,
@@ -20,4 +22,7 @@ __all__ = [
     "ToolVetoedError",
 ]
 
-__version__ = "0.9.0"
+try:
+    __version__ = version("arc-agent")
+except PackageNotFoundError:  # reason: source checkout without an installed distribution
+    __version__ = "0.14.0"

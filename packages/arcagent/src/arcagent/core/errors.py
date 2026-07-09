@@ -107,9 +107,3 @@ class ExtensionError(ArcAgentError):
     """Extension load, sandbox violation, or factory error."""
 
     _component = "extensions"
-
-
-class SettingsError(ArcAgentError):
-    """Settings validation, persistence, or access error."""
-
-    _component = "settings_manager"

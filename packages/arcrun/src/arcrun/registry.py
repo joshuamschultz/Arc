@@ -56,6 +56,17 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    def get_classification(self, name: str) -> str:
+        """Return a tool's dispatch classification (SPEC-043 REQ-034).
+
+        Consumed by ``parallel_dispatch.BatchClassifier`` to decide whether a
+        turn's calls may run concurrently. Unknown tools are treated as
+        ``state_modifying`` (fail-closed): the loop never parallelizes a call it
+        cannot classify.
+        """
+        tool = self._tools.get(name)
+        return tool.classification if tool is not None else "state_modifying"
+
     def list_schemas(self) -> list[LLMTool]:
         """Convert tools to arcllm Tool format for model.invoke().
 

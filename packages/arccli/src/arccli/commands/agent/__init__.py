@@ -35,8 +35,7 @@ Internal modules
 
 from __future__ import annotations
 
-# Re-export selected internal helpers used by other arccli modules
-# (e.g. ``arccli.telegram_setup`` imports ``_resolve_agent_dir``).
+# Re-export selected internal helpers used by other arccli modules.
 from arccli.commands.agent._common import (
     _CALCULATOR_TOOL,
     _DEFAULT_CONFIG,

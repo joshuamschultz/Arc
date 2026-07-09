@@ -1,5 +1,9 @@
 """Integration tests: tier-driven ACL defaults.
 
+Drives the REAL production path: memory_acl ``@hook`` functions discovered by
+:class:`CapabilityLoader` and subscribed onto a :class:`ModuleBus` as at agent
+startup, then exercised via ``bus.emit``.
+
 Test contract item 5:
 - federal → private (cross-session reads blocked unless explicitly shared)
 - enterprise → shared-with-agent (within team)
@@ -8,25 +12,44 @@ Test contract item 5:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from pathlib import Path
 
-from arcagent.core.module_bus import ModuleBus, ModuleContext
-from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule
+import pytest
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from arcagent.capabilities.capability_loader import CapabilityLoader
+from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.core.module_bus import ModuleBus
+from arcagent.modules.memory_acl import _runtime
+
+_MEMORY_EVENTS = ("memory.read", "memory.write", "memory.search")
 
 
-def _make_module_ctx(bus: ModuleBus) -> ModuleContext:
-    return ModuleContext(
-        bus=bus,
-        tool_registry=MagicMock(),
-        config=MagicMock(),
-        telemetry=MagicMock(),
-        workspace=MagicMock(),
-        llm_config=MagicMock(),
-    )
+@pytest.fixture(autouse=True)
+def _reset_runtime() -> None:
+    _runtime.reset()
+
+
+async def _bus_with_acl_hooks(tier: str) -> ModuleBus:
+    """Load the memory_acl hooks and subscribe them onto a fresh bus."""
+    _runtime.configure(config={"tier": tier})
+
+    from arcagent.modules.memory_acl import capabilities as macl_caps
+
+    module_dir = Path(macl_caps.__file__).parent
+    reg = CapabilityRegistry()
+    loader = CapabilityLoader(scan_roots=[("memory_acl", module_dir)], registry=reg)
+    await loader.scan_and_register()
+
+    bus = ModuleBus()
+    for event in _MEMORY_EVENTS:
+        for hook in await reg.get_hooks(event):
+            bus.subscribe(
+                event=event,
+                handler=hook.handler,
+                priority=hook.meta.priority,
+                module_name=f"capability:{hook.meta.name}",
+            )
+    return bus
 
 
 async def _emit_cross_session_read(
@@ -53,6 +76,7 @@ async def _emit_cross_session_read(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestFederalTierDefaults:
     async def test_federal_no_acl_cross_session_read_vetoed(self) -> None:
         """Test item 5: federal tier without ACL blocks cross-session reads."""
@@ -60,16 +84,13 @@ class TestFederalTierDefaults:
         owner = "did:arc:org:user/owner"
         agent = "did:arc:org:agent/agent1"
 
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "federal"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("federal")
 
         vetoed = await _emit_cross_session_read(
             bus,
             caller_did=stranger,
             target_user_did=owner,
             agent_did=agent,
-            # No ACL content → defaults to federal private
         )
         assert vetoed, "Federal tier without ACL must block cross-session reads"
 
@@ -84,9 +105,7 @@ acl:
 owner_did: {owner}
 ---
 """
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "federal"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("federal")
 
         vetoed = await _emit_cross_session_read(
             bus,
@@ -102,9 +121,7 @@ owner_did: {owner}
         owner = "did:arc:org:user/owner"
         agent = "did:arc:org:agent/agent1"
 
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "federal"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("federal")
 
         vetoed = await _emit_cross_session_read(
             bus,
@@ -125,9 +142,7 @@ acl:
 owner_did: {owner}
 ---
 """
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "federal"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("federal")
 
         vetoed = await _emit_cross_session_read(
             bus,
@@ -144,15 +159,14 @@ owner_did: {owner}
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestEnterpriseTierDefaults:
     async def test_enterprise_no_acl_agent_allowed(self) -> None:
         """Enterprise default: agent may read shared-with-agent sessions."""
         owner = "did:arc:org:user/owner"
         agent = "did:arc:org:agent/ent-agent"
 
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "enterprise"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("enterprise")
 
         vetoed = await _emit_cross_session_read(
             bus,
@@ -168,9 +182,7 @@ class TestEnterpriseTierDefaults:
         stranger = "did:arc:org:user/stranger"
         agent = "did:arc:org:agent/ent-agent"
 
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "enterprise"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("enterprise")
 
         vetoed = await _emit_cross_session_read(
             bus,
@@ -186,14 +198,13 @@ class TestEnterpriseTierDefaults:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestPersonalTierDefaults:
     async def test_personal_no_acl_agent_allowed(self) -> None:
         owner = "did:arc:org:user/owner"
         agent = "did:arc:org:agent/personal-agent"
 
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "personal"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("personal")
 
         vetoed = await _emit_cross_session_read(
             bus,
@@ -209,9 +220,7 @@ class TestPersonalTierDefaults:
         stranger = "did:arc:org:user/stranger"
         agent = "did:arc:org:agent/personal-agent"
 
-        bus = ModuleBus()
-        module = MemoryACLModule(config={"tier": "personal"})
-        await module.startup(_make_module_ctx(bus))
+        bus = await _bus_with_acl_hooks("personal")
 
         vetoed = await _emit_cross_session_read(
             bus,

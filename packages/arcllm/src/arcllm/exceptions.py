@@ -33,6 +33,21 @@ class ArcLLMConfigError(ArcLLMError):
     """Raised on configuration validation failure."""
 
 
+class ArcLLMEmbeddingUnavailableError(ArcLLMError):
+    """Raised when no embedder is available for an ``embed()`` call.
+
+    The ``none`` signal (SPEC-041 REQ-041): the local ``[local]`` extra is
+    not installed and no provider endpoint is configured. Callers (arcmemory)
+    catch this and degrade to BM25 + graph retrieval — it is a clean,
+    typed signal, never a hard ImportError crash.
+    """
+
+    def __init__(self, model: str, reason: str) -> None:
+        self.model = model
+        self.reason = reason
+        super().__init__(f"No embedder available for model '{model}': {reason}")
+
+
 class ArcLLMBudgetError(ArcLLMError):
     """Raised when a budget limit would be exceeded.
 

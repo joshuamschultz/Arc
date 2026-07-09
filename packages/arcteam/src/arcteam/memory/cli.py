@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from arcteam.memory.config import TeamMemoryConfig
@@ -31,12 +31,14 @@ def build_memory_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     # status
-    sub.add_parser("status", help="Show memory service status")
+    status_p = sub.add_parser("status", help="Show memory service status")
+    status_p.set_defaults(handler=_cmd_status)
 
     # search
     p = sub.add_parser("search", help="Search team memory")
     p.add_argument("query", help="Search query")
     p.add_argument("--max-results", type=int, default=20, help="Max results")
+    p.set_defaults(handler=_cmd_search)
 
     # entity (subcommands: show, list)
     entity_p = sub.add_parser("entity", help="Entity operations")
@@ -44,14 +46,17 @@ def build_memory_parser() -> argparse.ArgumentParser:
 
     show_p = entity_sub.add_parser("show", help="Show entity details")
     show_p.add_argument("entity_id", help="Entity ID")
+    show_p.set_defaults(handler=_cmd_entity_show)
 
     list_p = entity_sub.add_parser("list", help="List entities")
     list_p.add_argument("--type", dest="entity_type", default=None, help="Filter by entity type")
+    list_p.set_defaults(handler=_cmd_entity_list)
 
     # index (subcommands: rebuild)
     index_p = sub.add_parser("index", help="Index operations")
     index_sub = index_p.add_subparsers(dest="index_command", required=True)
-    index_sub.add_parser("rebuild", help="Force index rebuild")
+    rebuild_p = index_sub.add_parser("rebuild", help="Force index rebuild")
+    rebuild_p.set_defaults(handler=_cmd_index_rebuild)
 
     # promote
     p = sub.add_parser("promote", help="Promote entity to team memory")
@@ -61,8 +66,75 @@ def build_memory_parser() -> argparse.ArgumentParser:
     p.add_argument("--content", default="", help="Markdown content")
     p.add_argument("--tags", default="", help="Comma-separated tags")
     p.add_argument("--links-to", default="", help="Comma-separated linked entity IDs")
+    p.set_defaults(handler=_cmd_promote)
 
     return parser
+
+
+async def _cmd_status(service: TeamMemoryService, args: argparse.Namespace) -> int:
+    status = await service.status()
+    _print_json(status.model_dump())
+    return 0
+
+
+async def _cmd_search(service: TeamMemoryService, args: argparse.Namespace) -> int:
+    results = await service.search(args.query, max_results=args.max_results)
+    if args.json:
+        _print_json([r.model_dump() for r in results])
+    else:
+        if not results:
+            print("No results found.")
+        for r in results:
+            print(f"  [{r.score:.2f}] {r.entity_id} — {r.snippet[:60]}")
+    return 0
+
+
+async def _cmd_entity_show(service: TeamMemoryService, args: argparse.Namespace) -> int:
+    entity = await service.get_entity(args.entity_id)
+    if entity is None:
+        print(f"Entity not found: {args.entity_id}", file=sys.stderr)
+        return 1
+    _print_json(entity.metadata.model_dump())
+    print("\n" + entity.content)
+    return 0
+
+
+async def _cmd_entity_list(service: TeamMemoryService, args: argparse.Namespace) -> int:
+    entries = await service.list_entities(entity_type=args.entity_type)
+    if not entries:
+        print("No entities found.")
+    for e in entries:
+        print(f"  {e.entity_id:<30} {e.entity_type:<15} {e.summary_snippet[:40]}")
+    return 0
+
+
+async def _cmd_index_rebuild(service: TeamMemoryService, args: argparse.Namespace) -> int:
+    index = await service.rebuild_index()
+    if index is not None:
+        print(f"Index rebuilt: {len(index)} entities")
+    else:
+        print("Memory service is disabled.")
+    return 0
+
+
+async def _cmd_promote(service: TeamMemoryService, args: argparse.Namespace) -> int:
+    tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+    links = [lnk.strip() for lnk in args.links_to.split(",") if lnk.strip()]
+    meta = EntityMetadata(
+        entity_type=args.entity_type,
+        entity_id=args.entity_id,
+        name=args.name,
+        tags=tags,
+        links_to=links,
+    )
+    result = await service.promote(
+        args.entity_id,
+        args.content or f"# {args.name}",
+        meta,
+        agent_id="cli",
+    )
+    _print_json(result.model_dump())
+    return 0
 
 
 async def run_memory_command(args: argparse.Namespace) -> int:
@@ -70,64 +142,8 @@ async def run_memory_command(args: argparse.Namespace) -> int:
     root = args.root or TeamMemoryConfig().root
     config = TeamMemoryConfig(root=root)
     service = TeamMemoryService(config)
-
-    if args.command == "status":
-        status = await service.status()
-        _print_json(status.model_dump())
-
-    elif args.command == "search":
-        results = await service.search(args.query, max_results=args.max_results)
-        if hasattr(args, "json") and args.json:
-            _print_json([r.model_dump() for r in results])
-        else:
-            if not results:
-                print("No results found.")
-            for r in results:
-                print(f"  [{r.score:.2f}] {r.entity_id} — {r.snippet[:60]}")
-
-    elif args.command == "entity":
-        if args.entity_command == "show":
-            entity = await service.get_entity(args.entity_id)
-            if entity is None:
-                print(f"Entity not found: {args.entity_id}", file=sys.stderr)
-                return 1
-            _print_json(entity.metadata.model_dump())
-            print("\n" + entity.content)
-
-        elif args.entity_command == "list":
-            entries = await service.list_entities(entity_type=getattr(args, "entity_type", None))
-            if not entries:
-                print("No entities found.")
-            for e in entries:
-                print(f"  {e.entity_id:<30} {e.entity_type:<15} {e.summary_snippet[:40]}")
-
-    elif args.command == "index":
-        if args.index_command == "rebuild":
-            index = await service.rebuild_index()
-            if index is not None:
-                print(f"Index rebuilt: {len(index)} entities")
-            else:
-                print("Memory service is disabled.")
-
-    elif args.command == "promote":
-        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-        links = [lnk.strip() for lnk in args.links_to.split(",") if lnk.strip()]
-        meta = EntityMetadata(
-            entity_type=args.entity_type,
-            entity_id=args.entity_id,
-            name=args.name,
-            tags=tags,
-            links_to=links,
-        )
-        result = await service.promote(
-            args.entity_id,
-            args.content or f"# {args.name}",
-            meta,
-            agent_id="cli",
-        )
-        _print_json(result.model_dump())
-
-    return 0
+    handler: Callable[[TeamMemoryService, argparse.Namespace], Awaitable[int]] = args.handler
+    return await handler(service, args)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

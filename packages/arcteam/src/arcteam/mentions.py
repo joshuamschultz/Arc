@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import re
 
-from arcteam.registry import EntityRegistry, UnknownHandle, resolve
-from arcteam.types import Message, Priority
+from arcteam.registry import UnknownHandle, resolve_ref
+from arcteam.types import Entity, Message, Priority
 
 _MENTION_RE = re.compile(r"@([a-z0-9_-]+)")
 
@@ -25,18 +25,20 @@ def extract_mentions(body: str) -> list[str]:
     return list(seen)
 
 
-async def apply_mentions(registry: EntityRegistry, message: Message) -> None:
+def apply_mentions(entities: list[Entity], message: Message) -> None:
     """Resolve body mentions to DIDs and raise attention flags on ``message``.
 
-    A body ``@handle`` that names no registered entity is treated as plain
-    text and ignored — mentions are best-effort attention hints, not routing.
-    When at least one mention resolves, ``action_required`` is set and the
-    priority is raised to at least ``HIGH`` without downgrading a higher one.
+    Resolves against a pre-fetched entity snapshot (the caller's single
+    per-send registry read) rather than re-querying per mention. A body
+    ``@handle`` that names no registered entity is treated as plain text and
+    ignored — mentions are best-effort attention hints, not routing. When at
+    least one mention resolves, ``action_required`` is set and the priority is
+    raised to at least ``HIGH`` without downgrading a higher one.
     """
     dids: list[str] = []
     for handle in extract_mentions(message.body):
         try:
-            dids.append(await resolve(registry, f"@{handle}"))
+            dids.append(resolve_ref(entities, f"@{handle}"))
         except UnknownHandle:
             continue
     message.mentions = dids

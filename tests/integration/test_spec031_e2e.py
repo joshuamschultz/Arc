@@ -49,6 +49,7 @@ from arcteam.storage import StorageBackend
 from arcteam.team import Team, TeamStore
 from arcteam.types import Entity, EntityType, Message, Priority, generate_message_id
 from arctrust import AgentIdentity, generate_did, generate_keypair
+from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
 pytestmark = [
@@ -271,7 +272,7 @@ async def _wait_for_dlq_reason(
 
 
 async def test_spec031_acceptance_flow(backend: StorageBackend) -> None:
-    audit = AuditLogger(backend, hmac_key=b"k" * 32)
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
 

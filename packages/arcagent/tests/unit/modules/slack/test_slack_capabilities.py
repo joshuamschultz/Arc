@@ -16,9 +16,6 @@ This file verifies:
   3. ``slack_notify_user`` calls ``bot.send_notification``.
   4. ``bind_agent_run_fn`` propagates the run fn into the bot.
   5. ``notify_schedule_failed`` sends a failure notification.
-
-Legacy :class:`SlackModule` tests in ``test_module.py`` continue to
-verify behaviour at the wrapper level.
 """
 
 from __future__ import annotations
@@ -148,6 +145,30 @@ class TestCapabilityLifecycle:
 
         cap = SlackCapability()
         await cap.teardown()  # must not raise
+
+    async def test_setup_threads_egress_proxy_into_bot(self, tmp_path: Path) -> None:
+        """SPEC-038 REQ-031 — the shared egress proxy configured at startup
+        reaches the SlackBot so send_notification is mediated."""
+        from arcagent.modules.slack.capabilities import SlackCapability
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        sentinel_egress = object()
+        _runtime.configure(
+            config={"enabled": True, "allowed_user_ids": ["U123"]},
+            workspace=workspace,
+            egress_proxy=sentinel_egress,
+        )
+
+        with patch("arcagent.modules.slack.capabilities.SlackBot") as MockBot:
+            mock_bot = MagicMock()
+            mock_bot.start = AsyncMock()
+            MockBot.return_value = mock_bot
+
+            cap = SlackCapability()
+            await cap.setup(ctx=None)
+
+            assert MockBot.call_args.kwargs["egress"] is sentinel_egress
 
 
 @pytest.mark.asyncio

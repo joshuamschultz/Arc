@@ -10,7 +10,7 @@ from arcagent.modules.policy.policy_engine import (
     PolicyDelta,
     PolicyEngine,
 )
-from arcagent.modules.policy.policy_module import PolicyModule
+from arcagent.modules.policy.reflection import ReflectionGrounding, reflect_and_curate
 
 __all__ = [
     "BulletRewrite",
@@ -20,6 +20,7 @@ __all__ = [
     "PolicyDelta",
     "PolicyEngine",
     "PolicyEvalError",
-    "PolicyModule",
+    "ReflectionGrounding",
     "cli_group",
+    "reflect_and_curate",
 ]

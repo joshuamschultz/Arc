@@ -13,16 +13,6 @@ Design (SDD §3.1 Process Model):
     6. Writes a ``gateway.pid`` file atomically on startup and unlinks it on
        clean shutdown so ``arc gateway stop`` can send SIGTERM reliably.
 
-T1.13 addition (SPEC-018 §3.4):
-    GatewayRunner constructs a ``DeliverySenderImpl`` and exposes it via the
-    ``delivery_sender`` property so callers can inject it into the scheduler's
-    ``SchedulerEngine.set_cron_runner()`` without the scheduler importing
-    arcgateway.
-
-    Adapters are registered with the sender via ``_register_adapters_for_delivery``
-    during startup.  Any adapter added before ``run()`` is called automatically
-    appears in the sender's routing table.
-
 Pairing cleanup scheduler:
     When a PairingStore is set via ``set_pairing_store()``, GatewayRunner
     schedules ``pairing_store.cleanup_expired()`` every 600 seconds inside the
@@ -65,7 +55,6 @@ from typing import TYPE_CHECKING, Any
 
 from arcgateway.adapters._reconnect import FailedAdapter, reconnect_watcher
 from arcgateway.adapters.base import BasePlatformAdapter
-from arcgateway.delivery import DeliverySenderImpl
 from arcgateway.executor import AsyncioExecutor, Executor, SubprocessExecutor
 from arcgateway.session import SessionRouter
 
@@ -131,7 +120,6 @@ class GatewayRunner:
         _session_router: Routes inbound events to per-session agent tasks.
         _failed_adapters: Tracks adapters that failed and need reconnection.
         _shutdown_event: Set on SIGINT/SIGTERM to trigger clean shutdown.
-        _delivery_sender: Satisfies DeliverySender Protocol for cron delivery.
         _pairing_store: Optional PairingStore for scheduled cleanup.
     """
 
@@ -157,11 +145,6 @@ class GatewayRunner:
         self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}
         self._shutdown_event = asyncio.Event()
 
-        # T1.13 — DeliverySenderImpl satisfies arcagent's DeliverySender Protocol.
-        # Populated with adapters in _register_adapters_for_delivery().
-        self._delivery_sender = DeliverySenderImpl()
-        self._register_adapters_for_delivery()
-
         # Optional PairingStore for background cleanup scheduling.
         # Set via set_pairing_store() before run() is called.
         self._pairing_store: Any | None = None
@@ -178,23 +161,6 @@ class GatewayRunner:
                            coroutine method.
         """
         self._pairing_store = pairing_store
-
-    @property
-    def delivery_sender(self) -> DeliverySenderImpl:
-        """Expose DeliverySenderImpl for injection into the scheduler.
-
-        Usage (at gateway startup, after add_adapter calls)::
-
-            engine.set_cron_runner(
-                cron_runner=CronRunner(telemetry),
-                agent_factory=make_agent_factory(agent),
-                delivery_sender=runner.delivery_sender,
-            )
-
-        Returns:
-            The DeliverySenderImpl instance wired with all registered adapters.
-        """
-        return self._delivery_sender
 
     @classmethod
     def from_config(cls, config: GatewayConfig) -> GatewayRunner:
@@ -250,10 +216,8 @@ class GatewayRunner:
     def add_adapter(self, adapter: BasePlatformAdapter) -> None:
         """Register a platform adapter before run() is called.
 
-        Wires the adapter into both outbound paths:
-        - the SessionRouter, so live chat replies stream back to the platform
-          the message came from (per-platform routing);
-        - the DeliverySenderImpl, so cron/proactive output can reach it.
+        Wires the adapter into the SessionRouter, so live chat replies stream
+        back to the platform the message came from (per-platform routing).
 
         Args:
             adapter: Adapter instance to add.
@@ -262,8 +226,6 @@ class GatewayRunner:
         self._adapter_index[adapter.name] = adapter
         # Live chat replies — route back to the originating platform.
         self._session_router.register_adapter(adapter)
-        # Cron / proactive delivery routing.
-        self._delivery_sender.register_adapter(adapter.name, adapter)
 
     async def run(self) -> None:
         """Start the gateway daemon.
@@ -516,15 +478,6 @@ class GatewayRunner:
             _logger.info("GatewayRunner: wrote clean-shutdown marker at %s", marker)
         except OSError:
             _logger.warning("GatewayRunner: failed to write clean-shutdown marker", exc_info=True)
-
-    def _register_adapters_for_delivery(self) -> None:
-        """Register already-added adapters with the DeliverySenderImpl.
-
-        Called once at construction so adapters passed via the constructor
-        are immediately available for cron job delivery routing.
-        """
-        for adapter in self._adapters:
-            self._delivery_sender.register_adapter(adapter.name, adapter)
 
     @property
     def _clean_marker(self) -> Path:

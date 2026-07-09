@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
 import pytest
 
+from arcagent.modules.browser._runtime import _State
+from arcagent.modules.browser.accessibility import AccessibilityManager
+from arcagent.modules.browser.capabilities import (
+    browser_click,
+    browser_hover,
+    browser_select,
+    browser_type,
+)
 from arcagent.modules.browser.config import BrowserConfig
 from arcagent.modules.browser.errors import ElementNotFoundError
 
@@ -51,143 +60,91 @@ _SAMPLE_AX_TREE = {
 
 def _make_cdp() -> AsyncMock:
     cdp = AsyncMock()
-    cdp.send = AsyncMock()
+    cdp.send = AsyncMock(return_value=_SAMPLE_AX_TREE)
     return cdp
 
 
-def _make_bus() -> MagicMock:
-    bus = MagicMock()
-    bus.emit = AsyncMock()
-    return bus
+async def _snapshot(config: BrowserConfig) -> tuple[AsyncMock, AccessibilityManager]:
+    """Build a CDP + AX manager and populate refs from the sample tree."""
+    cdp = _make_cdp()
+    ax = AccessibilityManager(cdp, config)
+    await ax.snapshot()
+    cdp.send.reset_mock()
+    return cdp, ax
 
 
 class TestBrowserClick:
     """browser_click tool."""
 
-    async def test_click_by_ref(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
+    async def test_click_by_ref(self, configure_browser: Callable[..., _State]) -> None:
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        # After snapshot, reset send mock for click interactions
-        cdp.send.reset_mock()
+        cdp, ax = await _snapshot(config)
         cdp.send.side_effect = [
             {"model": {"content": [100, 100, 200, 100, 200, 200, 100, 200]}},  # DOM.getBoxModel
             {},  # Input.dispatchMouseEvent (mousePressed)
             {},  # Input.dispatchMouseEvent (mouseReleased)
         ]
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_interact_tools(cdp, ax, config, bus)
-        click_tool = next(t for t in tools if t.name == "browser_click")
-
-        result = await click_tool.execute(ref=2)  # Button "Submit"
+        result = await browser_click(ref=2)  # Button "Submit"
         assert "Clicked" in result
 
-    async def test_click_invalid_ref(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
+    async def test_click_invalid_ref(self, configure_browser: Callable[..., _State]) -> None:
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        tools = create_interact_tools(cdp, ax, config, bus)
-        click_tool = next(t for t in tools if t.name == "browser_click")
+        cdp, ax = await _snapshot(config)
+        configure_browser(config, cdp=cdp, ax=ax)
 
         with pytest.raises(ElementNotFoundError):
-            await click_tool.execute(ref=999)
+            await browser_click(ref=999)
 
-    async def test_click_degenerate_box_model_raises(self) -> None:
+    async def test_click_degenerate_box_model_raises(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         """Degenerate box model (no content) raises ElementNotFoundError."""
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        cdp.send.reset_mock()
+        cdp, ax = await _snapshot(config)
         cdp.send.side_effect = [
             {"model": {"content": []}},  # DOM.getBoxModel — empty content
         ]
-
-        tools = create_interact_tools(cdp, ax, config, bus)
-        click_tool = next(t for t in tools if t.name == "browser_click")
+        configure_browser(config, cdp=cdp, ax=ax)
 
         with pytest.raises(ElementNotFoundError, match="bounding box"):
-            await click_tool.execute(ref=2)
+            await browser_click(ref=2)
 
 
 class TestBrowserType:
     """browser_type tool."""
 
-    async def test_type_text_uses_insert_text(self) -> None:
+    async def test_type_text_uses_insert_text(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         """Type uses Input.insertText (single call, not char-by-char)."""
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        cdp.send.reset_mock()
+        cdp, ax = await _snapshot(config)
         cdp.send.side_effect = [
             {},  # DOM.focus
             {},  # Input.insertText
         ]
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_interact_tools(cdp, ax, config, bus)
-        type_tool = next(t for t in tools if t.name == "browser_type")
-
-        result = await type_tool.execute(ref=1, text="hello")
+        result = await browser_type(ref=1, text="hello")
         assert "Typed" in result
         assert "hello" in result
-
-        # Verify Input.insertText was called (not char-by-char)
         cdp.send.assert_any_call("Input", "insertText", {"text": "hello"})
 
-    async def test_type_redacts_return_value(self) -> None:
+    async def test_type_redacts_return_value(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         """When redact_inputs is True, return value is redacted."""
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
         config = BrowserConfig(security={"redact_inputs": True})  # type: ignore[arg-type]
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        cdp.send.reset_mock()
+        cdp, ax = await _snapshot(config)
         cdp.send.side_effect = [
             {},  # DOM.focus
             {},  # Input.insertText
         ]
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_interact_tools(cdp, ax, config, bus)
-        type_tool = next(t for t in tools if t.name == "browser_type")
-
-        result = await type_tool.execute(ref=1, text="secret-password")
+        result = await browser_type(ref=1, text="secret-password")
         assert "[REDACTED]" in result
         assert "secret-password" not in result
 
@@ -195,32 +152,21 @@ class TestBrowserType:
 class TestBrowserSelect:
     """browser_select tool."""
 
-    async def test_select_uses_arguments(self) -> None:
+    async def test_select_uses_arguments(
+        self, configure_browser: Callable[..., _State]
+    ) -> None:
         """Select uses callFunctionOn with arguments (no JS injection)."""
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        cdp.send.reset_mock()
+        cdp, ax = await _snapshot(config)
         cdp.send.side_effect = [
             {"object": {"objectId": "obj-1"}},  # DOM.resolveNode
             {"result": {}},  # Runtime.callFunctionOn
         ]
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_interact_tools(cdp, ax, config, bus)
-        select_tool = next(t for t in tools if t.name == "browser_select")
-
-        result = await select_tool.execute(ref=3, value="UK")
+        result = await browser_select(ref=3, value="UK")
         assert "Selected" in result
 
-        # Verify callFunctionOn used arguments param (not f-string injection)
         call_args = cdp.send.call_args_list[1]
         params = call_args[0][2]  # Third positional arg
         assert "arguments" in params
@@ -230,26 +176,14 @@ class TestBrowserSelect:
 class TestBrowserHover:
     """browser_hover tool."""
 
-    async def test_hover(self) -> None:
-        from arcagent.modules.browser.accessibility import AccessibilityManager
-        from arcagent.modules.browser.tools.interact import create_interact_tools
-
-        cdp = _make_cdp()
-        cdp.send.return_value = _SAMPLE_AX_TREE
+    async def test_hover(self, configure_browser: Callable[..., _State]) -> None:
         config = BrowserConfig()
-        ax = AccessibilityManager(cdp, config)
-        bus = _make_bus()
-
-        await ax.snapshot()
-
-        cdp.send.reset_mock()
+        cdp, ax = await _snapshot(config)
         cdp.send.side_effect = [
             {"model": {"content": [100, 100, 200, 100, 200, 200, 100, 200]}},  # DOM.getBoxModel
             {},  # Input.dispatchMouseEvent (mouseMoved)
         ]
+        configure_browser(config, cdp=cdp, ax=ax)
 
-        tools = create_interact_tools(cdp, ax, config, bus)
-        hover_tool = next(t for t in tools if t.name == "browser_hover")
-
-        result = await hover_tool.execute(ref=2)
+        result = await browser_hover(ref=2)
         assert "Hovered" in result

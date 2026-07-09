@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-08
+
+SPEC-044 — the optional **`SkillAdapter`** self-improvement seam (mirrors the SPEC-041
+`Brain` seam). arcagent manages skills (write/load/run) on its own; installing the
+optional `arcskill` package and enabling it supercharges them with adaptation and
+improvement. arcagent holds only the thin seam — all improvement logic lives in
+`arcskill.improver`.
+
+### Added
+- `arcagent.skilladapt`: `SkillAdapter` Protocol + `NullSkillAdapter` (improver-less
+  default, silent no-op, zero files) + config-select (`none` / `arcskill` / signed BYO,
+  lazy import, BYO signing gate above personal).
+- `arcagent.modules.skills`: thin wiring — module-bus hooks forward primitive per-turn
+  signals to the adapter; builds the injected agent-DID sidecar signer and the
+  operator-key WORM audit sink (audit authority ≠ audited subject).
+- `create_skill` now scaffolds a runnable `evals/` golden-task suite so new skills are
+  improvable from creation (SPEC-044 REQ-070).
+
+### Removed
+- `arcagent/modules/skill_improver/` (relocated to `arcskill.improver`, no-legacy):
+  arcagent source NCLOC net **down** ~2,400.
+
+## [0.13.1] - 2026-07-07
+
+arcmemory embedder + distiller wiring (SPEC-041, Phase 10). The `Brain` seam now
+lights up arcmemory's arcllm-backed embedder and distiller so semantic recall and
+consolidation are live in production.
+
+### Changed
+- **`select_brain` wires the arcllm-backed seams.** When `brain="arcmemory"`/`"auto"`
+  is selected and arcmemory is importable, `select_brain` builds an
+  `arcmemory.ArcLLMEmbedder` (unless `embed_backend="none"`) and, when a
+  `distill_provider` is configured, an `arcmemory.ArcLLMDistiller` (fresh provider per
+  consolidation via `arcllm.load_model`), and injects both into `ArcMemoryBrain`.
+  `embed_backend="none"` / an empty `distill_provider` leaves the respective seam
+  unwired — recall degrades to BM25 + graph, consolidation is a no-op, never a crash.
+- **`modules.memory.config`** gains `embed_backend`, `embed_model`, `distill_provider`,
+  and `distill_model` knobs (threaded through `_runtime.configure` → `select_brain`).
+- **`Brain.rebuild_index` is now async** (matching arcmemory's async embedder seam);
+  `NullBrain.rebuild_index` updated in lockstep.
+
+### Fixed
+- Synced `arcagent.__version__` with the packaged version (was drifting at `0.12.0`).
+
+## [0.13.0] - 2026-07-07
+
+arcmemory integration (SPEC-041, Phases 8/9): the memory-less `Brain` seam, thin wiring, deletion of both old memory backends (no-legacy), and grounded reflection into the existing ACE curator. A `pip install arc-agent` alone runs fully memory-less; adding `arcmemory` (or a BYO Brain) activates capture/recall.
+
+### Added
+- **The `Brain` seam (`arcagent/brain/`, outside core).** A structural `Brain` Protocol (primitives only — arcagent imports no memory package) + a no-op `NullBrain` default. `select_brain(setting, ...)` config-selects the impl: `"none"` → NullBrain (memory off, zero files), `"arcmemory"`/`"auto"` → the `arcmemory.ArcMemoryBrain` plug-in (lazy import; missing install degrades to NullBrain, never crashes), or a dotted `module:Class` path for a bring-your-own Brain. This is the SPEC-047 pluggable-brain seam.
+- **Query-conditioned assembly (T-080, core seam).** `assemble_system_prompt(..., *, query="")` threads the turn text into the `agent:assemble_prompt` payload so recall is query-conditioned. Signature/payload only — core NCLOC unchanged (3498).
+- **Thin `modules/memory` wiring (T-081/082/083) — the only arcagent-side memory code.** `Brain.capture()` on `agent:post_tool` + `agent:post_respond` (zero-LLM); `Brain.retrieve()` on `agent:assemble_prompt` @ priority 50 → `sections["recall"]`, query-conditioned with a once-per-turn cache (spawn double-assembly retrieves once); one de-duplicated `memory_search` tool; a `@background_task` that polls an event-count / idle trigger and calls `Brain.consolidate()`, emitting `memory.consolidated`. Every Brain read/write is routed through the priority-10 `memory_acl` veto first. With `NullBrain` selected the module is a silent no-op (writes nothing).
+- **Grounded reflection → existing ACE (`modules/policy/reflection.py`, Phase 9).** `ReflectionGrounding{episode_summary, step_results, failures}` + `reflect_and_curate()` feed the EXISTING `PolicyEngine._reflect`→`_curate` (no second curation algorithm). A `memory.consolidated` policy hook grounds a session-less automated run on the consolidation episode (closes the automated-run gap). Writes only `policy.md`/`policy.pending`, never `identity.md` (ASI01); federal stages `policy.pending` for approval, personal/enterprise auto-apply; every mutation audited (`policy.reflected`/`policy.curated`). Reuses the engine's score-clamp/prune/cap/sanitize.
+
+### Removed
+- **No-legacy deletion of both old memory backends.** Deleted `modules/bio_memory/` and the old `modules/memory/` internals (`MarkdownMemoryModule`, `HybridSearch`, `EntityExtractor`, the duplicate `memory_search` tool, the dead `ctx.data["memory_context"]` path, and the dead `embedding_model`/`search_weight_vector`/`context_budget_tokens` config). Their salvageable logic was already absorbed into `arcmemory`. `memory_acl` is retained wholesale.
+
+## [0.12.0] - 2026-07-07
+
+SPEC-043 SOTA loop controls (arcagent half): arcrun executes concurrently; arcagent keeps its own accounting atomic. The guards live next to the state they protect — never in the loop.
+
+### Added
+- **Concurrency-safe trifecta ledger (REQ-032, the hard part).** `SessionCapabilityLedger.admission_lock(session_id)` — a per-session `asyncio.Lock`. `tool_registry.wrapped_execute` now holds it across the `snapshot → await pipeline.evaluate → record` critical section so concurrent dispatch cannot interleave the TOCTOU window: two calls whose capability-leg *union* completes a forbidden composition are evaluated in sequence and the second is DENIED (no lost update). The lock covers only the O(1) admission decision — `tool.execute` and the HumanGate approval await run OUTSIDE it (no over-locking, no human timeout under the lock). Proven by an interleaving-forced `asyncio.Barrier` test that FAILS on the unguarded ledger and PASSES guarded.
+- **Plan aggregate reserve-then-settle (REQ-053).** `Plan.reserved_tokens`/`reserved_cost` + `available_budget()` (remaining − reservations); `ConcurrentStepExecutor` reserves each branch's cap from the shared budget before launch (under a plan-level lock) and settles actual spend on completion, so `Σ(reservations + spend) ≤ Plan.budget` — N concurrent branches can never overspend. Proven by an interleaving-forced test (guarded: no overspend + over-budget branch deferred; control: the naive read-then-run pattern overspends).
+- **Concurrent Plan-Execute (REQ-050..056).** `ConcurrentStepExecutor` (satisfies the SPEC-040 `StepExecutor` seam) dispatches the ready DAG frontier concurrently via arcrun's wired `PlanExecuteStrategy` — one gather path, not a second. `PlanOrchestrator` swaps to concurrent frontier dispatch by injection; the `Plan` model + `ready_steps`/replan are unchanged. A failing branch is captured as a `FAILED` outcome and never crashes siblings.
+- **Checkpoint persistence (REQ-005).** `SessionManager.persist_checkpoint()` writes each arcrun `LoopCheckpoint` (scalar metadata only — the transcript is already durable) as one append-only JSONL line under the existing lock, emits a `loop.checkpoint` audit event, and segregates checkpoint records from the model transcript on resume (`latest_checkpoint()`).
+- **Proactive HITL wiring (REQ-010b/c, ADR-019).** `tools/approval_policy.py` resolves the tier approval ladder — personal empty, enterprise all plain tools, federal every skill+tool (`RegisteredTool.skill_backed`) — and binds `approval_provider` to SPEC-035 `HumanGate` (operator-signed one-shot grant). arcrun enforces the resolved name-set as a dumb predicate. `build_loop_controls` assembles the loop-control kwargs for the streaming run.
+- **Federal circuit-breaker floors (REQ-024).** `SecurityConfig` gains `runaway_max_repeat`/`error_cascade_max`/`loop_max_parallel`; the tier validator pins non-relaxable federal floors and fails closed on a looser/disabled override.
+- `Tool.classification` is stamped onto arcrun tools in `to_arcrun_tools()` so the wired parallel dispatcher can classify batches.
+
+SPEC-040 real planner: the planning module is now a Plan-Execute planner, not a to-do notebook. Given a goal it produces a durable, dependency-aware DAG plan, executes each step as one bounded, policy- and budget-gated arcrun run, resumes cleanly after a restart, and replans a failed step — bounded so it can never run away.
+
+### Added
+- `arcagent/modules/planning/models.py` — `Plan`/`PlanStep` DAG model (LLMCompiler-style `depends_on` edges) with typed `StepStatus`/`PlanStatus`, cycle/dangling/duplicate validation, and a frontier (`ready_steps`) re-derived from `depends_on` + the succeeded set (no separate cursor, so resume reconstructs progress from the plan file alone).
+- `decomposer.py` — goal → DAG via arcllm's portable tool-forced structured output (ReWOO-style single upfront decomposition); a grounding gate rejects ungrounded plans and any step targeting a protected identity path (`identity.md`/`policy.md`, ASI01) before persistence; `replan` preserves the succeeded prefix, feeds the model the real results + failure reason (Reflexion-lite), and bumps `version`.
+- `store.py` — durable `plans/<id>.json` via the existing atomic-write helper, integrity-checked on read, with a single audit emission point per transition through the arctrust sink (WormSink where configured) + telemetry mirror.
+- `executor.py` — the `StepExecutor` Protocol (the SPEC-043 swap point) + interim `ArcRunStepExecutor` driving one bounded react run per step through `arcrun.run`; a policy DENY, SPEC-038 budget breach, or tool error is captured as a `FAILED` step, never a crash.
+- `orchestrator.py` — deterministic DAG walk (one ready step at a time; parallel dispatch deferred to SPEC-043), checkpoint-before-proceed, bounded replan with a structured terminator on `max_replans` exhaustion, and crash-safe resume.
+- Planner tools `plan_create` / `plan_status` / `plan_replan` / `plan_abandon` (SPEC-021) and an `agent:assemble_prompt` hook injecting the active plan frontier.
+
+### Removed
+- The four to-do CRUD tools (`task_create`/`task_list`/`task_update`/`task_complete`), `tasks.json` handling, the redundant `tools.py`, and the dead `PlanningModule` class (no-legacy, OQ-4).
+
+### Notes
+- Zero `arcagent/core` LOC added (core NCLOC unchanged at 3411/3500); the planner is entirely a module and drives, never re-implements, the loop.
+
 ## [0.10.0] - 2026-07-07
 
 SPEC-039 quality pass: core back under budget, and per-tier default budget ceilings so token/cost/request limits are ON by default (SPEC-038 OQ-3).
