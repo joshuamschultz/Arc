@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import date
 from pathlib import Path
 
 from arcrun import collect
@@ -18,6 +19,18 @@ from arccli.commands.agent._common import (
 )
 
 
+def _default_session_id() -> str:
+    """Dated rolling session id — one transcript per day, not one forever.
+
+    A fixed ``cli:run`` id piled every task into a single ever-growing
+    ``workspace/sessions/cli:run.jsonl`` (unbounded context bloat + cross-task
+    bleed). Rolling on the date bounds each transcript to a day while still
+    letting same-day invocations resume shared context. Pass ``--session`` to
+    pin an explicit id.
+    """
+    return f"cli:run:{date.today().isoformat()}"
+
+
 async def _agent_run_once(
     agent_dir: Path,
     task: str,
@@ -25,6 +38,7 @@ async def _agent_run_once(
     context: str | None,
     verbose: bool,
     as_json: bool,
+    session_id: str,
 ) -> None:
     """One-shot task execution coroutine."""
     arc_agent, config, _config_path = _load_arcagent(agent_dir)
@@ -44,9 +58,10 @@ async def _agent_run_once(
 
     await arc_agent.startup()
     try:
-        # One streaming entry — open-or-resume a deterministic local session and
-        # collect the stream to a final result (SPEC-027 AC-2.2).
-        session = await arc_agent.session("cli:run")
+        # One streaming entry — open-or-resume a local session and collect the
+        # stream to a final result (SPEC-027 AC-2.2). Session id is dated/rolling
+        # (or --session) so tasks don't all pile into one unbounded transcript.
+        session = await arc_agent.session(session_id)
         result = await collect(arc_agent.run(task, session=session))
 
         if as_json:
@@ -67,6 +82,7 @@ def _run(args: argparse.Namespace) -> None:
     """Run a task against an agent (non-interactive one-shot)."""
     agent_dir = _resolve_agent_dir(args.path)
     _load_env(agent_dir)
+    session_id = getattr(args, "session", None) or _default_session_id()
     asyncio.run(
         _agent_run_once(
             agent_dir=agent_dir,
@@ -75,5 +91,6 @@ def _run(args: argparse.Namespace) -> None:
             context=getattr(args, "context", None),
             verbose=getattr(args, "verbose", False),
             as_json=getattr(args, "as_json", False),
+            session_id=session_id,
         )
     )
