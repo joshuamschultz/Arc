@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from arccli.commands._shared import dispatch
+from arccli.commands._shared import dispatch, err
 from arccli.commands._shared import print_json as _print_json
 from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import print_table as _print_table
@@ -912,6 +912,50 @@ def _down(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Folder serve (Josh's team-serve model) — arc team serve <dir>
+# ---------------------------------------------------------------------------
+
+
+def _serve_cmd(args: argparse.Namespace) -> None:
+    """Start NATS + register the folder's agents + serve the dashboard.
+
+    Thin alias for ``arc ui start --team-root <dir>``: both share one infra
+    bootstrap (:func:`arccli.commands._serve.bootstrap_infra`), so the broker
+    comes up automatically and every agent dir under the root is registered and
+    surfaced in the roster without any manual ``nats-server`` or ``arc team
+    register`` step.
+    """
+    from arccli.commands.ui import ui_handler
+
+    forwarded = ["start", "--team-root", args.team_root]
+    if getattr(args, "port", None) is not None:
+        forwarded += ["--port", str(args.port)]
+    if getattr(args, "host", None):
+        forwarded += ["--host", args.host]
+    if getattr(args, "no_browser", False):
+        forwarded.append("--no-browser")
+    ui_handler(forwarded)
+
+
+def _is_nats_unavailable(exc: BaseException) -> bool:
+    """True when *exc* signals an unreachable/JetStream-less NATS broker."""
+    if isinstance(exc, ConnectionError):
+        return True
+    return (type(exc).__module__ or "").startswith("nats")
+
+
+def _print_nats_hint(exc: BaseException) -> None:
+    """Actionable guidance instead of a raw NATS error (Problem 2 degrade)."""
+    err(f"arc team: no usable NATS broker ({exc}).")
+    err(
+        "  Start one with `arc team serve <agent-dir>` — it auto-starts NATS "
+        "JetStream and serves the dashboard."
+    )
+    err("  Or run `nats-server -js` yourself (install: brew install nats-server).")
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # Argparse-based dispatcher
 # ---------------------------------------------------------------------------
 
@@ -1037,6 +1081,25 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("down", help="Stop a running team's member daemons.")
     p.add_argument("team_id", help="Team id.")
 
+    # serve — start NATS + register folder agents + serve the dashboard
+    p = subs.add_parser(
+        "serve",
+        help="Start NATS + register + serve the dashboard for a folder of agents.",
+    )
+    p.add_argument(
+        "team_root",
+        help="Directory of agent subdirs (each holding an arcagent.toml).",
+    )
+    p.add_argument("--port", type=int, default=None, help="Dashboard port (default 8420).")
+    p.add_argument("--host", default=None, help="Bind address (default 127.0.0.1).")
+    p.add_argument(
+        "--no-browser",
+        dest="no_browser",
+        action="store_true",
+        default=False,
+        help="Do not auto-open a browser tab on loopback start.",
+    )
+
     return parser
 
 
@@ -1058,12 +1121,20 @@ _SUBCOMMAND_MAP = {
     "thread": _thread,
     "up": _up,
     "down": _down,
+    "serve": _serve_cmd,
 }
 
 
 def team_handler(args: list[str]) -> None:
     """Top-level handler for `arc team <sub> [args]`.
 
-    Called by arccli.commands.registry when the user runs `arc team ...`.
+    Called by arccli.commands.registry when the user runs `arc team ...`. A NATS
+    broker that is down or lacks JetStream degrades to an actionable hint
+    (pointing at `arc team serve`) rather than a raw connection error.
     """
-    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)
+    try:
+        dispatch(_build_parser(), _SUBCOMMAND_MAP, args)
+    except Exception as exc:  # reason: reshape only NATS errors, re-raise rest
+        if _is_nats_unavailable(exc):
+            _print_nats_hint(exc)
+        raise
