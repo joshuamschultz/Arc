@@ -39,11 +39,15 @@ class TestWebbrowserOpenReturnsFalse:
         assert "viewer-tok-abc" not in out
         assert "#auth=" not in out
 
-    def test_fallback_prints_no_token_url(self, capsys: pytest.CaptureFixture[str]) -> None:
-        _print_browser_open_fallback("127.0.0.1", 8420, "viewer-tok-abc", show_tokens=False)
+    def test_fallback_nudges_to_link_without_token(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The fallback no longer prints tokens itself — `_start` already
+        # printed the full magic-link above on loopback. It only nudges.
+        _print_browser_open_fallback("127.0.0.1", 8420)
         out = capsys.readouterr().out
-        # The URL line MUST NOT carry the auth fragment under any condition.
         assert "#auth=" not in out
+        assert "viewer-tok-abc" not in out
         assert "http://127.0.0.1:8420/" in out
 
 
