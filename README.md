@@ -205,9 +205,14 @@ Pick a tier — this is the **only** dial that controls strictness:
 
 | Tier | Telemetry | Audit | Retry | Fallback | OpenTelemetry | PII redaction + signing |
 |---|---|---|---|---|---|---|
-| `personal` | off | off | off | off | off | off |
+| `personal` | ✅ | off | off | off | off | off |
 | `enterprise` | ✅ | ✅ | ✅ (3x) | ✅ | off | off |
 | `federal` | ✅ | ✅ | ✅ (3x) | ✅ | ✅ (OTLP) | ✅ |
+
+> Telemetry is on at every tier because it drives the always-on `arcstore`
+> operational spool the dashboard's **ArcLLM / Observe** page reads — a personal
+> deployment still sees its own LLM calls. OpenTelemetry export stays off below
+> `federal`, so personal stays lightweight.
 
 Or fully non-interactive:
 
@@ -286,6 +291,88 @@ arc ui tail --viewer-token <token> --layer llm
 
 > The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status wrapper for the
 > dashboard plus every `*_agent` under `./team`.
+
+---
+
+## 🧑‍🤝‍🧑 Stand Up a Fleet (Multi-Agent Team)
+
+The single-agent flow above scales to a whole team in one self-contained,
+isolated folder — "start up, config identities, add tools, and go."
+
+**1. Lay out a deployment folder.** Keep everything (config, keys, agents) in one
+directory so it's isolated from `~/.arc` and portable:
+
+```
+mfg-deploy/
+├── config/            # ARC_CONFIG_DIR points here
+│   ├── .env           # provider keys — auto-loaded (see below)
+│   ├── arcagent.toml  # tier = "personal"
+│   └── arcllm.toml
+└── agents/
+    ├── procurement/   # each is a normal `arc agent create` dir
+    ├── picking/
+    ├── demand-planning/
+    └── inventory/
+```
+
+**2. Initialize + create each agent.** `arc agent create` scaffolds the dir,
+identity card, DID/keypair, and auto-registers it so it appears in the dashboard:
+
+```bash
+export ARC_CONFIG_DIR="$PWD/config"
+arc init --tier personal --provider anthropic
+
+for a in procurement picking demand-planning inventory; do
+  arc agent create "$a" --dir ./agents --model anthropic/claude-sonnet-4-6
+done
+```
+
+**3. Configure keys + memory.** Drop provider keys in `config/.env` — Arc
+auto-loads `${ARC_CONFIG_DIR}/.env` (plus cwd and `~`), so no manual `export`:
+
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > config/.env
+# Optional: keep this fleet's telemetry in its own store (clean Observe view)
+echo "ARCSTORE_DATA_DIR=$PWD/data-store" >> config/.env
+```
+
+Each agent ships `[modules.memory].config.brain = "arcmemory"` by default, so
+durable semantic memory (episodic index + entity graph + a daily log) is on out
+of the box — no extra wiring.
+
+**4. Validate the fleet:**
+
+```bash
+for a in agents/*/; do arc agent build --check "$a"; done
+```
+
+**5. Spin up the dashboard over the whole fleet:**
+
+```bash
+arc ui start --team-root ./agents
+```
+
+`--team-root` discovers every `agents/*/arcagent.toml` (bare `<name>/` or legacy
+`<name>_agent/`), auto-starts NATS JetStream, and turns on the in-process web
+chat. Open the printed `#auth=<token>` URL and click any agent. You get, per
+agent, out of the box:
+
+- **Chat that persists** — reopen an agent or come back later and the
+  conversation is still there (replayed from `workspace/sessions/<chat_id>.jsonl`).
+- **Live LLM calls** in the **ArcLLM / Observe** tab (scoped to this fleet via
+  `ARCSTORE_DATA_DIR`).
+- **Memory** written under each `workspace/memory/`.
+
+**6. (Optional) Team collaboration — agents in channels:**
+
+```bash
+arc team create mfg --channel ops --members "procurement,picking,demand-planning,inventory"
+arc team up mfg          # boot members as supervised daemons on NATS
+# watch them talk in the dashboard's "Messages" tab, or:  arc team read ops
+```
+
+> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status
+> wrapper for the dashboard plus every agent under `./agents`.
 
 ---
 
