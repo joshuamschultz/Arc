@@ -541,7 +541,9 @@ class FirecrackerSandbox:
 # ---------------------------------------------------------------------------
 
 
-async def _run_firecracker(fixture_cmd: str, skill_dir: Path) -> DryRunResult:
+async def _run_firecracker(
+    fixture_cmd: str, skill_dir: Path, *, timeout_s: int = 10
+) -> DryRunResult:
     """Execute the fixture inside a Firecracker microVM via FirecrackerSandbox.
 
     Requires kernel_path, rootfs_path, and jailer_binary to be configured via
@@ -565,4 +567,4 @@ async def _run_firecracker(fixture_cmd: str, skill_dir: Path) -> DryRunResult:
         rootfs_path=rootfs_path,
         jailer_binary=jailer_bin,
     )
-    return await sandbox.execute(skill_dir, test_command=fixture_cmd)
+    return await sandbox.execute(skill_dir, test_command=fixture_cmd, timeout_s=timeout_s)

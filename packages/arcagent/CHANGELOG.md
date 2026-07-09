@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-08
+
+SPEC-044 — the optional **`SkillAdapter`** self-improvement seam (mirrors the SPEC-041
+`Brain` seam). arcagent manages skills (write/load/run) on its own; installing the
+optional `arcskill` package and enabling it supercharges them with adaptation and
+improvement. arcagent holds only the thin seam — all improvement logic lives in
+`arcskill.improver`.
+
+### Added
+- `arcagent.skilladapt`: `SkillAdapter` Protocol + `NullSkillAdapter` (improver-less
+  default, silent no-op, zero files) + config-select (`none` / `arcskill` / signed BYO,
+  lazy import, BYO signing gate above personal).
+- `arcagent.modules.skills`: thin wiring — module-bus hooks forward primitive per-turn
+  signals to the adapter; builds the injected agent-DID sidecar signer and the
+  operator-key WORM audit sink (audit authority ≠ audited subject).
+- `create_skill` now scaffolds a runnable `evals/` golden-task suite so new skills are
+  improvable from creation (SPEC-044 REQ-070).
+
+### Removed
+- `arcagent/modules/skill_improver/` (relocated to `arcskill.improver`, no-legacy):
+  arcagent source NCLOC net **down** ~2,400.
+
 ## [0.13.1] - 2026-07-07
 
 arcmemory embedder + distiller wiring (SPEC-041, Phase 10). The `Brain` seam now

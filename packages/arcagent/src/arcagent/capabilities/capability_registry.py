@@ -161,6 +161,11 @@ class CapabilityRegistry:
         self._lock = aiorwlock.RWLock()
         self._tools: dict[str, ToolEntry] = {}
         self._skills: dict[str, SkillEntry] = {}
+        # Retired (suppressed) skills: name -> stashed entry (for revive restore).
+        # A suppressed skill is absent from _skills, so BOTH read sites (the arcrun
+        # advertisement and the prompt manifest) exclude it, and register_skill skips
+        # re-adding it on a disk re-scan (SPEC-044 HIGH-3, REQ-043).
+        self._suppressed: dict[str, SkillEntry | None] = {}
         self._hooks: dict[str, list[HookEntry]] = {}
         self._tasks: dict[str, BackgroundTaskEntry] = {}
         self._capabilities: dict[str, LifecycleEntry] = {}
@@ -189,6 +194,11 @@ class CapabilityRegistry:
 
     async def register_skill(self, entry: SkillEntry) -> RegisterResult:
         async with self._lock.writer:
+            if entry.name in self._suppressed:
+                # A retired skill: keep it out of the offering even on a disk re-scan.
+                # Refresh the stash so a later revive restores the current version.
+                self._suppressed[entry.name] = entry
+                return RegisterResult(outcome="added")
             existing = self._skills.get(entry.name)
             self._skills[entry.name] = entry
             self._invalidate_cache()
@@ -199,6 +209,33 @@ class CapabilityRegistry:
     async def get_skill(self, name: str) -> SkillEntry | None:
         async with self._lock.reader:
             return self._skills.get(name)
+
+    async def suppress_skill(self, name: str) -> None:
+        """Retire a skill from the offering: remove it from ``_skills`` and stash it.
+
+        Idempotent. Excludes the skill from both the arcrun advertisement and the prompt
+        manifest, and survives disk re-scans via :meth:`register_skill` (SPEC-044 HIGH-3).
+        """
+        async with self._lock.writer:
+            if name in self._suppressed:
+                return
+            self._suppressed[name] = self._skills.pop(name, None)
+            self._invalidate_cache()
+
+    async def unsuppress_skill(self, name: str) -> None:
+        """Revive a suppressed skill, restoring the stashed entry to the offering."""
+        async with self._lock.writer:
+            if name not in self._suppressed:
+                return
+            entry = self._suppressed.pop(name)
+            if entry is not None:
+                self._skills[name] = entry
+            self._invalidate_cache()
+
+    async def suppressed_skills(self) -> frozenset[str]:
+        """Names currently suppressed (retired)."""
+        async with self._lock.reader:
+            return frozenset(self._suppressed)
 
     # --- Hooks ------------------------------------------------------------
 

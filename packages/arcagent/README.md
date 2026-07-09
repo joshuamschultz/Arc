@@ -6,7 +6,7 @@
 *DID-required at construction. Unified capability loader (tools · skills · hooks · background tasks), sessions, module bus. Wraps arcrun + arcllm with everything an autonomous agent needs to be accountable.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-3%2C136%2B-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-2%2C805%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/core_coverage-≥90%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![DID Required](https://img.shields.io/badge/DID-required-F68D2E.svg)](#-the-four-pillars-built-in)
@@ -321,6 +321,49 @@ enabled = true
 
 Verified skills land under `~/.arc/capabilities/` (root 2) just like operator-installed ones.
 
+### Skill self-improvement (optional, SPEC-044)
+
+arcagent writes, loads, and runs skills on its own — no extra install needed. It also
+defines a `SkillAdapter` seam (mirrors the `Brain` seam above) that a separate package
+can plug into to make skills *improve themselves*. arcagent ships **improver-less by
+default** (`NullSkillAdapter`: silent no-op, zero files written) and holds only the thin
+wiring — all optimization logic lives in the optional `arcskill` package.
+
+```toml
+[modules.skills]
+adapter = "none"                     # none (default) | arcskill | "pkg.mod:Class" (signed BYO)
+tier = "personal"                    # personal | enterprise | federal
+sweep_poll_seconds = 3600            # Curator retire/revive sweep cadence (@background_task)
+
+[modules.skills.improver]            # forwarded verbatim to arcskill.improver.ImproverConfig
+```
+
+Set `adapter = "arcskill"` (after `pip install arcskill`) to turn it on. What the thin
+wiring does:
+
+- Module-bus hooks forward primitive per-turn signals to the adapter — a skill read
+  opens a usage span, each subsequent tool call is `observe`d, `agent:post_plan` closes
+  the span, and `agent:pre_respond` triggers a bounded improvement pass once a skill
+  crosses its usage threshold.
+- `agent:ready` hands the adapter the real `CapabilityRegistry` (as `skill_registry`) so
+  it can resolve a skill name to its on-disk bundle.
+- A retired skill is suppressed from the agent's offering (`CapabilityRegistry.suppress_skill`)
+  — excluded from both the prompt manifest and the arcrun tool surface, reversibly, and
+  the suppressed set is rehydrated from disk on restart.
+- Builds two separate signers: an agent-DID sidecar `Signer` for mutated skill artifacts
+  (`.arcsig`, same convention as `create_skill`), and an operator-key WORM `AuditSink`
+  (`<agent>/.audit/skills.worm`) for the audit trail — the audited subject is never its
+  own audit authority.
+- Binds the improver's operator-approval seam to the shared `HumanGate` (SPEC-035/043):
+  federal approves every mutation and retire/revive, enterprise approves code mutations,
+  personal auto-applies with an audit record.
+- If memory (`[modules.memory]`) is active, the `agent:pre_respond` recall hook places
+  Brain-derived context on `ctx.data["insight"]` before the skills hook runs, giving the
+  improver's mutator grounded context; empty when memory is off (REQ-060).
+
+See `packages/arcskill/README.md` for what the improver itself does (code-repair
+mutation, golden-task gate, change-bound edits, Curator lifecycle).
+
 ---
 
 ## 💾 Sessions
@@ -534,7 +577,7 @@ Every operation emits arctrust audit events.
 uv run --no-sync pytest packages/arcagent/tests
 ```
 
-- **Tests:** 3,136+
+- **Tests:** 2,805+ (16 skipped)
 - **Coverage:** core components ≥ 90%
 - **Type check:** `mypy --strict` (active cleanup in progress)
 - **Lint:** `ruff check`
