@@ -257,21 +257,35 @@ arc agent run my-agent "Read the CSVs in workspace/data/ and summarize the trend
 
 Inside the chat REPL: `/help`, `/tools`, `/cost`, `/skills`, `/sessions`, `/switch <id>`, `/identity`, `/quit`.
 
-### 6. (Optional) Watch It Run in a Browser
+### 6. (Optional) Watch It Run — and Message It — in a Browser
+
+The dashboard is also a chat surface. Point it at a team directory and it serves a web
+chat box per agent (`/ws/chat/{agent_id}`) plus live telemetry, both read on demand from
+the shared `arcstore` record — the agent does **not** push to it.
 
 ```bash
-arc ui start --show-tokens          # prints viewer / operator tokens
+# 1. Start the dashboard, pointed at the directory your agents live in.
+#    --team-root turns on the in-process web chat platform.
+arc ui start --team-root ./team --show-tokens
+#    Prints a viewer token + operator token and the URL (default 127.0.0.1:8420).
+
+# 2. In another terminal, run the agent so it's live to answer.
+arc agent serve ./team/my_agent
+
+# 3. Open the printed http://127.0.0.1:8420/ URL with the viewer token
+#    (on a loopback bind the browser opens pre-authenticated) and message the agent.
 ```
 
-`arc ui` reads agent activity on demand from the shared `arcstore` data dir (the Observe
-plane) — no separate daemon flag needed on the agent side. Open http://127.0.0.1:8420 with
-the viewer token. You'll see live LLM calls, tool invocations, costs, and audit events.
-
-Stream to terminal instead:
+There is no `--agent-token` and no agent-side `--ui` push flag — `arcui` reads everything
+from `arcstore`, so any agent that already wrote to the shared store shows up whether or not
+the dashboard was running when it did. Prefer the terminal?
 
 ```bash
 arc ui tail --viewer-token <token> --layer llm
 ```
+
+> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status wrapper for the
+> dashboard plus every `*_agent` under `./team`.
 
 ---
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # arc-stack.sh — clean start/stop/status of ArcUI + agents.
 #
-# Order matters: ArcUI must answer /api/health BEFORE any agent is
-# started. The agent's ui_reporter runs a one-shot probe at startup
-# (packages/arcagent/src/arcagent/modules/ui_reporter/_runtime.py).
-# If the probe fails, the agent runs UI-blind for its whole lifetime —
-# no retry, no reconnect to the dashboard, no operator messaging.
+# ArcUI is a pure READER of the shared arcstore record (SPEC-026 FR-5):
+# agents write LLM/tool/audit events to ~/.arc/store and arcui reads them
+# on demand. There is no agent-side push wire and no per-agent "ui_reporter"
+# handshake — starting an agent is enough for it to appear in the dashboard.
+# We still start the UI before the agents so the team registry the UI reads
+# at boot is populated (see register_agents).
 #
 # Usage:
 #   scripts/arc-stack.sh start [agent_name ...]
@@ -52,14 +53,12 @@ ensure_stable_tokens() {
     return 0
   fi
   echo "→ Generating stable UI tokens (first run): $TOKENS_FILE"
-  local v o a
+  local v o
   v="$(openssl rand -hex 32)"
   o="$(openssl rand -hex 32)"
-  a="$(openssl rand -hex 32)"
   # umask 077 ensures the file is born at 0600 — no chmod race.
   ( umask 077
-    printf 'VIEWER_TOKEN=%s\nOPERATOR_TOKEN=%s\nAGENT_TOKEN=%s\n' \
-      "$v" "$o" "$a" >"$TOKENS_FILE"
+    printf 'VIEWER_TOKEN=%s\nOPERATOR_TOKEN=%s\n' "$v" "$o" >"$TOKENS_FILE"
   )
 }
 
@@ -67,8 +66,8 @@ load_stable_tokens() {
   ensure_stable_tokens
   # shellcheck disable=SC1090
   . "$TOKENS_FILE"
-  if [ -z "${VIEWER_TOKEN:-}" ] || [ -z "${OPERATOR_TOKEN:-}" ] || [ -z "${AGENT_TOKEN:-}" ]; then
-    echo "✗ $TOKENS_FILE is malformed (missing VIEWER/OPERATOR/AGENT)."
+  if [ -z "${VIEWER_TOKEN:-}" ] || [ -z "${OPERATOR_TOKEN:-}" ]; then
+    echo "✗ $TOKENS_FILE is malformed (missing VIEWER/OPERATOR)."
     exit 1
   fi
 }
@@ -136,7 +135,6 @@ start_ui() {
     --port       "$UI_PORT" \
     --viewer-token   "$VIEWER_TOKEN" \
     --operator-token "$OPERATOR_TOKEN" \
-    --agent-token    "$AGENT_TOKEN" \
     --no-browser \
     >"$LOG_DIR/ui.log" 2>&1 &
   echo $! >"$PID_DIR/ui.pid"
@@ -226,20 +224,19 @@ start_agents() {
   done
 }
 
-# Scan each agent's log for the probe result. Distinguishes four states
-# so the operator knows what to do:
-#   ok        — ui_reporter handshake succeeded (visible on dashboard)
-#   probe     — UI probe ran but failed (UI unreachable from this agent)
-#   crashed   — process exited during startup (config / key / vault error)
-#   stalled   — alive but never emitted a ui_reporter line (likely no
-#               [modules.ui_reporter] section in arcagent.toml, OR a
-#               long boot path)
+# Confirm each agent process actually stayed up through boot. Since arcui is a
+# pure reader of arcstore (no agent-side handshake to wait for), "healthy" now
+# means: the process is still alive after a short settle and did not crash with
+# a startup error. Two states:
+#   connected — process alive after the settle window (writes to arcstore → shows
+#               up in the dashboard)
+#   degraded  — process exited during startup (config / key / vault error)
 #
 # After probing all agents the function:
-#   - Writes per-agent state to AGENT_STATE_FILE (atomic tmp+rename,
-#     chmod 600) so arcui's roster endpoint can surface `degraded` entries.
-#   - Exits 0 if at least one agent connected (systemd unit stays active).
-#   - Exits 1 only when zero agents connected (unit really is dead).
+#   - Writes per-agent state to AGENT_STATE_FILE (atomic tmp+rename, chmod 600)
+#     so arcui's roster endpoint can surface `degraded` entries.
+#   - Exits 0 if at least one agent is alive (systemd unit stays active).
+#   - Exits 1 only when zero agents survived boot (unit really is dead).
 wait_for_agents() {
   local connected=0 total=0
   local -A agent_states   # associative array: name → "connected"|"degraded"
@@ -251,44 +248,26 @@ wait_for_agents() {
     local log="$LOG_DIR/agent-$a.log"
     local pid; pid="$(cat "$PID_DIR/agent-$a.pid" 2>/dev/null || true)"
     local deadline=$((SECONDS + AGENT_PROBE_TIMEOUT_S))
-    local result=""
+    local result="alive"
+    # Watch for an early crash; if the process is still up at the deadline it's
+    # considered live (it's already writing to arcstore).
     while (( SECONDS < deadline )); do
-      if grep -q "ui_reporter: connected"      "$log" 2>/dev/null; then
-        result="ok"; break
-      fi
-      if grep -q "ui_reporter: not connecting" "$log" 2>/dev/null; then
-        result="probe"; break
-      fi
-      # Process gone before any probe line landed = crashed during boot.
-      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
         result="crashed"; break
       fi
       sleep 0.3
     done
     case "$result" in
-      ok)
-        echo "  ✓ $a connected to UI"
+      alive)
+        echo "  ✓ $a is live (writing to arcstore → visible on the dashboard)"
         connected=$((connected + 1))
         agent_states["$a"]="connected"
-        ;;
-      probe)
-        echo "  ✗ $a UI probe failed (agent ran but couldn't reach UI):"
-        grep "ui_reporter: not connecting" "$log" | tail -n 1 \
-          | sed 's/^/      /'
-        agent_states["$a"]="degraded"
         ;;
       crashed)
         echo "  ✗ $a crashed during startup:"
         # Last non-blank line is almost always the actionable error
         # ('arc: error in agent: ...').
         grep -v '^[[:space:]]*$' "$log" | tail -n 3 | sed 's/^/      /'
-        agent_states["$a"]="degraded"
-        ;;
-      *)
-        echo "  ! $a alive but no ui_reporter line in ${AGENT_PROBE_TIMEOUT_S}s"
-        if ! grep -q "ui_reporter" "$log" 2>/dev/null; then
-          echo "      (no [modules.ui_reporter] in $TEAM_ROOT/$a/arcagent.toml?)"
-        fi
         agent_states["$a"]="degraded"
         ;;
     esac
@@ -318,12 +297,12 @@ wait_for_agents() {
 
   local degraded=$((total - connected))
   echo ""
-  echo "✓ ${connected}/${total} agents connected (${degraded} degraded)"
+  echo "✓ ${connected}/${total} agents live (${degraded} degraded)"
 
   if [ "${connected}" -ge 1 ]; then
     return 0   # systemd unit stays active
   fi
-  echo "✗ no agents connected — unit startup failed"
+  echo "✗ no agents survived boot — unit startup failed"
   return 1
 }
 
@@ -335,8 +314,8 @@ print_status() {
   else
     echo "  health   : DOWN"
   fi
-  if [ -f "$HOME/.arcagent/ui-token" ]; then
-    echo "  token    : $(head -c 8 "$HOME/.arcagent/ui-token")…  (~/.arcagent/ui-token)"
+  if [ -f "$TOKENS_FILE" ]; then
+    echo "  token    : viewer/operator pinned in $TOKENS_FILE"
   fi
   echo "  dashboard: $(bootstrap_url)"
   echo "    ^ stable URL (tokens pinned in $TOKENS_FILE) — bookmark it once"
