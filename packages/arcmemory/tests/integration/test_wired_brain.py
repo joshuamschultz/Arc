@@ -19,17 +19,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from arctrust.audit import AuditEvent
 from arctrust.classification import Classification
 
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig
-from arcmemory.db import DEFAULT_DIMS, MemoryDB
+from arcmemory.db import DEFAULT_DIMS, MemoryDB, sqlite_vec_loadable
 from arcmemory.distill import FactCandidate, FactExtraction, InsightCandidate, InsightMint
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Event, Scope
+
+# Real-vector semantic recall needs the sqlite-vec extension; skip where it can't
+# load (the interpreter degrades to BM25+graph, which this test asserts against).
+requires_vec = pytest.mark.skipif(
+    not sqlite_vec_loadable(),
+    reason="sqlite-vec extension not loadable in this Python/SQLite build",
+)
 
 _DID = "did:arc:wired-agent"
 
@@ -267,6 +275,7 @@ async def test_t101_consolidate_mints_promotes_decays_and_audits(workspace: Path
 # -- T-102 (AC-5): semantic (no-lexical-overlap) recall via the WIRED embedder
 
 
+@requires_vec
 async def test_t102_semantic_recall_uses_real_vectors_not_degrade(workspace: Path) -> None:
     scope = _scope()
     _seed_events(

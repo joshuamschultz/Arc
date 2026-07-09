@@ -11,12 +11,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from arctrust.audit import AuditEvent
 
-from arcmemory.db import MemoryDB
+from arcmemory.db import MemoryDB, sqlite_vec_loadable
 from arcmemory.index.surface import SurfaceIndex
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.types import Event, Scope
+
+# Real-vector semantic recall needs the sqlite-vec extension; where it cannot
+# load the recall path degrades to BM25+graph and these assertions can't hold.
+requires_vec = pytest.mark.skipif(
+    not sqlite_vec_loadable(),
+    reason="sqlite-vec extension not loadable in this Python/SQLite build",
+)
 
 # Concept lexicon: distinct synonym sets map to distinct concept dimensions.
 # "dog"/"puppy"/"canine" -> dim 0; "cat"/"kitten"/"feline" -> dim 1; etc. No two
@@ -71,6 +79,7 @@ def _surface(
 # -- T-040: incremental, content-gated indexing -----------------------------
 
 
+@requires_vec
 async def test_index_embeds_all_then_skips_unchanged(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     episodic = EpisodicStore(db, workspace)
@@ -88,6 +97,7 @@ async def test_index_embeds_all_then_skips_unchanged(workspace, db, scope) -> No
     assert emb.calls == 2
 
 
+@requires_vec
 async def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
     emb = ConceptEmbedder()
     entities = workspace / "memory" / "entities"
@@ -110,6 +120,7 @@ async def test_index_reembeds_only_changed_file(workspace, db, scope) -> None:
 # -- T-041: RRF fusion, semantic recall, recency ----------------------------
 
 
+@requires_vec
 async def test_semantic_query_with_no_lexical_overlap_is_recalled(workspace, db, scope) -> None:
     """A query sharing a CONCEPT but no TOKEN with the target still retrieves it."""
     emb = ConceptEmbedder()

@@ -48,6 +48,21 @@ def _load_sqlite_vec(conn: sqlite3.Connection) -> bool:
     return True
 
 
+def sqlite_vec_loadable() -> bool:
+    """True if the sqlite-vec extension can load in this interpreter.
+
+    Probes the same gate the DB applies at connect time (import + runtime
+    ``enable_load_extension``) on a throwaway connection. Some Python/SQLite
+    builds compile out extension loading, so callers can detect up front that
+    vector recall will degrade to BM25 + graph.
+    """
+    conn = sqlite3.connect(":memory:")
+    try:
+        return _load_sqlite_vec(conn)
+    finally:
+        conn.close()
+
+
 class MemoryDB:
     """Opens/creates the per-agent index DB and owns its schema.
 
