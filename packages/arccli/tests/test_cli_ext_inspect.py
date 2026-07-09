@@ -44,8 +44,11 @@ def test_inspect_renders_all_families(tmp_path: Path) -> None:
 def test_verify_clean_at_personal(tmp_path: Path) -> None:
     agent = _write_agent(tmp_path, tier="personal", brain="arcmemory")
     out = io.StringIO()
-    with redirect_stdout(out):
-        ext.ext_handler(["verify", "--agent", str(agent)])
+    try:
+        with redirect_stdout(out):
+            ext.ext_handler(["verify", "--agent", str(agent)])
+    except SystemExit as exc:  # surface the refused selection; a bare exit is undebuggable
+        pytest.fail(f"verify exited {exc.code}; output:\n{out.getvalue()}")
     assert "load-clean" in out.getvalue()
 
 

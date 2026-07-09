@@ -50,7 +50,9 @@ def iter_source_chunks(
         for path in sorted(directory.glob("*.md")):
             text = path.read_text(encoding="utf-8")
             fm, _ = parse_document(text)
-            rel = str(path.relative_to(workspace))
+            # as_posix() keeps source identifiers stable across OSes — on Windows
+            # str() would emit backslashes and fork the chunk_id from Unix.
+            rel = path.relative_to(workspace).as_posix()
             yield SourceChunk(
                 chunk_id=f"file:{rel}",
                 source_path=rel,
