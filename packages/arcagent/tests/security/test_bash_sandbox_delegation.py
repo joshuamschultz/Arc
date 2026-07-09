@@ -68,6 +68,7 @@ class TestTierDelegation:
         assert "hostbash" in result
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not _DOCKER, reason="requires a Docker daemon")
 @pytest.mark.asyncio
 class TestSandboxLive:

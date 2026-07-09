@@ -31,15 +31,21 @@ Extension pattern:
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import logging
 import os
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+# fcntl is POSIX-only. The WormSink single-writer lock and 0o600 hardening are
+# Unix deployment guarantees (federal/enterprise run on Linux); Windows imports
+# arctrust only so arcllm stays cross-platform, so the lock is skipped there.
+if sys.platform != "win32":
+    import fcntl
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -233,14 +239,15 @@ class WormSink:
 
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, self._FILE_MODE)
-        try:
-            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            os.close(self._fd)
-            raise RuntimeError(
-                f"WormSink: another writer holds {self._path} (single-writer invariant)"
-            ) from exc
-        os.fchmod(self._fd, self._FILE_MODE)
+        if sys.platform != "win32":
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                os.close(self._fd)
+                raise RuntimeError(
+                    f"WormSink: another writer holds {self._path} (single-writer invariant)"
+                ) from exc
+            os.fchmod(self._fd, self._FILE_MODE)
         self._restore_tip()
         if self._pending_recovery is not None:
             # A torn tail was truncated during restore; record the recovery
@@ -302,8 +309,9 @@ class WormSink:
         os.close(self._fd)
         self._path.rename(segment)
         self._fd = os.open(self._path, os.O_RDWR | os.O_APPEND | os.O_CREAT, self._FILE_MODE)
-        fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        os.fchmod(self._fd, self._FILE_MODE)
+        if sys.platform != "win32":
+            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.fchmod(self._fd, self._FILE_MODE)
         self._segment_first_seq = self._next_seq
         self._active_count = 0
 

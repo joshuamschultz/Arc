@@ -7,10 +7,18 @@ its designated directory.
 from __future__ import annotations
 
 import json
+import shutil
 
 import pytest
 
 from arcrun.builtins.execute import make_execute_tool
+
+# Every active test drives the personal-tier default (container) backend, so it
+# needs a real Docker CLI. Skip where absent (e.g. the macOS CI runner) rather
+# than failing with FileNotFoundError.
+pytestmark = pytest.mark.skipif(
+    shutil.which("docker") is None, reason="no docker CLI — container cannot run here"
+)
 
 
 class TestPathTraversal:

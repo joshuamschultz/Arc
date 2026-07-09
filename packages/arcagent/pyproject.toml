@@ -111,6 +111,9 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--strict-markers -v"
+markers = [
+    "slow: live-runtime tests (real docker) excluded from the fast unit run",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcagent"]
