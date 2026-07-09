@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Public tool-authoring surface (F6/F7).** `tool`/`hook`/`background_task`/`capability` and the
+  new `capability_meta(fn)` accessor are re-exported from `arcagent.tools` — authors no longer import
+  the private `arcagent.tools._decorator` or read `_arc_capability_meta` directly.
+
+### Fixed
+- **`@tool`/`@hook`/`@background_task` reject sync functions at decoration time (F8)** — a clear
+  `TypeError` at the definition site instead of an opaque failure later in the loader.
+- **Unreachable NATS degrades quietly (F9)** — the messaging bootstrap bounds the connect, quiets
+  nats-py's async error callback, and degrades to the in-memory bus with a single warning instead of
+  dumping a ConnectionRefused traceback on every solo-agent run.
+
 ## [0.15.0] - 2026-07-08
 
 SPEC-047 — **extensibility as a first-class product property**. Generalized the two

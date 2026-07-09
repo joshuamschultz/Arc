@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+Rough edges surfaced by a live manufacturing customer test (4 agents on real
+part/vendor/BOM data), fixed at the repo level so all future builds inherit them:
+
+- **F1 — bare `arc` crashed on non-TTY stdin.** Piped/CI/`arc < file` invocations threw a
+  prompt_toolkit `KeyError` from the raw-mode REPL. `arccli` now prints help and exits 0 when
+  stdin is not a terminal.
+- **F6 — `@tool` was only importable from a private module.** `tool`/`hook`/`background_task`/
+  `capability` are now re-exported from `arcagent.tools`; the scaffold, `arc ext create`, and the
+  create-tool skill templates use the public path.
+- **F7 — no public accessor for stamped tool metadata.** Added `arcagent.tools.capability_meta(fn)`.
+- **F8 — `@tool` accepted a sync function silently.** `@tool`/`@hook`/`@background_task` now raise
+  `TypeError` at decoration time on a non-`async def`.
+- **F9 — an unreachable NATS server dumped a ~30-line traceback** on every solo-agent run before
+  degrading. The messaging bootstrap now bounds the connect, quiets nats-py's async error callback,
+  and degrades to the in-memory bus with a single clean warning.
+
 ### Changed
 
 - **Memory ON by default in scaffolded agents.** `arc agent create` and `arc init` now write

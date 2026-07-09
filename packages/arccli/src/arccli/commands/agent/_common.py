@@ -201,7 +201,7 @@ from __future__ import annotations
 import ast
 import operator
 
-from arcagent.tools._decorator import tool
+from arcagent.tools import tool
 
 _OPS = {
     ast.Add: operator.add,
