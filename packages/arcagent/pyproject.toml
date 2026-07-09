@@ -121,6 +121,9 @@ addopts = "--strict-markers -v"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcagent"]
+# SPEC-047: guarantee the packaged blueprint presets ship in the wheel regardless of
+# VCS state (they are loaded at runtime by arcagent.blueprints — not optional data).
+artifacts = ["src/arcagent/blueprints/*.toml"]
 
 [tool.coverage.run]
 source = ["arcagent"]
