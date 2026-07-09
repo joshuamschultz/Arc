@@ -58,7 +58,7 @@ async def test_cosine_edit_budget_threaded_into_change_bound(tmp_path: Path) -> 
 
     imp = ArcSkillImprover(
         tmp_path / "ws", config=_cfg(), tier="enterprise",  # ceiling 4, floor 2, cosine/3
-        mutator=_Mut(), eval_runner=_AllFailRunner(), approver=None,
+        mutator=_Mut(), eval_runner=_AllFailRunner(), approval_provider=None,
         skill_path=lambda name: skill_md,
     )
     captured: dict[str, int | None] = {}

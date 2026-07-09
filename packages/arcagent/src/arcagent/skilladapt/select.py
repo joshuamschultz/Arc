@@ -33,12 +33,11 @@ def select_skill_adapter(
     tier: str = "personal",
     llm: Any = None,
     signer: Any = None,
-    approver: Any = None,
+    approval_provider: Any = None,
     eval_runner: Any = None,
     audit_sink: Any = None,
     agent_did: str = "",
     skill_path: Callable[[str], Path | None] | None = None,
-    reload: Callable[[], None] | None = None,
     adapter_allowlist: tuple[str, ...] = (),
 ) -> SkillAdapter:
     """Return the configured SkillAdapter (fail-safe: any error degrades to Null)."""
@@ -52,12 +51,11 @@ def select_skill_adapter(
             tier=tier,
             llm=llm,
             signer=signer,
-            approver=approver,
+            approval_provider=approval_provider,
             eval_runner=eval_runner,
             audit_sink=audit_sink,
             agent_did=agent_did,
             skill_path=skill_path,
-            reload=reload,
         )
         if adapter is not None:
             return adapter
@@ -76,12 +74,11 @@ def _try_arcskill(
     tier: str,
     llm: Any,
     signer: Any,
-    approver: Any,
+    approval_provider: Any,
     eval_runner: Any,
     audit_sink: Any,
     agent_did: str,
     skill_path: Callable[[str], Path | None] | None,
-    reload: Callable[[], None] | None,
 ) -> SkillAdapter | None:
     """Build an ``ArcSkillImprover`` if arcskill.improver is importable, else ``None``."""
     try:
@@ -95,12 +92,11 @@ def _try_arcskill(
         tier=tier,
         llm=llm,
         signer=signer,
-        approver=approver,
+        approval_provider=approval_provider,
         eval_runner=eval_runner,
         audit_sink=audit_sink,
         agent_did=agent_did,
         skill_path=skill_path,
-        reload=reload,
     )
     return adapter
 

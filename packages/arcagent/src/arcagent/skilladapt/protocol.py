@@ -47,8 +47,9 @@ class SkillAdapter(Protocol):
     async def maybe_improve(self, *, insight: str = "", session_id: str | None = None) -> None:
         """Trigger a bounded, eval-gated improvement pass when usage warrants it.
 
-        ``insight`` is optional recurring-failure abstraction text (from an active
-        arcmemory ``Brain``); the improver works fully with it empty (REQ-060).
+        ``insight`` is optional Brain-derived recall/insight text when an arcmemory ``Brain``
+        is active (the memory module's ``agent:pre_respond`` hook retrieves it); empty
+        otherwise, and the improver works fully memory-less (REQ-060).
         """
         ...
 

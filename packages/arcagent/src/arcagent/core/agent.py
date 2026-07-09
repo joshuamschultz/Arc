@@ -445,7 +445,11 @@ class ArcAgent:
         # collects it to a final result.
         await self._bus.emit(
             "agent:ready",
-            {"run_fn": self.run_collected, "deliver_fn": self.deliver_message},
+            {
+                "run_fn": self.run_collected,
+                "deliver_fn": self.deliver_message,
+                "skill_registry": self._capability_registry,
+            },
         )
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})

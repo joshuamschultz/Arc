@@ -232,6 +232,7 @@ def configure_module_runtimes(
             "agent_did": identity.did if identity else "",
             "identity": identity,
             "egress_proxy": egress_proxy,
+            "human_gate": agent._human_gate,
         }
         # SPEC-053/037 — the operator authority is NOT broadcast to every module.
         # Only modules that actually build a WORM audit sink receive the resolved

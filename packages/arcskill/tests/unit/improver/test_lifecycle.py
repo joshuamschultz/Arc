@@ -112,12 +112,12 @@ class _Sink:
 
 
 class _AutoApprover:
-    """Approver seam that always grants — the wired-and-approved federal path."""
+    """Callable ApprovalProvider that always grants — the wired-and-approved federal path."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def request(self, *, action: str, skill_name: str, detail: str) -> bool:
+    async def __call__(self, action: str, skill_name: str, detail: str) -> bool:
         self.calls.append((action, skill_name))
         return True
 
@@ -139,7 +139,7 @@ async def test_federal_sweep_retire_then_revive_gated_and_audited(tmp_path: Path
     sink = _Sink()
     approver = _AutoApprover()
     imp = ArcSkillImprover(
-        ws, config=ImproverConfig(), tier="federal", audit_sink=sink, approver=approver
+        ws, config=ImproverConfig(), tier="federal", audit_sink=sink, approval_provider=approver
     )
 
     await imp.review_lifecycle(turn=1)

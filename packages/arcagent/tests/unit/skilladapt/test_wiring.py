@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from arcagent.capabilities.capability_registry import CapabilityRegistry, SkillEntry
 from arcagent.modules.skills import _runtime
 from arcagent.modules.skills.capabilities import (
     skills_post_plan,
@@ -26,18 +27,17 @@ class _Ctx:
         self.is_vetoed = False
 
 
-class _Skill:
-    def __init__(self, name: str, file_path: Path) -> None:
-        self.name = name
-        self.file_path = file_path
-
-
-class _Registry:
-    def __init__(self, skills: list[_Skill]) -> None:
-        self.skills = skills
-
-    def discover(self, *_a: Any) -> None:
-        pass
+async def _registry(*skills: tuple[str, Path]) -> CapabilityRegistry:
+    """Build a real CapabilityRegistry (finding 3b: the module reads its real shape)."""
+    reg = CapabilityRegistry()
+    for name, loc in skills:
+        await reg.register_skill(
+            SkillEntry(
+                name=name, version="1.0.0", description=name, triggers=(), tools=(),
+                location=loc, scan_root="builtin",
+            )
+        )
+    return reg
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,7 @@ async def test_ac1_default_is_silent_noop(tmp_path: Path) -> None:
     _runtime.configure(config={}, workspace=tmp_path)
     assert _runtime.state().active is False
 
-    await skills_ready(_Ctx(skill_registry=_Registry([])))
+    await skills_ready(_Ctx(skill_registry=await _registry()))
     await skills_post_tool(_Ctx(tool="read", args={"file_path": str(tmp_path / "SKILL.md")}))
     await skills_post_tool(_Ctx(tool="bash", result="ok"))
     await skills_post_plan(_Ctx(task_outcome="success", turn_number=1))
@@ -76,7 +76,7 @@ async def test_live_path_collects_traces_via_hooks(tmp_path: Path) -> None:
     _runtime.configure(config={"adapter": "arcskill"}, workspace=tmp_path)
     assert _runtime.state().active is True
 
-    await skills_ready(_Ctx(skill_registry=_Registry([_Skill("my-skill", skill_file)])))
+    await skills_ready(_Ctx(skill_registry=await _registry(("my-skill", skill_file))))
     # Read the skill (opens the span), then two tool calls, then close the turn.
     await skills_post_tool(_Ctx(tool="read", args={"file_path": str(skill_file)}))
     await skills_post_tool(_Ctx(tool="bash", result="ok"))

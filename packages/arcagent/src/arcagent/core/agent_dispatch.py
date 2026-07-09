@@ -113,17 +113,13 @@ async def build_run_context(
 
 
 def _agent_skills(agent: ArcAgent) -> list[_Skill]:
-    """Snapshot the agent's registered skills as lean specs, minus retired ones (REQ-043)."""
+    """Registered skills as lean specs — retired ones are already suppressed from _skills."""
     registry = agent._capability_registry
     if registry is None:
         return []
-    from arcagent.modules.skills._runtime import retired_skill_names
-
-    retired = retired_skill_names()
     return [
         _Skill(name=e.name, description=e.description, location=e.location, scan_root=e.scan_root)
         for e in registry._skills.values()
-        if e.name not in retired
     ]
 
 

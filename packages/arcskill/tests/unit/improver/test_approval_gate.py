@@ -32,11 +32,13 @@ class _PassRunner:
 
 
 class _Approver:
+    """Callable ApprovalProvider (action, skill_name, detail) -> approved."""
+
     def __init__(self, grant: bool) -> None:
         self.grant = grant
         self.calls: list[str] = []
 
-    async def request(self, *, action: str, skill_name: str, detail: str) -> bool:
+    async def __call__(self, action: str, skill_name: str, detail: str) -> bool:
         self.calls.append(action)
         return self.grant
 
@@ -60,7 +62,7 @@ def _seed(root: Path) -> Path:
 
 
 def _make(
-    root: Path, skill_md: Path, *, tier: str, approver: object | None, sink: _Sink
+    root: Path, skill_md: Path, *, tier: str, approval_provider: object | None, sink: _Sink
 ) -> ArcSkillImprover:
     return ArcSkillImprover(
         root / "ws",
@@ -69,7 +71,7 @@ def _make(
         tier=tier,
         mutator=_FixMutator(),
         eval_runner=_PassRunner(),
-        approver=approver,
+        approval_provider=approval_provider,
         audit_sink=sink,
         skill_path=lambda name: skill_md,
     )
@@ -87,7 +89,7 @@ async def test_enterprise_code_blocked_without_approver(tmp_path: Path) -> None:
     """Enterprise code mutation with no approver fails closed: patch NOT applied, audited."""
     skill_md = _seed(tmp_path)
     sink = _Sink()
-    imp = _make(tmp_path, skill_md, tier="enterprise", approver=None, sink=sink)
+    imp = _make(tmp_path, skill_md, tier="enterprise", approval_provider=None, sink=sink)
 
     await _drive(imp)
 
@@ -101,7 +103,7 @@ async def test_enterprise_code_applies_when_approved(tmp_path: Path) -> None:
     skill_md = _seed(tmp_path)
     sink = _Sink()
     approver = _Approver(grant=True)
-    imp = _make(tmp_path, skill_md, tier="enterprise", approver=approver, sink=sink)
+    imp = _make(tmp_path, skill_md, tier="enterprise", approval_provider=approver, sink=sink)
 
     await _drive(imp)
 
@@ -115,7 +117,9 @@ async def test_enterprise_code_applies_when_approved(tmp_path: Path) -> None:
 async def test_federal_code_blocked_when_approver_denies(tmp_path: Path) -> None:
     skill_md = _seed(tmp_path)
     sink = _Sink()
-    imp = _make(tmp_path, skill_md, tier="federal", approver=_Approver(grant=False), sink=sink)
+    imp = _make(
+        tmp_path, skill_md, tier="federal", approval_provider=_Approver(grant=False), sink=sink
+    )
 
     await _drive(imp)
 
@@ -129,7 +133,7 @@ async def test_personal_code_needs_no_approval(tmp_path: Path) -> None:
     """Personal tier auto-applies (audited) — no approver required (PRD §7)."""
     skill_md = _seed(tmp_path)
     sink = _Sink()
-    imp = _make(tmp_path, skill_md, tier="personal", approver=None, sink=sink)
+    imp = _make(tmp_path, skill_md, tier="personal", approval_provider=None, sink=sink)
 
     await _drive(imp)
 

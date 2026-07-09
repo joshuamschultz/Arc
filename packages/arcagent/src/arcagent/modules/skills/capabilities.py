@@ -6,9 +6,13 @@ the config-selected :class:`~arcagent.skilladapt.SkillAdapter`:
 * ``agent:post_tool``   — detect a skill read (open the active span), then forward each
   subsequent tool call as ``observe`` (the signal-extraction half of the old
   ``trace_collector``);
-* ``agent:post_plan``   — ``on_turn_end`` closes the span + accrues usage;
-* ``agent:pre_respond`` — ``maybe_improve`` triggers the gated improvement pass;
-* ``agent:ready``       — index skill paths from the registry.
+* ``agent:post_plan``   — ``on_turn_end`` closes the span + accrues usage, and stashes the
+  turn number for the off-loop Curator sweep;
+* ``agent:pre_respond`` — ``maybe_improve`` triggers the gated improvement pass, threading
+  any recurring-failure ``insight`` the memory module produced this turn (REQ-060);
+* ``agent:ready``       — index skill paths from the CapabilityRegistry and rehydrate the
+  retire/revive suppression set;
+* a ``@background_task`` loop — drives the Curator lifecycle sweep on a config cadence.
 
 With a :class:`~arcagent.skilladapt.NullSkillAdapter` selected, ``state().active`` is
 ``False`` and every hook short-circuits — a silent no-op that writes nothing (AC-1).
@@ -16,14 +20,19 @@ With a :class:`~arcagent.skilladapt.NullSkillAdapter` selected, ``state().active
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
 from arcagent.modules.skills import _runtime
-from arcagent.tools._decorator import hook
+from arcagent.tools._decorator import background_task, hook
 
 _logger = logging.getLogger("arcagent.modules.skills.capabilities")
+
+# @background_task interval is metadata only; the loop owns its own sleep, reading the
+# live cadence from config each cycle (default hourly).
+_SWEEP_POLL_DEFAULT = 3_600.0
 
 
 def _call_status(ctx: Any) -> tuple[str, str | None]:
@@ -68,12 +77,13 @@ async def skills_post_tool(ctx: Any) -> None:
 
 @hook(event="agent:post_plan", priority=200)
 async def skills_post_plan(ctx: Any) -> None:
-    """Close the active span at turn end and clear the active-skill tracker."""
+    """Close the active span at turn end, stash the turn, and clear the active-skill tracker."""
     st = _runtime.state()
     if not st.active:
         return
     outcome = str(ctx.data.get("task_outcome", ""))
     turn = int(ctx.data.get("turn_number", 0))
+    _runtime.record_turn(turn)
     await st.adapter.on_turn_end(turn=turn, outcome=outcome)
     st.active_skill = None
 
@@ -82,39 +92,56 @@ async def skills_post_plan(ctx: Any) -> None:
 async def skills_pre_respond(ctx: Any) -> None:
     """Trigger the gated improvement pass for over-threshold skills.
 
-    ``insight`` (optional arcmemory recurring-failure abstraction, REQ-060) is passed
-    memory-less here: no producer populates it at the ``agent:pre_respond`` emit, and
-    wiring the active Brain's retrieval there costs core LOC the budget can't spare —
-    so the extension calls ``maybe_improve()`` plainly (the fully-supported memory-less
-    default). The arcskill consumer still accepts ``insight`` for a BYO producer or a
-    later SPEC-047 wire; see the SPEC-044 README deviation.
+    ``insight`` is the optional recurring-failure abstraction the memory module's
+    ``agent:pre_respond`` hook (priority 100, runs first) placed on ``ctx.data`` from the
+    active Brain's retrieval; empty when memory is off (the improver works memory-less).
     """
-    del ctx
     st = _runtime.state()
     if not st.active:
         return
-    await st.adapter.maybe_improve()
+    insight = str(ctx.data.get("insight", ""))
+    await st.adapter.maybe_improve(insight=insight)
 
 
 @hook(event="agent:ready", priority=100)
 async def skills_ready(ctx: Any) -> None:
-    """Index skill paths and start the Curator lifecycle sweep on the proactive engine."""
+    """Index skill paths from the CapabilityRegistry and rehydrate retire suppression."""
     st = _runtime.state()
     if not st.active:
         return
-    _runtime.start_sweep()
     registry = ctx.data.get("skill_registry") or st.skill_registry
     if registry is None:
         _logger.warning("no skill_registry in agent:ready; skill trace attribution disabled")
         return
     st.index_skills(registry)
+    # Rehydrate: re-suppress skills retired in a prior session (read from the on-disk
+    # candidate-store manifest) so retirement survives restart (HIGH-3).
+    await _runtime.reconcile_suppression()
 
 
-@hook(event="agent:shutdown", trylast=True)
-async def skills_shutdown(ctx: Any) -> None:
-    """Stop the lifecycle-sweep engine and drain in-flight sweeps on shutdown."""
-    del ctx
-    await _runtime.stop_sweep()
+@background_task(name="skills_review_lifecycle_loop", interval=_SWEEP_POLL_DEFAULT)
+async def skills_review_lifecycle_loop(_ctx: Any) -> None:
+    """Curator: periodically sweep retire/revive through the adapter (CRITICAL-1 producer).
+
+    The decorator interval is metadata; the loop owns its cadence, reading the live
+    ``sweep_poll_seconds`` config each cycle. Mirrors the memory consolidate loop.
+    """
+    while True:
+        try:
+            await _runtime.run_lifecycle_sweep()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # reason: fail-open — a sweep error must never crash the agent
+            _logger.warning("skills lifecycle sweep failed", exc_info=True)
+        await asyncio.sleep(_poll_interval())
+
+
+def _poll_interval() -> float:
+    """The live sweep-poll cadence, or the default when the module is unconfigured."""
+    try:
+        return _runtime.state().sweep_poll_seconds
+    except RuntimeError:
+        return _SWEEP_POLL_DEFAULT
 
 
 __all__ = [
@@ -122,5 +149,5 @@ __all__ = [
     "skills_post_tool",
     "skills_pre_respond",
     "skills_ready",
-    "skills_shutdown",
+    "skills_review_lifecycle_loop",
 ]

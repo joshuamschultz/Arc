@@ -14,11 +14,19 @@ richer ``Mutator``/``Judge``/``EvalRunner``/``AuditSink`` Protocols over
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from arcskill.improver.models import BundlePatch, BundleView, EvalCase, EvalOutcome
+
+# Operator-approval seam (D-10). A thin injected callable — the improver decides *when*
+# approval is required per the tier ladder; the provider returns True to proceed. arcagent
+# binds this to the shared SPEC-035/043 HumanGate (operator-signed, fail-closed at federal);
+# ``None`` (no provider wired) means the improver fails closed when approval is required.
+# ``(action, skill_name, detail) -> approved``.
+ApprovalProvider = Callable[[str, str, str], Awaitable[bool]]
 
 
 @runtime_checkable
@@ -56,20 +64,6 @@ class EvalRunner(Protocol):
 
 
 @runtime_checkable
-class Approver(Protocol):
-    """Operator-approval seam for consequential transitions (D-10, SPEC-043 ladder).
-
-    arcskill declares it; arcagent injects a real approver that reuses the SPEC-043
-    tier HITL mechanism. ``request`` returns ``True`` to proceed, ``False`` to block.
-    The improver decides *when* approval is required (per-tier ladder) — federal gates
-    every mutation + retire/revive, enterprise gates code mutations, personal auto —
-    and fails closed (blocks) when approval is required but no approver is wired.
-    """
-
-    async def request(self, *, action: str, skill_name: str, detail: str) -> bool: ...
-
-
-@runtime_checkable
 class Signer(Protocol):
     """Agent-DID sidecar signer (SPEC-033): sign ``content`` for ``path`` on write.
 
@@ -81,4 +75,4 @@ class Signer(Protocol):
     def sign(self, path: Path, content: bytes) -> None: ...
 
 
-__all__ = ["Approver", "EvalRunner", "LLMInvoker", "Mutator", "Signer"]
+__all__ = ["ApprovalProvider", "EvalRunner", "LLMInvoker", "Mutator", "Signer"]

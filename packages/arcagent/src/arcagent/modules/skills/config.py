@@ -24,10 +24,11 @@ class SkillsConfig(ModuleConfig):
     adapter: str = "none"
     tier: str = "personal"
 
-    # Curator lifecycle-sweep cadence (Josh-LOCKED: all sweep settings config-adjustable).
-    # The inactivity *window* (default 30 days) lives in the improver's LifecycleConfig;
-    # this is how often the proactive engine fires the sweep. Default: daily.
-    sweep_interval_seconds: float = Field(default=86_400.0, gt=0.0)
+    # Curator lifecycle-sweep POLL cadence (Josh-LOCKED: all sweep settings config-adjustable).
+    # This is how often the @background_task sweep loop WAKES — distinct from the 30-day
+    # inactivity *window* (in the improver's LifecycleConfig) the sweep evaluates. Default:
+    # hourly (the sweep is cheap and only retires once the window is exceeded).
+    sweep_poll_seconds: float = Field(default=3_600.0, gt=0.0)
 
     # Operator-vetted BYO adapter class-paths. Above personal a dotted ``module:Class``
     # adapter is refused unless it appears here (ASI04 sign gate).

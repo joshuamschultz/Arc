@@ -1,33 +1,29 @@
 """Per-agent skills-module runtime — wires the SkillAdapter seam (SPEC-044).
 
 Mirrors :mod:`arcagent.modules.memory._runtime`. ``configure`` builds the injected
-seams (agent-DID :class:`Signer`, operator-key WORM :class:`~arctrust.AuditSink`, the
-eval LLM) and selects the :class:`~arcagent.skilladapt.SkillAdapter`. When the selected
-adapter is a :class:`~arcagent.skilladapt.NullSkillAdapter`, ``active`` is ``False`` and
-every capability hook short-circuits — a silent no-op that writes nothing (AC-1).
+seams (agent-DID :class:`Signer`, operator-key WORM :class:`~arctrust.AuditSink`, the eval
+LLM, and the operator-approval provider bound to the shared :class:`HumanGate`) and selects
+the :class:`~arcagent.skilladapt.SkillAdapter`. With a :class:`NullSkillAdapter`, ``active``
+is ``False`` and every hook short-circuits — a silent no-op that writes nothing (AC-1).
 
-The ``skill_path``/``reload`` seams read the module-global state lazily so the skill
-registry delivered at ``agent:ready`` is visible without rebinding the adapter.
+The ``skill_path`` seam and the retire/revive suppression reconcile read the module-global
+state lazily so the real :class:`~arcagent.capabilities.capability_registry.CapabilityRegistry`
+delivered at ``agent:ready`` is visible without rebinding the adapter.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from arcagent.capabilities import artifact_signing
 from arcagent.core.config import EvalConfig
-from arcagent.modules.proactive.engine import ProactiveEngine, Schedule
 from arcagent.skilladapt import NullSkillAdapter, SkillAdapter, select_skill_adapter
 from arcagent.utils.model_helpers import get_eval_model
 
 _logger = logging.getLogger("arcagent.modules.skills._runtime")
-
-_SWEEP_SCHEDULE_ID = "skills:lifecycle-sweep"
 
 
 class _SidecarSigner:
@@ -49,22 +45,25 @@ class _State:
     active: bool
     workspace: Path
     telemetry: Any = None
+    # The real CapabilityRegistry (delivered at agent:ready). Skills live in its ``_skills``
+    # dict as SkillEntry(name=, location=, ...) — NOT the old SkillRegistry ``.skills`` shape.
     skill_registry: Any = None
     # Signal-extraction state (the split-off half of the old trace_collector):
-    # resolved skill-file path -> skill name, and the currently active skill span.
+    # resolved SKILL.md path -> skill name, and the currently active skill span.
     skill_paths: dict[Path, str] = field(default_factory=dict)
     active_skill: str | None = None
-    # Curator lifecycle-sweep: a dedicated ProactiveEngine drives review_lifecycle on a
-    # configurable cadence (CRITICAL-1). ``sweep_turn`` monotonically labels each sweep.
-    sweep_interval_seconds: float = 86_400.0
-    sweep_engine: ProactiveEngine | None = None
-    sweep_task: asyncio.Task[None] | None = None
+    # Curator lifecycle-sweep cadence (CRITICAL-1): how often the @background_task loop
+    # wakes. The 30-day inactivity *window* lives in the improver's LifecycleConfig.
+    sweep_poll_seconds: float = 3_600.0
     sweep_turn: int = 0
+    last_turn: int = 0  # stashed from agent:post_plan so the off-loop sweep has a turn label
 
     def index_skills(self, registry: Any) -> None:
-        """Rebuild the path -> name lookup from the registry's ``.skills`` list."""
+        """Rebuild the SKILL.md-path -> name lookup from the CapabilityRegistry."""
         self.skill_registry = registry
-        self.skill_paths = {s.file_path.resolve(): s.name for s in registry.skills}
+        self.skill_paths = {
+            entry.location.resolve(): entry.name for entry in registry._skills.values()
+        }
 
 
 _state: _State | None = None
@@ -81,20 +80,24 @@ def configure(
     agent_did: str = "",
     identity: Any = None,
     operator_signer: Any = None,
+    human_gate: Any = None,
 ) -> None:
     """Bind module state. Called once at agent startup."""
     global _state
-    from arcagent.modules.skills.approver import SkillApprover
+    from arcagent.modules.skills.approval import build_skill_approval_provider
     from arcagent.modules.skills.config import SkillsConfig
 
     cfg = SkillsConfig(**(config or {}))
     ws = workspace.resolve()
     signer = _build_signer(identity)
     audit_sink = _build_worm_sink(ws, operator_signer, telemetry)
-    # Operator-approval seam (D-10). No interactive approval channel is wired yet
-    # (SPEC-032 follow-on) → fail-closed: federal/enterprise mutations are denied until a
-    # channel is configured. The improver decides *when* approval is required per tier.
-    approver = SkillApprover()
+    # Operator-approval seam (D-10): a thin provider bound to the SHARED HumanGate
+    # (SPEC-035/043 — operator-signed, self-approval-guarded, fail-closed at federal). No
+    # gate wired → None → the improver denies (fail-closed). The improver decides *when*
+    # approval is required per the tier ladder.
+    approval_provider = (
+        build_skill_approval_provider(human_gate, agent_did) if human_gate is not None else None
+    )
     llm = get_eval_model(
         cached_model=None,
         eval_config=eval_config or EvalConfig(),
@@ -109,11 +112,10 @@ def configure(
         tier=cfg.tier,
         llm=llm,
         signer=signer,
-        approver=approver,
+        approval_provider=approval_provider,
         audit_sink=audit_sink,
         agent_did=agent_did,
         skill_path=_skill_path,
-        reload=_reload,
         adapter_allowlist=tuple(cfg.adapter_allowlist),
     )
     _state = _State(
@@ -121,7 +123,7 @@ def configure(
         active=not isinstance(adapter, NullSkillAdapter),
         workspace=ws,
         telemetry=telemetry,
-        sweep_interval_seconds=cfg.sweep_interval_seconds,
+        sweep_poll_seconds=cfg.sweep_poll_seconds,
     )
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, _state.active)
 
@@ -160,92 +162,59 @@ def _build_worm_sink(workspace: Path, operator_signer: Any | None, telemetry: An
 
 
 def _skill_path(skill_name: str) -> Path | None:
-    """Resolve a skill name to its file path via the registry (lazy — reads state)."""
+    """Resolve a skill name to its SKILL.md path via the CapabilityRegistry (lazy).
+
+    Reads the real registry shape (``_skills`` dict of ``SkillEntry`` with ``.location``),
+    so the improver can locate a skill's bundle to mutate it (SPEC-044 finding 3b).
+    """
     st = _state
     if st is None or st.skill_registry is None:
         return None
-    for skill in st.skill_registry.skills:
-        if skill.name == skill_name:
-            path: Path | None = skill.file_path
-            return path
-    return None
+    entry = st.skill_registry._skills.get(skill_name)
+    if entry is None:
+        return None
+    location: Path = entry.location
+    return location
 
 
-def _reload() -> None:
-    """Re-discover skills after a mutation (lazy — reads state)."""
-    st = _state
-    if st is None or st.skill_registry is None:
-        return
-    st.skill_registry.discover(st.workspace, st.workspace)
+async def run_lifecycle_sweep() -> None:
+    """One Curator pass: retire/revive sweep through the adapter, then reconcile the
+    registry so retired skills stop being offered (CRITICAL-1 producer body + HIGH-3).
 
-
-async def _run_sweep(schedule: Schedule) -> None:
-    """Proactive-engine handler: drive one lifecycle sweep through the adapter (CRITICAL-1).
-
-    This is exactly what the proactive tick invokes on each due schedule; it is the sole
-    producer of ``review_lifecycle`` (retire/revive sweep) — never a direct facade call.
+    Driven by the ``@background_task`` loop — the sole producer of ``review_lifecycle``,
+    never a direct facade call.
     """
-    del schedule
     st = _state
     if st is None or not st.active:
         return
     st.sweep_turn += 1
-    await st.adapter.review_lifecycle(turn=st.sweep_turn)
+    await st.adapter.review_lifecycle(turn=st.last_turn or st.sweep_turn)
+    await reconcile_suppression()
 
 
-def start_sweep() -> None:
-    """Register the lifecycle-sweep schedule on a dedicated ProactiveEngine and run it.
+async def reconcile_suppression() -> None:
+    """Align the registry's suppressed set with the adapter's retired skills (HIGH-3).
 
-    Idempotent, and a silent no-op when skill improvement is off (NullSkillAdapter). Wired
-    from the ``agent:ready`` hook; torn down on ``agent:shutdown``.
+    Suppress newly-retired skills (hide from the offering) and unsuppress revived ones.
+    Called after each sweep and once at ``agent:ready`` so retirement survives restart
+    (the retired set is read from the on-disk candidate-store manifest).
     """
     st = _state
-    if st is None or not st.active or st.sweep_engine is not None:
+    if st is None or not st.active or st.skill_registry is None:
         return
-    engine = ProactiveEngine(handler=_run_sweep)
-    engine.add(
-        Schedule(
-            id=_SWEEP_SCHEDULE_ID,
-            interval_seconds=st.sweep_interval_seconds,
-            next_run_monotonic=time.monotonic() + st.sweep_interval_seconds,
-            kind="heartbeat",
-        )
-    )
-    st.sweep_engine = engine
-    st.sweep_task = asyncio.get_running_loop().create_task(
-        engine.start_tick_loop(), name="skills:lifecycle_sweep"
-    )
-    _logger.info("skills lifecycle sweep started (interval=%ss)", st.sweep_interval_seconds)
+    retired = st.adapter.retired_skills()
+    registry = st.skill_registry
+    for name in retired:
+        await registry.suppress_skill(name)
+    for name in await registry.suppressed_skills():
+        if name not in retired:
+            await registry.unsuppress_skill(name)
 
 
-async def stop_sweep() -> None:
-    """Stop the sweep tick loop and drain in-flight sweeps. Idempotent."""
-    st = _state
-    if st is None or st.sweep_engine is None:
-        return
-    st.sweep_engine.stop()
-    task = st.sweep_task
-    if task is not None and not task.done():
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-    await st.sweep_engine.drain()
-    st.sweep_engine = None
-    st.sweep_task = None
-
-
-def retired_skill_names() -> frozenset[str]:
-    """Retired skill names from the active adapter, or empty when skills is off/unset.
-
-    Read by the capability-offering path to hide retired skills from the loop (HIGH-3,
-    REQ-043). Safe to call before configuration — returns empty rather than raising.
-    """
-    st = _state
-    if st is None or not st.active:
-        return frozenset()
-    return st.adapter.retired_skills()
+def record_turn(turn: int) -> None:
+    """Stash the latest turn number (from agent:post_plan) for the off-loop sweep label."""
+    if _state is not None:
+        _state.last_turn = turn
 
 
 def state() -> _State:
@@ -258,18 +227,16 @@ def state() -> _State:
 
 
 def reset() -> None:
-    """Test-only: clear runtime state (cancelling any running sweep task)."""
+    """Test-only: clear runtime state."""
     global _state
-    if _state is not None and _state.sweep_task is not None and not _state.sweep_task.done():
-        _state.sweep_task.cancel()
     _state = None
 
 
 __all__ = [
     "configure",
+    "reconcile_suppression",
+    "record_turn",
     "reset",
-    "retired_skill_names",
-    "start_sweep",
+    "run_lifecycle_sweep",
     "state",
-    "stop_sweep",
 ]

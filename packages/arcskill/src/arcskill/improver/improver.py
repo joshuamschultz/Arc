@@ -39,7 +39,7 @@ from arcskill.improver.models import (
 )
 from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
-from arcskill.improver.seams import Approver, EvalRunner, LLMInvoker, Mutator, Signer
+from arcskill.improver.seams import ApprovalProvider, EvalRunner, LLMInvoker, Mutator, Signer
 from arcskill.improver.trace_store import TraceStore
 
 _logger = logging.getLogger("arcskill.improver.improver")
@@ -67,7 +67,7 @@ class ArcSkillImprover:
         signer: Signer | None = None,
         eval_runner: EvalRunner | None = None,
         mutator: Mutator | None = None,
-        approver: Approver | None = None,
+        approval_provider: ApprovalProvider | None = None,
         audit_sink: Any = None,
         agent_did: str = "",
         skill_path: Callable[[str], Path | None] | None = None,
@@ -82,10 +82,10 @@ class ArcSkillImprover:
         self._llm = llm
         self._signer = signer
         # Operator-approval seam (D-10). The improver decides *when* approval is required
-        # per the tier ladder; the injected approver decides the answer. Fail-closed when
-        # required but unwired (federal/enterprise), so a missing approver blocks, never
-        # silently applies.
-        self._approver = approver
+        # per the tier ladder; the injected provider (bound to the shared HumanGate) decides
+        # the answer. Fail-closed when required but unwired (federal/enterprise), so a missing
+        # provider blocks, never silently applies.
+        self._approval_provider = approval_provider
         # Constructed agent DID — the audit *actor* (who authored the mutation), distinct
         # from the operator key that signs the WORM chain (REQ-050).
         self._agent_did = agent_did
@@ -386,14 +386,12 @@ class ArcSkillImprover:
         """
         if not self._approval_required(kind):
             return True
-        if self._approver is None:
+        if self._approval_provider is None:
             self._emit_audit(
                 skill_name, f"{action}.approval", "denied_no_approver", extra={"detail": detail}
             )
             return False
-        approved = await self._approver.request(
-            action=action, skill_name=skill_name, detail=detail
-        )
+        approved = await self._approval_provider(action, skill_name, detail)
         self._emit_audit(
             skill_name,
             f"{action}.approval",
