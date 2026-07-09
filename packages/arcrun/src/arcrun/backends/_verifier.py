@@ -15,10 +15,11 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib
-import json
 import tomllib
 from pathlib import Path
 from typing import Any
+
+from arctrust import canonical_json
 
 from arcrun.backends._audit import (
     emit_content_mismatch,
@@ -36,15 +37,10 @@ class BackendSignatureError(RuntimeError):
 def canonical_json_payload(*, meta: dict[str, Any], backends: list[Any]) -> bytes:
     """Return the canonical-JSON bytes that are signed by the issuer.
 
-    Uses ``sort_keys=True`` and the most compact separators so the signer
-    and the verifier agree byte-for-byte. Only ``meta`` + ``backends`` are
-    included — the ``signature`` table is never self-referentially signed.
+    Only ``meta`` + ``backends`` are included — the ``signature`` table is
+    never self-referentially signed.
     """
-    return json.dumps(
-        {"meta": meta, "backends": backends},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    return canonical_json({"meta": meta, "backends": backends})
 
 
 def _load_manifest(manifest_path: Path) -> dict[str, Any]:
@@ -118,14 +114,13 @@ def _verify_signature(
     isolated crypto step.
     """
     try:
+        import arctrust
         from arctrust.trust_store import (
             TrustStoreError,
             load_issuer_pubkey,
         )
-        from nacl.exceptions import BadSignatureError
-        from nacl.signing import VerifyKey
     except ImportError as exc:  # pragma: no cover — arctrust is a required dep
-        raise BackendSignatureError(f"PyNaCl / arctrust trust store not available: {exc}") from exc
+        raise BackendSignatureError(f"arctrust trust store not available: {exc}") from exc
 
     try:
         pubkey = load_issuer_pubkey(issuer_did, trust_dir=trust_dir)
@@ -140,9 +135,7 @@ def _verify_signature(
             f"Cannot resolve issuer pubkey for {issuer_did!r}: [{exc.code}] {exc.message}"
         ) from exc
 
-    try:
-        VerifyKey(pubkey).verify(payload, sig_bytes)
-    except BadSignatureError as exc:
+    if not arctrust.verify(payload, sig_bytes, pubkey):
         emit_sig_invalid(
             manifest_path=manifest_path,
             reason="bad_signature",
@@ -151,7 +144,7 @@ def _verify_signature(
         )
         raise BackendSignatureError(
             f"Manifest signature did not verify against issuer {issuer_did!r}"
-        ) from exc
+        )
 
 
 def _build_verified_map(backends: list[Any]) -> dict[str, dict[str, Any]]:
