@@ -252,6 +252,9 @@ def _init(args: argparse.Namespace) -> None:
         tier = tier_map.get(choice, "open")
         quick = choice == "1"
 
+    if provider is None and quick:
+        # Quick start is fully non-interactive: default provider, no prompt.
+        provider = "anthropic"
     if provider is None:
         _write("")
         _write("  LLM Providers:")
@@ -259,9 +262,9 @@ def _init(args: argparse.Namespace) -> None:
         _write("    Local:  ollama, lmstudio (no API key needed)")
         _write("")
         provider = input("  Default provider (default: anthropic): ").strip() or "anthropic"
-        if provider not in _VALID_PROVIDERS:
-            sys.stderr.write(f"Error: Unknown provider '{provider}'.\n")
-            sys.exit(1)
+    if provider not in _VALID_PROVIDERS:
+        sys.stderr.write(f"Error: Unknown provider '{provider}'.\n")
+        sys.exit(1)
 
     arc_dir = Path(config_dir) if config_dir else Path.home() / ".arc"
     arc_dir.mkdir(parents=True, exist_ok=True)
