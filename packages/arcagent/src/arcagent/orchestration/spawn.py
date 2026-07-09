@@ -130,11 +130,19 @@ def make_spawn_tool(
     spawn_timeout_seconds: int = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
     max_concurrent_spawns: int = _DEFAULT_MAX_CONCURRENT_SPAWNS,
     max_child_turns: int = _DEFAULT_MAX_CHILD_TURNS,
+    root_token_budget: RootTokenBudget | None = None,
 ) -> Tool:
     """Create a spawn_task tool that starts a child run().
 
     State is read from ``ctx.parent_state`` at execute time, set by the
     arcrun executor.
+
+    When ``root_token_budget`` is supplied, it is a pool shared by every child
+    this tool spawns during the run (LLM10). Each child runs with its
+    ``max_tokens`` clamped to the pool's remaining balance, and its actual usage
+    is debited on completion; once the pool is exhausted, further spawns are
+    refused. This is the cross-child cap that stops one run from silently
+    spending several times its allocation.
     """
     # Semaphore limits concurrent child runs (ASI-08, LLM10)
     spawn_semaphore = asyncio.Semaphore(max_concurrent_spawns)
@@ -147,6 +155,10 @@ def make_spawn_tool(
         # Depth guard
         if run_state.depth >= run_state.max_depth:
             return f"Error: max spawn depth ({run_state.max_depth}) reached"
+
+        # Cross-child token cap (LLM10): refuse once the shared pool is spent.
+        if root_token_budget is not None and root_token_budget.is_exhausted():
+            return "Error: spawn token budget exhausted for this run"
 
         child_task = params["task"]
         requested_tools = params.get("tools")
@@ -228,6 +240,12 @@ def make_spawn_tool(
                 outcome="allow",
             )
 
+        # Clamp the child's token ceiling to what the shared pool still allows,
+        # so arcrun's breaker stops a child that would overrun the pool.
+        child_max_tokens = (
+            root_token_budget.remaining if root_token_budget is not None else None
+        )
+
         try:
             async with spawn_semaphore:
                 # agent_identity is a sync contextmanager (task-local identity);
@@ -247,9 +265,14 @@ def make_spawn_tool(
                             allowed_strategies=allowed_strategies,
                             actor_did=child_actor,
                             store_raw_bodies=run_state.event_bus.store_raw_bodies,
+                            max_tokens=child_max_tokens,
                         ),
                         timeout=spawn_timeout_seconds,
                     )
+
+            # Debit the child's actual usage from the shared pool (LLM10).
+            if root_token_budget is not None:
+                await root_token_budget.record_actual(int(result.tokens_used.get("total", 0)))
 
             # Audit event: spawn complete
             _complete(True, turns_used=result.turns, cost_usd=result.cost_usd)
@@ -311,7 +334,6 @@ def make_spawn_tool(
         },
         execute=_execute,
         timeout_seconds=spawn_timeout_seconds,
-        parallel_safe=True,
     )
 
 

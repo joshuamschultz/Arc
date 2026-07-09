@@ -87,7 +87,6 @@ class AgentCapabilityProvider:
                 description=tool.description,
                 input_schema=tool.input_schema,
                 kind="tool",
-                parallel_safe=tool.parallel_safe,
                 signals_completion=tool.signals_completion,
                 timeout_seconds=tool.timeout_seconds,
             )
