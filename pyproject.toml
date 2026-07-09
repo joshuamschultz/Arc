@@ -125,8 +125,19 @@ module = [
     "opentelemetry.exporter.otlp.*",
     "sqlite_vec",
     "sqlite_vec.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "slack_bolt",
+    "slack_bolt.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The Slack integration's @app.event handlers are decorated by the stub-less
+# optional slack_bolt lib (its decorators resolve to Any), so strict
+# untyped-decorator checks don't apply to this optional-dependency module.
+module = ["arcagent.modules.slack.bot"]
+disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

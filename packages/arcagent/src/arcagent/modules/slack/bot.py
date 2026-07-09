@@ -155,8 +155,9 @@ class SlackBot:
         # Create Socket Mode handler and connect
         self._handler = AsyncSocketModeHandler(self._app, app_token)
         try:
-            # reason: slack_sdk's AsyncSocketModeHandler ships no type stubs
-            await self._handler.connect_async()  # type: ignore[no-untyped-call]  # Non-blocking — NOT start_async()
+            # Non-blocking — NOT start_async(). slack_sdk ships no type stubs;
+            # the handler resolves to Any via the mypy optional-dep override.
+            await self._handler.connect_async()
         except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to establish Socket Mode connection")
             self._emit_event("slack:error", {"error": "connection_failed"})
