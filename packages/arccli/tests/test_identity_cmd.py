@@ -57,3 +57,34 @@ def test_force_replaces_authority(tmp_path: Path) -> None:
 
 def test_default_key_dir_is_under_home() -> None:
     assert DEFAULT_KEY_DIR == Path("~/.arc/identity").expanduser()
+
+
+def test_init_honors_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ARC_CONFIG_DIR redirects the key under <dir>/identity, not ~/.arc (F5)."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    identity_handler(["init"])
+    key_dir = tmp_path / "identity"
+    loaded = load_signing_authority(key_dir)
+    assert loaded is not None and loaded.did.startswith("did:arc:")
+    assert (key_dir / "active.did").exists()
+
+
+def test_init_honors_dir_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--dir sets the config base; the key lands under <dir>/identity (F5)."""
+    monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+    identity_handler(["init", "--dir", str(tmp_path)])
+    loaded = load_signing_authority(tmp_path / "identity")
+    assert loaded is not None and loaded.did.startswith("did:arc:")
+
+
+def test_key_dir_flag_overrides_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--key-dir pins the exact dir even when ARC_CONFIG_DIR is set (F5)."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "env"))
+    explicit = tmp_path / "explicit"
+    identity_handler(["init", "--key-dir", str(explicit)])
+    assert load_signing_authority(explicit) is not None
+    assert not (tmp_path / "env" / "identity" / "active.did").exists()

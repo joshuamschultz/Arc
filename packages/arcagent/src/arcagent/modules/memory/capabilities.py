@@ -34,6 +34,18 @@ _RECALL_PRIORITY = 50
 _CAPTURE_PRIORITY = 100
 _CONSOLIDATE_POLL_INTERVAL = 300.0
 
+# Told to "remember X" with a NullBrain active, the model will happily reply
+# "saved to memory" while nothing persists (ASI09 trust exploitation). There is
+# no save-tool to make truthful — capture is an automatic hook that silently
+# no-ops — so the honest fix is to tell the model, in the prompt, that durable
+# memory is off whenever the brain is inactive.
+_MEMORY_DISABLED_NOTE = (
+    "Durable memory is DISABLED for this agent. Nothing you are told to "
+    "'remember', 'save', or 'note for later' persists beyond this session. Do "
+    "not claim anything was saved to memory; say plainly that persistent memory "
+    "is off."
+)
+
 
 # -- ACL gating ----------------------------------------------------------
 
@@ -107,6 +119,22 @@ def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
     if len(st.recall_cache) >= _runtime._RECALL_CACHE_CAP:
         st.recall_cache.pop(next(iter(st.recall_cache)))
     st.recall_cache[key] = text
+
+
+@hook(event="agent:assemble_prompt", priority=_RECALL_PRIORITY)
+async def inject_memory_disabled_note(ctx: Any) -> None:
+    """Tell the model durable memory is off when the brain is inactive (NullBrain).
+
+    Only fires when the memory module is loaded but ``active`` is False (brain
+    ``none`` — federal zero-config or explicit). Prevents the "saved to memory"
+    over-claim. When a real brain is active this is silent.
+    """
+    st = _runtime.state()
+    if st.active:
+        return
+    sections = ctx.data.get("sections")
+    if isinstance(sections, dict):
+        sections["memory_status"] = _MEMORY_DISABLED_NOTE
 
 
 @hook(event="agent:pre_respond", priority=100)
@@ -246,6 +274,7 @@ __all__ = [
     "capture_tool",
     "consolidate_poll_once",
     "inject_insight",
+    "inject_memory_disabled_note",
     "inject_recall",
     "memory_consolidate_loop",
     "memory_search",
