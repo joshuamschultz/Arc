@@ -34,6 +34,7 @@ def build(ctx: AdapterBuildContext) -> MattermostAdapter:
         server_url=cfg.server_url,
         bot_token=token,
         on_message=ctx.on_message,
+        agent_did=ctx.agent_did(),
         allowed_channel_ids=cfg.allowed_channel_ids or None,
         bot_user_id=cfg.bot_user_id,
         tier=ctx.tier,

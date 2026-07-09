@@ -50,6 +50,7 @@ _HANDLER_PATH = "slack_bolt.adapter.socket_mode.async_handler.AsyncSocketModeHan
 
 def _make_adapter(
     allowed_user_ids: list[str] | None = None,
+    agent_did: str = "did:arc:agent:default",
 ) -> tuple[SlackAdapter, list[InboundEvent]]:
     """Build a SlackAdapter with in-memory dedup store and capture on_message calls."""
     received: list[InboundEvent] = []
@@ -62,6 +63,7 @@ def _make_adapter(
         app_token="xapp-valid-token",
         allowed_user_ids=allowed_user_ids if allowed_user_ids is not None else ["U123"],
         on_message=_on_message,
+        agent_did=agent_did,
         dedup_db_path=None,  # in-memory DB for tests
     )
     return adapter, received
@@ -206,6 +208,19 @@ class TestAuthorisation:
         assert received[0].platform == "slack"
         assert received[0].chat_id == "D456"
 
+    async def test_emitted_event_carries_agent_did(self) -> None:
+        """The dispatched InboundEvent must carry the adapter's agent_did.
+
+        Guards the real path: executor resolves the agent from
+        event.agent_did, so an empty DID would fail agent resolution.
+        """
+        adapter, received = _make_adapter(
+            allowed_user_ids=["U123"], agent_did="did:arc:agent:slack"
+        )
+        await adapter._handle_inbound(_make_event(user="U123", client_msg_id="msg-did"))
+        assert len(received) == 1
+        assert received[0].agent_did == "did:arc:agent:slack"
+
     async def test_multiple_allowed_users(self) -> None:
         """Both users in the allowlist must be dispatched."""
         adapter, received = _make_adapter(allowed_user_ids=["U123", "U456"])
@@ -319,11 +334,20 @@ class TestConnectDisconnect:
         """If slack-bolt is not installed, connect() raises ImportError."""
         adapter, _ = _make_adapter()
 
-        # Remove slack_bolt from sys.modules to simulate missing install
-        mods_to_remove = {k: v for k, v in sys.modules.items() if "slack_bolt" in k}
-        with patch.dict(sys.modules, {k: None for k in mods_to_remove}):  # type: ignore[misc]
-            # If it's already absent, just verify the adapter handles it
-            with pytest.raises((ImportError, Exception)):
+        # Force the lazy imports inside connect() to fail even when slack-bolt
+        # IS installed: a None entry in sys.modules makes `import x` raise
+        # ImportError. Patching only already-imported keys is not enough — in a
+        # fresh venv nothing is imported yet and connect() would hit the real
+        # network with a fake token.
+        blocked = {
+            "slack_bolt": None,
+            "slack_bolt.async_app": None,
+            "slack_bolt.adapter": None,
+            "slack_bolt.adapter.socket_mode": None,
+            "slack_bolt.adapter.socket_mode.async_handler": None,
+        }
+        with patch.dict(sys.modules, blocked):  # type: ignore[arg-type]
+            with pytest.raises(ImportError, match="slack-bolt is not installed"):
                 await adapter.connect()
 
     async def test_connect_raises_on_connection_failure(self) -> None:

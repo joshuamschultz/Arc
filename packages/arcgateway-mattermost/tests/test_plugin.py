@@ -41,6 +41,26 @@ def test_build_returns_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert adapter.name == "mattermost"
 
 
+def test_build_threads_agent_did_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MM_BOT_TOKEN", "pat-abc")
+    adapter = build(
+        _ctx(
+            {
+                "enabled": True,
+                "server_url": "https://mm.example.com",
+                "agent_did": "did:arc:agent:mm",
+            }
+        )
+    )
+    assert adapter._agent_did == "did:arc:agent:mm"
+
+
+def test_build_uses_default_agent_did(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MM_BOT_TOKEN", "pat-abc")
+    adapter = build(_ctx({"enabled": True, "server_url": "https://mm.example.com"}))
+    assert adapter._agent_did == "did:arc:agent:default"
+
+
 def test_build_raises_without_server_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MM_BOT_TOKEN", "pat-abc")
     with pytest.raises(AdapterUnavailableError):
