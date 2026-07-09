@@ -1,28 +1,57 @@
 """Config-driven SkillAdapter selection — the SPEC-044 pluggable-improver seam.
 
-Maps the ``[modules.skills] adapter`` setting to a concrete :class:`SkillAdapter`:
+A thin :class:`ExtensionPoint` instance over the SPEC-047 generalized ``select_extension``
+mechanism. Maps the ``[modules.skills] adapter`` setting to a concrete :class:`SkillAdapter`:
 
 * ``"none"``      → :class:`NullSkillAdapter` (default; improvement off, zero files).
 * ``"arcskill"``  → ``arcskill.improver.ArcSkillImprover`` (lazy import; a partial
   install without the improver degrades to NullSkillAdapter with a warning).
-* dotted class path → a user-supplied adapter (BYO), signed/allowlisted above personal.
+* dotted class path → a user-supplied adapter (BYO), instantiated ``cls(workspace)``;
+  refused before import above personal unless operator-allowlisted (ASI04).
 
-Mirrors :mod:`arcagent.brain.select`: arcagent never imports an improver type at module
-load, and a BYO dotted path is refused unless operator-allowlisted above the personal
-tier (importing an unverified class-path is arbitrary code execution — ASI04).
+The choice dispatch, BYO allowlist gate, and dotted-path importer live once in
+:func:`arcagent.extension.select.select_extension`; this module only supplies the
+arcskill builder and the BYO construction shape.
 """
 
 from __future__ import annotations
 
-import importlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from arcagent.extension import ExtensionPoint, select_extension
 from arcagent.skilladapt.protocol import NullSkillAdapter, SkillAdapter
 
 _logger = logging.getLogger("arcagent.skilladapt.select")
+
+
+def _build_arcskill(module: Any, context: dict[str, Any]) -> SkillAdapter | None:
+    """Build an ``ArcSkillImprover`` from the imported ``arcskill.improver`` module."""
+    improver_config = module.ImproverConfig(**context["config"])
+    adapter: SkillAdapter = module.ArcSkillImprover(
+        context["workspace"],
+        config=improver_config,
+        tier=context["tier"],
+        llm=context["llm"],
+        signer=context["signer"],
+        approval_provider=context["approval_provider"],
+        eval_runner=context["eval_runner"],
+        audit_sink=context["audit_sink"],
+        agent_did=context["agent_did"],
+        skill_path=context["skill_path"],
+    )
+    return adapter
+
+
+_SKILLADAPT_POINT = ExtensionPoint(
+    name="skills",
+    null_factory=NullSkillAdapter,
+    builtin_modules={"arcskill": "arcskill.improver"},
+    builtin_builder=_build_arcskill,
+    byo_constructor=lambda cls, ctx: cls(ctx["workspace"]),
+)
 
 
 def select_skill_adapter(
@@ -40,87 +69,27 @@ def select_skill_adapter(
     skill_path: Callable[[str], Path | None] | None = None,
     adapter_allowlist: tuple[str, ...] = (),
 ) -> SkillAdapter:
-    """Return the configured SkillAdapter (fail-safe: any error degrades to Null)."""
-    choice = (setting or "none").strip()
-    if choice in ("none", "", "null"):
-        return NullSkillAdapter()
-    if choice == "arcskill":
-        adapter = _try_arcskill(
-            workspace,
-            config=config or {},
-            tier=tier,
-            llm=llm,
-            signer=signer,
-            approval_provider=approval_provider,
-            eval_runner=eval_runner,
-            audit_sink=audit_sink,
-            agent_did=agent_did,
-            skill_path=skill_path,
-        )
-        if adapter is not None:
-            return adapter
-        _logger.warning(
-            "skills adapter='arcskill' but arcskill.improver is unavailable; "
-            "running improver-less (NullSkillAdapter)"
-        )
-        return NullSkillAdapter()
-    return _load_custom(choice, workspace, tier=tier, allowlist=adapter_allowlist)
-
-
-def _try_arcskill(
-    workspace: Path,
-    *,
-    config: dict[str, Any],
-    tier: str,
-    llm: Any,
-    signer: Any,
-    approval_provider: Any,
-    eval_runner: Any,
-    audit_sink: Any,
-    agent_did: str,
-    skill_path: Callable[[str], Path | None] | None,
-) -> SkillAdapter | None:
-    """Build an ``ArcSkillImprover`` if arcskill.improver is importable, else ``None``."""
-    try:
-        improver_mod = importlib.import_module("arcskill.improver")
-    except ImportError:
-        return None
-    improver_config = improver_mod.ImproverConfig(**config)
-    adapter: SkillAdapter = improver_mod.ArcSkillImprover(
-        workspace,
-        config=improver_config,
+    """Return the configured SkillAdapter (fail-safe: any degrade path yields Null)."""
+    context: dict[str, Any] = {
+        "workspace": workspace,
+        "config": config or {},
+        "tier": tier,
+        "llm": llm,
+        "signer": signer,
+        "approval_provider": approval_provider,
+        "eval_runner": eval_runner,
+        "audit_sink": audit_sink,
+        "agent_did": agent_did,
+        "skill_path": skill_path,
+    }
+    adapter: SkillAdapter = select_extension(
+        _SKILLADAPT_POINT,
+        setting,
         tier=tier,
-        llm=llm,
-        signer=signer,
-        approval_provider=approval_provider,
-        eval_runner=eval_runner,
-        audit_sink=audit_sink,
-        agent_did=agent_did,
-        skill_path=skill_path,
+        allowlist=tuple(adapter_allowlist),
+        context=context,
+        logger=_logger,
     )
-    return adapter
-
-
-def _load_custom(
-    class_path: str, workspace: Path, *, tier: str, allowlist: tuple[str, ...]
-) -> SkillAdapter:
-    """Import + instantiate a BYO SkillAdapter from a dotted ``module:Class`` path.
-
-    Above the personal tier a BYO class-path must be operator-allowlisted — otherwise
-    it is REFUSED before any import, because importing an unverified dotted path is
-    arbitrary code execution at startup (ASI04; mirrors the BYO-brain gate).
-    """
-    if tier != "personal" and class_path not in allowlist:
-        raise ValueError(
-            f"BYO skills adapter class-path {class_path!r} is not on the operator "
-            f"allowlist; refusing to import an unverified class-path at tier {tier!r} "
-            f"(fail-closed)"
-        )
-    module_name, _, attr = class_path.replace(":", ".").rpartition(".")
-    if not module_name:
-        raise ValueError(f"invalid skills adapter class path: {class_path!r}")
-    cls = getattr(importlib.import_module(module_name), attr)
-    adapter: SkillAdapter = cls(workspace)
     return adapter
 
 

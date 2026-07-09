@@ -1,108 +1,57 @@
-"""Config-driven Brain selection — the SPEC-047 pluggable-brain seam.
+"""Config-driven Brain selection — the SPEC-041 pluggable-brain seam.
 
-Maps the ``[modules.memory] brain`` setting to a concrete :class:`Brain`:
+A thin :class:`ExtensionPoint` instance over the SPEC-047 generalized ``select_extension``
+mechanism. Maps the ``[modules.memory] brain`` setting to a concrete :class:`Brain`:
 
 * ``"none"``       → :class:`NullBrain` (default; memory off, zero files).
 * ``"arcmemory"``  → ``arcmemory.ArcMemoryBrain`` (lazy import — arcagent has no
   static dependency on any memory package; missing install degrades to NullBrain
   with a warning rather than crashing the agent).
-* ``"auto"``       → ``arcmemory`` if importable, else NullBrain.
-* dotted class path → a user-supplied Brain (BYO), instantiated ``cls(workspace, did)``.
+* ``"auto"``       → ``arcmemory`` if importable, else NullBrain (silent).
+* dotted class path → a user-supplied Brain (BYO), instantiated ``cls(workspace, did)``;
+  refused before import above personal unless operator-allowlisted (ASI04).
 
-arcagent never imports a memory type at module load; the only ``import arcmemory``
-is lazy, inside :func:`select_brain`, and guarded.
+The choice dispatch, BYO allowlist gate, and dotted-path importer live once in
+:func:`arcagent.extension.select.select_extension`; this module only supplies the
+arcmemory builder and the BYO construction shape.
 """
 
 from __future__ import annotations
 
-import importlib
 import logging
 from pathlib import Path
 from typing import Any
 
 from arcagent.brain.protocol import Brain, NullBrain
+from arcagent.extension import ExtensionPoint, select_extension
 
 _logger = logging.getLogger("arcagent.brain.select")
 
 
-def select_brain(
-    setting: str,
-    *,
-    workspace: Path,
-    agent_did: str,
-    tier: str = "personal",
-    audit_sink: Any = None,
-    embed_backend: str = "local",
-    embed_model: str = "",
-    distill_provider: str = "",
-    distill_model: str = "",
-    brain_allowlist: tuple[str, ...] = (),
-) -> Brain:
-    """Return the configured Brain (fail-safe: any error degrades to NullBrain).
+def _build_arcmemory(module: Any, context: dict[str, Any]) -> Brain | None:
+    """Build an arcllm-wired ``ArcMemoryBrain`` from the imported ``arcmemory`` module.
 
-    When arcmemory is selected and importable, its embedder + distiller seams are
-    wired to arcllm (:class:`arcmemory.ArcLLMEmbedder` /
-    :class:`arcmemory.ArcLLMDistiller`) so semantic vector recall, the analogical
-    trigger channel, and consolidation insight-minting are live. ``embed_backend
-    == "none"`` or an empty ``distill_provider`` leaves the respective seam unwired
-    (recall degrades to BM25 + graph; consolidation is a no-op) — never a crash.
-
-    A dotted BYO class-path is arbitrary code executed at startup (ASI04). Above the
-    personal tier it is refused unless it appears in ``brain_allowlist`` (the operator's
-    signed/vetted registry) — fail-closed, never imported (see :func:`_load_custom`).
+    The embedder + distiller seams are wired to arcllm (``ArcLLMEmbedder`` /
+    ``ArcLLMDistiller``) so semantic vector recall, the analogical trigger channel, and
+    consolidation insight-minting are live. ``embed_backend == "none"`` or an empty
+    ``distill_provider`` leaves the respective seam unwired (recall degrades to BM25 +
+    graph; consolidation is a no-op) — never a crash.
     """
-    choice = (setting or "none").strip()
-    if choice in ("none", "", "null"):
-        return NullBrain()
-    if choice in ("arcmemory", "auto"):
-        brain = _try_arcmemory(
-            workspace,
-            agent_did,
-            tier,
-            audit_sink,
-            embed_backend=embed_backend,
-            embed_model=embed_model,
-            distill_provider=distill_provider,
-            distill_model=distill_model,
-        )
-        if brain is not None:
-            return brain
-        if choice == "arcmemory":
-            _logger.warning(
-                "memory brain='arcmemory' but arcmemory is not installed; "
-                "running memory-less (NullBrain)"
-            )
-        return NullBrain()
-    return _load_custom(choice, workspace, agent_did, tier=tier, allowlist=brain_allowlist)
-
-
-def _try_arcmemory(
-    workspace: Path,
-    agent_did: str,
-    tier: str,
-    audit_sink: Any,
-    *,
-    embed_backend: str,
-    embed_model: str,
-    distill_provider: str,
-    distill_model: str,
-) -> Brain | None:
-    """Build an arcllm-wired ``ArcMemoryBrain`` if arcmemory is importable, else ``None``."""
-    try:
-        arcmemory = importlib.import_module("arcmemory")
-    except ImportError:
-        return None
+    tier = context["tier"]
     safe_tier = tier if tier in ("personal", "enterprise", "federal") else "personal"
-    config = arcmemory.MemoryConfig.for_tier(safe_tier)
-    embedder = _build_embedder(arcmemory, agent_did, embed_backend, embed_model)
-    distiller = _build_distiller(arcmemory, distill_provider, distill_model, agent_did)
-    brain: Brain = arcmemory.ArcMemoryBrain(
-        workspace,
+    config = module.MemoryConfig.for_tier(safe_tier)
+    agent_did = context["agent_did"]
+    embedder = _build_embedder(module, agent_did, context["embed_backend"], context["embed_model"])
+    distiller = _build_distiller(
+        module, context["distill_provider"], context["distill_model"], agent_did
+    )
+    brain: Brain = module.ArcMemoryBrain(
+        context["workspace"],
         agent_did,
         config=config,
         embedder=embedder,
         distiller=distiller,
-        audit_sink=audit_sink,
+        audit_sink=context["audit_sink"],
     )
     return brain
 
@@ -134,25 +83,47 @@ def _build_distiller(arcmemory: Any, provider: str, model: str, agent_did: str) 
     return arcmemory.ArcLLMDistiller(factory, model=model or None)
 
 
-def _load_custom(
-    class_path: str, workspace: Path, agent_did: str, *, tier: str, allowlist: tuple[str, ...]
-) -> Brain:
-    """Import + instantiate a BYO Brain from a dotted ``module:Class`` / ``module.Class``.
+_BRAIN_POINT = ExtensionPoint(
+    name="brain",
+    null_factory=NullBrain,
+    builtin_modules={"arcmemory": "arcmemory", "auto": "arcmemory"},
+    builtin_builder=_build_arcmemory,
+    byo_constructor=lambda cls, ctx: cls(ctx["workspace"], ctx["agent_did"]),
+)
 
-    Above the personal tier a BYO class-path must be operator-allowlisted (the signed
-    registry posture of SPEC-033) — otherwise it is REFUSED before any import, because
-    importing an unverified dotted path is arbitrary code execution at startup (ASI04).
-    """
-    if tier != "personal" and class_path not in allowlist:
-        raise ValueError(
-            f"BYO brain class-path {class_path!r} is not on the operator allowlist; "
-            f"refusing to import an unverified class-path at tier {tier!r} (fail-closed)"
-        )
-    module_name, _, attr = class_path.replace(":", ".").rpartition(".")
-    if not module_name:
-        raise ValueError(f"invalid brain class path: {class_path!r}")
-    cls = getattr(importlib.import_module(module_name), attr)
-    brain: Brain = cls(workspace, agent_did)
+
+def select_brain(
+    setting: str,
+    *,
+    workspace: Path,
+    agent_did: str,
+    tier: str = "personal",
+    audit_sink: Any = None,
+    embed_backend: str = "local",
+    embed_model: str = "",
+    distill_provider: str = "",
+    distill_model: str = "",
+    brain_allowlist: tuple[str, ...] = (),
+) -> Brain:
+    """Return the configured Brain (fail-safe: any degrade path yields NullBrain)."""
+    context: dict[str, Any] = {
+        "workspace": workspace,
+        "agent_did": agent_did,
+        "tier": tier,
+        "audit_sink": audit_sink,
+        "embed_backend": embed_backend,
+        "embed_model": embed_model,
+        "distill_provider": distill_provider,
+        "distill_model": distill_model,
+    }
+    brain: Brain = select_extension(
+        _BRAIN_POINT,
+        setting,
+        tier=tier,
+        allowlist=tuple(brain_allowlist),
+        context=context,
+        logger=_logger,
+    )
     return brain
 
 
