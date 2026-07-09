@@ -138,6 +138,10 @@ ignore_missing_imports = true
 # untyped-decorator checks don't apply to this optional-dependency module.
 module = ["arcagent.modules.slack.bot"]
 disallow_untyped_decorators = false
+# slack_bolt has no stubs: connect_async is untyped when [slack] is installed
+# (needs a per-call ignore), but resolves to Any when it is not (ignore unused).
+# Don't warn on the ignore in the extra-absent env.
+warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
