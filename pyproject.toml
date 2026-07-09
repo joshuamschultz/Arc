@@ -12,6 +12,12 @@ dependencies = [
     # (brain = "arcmemory") have a working Brain out of the box. arc-agent
     # itself keeps it optional (no static import); this is the deployment env.
     "arcmemory",
+    # arcskill is the default skills adapter (skills.adapter = "arcskill" ->
+    # arcskill.improver). Nothing else depends on it, so without this edge it is
+    # only present under `uv sync --all-packages` and `arc ext verify` sees the
+    # builtin adapter as unavailable in a default-synced env. Pin it here for the
+    # same reason as arcmemory: the default extension must load out of the box.
+    "arcskill",
     "croniter>=6.2.2",
 ]
 

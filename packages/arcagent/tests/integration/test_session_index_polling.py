@@ -61,11 +61,12 @@ class TestPollingFullCycle:
         entries = [_make_msg(f"integration message {i}") for i in range(10)]
         _write_entries(sessions_dir / "session-a.jsonl", entries)
 
-        index = SessionIndex(db_path, sessions_dir, poll_interval=0.5)
+        index = SessionIndex(db_path, sessions_dir, poll_interval=60.0)
         await index.start()
 
-        # Wait for at least one poll cycle to fire naturally.
-        await asyncio.sleep(0.8)
+        # Drive exactly one poll deterministically instead of racing a timer
+        # against a fixed sleep (flaky under CI load).
+        await _run_single_poll(index)
 
         hits = index.search("integration message")
         await index.stop()
@@ -85,9 +86,9 @@ class TestPollingFullCycle:
                 [_make_msg(f"topic_{i} content")],
             )
 
-        index = SessionIndex(db_path, sessions_dir, poll_interval=0.5)
+        index = SessionIndex(db_path, sessions_dir, poll_interval=60.0)
         await index.start()
-        await asyncio.sleep(0.8)
+        await _run_single_poll(index)
         await index.stop()
 
         # Reopen to inspect without the index being active
