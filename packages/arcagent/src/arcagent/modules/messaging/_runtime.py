@@ -166,15 +166,13 @@ async def ensure_live_backend() -> None:
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
+    from arcteam.storage import MemoryBackend
 
-    try:
-        backend = await _bootstrap.make_backend(st.config.nats_url)
-    except Exception:  # reason: no reachable NATS — degrade to in-memory, don't crash
-        _logger.warning(
-            "Messaging: NATS unavailable at %s; staying on in-memory backend "
-            "(this agent will not see teammates until a server is reachable)",
-            st.config.nats_url,
-        )
+    # make_backend degrades an unreachable NATS to an in-memory backend (with a
+    # single warning) rather than raising. When it did, keep the in-memory
+    # services built by configure() instead of rebuilding over a fresh backend.
+    backend = await _bootstrap.make_backend(st.config.nats_url)
+    if isinstance(backend, MemoryBackend):
         st.live_backend_ready = True
         return
 

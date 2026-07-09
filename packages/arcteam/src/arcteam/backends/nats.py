@@ -21,7 +21,9 @@ and stream subjects preserve their readable form where NATS allows it.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -41,7 +43,12 @@ if TYPE_CHECKING:
     from nats.js import JetStreamContext
     from nats.js.kv import KeyValue
 
+_logger = logging.getLogger("arcteam.backends.nats")
+
 _FETCH_TIMEOUT = 1.0
+# Bound the initial connect so an unreachable server fails fast instead of
+# looping through nats-py's default reconnect budget (~2 min of 2 s retries).
+_CONNECT_TIMEOUT = 3.0
 _SUBJECT_RE = re.compile(r"^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$")
 
 
@@ -117,11 +124,27 @@ class NatsBackend:
         self._nc = nc
 
     @classmethod
-    async def connect(cls, servers: str | list[str]) -> NatsBackend:
-        """Open a JetStream-enabled NATS connection and wrap it."""
+    async def connect(
+        cls, servers: str | list[str], *, connect_timeout: float = _CONNECT_TIMEOUT
+    ) -> NatsBackend:
+        """Open a JetStream-enabled NATS connection and wrap it.
+
+        The initial connect is bounded by ``connect_timeout`` so an unreachable
+        server raises ``asyncio.TimeoutError`` fast instead of blocking on
+        nats-py's default reconnect budget. A quiet ``error_cb`` routes nats-py's
+        async errors through our logger at debug, so a transient/connection error
+        never reaches asyncio's default handler as a raw stderr traceback (F9).
+        Reconnection after a successful connect stays enabled (nats-py default).
+        """
         import nats
 
-        nc = await nats.connect(servers)
+        async def _quiet_error(err: Exception) -> None:
+            _logger.debug("NATS async error: %s", err)
+
+        nc = await asyncio.wait_for(
+            nats.connect(servers, error_cb=_quiet_error),
+            timeout=connect_timeout,
+        )
         return cls(nc.jetstream(), nc)
 
     async def close(self) -> None:

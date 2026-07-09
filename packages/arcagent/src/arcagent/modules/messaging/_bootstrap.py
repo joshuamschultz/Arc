@@ -9,6 +9,7 @@ itself.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from arcteam.storage import StorageBackend
     from arcteam.types import Entity
     from arctrust import AgentIdentity
+
+_logger = logging.getLogger("arcagent.modules.messaging")
 
 
 def message_signer(identity: AgentIdentity | None) -> MessageSigner | None:
@@ -42,14 +45,40 @@ async def make_backend(nats_url: str) -> StorageBackend:
     A configured NATS url selects the JetStream backend — the shared,
     push-capable, federal substrate. With none, the dependency-free in-memory
     backend backs local single-process and test use.
-    """
-    if nats_url:
-        from arcteam.backends.nats import NatsBackend
 
-        return await NatsBackend.connect(nats_url)
+    An unreachable NATS server is the normal solo/local case, so a connection
+    failure degrades to the in-memory bus with a single clean warning — never a
+    nats-py traceback (F9). Only the connection-error class is caught; an
+    unexpected error still surfaces.
+    """
     from arcteam.storage import MemoryBackend
 
-    return MemoryBackend()
+    if not nats_url:
+        return MemoryBackend()
+
+    from arcteam.backends.nats import NatsBackend
+
+    # OSError covers ConnectionRefusedError; TimeoutError covers the bounded
+    # connect timeout. Add nats-py's own connection-error types when installed.
+    conn_errors: tuple[type[BaseException], ...] = (OSError, TimeoutError)
+    try:
+        from nats.errors import NoServersError
+        from nats.errors import TimeoutError as NatsTimeoutError
+
+        conn_errors = (*conn_errors, NoServersError, NatsTimeoutError)
+    except ImportError:
+        pass
+
+    try:
+        return await NatsBackend.connect(nats_url)
+    except conn_errors as exc:
+        _logger.warning(
+            "NATS unreachable at %s; using the in-memory bus (this agent will "
+            "not see teammates until a server is reachable): %s",
+            nats_url,
+            exc,
+        )
+        return MemoryBackend()
 
 
 def derive_handle(entity_id: str, fallback: str) -> str:
