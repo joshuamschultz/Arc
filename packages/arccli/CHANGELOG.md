@@ -32,6 +32,19 @@ inspection, and a tier-vocabulary cleanup.
   `--blueprint` deep-merge.
 - `arccli.__version__` now derives from the installed distribution metadata (fallback literal).
 
+### Security
+- **Blueprint apply/verify pins to the deployment operator key (adversarial-review HIGH-1).**
+  `apply_to_disk`, `arc blueprint show/verify/list`, and `arc init --blueprint` resolve the
+  operator public key read-only via the new `operator_public_key(arc_dir)` and pass it to
+  `resolve_blueprint`/`list_blueprints`, so above personal a user preset must be signed by the
+  operator key (`arc blueprint sign`), not merely self-consistent. An unresolvable operator key
+  denies fail-closed.
+- **`arc blueprint apply --dry-run` no longer writes a false WORM audit record (MED-2).**
+  `audit_apply` moved inside the `if not dry_run` write guard — a dry run now writes no config
+  and emits no `blueprint.applied` record.
+- **`arc ext inspect`/`verify` pins capability signed-status to the agent DID key (HIGH-1)**, so a
+  wrong-key self-signed capability is labeled unsigned rather than falsely signed.
+
 ## [0.5.1] - 2026-07-06
 
 SPEC-037: WORM/audit signing goes through the arctrust `Signer` seam.

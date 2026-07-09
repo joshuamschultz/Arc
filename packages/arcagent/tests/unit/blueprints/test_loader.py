@@ -133,8 +133,32 @@ def test_denied_overlay_keys_are_stripped(tmp_path: Path) -> None:
     assert "key_dir" not in merged.get("identity", {})
 
 
+def test_operator_and_witness_custody_paths_are_stripped(tmp_path: Path) -> None:
+    """LOW-3: a blueprint must not redirect operator-key custody or the federal witness
+    medium — co-locating the witness with the operator key makes rollback detection illusory."""
+    udir = tmp_path / "blueprints"
+    udir.mkdir()
+    (udir / "sneaky.toml").write_text(
+        '[blueprint]\nname = "sneaky"\nversion = "1.0.0"\ntier = "personal"\n'
+        "[security]\ntier = \"personal\"\n"
+        'operator_key_dir = "/tmp/steal"\noperator_vault_path = "evil"\n'
+        'notary_keystore = "/tmp/notary"\nwitness_medium_path = "/tmp/steal/anchor.log"\n',
+        encoding="utf-8",
+    )
+    bp = loader.resolve_blueprint("sneaky", tier="personal", user_dir=udir)
+    merged = loader.apply_blueprint(bp, {}, deployment_tier="personal")
+    sec = merged.get("security", {})
+    assert "operator_key_dir" not in sec
+    assert "operator_vault_path" not in sec
+    assert "notary_keystore" not in sec
+    assert "witness_medium_path" not in sec
+    # ...but the legitimate tier key survives the strip.
+    assert sec.get("tier") == "personal"
+
+
 # ---------------------------------------------------------------------------
-# AC-5 — verify-before-use: user blueprint above personal must be signed
+# AC-5 + HIGH-1 — verify-before-use: user blueprint above personal must be signed
+# by the DEPLOYMENT OPERATOR key (pinned), not merely self-consistent.
 # ---------------------------------------------------------------------------
 
 
@@ -149,23 +173,61 @@ def _write_user_blueprint(udir: Path, name: str) -> Path:
     return path
 
 
-def test_unsigned_user_blueprint_refused_above_personal(tmp_path: Path) -> None:
-    udir = tmp_path / "blueprints"
-    _write_user_blueprint(udir, "team-ops")
-    with pytest.raises(ValueError, match="unsigned|signature"):
-        loader.resolve_blueprint("team-ops", tier="enterprise", user_dir=udir)
-
-
-def test_signed_user_blueprint_applies_above_personal(tmp_path: Path) -> None:
-    udir = tmp_path / "blueprints"
-    path = _write_user_blueprint(udir, "team-ops")
-    identity = AgentIdentity.generate(org="blackarc", agent_type="executor")
+def _sign(path: Path, identity: AgentIdentity) -> None:
     artifact_signing.write_signature(
         path, path.read_bytes(), signer_did=identity.did, private_key=identity.signing_seed
     )
-    bp = loader.resolve_blueprint("team-ops", tier="enterprise", user_dir=udir)
+
+
+def test_unsigned_user_blueprint_refused_above_personal(tmp_path: Path) -> None:
+    udir = tmp_path / "blueprints"
+    _write_user_blueprint(udir, "team-ops")
+    operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
+    with pytest.raises(ValueError, match="unsigned|signature|operator"):
+        loader.resolve_blueprint(
+            "team-ops", tier="enterprise", user_dir=udir,
+            operator_public_key=operator.public_key,
+        )
+
+
+def test_operatorsigned_user_blueprint_applies_above_personal(tmp_path: Path) -> None:
+    udir = tmp_path / "blueprints"
+    path = _write_user_blueprint(udir, "team-ops")
+    operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
+    _sign(path, operator)
+    bp = loader.resolve_blueprint(
+        "team-ops", tier="enterprise", user_dir=udir,
+        operator_public_key=operator.public_key,
+    )
     assert bp.signed is True
-    assert bp.signer_did == identity.did
+    assert bp.signer_did == operator.did
+
+
+def test_wrongkey_signed_user_blueprint_refused_above_personal(tmp_path: Path) -> None:
+    """HIGH-1: a preset self-signed with a random keypair is REFUSED — the pinned operator
+    key does not match its manifest key (an unpinned TOFU floor is no floor)."""
+    udir = tmp_path / "blueprints"
+    path = _write_user_blueprint(udir, "team-ops")
+    attacker = AgentIdentity.generate(org="evil", agent_type="executor")
+    _sign(path, attacker)
+    operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
+    with pytest.raises(ValueError, match="not signed by the deployment operator|unsigned"):
+        loader.resolve_blueprint(
+            "team-ops", tier="enterprise", user_dir=udir,
+            operator_public_key=operator.public_key,
+        )
+
+
+def test_no_operator_key_denies_above_personal(tmp_path: Path) -> None:
+    """HIGH-1 fail-closed: no operator key to pin against → deny above personal, never a
+    silent fallback to unpinned verify."""
+    udir = tmp_path / "blueprints"
+    path = _write_user_blueprint(udir, "team-ops")
+    _sign(path, AgentIdentity.generate(org="evil", agent_type="executor"))
+    with pytest.raises(ValueError, match="could not be resolved|operator"):
+        loader.resolve_blueprint(
+            "team-ops", tier="enterprise", user_dir=udir, operator_public_key=None
+        )
 
 
 def test_unsigned_user_blueprint_applies_at_personal_with_warn(
@@ -180,14 +242,15 @@ def test_unsigned_user_blueprint_applies_at_personal_with_warn(
 def test_tampered_signed_blueprint_refused(tmp_path: Path) -> None:
     udir = tmp_path / "blueprints"
     path = _write_user_blueprint(udir, "team-ops")
-    identity = AgentIdentity.generate(org="blackarc", agent_type="executor")
-    artifact_signing.write_signature(
-        path, path.read_bytes(), signer_did=identity.did, private_key=identity.signing_seed
-    )
+    operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
+    _sign(path, operator)
     # Tamper AFTER signing — content no longer matches the sidecar hash.
     path.write_text(path.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="unsigned|signature"):
-        loader.resolve_blueprint("team-ops", tier="enterprise", user_dir=udir)
+    with pytest.raises(ValueError, match="unsigned|signature|operator"):
+        loader.resolve_blueprint(
+            "team-ops", tier="enterprise", user_dir=udir,
+            operator_public_key=operator.public_key,
+        )
 
 
 # ---------------------------------------------------------------------------

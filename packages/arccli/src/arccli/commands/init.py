@@ -195,8 +195,13 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
         from arcagent.blueprints import apply_blueprint, resolve_blueprint
 
         from arccli.commands.blueprint import audit_apply
+        from arccli.commands.operator import operator_public_key
 
-        bp = resolve_blueprint(blueprint_name, tier=tier)
+        bp = resolve_blueprint(
+            blueprint_name,
+            tier=tier,
+            operator_public_key=operator_public_key(Path.home() / ".arc"),
+        )
         base = apply_blueprint(bp, base, deployment_tier=tier)
         effective = str(base.get("security", {}).get("tier", tier))
         audit_apply(bp, base, Path.home() / ".arc")

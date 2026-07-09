@@ -241,7 +241,7 @@ def _inspect(args: argparse.Namespace) -> None:
     config, registry = _resolve_inspect_context(getattr(args, "agent", None))
     rows = [
         [r.family, r.kind, r.selected, "yes" if r.available else "no", r.signed]
-        for r in inspect_extensions(config, registry)
+        for r in inspect_extensions(config, registry, trusted_public_key=_agent_pubkey(config))
     ]
     if rows:
         _print_table(["Family", "Kind", "Selected", "Available", "Signed"], rows)
@@ -258,7 +258,8 @@ def _verify_extensions(args: argparse.Namespace) -> None:
 
     config, registry = _resolve_inspect_context(getattr(args, "agent", None))
     tier = _config_tier(config)
-    refused = [r for r in inspect_extensions(config, registry) if _would_refuse(r, tier)]
+    rows = inspect_extensions(config, registry, trusted_public_key=_agent_pubkey(config))
+    refused = [r for r in rows if _would_refuse(r, tier)]
     if not refused:
         _write(f"All extension-point selections load-clean at tier {tier!r}.")
         return
@@ -312,6 +313,28 @@ def _config_tier(config: object) -> str:
         return str(config.security.tier)  # type: ignore[attr-defined]
     except AttributeError:
         return "personal"
+
+
+def _agent_pubkey(config: object) -> bytes | None:
+    """Resolve the agent's DID public key (read-only) to PIN capability signatures.
+
+    This is the authority the self-modification tools sign agent-authored artifacts with
+    (``_runtime.sign_artifact_file`` → the agent DID key), so a wrong-key self-signed
+    capability shows "unsigned" instead of a false "signed" (SPEC-047 HIGH-1). Loads the
+    ``.pub`` from the identity key dir only when a DID is configured — never generates a
+    key (an inspection must not mint identity). Returns None when no DID is resolvable.
+    """
+    from arctrust.identity import AgentIdentity
+
+    identity_cfg = getattr(config, "identity", None)
+    did = str(getattr(identity_cfg, "did", "") or "")
+    key_dir = str(getattr(identity_cfg, "key_dir", "") or "")
+    if not did or not key_dir:
+        return None
+    try:
+        return AgentIdentity.load_keys(did, Path(key_dir).expanduser()).public_key
+    except Exception:  # reason: no/invalid key on disk → nothing to pin (inspection best-effort)
+        return None
 
 
 def _build_registry(agent_root: Path | None) -> object | None:

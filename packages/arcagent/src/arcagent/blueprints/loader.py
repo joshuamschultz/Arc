@@ -22,6 +22,14 @@ so "a personal blueprint cannot weaken federal" is true by construction, not a s
 (provenance-trusted, no ``.arcsig``). Any user preset from ``~/.arc/blueprints/`` is
 verified fail-closed via the existing ``.arcsig`` sidecar — above ``personal`` an
 unsigned/invalid one is refused before merge; ``personal`` may apply it with an audit-warn.
+
+**Pinning is ENFORCED, not optional (SPEC-047 HIGH-1).** Above personal the sidecar is
+verified against the DEPLOYMENT OPERATOR's public key (``operator_public_key``, the same
+key ``arc blueprint sign`` signs with) — an unpinned signature gate accepts ANY
+self-consistent signature (an attacker self-signs a malicious preset with a random
+keypair), so an unpinned floor is no floor. When the operator key cannot be resolved above
+personal, resolution DENIES fail-closed (mirrors the capability loader's
+require-signature-with-no-pinned-key deny). Personal may verify unpinned (audit-warn).
 """
 
 from __future__ import annotations
@@ -45,12 +53,19 @@ _USER_DIR = Path("~/.arc/blueprints").expanduser()
 
 # Trusted-admin-only keys a blueprint overlay must never set (mirror of the
 # env-override denylist in core/config.py). A lower-trust preset must not touch the
-# vault backend, native tool execution, the tool preamble, or identity key custody.
+# vault backend, native tool execution, the tool preamble, identity key custody, or the
+# operator-key / federal-witness custody paths — redirecting the latter would let a preset
+# co-locate the witness with the operator key (making rollback detection illusory) or
+# point the audit authority at attacker-controlled storage (SPEC-047 LOW-3, SPEC-053 AU-9).
 _DENIED_OVERLAY_PATHS: tuple[tuple[str, ...], ...] = (
     ("vault", "backend"),
     ("tools", "process"),
     ("tools", "preamble"),
     ("identity", "key_dir"),
+    ("security", "operator_key_dir"),
+    ("security", "operator_vault_path"),
+    ("security", "notary_keystore"),
+    ("security", "witness_medium_path"),
 )
 
 
@@ -69,13 +84,20 @@ class ResolvedBlueprint:
 
 
 def resolve_blueprint(
-    name: str, *, tier: str, user_dir: Path | None = None
+    name: str,
+    *,
+    tier: str,
+    user_dir: Path | None = None,
+    operator_public_key: bytes | None = None,
 ) -> ResolvedBlueprint:
     """Find + verify a blueprint by ``name`` for a deployment at ``tier`` (fail-closed).
 
     Packaged presets (shipped read-only in the wheel) are provenance-trusted. A user
-    preset from ``~/.arc/blueprints/`` is verified via its ``.arcsig`` sidecar; above
-    the personal tier an unsigned/invalid one is refused before it can be merged.
+    preset from ``~/.arc/blueprints/`` is verified via its ``.arcsig`` sidecar, PINNED to
+    ``operator_public_key`` (the deployment operator's key, the same one ``arc blueprint
+    sign`` signs with). Above the personal tier the pin is mandatory: an unsigned, invalid,
+    or wrong-key preset is refused before merge, and when the operator key cannot be
+    resolved resolution DENIES fail-closed — an unpinned floor is no floor (HIGH-1).
     """
     packaged = _PACKAGED_DIR / f"{name}.toml"
     if packaged.is_file():
@@ -90,11 +112,19 @@ def resolve_blueprint(
         )
 
     content, meta, overlay = _parse(upath)
-    signed = verify_file(upath, content)
-    if tier_rank(tier) > tier_rank("personal") and not signed:
+    above_personal = tier_rank(tier) > tier_rank("personal")
+    if above_personal and operator_public_key is None:
         raise ValueError(
-            f"user blueprint {name!r} is unsigned or its signature is invalid; refusing to "
-            f"apply above the personal tier (fail-closed, LLM03/ASI04)"
+            f"user blueprint {name!r} requires the deployment operator's public key to pin its "
+            f"signature against, but it could not be resolved; refusing above the personal tier "
+            f"(fail-closed — an unpinned signature gate accepts any self-signed preset, "
+            f"LLM03/ASI04)"
+        )
+    signed = verify_file(upath, content, trusted_public_key=operator_public_key)
+    if above_personal and not signed:
+        raise ValueError(
+            f"user blueprint {name!r} is unsigned or not signed by the deployment operator key; "
+            f"refusing to apply above the personal tier (fail-closed, LLM03/ASI04)"
         )
     if not signed:
         _logger.warning(
@@ -121,11 +151,14 @@ def apply_blueprint(
     return merged
 
 
-def list_blueprints(*, user_dir: Path | None = None) -> list[ResolvedBlueprint]:
+def list_blueprints(
+    *, user_dir: Path | None = None, operator_public_key: bytes | None = None
+) -> list[ResolvedBlueprint]:
     """Enumerate available blueprints (packaged + user) for ``arc blueprint list``.
 
-    Informational: reports each user preset's signed status without refusing an
-    unsigned one (that gate fires at :func:`resolve_blueprint`/apply time).
+    Informational: reports each user preset's signed status (PINNED to
+    ``operator_public_key`` so a wrong-key self-signed preset reads as unsigned) without
+    refusing an unsigned one — that gate fires at :func:`resolve_blueprint`/apply time.
     """
     out: list[ResolvedBlueprint] = []
     for path in sorted(_PACKAGED_DIR.glob("*.toml")):
@@ -135,7 +168,7 @@ def list_blueprints(*, user_dir: Path | None = None) -> list[ResolvedBlueprint]:
     if udir.is_dir():
         for path in sorted(udir.glob("*.toml")):
             content, meta, overlay = _parse(path)
-            signed = verify_file(path, content)
+            signed = verify_file(path, content, trusted_public_key=operator_public_key)
             out.append(
                 _make(
                     meta,

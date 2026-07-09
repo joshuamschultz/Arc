@@ -37,15 +37,24 @@ class ExtensionStatus:
     detail: str = ""
 
 
-def inspect_extensions(config: Any, registry: Any = None) -> list[ExtensionStatus]:
-    """Return the current selected/available/signed state across all four families."""
+def inspect_extensions(
+    config: Any, registry: Any = None, *, trusted_public_key: bytes | None = None
+) -> list[ExtensionStatus]:
+    """Return the current selected/available/signed state across all four families.
+
+    ``trusted_public_key`` is the agent's own DID public key — the authority that signs
+    agent-authored capabilities/skills (``_runtime.sign_artifact_file``). When supplied,
+    a scan-many capability's ``.arcsig`` is PINNED to it, so a wrong-key self-signed
+    artifact reads as unsigned (mirrors what the live loader refuses at enterprise/federal)
+    instead of falsely "signed" (SPEC-047 HIGH-1). Unpinned when None (personal / no DID).
+    """
     tier = _read_tier(config)
     rows: list[ExtensionStatus] = []
     for family in FAMILIES:
         if isinstance(family, SelectOneFamily):
             rows.append(_inspect_select_one(family, config, tier))
         elif isinstance(family, ScanManyFamily) and registry is not None:
-            rows.extend(_inspect_scan_many(family, registry))
+            rows.extend(_inspect_scan_many(family, registry, trusted_public_key))
     return rows
 
 
@@ -95,7 +104,9 @@ def _builtin_importable(module_name: str) -> bool:
         return False
 
 
-def _inspect_scan_many(family: ScanManyFamily, registry: Any) -> list[ExtensionStatus]:
+def _inspect_scan_many(
+    family: ScanManyFamily, registry: Any, trusted_public_key: bytes | None = None
+) -> list[ExtensionStatus]:
     """Enumerate discovered capabilities of the family's kinds from the live registry."""
     rows: list[ExtensionStatus] = []
     for name, source_path, scan_root in _iter_registry(family.kinds, registry):
@@ -105,7 +116,7 @@ def _inspect_scan_many(family: ScanManyFamily, registry: Any) -> list[ExtensionS
                 "scan_many",
                 name,
                 True,
-                _signed_status(source_path),
+                _signed_status(source_path, trusted_public_key),
                 detail=scan_root,
             )
         )
@@ -138,13 +149,18 @@ def _entry_row(entry: Any) -> tuple[str, Any, str]:
     return str(name), entry.source_path, entry.scan_root
 
 
-def _signed_status(source_path: Any) -> str:
-    """"signed" if the source file's ``.arcsig`` verifies, else "unsigned"/"unknown"."""
+def _signed_status(source_path: Any, trusted_public_key: bytes | None = None) -> str:
+    """"signed" if the source file's ``.arcsig`` verifies, else "unsigned"/"unknown".
+
+    Pinned to ``trusted_public_key`` (the agent DID key) when supplied so a wrong-key
+    self-signed artifact reads "unsigned" rather than falsely "signed" (SPEC-047 HIGH-1).
+    """
     try:
         content = source_path.read_bytes()
     except OSError:
         return "unknown"
-    return "signed" if verify_file(source_path, content) else "unsigned"
+    signed = verify_file(source_path, content, trusted_public_key=trusted_public_key)
+    return "signed" if signed else "unsigned"
 
 
 __all__ = ["ExtensionStatus", "inspect_extensions"]

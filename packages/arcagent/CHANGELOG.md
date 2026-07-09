@@ -35,6 +35,22 @@ and gave config-relaxable tiers one declared surface.
 - `core/config.py` `SecurityConfig` federal-floor enforcement delegates to
   `arcagent.tiers.resolve_tier_floor` (core NCLOC 3498 → 3463).
 
+### Security
+- **Blueprint signature verification is PINNED, not TOFU-only (adversarial-review HIGH-1).**
+  `resolve_blueprint` / `list_blueprints` now take an `operator_public_key` and, above personal,
+  verify a user preset's `.arcsig` against it. Previously the gate called `verify_file` with no
+  pinned key, so any self-consistent signature was accepted — an attacker could self-sign a
+  malicious preset with a random keypair. An unsigned, tampered, or wrong-key preset is now
+  refused before merge; when the operator key cannot be resolved above personal, resolution
+  denies fail-closed (an unpinned floor is no floor).
+- **`arc ext inspect`/`verify` signed-status is pinned to the agent DID key (HIGH-1).**
+  `inspect_extensions` / `_signed_status` accept a `trusted_public_key` so a wrong-key
+  self-signed capability reads "unsigned" instead of a false "signed".
+- **Blueprint overlay denylist extended (LOW-3):** `security.operator_key_dir`,
+  `operator_vault_path`, `notary_keystore`, and `witness_medium_path` are now stripped from a
+  blueprint overlay before merge — a preset can no longer redirect operator-key or federal-witness
+  custody (co-locating the witness with the operator key would make rollback detection illusory).
+
 ## [0.14.0] - 2026-07-08
 
 SPEC-044 — the optional **`SkillAdapter`** self-improvement seam (mirrors the SPEC-041

@@ -71,12 +71,22 @@ def apply_to_disk(
     """
     from arcagent.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 
-    blueprint = resolve_blueprint(name, tier=deployment_tier, user_dir=user_dir)
+    from arccli.commands.operator import operator_public_key
+
+    blueprint = resolve_blueprint(
+        name,
+        tier=deployment_tier,
+        user_dir=user_dir,
+        operator_public_key=operator_public_key(arc_dir),
+    )
     base = _read_existing(target)
     merged = apply_blueprint(blueprint, base, deployment_tier=deployment_tier)
-    audit_apply(blueprint, merged, arc_dir, audit=audit)
 
+    # A --dry-run must leave NO trace: it writes no config AND emits no WORM record.
+    # Auditing an "applied" event for a run that applied nothing is false AU-9/10
+    # provenance (SPEC-047 MED-2). Both live behind the same guard.
     if not dry_run:
+        audit_apply(blueprint, merged, arc_dir, audit=audit)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(dumps_toml(merged), encoding="utf-8")
     return target, merged
@@ -167,9 +177,12 @@ def _worm_sink(arc_dir: Path) -> Any:
 def _list(args: argparse.Namespace) -> None:
     from arcagent.blueprints import list_blueprints
 
+    from arccli.commands.operator import operator_public_key
+
+    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
     rows = [
         [bp.name, bp.version, bp.tier, bp.source, _signed_label(bp)]
-        for bp in list_blueprints()
+        for bp in list_blueprints(operator_public_key=operator_public_key(arc_dir))
     ]
     if rows:
         _print_table(["Name", "Version", "Tier", "Source", "Signed"], rows)
@@ -186,8 +199,11 @@ def _signed_label(bp: Any) -> str:
 def _show(args: argparse.Namespace) -> None:
     from arcagent.blueprints import dumps_toml, resolve_blueprint
 
+    from arccli.commands.operator import operator_public_key
+
     tier = getattr(args, "tier", None) or "personal"
-    bp = resolve_blueprint(args.name, tier=tier)
+    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
+    bp = resolve_blueprint(args.name, tier=tier, operator_public_key=operator_public_key(arc_dir))
     _write(f"# blueprint: {bp.name} v{bp.version} (tier={bp.tier}, source={bp.source})")
     _write(dumps_toml(bp.overlay).rstrip())
 
@@ -195,9 +211,14 @@ def _show(args: argparse.Namespace) -> None:
 def _verify(args: argparse.Namespace) -> None:
     from arcagent.blueprints import resolve_blueprint
 
+    from arccli.commands.operator import operator_public_key
+
     tier = getattr(args, "tier", None) or "personal"
+    arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
     try:
-        bp = resolve_blueprint(args.name, tier=tier)
+        bp = resolve_blueprint(
+            args.name, tier=tier, operator_public_key=operator_public_key(arc_dir)
+        )
     except (FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"Error: {exc}\n")
         sys.exit(1)
@@ -300,6 +321,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("show", help="Print a blueprint's resolved config overlay.")
     p.add_argument("name")
     p.add_argument("--tier", default=None, help="Deployment tier for resolution.")
+    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
 
     p = subs.add_parser("apply", help="Verify + deep-merge a blueprint into a config file.")
     p.add_argument("name")
@@ -310,6 +332,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("verify", help="Report a blueprint's signature validity.")
     p.add_argument("name")
     p.add_argument("--tier", default=None, help="Deployment tier for the fail-closed gate.")
+    p.add_argument("--dir", dest="config_dir", default=None, help="Config dir (default: ~/.arc).")
 
     p = subs.add_parser("sign", help="Operator-sign a user blueprint (.arcsig sidecar).")
     p.add_argument("path")
