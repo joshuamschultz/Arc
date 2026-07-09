@@ -12,17 +12,22 @@ registry delivered at ``agent:ready`` is visible without rebinding the adapter.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from arcagent.capabilities import artifact_signing
 from arcagent.core.config import EvalConfig
+from arcagent.modules.proactive.engine import ProactiveEngine, Schedule
 from arcagent.skilladapt import NullSkillAdapter, SkillAdapter, select_skill_adapter
 from arcagent.utils.model_helpers import get_eval_model
 
 _logger = logging.getLogger("arcagent.modules.skills._runtime")
+
+_SWEEP_SCHEDULE_ID = "skills:lifecycle-sweep"
 
 
 class _SidecarSigner:
@@ -49,6 +54,12 @@ class _State:
     # resolved skill-file path -> skill name, and the currently active skill span.
     skill_paths: dict[Path, str] = field(default_factory=dict)
     active_skill: str | None = None
+    # Curator lifecycle-sweep: a dedicated ProactiveEngine drives review_lifecycle on a
+    # configurable cadence (CRITICAL-1). ``sweep_turn`` monotonically labels each sweep.
+    sweep_interval_seconds: float = 86_400.0
+    sweep_engine: ProactiveEngine | None = None
+    sweep_task: asyncio.Task[None] | None = None
+    sweep_turn: int = 0
 
     def index_skills(self, registry: Any) -> None:
         """Rebuild the path -> name lookup from the registry's ``.skills`` list."""
@@ -67,17 +78,23 @@ def configure(
     workspace: Path = Path("."),
     llm_config: Any = None,
     agent_name: str = "",
+    agent_did: str = "",
     identity: Any = None,
     operator_signer: Any = None,
 ) -> None:
     """Bind module state. Called once at agent startup."""
     global _state
+    from arcagent.modules.skills.approver import SkillApprover
     from arcagent.modules.skills.config import SkillsConfig
 
     cfg = SkillsConfig(**(config or {}))
     ws = workspace.resolve()
     signer = _build_signer(identity)
     audit_sink = _build_worm_sink(ws, operator_signer, telemetry)
+    # Operator-approval seam (D-10). No interactive approval channel is wired yet
+    # (SPEC-032 follow-on) → fail-closed: federal/enterprise mutations are denied until a
+    # channel is configured. The improver decides *when* approval is required per tier.
+    approver = SkillApprover()
     llm = get_eval_model(
         cached_model=None,
         eval_config=eval_config or EvalConfig(),
@@ -92,7 +109,9 @@ def configure(
         tier=cfg.tier,
         llm=llm,
         signer=signer,
+        approver=approver,
         audit_sink=audit_sink,
+        agent_did=agent_did,
         skill_path=_skill_path,
         reload=_reload,
         adapter_allowlist=tuple(cfg.adapter_allowlist),
@@ -102,6 +121,7 @@ def configure(
         active=not isinstance(adapter, NullSkillAdapter),
         workspace=ws,
         telemetry=telemetry,
+        sweep_interval_seconds=cfg.sweep_interval_seconds,
     )
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, _state.active)
 
@@ -159,6 +179,63 @@ def _reload() -> None:
     st.skill_registry.discover(st.workspace, st.workspace)
 
 
+async def _run_sweep(schedule: Schedule) -> None:
+    """Proactive-engine handler: drive one lifecycle sweep through the adapter (CRITICAL-1).
+
+    This is exactly what the proactive tick invokes on each due schedule; it is the sole
+    producer of ``review_lifecycle`` (retire/revive sweep) — never a direct facade call.
+    """
+    del schedule
+    st = _state
+    if st is None or not st.active:
+        return
+    st.sweep_turn += 1
+    await st.adapter.review_lifecycle(turn=st.sweep_turn)
+
+
+def start_sweep() -> None:
+    """Register the lifecycle-sweep schedule on a dedicated ProactiveEngine and run it.
+
+    Idempotent, and a silent no-op when skill improvement is off (NullSkillAdapter). Wired
+    from the ``agent:ready`` hook; torn down on ``agent:shutdown``.
+    """
+    st = _state
+    if st is None or not st.active or st.sweep_engine is not None:
+        return
+    engine = ProactiveEngine(handler=_run_sweep)
+    engine.add(
+        Schedule(
+            id=_SWEEP_SCHEDULE_ID,
+            interval_seconds=st.sweep_interval_seconds,
+            next_run_monotonic=time.monotonic() + st.sweep_interval_seconds,
+            kind="heartbeat",
+        )
+    )
+    st.sweep_engine = engine
+    st.sweep_task = asyncio.get_running_loop().create_task(
+        engine.start_tick_loop(), name="skills:lifecycle_sweep"
+    )
+    _logger.info("skills lifecycle sweep started (interval=%ss)", st.sweep_interval_seconds)
+
+
+async def stop_sweep() -> None:
+    """Stop the sweep tick loop and drain in-flight sweeps. Idempotent."""
+    st = _state
+    if st is None or st.sweep_engine is None:
+        return
+    st.sweep_engine.stop()
+    task = st.sweep_task
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    await st.sweep_engine.drain()
+    st.sweep_engine = None
+    st.sweep_task = None
+
+
 def retired_skill_names() -> frozenset[str]:
     """Retired skill names from the active adapter, or empty when skills is off/unset.
 
@@ -181,9 +258,18 @@ def state() -> _State:
 
 
 def reset() -> None:
-    """Test-only: clear runtime state."""
+    """Test-only: clear runtime state (cancelling any running sweep task)."""
     global _state
+    if _state is not None and _state.sweep_task is not None and not _state.sweep_task.done():
+        _state.sweep_task.cancel()
     _state = None
 
 
-__all__ = ["configure", "reset", "retired_skill_names", "state"]
+__all__ = [
+    "configure",
+    "reset",
+    "retired_skill_names",
+    "start_sweep",
+    "state",
+    "stop_sweep",
+]

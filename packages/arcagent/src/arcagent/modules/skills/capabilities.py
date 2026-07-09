@@ -80,20 +80,29 @@ async def skills_post_plan(ctx: Any) -> None:
 
 @hook(event="agent:pre_respond", priority=150)
 async def skills_pre_respond(ctx: Any) -> None:
-    """Trigger the gated improvement pass for over-threshold skills."""
+    """Trigger the gated improvement pass for over-threshold skills.
+
+    ``insight`` (optional arcmemory recurring-failure abstraction, REQ-060) is passed
+    memory-less here: no producer populates it at the ``agent:pre_respond`` emit, and
+    wiring the active Brain's retrieval there costs core LOC the budget can't spare —
+    so the extension calls ``maybe_improve()`` plainly (the fully-supported memory-less
+    default). The arcskill consumer still accepts ``insight`` for a BYO producer or a
+    later SPEC-047 wire; see the SPEC-044 README deviation.
+    """
+    del ctx
     st = _runtime.state()
     if not st.active:
         return
-    insight = str(ctx.data.get("insight", ""))
-    await st.adapter.maybe_improve(insight=insight)
+    await st.adapter.maybe_improve()
 
 
 @hook(event="agent:ready", priority=100)
 async def skills_ready(ctx: Any) -> None:
-    """Index skill paths from the registry so reads can be attributed to skills."""
+    """Index skill paths and start the Curator lifecycle sweep on the proactive engine."""
     st = _runtime.state()
     if not st.active:
         return
+    _runtime.start_sweep()
     registry = ctx.data.get("skill_registry") or st.skill_registry
     if registry is None:
         _logger.warning("no skill_registry in agent:ready; skill trace attribution disabled")
@@ -101,9 +110,17 @@ async def skills_ready(ctx: Any) -> None:
     st.index_skills(registry)
 
 
+@hook(event="agent:shutdown", trylast=True)
+async def skills_shutdown(ctx: Any) -> None:
+    """Stop the lifecycle-sweep engine and drain in-flight sweeps on shutdown."""
+    del ctx
+    await _runtime.stop_sweep()
+
+
 __all__ = [
     "skills_post_plan",
     "skills_post_tool",
     "skills_pre_respond",
     "skills_ready",
+    "skills_shutdown",
 ]
