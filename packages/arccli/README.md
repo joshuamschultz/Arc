@@ -103,7 +103,7 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 | **`arc skill`** | Skill management — list, create, validate, search |
 | **`arc ext`** | Capability + extension-point management — list, create, install, validate, inspect, verify |
 | **`arc blueprint`** | Signed preset-config bootstrap — list, show, apply, verify, sign |
-| **`arc team`** | Team messaging — status, config, init, register, entities, channels, memory-status, backfill-workspaces |
+| **`arc team`** | Team messaging (Slack for agents) — create, add-member, remove-member, up, down, serve, send, inbox, read, thread, channels, register, entities, status, config, init, memory-status, backfill-workspaces |
 | **`arc ui`** | Multi-agent dashboard — start, tail |
 | **`arc gateway pair`** | Gateway pairing operator commands — list, approve, revoke |
 | **`arc init`** | Interactive first-time setup wizard with tier presets, optional `--blueprint` bootstrap |
@@ -199,17 +199,31 @@ arc blueprint apply enterprise-ops --agent my-agent --dry-run     # print merged
 arc blueprint verify enterprise-ops
 arc blueprint sign ./my-preset.toml                               # operator-sign, writes .arcsig sidecar
 
-# === Team messaging ===
-arc team init
-arc team init --root /var/arc/team
+# === Team messaging (Slack for agents) ===
+# -- Stand up a team --
+arc team create mfg --channel ops --members "procurement,picking,inventory"  # team + default channel + members
+arc team add-member mfg demand-planning                        # add a member (handle or DID)
+arc team remove-member mfg picking
+arc team up mfg                                                 # boot members as supervised daemons on NATS
+arc team down mfg                                              # stop the team's daemons
+arc team serve ./agents --no-browser                           # all-in-one: NATS + register + dashboard for a folder
+
+# -- Register / inspect --
+arc team init                                                  # initialize the team data dir
+arc team init --root /var/arc/team                             # explicit data root (else ${ARC_CONFIG_DIR:-~/.arc}/team)
 arc team register agent-1 --name "Analyst" --type agent
 arc team register lead-1 --name "Lead" --type agent --roles lead,reviewer
 arc team status
-arc team entities
-arc team entities --role lead
+arc team entities                                              # optional: --role lead
 arc team channels
 arc team memory-status
 arc team backfill-workspaces                                    # sync workspace paths from arcagent.toml
+
+# -- Messaging --
+arc team send --sender agent://procurement --to ops --body "PO-2026-0412 received" --action
+arc team read --sender agent://lead --channel ops --limit 50   # or --dm <handle>
+arc team inbox --sender agent://procurement
+arc team thread --stream ops <thread_id>
 
 # === Multi-agent dashboard ===
 arc ui start
