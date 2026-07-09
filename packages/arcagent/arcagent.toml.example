@@ -87,19 +87,23 @@ estimate_multiplier = 1.1  # Conservative token estimate buffer
 # [modules.NAME.config] for module-specific settings.
 
 # Memory module (thin Brain wiring — SPEC-041)
-# Memory-less by default: brain = "none" runs a no-op NullBrain (zero memory files).
-# Install the `arcmemory` package and set brain = "arcmemory" to activate
-# dual-speed analogical memory, or point brain at a dotted `module:Class` path
-# for a bring-your-own Brain.
+# Scaffolded agents get memory ON (brain = "arcmemory"): zero-LLM capture writes
+# daily-log bullets (workspace/memory/daily-log/YYYY-MM-DD.md), the episodic index
+# (workspace/memory/index.db), and the entity graph each turn. Set brain = "none"
+# for a no-op NullBrain (zero memory files), or a dotted `module:Class` path for a
+# bring-your-own Brain. Consolidation (entity cards + facts + insights) is opt-in:
+# set distill_provider/distill_model to an LLM to enable it.
 # [modules.memory]
 # enabled = true
 # priority = 100
 #
 # [modules.memory.config]
-# brain = "none"                    # none | arcmemory | auto | module:Class
+# brain = "arcmemory"               # arcmemory | none | auto | module:Class
 # tier = "personal"
 # top_k = 5
 # budget = 1024
+# distill_provider = ""             # e.g. "anthropic" to enable consolidation
+# distill_model = ""
 # consolidate_event_threshold = 20
 # consolidate_idle_seconds = 900.0
 

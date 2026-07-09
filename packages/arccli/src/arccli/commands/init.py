@@ -163,6 +163,11 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
         },
         "eval": {"provider": "", "model": "", "max_tokens": 1024, "temperature": 0.2},
         "session": {"retention_count": 50, "retention_days": 30},
+        # Memory ON by default (arcmemory): zero-LLM capture writes daily-log
+        # bullets + the episodic index + entity graph each turn. Consolidation
+        # (facts/insights) is opt-in via distill_provider. brain = "none" for
+        # a memory-less deployment.
+        "modules": {"memory": {"enabled": True, "config": {"brain": "arcmemory"}}},
     }
 
 

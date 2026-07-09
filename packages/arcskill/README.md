@@ -222,7 +222,8 @@ from arcskill.lock import HubLockFile
 
 ## 🔒 The Lock File
 
-`arcskill` keeps a single source of truth for everything installed: `~/.arcagent/skills.lock` (or per-agent `workspace/.skills.lock`).
+`arcskill` keeps a single source of truth for everything installed via the hub:
+`~/.arc/skills/.hub/lock.json`, with skills installed under `~/.arc/skills/`.
 
 ```json
 {
@@ -236,7 +237,7 @@ from arcskill.lock import HubLockFile
       "signing_cert_fingerprint": "sha256:...",
       "scan_verdict": "pass",
       "installed_at": "2026-04-28T14:30:00Z",
-      "install_path": "/home/user/.arcagent/skills/data-analysis"
+      "install_path": "/home/user/.arc/skills/data-analysis"
     }
   }
 }
@@ -258,12 +259,12 @@ arc skill search "data analysis"                  # by name or description
 arc skill search "report" --agent my-agent
 
 # Create
-arc skill create data-analysis                    # scaffold to current dir
-arc skill create data-analysis --dir my-agent/workspace/skills
-arc skill create shared-skill --global            # to ~/.arcagent/skills/
+arc skill create data-analysis                    # scaffold ./data-analysis/SKILL.md
+arc skill create data-analysis --dir my-agent/capabilities
+arc skill create shared-skill --global            # to ~/.arc/capabilities/shared-skill/
 
 # Validate
-arc skill validate ./my-skill.md                  # checks frontmatter + structure
+arc skill validate ./data-analysis                # folder OR its SKILL.md — checks frontmatter + structure
 ```
 
 For programmatic install through the verified pipeline, use the Python API (`install()`).

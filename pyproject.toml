@@ -8,6 +8,10 @@ dependencies = [
     "arc-agent",
     "arccmd",
     "arcgateway",
+    # arcmemory ships in the default workspace env so scaffolded agents
+    # (brain = "arcmemory") have a working Brain out of the box. arc-agent
+    # itself keeps it optional (no static import); this is the deployment env.
+    "arcmemory",
     "croniter>=6.2.2",
 ]
 

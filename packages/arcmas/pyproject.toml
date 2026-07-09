@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = [
     "arccmd>=0.2",
+    # Memory is on by default in scaffolded agents (brain = "arcmemory"), so the
+    # full-stack install ships it. arc-agent keeps it an optional import.
+    "arcmemory>=0.1",
 ]
 
 [project.urls]

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`TeamFileStore` path-traversal hardening** — every resolved path is checked against the
+  team root (`path.resolve().is_relative_to(root.resolve())`) before a read or write, closing
+  an entity-ID/filename-controlled path-traversal / symlink-escape gap.
+- **Poison-message guard now covers parsing**, not just post-parse validation.
+
+### Changed
+
+- **Registry resolve caching completed** — `mentions` now resolves against a **per-send
+  entity snapshot** from the registry cache instead of re-querying per mention.
+- **BM25 memory-search index reuse** — `memory/search_engine.py` no longer rebuilds the index
+  on every query.
+
+### Removed
+
+- **Unwired `Roster` / presence surface deleted** (`roster.py`, `test_roster.py`,
+  `test_presence.py`) — dead code with no live caller; entity/role tracking already lives in
+  `registry.py`.
+
 ## [0.5.0] - 2026-07-06
 
 SPEC-038 sub-scope C: the messenger enforces Bell-LaPadula "no write down", and the duplicate classification ladder is consolidated into arctrust.

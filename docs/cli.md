@@ -44,7 +44,6 @@ Manage agent directories: scaffold, configure, run, and inspect agents.
 | `arc agent chat [path] --task "<task>"` | One-shot task via chat handler | `arc agent chat myagent --task "List all files"` |
 | `arc agent run <path> <task>` | Run a single task non-interactively | `arc agent run myagent "Analyze data.csv"` |
 | `arc agent serve [path]` | Start a long-running agent daemon (scheduler active) | `arc agent serve myagent --verbose` |
-| `arc agent serve [path] --ui` | Start daemon with UI reporter module enabled | `arc agent serve myagent --ui` |
 | `arc agent status [path]` | Show agent summary: DID, model, tool/skill/extension/session counts | `arc agent status myagent` |
 | `arc agent config [path]` | Show parsed `arcagent.toml` | `arc agent config myagent --json` |
 | `arc agent tools [path]` | List tools available to the agent | `arc agent tools myagent --json` |
@@ -128,34 +127,71 @@ The agent has two ways to fan out work across multiple `arcrun` loops:
 
 ### `arc skill` — Skill management
 
-Create, validate, and search agent skills (Markdown files with YAML frontmatter).
+Create, validate, and search agent skills — folders containing a `SKILL.md` (frontmatter +
+7 required sections: Resources, Contract, Knowledge, Steps, Anti Patterns, Examples,
+Validation) plus optional `references/`, `scripts/`, `templates/`, `assets/` (SPEC-021). The
+unified `CapabilityLoader` discovers skills from four scan roots: the package builtins,
+`~/.arc/capabilities/` (global), `<agent>/capabilities/` (per-agent, trusted), and
+`<agent>/workspace/capabilities/` (agent-authored, untrusted).
 
 | Command | Purpose | Example |
 |---|---|---|
-| `arc skill list` | List all discovered skills (global + workspace) | `arc skill list` |
+| `arc skill list` | List all discovered skill folders (global + workspace) | `arc skill list` |
 | `arc skill list --agent <path>` | Include skills from a specific agent workspace | `arc skill list --agent myagent` |
-| `arc skill create <name>` | Scaffold a new SKILL.md with YAML frontmatter | `arc skill create data-analysis` |
-| `arc skill create <name> --dir <dir>` | Write to a specific directory | `arc skill create audit-report --dir myagent/workspace/skills` |
-| `arc skill create <name> --global` | Write to `~/.arcagent/skills/` | `arc skill create shared-tool --global` |
-| `arc skill validate <path>` | Validate a skill file (checks required frontmatter fields) | `arc skill validate myskill.md` |
+| `arc skill create <name>` | Scaffold a new skill folder (`./<name>/SKILL.md`) | `arc skill create data-analysis` |
+| `arc skill create <name> --dir <dir>` | Write to a specific parent directory | `arc skill create audit-report --dir myagent/capabilities` |
+| `arc skill create <name> --global` | Write to `~/.arc/capabilities/<name>/` | `arc skill create shared-tool --global` |
+| `arc skill validate <path>` | Validate a skill folder or its `SKILL.md` | `arc skill validate ./myskill` |
 | `arc skill search <query>` | Search skills by name or description | `arc skill search "data analysis"` |
 | `arc skill search <query> --agent <path>` | Include agent workspace in search | `arc skill search "report" --agent myagent` |
 
+Adaptation and self-improvement (golden-task-gated code repair, per-turn nudge/usage/retire
+lifecycle) is an **optional supercharger**: arcagent runs skills on its own with a no-op
+`NullSkillAdapter`; installing `arcskill` and selecting it in config
+(`[skills] adapter = "arcskill"`) turns it on. See [`arcskill`](../packages/arcskill/README.md).
+
 ---
 
-### `arc ext` — Extension management
+### `arc ext` — Capability + extension-point management
 
-Manage Python extensions that register tools and hooks with ArcAgent.
+Manage capability `.py` files — Python modules exposing callables/classes stamped with
+`@tool`, `@hook`, `@background_task`, or `@capability` (SPEC-021) — and inspect the four
+generalized extension-point families (`brain`, `skills`, `tools`, `hook-builds`; SPEC-047).
+Capability files use the same four scan roots as `arc skill`.
 
 | Command | Purpose | Example |
 |---|---|---|
-| `arc ext list` | List all discovered extensions (global + workspace) | `arc ext list` |
-| `arc ext list --agent <path>` | Include extensions from a specific agent workspace | `arc ext list --agent myagent` |
-| `arc ext create <name>` | Scaffold a new extension with boilerplate `extension()` factory | `arc ext create web-search` |
-| `arc ext create <name> --dir <dir>` | Write to a specific directory | `arc ext create scraper --dir myagent/workspace/extensions` |
-| `arc ext create <name> --global` | Write to `~/.arcagent/extensions/` | `arc ext create shared-tool --global` |
-| `arc ext install <source>` | Install a `.py` file or directory to `~/.arcagent/extensions/` | `arc ext install my_extension.py` |
-| `arc ext validate <path>` | Validate an extension: imports cleanly and has `extension()` factory | `arc ext validate my_extension.py` |
+| `arc ext list` | List all discovered capability files (global + workspace) | `arc ext list` |
+| `arc ext list --agent <path>` | Include capabilities from a specific agent workspace | `arc ext list --agent myagent` |
+| `arc ext create <name>` | Scaffold a new `.py` with a `@tool` template | `arc ext create web-search` |
+| `arc ext create <name> --dir <dir>` | Write to a specific directory | `arc ext create scraper --dir myagent/capabilities` |
+| `arc ext create <name> --global` | Write to `~/.arc/capabilities/` | `arc ext create shared-tool --global` |
+| `arc ext install <source>` | Install a `.py` file or directory into `~/.arc/capabilities/` | `arc ext install my_capability.py` |
+| `arc ext validate <path>` | Validate a capability file | `arc ext validate my_capability.py` |
+| `arc ext inspect [--agent <path>]` | Show selected/available/signed state for all 4 extension-point families | `arc ext inspect --agent myagent` |
+| `arc ext verify [--agent <path>]` | Report extension-point selections that would be refused at load; non-zero exit on a refusal | `arc ext verify --agent myagent` |
+
+---
+
+### `arc blueprint` — Signed preset-config bootstrap
+
+A blueprint is a versioned, signed TOML preset that bootstraps a deployment in one command
+(SPEC-047). `apply` verifies the signature (fail-closed above `personal`), deep-merges the
+preset **under** the target's existing config (identity + user keys win — not a
+clobber-write), floors the tier by stringency-max (a blueprint can only raise a floor, never
+weaken federal), and materializes the concrete `arcagent.toml`. Three packaged presets ship
+provenance-trusted: `personal-assistant`, `enterprise-ops`, `federal-analyst`. User presets
+live in `~/.arc/blueprints/` and must be signed with `arc blueprint sign` (pinned to the
+deployment operator key above `personal`).
+
+| Command | Purpose | Example |
+|---|---|---|
+| `arc blueprint list` | List packaged + `~/.arc/blueprints` presets | `arc blueprint list` |
+| `arc blueprint show <name>` | Print a blueprint's resolved config overlay | `arc blueprint show enterprise-ops` |
+| `arc blueprint apply <name> [--agent <path>]` | Verify, deep-merge, and write | `arc blueprint apply enterprise-ops --agent myagent` |
+| `arc blueprint apply <name> --dry-run` | Print the merged config only — no write, no audit record | `arc blueprint apply enterprise-ops --dry-run` |
+| `arc blueprint verify <name>` | Report signature validity for the current tier | `arc blueprint verify enterprise-ops` |
+| `arc blueprint sign <path>` | Operator-sign a user blueprint, writes the `.arcsig` sidecar | `arc blueprint sign ./my-preset.toml` |
 
 ---
 
@@ -167,7 +203,7 @@ Manage arcteam entity registries, channels, and messaging.
 |---|---|---|
 | `arc team status` | Show team overview: entity count, channels, messages, audit entries | `arc team status` |
 | `arc team config` | Show team configuration | `arc team config --json` |
-| `arc team init` | Initialize team data directory and generate HMAC key | `arc team init` |
+| `arc team init` | Initialize team data directory and bootstrap the operator audit key (asymmetric authority) | `arc team init` |
 | `arc team init --root <path>` | Initialize at a specific root path | `arc team init --root /var/arc/team` |
 | `arc team register <id>` | Register an agent or user entity | `arc team register agent-1 --name "Analyst" --type agent` |
 | `arc team register <id> --roles <r>` | Register with comma-separated roles | `arc team register agent-1 --name "Lead" --type agent --roles lead,reviewer` |
@@ -194,9 +230,11 @@ Start and observe the ArcUI real-time dashboard.
 | `arc ui start --show-tokens` | Print full tokens to stdout instead of masked | `arc ui start --show-tokens` |
 | `arc ui start --viewer-token <t>` | Supply a viewer token (auto-generated if omitted) | `arc ui start --viewer-token mytoken` |
 | `arc ui start --operator-token <t>` | Supply an operator token | `arc ui start --operator-token optoken` |
-| `arc ui start --agent-token <t>` | Supply an agent token | `arc ui start --agent-token agtoken` |
 | `arc ui start --max-agents <n>` | Maximum tracked agents (default: 100) | `arc ui start --max-agents 500` |
-| `arc ui start --traces-dir <dir>` | Warm-start from a JSONL trace directory | `arc ui start --traces-dir /var/arc/traces` |
+| `arc ui start --team-root <dir>` | Agent-discovery root (SPEC-022 routes); defaults to `./team` if it exists | `arc ui start --team-root ./team` |
+| `arc ui start --gateway-config <path>` | Path to `gateway.toml`; omitted auto-builds a default with the web platform enabled | `arc ui start --gateway-config ./gateway.toml` |
+| `arc ui start --no-browser` | Do not auto-open a browser tab on loopback start | `arc ui start --no-browser` |
+| `arc ui start --no-chat` | Disable the in-process web chat platform even when `team_root` is set | `arc ui start --no-chat` |
 | `arc ui tail` | Stream live events to stdout as JSONL (requires `--viewer-token`) | `arc ui tail --viewer-token <t>` |
 | `arc ui tail --host <h> --port <n>` | Connect to a non-default dashboard | `arc ui tail --host 10.0.0.1 --port 9000 --viewer-token <t>` |
 | `arc ui tail --layer <l>` | Filter to a specific layer: `llm`, `run`, `agent`, or `team` | `arc ui tail --viewer-token <t> --layer llm` |
@@ -204,15 +242,12 @@ Start and observe the ArcUI real-time dashboard.
 | `arc ui tail --group <name>` | Filter to events from agents in a specific team/group | `arc ui tail --viewer-token <t> --group research-team` |
 
 **Notes:**
-- `arc ui start` auto-generates tokens if not supplied; the agent token is written to `~/.arcagent/ui-token`
-- `arc ui tail` requires `--viewer-token` explicitly; it does not auto-read the token file (which contains the agent token, not the viewer token)
-- `arc agent serve --ui` enables the UI reporter module so agent events flow to a running dashboard
-
----
-
-### `arc ext` — Extension management
-
-See the `arc ext` section above.
+- `arc ui start` auto-generates viewer/operator tokens if not supplied and prints them masked (`--show-tokens` prints them in full). On a loopback bind the browser opens pre-authenticated; there is no `--agent-token` flag and no on-disk token file — tokens live only in the running process.
+- `arc ui tail` requires `--viewer-token` explicitly.
+- `arc ui start` reads agent activity on demand from the shared `arcstore` data dir (the
+  Observe plane) — agents don't push events to a running dashboard; there is no
+  `--ui`/`ui_reporter` opt-in on `arc agent serve`. Pass `--team-root` so `arc ui start` can
+  discover the agents to read.
 
 ---
 
@@ -222,18 +257,22 @@ Interactive tier-based configuration wizard.
 
 | Command | Purpose | Example |
 |---|---|---|
-| `arc init` | Interactive wizard: select tier (open/enterprise/federal), provider, API key | `arc init` |
+| `arc init` | Interactive wizard: select tier (personal/enterprise/federal), provider, API key | `arc init` |
 | `arc init --tier <t>` | Non-interactive: write config for a specific tier | `arc init --tier enterprise` |
-| `arc init --provider <p>` | Non-interactive: set provider | `arc init --tier open --provider anthropic` |
+| `arc init --provider <p>` | Non-interactive: set provider | `arc init --tier personal --provider anthropic` |
 | `arc init --dir <path>` | Write config to a specific directory | `arc init --tier federal --dir /etc/arc` |
+| `arc init --blueprint <name>` | Bootstrap from a signed preset, deep-merged UNDER init defaults | `arc init --blueprint enterprise-ops` |
 
 **Tier presets:**
 
 | Tier | Telemetry | Audit | Retry | Fallback | OTel | Security (PII + signing) |
 |---|---|---|---|---|---|---|
-| `open` | off | off | off | off | off | off |
+| `personal` | off | off | off | off | off | off |
 | `enterprise` | on | on | on (3x) | on | off | off |
 | `federal` | on | on | on (3x) | on | on (OTLP gRPC) | on |
+
+Tiers are config-relaxable within limits (`arcagent.tiers.RELAXABLE_KNOBS`); federal floors are
+never relaxable. See `arc blueprint` and `arc ext` below.
 
 ---
 
@@ -311,15 +350,27 @@ max_tokens = 128000
 retention_count = 50
 retention_days = 30
 
-[extensions]
-global_dir = "~/.arcagent/extensions"
-
 [modules.memory]
 enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"             # arcmemory (scaffold default) | none | auto | module:Class
 
 [modules.policy]
 enabled = true
 ```
+
+`arc agent create` and `arc init` scaffold `brain = "arcmemory"`, so a fresh agent has
+memory ON: zero-LLM capture writes daily-log bullets to `workspace/memory/daily-log/YYYY-MM-DD.md`,
+the episodic index to `workspace/memory/index.db`, and the entity graph on every turn.
+Consolidation (entity cards + facts + insights) is opt-in via `distill_provider`. Set
+`brain = "none"` for a memory-less agent. (The framework code default — an agent with no
+`[modules.memory]` config at all — remains `none`, so federal deployments stay memory-off
+unless a config/blueprint opts in.)
+
+Skills and capability `.py` files are discovered from `~/.arc/capabilities/` (global) plus
+per-agent `capabilities/` / `workspace/capabilities/` — there is no separate `[extensions]`
+config section; see `arc skill` / `arc ext` above.
 
 For the full TOML schema, see `arcagent.core.config.ArcAgentConfig`.
 

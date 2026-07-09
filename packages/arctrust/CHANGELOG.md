@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Simplification-sweep cleanup (no version bump).
+
+### Added
+- `arctrust.canonical.canonical_json(obj) -> bytes` — the one deterministic canonical-JSON
+  serializer (`sort_keys=True`, compact separators, `ensure_ascii=True`) a signature binds
+  to. Adopted across packages (arcllm `_signing.py`, arcagent checkpoint signing) in place
+  of hand-rolled per-package serialization, with a byte-identity cross-package test proving
+  every adopter produces the same bytes for the same input.
+
+### Changed
+- **Policy decision-cache key now includes a digest of mutable `PolicyContext` state**
+  (`provider_usage`, `clearance`, `tool_runtime`, `team_scope`). Previously the cache key
+  didn't account for this state, so a repeated signed call could replay a stale `ALLOW`
+  from before a budget was exceeded, a clearance changed, or team scope narrowed, for the
+  remainder of the cache TTL (LLM10). It now misses and re-evaluates whenever that state
+  moves.
+
+### Removed
+- **`TierConfig`** (dead — tier→layer-set mapping had already been absorbed into
+  `build_pipeline`; `arcagent.core.tool_policy` migrated off it). No longer exported from
+  `arctrust`.
+
 ## [0.9.0] - 2026-07-06
 
 SPEC-038 sub-scopes B + C: arctrust becomes the canonical owner of the classification ladder and gains a no-read-up policy layer; the provider-budget layer now fails closed on an unknown label.

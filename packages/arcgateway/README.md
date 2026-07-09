@@ -2,7 +2,7 @@
 
 # 📡 arcgateway
 
-### **Make Your Agents Reachable from Telegram, Slack, Discord — Safely**
+### **Make Your Agents Reachable from Telegram, Slack, Mattermost — Safely**
 *Long-running daemon. Multi-platform adapters. Operator-approved pairing. TaskGroup isolation per platform.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -17,7 +17,7 @@
 
 ## ✨ What is arcgateway?
 
-`arcgateway` is the long-running daemon that lets users talk to your agents through chat platforms — Telegram, Slack, Discord — **without** giving anyone implicit access to anything.
+`arcgateway` is the long-running daemon that lets users talk to your agents through chat platforms — Telegram, Slack, Mattermost — **without** giving anyone implicit access to anything.
 
 Every DM gets a per-(user, agent) session. Every session must be **explicitly paired** by an operator before the agent will respond. One platform crashing never takes down the others. Every action emits an audit event.
 
@@ -35,7 +35,7 @@ flowchart LR
 
     Telegram[Telegram]:::other --> arcgateway
     Slack[Slack]:::other --> arcgateway
-    Discord[Discord]:::other --> arcgateway
+    Mattermost[Mattermost]:::other --> arcgateway
     arcgateway[arcgateway<br/>session router · pairing<br/>TaskGroup isolation]:::surface --> arcagent[arcagent]:::agent
 ```
 
@@ -191,7 +191,7 @@ Audit events emitted on every fs op: `gateway.fs.read`, `gateway.fs.tree`, `gate
 
 ### How the runner stays resilient
 
-`GatewayRunner` supervises N platform adapters inside an `asyncio.TaskGroup`. **A crash in one adapter never kills its siblings.** Telegram disconnects → Slack and Discord keep serving. The crashed adapter is logged, audited, and restarted with backoff.
+`GatewayRunner` supervises N platform adapters inside an `asyncio.TaskGroup`. **A crash in one adapter never kills its siblings.** Telegram disconnects → Slack and Mattermost keep serving. The crashed adapter is logged, audited, and restarted with backoff.
 
 ### How the session router prevents races
 

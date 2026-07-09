@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`arc agent create` / `arc init` default memory ON** — both now scaffold
+  `[modules.memory].config.brain = "arcmemory"` (matching the SPEC-047 blueprints), so a fresh
+  agent captures daily-log bullets (`workspace/memory/daily-log/YYYY-MM-DD.md`), the episodic
+  index, and the entity graph out of the box. Set `brain = "none"` for a memory-less agent.
+- **`arc agent create` scaffold trimmed** — only the directories the runtime reads
+  (`capabilities/`, `sessions/`) are created; the unused `workspace/{notes,entities,archive,library/*}`
+  dirs are gone. `workspace/memory/` is created lazily by arcmemory on first write.
+
 ## [0.6.0] - 2026-07-08
 
 SPEC-047 — the operator surface for extensibility: preset-config blueprints, extension-point

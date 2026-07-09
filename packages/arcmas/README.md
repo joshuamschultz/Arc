@@ -52,10 +52,11 @@ The deployment tier only changes how *strict* the verification is — not whethe
 | 🌐 [**arcllm**](../arcllm/) | 16 LLM providers via direct HTTP — no SDKs |
 | ⚙️ [**arcrun**](../arcrun/) | Async think → act → observe loop — tool sandbox, streaming, parallel dispatch |
 | 🤖 [**arcagent**](../arcagent/) | The agent — DID-required, skills, extensions, persistent sessions, module bus |
-| 📡 [**arcgateway**](../arcgateway/) | Multi-platform daemon — Telegram, Slack, Discord with operator-approved pairing |
-| 🔧 [**arcskill**](../arcskill/) | Verified skill install (Sigstore + Rekor), scan, lock, CRL lifecycle |
-| 🤝 [**arcteam**](../arcteam/) | Multi-agent messaging — entity registry, channels, Ed25519-signed audit |
-| 📊 [**arcui**](../arcui/) | Real-time dashboard — live WebSocket telemetry, three-token auth |
+| 🧠 [**arcmemory**](../arcmemory/) | Dual-speed analogical memory — daily-log journal, episodic index, entity graph; the scaffold-default Brain |
+| 📡 [**arcgateway**](../arcgateway/) | Multi-platform daemon — Telegram, Slack, Mattermost with operator-approved pairing |
+| 🔧 [**arcskill**](../arcskill/) *(optional)* | Verified skill install (Sigstore + Rekor), scan, lock, CRL lifecycle, plus optional self-improvement (`arcskill.improver`) |
+| 🤝 [**arcteam**](../arcteam/) | Multi-agent messaging — entity registry, channels, operator-key-signed audit |
+| 📊 [**arcui**](../arcui/) | Real-time dashboard — reads on demand from the shared arcstore record, two-token auth |
 | ⌨️ [**arccli**](../arccli/) | Unified `arc` command-line tool |
 
 ---
@@ -105,8 +106,7 @@ arc agent build my-agent --check
 arc agent chat my-agent
 
 # 5. (Optional) watch in a browser
-arc ui start --show-tokens          # terminal 1
-arc agent serve my-agent --ui       # terminal 2
+arc ui start --show-tokens          # reads agent activity from arcstore on demand
 ```
 
 What `arc agent create` scaffolds:
@@ -115,9 +115,9 @@ What `arc agent create` scaffolds:
 my-agent/
 ├── arcagent.toml          # config
 ├── identity.md            # the agent's identity card
+├── capabilities/          # per-agent capabilities (.py + SKILL.md folders) — trusted
 └── workspace/
-    ├── extensions/        # Python tools
-    ├── skills/            # markdown skills
+    ├── .capabilities/     # agent-authored capabilities — UNTRUSTED, AST-validated
     └── sessions/          # JSONL transcripts
 ```
 
@@ -129,7 +129,7 @@ A fresh Ed25519 keypair is generated. The DID is written into `arcagent.toml`. *
 
 | Tier | Telemetry | Audit | Retry | Fallback | OpenTelemetry | PII redaction + signing |
 |---|---|---|---|---|---|---|
-| `open` | off | off | off | off | off | off |
+| `personal` | off | off | off | off | off | off |
 | `enterprise` | ✅ | ✅ | ✅ (3x) | ✅ | off | off |
 | `federal` | ✅ | ✅ | ✅ (3x) | ✅ | ✅ (OTLP) | ✅ |
 

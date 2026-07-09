@@ -62,7 +62,8 @@ Event flow: user types → `InputComposer` submits → non-slash goes to `_send_
 ## 🧪 Status
 
 ```bash
-uv run --no-sync pytest packages/arctui/tests
+uv run --no-sync pytest packages/arctui/src/arctui/tests
 ```
 
+- **Tests:** 66+
 - **License:** Apache 2.0 · Copyright © 2025-2026 BlackArc Systems
