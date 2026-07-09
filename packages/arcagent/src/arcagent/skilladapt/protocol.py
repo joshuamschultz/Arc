@@ -56,6 +56,10 @@ class SkillAdapter(Protocol):
         """Run the retire/revive lifecycle sweep on the proactive tick."""
         ...
 
+    def retired_skills(self) -> frozenset[str]:
+        """Names of currently-retired skills — excluded from the agent's offering."""
+        ...
+
 
 class NullSkillAdapter:
     """The default no-op adapter: improvement off, zero files, never errors.
@@ -84,6 +88,9 @@ class NullSkillAdapter:
 
     async def review_lifecycle(self, *, turn: int) -> None:
         return None
+
+    def retired_skills(self) -> frozenset[str]:
+        return frozenset()
 
 
 __all__ = ["NullSkillAdapter", "SkillAdapter"]

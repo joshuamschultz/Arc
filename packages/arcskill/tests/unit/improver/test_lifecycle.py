@@ -148,12 +148,17 @@ async def test_federal_sweep_retire_then_revive_gated_and_audited(tmp_path: Path
     assert getattr(retired[0], "tier", None) == "federal"
     assert imp._candidate_store.lifecycle_state("old-skill") == STATE_RETIRED
 
+    # HIGH-3: a retired skill is reported as retired (excluded from the agent offering).
+    assert imp.retired_skills() == frozenset({"old-skill"})
+
     await imp.revive("old-skill")
     revived = [e for e in sink.events if getattr(e, "action", "") == "skill.lifecycle.revived"]
     assert revived, "approved operator revive should emit an audit event"
     # Both transitions passed through the operator-approval seam (federal, D-10).
     assert ("skill.lifecycle.retire", "old-skill") in approver.calls
     assert ("skill.lifecycle.revive", "old-skill") in approver.calls
+    # HIGH-3: revive un-hides the skill — it is offered again.
+    assert imp.retired_skills() == frozenset()
 
 
 @pytest.mark.asyncio

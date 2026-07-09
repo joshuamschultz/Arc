@@ -159,6 +159,18 @@ def _reload() -> None:
     st.skill_registry.discover(st.workspace, st.workspace)
 
 
+def retired_skill_names() -> frozenset[str]:
+    """Retired skill names from the active adapter, or empty when skills is off/unset.
+
+    Read by the capability-offering path to hide retired skills from the loop (HIGH-3,
+    REQ-043). Safe to call before configuration — returns empty rather than raising.
+    """
+    st = _state
+    if st is None or not st.active:
+        return frozenset()
+    return st.adapter.retired_skills()
+
+
 def state() -> _State:
     if _state is None:
         raise RuntimeError(
@@ -174,4 +186,4 @@ def reset() -> None:
     _state = None
 
 
-__all__ = ["configure", "reset", "state"]
+__all__ = ["configure", "reset", "retired_skill_names", "state"]

@@ -120,6 +120,19 @@ class ArcSkillImprover:
     def tier(self) -> str:
         return self._tier
 
+    def retired_skills(self) -> frozenset[str]:
+        """Names of skills currently retired (disabled) — the offering filter (REQ-043).
+
+        A retired skill must not be advertised to or loaded by the agent loop. Read from
+        the candidate-store manifest so it survives restarts; revive clears it (lineage
+        retained, D-8).
+        """
+        return frozenset(
+            name
+            for name in self._candidate_store.list_skills()
+            if self._candidate_store.lifecycle_state(name) == "retired"
+        )
+
     # -- SkillAdapter surface ------------------------------------------------
 
     async def observe(
