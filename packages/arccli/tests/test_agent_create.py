@@ -104,6 +104,13 @@ class TestCreate:
         assert config["agent"]["name"] == "test-bot"
         assert config["telemetry"]["service_name"] == "test-bot"
 
+    def test_create_defaults_memory_to_arcmemory(self, tmp_path):
+        # Fresh agents get memory ON so daily-log + episodic index populate.
+        _arc("agent", "create", "mem-bot", "--dir", str(tmp_path))
+        config = tomllib.loads((tmp_path / "mem-bot" / "arcagent.toml").read_text())
+        assert config["modules"]["memory"]["enabled"] is True
+        assert config["modules"]["memory"]["config"]["brain"] == "arcmemory"
+
     def test_create_workspace_structure(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
         agent_root = tmp_path / "my-agent"

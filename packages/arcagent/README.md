@@ -377,10 +377,15 @@ importer. Four families:
 | `hook-builds` | scan-many | module-bus hook registrations | — |
 
 `brain` and `skills` each resolve via `[modules.memory].config.brain` / `[modules.skills].adapter`
-= `none` (default) / the package name / a signed `pkg.mod:Class` BYO path. `arc ext inspect`
-(read-only) shows the selected/available/signed state of all four families for an agent;
-`arc ext verify` reports any selection that would be refused at load (federal change-control
-gate, non-zero exit on a refusal).
+= the package name / `none` / a signed `pkg.mod:Class` BYO path. **Scaffolded agents default
+`brain = "arcmemory"`** (`arc agent create`, `arc init`, and all three blueprints), so a fresh
+agent has memory on: zero-LLM capture writes daily-log bullets to
+`workspace/memory/daily-log/YYYY-MM-DD.md`, the episodic index (`workspace/memory/index.db`),
+and the entity graph each turn (consolidation into entity cards + facts + insights is opt-in
+via `distill_provider`). The framework *code* default — no `[modules.memory]` config at all —
+stays `none` (federal absent-config safety). `arc ext inspect` (read-only) shows the
+selected/available/signed state of all four families for an agent; `arc ext verify` reports any
+selection that would be refused at load (federal change-control gate, non-zero exit on a refusal).
 
 ### Blueprints — signed preset-config bootstrap
 

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Memory ON by default in scaffolded agents.** `arc agent create` and `arc init` now write
+  `[modules.memory].config.brain = "arcmemory"` (matching all three SPEC-047 blueprints), and
+  `arcmemory` ships in the full-stack (`arcmas`) and workspace dev installs. A fresh agent now
+  has a working Brain out of the box: zero-LLM capture writes daily-log bullets to
+  `workspace/memory/daily-log/YYYY-MM-DD.md`, the episodic index to `workspace/memory/index.db`,
+  and the entity graph each turn. Consolidation (entity cards + facts + insights) stays opt-in
+  via `distill_provider`. The framework *code* default (no `[modules.memory]` config at all)
+  remains `none`, so federal absent-config deployments stay memory-off unless a config or
+  blueprint opts in. Fixes the prior state where a scaffolded agent had `brain = "none"` and
+  `arcmemory` was not installed, so `workspace/memory/` was never created and nothing persisted.
+- **Agent scaffold trimmed to used directories.** `arc agent create` no longer materializes the
+  unused `workspace/{notes,entities,archive,library/*}` dirs (no runtime code read them); it
+  scaffolds only `capabilities/` + `sessions/`. `workspace/memory/` is created lazily by
+  arcmemory on first write. The daily-log (`memory/daily-log/`) — not the old empty `notes/` —
+  is the per-day context journal.
+- **`scripts/arc-stack.sh` repaired against current code.** Dropped the removed `--agent-token`
+  flag (which hard-failed `arc ui start`) and the removed `ui_reporter` handshake probe (which
+  reported `0/N connected` and exited 1 on every start); agent liveness is now "process survived
+  boot," matching the SPEC-026 arcstore read-on-demand model (no agent-side push wire).
 - **README + documentation rebrand** — Root and per-package READMEs realigned to the CTG Federal brand system (navy `#002550` → azure `#0073FE` blues with a single orange `#F68D2E` accent, replacing the prior rainbow Tailwind palette). New TUI-framed banner on the root README.
 - **Architecture diagram corrected and redrawn** — The dependency graph now reflects the real layered direction (every edge points down toward the `arctrust` / `arcstore` foundation: `arcrun → arcllm`, `arcagent → arcrun`, surfaces → agent, entry → surfaces). Added a branded SVG stack diagram at `docs/assets/arc-architecture.svg`. `arcstore` (operational storage) is now shown as a foundation package alongside `arctrust`; mermaid `classDef` colors switched to the brand palette.
 

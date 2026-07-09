@@ -354,11 +354,19 @@ retention_days = 30
 enabled = true
 
 [modules.memory.config]
-brain = "none"                  # none | arcmemory | auto | module:Class
+brain = "arcmemory"             # arcmemory (scaffold default) | none | auto | module:Class
 
 [modules.policy]
 enabled = true
 ```
+
+`arc agent create` and `arc init` scaffold `brain = "arcmemory"`, so a fresh agent has
+memory ON: zero-LLM capture writes daily-log bullets to `workspace/memory/daily-log/YYYY-MM-DD.md`,
+the episodic index to `workspace/memory/index.db`, and the entity graph on every turn.
+Consolidation (entity cards + facts + insights) is opt-in via `distill_provider`. Set
+`brain = "none"` for a memory-less agent. (The framework code default — an agent with no
+`[modules.memory]` config at all — remains `none`, so federal deployments stay memory-off
+unless a config/blueprint opts in.)
 
 Skills and capability `.py` files are discovered from `~/.arc/capabilities/` (global) plus
 per-agent `capabilities/` / `workspace/capabilities/` — there is no separate `[extensions]`

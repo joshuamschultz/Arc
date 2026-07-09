@@ -26,6 +26,18 @@ through the `Brain` Protocol via hooks + a scheduled task.
 DAG: `arcmemory → {arctrust, arcllm, arcstore}`, sibling to `arcrun`/`arcskill`,
 below `arcagent`.
 
+## Daily notes (glass-box daily-log)
+
+The fast path writes a human-readable **daily note** per day at
+`workspace/memory/daily-log/YYYY-MM-DD.md` — one bullet per captured turn
+(`- <ts> [<kind>] <text>`), classification-gated in the file frontmatter. This is the
+running "what was talked about, decisions, key entities, tasks" journal for each day, and it
+is **distinct from `workspace/policy.md`**: policy.md is the self-improving system-prompt
+playbook (the agentic-context-management bullets the policy module curates), whereas the
+daily-log is plain context history you can read or edit by hand. Both entity cards
+(`workspace/memory/entities/*.md`) and the daily-log are the glass-box source of truth; the
+SQLite index is a rebuildable derivative.
+
 ## Install
 
 ```bash
@@ -33,6 +45,11 @@ pip install arcmemory            # core
 pip install "arcmemory[vec]"     # + sqlite-vec surface/structural vector index
 pip install "arcmemory[local]"   # + offline local embedder (bge-small / MiniLM)
 ```
+
+arcmemory ships in the full-stack install (`pip install arcmas`) and the workspace dev env,
+and **scaffolded agents default to `brain = "arcmemory"`** (`arc agent create` / `arc init` /
+all blueprints) — so memory, the daily-log, and the episodic index are populated out of the
+box. Set `[modules.memory].config.brain = "none"` for a memory-less agent.
 
 ## Status
 

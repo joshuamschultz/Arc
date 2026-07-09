@@ -52,6 +52,7 @@ The deployment tier only changes how *strict* the verification is — not whethe
 | 🌐 [**arcllm**](../arcllm/) | 16 LLM providers via direct HTTP — no SDKs |
 | ⚙️ [**arcrun**](../arcrun/) | Async think → act → observe loop — tool sandbox, streaming, parallel dispatch |
 | 🤖 [**arcagent**](../arcagent/) | The agent — DID-required, skills, extensions, persistent sessions, module bus |
+| 🧠 [**arcmemory**](../arcmemory/) | Dual-speed analogical memory — daily-log journal, episodic index, entity graph; the scaffold-default Brain |
 | 📡 [**arcgateway**](../arcgateway/) | Multi-platform daemon — Telegram, Slack, Mattermost with operator-approved pairing |
 | 🔧 [**arcskill**](../arcskill/) *(optional)* | Verified skill install (Sigstore + Rekor), scan, lock, CRL lifecycle, plus optional self-improvement (`arcskill.improver`) |
 | 🤝 [**arcteam**](../arcteam/) | Multi-agent messaging — entity registry, channels, operator-key-signed audit |

@@ -160,7 +160,13 @@ allow_imports = []
 enabled = true
 
 [modules.memory.config]
-brain = "none"
+# Dual-speed analogical memory (arcmemory). Fresh agents get memory ON:
+# zero-LLM capture writes daily-log bullets (workspace/memory/daily-log/
+# YYYY-MM-DD.md), the episodic index (workspace/memory/index.db), and the
+# entity graph on every turn. Set brain = "none" for a memory-less agent.
+# Consolidation (entity cards + facts + insights) is opt-in — set
+# distill_provider/distill_model to an LLM to enable it.
+brain = "arcmemory"
 
 [modules.policy]
 enabled = true
