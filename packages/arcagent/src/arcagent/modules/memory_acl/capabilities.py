@@ -1,7 +1,6 @@
 """Decorator-form memory_acl module — SPEC-021 unified capability surface.
 
-Three ``@hook`` functions that mirror :class:`MemoryACLModule`'s
-``startup`` registrations:
+Three ``@hook`` functions gating memory operations at priority 10:
 
   * ``memory.read``    (priority 10) — ACL gate for cross-session reads.
   * ``memory.write``   (priority 10) — write requires ownership.
@@ -9,10 +8,6 @@ Three ``@hook`` functions that mirror :class:`MemoryACLModule`'s
 
 State is shared via :mod:`arcagent.modules.memory_acl._runtime`. The
 agent configures it once at startup; the hooks read state lazily.
-
-The legacy :class:`MemoryACLModule` class is kept alongside this module
-for tests and the per-turn capability issuance API
-(``issue_capability`` / ``revoke_turn_capabilities`` / ``has_valid_capability``).
 """
 
 from __future__ import annotations

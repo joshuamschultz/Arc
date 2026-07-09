@@ -146,13 +146,16 @@ async def run(
     resume_from: LoopCheckpoint | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume."""
-    state, sandbox_obj = _build_state(
+    handle = await run_async(
+        model,
         capabilities,
         system_prompt,
         task,
         messages=messages,
-        on_event=on_event,
+        max_turns=max_turns,
+        allowed_strategies=allowed_strategies,
         sandbox=sandbox,
+        on_event=on_event,
         transform_context=transform_context,
         tool_timeout=tool_timeout,
         depth=depth,
@@ -171,13 +174,7 @@ async def run(
         max_consecutive_errors=max_consecutive_errors,
         resume_from=resume_from,
     )
-
-    # Bind the run id as the spool correlation id so every record emitted inside
-    # the run — including arcllm's llm_call, deep in the model call — inherits it.
-    with request_context(state.run_id):
-        strategy_fn = await _select_and_emit(allowed_strategies, model, state)
-        result: LoopResult = await strategy_fn(model, state, sandbox_obj, max_turns)
-    return result
+    return await handle.result()
 
 
 async def run_async(

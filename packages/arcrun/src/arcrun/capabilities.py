@@ -42,7 +42,6 @@ class CapabilitySpec:
     description: str
     input_schema: dict[str, Any]
     kind: str = "tool"
-    parallel_safe: bool = False
     signals_completion: bool = False
     timeout_seconds: float | None = None
 
@@ -124,7 +123,6 @@ class StaticProvider:
                 description=t.description,
                 input_schema=t.input_schema,
                 kind="tool",
-                parallel_safe=t.parallel_safe,
                 signals_completion=t.signals_completion,
                 timeout_seconds=t.timeout_seconds,
             )
@@ -195,7 +193,6 @@ def _invoke_tool(spec: CapabilitySpec, provider: CapabilityProvider, *, caller_d
         input_schema=spec.input_schema,
         execute=_execute,
         timeout_seconds=spec.timeout_seconds,
-        parallel_safe=spec.parallel_safe,
         signals_completion=spec.signals_completion,
     )
 

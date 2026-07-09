@@ -11,11 +11,7 @@ Key differences from standard OpenAI:
 - content_filter finish_reason from Azure Content Safety (handled by base)
 """
 
-from typing import Any
-
 from arcllm.adapters.openai import OpenaiAdapter
-from arcllm.exceptions import ArcLLMAPIError
-from arcllm.types import LLMResponse, Message, Tool
 
 
 class Azure_OpenaiAdapter(OpenaiAdapter):  # noqa: N801 — matches provider name convention
@@ -40,32 +36,12 @@ class Azure_OpenaiAdapter(OpenaiAdapter):  # noqa: N801 — matches provider nam
             headers["api-key"] = self._api_key
         return headers
 
-    async def invoke(
-        self,
-        messages: list[Message],
-        tools: list[Tool] | None = None,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        """Send request to Azure OpenAI v1 API endpoint.
+    def _completions_url(self) -> str:
+        """Azure v1 API endpoint: ``{base}/openai/v1/chat/completions``.
 
-        URL: ``{base_url}/openai/v1/chat/completions`` — no query params.
-        The v1 API hard-fails (400) if ``?api-version=`` is appended.
+        The v1 API hard-fails (400) if ``?api-version=`` is appended, so no
+        query params. ``rstrip('/')`` prevents a double slash on a
+        trailing-slash base URL.
         """
-        headers = self._build_headers()
-        body = self._build_request_body(messages, tools, **kwargs)
-
-        # rstrip('/') prevents double-slash when base_url has trailing slash
         base = self._config.provider.base_url.rstrip("/")
-        url = f"{base}/openai/v1/chat/completions"
-
-        response = await self._client.post(url, headers=headers, json=body)
-
-        if response.status_code != 200:
-            raise ArcLLMAPIError(
-                status_code=response.status_code,
-                body=response.text,
-                provider=self.name,
-                retry_after=self._parse_retry_after(response),
-            )
-
-        return self._parse_response(response.json())
+        return f"{base}/openai/v1/chat/completions"

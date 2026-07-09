@@ -1,4 +1,4 @@
-"""Tests for agents REST routes — list, detail, control proxy.
+"""Tests for agents REST routes — list and detail.
 
 SPEC-022 Phase 2 extends this file with per-agent detail routes that read
 from a synthetic ``team/`` directory through ``arcgateway.fs_reader``.
@@ -6,9 +6,8 @@ from a synthetic ``team/`` directory through ``arcgateway.fs_reader``.
 
 from __future__ import annotations
 
-from collections import deque
+import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from arcgateway import team_roster
@@ -29,7 +28,6 @@ def _make_app() -> tuple[Starlette, AuthConfig, AgentRegistry]:
         {
             "viewer_token": "viewer",
             "operator_token": "operator",
-            "agent_token": "agent-secret",
         }
     )
     registry = AgentRegistry()
@@ -38,9 +36,29 @@ def _make_app() -> tuple[Starlette, AuthConfig, AgentRegistry]:
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.agent_registry = registry
-    app.state.pending_controls = {}
     app.state.audit = UIAuditLogger(enabled=False)
     return app, auth, registry
+
+
+def _write_worm_audit(data_dir: Path, *, seq: int, actor_did: str) -> None:
+    """Append one signed-chain record to the durable WORM file arcstore mirrors."""
+    worm = data_dir / "worm"
+    worm.mkdir(parents=True, exist_ok=True)
+    line = {
+        "seq": seq,
+        "event_hash": f"hash-{seq}",
+        "prev_hash": f"hash-{seq - 1}" if seq else "",
+        "signature": "sig",
+        "event": {
+            "ts": f"2026-05-31T00:00:0{seq}+00:00",
+            "actor_did": actor_did,
+            "action": "gateway.fs.read",
+            "target": "tool:x",
+            "outcome": "allow",
+        },
+    }
+    with (worm / "audit-chain.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
 
 
 # --- SPEC-022 Phase 2 fixtures ---------------------------------------------
@@ -141,7 +159,6 @@ def _make_detail_app(
         {
             "viewer_token": "viewer",
             "operator_token": "operator",
-            "agent_token": "agent-secret",
         }
     )
     registry = AgentRegistry()
@@ -150,9 +167,7 @@ def _make_detail_app(
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.agent_registry = registry
-    app.state.pending_controls = {}
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.audit_buffer = deque(maxlen=1000)
     app.state.team_root = team_root
     # SPEC-026 FR-5: stats and traces routes read from the Observe plane.
     app.state.observe = Observe(data_dir=data_dir)
@@ -179,8 +194,7 @@ def _register_agent(
         provider="openai",
         connected_at="2026-03-03T12:00:00+00:00",
     )
-    ws = MagicMock()
-    registry.register(agent_id, ws, reg)
+    registry.register(agent_id, reg)
 
 
 class TestListAgents:
@@ -244,70 +258,6 @@ class TestGetAgent:
         )
         assert resp.status_code == 404
         assert resp.json() == {"error": "Agent not found"}
-
-
-class TestControlAgent:
-    def test_control_requires_operator(self):
-        app, auth, registry = _make_app()
-        _register_agent(registry, "a1")
-
-        client = TestClient(app)
-        resp = client.post(
-            "/api/agents/a1/control",
-            json={"action": "cancel", "data": {}, "request_id": "req-1"},
-            headers={"Authorization": f"Bearer {auth.viewer_token}"},
-        )
-        assert resp.status_code == 403
-
-    def test_control_nonexistent_agent_returns_404(self):
-        app, auth, _ = _make_app()
-        client = TestClient(app)
-        resp = client.post(
-            "/api/agents/nonexistent/control",
-            json={"action": "cancel", "data": {}, "request_id": "req-1"},
-            headers={"Authorization": f"Bearer {auth.operator_token}"},
-        )
-        assert resp.status_code == 404
-
-    def test_control_malformed_body_400(self):
-        app, auth, registry = _make_app()
-        _register_agent(registry, "a1")
-
-        client = TestClient(app)
-        resp = client.post(
-            "/api/agents/a1/control",
-            content=b"not json",
-            headers={
-                "Authorization": f"Bearer {auth.operator_token}",
-                "Content-Type": "application/json",
-            },
-        )
-        assert resp.status_code == 400
-
-    def test_control_missing_fields_400(self):
-        app, auth, registry = _make_app()
-        _register_agent(registry, "a1")
-
-        client = TestClient(app)
-        resp = client.post(
-            "/api/agents/a1/control",
-            json={"data": {}},  # missing action and request_id
-            headers={"Authorization": f"Bearer {auth.operator_token}"},
-        )
-        assert resp.status_code == 400
-        assert "Missing required fields" in resp.json()["error"]
-
-    def test_control_invalid_action_400(self):
-        app, auth, registry = _make_app()
-        _register_agent(registry, "a1")
-
-        client = TestClient(app)
-        resp = client.post(
-            "/api/agents/a1/control",
-            json={"action": "invalid_action", "data": {}, "request_id": "req-1"},
-            headers={"Authorization": f"Bearer {auth.operator_token}"},
-        )
-        assert resp.status_code == 400
 
 
 # ===========================================================================
@@ -447,10 +397,8 @@ class TestToolsRoute:
         team = _build_team_dir(tmp_path)
         app, auth, registry = _make_detail_app(team_root=team)
 
-        ws = MagicMock()
         registry.register(
             "alpha",
-            ws,
             AgentRegistration(
                 agent_id="alpha",
                 agent_name="alpha",
@@ -533,20 +481,23 @@ class TestTracesRoute:
 
 
 class TestAuditRoute:
-    def test_audit_returns_buffer(self, tmp_path):
+    def test_audit_returns_chain_for_agent(self, tmp_path, _isolated_arc_data_dir: Path):
+        # Real path: the per-agent audit tab resolves agent label -> DID and
+        # reads the durable signed chain (arcstore WORM mirror), not a buffer.
+        from arcui.server import create_app
+
+        _write_worm_audit(_isolated_arc_data_dir, seq=0, actor_did="did:arc:alpha")
+        _write_worm_audit(_isolated_arc_data_dir, seq=1, actor_did="did:arc:beta")
+
         team = _build_team_dir(tmp_path)
-        app, auth, _ = _make_detail_app(team_root=team)
-        app.state.audit_buffer.append(
-            {"agent_id": "alpha", "action": "gateway.fs.read", "outcome": "allow"}
-        )
-        app.state.audit_buffer.append(
-            {"agent_id": "beta", "action": "gateway.fs.read", "outcome": "allow"}
-        )
-        client = TestClient(app)
-        resp = client.get("/api/agents/alpha/audit", headers=_viewer(auth))
+        auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get("/api/agents/alpha/audit", headers=_viewer(auth))
         assert resp.status_code == 200
         events = resp.json()["events"]
-        assert all(e["agent_id"] == "alpha" for e in events)
+        assert [e["actor_did"] for e in events] == ["did:arc:alpha"]
+        assert events[0]["action"] == "gateway.fs.read"
 
 
 class TestPolicyRoutes:
@@ -920,7 +871,7 @@ class TestNoRosterProvider:
         from arcui.registry import AgentRegistry
         from arcui.routes.agent_detail import routes as detail_routes
 
-        auth = AuthConfig({"viewer_token": "v", "operator_token": "o", "agent_token": "a"})
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
         registry = AgentRegistry()
         app = Starlette(routes=detail_routes)
         app.add_middleware(AuthMiddleware, auth_config=auth)

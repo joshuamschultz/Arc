@@ -22,6 +22,7 @@ import httpx
 from arcagent.modules.web.errors import ExtractFailed, ProviderConfigMissing, SearchFailed
 from arcagent.modules.web.protocols import ExtractResult, SearchHit
 from arcagent.modules.web.providers._shared import format_http_error
+from arcagent.utils.http import LazyHttpProvider
 
 _logger = logging.getLogger("arcagent.modules.web.providers.tavily")
 
@@ -31,7 +32,7 @@ _EXTRACT_URL = "https://api.tavily.com/extract"
 _SECRET_NAME = "tavily_api_key"  # noqa: S105
 
 
-class TavilyProvider:
+class TavilyProvider(LazyHttpProvider):
     """Tavily adapter implementing WebSearchProvider + WebExtractProvider.
 
     Construct via ``TavilyProvider.create(api_key, timeout_s)`` after
@@ -43,25 +44,11 @@ class TavilyProvider:
             raise ProviderConfigMissing("tavily", _SECRET_NAME)
         self._api_key = api_key
         self._timeout_s = timeout_s
-        # Long-lived client; populated on first use via _get_client().
-        self._client: httpx.AsyncClient | None = None
 
     @classmethod
     def create(cls, api_key: str, timeout_s: float = 30.0) -> TavilyProvider:
         """Factory — validates api_key is non-empty before constructing."""
         return cls(api_key=api_key, timeout_s=timeout_s)
-
-    def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared client, creating it lazily on first call."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout_s)
-        return self._client
-
-    async def close(self) -> None:
-        """Close the shared httpx client and release its connection pool."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
     def _auth_payload(self) -> dict[str, str]:
         """Return the api_key dict merged into request payloads."""

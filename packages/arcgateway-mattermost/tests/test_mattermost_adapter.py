@@ -49,6 +49,7 @@ def _make_adapter(
     bot_user_id: str = "bot-uid",
     tier: str = "personal",
     intranet_domains: list[str] | None = None,
+    agent_did: str = "did:arc:agent:default",
 ) -> tuple[MattermostAdapter, list[InboundEvent], list[tuple[str, dict[str, Any]]]]:
     received: list[InboundEvent] = []
     audit_events: list[tuple[str, dict[str, Any]]] = []
@@ -60,6 +61,7 @@ def _make_adapter(
         server_url=server_url,
         bot_token=_PAT_CANARY,
         on_message=_on_message,
+        agent_did=agent_did,
         allowed_channel_ids=allowed_channel_ids,
         bot_user_id=bot_user_id,
         tier=tier,
@@ -373,6 +375,20 @@ class TestSessionKey:
         envelope = _make_posted_envelope(channel_id="ch-x", post_id="p-3")
         await adapter._handle_ws_message(envelope)
         assert received[0].platform == "mattermost"
+
+    async def test_emitted_event_carries_agent_did(self) -> None:
+        """The dispatched InboundEvent must carry the adapter's agent_did.
+
+        Guards the real path: executor resolves the agent from
+        event.agent_did, so an empty DID would fail agent resolution.
+        """
+        adapter, received, _ = _make_adapter(
+            allowed_channel_ids=["ch-abc"], agent_did="did:arc:agent:mm"
+        )
+        envelope = _make_posted_envelope(channel_id="ch-abc", user_id="u-a", post_id="p-did")
+        await adapter._handle_ws_message(envelope)
+        assert len(received) == 1
+        assert received[0].agent_did == "did:arc:agent:mm"
 
 
 # ---------------------------------------------------------------------------

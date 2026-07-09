@@ -9,7 +9,6 @@ Scenario:
      b. Tombstone record retained (hash only).
      c. Session JSONLs redacted field-wise (tool-call structure preserved).
      d. FTS5 reindex event emitted.
-     e. Derived section can be flagged for regeneration.
 
 This is the KEY compliance deliverable for SPEC-018 M2 / T2.4.
 """
@@ -274,13 +273,6 @@ class TestGDPRTombstoneE2E:
                 assert data["user_did_hash"] == USER_DID_HASH
                 assert USER_DID not in json.dumps(data)
                 break
-
-    def test_e2e_derived_hook_callable(self, populated_workspace: Path) -> None:
-        """Step 5: _mark_derived_regeneratable hook is callable without error."""
-        from arcagent.modules.user_profile.tombstone import _mark_derived_regeneratable
-
-        # Must not raise
-        _mark_derived_regeneratable(USER_DID, populated_workspace)
 
     def test_e2e_tombstone_count_reported(self, populated_workspace: Path, tel: MagicMock) -> None:
         """Tombstone record includes the number of sessions redacted."""

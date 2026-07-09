@@ -273,14 +273,7 @@ class TestFTS5ReindexRequested:
 
 
 class TestDerivedSectionRegeneratable:
-    """T10: after tombstone, Derived section empty; regeneration hook exists."""
-
-    def test_derived_section_regeneratable(self, tmp_path: Path) -> None:
-        """After tombstone the derived section is gone; the hook is callable."""
-        from arcagent.modules.user_profile.tombstone import _mark_derived_regeneratable
-
-        # The hook must be callable without error
-        _mark_derived_regeneratable(USER_DID, tmp_path)
+    """T10: after tombstone, a recreated profile starts with an empty Derived section."""
 
     def test_profile_derived_empty_after_tombstone_and_recreate(self, tmp_path: Path) -> None:
         """A recreated profile starts with an empty Derived section."""

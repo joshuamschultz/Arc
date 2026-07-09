@@ -2,8 +2,12 @@
 
 Simulates the G4.5 deliverable:
     A voice-memo message arrives (e.g. from Telegram/Discord adapter),
-    the adapter downloads the audio attachment → VoiceModule transcribes
-    it → transcript is fed as text input to the agent pipeline.
+    the adapter downloads the audio attachment → the voice capability
+    transcribes it → transcript is fed as text input to the agent pipeline.
+
+Drives the production path: :mod:`arcagent.modules.voice._runtime` is
+configured once, then :func:`arcagent.modules.voice.capabilities._transcribe`
+runs the pipeline the loaded ``transcribe`` tool and hook both call.
 
 The test mocks:
     - The STT provider (WhisperApiProvider) via httpx
@@ -15,14 +19,24 @@ No real network calls, no real binaries required.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from arcagent.modules.voice import _runtime
+from arcagent.modules.voice.capabilities import _transcribe
 from arcagent.modules.voice.errors import AirGapProviderRequired
 from arcagent.modules.voice.protocols import TranscriptionResult
-from arcagent.modules.voice.voice_module import VoiceModule
+
+
+@pytest.fixture(autouse=True)
+def _reset_runtime() -> Iterator[None]:
+    _runtime.reset()
+    yield
+    _runtime.reset()
+
 
 # ---------------------------------------------------------------------------
 # Fake adapter — simulates a platform adapter (Telegram-like) that receives
@@ -64,36 +78,30 @@ class FakeAgent:
 
 
 # ---------------------------------------------------------------------------
-# Voice-memo pipeline helper — ties adapter + voice module + agent together.
+# Voice-memo pipeline helper — ties adapter + voice runtime + agent together.
 # ---------------------------------------------------------------------------
 
 
 async def handle_voice_memo(
     *,
     adapter: FakePlatformAdapter,
-    voice_module: VoiceModule,
     agent: FakeAgent,
     tmp_path: Path,
 ) -> str:
     """Simulate the full voice-memo → agent pipeline.
 
     1. Adapter downloads audio attachment.
-    2. Voice module transcribes audio to text.
+    2. Voice capability transcribes audio to text.
     3. Transcript is fed to the agent as a text message.
     4. Agent response is sent back via adapter.
     """
-    # Step 1: download audio attachment
     audio_path = tmp_path / "voice_memo.ogg"
     await adapter.download_voice_memo(dest=audio_path)
 
-    # Step 2: transcribe
-    result = await voice_module._transcribe(audio_path)
+    result = await _transcribe(audio_path)
     transcript = result["text"]
 
-    # Step 3: feed to agent
     response = await agent.process_text(transcript)
-
-    # Step 4: send response
     await adapter.send_text(response)
 
     return transcript
@@ -106,33 +114,24 @@ async def handle_voice_memo(
 
 class TestVoiceMemoToAgentIntegration:
     @pytest.mark.asyncio
-    async def test_voice_memo_transcribed_and_processed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_voice_memo_transcribed_and_processed(self, tmp_path: Path) -> None:
         """Happy-path: voice memo → transcribed → agent receives text."""
         audio_bytes = b"fake ogg voice data"
         adapter = FakePlatformAdapter(audio_bytes=audio_bytes)
         agent = FakeAgent()
 
-        # Mock the STT provider to return a known transcript
         expected_transcript = "Please schedule a meeting for tomorrow at 3pm"
-        mock_result = TranscriptionResult(
-            text=expected_transcript,
-            language="en",
-            duration_s=4.2,
-        )
         mock_stt = AsyncMock()
-        mock_stt.transcribe = AsyncMock(return_value=mock_result)
-
-        voice_module = VoiceModule(config={"tier": "personal", "stt_provider": "whisper_cpp"})
-        voice_module._stt = mock_stt  # inject mock
-
-        transcript = await handle_voice_memo(
-            adapter=adapter,
-            voice_module=voice_module,
-            agent=agent,
-            tmp_path=tmp_path,
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(
+                text=expected_transcript, language="en", duration_s=4.2
+            )
         )
+
+        _runtime.configure(config={"tier": "personal", "stt_provider": "whisper_cpp"})
+        _runtime.state().stt = mock_stt
+
+        transcript = await handle_voice_memo(adapter=adapter, agent=agent, tmp_path=tmp_path)
 
         assert transcript == expected_transcript
         assert agent.received_inputs == [expected_transcript]
@@ -140,34 +139,22 @@ class TestVoiceMemoToAgentIntegration:
         assert "Agent processed" in adapter.last_sent[0]
 
     @pytest.mark.asyncio
-    async def test_voice_memo_pii_redacted_enterprise(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_voice_memo_pii_redacted_enterprise(self, tmp_path: Path) -> None:
         """Enterprise tier: PII in voice memo is redacted before agent sees it."""
         adapter = FakePlatformAdapter(audio_bytes=b"voice data")
         agent = FakeAgent()
 
-        # Transcript contains SSN — should be redacted at enterprise tier
         raw_transcript = "My SSN is 123-45-6789 please update my records"
-        mock_result = TranscriptionResult(
-            text=raw_transcript,
-            language="en",
-            duration_s=3.0,
-        )
         mock_stt = AsyncMock()
-        mock_stt.transcribe = AsyncMock(return_value=mock_result)
-
-        voice_module = VoiceModule(config={"tier": "enterprise", "stt_provider": "whisper_cpp"})
-        voice_module._stt = mock_stt
-
-        transcript = await handle_voice_memo(
-            adapter=adapter,
-            voice_module=voice_module,
-            agent=agent,
-            tmp_path=tmp_path,
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(text=raw_transcript, language="en", duration_s=3.0)
         )
 
-        # Agent must receive redacted text
+        _runtime.configure(config={"tier": "enterprise", "stt_provider": "whisper_cpp"})
+        _runtime.state().stt = mock_stt
+
+        transcript = await handle_voice_memo(adapter=adapter, agent=agent, tmp_path=tmp_path)
+
         assert "123-45-6789" not in transcript
         assert "[SSN]" in transcript
         assert agent.received_inputs[0] == transcript
@@ -178,31 +165,27 @@ class TestVoiceMemoToAgentIntegration:
         adapter = FakePlatformAdapter(audio_bytes=b"voice data")
         agent = FakeAgent()
 
-        mock_result = TranscriptionResult(
-            text="secret voice content",
-            language="en",
-            duration_s=2.1,
-        )
         mock_stt = AsyncMock()
-        mock_stt.transcribe = AsyncMock(return_value=mock_result)
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(
+                text="secret voice content", language="en", duration_s=2.1
+            )
+        )
 
         mock_telemetry = MagicMock()
-        voice_module = VoiceModule(config={"tier": "personal"})
-        voice_module._stt = mock_stt
-        voice_module._telemetry = mock_telemetry
+        _runtime.configure(config={"tier": "personal"}, telemetry=mock_telemetry)
+        _runtime.state().stt = mock_stt
 
-        await handle_voice_memo(
-            adapter=adapter,
-            voice_module=voice_module,
-            agent=agent,
-            tmp_path=tmp_path,
-        )
+        await handle_voice_memo(adapter=adapter, agent=agent, tmp_path=tmp_path)
 
-        mock_telemetry.audit_event.assert_called_once()
-        event_name, payload = mock_telemetry.audit_event.call_args[0]
-        assert event_name == "voice.transcribed"
+        transcribed_calls = [
+            c
+            for c in mock_telemetry.audit_event.call_args_list
+            if c.args[0] == "voice.transcribed"
+        ]
+        assert len(transcribed_calls) == 1
+        payload = transcribed_calls[0].args[1]
 
-        # Must contain hash, not raw text
         assert "transcript_hash" in payload
         assert "secret voice content" not in str(payload)
         assert "duration_s" in payload
@@ -219,7 +202,6 @@ class TestVoiceMemoToAgentIntegration:
         adapter = FakePlatformAdapter(audio_bytes=b"fake audio bytes here")
         agent = FakeAgent()
 
-        # Set up httpx mock for WhisperAPI
         fake_api_response = MagicMock()
         fake_api_response.status_code = 200
         fake_api_response.json.return_value = {
@@ -237,22 +219,19 @@ class TestVoiceMemoToAgentIntegration:
         with patch("arcagent.modules.voice.providers.whisper_api.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = mock_http_client
 
-            voice_module = VoiceModule(config={"tier": "personal", "stt_provider": "whisper_api"})
+            _runtime.configure(config={"tier": "personal", "stt_provider": "whisper_api"})
             transcript = await handle_voice_memo(
-                adapter=adapter,
-                voice_module=voice_module,
-                agent=agent,
-                tmp_path=tmp_path,
+                adapter=adapter, agent=agent, tmp_path=tmp_path
             )
 
         assert transcript == "transcribed from whisper api"
         assert agent.received_inputs == ["transcribed from whisper api"]
 
     @pytest.mark.asyncio
-    async def test_federal_cloud_provider_blocked_at_init(self) -> None:
-        """Federal tier must refuse to init with cloud STT — fail before audio processed."""
+    async def test_federal_cloud_provider_blocked_at_configure(self) -> None:
+        """Federal tier must refuse to configure with cloud STT — fail before audio processed."""
         with pytest.raises(AirGapProviderRequired) as exc_info:
-            VoiceModule(
+            _runtime.configure(
                 config={
                     "tier": "federal",
                     "stt_provider": "whisper_api",
@@ -267,31 +246,20 @@ class TestVoiceMemoToAgentIntegration:
         adapter = FakePlatformAdapter(audio_bytes=b"voice data")
         agent = FakeAgent()
 
-        mock_result = TranscriptionResult(
-            text="classified briefing notes",
-            language="en",
-            duration_s=10.0,
-        )
         mock_stt = AsyncMock()
-        mock_stt.transcribe = AsyncMock(return_value=mock_result)
-
-        voice_module = VoiceModule(
-            config={
-                "tier": "federal",
-                "stt_provider": "whisper_cpp",
-                "tts_provider": "piper",
-            }
-        )
-        voice_module._stt = mock_stt
-
-        transcript = await handle_voice_memo(
-            adapter=adapter,
-            voice_module=voice_module,
-            agent=agent,
-            tmp_path=tmp_path,
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(
+                text="classified briefing notes", language="en", duration_s=10.0
+            )
         )
 
-        # Federal always redacts PII — but "classified briefing notes" has no PII
+        _runtime.configure(
+            config={"tier": "federal", "stt_provider": "whisper_cpp", "tts_provider": "piper"}
+        )
+        _runtime.state().stt = mock_stt
+
+        transcript = await handle_voice_memo(adapter=adapter, agent=agent, tmp_path=tmp_path)
+
         assert transcript == "classified briefing notes"
         assert agent.received_inputs[0] == transcript
 
@@ -305,19 +273,15 @@ class TestVoiceMemoToAgentIntegration:
             "Contact alice@example.com or call 555-867-5309. "
             "Card ending in 4111111111111111. SSN 123-45-6789."
         )
-        mock_result = TranscriptionResult(text=pii_heavy, language="en", duration_s=5.0)
         mock_stt = AsyncMock()
-        mock_stt.transcribe = AsyncMock(return_value=mock_result)
-
-        voice_module = VoiceModule(config={"tier": "enterprise", "stt_provider": "whisper_cpp"})
-        voice_module._stt = mock_stt
-
-        transcript = await handle_voice_memo(
-            adapter=adapter,
-            voice_module=voice_module,
-            agent=agent,
-            tmp_path=tmp_path,
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(text=pii_heavy, language="en", duration_s=5.0)
         )
+
+        _runtime.configure(config={"tier": "enterprise", "stt_provider": "whisper_cpp"})
+        _runtime.state().stt = mock_stt
+
+        transcript = await handle_voice_memo(adapter=adapter, agent=agent, tmp_path=tmp_path)
 
         assert "alice@example.com" not in transcript
         assert "555-867-5309" not in transcript
@@ -329,20 +293,17 @@ class TestVoiceMemoToAgentIntegration:
     @pytest.mark.asyncio
     async def test_voice_memo_language_detection_propagated(self, tmp_path: Path) -> None:
         """Detected language from STT is propagated to the result."""
-        mock_result = TranscriptionResult(
-            text="Bonjour le monde",
-            language="fr",
-            duration_s=1.5,
-        )
         mock_stt = AsyncMock()
-        mock_stt.transcribe = AsyncMock(return_value=mock_result)
+        mock_stt.transcribe = AsyncMock(
+            return_value=TranscriptionResult(
+                text="Bonjour le monde", language="fr", duration_s=1.5
+            )
+        )
 
-        voice_module = VoiceModule(config={"tier": "personal"})
-        voice_module._stt = mock_stt
+        _runtime.configure(config={"tier": "personal"})
+        _runtime.state().stt = mock_stt
 
-        result = await voice_module._transcribe(tmp_path / "audio.ogg")
-        # Create the file so transcribe doesn't fail on validation
-        # (mock provider bypasses file validation)
+        result = await _transcribe(tmp_path / "audio.ogg")
         assert result["language"] == "fr"
 
     @pytest.mark.asyncio

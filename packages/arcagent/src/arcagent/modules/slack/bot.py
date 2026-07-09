@@ -17,112 +17,20 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcagent.utils.text import split_message, user_facing_error
+
 if TYPE_CHECKING:
     from arcagent.core.telemetry import AgentTelemetry
     from arcagent.modules.slack.config import SlackConfig
 
 _logger = logging.getLogger("arcagent.slack.bot")
 
-# Sentence-ending punctuation for boundary detection
-_SENTENCE_END = re.compile(r"[.!?]\s")
-
 # Bot mention pattern for stripping
 _BOT_MENTION = re.compile(r"<@[A-Z0-9]+>\s*")
 
-
-def _user_facing_error(exc: Exception) -> str:
-    """Map exceptions to user-friendly error messages.
-
-    Avoids leaking internal details while giving the user
-    actionable information about what went wrong.
-    """
-    # Import here to avoid hard dependency on arcllm from the bot module
-    try:
-        from arcllm.exceptions import ArcLLMAPIError
-    except ImportError:
-        return "Error processing your message. Please try again."
-
-    if isinstance(exc, ArcLLMAPIError):
-        if exc.status_code == 429:
-            return (
-                "I'm currently rate limited by the LLM provider. "
-                "Please try again in a minute or two."
-            )
-        if exc.status_code in {500, 502, 503}:
-            return "The LLM provider is temporarily unavailable. Please try again shortly."
-        if exc.status_code == 400 and "content_filter" in exc.body.lower():
-            return (
-                "Your message was blocked by the content safety filter. "
-                "Please rephrase and try again."
-            )
-
-    if isinstance(exc, TimeoutError):
-        return "The request timed out. Please try again with a simpler message."
-
-    return "Error processing your message. Please try again."
-
-
-def split_message(text: str, max_length: int = 4000) -> list[str]:
-    """Split text into chunks respecting natural boundaries.
-
-    Priority order:
-    1. Double-newline (paragraph boundary)
-    2. Single newline
-    3. Sentence boundary (. ! ?)
-    4. Hard split at max_length
-
-    Args:
-        text: The text to split.
-        max_length: Maximum characters per chunk (Slack safe limit: 4000).
-
-    Returns:
-        List of text chunks, each <= max_length characters.
-    """
-    if not text:
-        return []
-
-    if len(text) <= max_length:
-        return [text]
-
-    chunks: list[str] = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_length:
-            chunks.append(remaining)
-            break
-
-        chunk = remaining[:max_length]
-
-        # Try paragraph boundary (double-newline)
-        split_pos = chunk.rfind("\n\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 2 :]
-            continue
-
-        # Try single newline
-        split_pos = chunk.rfind("\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 1 :]
-            continue
-
-        # Try sentence boundary — find last match without materializing all
-        last_match = None
-        for m in _SENTENCE_END.finditer(chunk):
-            last_match = m
-        if last_match is not None:
-            split_pos = last_match.end() - 1  # Include punctuation, not space
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos:].lstrip()
-            continue
-
-        # Hard split — no natural boundary found
-        chunks.append(remaining[:max_length])
-        remaining = remaining[max_length:]
-
-    return chunks
+# The external origin the Slack Web API talks to; the egress proxy allowlist
+# must include it for notifications to leave (SPEC-038 REQ-031).
+_SLACK_API_ORIGIN = "https://slack.com"
 
 
 class SlackBot:
@@ -137,10 +45,15 @@ class SlackBot:
         config: SlackConfig,
         telemetry: AgentTelemetry | None = None,
         workspace: Path = Path("."),
+        egress: Any = None,
     ) -> None:
         self._config = config
         self._telemetry = telemetry
         self._workspace = workspace
+        # SPEC-038 REQ-031 — outbound notifications are mediated by the shared
+        # EgressProxy (allowlist slack.com, no-exfil, external_comms leg).
+        # None → unmediated (standalone bot / tests); wired agents inject.
+        self._egress = egress
         self._agent_run_fn: Callable[..., Awaitable[Any]] | None = None
         self._lock = asyncio.Lock()
         self._app: Any | None = None
@@ -282,6 +195,13 @@ class SlackBot:
         channel_id = await self._ensure_dm_channel(self._user_id)
         if channel_id is None:
             return
+
+        # SPEC-038 REQ-031 — mediate the outbound comm through the shared egress
+        # proxy before slack_sdk delivers it: allowlist slack.com, enforce
+        # no-exfil against the session's read classification, and record the
+        # external_comms trifecta leg. A refusal raises and blocks the send.
+        if self._egress is not None:
+            await self._egress.authorize(_SLACK_API_ORIGIN)
 
         chunks = split_message(text, self._config.max_message_length)
         for chunk in chunks:
@@ -453,7 +373,7 @@ class SlackBot:
             result = await self._agent_run_fn(text, session_key=self._current_session_id)
         except Exception as exc:  # reason: fail-open — log + continue
             _logger.exception("Error calling agent run callback")
-            error_msg = _user_facing_error(exc)
+            error_msg = user_facing_error(exc)
             await self._app.client.chat_postMessage(
                 channel=channel,
                 text=error_msg,

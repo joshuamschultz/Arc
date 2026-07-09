@@ -245,11 +245,11 @@ class TestReactLoop:
         assert len(calls) >= 1
 
 
-class TestParallelSafeDispatch:
-    """Tools with parallel_safe=True dispatch concurrently in one turn."""
+class TestClassificationDispatch:
+    """read_only tools dispatch concurrently in one turn; others run serially."""
 
     @pytest.mark.asyncio
-    async def test_parallel_safe_calls_run_concurrently(self):
+    async def test_read_only_calls_run_concurrently(self):
         async def slow(params: dict, ctx: object) -> str:
             await asyncio.sleep(0.1)
             return f"ok:{params['n']}"
@@ -290,7 +290,7 @@ class TestParallelSafeDispatch:
         assert result.content == "all done"
 
     @pytest.mark.asyncio
-    async def test_non_parallel_safe_calls_run_serially(self):
+    async def test_state_modifying_calls_run_serially(self):
         async def slow(params: dict, ctx: object) -> str:
             await asyncio.sleep(0.05)
             return f"ok:{params['n']}"

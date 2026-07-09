@@ -3,17 +3,57 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import json
+import operator
 import os
 import sys
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from arccli.commands._shared import dispatch
+from arccli.commands._shared import print_json as _print_json
+from arccli.commands._shared import print_kv as _print_kv
+from arccli.commands._shared import write as _write
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+# Safe arithmetic for the `--with-calc` demo tool. Pow is deliberately excluded:
+# the expression source is the LLM, and `9**9**9**9` is an unbounded-compute DoS
+# (LLM10). The advertised surface is only + - * / ( ) %.
+_ARITH_OPS: dict[type[ast.AST], Callable[..., float]] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Mod: operator.mod,
+    ast.USub: operator.neg,
+    ast.UAdd: operator.pos,
+}
+
+
+def _eval_arith(node: ast.AST) -> float:
+    """Evaluate a whitelisted arithmetic AST node; reject everything else."""
+    if isinstance(node, ast.Expression):
+        return _eval_arith(node.body)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return node.value
+    if isinstance(node, ast.BinOp):
+        op_fn = _ARITH_OPS.get(type(node.op))
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        return op_fn(_eval_arith(node.left), _eval_arith(node.right))
+    if isinstance(node, ast.UnaryOp):
+        op_fn = _ARITH_OPS.get(type(node.op))
+        if op_fn is None:
+            raise ValueError(f"Unsupported operator: {type(node.op).__name__}")
+        return op_fn(_eval_arith(node.operand))
+    raise ValueError("Unsupported expression")
 
 _ENV_PATHS = [
     Path.cwd() / ".env",
@@ -108,28 +148,6 @@ def _load_env() -> None:
     for env_path in _ENV_PATHS:
         if env_path.exists():
             load_dotenv(env_path)
-
-
-def _write(msg: str = "") -> None:
-    """Write a line to stdout."""
-    sys.stdout.write(msg + "\n")
-
-
-def _print_json(data: Any) -> None:
-    """Print data as indented JSON."""
-    sys.stdout.write(json.dumps(data, indent=2, default=str) + "\n")
-
-
-def _print_kv(pairs: list[tuple[str, str]]) -> None:
-    """Print key-value pairs in aligned format."""
-    try:
-        from arccli.formatting import print_kv
-
-        print_kv(pairs)
-    except ImportError:
-        width = max(len(k) for k, _ in pairs) if pairs else 0
-        for k, v in pairs:
-            sys.stdout.write(f"  {k:<{width}}  {v}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +281,7 @@ def _task(args: argparse.Namespace) -> None:
     code_timeout: float = getattr(args, "code_timeout", 30.0)
     with_calc: bool = getattr(args, "with_calc", False)
     no_spawn: bool = getattr(args, "no_spawn", False)
+    spawn_token_budget: int | None = getattr(args, "spawn_token_budget", None)
     verbose: bool = getattr(args, "verbose", False)
     show_events: bool = getattr(args, "show_events", False)
     as_json: bool = getattr(args, "as_json", False)
@@ -279,6 +298,7 @@ def _task(args: argparse.Namespace) -> None:
             code_timeout=code_timeout,
             with_calc=with_calc,
             with_spawn=not no_spawn,
+            spawn_token_budget=spawn_token_budget,
             verbose=verbose,
             show_events=show_events,
             as_json=as_json,
@@ -298,11 +318,12 @@ async def _execute_task(
     code_timeout: float,
     with_calc: bool,
     with_spawn: bool,
+    spawn_token_budget: int | None,
     verbose: bool,
     show_events: bool,
     as_json: bool,
 ) -> None:
-    from arcagent.orchestration import make_spawn_tool
+    from arcagent.orchestration import RootTokenBudget, make_spawn_tool
     from arcllm import load_model
     from arcrun import StaticProvider, Tool, ToolContext, make_execute_tool, run
 
@@ -337,12 +358,9 @@ async def _execute_task(
 
         async def calculate(params: dict[str, Any], ctx: ToolContext) -> str:
             expr = params["expression"]
-            allowed = set("0123456789+-*/().% ")
-            if not all(c in allowed for c in expr):
-                return "Error: disallowed characters"
             try:
-                return str(eval(expr))  # noqa: S307
-            except Exception as e:  # reason: fail-open — continue
+                return str(_eval_arith(ast.parse(expr, mode="eval")))
+            except (ValueError, SyntaxError, TypeError, ZeroDivisionError) as e:
                 return f"Error: {e}"
 
         tools.append(
@@ -382,6 +400,9 @@ async def _execute_task(
             model=llm,
             tools=tools,
             system_prompt=system_prompt,
+            root_token_budget=(
+                RootTokenBudget(spawn_token_budget) if spawn_token_budget else None
+            ),
         )
         tools.append(spawn_tool)
 
@@ -528,6 +549,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable spawn_task tool (default: registered for parallel sub-task fan-out).",
     )
+    p.add_argument(
+        "--spawn-token-budget",
+        dest="spawn_token_budget",
+        type=int,
+        default=None,
+        help="Shared token pool (LLM10) across all spawned children; omit to leave uncapped.",
+    )
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--show-events", dest="show_events", action="store_true")
     p.add_argument("--json", dest="as_json", action="store_true", help="Output as JSON.")
@@ -547,21 +575,4 @@ def run_handler(args: list[str]) -> None:
 
     Called by arccli.commands.registry when the user runs `arc run ...`.
     """
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc run: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

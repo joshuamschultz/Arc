@@ -20,12 +20,17 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
+from uuid import uuid4
 
 from arcrun.types import LoopResult
 
 from arcagent.modules.planning import _runtime
 from arcagent.modules.planning.decomposer import DecompositionError, decompose, replan
-from arcagent.modules.planning.executor import ArcRunStepExecutor
+from arcagent.modules.planning.executor import (
+    ArcRunStepExecutor,
+    ConcurrentStepExecutor,
+    StepExecutor,
+)
 from arcagent.modules.planning.models import Plan, PlanStatus
 from arcagent.modules.planning.orchestrator import PlanOrchestrator
 from arcagent.tools._decorator import hook, tool
@@ -51,10 +56,15 @@ def _goal_drift_error(plan: Plan) -> str | None:
     return None
 
 
-def _adapt_run_fn(agent_run_fn: Any, plan_id: str) -> Any:
+def _adapt_run_fn(agent_run_fn: Any, plan_id: str, *, isolated: bool = False) -> Any:
     """Adapt ``agent.run_collected`` to the executor's ``RunFn`` seam.
 
-    All steps of a plan share one session so later steps see earlier context.
+    Sequentially, all steps of a plan share one session so later steps see
+    earlier context. Under concurrent dispatch (``isolated=True``) each branch
+    gets its OWN session so parallel branches cannot clobber one shared
+    session's turn history mid-flight — the DAG frontier is independent by
+    construction, so no cross-branch context is expected (SPEC-043 F1).
+
     The per-step budget slice is forwarded so the run's LLM10 breaker bounds
     the step, and the terminal outcome the run reports (``completion_payload``
     / ``completion_tool`` / observed tokens) is mapped into the ``LoopResult``
@@ -65,9 +75,10 @@ def _adapt_run_fn(agent_run_fn: Any, plan_id: str) -> Any:
     async def run_fn(
         *, task: str, max_tokens: int | None, max_cost_usd: float | None, actor_did: str
     ) -> LoopResult:
+        session_key = f"plan-{plan_id}-{uuid4().hex}" if isolated else f"plan-{plan_id}"
         rr = await agent_run_fn(
             task,
-            session_key=f"plan-{plan_id}",
+            session_key=session_key,
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
         )
@@ -95,8 +106,17 @@ def _build_orchestrator(plan_id: str) -> PlanOrchestrator:
             plan, reason, model=_runtime.get_model(), known_tools=st.known_tools
         )
 
-    run_fn = _adapt_run_fn(st.run_fn, plan_id)
-    executor = ArcRunStepExecutor(run_fn, actor_did=st.agent_did)
+    executor: StepExecutor
+    if st.config.concurrent:
+        run_fn = _adapt_run_fn(st.run_fn, plan_id, isolated=True)
+        executor = ConcurrentStepExecutor(
+            run_fn,
+            actor_did=st.agent_did,
+            max_parallel=st.config.max_parallel,
+        )
+    else:
+        run_fn = _adapt_run_fn(st.run_fn, plan_id)
+        executor = ArcRunStepExecutor(run_fn, actor_did=st.agent_did)
     return PlanOrchestrator(st.store, executor, replan_fn=replan_fn)
 
 

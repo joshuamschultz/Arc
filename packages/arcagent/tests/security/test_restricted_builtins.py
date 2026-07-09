@@ -73,57 +73,30 @@ class TestBlockedBuiltins:
 
 class TestRestrictedImportAtRuntime:
     """SPEC-017 defense-in-depth — even if the AST validator is bypassed,
-    the loader's wrapped ``__import__`` refuses non-allowlist modules."""
-
-    def test_allowlist_imports_succeed(self) -> None:
-        """The decorator module stays importable — it's the hook tools use."""
-        from arcagent.tools._dynamic_loader import DynamicToolLoader
-
-        loader = DynamicToolLoader()
-        src = (
-            "from arcagent.tools._decorator import tool\n"
-            "\n"
-            "@tool(description='ok', classification='read_only')\n"
-            "async def ok() -> str:\n"
-            "    return 'ok'\n"
-        )
-        registered = loader.load(src, name="ok")
-        assert registered.name == "ok"
+    the live loader's wrapped ``__import__`` refuses denylisted modules."""
 
     def test_runtime_os_import_blocked_even_if_ast_validator_missed_it(
         self,
     ) -> None:
-        """Regression guard: construct a namespace directly (bypass AST)
-        and verify the wrapped ``__import__`` refuses."""
+        """Regression guard: construct the live restricted namespace directly
+        (bypass AST) and verify the wrapped ``__import__`` refuses."""
         from arcagent.tools._dynamic_loader import (
-            RESTRICTED_BUILTINS,
             ASTValidationError,
-            _make_restricted_import,
+            build_restricted_builtins,
         )
 
-        ns: dict[str, object] = {
-            "__builtins__": {
-                **RESTRICTED_BUILTINS,
-                "__import__": _make_restricted_import(),
-            },
-        }
+        ns: dict[str, object] = {"__builtins__": build_restricted_builtins()}
         src = compile("x = __import__('os')", "<test>", "exec")
         with pytest.raises(ASTValidationError):
             exec(src, ns)  # noqa: S102 — adversarial test
 
     def test_runtime_subprocess_import_blocked(self) -> None:
         from arcagent.tools._dynamic_loader import (
-            RESTRICTED_BUILTINS,
             ASTValidationError,
-            _make_restricted_import,
+            build_restricted_builtins,
         )
 
-        ns: dict[str, object] = {
-            "__builtins__": {
-                **RESTRICTED_BUILTINS,
-                "__import__": _make_restricted_import(),
-            },
-        }
+        ns: dict[str, object] = {"__builtins__": build_restricted_builtins()}
         src = compile("x = __import__('subprocess')", "<test>", "exec")
         with pytest.raises(ASTValidationError):
             exec(src, ns)  # noqa: S102

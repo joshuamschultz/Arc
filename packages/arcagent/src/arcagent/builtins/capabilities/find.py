@@ -1,4 +1,4 @@
-"""Built-in ``find`` tool — SPEC-021 port of arcagent.tools.find.
+"""Built-in ``find`` tool.
 
 Glob-match workspace files. Returns paths sorted newest-mtime first
 (for "what changed recently?" queries), capped at ``max_results``.

@@ -25,7 +25,6 @@ from arcui.server import create_app
 
 VIEWER_TOKEN = "viewer-tok-test"
 OPERATOR_TOKEN = "operator-tok-test"
-AGENT_TOKEN = "agent-tok-test"
 
 
 @pytest.fixture
@@ -34,7 +33,6 @@ def auth_config() -> AuthConfig:
         {
             "viewer_token": VIEWER_TOKEN,
             "operator_token": OPERATOR_TOKEN,
-            "agent_token": AGENT_TOKEN,
         }
     )
 
@@ -272,20 +270,6 @@ def test_unknown_agent_id_closes_with_error(app_with_chat: Any) -> None:
             ws.send_json({"token": VIEWER_TOKEN})
             err = ws.receive_json()
             assert "error" in err and "ghost-agent" in err["error"]
-
-
-def test_agent_token_rejected(app_with_chat: Any) -> None:
-    """Agent-role tokens cannot open a chat session."""
-    with TestClient(app_with_chat) as client:
-        with client.websocket_connect(_ws_url()) as ws:
-            ws.send_json({"token": AGENT_TOKEN})
-            # The server sends an error frame and closes; we either see the
-            # error or the disconnect.
-            try:
-                err = ws.receive_json()
-                assert "error" in err or err.get("type") == "error"
-            except Exception:  # noqa: S110 — server may close before the error frame
-                pass
 
 
 # ── SPEC-025 Track A — sequence-gap query param + replay ────────────────────

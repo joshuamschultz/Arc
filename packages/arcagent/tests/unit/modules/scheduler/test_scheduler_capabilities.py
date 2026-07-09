@@ -263,3 +263,84 @@ class TestCrudTools:
 
         deleted = json.loads(await schedule_cancel(id=created["id"], delete=True))
         assert deleted["status"] == "deleted"
+
+
+@pytest.mark.asyncio
+class TestConfigLimitsHonored:
+    """Operator limits in SchedulerConfig must be enforced on the live tool
+    path — not silently ignored in favor of hardcoded model defaults."""
+
+    def _configure(self, tmp_path: Path, **overrides: int) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        _runtime.configure(
+            config={"enabled": True, **overrides},
+            telemetry=MagicMock(),
+            workspace=workspace,
+        )
+
+    async def test_min_interval_rejects_below_operator_floor(self, tmp_path: Path) -> None:
+        import json
+
+        from arcagent.modules.scheduler.capabilities import schedule_create
+
+        # Operator tightens the LLM10 unbounded-consumption floor to 300s.
+        self._configure(tmp_path, min_interval_seconds=300)
+
+        rejected = json.loads(
+            await schedule_create(type="interval", prompt="Too frequent", every_seconds=120)
+        )
+        assert "error" in rejected
+        assert "300s" in rejected["error"]
+
+        accepted = json.loads(
+            await schedule_create(type="interval", prompt="At floor", every_seconds=300)
+        )
+        assert accepted["every_seconds"] == 300
+
+    async def test_default_timeout_comes_from_config(self, tmp_path: Path) -> None:
+        import json
+
+        from arcagent.modules.scheduler.capabilities import schedule_create
+
+        self._configure(tmp_path, default_timeout_seconds=120)
+
+        created = json.loads(
+            await schedule_create(type="interval", prompt="Uses default timeout", every_seconds=300)
+        )
+        assert created["timeout_seconds"] == 120
+
+    async def test_max_timeout_rejects_above_operator_ceiling(self, tmp_path: Path) -> None:
+        import json
+
+        from arcagent.modules.scheduler.capabilities import schedule_create
+
+        self._configure(tmp_path, max_timeout_seconds=600)
+
+        rejected = json.loads(
+            await schedule_create(
+                type="interval",
+                prompt="Too long",
+                every_seconds=300,
+                timeout_seconds=1200,
+            )
+        )
+        assert "error" in rejected
+        assert "600s" in rejected["error"]
+
+    async def test_update_honors_min_interval(self, tmp_path: Path) -> None:
+        import json
+
+        from arcagent.modules.scheduler.capabilities import (
+            schedule_create,
+            schedule_update,
+        )
+
+        self._configure(tmp_path, min_interval_seconds=300)
+
+        created = json.loads(
+            await schedule_create(type="interval", prompt="Fine for now", every_seconds=300)
+        )
+        rejected = json.loads(await schedule_update(id=created["id"], every_seconds=120))
+        assert "error" in rejected
+        assert "300s" in rejected["error"]

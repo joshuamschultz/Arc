@@ -10,8 +10,6 @@ in ``[team] root`` so all team modules share one setting.
 
 from __future__ import annotations
 
-from pydantic import Field
-
 from arcagent.modules.base_config import ModuleConfig
 
 
@@ -26,20 +24,10 @@ class MessagingConfig(ModuleConfig):
     # Entity identity — how this agent appears in the registry.
     entity_id: str = ""
     entity_name: str = ""
-    roles: list[str] = Field(default_factory=list)
-    capabilities: list[str] = Field(default_factory=list)
-
-    # Auto-register this agent in the entity registry on startup.
-    auto_register: bool = True
 
     # NATS JetStream url for the shared, push-capable substrate (REQ-020/021).
     # Empty selects the dependency-free in-memory backend (local/dev/test).
     nats_url: str = ""
-
-    # Polling configuration. Push-first delivery via the durable consumer
-    # reacts immediately when the backend supports it; this interval bounds
-    # the fallback poll cycle (and the resume-scan cadence).
-    poll_interval_seconds: float = 5.0
 
     # Auto-ack messages after the agent reads them via tool.
     auto_ack: bool = True

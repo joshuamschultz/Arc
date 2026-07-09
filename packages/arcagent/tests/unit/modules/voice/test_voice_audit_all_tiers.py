@@ -1,17 +1,27 @@
-"""Tests for §4: voice_module audit events at all tiers.
+"""Tests for §4: voice provider audit events at all tiers.
 
 voice.provider_selected must be emitted at every tier.
 Cloud provider warning must be emitted at non-federal tiers.
 Air-gap violation must be emitted at federal tier.
+
+These are emitted by :func:`arcagent.modules.voice._runtime.configure`.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
 
-from arcagent.modules.voice.voice_module import VoiceModule
+from arcagent.modules.voice import _runtime
+
+
+@pytest.fixture(autouse=True)
+def _reset_runtime() -> Iterator[None]:
+    _runtime.reset()
+    yield
+    _runtime.reset()
 
 
 def _make_telemetry() -> MagicMock:
@@ -25,9 +35,9 @@ class TestVoiceProviderAuditAllTiers:
 
     @pytest.mark.parametrize("tier", ["personal", "enterprise"])
     def test_cloud_provider_warning_emitted_at_non_federal(self, tier: str) -> None:
-        """Constructing a VoiceModule with a cloud provider emits audit event."""
+        """Configuring with a cloud provider emits a provider audit event."""
         telemetry = _make_telemetry()
-        VoiceModule(
+        _runtime.configure(
             config={"tier": tier, "stt_provider": "whisper_api", "tts_provider": "elevenlabs"},
             telemetry=telemetry,
         )
@@ -37,9 +47,9 @@ class TestVoiceProviderAuditAllTiers:
         ), f"Expected a voice provider audit event at {tier} tier, got: {calls}"
 
     def test_provider_selected_audit_emitted_at_personal(self) -> None:
-        """voice.provider_selected must be emitted on construction at personal tier."""
+        """voice.provider_selected must be emitted on configure at personal tier."""
         telemetry = _make_telemetry()
-        VoiceModule(
+        _runtime.configure(
             config={"tier": "personal", "stt_provider": "whisper_cpp", "tts_provider": "piper"},
             telemetry=telemetry,
         )
@@ -51,7 +61,7 @@ class TestVoiceProviderAuditAllTiers:
     def test_provider_selected_audit_emitted_at_enterprise(self) -> None:
         """voice.provider_selected must be emitted at enterprise tier."""
         telemetry = _make_telemetry()
-        VoiceModule(
+        _runtime.configure(
             config={"tier": "enterprise", "stt_provider": "whisper_cpp", "tts_provider": "piper"},
             telemetry=telemetry,
         )
@@ -59,9 +69,8 @@ class TestVoiceProviderAuditAllTiers:
         assert any("voice.provider" in c for c in calls)
 
     def test_no_audit_crash_when_telemetry_is_none(self) -> None:
-        """VoiceModule must not raise if telemetry is None."""
-        # Should not raise
-        VoiceModule(
+        """configure must not raise if telemetry is None."""
+        _runtime.configure(
             config={"tier": "personal", "stt_provider": "whisper_cpp", "tts_provider": "piper"},
             telemetry=None,
         )
@@ -69,12 +78,11 @@ class TestVoiceProviderAuditAllTiers:
     def test_cloud_provider_audit_contains_provider_names(self) -> None:
         """Audit details must include the configured provider names."""
         telemetry = _make_telemetry()
-        VoiceModule(
+        _runtime.configure(
             config={"tier": "enterprise", "stt_provider": "whisper_api", "tts_provider": "piper"},
             telemetry=telemetry,
         )
         all_details = [c[0][1] for c in telemetry.audit_event.call_args_list]
-        # At least one event should reference the providers
         all_details_str = str(all_details)
         assert (
             "whisper_api" in all_details_str

@@ -27,12 +27,6 @@ except ImportError:  # pragma: no cover - exercised only where the extra is abse
 # Default embedding width (bge-small / MiniLM are both 384-dim).
 DEFAULT_DIMS = 384
 
-# The derived tables that a rebuild wipes and re-derives. Kept as a constant so
-# rebuild and tests share one source of truth for "what is disposable". The
-# ``insight_trigger`` abstraction-space vectors are derived from the insight cards
-# (re-embedded by ``index/structural.trigger_index``), hence disposable too.
-DERIVED_TABLES = ("fts_chunks", "edges", "vec0", "insight_trigger")
-
 
 def _load_sqlite_vec(conn: sqlite3.Connection) -> bool:
     """Attempt to load the sqlite-vec extension onto ``conn``.
@@ -160,19 +154,5 @@ class MemoryDB:
 
         conn.commit()
 
-    def wipe_derived(self) -> None:
-        """Drop every disposable derived table (rebuild precondition).
 
-        The ``episodic`` raw stream and ``chunks`` provenance are preserved; only
-        FTS5 / vectors / graph edges are cleared, to be re-derived from truth.
-        """
-        conn = self.connect()
-        conn.execute("DELETE FROM fts_chunks")
-        conn.execute("DELETE FROM edges")
-        conn.execute("DELETE FROM insight_trigger")
-        if self._vec_available:
-            conn.execute("DELETE FROM vec0")
-        conn.commit()
-
-
-__all__ = ["DEFAULT_DIMS", "DERIVED_TABLES", "MemoryDB"]
+__all__ = ["DEFAULT_DIMS", "MemoryDB"]

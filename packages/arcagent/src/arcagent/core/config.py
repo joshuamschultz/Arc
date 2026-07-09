@@ -284,6 +284,15 @@ class SpawnConfig(BaseModel):
         ge=1,
         description="Wall-clock timeout per child run.",
     )
+    max_total_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Shared token pool (LLM10) across all children a run spawns. When "
+            "set, each spawned child's tokens debit this pool; once exhausted, "
+            "further spawns are refused. None leaves the pool uncapped."
+        ),
+    )
 
 
 class ValidatorEntry(BaseModel):

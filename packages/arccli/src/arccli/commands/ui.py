@@ -19,7 +19,8 @@ from typing import Any, Protocol
 
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
 
-_TOKEN_FILE = Path.home() / ".arcagent" / "ui-token"
+from arccli.commands._shared import dispatch
+from arccli.commands._shared import write as _write
 
 # Valid layer values — enforced at parse time.
 _VALID_LAYERS = ("llm", "run", "agent", "team")
@@ -30,37 +31,11 @@ _VALID_LAYERS = ("llm", "run", "agent", "team")
 # ---------------------------------------------------------------------------
 
 
-def _write(msg: str = "") -> None:
-    """Write a line to stdout."""
-    sys.stdout.write(msg + "\n")
-
-
 def _mask_token(token: str) -> str:
     """Mask a token for display: show first 8 and last 8 chars."""
     if len(token) <= 16:
         return "****"
     return f"{token[:8]}...{token[-8:]}"
-
-
-def _persist_agent_token(token: str) -> None:
-    """Atomically write the agent token with 0600 from creation.
-
-    Delegates to `arcagent.utils.secure_file.write_secret` (Wave 2
-    TD-MED). Future credential writers (vault cache, federated peer
-    keys) inherit the same SR-1 posture — atomic 0600, parent 0700,
-    no umask race — instead of reinventing it inline.
-    """
-    from arcagent.utils.secure_file import write_secret
-
-    write_secret(_TOKEN_FILE, token)
-
-
-def _read_token_file() -> str | None:
-    """Read persisted agent token. Returns None if not found."""
-    try:
-        return _TOKEN_FILE.read_text().strip() or None
-    except OSError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +162,6 @@ def _start(args: argparse.Namespace) -> None:
     host: str = getattr(args, "host", "127.0.0.1")
     viewer_token: str | None = getattr(args, "viewer_token", None)
     operator_token: str | None = getattr(args, "operator_token", None)
-    agent_token: str | None = getattr(args, "agent_token", None)
     max_agents: int = getattr(args, "max_agents", 100)
     show_tokens: bool = getattr(args, "show_tokens", False)
     no_browser: bool = getattr(args, "no_browser", False)
@@ -197,12 +171,8 @@ def _start(args: argparse.Namespace) -> None:
         config_dict["viewer_token"] = viewer_token
     if operator_token:
         config_dict["operator_token"] = operator_token
-    if agent_token:
-        config_dict["agent_token"] = agent_token
 
     auth = AuthConfig(config=config_dict) if config_dict else AuthConfig()
-
-    _persist_agent_token(auth.agent_token)
 
     team_root_arg: str | None = getattr(args, "team_root", None)
     team_root: Path | None
@@ -233,8 +203,6 @@ def _start(args: argparse.Namespace) -> None:
     _write(f"ArcUI dashboard: http://{host}:{port}")
     _write(f"  Viewer token:   {fmt(app.state.auth_config.viewer_token)}")
     _write(f"  Operator token: {fmt(app.state.auth_config.operator_token)}")
-    _write(f"  Agent token:    {fmt(app.state.auth_config.agent_token)}")
-    _write(f"  Token file:     {_TOKEN_FILE}")
     _write(f"  Max agents:     {max_agents}")
 
     if not is_loopback:
@@ -335,9 +303,6 @@ def _tail(args: argparse.Namespace) -> None:
     host: str = getattr(args, "host", "127.0.0.1")
     viewer_token: str | None = getattr(args, "viewer_token", None)
 
-    # Auto-discover viewer token from persisted token file if not supplied.
-    # The persisted file contains the agent token, so we cannot use it for
-    # /ws (agent tokens are rejected there). Only use it if explicitly set.
     if not viewer_token:
         sys.stderr.write(
             "arc ui tail: no --viewer-token supplied.\n"
@@ -424,7 +389,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--host", default="127.0.0.1", help="Bind address.")
     p_start.add_argument("--viewer-token", dest="viewer_token", default=None)
     p_start.add_argument("--operator-token", dest="operator_token", default=None)
-    p_start.add_argument("--agent-token", dest="agent_token", default=None)
     p_start.add_argument("--max-agents", dest="max_agents", type=int, default=100)
     p_start.add_argument(
         "--team-root",
@@ -518,21 +482,4 @@ def ui_handler(args: list[str]) -> None:
 
     Called by arccli.commands.registry when the user runs `arc ui ...`.
     """
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc ui: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

@@ -8,9 +8,13 @@ from arcrun.registry import ToolRegistry
 from arcrun.state import RunState
 from arcrun.types import Tool, ToolContext
 
-from arcagent.orchestration.spawn import _make_bubble_handler, make_spawn_tool
+from arcagent.orchestration.spawn import (
+    RootTokenBudget,
+    _make_bubble_handler,
+    make_spawn_tool,
+)
 
-from ._mock_llm import LLMResponse, Message, MockModel
+from ._mock_llm import LLMResponse, Message, MockModel, ToolCall
 
 
 async def _echo_execute(params: dict, ctx: object) -> str:
@@ -224,6 +228,97 @@ class TestToolSubsetting:
         ctx = _make_ctx(parent_state=state)
         result = await tool.execute({"task": "do X", "tools": ["echo"]}, ctx)
         assert result == "Child done."
+
+
+def _echo_tool() -> Tool:
+    return Tool(
+        name="echo",
+        description="Echo input",
+        input_schema={"type": "object", "properties": {"input": {"type": "string"}}},
+        execute=_echo_execute,
+    )
+
+
+class TestRootTokenBudgetWiring:
+    """The LLM10 cross-child token pool is enforced on the live spawn path."""
+
+    @pytest.mark.asyncio
+    async def test_pool_exhaustion_refuses_further_spawns(self):
+        # Pool holds exactly one child's worth of tokens (default Usage=15/call).
+        pool = RootTokenBudget(total=15)
+        state = _make_parent_state(depth=0, max_depth=3)
+        child_model = MockModel([LLMResponse(content="first child", stop_reason="end_turn")])
+        tool = make_spawn_tool(
+            model=child_model,
+            tools=[_echo_tool()],
+            system_prompt="test",
+            root_token_budget=pool,
+        )
+        ctx = _make_ctx(parent_state=state)
+
+        first = await tool.execute({"task": "do A"}, ctx)
+        assert first == "first child"
+        # The child's actual usage was debited into the shared pool.
+        assert pool.is_exhausted()
+
+        # A second spawn is refused without ever invoking the model again.
+        second = await tool.execute({"task": "do B"}, ctx)
+        assert "Error" in second
+        assert "budget exhausted" in second
+        assert len(child_model.invoke_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_child_is_stopped_when_it_would_overrun_the_pool(self):
+        # A multi-turn child clamped to the pool's remaining balance is halted at
+        # the turn boundary once its cumulative tokens reach the cap.
+        pool = RootTokenBudget(total=15)
+        state = _make_parent_state(depth=0, max_depth=3)
+        child_model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="t1", name="echo", arguments={"input": "x"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="second turn", stop_reason="end_turn"),
+            ]
+        )
+        tool = make_spawn_tool(
+            model=child_model,
+            tools=[_echo_tool()],
+            system_prompt="test",
+            root_token_budget=pool,
+        )
+        ctx = _make_ctx(parent_state=state)
+
+        await tool.execute({"task": "loop"}, ctx)
+        # The clamp (max_tokens == pool remaining) stops the child before its
+        # second model call — without it the child would have invoked twice.
+        assert len(child_model.invoke_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_budget_leaves_child_unclamped(self):
+        # Control: same child, no pool — both turns run, proving the clamp above
+        # is what stopped it, not the mock running out of responses.
+        state = _make_parent_state(depth=0, max_depth=3)
+        child_model = MockModel(
+            [
+                LLMResponse(
+                    tool_calls=[ToolCall(id="t1", name="echo", arguments={"input": "x"})],
+                    stop_reason="tool_use",
+                ),
+                LLMResponse(content="second turn", stop_reason="end_turn"),
+            ]
+        )
+        tool = make_spawn_tool(
+            model=child_model,
+            tools=[_echo_tool()],
+            system_prompt="test",
+        )
+        ctx = _make_ctx(parent_state=state)
+
+        result = await tool.execute({"task": "loop"}, ctx)
+        assert result == "second turn"
+        assert len(child_model.invoke_calls) == 2
 
 
 class TestBubbleHandler:

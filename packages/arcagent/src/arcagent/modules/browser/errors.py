@@ -62,48 +62,17 @@ class BrowserTimeoutError(BrowserError):
         super().__init__(code="BROWSER_TIMEOUT", message=message, details=details)
 
 
-class BrowserNotAvailableError(BrowserError):
-    """Operation attempted on a closed or uninitialized browser session."""
-
-    def __init__(
-        self,
-        message: str = "Browser session is not available",
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(code="BROWSER_NOT_AVAILABLE", message=message, details=details)
-
-
-class NavigationFailedError(BrowserError):
-    """Page navigation failed (e.g., network error, HTTP error, timeout)."""
-
-    def __init__(
-        self,
-        url: str = "",
-        reason: str = "Navigation failed",
-        message: str = "",
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        effective_message = (
-            message or f"Navigation failed: {reason}" if reason else "Navigation failed"
-        )
-        merged = {"url": url, "reason": reason, **(details or {})}
-        super().__init__(
-            code="BROWSER_NAVIGATION_FAILED",
-            message=effective_message,
-            details=merged,
-        )
-
-
 class LocalBrowserNotAllowedError(BrowserError):
-    """Local browser execution is not permitted by the current policy.
+    """Local (auto-launched) browser execution is forbidden by the tier.
 
-    Federal tier requires remote browser providers (e.g., Browserbase).
-    Configure ``mode = "remote"`` in ``[modules.browser.config]``.
+    Federal tier requires attaching to a remote CDP endpoint rather than
+    launching a local headless Chrome. Set ``connection.cdp_url`` in
+    ``[modules.browser.config]`` to a remote endpoint.
     """
 
     _DEFAULT_MSG = (
-        "Local browser execution is not allowed; "
-        "set remote_provider and endpoint in browser config"
+        "Local browser execution is not allowed at this tier; "
+        "set connection.cdp_url to a remote CDP endpoint in browser config"
     )
 
     def __init__(
@@ -120,14 +89,16 @@ class LocalBrowserNotAllowedError(BrowserError):
         )
 
 
-class RemoteProviderError(BrowserError):
-    """Remote browser provider (e.g., Browserbase) returned an error."""
+class CapabilityDisabledError(BrowserError):
+    """A browser capability disabled by config was invoked."""
 
     def __init__(
         self,
-        provider: str = "",
-        message: str = "Remote browser provider error",
+        capability: str,
         details: dict[str, Any] | None = None,
     ) -> None:
-        merged = {"provider": provider, **(details or {})} if provider else (details or {})
-        super().__init__(code="BROWSER_REMOTE_PROVIDER_ERROR", message=message, details=merged)
+        super().__init__(
+            code="BROWSER_CAPABILITY_DISABLED",
+            message=f"Browser capability '{capability}' is disabled by config",
+            details={"capability": capability, **(details or {})},
+        )

@@ -3,16 +3,15 @@
 The previous test suite covered helpers (`_maybe_open_browser`) but not
 `_start()` itself.
 These tests exercise the launcher end-to-end with uvicorn replaced by a
-spy so we can assert: (1) atomic 0600 token persistence, (2) loopback
-gating of browser open, (3) `mark_bootstrap_issued` only on loopback,
-(4) lifespan callback wiring (no monkey-patch), (5) non-loopback
-warning + token fallback that does NOT include the auth fragment.
+spy so we can assert: (1) loopback gating of browser open, (2)
+`mark_bootstrap_issued` only on loopback, (3) lifespan callback wiring
+(no monkey-patch), (4) non-loopback warning + token fallback that does
+NOT include the auth fragment.
 """
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -20,49 +19,9 @@ import pytest
 from arccli.commands.ui import (
     BOOTSTRAP_HASH_KEY,
     _maybe_open_browser,
-    _persist_agent_token,
     _print_browser_open_fallback,
     _start,
 )
-
-# ---------------------------------------------------------------------------
-# C-1: atomic 0600 token persistence
-# ---------------------------------------------------------------------------
-
-
-class TestPersistAgentTokenAtomic:
-    """The token file MUST land 0600 from creation, not via post-hoc chmod."""
-
-    def test_file_created_with_0600(self, tmp_path: Path) -> None:
-        target = tmp_path / "ui-token"
-        with patch("arccli.commands.ui._TOKEN_FILE", target):
-            _persist_agent_token("the-secret")
-        assert target.exists()
-        assert target.read_text() == "the-secret"
-        # Mode is OS-level — not subject to the umask race the old code had.
-        mode = target.stat().st_mode & 0o777
-        assert mode == 0o600, f"expected 0600, got {oct(mode)}"
-
-    def test_parent_dir_is_0700(self, tmp_path: Path) -> None:
-        target = tmp_path / "child_dir" / "ui-token"
-        with patch("arccli.commands.ui._TOKEN_FILE", target):
-            _persist_agent_token("the-secret")
-        parent_mode = target.parent.stat().st_mode & 0o777
-        assert parent_mode == 0o700, (
-            f"parent dir should be 0700 to prevent symlink swap, got {oct(parent_mode)}"
-        )
-
-    def test_overwrite_preserves_0600(self, tmp_path: Path) -> None:
-        target = tmp_path / "ui-token"
-        target.write_text("old")
-        target.chmod(0o644)  # Worst-case prior state — world-readable.
-        with patch("arccli.commands.ui._TOKEN_FILE", target):
-            _persist_agent_token("new-secret")
-        # The atomic write should also tighten perms on overwrite.
-        mode = target.stat().st_mode & 0o777
-        assert mode == 0o600
-        assert target.read_text() == "new-secret"
-
 
 # ---------------------------------------------------------------------------
 # C-2: browser-open fallback never echoes URL+token together
@@ -133,7 +92,6 @@ def _make_args(**kw: object) -> argparse.Namespace:
         "port": 18420,
         "viewer_token": "v",
         "operator_token": "o",
-        "agent_token": "a",
         "max_agents": 10,
         "show_tokens": False,
         "root": None,
@@ -145,7 +103,7 @@ def _make_args(**kw: object) -> argparse.Namespace:
 class TestStartLoopback:
     """Loopback `arc ui start` opens browser via on_startup, marks bootstrap."""
 
-    def test_registers_on_startup_callback_no_monkey_patch(self, tmp_path: Path) -> None:
+    def test_registers_on_startup_callback_no_monkey_patch(self) -> None:
         captured = {}
 
         class _SpyServer:
@@ -156,7 +114,6 @@ class TestStartLoopback:
                 pass  # don't actually serve
 
         with (
-            patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
             patch("uvicorn.Server", _SpyServer),
             patch("arccli.commands.ui._maybe_open_browser") as mock_open,
         ):
@@ -174,7 +131,7 @@ class TestStartLoopback:
         # Browser is NOT opened synchronously — only when the lifespan fires.
         mock_open.assert_not_called()
 
-    def test_marks_bootstrap_token_for_session_audit(self, tmp_path: Path) -> None:
+    def test_marks_bootstrap_token_for_session_audit(self) -> None:
         captured = {}
 
         class _SpyServer:
@@ -184,10 +141,7 @@ class TestStartLoopback:
             def run(self):
                 pass
 
-        with (
-            patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("uvicorn.Server", _SpyServer),
-        ):
+        with patch("uvicorn.Server", _SpyServer):
             _start(_make_args(host="127.0.0.1"))
 
         tracker = captured["app"].state.session_tracker
@@ -202,7 +156,7 @@ class TestStartLoopback:
 class TestStartNonLoopback:
     """Non-loopback bind MUST NOT open the browser, MUST NOT mark bootstrap."""
 
-    def test_no_on_startup_callback_added(self, tmp_path: Path) -> None:
+    def test_no_on_startup_callback_added(self) -> None:
         captured = {}
 
         class _SpyServer:
@@ -212,10 +166,7 @@ class TestStartNonLoopback:
             def run(self):
                 pass
 
-        with (
-            patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("uvicorn.Server", _SpyServer),
-        ):
+        with patch("uvicorn.Server", _SpyServer):
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
 
         app = captured["app"]
@@ -225,7 +176,7 @@ class TestStartNonLoopback:
             "non-loopback launch must NOT register browser-open hook"
         )
 
-    def test_does_not_mark_bootstrap(self, tmp_path: Path) -> None:
+    def test_does_not_mark_bootstrap(self) -> None:
         captured = {}
 
         class _SpyServer:
@@ -235,10 +186,7 @@ class TestStartNonLoopback:
             def run(self):
                 pass
 
-        with (
-            patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("uvicorn.Server", _SpyServer),
-        ):
+        with patch("uvicorn.Server", _SpyServer):
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
 
         tracker = captured["app"].state.session_tracker
@@ -248,7 +196,7 @@ class TestStartNonLoopback:
         # No bootstrap mark → manual_token, even though token is valid.
         assert auth_method == "manual_token"
 
-    def test_prints_warning(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_prints_warning(self, capsys: pytest.CaptureFixture[str]) -> None:
         class _SpyServer:
             def __init__(self, config):
                 pass
@@ -256,10 +204,7 @@ class TestStartNonLoopback:
             def run(self):
                 pass
 
-        with (
-            patch("arccli.commands.ui._TOKEN_FILE", tmp_path / "ui-token"),
-            patch("uvicorn.Server", _SpyServer),
-        ):
+        with patch("uvicorn.Server", _SpyServer):
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
         out = capsys.readouterr().out
         assert "non-loopback" in out.lower()

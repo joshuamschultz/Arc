@@ -417,6 +417,48 @@ def test_enrich_bundles_instances_neighbors_and_stream(workspace, db, scope) -> 
     assert {"before", "mid", "after"} <= ctx_ids  # N-hop stream neighbors of the instances
 
 
+async def test_match_folds_enrichment_into_recall_content(workspace, db, scope) -> None:
+    """The production path (match -> _to_recall) returns ENRICHED content, not the bare
+    statement — instances, adjacent insights, and related entities all reach the recall."""
+    episodic = EpisodicStore(db, workspace)
+    episodic.append(
+        Event(event_id="e0", scope=scope.key, kind="obs", text="the recipe omits salt about ada")
+    )
+    SemanticStore(workspace, WeightedGraph(db), scope=scope.key).write_fact(
+        "ada", "role", "engineer", confidence=0.7
+    )
+    _mint(
+        workspace,
+        db,
+        scope,
+        Insight(
+            id="silent-noop",
+            statement="A guarantee is claimed but never enforced.",
+            trigger="t",
+            cues=["shared-cue"],
+            instances=["e0"],
+        ),
+    )
+    _mint(
+        workspace,
+        db,
+        scope,
+        Insight(id="cousin", statement="A neighbouring abstraction.", trigger="t2",
+                cues=["shared-cue"]),
+    )
+
+    # No embedder -> the cue-graph channel alone promotes it (degraded), exercising the
+    # exact _to_recall enrichment fold that the fused/embedded path also runs.
+    result = await _structural(db, workspace, scope).match(
+        Situation(text="unrelated", cues=["shared-cue"])
+    )
+    recall = next(r for r in result.recalls if r.source == "silent-noop")
+    assert "A guarantee is claimed but never enforced." in recall.content  # statement anchor
+    assert "the recipe omits salt about ada" in recall.content  # instance folded in
+    assert "A neighbouring abstraction." in recall.content  # adjacent insight folded in
+    assert "Related: Ada" in recall.content  # related entity card folded in
+
+
 # -- T-065: optional rerank, tier-gated + margin fallback -------------------
 
 

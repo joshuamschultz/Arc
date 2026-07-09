@@ -22,7 +22,6 @@ from arcui.server import create_app
 
 VIEWER_TOKEN = "viewer-tok-test"
 OPERATOR_TOKEN = "operator-tok-test"
-AGENT_TOKEN = "agent-tok-test"
 
 
 @pytest.fixture
@@ -31,7 +30,6 @@ def auth_config() -> AuthConfig:
         {
             "viewer_token": VIEWER_TOKEN,
             "operator_token": OPERATOR_TOKEN,
-            "agent_token": AGENT_TOKEN,
         }
     )
 
@@ -123,17 +121,6 @@ def test_invalid_token_rejected(auth_config: AuthConfig) -> None:
     with TestClient(app) as client, client.websocket_connect(_team_url()) as ws:
         ws.send_json({"token": "nope"})
         assert "error" in ws.receive_json()
-
-
-def test_agent_token_rejected(auth_config: AuthConfig) -> None:
-    app = _make_app(auth_config)
-    with TestClient(app) as client, client.websocket_connect(_team_url()) as ws:
-        ws.send_json({"token": AGENT_TOKEN})
-        try:
-            err = ws.receive_json()
-            assert "error" in err or err.get("type") == "error"
-        except Exception:  # noqa: S110 — server may close before the frame
-            pass
 
 
 # ── streaming (read-only view) ─────────────────────────────────────────────

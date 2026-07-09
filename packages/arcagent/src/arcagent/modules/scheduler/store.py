@@ -74,14 +74,24 @@ class ScheduleStore:
         entries.append(entry)
         self.save(entries)
 
-    def update(self, schedule_id: str, updates: dict[str, object]) -> ScheduleEntry:
-        """Update fields on an existing entry. Raises KeyError if not found."""
+    def update(
+        self,
+        schedule_id: str,
+        updates: dict[str, object],
+        *,
+        context: dict[str, int] | None = None,
+    ) -> ScheduleEntry:
+        """Update fields on an existing entry. Raises KeyError if not found.
+
+        ``context`` is forwarded to model validation so config-derived limits
+        (interval floor, timeout ceiling) are enforced on updated fields.
+        """
         entries = self.load()
         for i, entry in enumerate(entries):
             if entry.id == schedule_id:
                 data = entry.model_dump()
                 data.update(updates)
-                entries[i] = ScheduleEntry(**data)
+                entries[i] = ScheduleEntry.model_validate(data, context=context)
                 self.save(entries)
                 return entries[i]
         msg = f"Schedule '{schedule_id}' not found"

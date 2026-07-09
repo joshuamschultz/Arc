@@ -16,14 +16,12 @@ Design decisions:
 from __future__ import annotations
 
 import logging
-import os
 import shutil
-import stat
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arcagent.modules.user_profile._fsutil import atomic_write
 from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.errors import BodyOverflow, ProfileNotFound
 from arcagent.modules.user_profile.models import ACL, DurableFact, UserProfile
@@ -99,7 +97,7 @@ class ProfileStore:
             raise BodyOverflow(body_size, self._config.body_cap_bytes)
 
         self._profile_dir.mkdir(parents=True, exist_ok=True)
-        _atomic_write(self.profile_path(profile.user_did), text)
+        atomic_write(self.profile_path(profile.user_did), text)
         _logger.debug(
             "user_profile.write user_did=%s body_bytes=%d",
             profile.user_did,
@@ -251,7 +249,7 @@ class ProfileStore:
             raise BodyOverflow(body_size, self._config.body_cap_bytes)
 
         path = self.agent_annotation_path(user_did, agent_did)
-        _atomic_write(path, annotation_text)
+        atomic_write(path, annotation_text)
         _logger.debug(
             "user_profile.agent_annotation_written user_did=%s agent_did=%s section=%r",
             user_did,
@@ -371,30 +369,3 @@ def _body_size(markdown_text: str) -> int:
     if len(parts) < 3:
         return len(markdown_text.encode("utf-8"))
     return len(parts[2].encode("utf-8"))
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    """Write *text* to *path* atomically using a temp file + os.replace().
-
-    If the process is killed between the write() and replace() calls
-    the original file at *path* is left intact; only the temp file is
-    orphaned.  Temp files are written to the same directory as *path* so
-    that os.replace() is guaranteed to be within the same filesystem.
-    """
-    dir_ = path.parent
-    dir_.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(dir=dir_, suffix=".tmp", prefix=path.stem + ".")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        # Secure permissions before making the file world-accessible via rename
-        os.chmod(tmp_path, stat.S_IRUSR | stat.S_IWUSR)
-        os.replace(tmp_path, path)
-    except Exception:  # reason: re-raise after log
-        # Clean up the temp file so we don't leave garbage behind
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise

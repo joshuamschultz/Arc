@@ -257,19 +257,8 @@ def _new_run(run_id: str) -> dict[str, Any]:
     }
 
 
-def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
-    """Accumulate one spool row (run/tool/llm) into its run summary."""
-    ts = row.get("ts")
-    if ts:
-        if run["started_at"] is None or ts < run["started_at"]:
-            run["started_at"] = ts
-        if run["ended_at"] is None or ts > run["ended_at"]:
-            run["ended_at"] = ts
-    if run["actor_did"] is None:
-        run["actor_did"] = row.get("actor_did")
-    if run["agent"] is None and row.get("agent_label"):
-        run["agent"] = row.get("agent_label")
-
+def _fold_event_kind(run: dict[str, Any], row: dict[str, Any]) -> None:
+    """Accumulate the kind-specific counters (run/tool/llm) for one row."""
     kind = row.get("kind")
     if kind == "run_event":
         name = row.get("name")
@@ -288,6 +277,23 @@ def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
         run["prompt_tokens"] += row.get("prompt_tokens") or 0
         run["completion_tokens"] += row.get("completion_tokens") or 0
         run["cost_usd"] += row.get("cost_usd") or 0.0
+
+
+def _fold_run(run: dict[str, Any], row: dict[str, Any]) -> None:
+    """Accumulate one spool row (run/tool/llm) into its run summary."""
+    ts = row.get("ts")
+    if ts:
+        if run["started_at"] is None or ts < run["started_at"]:
+            run["started_at"] = ts
+        if run["ended_at"] is None or ts > run["ended_at"]:
+            run["ended_at"] = ts
+    if run["actor_did"] is None:
+        run["actor_did"] = row.get("actor_did")
+    if run["agent"] is None and row.get("agent_label"):
+        run["agent"] = row.get("agent_label")
+
+    _fold_event_kind(run, row)
+
     if (row.get("outcome") or "ok") != "ok":
         run["_error"] = True
 

@@ -214,13 +214,6 @@ class UserProfile(BaseModel):
         body = "\n".join(parts)
         return f"---\n{frontmatter}---\n{body}"
 
-    def body_bytes(self) -> int:
-        """Return byte count of the markdown body (everything after frontmatter)."""
-        body = self.to_markdown().split("---\n", 2)
-        if len(body) < 3:
-            return 0
-        return len(body[2].encode("utf-8"))
-
     model_config = {"frozen": False}
 
 

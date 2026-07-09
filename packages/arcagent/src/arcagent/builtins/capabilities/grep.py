@@ -1,4 +1,4 @@
-"""Built-in ``grep`` tool — SPEC-021 port of arcagent.tools.grep.
+"""Built-in ``grep`` tool.
 
 Regex-search workspace files. Skips binaries, enforces a 5 MB
 per-file size cap, and short-circuits at ``max_results``. Patterns

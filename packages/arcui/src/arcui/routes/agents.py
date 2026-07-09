@@ -1,13 +1,11 @@
-"""Agents REST routes — list, detail, and control proxy.
+"""Agents REST routes — list and detail.
 
 GET  /api/agents              — List connected agents
 GET  /api/agents/{id}         — Agent details
-POST /api/agents/{id}/control — Send control command (operator only)
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from starlette.requests import Request
@@ -16,14 +14,10 @@ from starlette.routing import Route
 
 from arcui.schemas import (
     AgentsListResponse,
-    ControlResponseEnvelope,
     ErrorResponse,
 )
-from arcui.types import ControlMessage, ControlResponse
 
 logger = logging.getLogger(__name__)
-
-_CONTROL_TIMEOUT_SECONDS = 30.0
 
 
 async def list_agents(request: Request) -> JSONResponse:
@@ -105,105 +99,7 @@ async def get_agent(request: Request) -> JSONResponse:
     )
 
 
-async def control_agent(request: Request) -> JSONResponse:
-    """POST /api/agents/{id}/control — Send control command.
-
-    Requires operator role. Sends ControlMessage to agent's WebSocket
-    and waits for ControlResponse with timeout.
-    """
-    # Operator role check
-    role = getattr(request.state, "role", None)
-    if role != "operator":
-        return JSONResponse(
-            ErrorResponse(error="Operator role required").model_dump(mode="json"),
-            status_code=403,
-        )
-
-    agent_id = request.path_params["id"]
-    registry = request.app.state.agent_registry
-    pending_controls = request.app.state.pending_controls
-    audit = getattr(request.app.state, "audit", None)
-
-    entry = registry.get(agent_id)
-    if entry is None:
-        return JSONResponse(
-            ErrorResponse(error="Agent not found").model_dump(mode="json"),
-            status_code=404,
-        )
-
-    # Input validation
-    try:
-        body = await request.json()
-    except Exception:  # reason: fail-open — continue
-        return JSONResponse(
-            ErrorResponse(error="Invalid JSON body").model_dump(mode="json"),
-            status_code=400,
-        )
-
-    action = body.get("action")
-    request_id = body.get("request_id")
-
-    if not action or not request_id:
-        return JSONResponse(
-            ErrorResponse(error="Missing required fields: action, request_id").model_dump(
-                mode="json"
-            ),
-            status_code=400,
-        )
-
-    try:
-        msg = ControlMessage(
-            action=action,
-            target=agent_id,
-            data=body.get("data", {}),
-            request_id=request_id,
-        )
-    except Exception:  # reason: fail-open — continue
-        return JSONResponse(
-            ErrorResponse(error="Invalid control message fields").model_dump(mode="json"),
-            status_code=400,
-        )
-
-    # Create future for response correlation — store (target_id, future)
-    future: asyncio.Future[ControlResponse] = asyncio.get_running_loop().create_future()
-    pending_controls[msg.request_id] = (agent_id, future)
-
-    if audit:
-        audit.audit_event(
-            "control.sent",
-            {"agent_id": agent_id, "action": action, "request_id": request_id},
-        )
-
-    try:
-        # Send to agent via WebSocket
-        await entry.ws.send_json(msg.model_dump())
-
-        # Wait for response with timeout
-        result = await asyncio.wait_for(future, timeout=_CONTROL_TIMEOUT_SECONDS)
-        if audit:
-            audit.audit_event(
-                "control.response",
-                {"agent_id": agent_id, "request_id": request_id, "status": result.status},
-            )
-        return JSONResponse(
-            ControlResponseEnvelope(response=result.model_dump()).model_dump(mode="json")
-        )
-    except TimeoutError:
-        if audit:
-            audit.audit_event(
-                "control.timeout",
-                {"agent_id": agent_id, "request_id": request_id},
-            )
-        return JSONResponse(
-            ErrorResponse(error="Agent did not respond in time").model_dump(mode="json"),
-            status_code=504,
-        )
-    finally:
-        pending_controls.pop(msg.request_id, None)
-
-
 routes = [
     Route("/api/agents", list_agents, methods=["GET"]),
     Route("/api/agents/{id}", get_agent, methods=["GET"]),
-    Route("/api/agents/{id}/control", control_agent, methods=["POST"]),
 ]

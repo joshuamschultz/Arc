@@ -9,7 +9,7 @@ from typing import Literal
 from zoneinfo import available_timezones
 
 from croniter import croniter
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, ValidationInfo, field_validator, model_validator
 
 # Zero-width characters used in Unicode homoglyph attacks.
 _ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff]")
@@ -38,16 +38,12 @@ _INJECTION_PATTERNS: list[re.Pattern[str]] = [
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
-# Default constraints (overridden by SchedulerConfig at runtime).
+# Default floor constraints, used only when no SchedulerConfig context is
+# supplied to validation (e.g. reconstructing persisted entries). The live
+# create/update path passes config-derived limits via validation context.
 DEFAULT_MIN_INTERVAL_SECONDS = 60
 DEFAULT_MAX_PROMPT_LENGTH = 500
 DEFAULT_MAX_TIMEOUT_SECONDS = 3600
-
-# [SILENT] marker: when present at the start of a cron job prompt,
-# delivery is suppressed on success. Failures always deliver.
-# CronRunner strips this marker before passing the prompt to the agent
-# so the model never sees it as an instruction.
-SILENT_MARKER = "[SILENT]"
 
 
 def _normalize_text(text: str) -> str:
@@ -133,17 +129,6 @@ class ScheduleEntry(BaseModel):
     active_hours: ActiveHours | None = None
     timeout_seconds: int = 300
 
-    # T1.13 (SPEC-018 §3.4 Platform Delivery):
-    # Optional delivery target string ("telegram:chat_id" etc.).
-    # When set, CronRunner sends agent output to this address after execution.
-    deliver_to: str | None = None
-
-    # When True, delivery is suppressed on successful runs.
-    # Failures always deliver regardless of this flag.
-    # CronRunner also sets this to True for the current run if [SILENT]
-    # is present in the prompt.
-    silent_on_success: bool = False
-
     # Audit.
     metadata: ScheduleMetadata = ScheduleMetadata()
 
@@ -162,8 +147,18 @@ class ScheduleEntry(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _validate_type_fields(self) -> ScheduleEntry:
-        """Ensure type-specific required fields are present and valid."""
+    def _validate_type_fields(self, info: ValidationInfo) -> ScheduleEntry:
+        """Ensure type-specific required fields are present and valid.
+
+        The interval floor and timeout ceiling are read from the
+        SchedulerConfig-derived validation context when present, so operator
+        limits in arcagent.toml are honored; otherwise the module default
+        floors apply (e.g. when reconstructing persisted entries).
+        """
+        ctx = info.context or {}
+        min_interval = ctx.get("min_interval_seconds", DEFAULT_MIN_INTERVAL_SECONDS)
+        max_timeout = ctx.get("max_timeout_seconds", DEFAULT_MAX_TIMEOUT_SECONDS)
+
         if self.type == "cron" and not self.expression:
             msg = "Cron schedule requires 'expression'"
             raise ValueError(msg)
@@ -174,63 +169,13 @@ class ScheduleEntry(BaseModel):
             if self.every_seconds is None:
                 msg = "Interval schedule requires 'every_seconds'"
                 raise ValueError(msg)
-            if self.every_seconds < DEFAULT_MIN_INTERVAL_SECONDS:
-                msg = (
-                    f"Interval {self.every_seconds}s is below minimum "
-                    f"({DEFAULT_MIN_INTERVAL_SECONDS}s)"
-                )
+            if self.every_seconds < min_interval:
+                msg = f"Interval {self.every_seconds}s is below minimum ({min_interval}s)"
                 raise ValueError(msg)
-        if self.timeout_seconds > DEFAULT_MAX_TIMEOUT_SECONDS:
-            msg = (
-                f"Timeout {self.timeout_seconds}s exceeds maximum ({DEFAULT_MAX_TIMEOUT_SECONDS}s)"
-            )
+        if self.timeout_seconds > max_timeout:
+            msg = f"Timeout {self.timeout_seconds}s exceeds maximum ({max_timeout}s)"
             raise ValueError(msg)
         return self
-
-
-# ---------------------------------------------------------------------------
-# T1.12 / T1.13 additions (SPEC-018 §3.4)
-# ---------------------------------------------------------------------------
-
-
-class CronJob(BaseModel):
-    """A cron-triggered job definition loaded from [[cron.jobs]] config.
-
-    Mirrors the TOML schema defined in SDD §3.4:
-
-        [[cron.jobs]]
-        name = "morning-digest"
-        schedule = "0 9 * * 1-5"
-        prompt = "summarize overnight Slack DMs"
-        deliver_to = "telegram:joshs-channel"
-        silent_on_success = true
-    """
-
-    name: str
-    schedule: str  # cron expression OR natural-language (resolved by nl_parser)
-    prompt: str
-    deliver_to: str | None = None
-    silent_on_success: bool = False
-
-
-class CronRunResult(BaseModel):
-    """Outcome produced by CronRunner after executing a CronJob.
-
-    Attributes:
-        job_name: Name of the cron job that ran.
-        content: Agent output text (empty string on failure / timeout).
-        success: True when agent completed without exception/timeout.
-        error: Error message when success is False; None otherwise.
-        ran_at: ISO-8601 UTC timestamp of when execution started.
-        silent: Whether silent_on_success was active for this run.
-    """
-
-    job_name: str
-    content: str
-    success: bool
-    error: str | None = None
-    ran_at: str
-    silent: bool = False
 
 
 def generate_schedule_id() -> str:

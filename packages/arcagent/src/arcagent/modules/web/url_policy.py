@@ -47,46 +47,28 @@ def is_url_allowed(
     Returns:
         True if the URL is allowed, False if it should be denied.
     """
-    tier = tier.lower()
-
     # Deny-by-default at every tier: empty allowlist = deny all (ASI04 + LLM10).
     # The operator must explicitly configure allowed destinations.
     if not allowlist:
         return False
 
-    if tier == "personal":
-        return _check_allowlist(url, allowlist)
+    if tier.lower() == "enterprise":
+        _warn_cross_org_if_needed(url, allowlist)
 
-    if tier == "federal":
-        return _check_allowlist(url, allowlist)
-
-    # Enterprise tier: non-empty allowlist, check and optionally warn
-    _warn_cross_org_if_needed(url, allowlist)
     return _check_allowlist(url, allowlist)
 
 
 def _check_allowlist(url: str, allowlist: list[str]) -> bool:
     """Return True if ``url`` matches any pattern in ``allowlist``."""
-    if not allowlist:
-        # Empty allowlist at federal/enterprise = deny all
-        return False
     return any(fnmatch.fnmatch(url, pattern) for pattern in allowlist)
 
 
 def _warn_cross_org_if_needed(url: str, allowlist: list[str]) -> None:
     """Warn when a URL looks like it belongs to a different org.
 
-    This is a best-effort heuristic for enterprise tier: if the allowlist
-    contains domain fragments, check the URL's registered domain against them.
-    When allowlist is empty (allow-all mode) we emit a low-level debug log
-    only — no actionable warning needed.
+    Best-effort heuristic for enterprise tier: compare the URL's host
+    against the domain part of each allowlist pattern; warn when none match.
     """
-    if not allowlist:
-        # allow-all enterprise mode; nothing to compare against
-        parsed = urllib.parse.urlparse(url)
-        _logger.debug("web.extract enterprise outbound: %s", parsed.netloc)
-        return
-
     parsed = urllib.parse.urlparse(url)
     host = parsed.netloc.lower()
     # Check whether the host appears in any allowlist pattern's domain part

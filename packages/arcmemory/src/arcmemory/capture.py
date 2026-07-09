@@ -28,7 +28,7 @@ from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.security import Deduper, content_hash, privacy_filter, sanitize
 from arcmemory.stores.episodic import EpisodicStore
-from arcmemory.tagging import tag_entities
+from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Event, Scope
 
 
@@ -54,7 +54,7 @@ class FastCapture:
         self._audit = audit_sink if audit_sink is not None else NullSink()
         self._deduper = Deduper(self._cfg.dedup_window)
         self._seed_vocab = set(seed_vocabulary or [])
-        self._entities_dir = self._workspace / "memory" / "entities"
+        self._mem_dir = self._workspace / "memory"
 
     def capture(
         self,
@@ -93,10 +93,7 @@ class FastCapture:
 
     def _vocabulary(self) -> set[str]:
         """Tagging vocabulary: seed terms + the slugs of existing entity files."""
-        vocab = set(self._seed_vocab)
-        if self._entities_dir.exists():
-            vocab.update(p.stem for p in self._entities_dir.glob("*.md"))
-        return vocab
+        return entity_vocabulary(self._mem_dir, self._seed_vocab)
 
     def _emit_captured(self, event: Event, classification: str) -> None:
         """Emit the tamper-evident ``memory.captured`` audit event (AU-2)."""

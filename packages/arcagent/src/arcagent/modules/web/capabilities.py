@@ -9,25 +9,19 @@ Two ``@tool`` functions that mirror the legacy :class:`WebModule` surface:
 
 State is shared via :mod:`arcagent.modules.web._runtime`. The agent
 configures it once at startup; tools read state lazily on each invocation.
-
-The legacy :class:`WebModule` class continues to exist alongside this
-module; both forms route to the same provider adapters and audit semantics.
+Provider clients are built lazily by :mod:`arcagent.modules.web._runtime`.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
 
 from arcagent.modules.web import _runtime
-from arcagent.modules.web.errors import ExtractFailed, SearchFailed, URLNotAllowed
+from arcagent.modules.web.errors import ContentTooLarge, ExtractFailed, SearchFailed, URLNotAllowed
 from arcagent.modules.web.url_policy import is_url_allowed
-from arcagent.modules.web.web_module import (
-    _hash_query,
-    _redact_if_enabled,
-    _truncate_content,
-)
 from arcagent.tools._decorator import tool
 from arcagent.utils.audit import safe_audit
 
@@ -35,6 +29,49 @@ _logger = logging.getLogger("arcagent.modules.web.capabilities")
 
 # Bound error message length in audit payloads to prevent log inflation (LLM02).
 _MAX_ERROR_MSG_LEN: int = 200
+
+
+def _hash_query(query: str) -> str:
+    """Return first 16 hex chars of SHA-256(query) for audit logs.
+
+    Query content is PII-sensitive at federal/enterprise tier — we log the
+    hash, not the plaintext, in audit events.
+    """
+    return hashlib.sha256(query.encode()).hexdigest()[:16]
+
+
+def _redact_if_enabled(text: str, *, enabled: bool) -> str:
+    """Apply PII redaction when enabled.
+
+    Uses arcllm._pii directly so we don't take on an arcllm module-bus
+    dependency.  The RegexPiiDetector is stateless — safe to instantiate
+    per-call.
+    """
+    if not enabled:
+        return text
+    from arcllm._pii import RegexPiiDetector, redact_text
+
+    detector = RegexPiiDetector()
+    matches = detector.detect(text)
+    if not matches:
+        return text
+    result: str = str(redact_text(text, matches))
+    return result
+
+
+def _truncate_content(content: str, max_bytes: int, url: str) -> str:
+    """Truncate content to max_bytes, logging a warning if truncation occurs.
+
+    Content is truncated at byte boundary, then decoded safely.
+    Returns original content when no truncation is needed.
+    """
+    encoded = content.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return content
+    truncated = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    err = ContentTooLarge(url=url, actual_bytes=len(encoded), max_bytes=max_bytes)
+    _logger.warning("%s", err)
+    return truncated
 
 
 @tool(
@@ -93,11 +130,10 @@ async def _search(query: str, *, limit: int = 10) -> list[dict[str, Any]]:
     redacted_query = _redact_if_enabled(query, enabled=pii_on)
     query_hash = _hash_query(redacted_query)
 
-    if st.search_provider is None:
-        raise SearchFailed("web_search called before a search provider was configured")
+    provider = await _runtime.get_search_provider()
 
     try:
-        hits = await st.search_provider.search(redacted_query, limit=limit)
+        hits = await provider.search(redacted_query, limit=limit)
     except SearchFailed:
         raise
     except Exception as exc:  # reason: re-raise after log
@@ -134,11 +170,10 @@ async def _extract(url: str) -> dict[str, Any]:
         )
         raise URLNotAllowed(url=url, tier=cfg.tier)
 
-    if st.extract_provider is None:
-        raise ExtractFailed("web_extract called before an extract provider was configured")
+    provider = await _runtime.get_extract_provider()
 
     try:
-        result = await st.extract_provider.extract(url)
+        result = await provider.extract(url)
     except ExtractFailed:
         raise
     except Exception as exc:  # reason: re-raise after log

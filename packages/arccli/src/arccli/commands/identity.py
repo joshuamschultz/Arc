@@ -19,17 +19,12 @@ from pathlib import Path
 
 from arctrust import AgentIdentity
 
+from arccli.commands._shared import err as _err
+from arccli.commands._shared import write as _out
+
 # Standalone signing authority lives here (distinct from per-agent key_dirs).
 DEFAULT_KEY_DIR = Path("~/.arc/identity").expanduser()
 _ACTIVE_FILE = "active.did"
-
-
-def _out(msg: str = "") -> None:
-    sys.stdout.write(msg + "\n")
-
-
-def _err(msg: str) -> None:
-    sys.stderr.write(msg + "\n")
 
 
 def _active_did_path(key_dir: Path) -> Path:

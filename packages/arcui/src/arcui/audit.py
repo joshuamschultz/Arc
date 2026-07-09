@@ -57,7 +57,7 @@ class SessionStartFields(BaseModel):
     uid: int
     username: str  # REQUIRED — see arcui.auth._resolve_username for fallback
     remote_addr: str
-    auth_method: str  # "browser_bootstrap" | "manual_token" | "agent_token"
+    auth_method: str  # "browser_bootstrap" | "manual_token"
 
 
 class AgentAutoconnectFields(BaseModel):

@@ -75,8 +75,7 @@ class WhisperCppProvider:
 
     Attributes:
         _available: True when the binary is found on PATH at construction.
-                    Used by skip-guards in tests and by VoiceModule health
-                    checks.
+                    Used by skip-guards in tests and by health checks.
     """
 
     def __init__(

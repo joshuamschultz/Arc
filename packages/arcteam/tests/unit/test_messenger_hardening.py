@@ -441,3 +441,125 @@ class TestRetryableDelivery:
         assert second.acked is True
         assert got == ["x"]
         assert sent.id in seen
+
+
+class TestPoisonMessageGuard:
+    """A malformed delivery must not escape the consume loop (ASI08 / DoS).
+
+    ``_dispatch`` parses untrusted stream data with ``Message.model_validate``.
+    A ValidationError must be caught, the delivery acked and dropped, and the
+    loop kept alive — not propagated out of ``_consume_stream`` where it would
+    permanently kill the unsupervised consume task.
+    """
+
+    async def test_unparseable_delivery_is_acked_not_raised(self) -> None:
+        backend, registry, audit = await _bootstrap()
+        svc = MessagingService(backend, registry, audit)
+
+        called = False
+
+        async def handler(_m: Message) -> None:
+            nonlocal called
+            called = True
+
+        seen: set[str] = set()
+        # Missing required fields (sender/to/body) → Message.model_validate raises.
+        poison = _RecordingDelivery(data={"garbage": "not a message"})
+        await svc._dispatch(poison, handler, seen)  # must NOT raise
+
+        assert poison.acked is True
+        assert called is False
+
+
+class _RegistryQueryCounter:
+    """Delegates to a MemoryBackend but counts registry-collection queries."""
+
+    def __init__(self, inner: MemoryBackend) -> None:
+        self._inner = inner
+        self.registry_queries = 0
+
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
+        return getattr(self._inner, name)
+
+    async def query(
+        self,
+        collection: str,
+        filters: dict[str, Any] | None = None,
+        prefix: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if collection == "messages/registry":
+            self.registry_queries += 1
+        return await self._inner.query(collection, filters, prefix)
+
+
+class TestSendUsesSingleRegistrySnapshot:
+    """One send resolves every ref (sender + @-targets + mention + role) from a
+    single registry read, not one backend query per ref (the O(N*M) finding).
+    """
+
+    async def test_send_queries_registry_exactly_once(self) -> None:
+        backend = MemoryBackend()
+        counter = _RegistryQueryCounter(backend)
+        counting: StorageBackend = counter  # type: ignore[assignment]
+        audit = AuditLogger(counting, InProcessSigner(b"\x11" * 32))
+        await audit.initialize()
+        registry = EntityRegistry(counting, audit)
+        for handle in ("alice", "bob", "carol"):
+            await registry.register(
+                Entity(
+                    did=f"did:arc:local:agent/{handle}",
+                    handle=handle,
+                    id=f"agent://{handle}",
+                    name=handle.upper(),
+                    type=EntityType.AGENT,
+                    roles=["dev"],
+                )
+            )
+        counter.registry_queries = 0  # ignore setup reads; count only the send
+        svc = MessagingService(counting, registry, audit)
+
+        # Sender + two @-targets + a role fan-out + a body mention: many refs,
+        # yet one snapshot must serve them all.
+        await svc.send(
+            Message(
+                sender="agent://alice",
+                to=["@bob", "@carol", "role://dev"],
+                body="ping @bob and @carol",
+            )
+        )
+        assert counter.registry_queries == 1
+
+
+class TestChannelMembershipAddressForms:
+    """Membership is decided by DID on every path (send, poll, subscribe).
+
+    Regression: an entity that joined a channel under one address form (DID)
+    must still match when it polls under another (URI/handle). The old poll/
+    subscribe paths used a raw ``entity_id in members`` string compare that
+    silently missed the entity's own channel.
+    """
+
+    async def test_poll_all_matches_member_joined_by_different_form(self) -> None:
+        backend, registry, audit = await _bootstrap()
+        alice_kp = generate_keypair()
+        await _register(registry, "alice", public_key=alice_kp.public_key.hex())
+        await _register(registry, "builder")
+        svc = MessagingService(
+            backend,
+            registry,
+            audit,
+            signer=MessageSigner("did:arc:local:agent/alice", alice_kp.private_key),
+        )
+        # builder joins by DID; alice by URI.
+        await svc.create_channel(
+            Channel(
+                name="ops",
+                members=["agent://alice", "did:arc:local:agent/builder"],
+            )
+        )
+        await svc.send(Message(sender="agent://alice", to=["channel://ops"], body="hello"))
+
+        # builder polls by URI form — must still find the channel it joined by DID.
+        inbox = await svc.poll_all("agent://builder")
+        assert inbox.get("arc.channel.ops") is not None
+        assert [m.body for m in inbox["arc.channel.ops"]] == ["hello"]

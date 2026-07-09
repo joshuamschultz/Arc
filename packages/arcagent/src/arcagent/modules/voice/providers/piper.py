@@ -52,8 +52,7 @@ class PiperProvider:
 
     Attributes:
         _available: True when the piper binary is found at construction.
-                    Used by skip-guards in tests and VoiceModule health
-                    checks.
+                    Used by skip-guards in tests and health checks.
     """
 
     def __init__(

@@ -141,7 +141,8 @@ async def test_fusion_beats_bm25_alone(workspace, db, scope) -> None:
     await surface.index_if_needed()
 
     # BM25 alone finds nothing (no shared token with "puppy").
-    bm25_only = surface.bm25_only("a small puppy", top_k=2)
+    bm25_ids = surface._bm25_search("a small puppy")[:2]
+    bm25_only = [r.content for cid in bm25_ids if (r := surface._to_recall(cid, 0.0)) is not None]
     assert all("hound" not in c for c in bm25_only)
     # Fusion (with the concept vector) surfaces the canine chunk.
     fused = await surface.search("a small puppy", top_k=2)

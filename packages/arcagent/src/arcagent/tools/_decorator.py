@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, get_args, get_origin, get_type_hints
 
-ToolClassification = Literal["read_only", "state_modifying"]
+from arcagent.tools._transport import ToolClassification
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,6 @@ from arcmemory.types import (
     Bundle,
     Confidence,
     ConsolidationResult,
-    Cue,
     Entity,
     Event,
     Fact,
@@ -53,7 +52,6 @@ def test_insight_carries_trigger_cues_instances() -> None:
 def test_remaining_models_round_trip() -> None:
     for model in (
         Procedure(slug="p", title="Deploy", steps=["a", "b"], use_count=3),
-        Cue(name="claims-property", aliases=["asserts-property"]),
         Situation(text="now", summary="s", cues=["c1"]),
         Recall(source="x", content="y", score=1.2, confidence=Confidence.GUESSED),
         Bundle(recalls=[], degraded=True, budget=100),

@@ -23,11 +23,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from arctrust.classification import Classification
+
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.db import DEFAULT_DIMS, MemoryDB
 from arcmemory.distill import FactExtraction, InsightCandidate, InsightMint
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.structural import StructuralIndex
+from arcmemory.retrieve import Retriever
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.types import Event, Scope, Situation
 
@@ -163,6 +166,31 @@ async def test_production_retrieve_matches_zero_overlap_probe(workspace: Path) -
         _QUERY, summary=_SUMMARY, cues=[_FOREIGN_CUE], top_k=5, budget=10_000
     )
     assert "enforcement is never connected" in text
+
+
+async def test_production_retrieve_enriches_the_structural_recall(workspace: Path) -> None:
+    """The SDD-7 payoff on the REAL path: the spotted insight arrives *enriched*.
+
+    Driving the production ``Retriever.retrieve`` (surface + structural fused, gated,
+    bounded), the structural recall's agent-visible content must carry the enriched
+    neighborhood — an original instance episode — not the bare statement. This is the
+    end-to-end proof that ``enrich`` is wired into the return path, not producer-only.
+    """
+    _assert_zero_overlap_vs_insight(_QUERY, _SUMMARY, _FOREIGN_CUE)
+    await _plant_probe(workspace, bridge=True)
+    scope = Scope(agent_did=_DID)
+    rv = Retriever(MemoryDB(workspace), workspace, scope, embedder=ConceptEmbedder())
+    await rv.index()
+
+    bundle = await rv.retrieve(
+        _situation(), clearance=Classification.UNCLASSIFIED, top_k=5, budget=10_000
+    )
+    structural = [r for r in bundle.recalls if r.source == "silent-noop"]
+    assert structural, "the structural channel must contribute the spotted insight"
+    content = structural[0].content
+    assert _INSIGHT_STATEMENT in content  # the abstraction itself
+    # ...anchored to an ORIGINAL instance episode (the enrichment reached the agent).
+    assert any(ep in content for ep in _EPISODES), "structural recall must be enriched, not bare"
 
 
 async def test_both_structural_channels_fire_via_abstraction_and_graph(workspace: Path) -> None:

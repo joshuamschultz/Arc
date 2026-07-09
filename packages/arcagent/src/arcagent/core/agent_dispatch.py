@@ -72,19 +72,24 @@ async def build_run_context(
     # context-free invoke() path. Children inherit spawn + the invoke tools.
     ctx_tools: list[Any] = []
     if agent._config.spawn.enabled:
-        from arcagent.orchestration import SPAWN_GUIDANCE, make_spawn_tool
+        from arcagent.orchestration import SPAWN_GUIDANCE, RootTokenBudget, make_spawn_tool
 
         child_system_prompt = await context.assemble_system_prompt(
             agent._workspace,
             extra_sections={**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE},
         )
         child_tools = list(invoke_tools)  # closure ref — append makes children see spawn
+        # Shared cross-child token pool (LLM10) — one per run, capping the
+        # aggregate spend of every child the model spawns this turn.
+        pool_total = agent._config.spawn.max_total_tokens
+        root_token_budget = RootTokenBudget(pool_total) if pool_total else None
         spawn_tool = make_spawn_tool(
             model=model,
             tools=child_tools,
             system_prompt=child_system_prompt,
             spawn_timeout_seconds=agent._config.spawn.timeout_seconds,
             max_concurrent_spawns=agent._config.spawn.max_concurrent,
+            root_token_budget=root_token_budget,
         )
         child_tools.append(spawn_tool)
         ctx_tools = [spawn_tool]

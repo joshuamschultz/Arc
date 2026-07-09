@@ -8,9 +8,8 @@ snapshot tests in Phase 8.
 
 from __future__ import annotations
 
-from collections import deque
+import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from arcgateway import team_roster
 from starlette.applications import Starlette
@@ -18,9 +17,31 @@ from starlette.testclient import TestClient
 
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.routes.team_pages import routes as team_routes
 from arcui.types import AgentRegistration
+
+
+def _write_worm_audit(data_dir: Path, *, seq: int, actor_did: str) -> None:
+    """Append one signed-chain record to the durable WORM file arcstore mirrors."""
+    worm = data_dir / "worm"
+    worm.mkdir(parents=True, exist_ok=True)
+    line = {
+        "seq": seq,
+        "event_hash": f"hash-{seq}",
+        "prev_hash": f"hash-{seq - 1}" if seq else "",
+        "signature": "sig",
+        "event": {
+            "ts": f"2026-05-31T00:00:{seq:02d}+00:00",
+            "actor_did": actor_did,
+            "action": "gateway.fs.read",
+            "target": "tool:x",
+            "outcome": "allow",
+        },
+    }
+    with (worm / "audit-chain.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
 
 
 def _make_app(
@@ -30,7 +51,6 @@ def _make_app(
         {
             "viewer_token": "viewer",
             "operator_token": "operator",
-            "agent_token": "agent-secret",
         }
     )
     registry = AgentRegistry()
@@ -39,7 +59,7 @@ def _make_app(
     app.state.auth_config = auth
     app.state.agent_registry = registry
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.audit_buffer = deque(maxlen=1000)
+    app.state.observe = Observe()
     app.state.team_root = team_root
     app.state.agent_state_file = agent_state_file
 
@@ -117,7 +137,6 @@ class TestRoster:
         app, auth, registry = _make_app(team_root=team)
         registry.register(
             "alpha",
-            MagicMock(),
             AgentRegistration(
                 agent_id="alpha",
                 agent_name="alpha",
@@ -225,7 +244,6 @@ class TestFleetToolsSkills:
         app, auth, registry = _make_app(team_root=team)
         registry.register(
             "alpha",
-            MagicMock(),
             AgentRegistration(
                 agent_id="alpha",
                 agent_name="alpha",
@@ -249,31 +267,33 @@ class TestFleetToolsSkills:
 
 
 class TestFleetAudit:
-    def test_returns_recent_events(self, tmp_path):
-        team = _build_team(tmp_path, [("alpha", "")])
-        app, auth, _ = _make_app(team_root=team)
-        for i in range(3):
-            app.state.audit_buffer.append(
-                {
-                    "agent_id": "alpha",
-                    "action": "gateway.fs.read",
-                    "outcome": "allow",
-                    "seq": i,
-                }
-            )
-        client = TestClient(app)
-        resp = client.get("/api/team/audit", headers=_viewer(auth))
-        assert resp.status_code == 200
-        events = resp.json()["events"]
-        assert len(events) == 3
+    def test_returns_recent_events(self, tmp_path, _isolated_arc_data_dir: Path):
+        # Real path: the fleet audit tab reads the durable signed chain
+        # (arcstore WORM mirror) through Observe.audit — no buffer.
+        from arcui.server import create_app
 
-    def test_limit_param(self, tmp_path):
+        for i in range(3):
+            _write_worm_audit(_isolated_arc_data_dir, seq=i, actor_did=f"did:arc:a{i}")
+
         team = _build_team(tmp_path, [("alpha", "")])
-        app, auth, _ = _make_app(team_root=team)
+        auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get("/api/team/audit", headers=_viewer(auth))
+        assert resp.status_code == 200
+        assert len(resp.json()["events"]) == 3
+
+    def test_limit_param(self, tmp_path, _isolated_arc_data_dir: Path):
+        from arcui.server import create_app
+
         for i in range(50):
-            app.state.audit_buffer.append({"agent_id": "alpha", "seq": i})
-        client = TestClient(app)
-        resp = client.get("/api/team/audit?limit=10", headers=_viewer(auth))
+            _write_worm_audit(_isolated_arc_data_dir, seq=i, actor_did="did:arc:alpha")
+
+        team = _build_team(tmp_path, [("alpha", "")])
+        auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
+        app = create_app(auth_config=auth, team_root=team)
+        with TestClient(app) as client:
+            resp = client.get("/api/team/audit?limit=10", headers=_viewer(auth))
         assert len(resp.json()["events"]) == 10
 
 
@@ -365,7 +385,6 @@ class TestRosterDegradedState:
         app, auth, registry = _make_app(team_root=team, agent_state_file=state_file)
         registry.register(
             "alpha",
-            MagicMock(),
             AgentRegistration(
                 agent_id="alpha",
                 agent_name="alpha",
@@ -389,7 +408,6 @@ class TestRosterDegradedState:
         app, auth, registry = _make_app(team_root=team, agent_state_file=state_file)
         registry.register(
             "alpha",
-            MagicMock(),
             AgentRegistration(
                 agent_id="alpha",
                 agent_name="alpha",

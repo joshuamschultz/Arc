@@ -13,6 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from arccli.commands._shared import dispatch
 from arccli.commands.agent.build import _build
 from arccli.commands.agent.chat import _chat
 from arccli.commands.agent.config import _config
@@ -196,21 +197,4 @@ def agent_handler(args: list[str]) -> None:
         _run_module_cli(_MODULE_CLI_MAP[args[0]], args[1:])
         return
 
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc agent: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

@@ -172,7 +172,6 @@ Tier is stringency metadata, not a different code path: the same `Signer` seam r
 | `Decision` | `verdict` (ALLOW/DENY/ABSTAIN), `reason`, `policy_id`, `metadata` |
 | `ToolCall` | `tool_name`, `args`, `caller_did`, `classification` |
 | `PolicyContext` | Tier, tenant ID, run ID, timestamp, agent metadata |
-| `TierConfig` | Maps a deployment tier (Personal / Enterprise / Federal) to its layer set |
 | `build_pipeline(tier)` | Convenience builder — returns the right `PolicyPipeline` for a tier |
 
 **Layer composition by tier:**

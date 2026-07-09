@@ -14,6 +14,7 @@ consistent with the single-agent-per-process model.
 from __future__ import annotations
 
 import logging
+import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -55,21 +56,76 @@ def configure(
 ) -> None:
     """Bind module state. Called once at agent startup.
 
-    ``leader`` defaults to :class:`~arcagent.modules.proactive.leader.NoOpLeaderElection`
-    (single-instance / personal tier). Enterprise / federal deployments
-    pass a Redis or Kubernetes lease-backed implementation via config.
+    The leader-election backend is selected from ``config['leader']`` — see
+    :func:`_build_leader`. It defaults to NoOp (single-instance / personal
+    tier); a multi-instance enterprise / federal deployment MUST set
+    ``leader='redis'`` or ``leader='k8s'`` so exactly one replica ticks the
+    engine (R-048).
     """
     global _state
-    from arcagent.modules.proactive.leader import NoOpLeaderElection
-
+    cfg = config or {}
     _state = _State(
-        config=config or {},
+        config=cfg,
         workspace=workspace.resolve(),
         telemetry=telemetry,
         agent_name=agent_name,
         llm_config=llm_config,
-        leader=NoOpLeaderElection(),
+        leader=_build_leader(cfg, agent_name),
     )
+
+
+def _build_leader(config: dict[str, Any], agent_name: str) -> LeaderElection:
+    """Select the leader-election backend from module config (R-048).
+
+    ``config['leader']`` picks the implementation:
+
+      * ``noop`` (default) — single-instance / personal tier; always elected.
+      * ``redis`` — Redis ``SET NX PX`` lock; needs ``config['redis_url']``.
+      * ``k8s``   — Kubernetes Lease; needs ``config['k8s_namespace']`` and
+        ``config['k8s_lease_name']``.
+
+    A multi-instance deployment that leaves this at NoOp self-elects on every
+    replica and every replica ticks the engine. So an unknown backend, or a
+    ``redis``/``k8s`` selection missing its required keys, raises here rather
+    than silently degrading to NoOp — the deployment fails loud instead of
+    quietly violating R-048.
+    """
+    backend = str(config.get("leader", "noop")).lower()
+    if backend == "noop":
+        from arcagent.modules.proactive.leader import NoOpLeaderElection
+
+        return NoOpLeaderElection()
+    identity = str(config.get("identity") or agent_name or socket.gethostname())
+    if backend == "redis":
+        from arcagent.modules.proactive.leader_redis import RedisLockElection
+
+        url = config.get("redis_url")
+        if not url:
+            raise ValueError("proactive leader='redis' requires config['redis_url']")
+        try:
+            import redis.asyncio as redis_asyncio  # type: ignore[import-not-found]  # reason: optional dep
+        except ImportError as err:
+            raise RuntimeError(
+                "proactive leader='redis' requires the 'redis' package. "
+                "Install with 'pip install redis'."
+            ) from err
+        client = redis_asyncio.from_url(str(url))
+        key = str(config.get("redis_key", "arcagent:proactive:leader"))
+        return RedisLockElection(redis=client, key=key, identity=identity)
+    if backend == "k8s":
+        from arcagent.modules.proactive.leader_k8s import KubernetesLeaseElection
+
+        namespace = config.get("k8s_namespace")
+        lease_name = config.get("k8s_lease_name")
+        if not namespace or not lease_name:
+            raise ValueError(
+                "proactive leader='k8s' requires config['k8s_namespace'] "
+                "and config['k8s_lease_name']"
+            )
+        return KubernetesLeaseElection(
+            namespace=str(namespace), lease_name=str(lease_name), identity=identity
+        )
+    raise ValueError(f"unknown proactive leader backend: {backend!r}")
 
 
 def state() -> _State:

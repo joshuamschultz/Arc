@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from arcteam.audit import AuditLogger
 from arcteam.storage import StorageBackend
-from arcteam.types import Entity, EntityStatus, parse_uri
+from arcteam.types import Entity, parse_uri
 
 REGISTRY_COLLECTION = "messages/registry"
 
@@ -37,16 +37,17 @@ def _match_handle(entities: list[Entity], handle: str, ref: str) -> str:
     raise UnknownHandle(ref)
 
 
-async def resolve(registry: EntityRegistry, ref: str) -> str:
-    """Resolve any address ref to its canonical routing identity (REQ-002).
+def resolve_ref(entities: list[Entity], ref: str) -> str:
+    """Resolve an address ref against a pre-fetched entity list (REQ-002).
 
-    This is the single resolution path for all addressing. Entity refs
-    (``@handle``, ``agent://handle``, ``user://handle``, a bare handle, or a
-    raw ``did:``) resolve to the entity's DID. Group refs (``channel://name``,
-    ``role://name``) address a stream rather than an identity and pass through
-    unchanged. An unknown entity ref raises :class:`UnknownHandle`.
+    Pure and synchronous. Entity refs (``@handle``, ``agent://handle``,
+    ``user://handle``, a bare handle, or a raw ``did:``) resolve to the
+    entity's DID. Group refs (``channel://name``, ``role://name``) address a
+    stream rather than an identity and pass through unchanged. An unknown
+    entity ref raises :class:`UnknownHandle`. Callers that resolve many refs
+    against the same registry snapshot (e.g. channel-membership checks) fetch
+    the entity list once and reuse it here instead of re-querying per ref.
     """
-    entities = await registry.list_entities()
     if ref.startswith("did:"):
         if any(e.did == ref for e in entities):
             return ref
@@ -64,18 +65,13 @@ async def resolve(registry: EntityRegistry, ref: str) -> str:
     return _match_handle(entities, ref, ref)
 
 
-async def list_entities_readonly(backend: StorageBackend, role: str | None = None) -> list[Entity]:
-    """Read-only enumeration of every Entity, no audit logger required.
+async def resolve(registry: EntityRegistry, ref: str) -> str:
+    """Resolve any address ref to its canonical routing identity (REQ-002).
 
-    Pure-read callers (CLI status, dashboards) shouldn't need to bootstrap
-    the audit chain. Use ``EntityRegistry.list_entities`` inside the team
-    service where audit-emitting writes also happen.
+    The single resolution path for all addressing: reads the current entity
+    list and delegates to :func:`resolve_ref`.
     """
-    records = await backend.query(REGISTRY_COLLECTION)
-    entities = [Entity.model_validate(r) for r in records]
-    if role:
-        entities = [e for e in entities if role in e.roles]
-    return entities
+    return resolve_ref(await registry.list_entities(), ref)
 
 
 class EntityRegistry:
@@ -134,34 +130,6 @@ class EntityRegistry:
     async def by_role(self, role: str) -> list[Entity]:
         """All entities with this role. Used for role-based addressing."""
         return await self.list_entities(role=role)
-
-    async def set_status(self, ref: str, status: EntityStatus) -> None:
-        """Transition an entity's presence state, resolving any ref to its DID.
-
-        The presence lifecycle entry point (REQ-021): callers set ``active`` on
-        serve/turn start, ``idle``/``waiting``/``blocked`` mid-run, and
-        ``offline`` on stop. Persists the new state and audits the transition.
-        """
-        entity = await self.get(ref)
-        if entity is None:
-            raise ValueError(f"Entity not found: {ref}")
-
-        old_status = entity.status
-        entity.status = status
-        await self._backend.write(
-            REGISTRY_COLLECTION, _entity_key(entity.did), entity.model_dump()
-        )
-        await self._audit.log(
-            event_type="entity.status_changed",
-            subject="registry.status",
-            actor_id=entity.did,
-            detail=f"Status changed from '{old_status.value}' to '{status.value}'",
-            target_id=entity.did,
-        )
-
-    async def update_status(self, ref: str, status: EntityStatus) -> None:
-        """Update an entity's presence state by address ref."""
-        await self.set_status(ref, status)
 
     async def update(self, entity: Entity) -> None:
         """Replace an existing entity record. Emits `entity.updated`."""

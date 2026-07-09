@@ -41,17 +41,16 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
+from arcmemory.fusion import rrf_fuse
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
 from arcmemory.index.surface import _cosine
-from arcmemory.security import content_hash
+from arcmemory.security import content_hash, readable_within
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.tagging import tag_entities
+from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Confidence, Entity, Event, Insight, Recall, Scope, Situation
-
-_RRF_K = 60
 
 
 class Reranker(Protocol):
@@ -105,7 +104,7 @@ class StructuralIndex:
         self._insights = InsightStore(workspace)
         self._episodic = EpisodicStore(db, workspace)
         self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
-        self._entities_dir = self._workspace / "memory" / "entities"
+        self._mem_dir = self._workspace / "memory"
 
     # -- T-060: trigger index (kept apart from surface vec0) ----------------
 
@@ -231,7 +230,7 @@ class StructuralIndex:
             promoted = trig_ids & cue_ids  # conjunctive gating (R-8)
             channels = [[iid for iid, _ in trig or []], [iid for iid, _ in cue]]
 
-        fused = self._rrf(channels, promoted)
+        fused = rrf_fuse(channels, promoted=promoted)
         recalls = [r for iid, score in fused if (r := self._to_recall(iid, score)) is not None]
         recalls = await self._maybe_rerank(situation, recalls, reranker)
         if degraded:
@@ -251,6 +250,10 @@ class StructuralIndex:
         card = self._insights.read(insight_id)
         if card is None:
             raise KeyError(insight_id)
+        return self._enrich_card(card, hops)
+
+    def _enrich_card(self, card: Insight, hops: int | None = None) -> InsightBundle:
+        """Build the enriched neighborhood of an already-read insight card."""
         stream = self._episodic.events(self._scope.key)
         instance_ids = set(card.instances)
         instances = [e for e in stream if e.event_id in instance_ids]
@@ -277,7 +280,7 @@ class StructuralIndex:
         """
         if situation.cues:
             return situation.cues
-        vocab = self._cue_vocabulary() | self._entity_vocabulary()
+        vocab = self._cue_vocabulary() | entity_vocabulary(self._mem_dir)
         return tag_entities(_abstract(situation), vocab)
 
     def _cue_vocabulary(self) -> set[str]:
@@ -289,24 +292,15 @@ class StructuralIndex:
                 vocab.update(card.cues)
         return vocab
 
-    def _rrf(self, channels: list[list[str]], promoted: set[str]) -> list[tuple[str, float]]:
-        """Reciprocal-rank-fuse the channels, restricted to the promoted candidates."""
-        scores: dict[str, float] = {}
-        for ranked in channels:
-            for rank, insight_id in enumerate(ranked):
-                if insight_id in promoted:
-                    scores[insight_id] = scores.get(insight_id, 0.0) + 1.0 / (_RRF_K + rank)
-        return sorted(scores.items(), key=lambda pair: (-pair[1], pair[0]))
-
     def _to_recall(self, insight_id: str, score: float) -> Recall | None:
-        """Hydrate a promoted insight into a confidence-gated ``Recall`` (T-063)."""
+        """Hydrate a promoted insight into an enriched, confidence-gated ``Recall``."""
         card = self._insights.read(insight_id)
         if card is None:
             return None
         verify_first = card.status is Confidence.GUESSED
         return Recall(
             source=insight_id,
-            content=card.statement,
+            content=self._enriched_content(card),
             score=score,
             kind="structural",
             confidence=card.status,
@@ -316,6 +310,40 @@ class StructuralIndex:
             classification=card.classification,
             verify_first=verify_first,
         )
+
+    def _enriched_content(self, card: Insight) -> str:
+        """Fold the insight's enriched neighborhood into agent-visible content (SDD 7).
+
+        "Spot, then enrich": the statement is anchored to the instances it generalizes,
+        the entities those touch, its adjacent insights, and the surrounding raw stream.
+        Only neighbours the insight's own classification dominates are folded in
+        (``readable_within``) — the caller that receives this recall already dominates
+        that label, so nothing folded can outrank the caller's clearance.
+        """
+        bundle = self._enrich_card(card)
+        ceiling = card.classification
+        sections = [card.statement]
+        instances = [
+            e.text for e in bundle.instances if readable_within(ceiling, e.classification)
+        ]
+        if instances:
+            sections.append("Instances:\n" + "\n".join(f"- {t}" for t in instances))
+        names = [e.name for e in bundle.entities if readable_within(ceiling, e.classification)]
+        if names:
+            sections.append("Related: " + ", ".join(names))
+        adjacent = [
+            i.statement
+            for i in bundle.adjacent_insights
+            if readable_within(ceiling, i.classification)
+        ]
+        if adjacent:
+            sections.append("Adjacent insights:\n" + "\n".join(f"- {s}" for s in adjacent))
+        context = [
+            e.text for e in bundle.stream_context if readable_within(ceiling, e.classification)
+        ]
+        if context:
+            sections.append("Context:\n" + "\n".join(f"- {t}" for t in context))
+        return "\n\n".join(sections)
 
     async def _maybe_rerank(
         self, situation: Situation, recalls: list[Recall], reranker: Reranker | None
@@ -339,7 +367,7 @@ class StructuralIndex:
 
     def _related_entities(self, instances: list[Event], card: Insight) -> list[Entity]:
         """Entity cards mentioned in the instance episodes (bounded, deterministic)."""
-        vocab = self._entity_vocabulary()
+        vocab = entity_vocabulary(self._mem_dir)
         if not vocab:
             return []
         slugs: set[str] = set()
@@ -372,12 +400,6 @@ class StructuralIndex:
             if event.event_id in instance_ids:
                 keep.update(range(max(0, i - radius), min(len(stream), i + radius + 1)))
         return [stream[i] for i in sorted(keep) if stream[i].event_id not in instance_ids]
-
-    def _entity_vocabulary(self) -> set[str]:
-        """Slugs of existing entity files (the deterministic tagging vocabulary)."""
-        if not self._entities_dir.exists():
-            return set()
-        return {p.stem for p in self._entities_dir.glob("*.md")}
 
     def _emit_degraded(self, situation: Situation) -> None:
         """Signal (never raise) that structural retrieval ran without the trigger channel."""

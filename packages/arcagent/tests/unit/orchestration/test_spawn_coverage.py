@@ -30,7 +30,7 @@ from arcagent.orchestration.spawn import (
     spawn_many,
 )
 
-from ._mock_llm import LLMResponse, MockModel
+from ._mock_llm import LLMResponse, MockModel, ToolCall
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -213,6 +213,40 @@ class TestSpawnExceptionPath:
         assert result.status == "error"
         assert result.error is not None
         assert "RuntimeError" in result.error
+
+
+# ---------------------------------------------------------------------------
+# spawn() terminal-status derivation — a max_turns-truncated child must NOT
+# be reported as a genuine completion (regression: status was hardcoded).
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnStatusDerivation:
+    @pytest.mark.asyncio
+    async def test_max_turns_child_reports_max_iterations_not_completed(self) -> None:
+        """A child that exhausts max_turns is reported as 'max_iterations'."""
+        state = _make_state(depth=0, max_depth=3)
+        identity = _identity(40)
+
+        # The child model never ends its turn — it keeps calling a tool, so the
+        # loop trips the max_turns breaker instead of completing cleanly.
+        tool_call_resp = LLMResponse(
+            tool_calls=[ToolCall(id="1", name="echo", arguments={"input": "x"})],
+            stop_reason="tool_use",
+        )
+        model = MockModel([tool_call_resp, tool_call_resp])
+
+        result = await spawn(
+            parent_state=state,
+            task="task",
+            tools=[ECHO_TOOL],
+            system_prompt="sys",
+            identity=identity,
+            model=model,
+            max_turns=1,
+        )
+
+        assert result.status == "max_iterations"
 
 
 # ---------------------------------------------------------------------------

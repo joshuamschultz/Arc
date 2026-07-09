@@ -40,9 +40,12 @@ Policy:
     PolicyContext       — Tier, bundle version, age for a single evaluation
     PolicyLayer         — Protocol all layers must satisfy
     PolicyPipeline      — Ordered, fail-closed, short-circuiting evaluator
-    TierConfig          — Tier metadata (layers, max_parallel_tools)
     ToolCall            — Immutable tool invocation request
     build_pipeline      — Factory: assemble correct layers for a tier
+
+Canonical serialization:
+    canonical_json      — Deterministic canonical-JSON bytes a signature binds
+                          (the one serializer every signing package reuses)
 
 Trust store:
     TrustStoreError     — Structured trust-store load / key failure
@@ -69,6 +72,7 @@ from arctrust.audit import (
     verify_chain,
     worm_policy_sink,
 )
+from arctrust.canonical import canonical_json
 from arctrust.classification import (
     Classification,
     dominates,
@@ -97,7 +101,6 @@ from arctrust.policy import (
     PolicyContext,
     PolicyLayer,
     PolicyPipeline,
-    TierConfig,
     ToolCall,
     build_pipeline,
 )
@@ -154,7 +157,6 @@ __all__ = [
     "Signer",
     "SignerConfig",
     "SignerError",
-    "TierConfig",
     "ToolCall",
     "TransparencyLogWitness",
     "TrustStoreError",
@@ -168,6 +170,7 @@ __all__ = [
     "assert_fips_if_required",
     "build_pipeline",
     "build_signer",
+    "canonical_json",
     "content_sha256",
     "derive_child_identity",
     "dominates",

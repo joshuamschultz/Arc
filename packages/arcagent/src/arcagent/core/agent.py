@@ -63,7 +63,6 @@ from arcagent.core.session_internal.capability_ledger import (
     LETHAL_TRIFECTA,
     SessionCapabilityLedger,
 )
-from arcagent.core.settings_manager import SettingsManager
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import ToolRegistry
@@ -139,7 +138,6 @@ class ArcAgent:
         self._sessions_lock = asyncio.Lock()
         self._capability_registry: Any = None
         self._capability_loader: Any = None
-        self._settings: SettingsManager | None = None
         self._vault_resolver: Any = None
         self._model: Any = None
         self._trace_store: Any = None
@@ -420,15 +418,7 @@ class ArcAgent:
         # 7. Session pool starts empty; managers are built on demand by
         # ``session(key)`` so concurrent conversations stay isolated.
 
-        # 8. Settings Manager
-        self._settings = SettingsManager(
-            config=self._config,
-            telemetry=self._telemetry,
-            bus=self._bus,
-            config_path=self._config_path,
-        )
-
-        # 9. Capability subsystem (replaces SkillRegistry, ExtensionLoader,
+        # 8. Capability subsystem (replaces SkillRegistry, ExtensionLoader,
         # MODULE.yaml-based module loading, and the hardcoded built-in
         # tool list — SPEC-021 unified capability surface).
         await setup_capabilities(self, workspace)
@@ -751,11 +741,6 @@ class ArcAgent:
             return []
         return list(self._capability_registry._skills.values())
 
-    @property
-    def settings(self) -> SettingsManager | None:
-        """Runtime settings manager."""
-        return self._settings
-
     async def shutdown(self) -> None:
         """Reverse-order teardown of all components.
 
@@ -779,7 +764,6 @@ class ArcAgent:
             await self._capability_loader.shutdown()
 
         # Reverse-order cleanup
-        await bus.shutdown()
         await tool_registry.shutdown()
 
         # Release the WORM chain lock (SPEC-034).

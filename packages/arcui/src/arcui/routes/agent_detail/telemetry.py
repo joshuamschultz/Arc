@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from collections import deque
-from typing import Any
-
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from arcui.query_validators import safe_choice, safe_int
-from arcui.routes.agent_detail._common import _agent_root
+from arcui.routes.agent_detail._common import _agent_did, _agent_root
 from arcui.schemas import (
     AuditEventsResponse,
     ErrorResponse,
@@ -75,7 +72,6 @@ async def get_audit(request: Request) -> JSONResponse:
             status_code=404,
         )
 
-    buffer: deque[dict[str, Any]] = getattr(request.app.state, "audit_buffer", None) or deque()
     limit, err = safe_int(
         request.query_params.get("limit"),
         default=100,
@@ -86,5 +82,6 @@ async def get_audit(request: Request) -> JSONResponse:
     if err is not None:
         return err
 
-    events = [e for e in buffer if e.get("agent_id") == agent_id][-limit:]
+    did = _agent_did(request, agent_id)
+    events = await request.app.state.observe.audit(agent=did, limit=limit) if did else []
     return JSONResponse(AuditEventsResponse(events=events).model_dump(mode="json"))

@@ -1,4 +1,4 @@
-"""Built-in ``edit`` tool — SPEC-021 port of arcagent.tools.edit.
+"""Built-in ``edit`` tool.
 
 Performs an exact ``old_string`` → ``new_string`` substitution in a
 file. Refuses to edit when ``old_string`` is empty or appears more

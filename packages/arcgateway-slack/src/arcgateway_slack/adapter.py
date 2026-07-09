@@ -151,6 +151,8 @@ class SlackAdapter:
         app_token: str,
         allowed_user_ids: list[str],
         on_message: Callable[[InboundEvent], Awaitable[None]],
+        *,
+        agent_did: str = "did:arc:agent:default",
         dedup_db_path: Path | None = None,
     ) -> None:
         if not bot_token.startswith("xoxb-"):
@@ -175,6 +177,7 @@ class SlackAdapter:
         self._app_token = app_token
         self._allowed_user_ids = list(allowed_user_ids)
         self._on_message = on_message
+        self._agent_did = agent_did
 
         self._dedup = _DedupStore(db_path=dedup_db_path)
         self._dedup_sweep_task: asyncio.Task[None] | None = None
@@ -379,7 +382,7 @@ class SlackAdapter:
             platform="slack",
             chat_id=channel,
             user_did=f"slack:{user_id}",
-            agent_did="",
+            agent_did=self._agent_did,
             session_key=f"slack:{channel}:{user_id}",
             message=text,
             raw_payload=dict(event),
