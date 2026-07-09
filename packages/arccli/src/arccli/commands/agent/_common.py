@@ -18,6 +18,7 @@ import datetime
 import importlib
 import importlib.util
 import json
+import os
 import sys
 import tomllib
 from pathlib import Path
@@ -268,6 +269,12 @@ def _load_env(agent_dir: Path | None = None) -> None:
     except ImportError:
         return  # dotenv optional for status/read-only commands
     paths = list(_ENV_PATHS)
+    # Honor an isolated ARC_CONFIG_DIR so a self-contained deployment folder's
+    # own .env loads (the ~/.arc default in _ENV_PATHS misses it) — "start up,
+    # config, and go" without exporting keys by hand.
+    cfg = os.environ.get("ARC_CONFIG_DIR")
+    if cfg:
+        paths.insert(0, Path(cfg).expanduser() / ".env")
     if agent_dir is not None:
         paths.insert(0, agent_dir / ".env")
     for env_path in paths:

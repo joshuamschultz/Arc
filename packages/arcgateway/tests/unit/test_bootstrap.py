@@ -123,3 +123,32 @@ enabled = true
     bundle = await build_for_embedded(empty_team_root, cfg)
     assert bundle.web_adapter is not None
     assert [a.name for a in bundle.adapters] == ["telegram"]
+
+
+# ── DID → directory resolution (roster/chat parity) ──────────────────────────
+
+
+def _write_agent_dir(root: Path, dir_name: str, did: str, name: str) -> None:
+    d = root / dir_name
+    d.mkdir(parents=True)
+    (d / "arcagent.toml").write_text(
+        f'[agent]\nname = "{name}"\n[identity]\ndid = "{did}"\n', encoding="utf-8"
+    )
+
+
+def test_load_did_index_resolves_bare_and_suffixed_dirs(tmp_path: Path) -> None:
+    """`arc agent create <name>` makes a bare `<name>/` dir; the legacy layout is
+    `<name>_agent/`. Both must resolve, matching team_roster's discovery — else the
+    roster lists an agent that chat execution can't find (regression: chat runs
+    failed with "no agent matches DID")."""
+    from arcgateway.bootstrap import _load_did_index, _resolve_agent_dir
+
+    root = tmp_path / "team"
+    _write_agent_dir(root, "procurement", "did:arc:local:executor/aaa", "procurement")
+    _write_agent_dir(root, "picking_agent", "did:arc:local:executor/bbb", "picking")
+
+    index = _load_did_index(root)
+    assert index["did:arc:local:executor/aaa"] == root / "procurement"
+    assert index["did:arc:local:executor/bbb"] == root / "picking_agent"
+    assert _resolve_agent_dir(root, "did:arc:local:executor/aaa") == root / "procurement"
+    assert _resolve_agent_dir(root, "did:arc:local:executor/missing") is None

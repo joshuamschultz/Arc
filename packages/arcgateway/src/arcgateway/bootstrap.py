@@ -65,11 +65,14 @@ def _load_did_index(team_root: Path) -> dict[str, Path]:
         import tomli as tomllib  # type: ignore[no-redef]  # reason: Python <3.11 fallback — tomli is the same API as stdlib tomllib
 
     index: dict[str, Path] = {}
-    for agent_dir in sorted(team_root.glob("*_agent")):
+    # Discover by the presence of arcagent.toml — the same signal team_roster
+    # uses — so both `arc agent create <name>` (bare `<name>/`) and the legacy
+    # `<name>_agent/` layout resolve. Globbing `*_agent` missed bare dirs, so
+    # chat runs failed with "no agent matches DID" while the roster still listed
+    # them (the executor could never find the directory).
+    for toml_path in sorted(team_root.glob("*/arcagent.toml")):
+        agent_dir = toml_path.parent
         if not agent_dir.is_dir():
-            continue
-        toml_path = agent_dir / "arcagent.toml"
-        if not toml_path.exists():
             continue
         try:
             cfg = tomllib.loads(toml_path.read_text(encoding="utf-8"))

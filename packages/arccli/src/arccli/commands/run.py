@@ -146,7 +146,12 @@ def _load_env() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    for env_path in _ENV_PATHS:
+    paths = list(_ENV_PATHS)
+    # Honor an isolated ARC_CONFIG_DIR deployment's own .env (not just ~/.arc).
+    cfg = os.environ.get("ARC_CONFIG_DIR")
+    if cfg:
+        paths.insert(0, Path(cfg).expanduser() / ".env")
+    for env_path in paths:
         if env_path.exists():
             load_dotenv(env_path)
 

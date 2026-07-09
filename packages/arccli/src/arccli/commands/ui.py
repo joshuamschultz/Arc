@@ -163,6 +163,12 @@ def _start(args: argparse.Namespace) -> None:
     from arcui import create_app
     from arcui.auth import AuthConfig
 
+    from arccli.commands.agent import _load_env
+
+    # Load the deployment's .env (cwd + ${ARC_CONFIG_DIR:-~/.arc} + ~) BEFORE
+    # building agents, so their provider keys resolve without a manual export.
+    _load_env()
+
     port: int = getattr(args, "port", 8420)
     host: str = getattr(args, "host", "127.0.0.1")
     viewer_token: str | None = getattr(args, "viewer_token", None)

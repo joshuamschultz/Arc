@@ -22,7 +22,11 @@ from arccli.commands._shared import write as _write
 _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
     "personal": {
         "routing": {"enabled": False},
-        "telemetry": {"enabled": False},
+        # Telemetry ON: it drives the always-on arcstore operational spool
+        # (SPEC-026 FR-4) that the ArcUI Observe / ArcLLM page reads. With it
+        # off, a personal deployment's own LLM calls never appear in the
+        # dashboard. otel export stays off below, so this stays lightweight.
+        "telemetry": {"enabled": True, "log_level": "INFO"},
         "audit": {"enabled": False},
         "retry": {"enabled": False},
         "fallback": {"enabled": False},

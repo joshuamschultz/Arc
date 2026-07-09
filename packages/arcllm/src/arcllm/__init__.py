@@ -3,10 +3,9 @@
 __version__ = "0.7.0"
 
 import importlib
-from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from arcllm.capabilities import supports_tools, tool_capable_models
 from arcllm.config import (
@@ -56,9 +55,12 @@ from arcllm.types import (
     Usage,
 )
 
-# Load .env for API keys. Vault replaces this in production.
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
-load_dotenv()  # Also check cwd
+# Load the operator's own .env (their cwd) for API keys — Vault replaces this in
+# production. Deliberately NOT loading any package-internal .env: a library must
+# never inject credentials from inside its own source tree, or an editable
+# install leaks the framework's dev key into every deployment (and made
+# `arc agent build --check` report keys the deployment never configured).
+load_dotenv(find_dotenv(usecwd=True))
 
 # Adapter classes are lazily imported to avoid loading httpx at import time.
 # Access via `from arcllm import AnthropicAdapter` still works — __getattr__
