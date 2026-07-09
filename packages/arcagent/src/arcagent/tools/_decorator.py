@@ -101,6 +101,35 @@ class CapabilityClassMetadata:
 
 CapabilityMetadata = ToolMetadata | HookMetadata | BackgroundTaskMetadata | CapabilityClassMetadata
 
+_META_ATTR = "_arc_capability_meta"
+
+
+def capability_meta(obj: object) -> CapabilityMetadata | None:
+    """Public accessor for the metadata a capability decorator stamped.
+
+    Returns the frozen :data:`CapabilityMetadata` (``ToolMetadata`` / ``HookMetadata``
+    / ``BackgroundTaskMetadata`` / ``CapabilityClassMetadata``) for a decorated
+    function or class, or ``None`` if it carries no stamp. Lets tool authors assert
+    registration in tests without reaching into the private ``_arc_capability_meta``
+    attribute (SPEC-021 authoring DX).
+    """
+    meta = getattr(obj, _META_ATTR, None)
+    return meta if isinstance(meta, CapabilityMetadata) else None
+
+
+def _require_async(fn: Callable[..., Any], decorator: str) -> None:
+    """Fail at decoration time if ``fn`` is not a coroutine function.
+
+    ``@tool`` / ``@hook`` / ``@background_task`` all wrap async callables — the loader
+    awaits them. Catching a sync definition here gives a clear, immediate error at the
+    definition site instead of an opaque failure later in the loader (SPEC-021 DX).
+    """
+    if not inspect.iscoroutinefunction(fn):
+        raise TypeError(
+            f"@{decorator} requires an 'async def' function; "
+            f"{fn.__name__} is synchronous. Add 'async' to its definition."
+        )
+
 
 def tool(
     *,
@@ -141,6 +170,7 @@ def tool(
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        _require_async(fn, "tool")
         tool_name = name or fn.__name__
         tool_desc = description or (fn.__doc__ or "").strip()
         schema = _schema_from_signature(fn)
@@ -198,6 +228,7 @@ def hook(
         priority = _TRYLAST_PRIORITY
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        _require_async(fn, "hook")
         meta = HookMetadata(
             name=name or fn.__name__,
             event=event,
@@ -225,6 +256,7 @@ def background_task(
         raise ValueError(f"@background_task: interval must be > 0, got {interval!r}")
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+        _require_async(fn, "background_task")
         meta = BackgroundTaskMetadata(
             name=name or fn.__name__,
             interval=float(interval),
@@ -345,6 +377,7 @@ __all__ = [
     "ToolMetadata",
     "background_task",
     "capability",
+    "capability_meta",
     "hook",
     "tool",
 ]

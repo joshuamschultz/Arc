@@ -3,7 +3,7 @@
 ## Good — single-purpose, read-only
 
 ```python
-from arcagent.tools._decorator import tool
+from arcagent.tools import tool
 from arcagent.builtins.capabilities import _runtime
 
 @tool(

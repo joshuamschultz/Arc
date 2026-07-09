@@ -36,7 +36,7 @@ Registers a tool with the unified capability loader (SPEC-021).
 
 from __future__ import annotations
 
-from arcagent.tools._decorator import tool
+from arcagent.tools import tool
 
 
 @tool(

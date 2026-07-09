@@ -213,3 +213,57 @@ class TestExtendedToolFields:
         meta = fn._arc_capability_meta  # type: ignore[attr-defined]
         with pytest.raises(FrozenInstanceError):
             meta.version = "9.9.9"  # type: ignore[misc]
+
+
+class TestPublicAuthoringSurface:
+    """SPEC-021 DX (findings F6/F7/F8) — public import path, metadata accessor,
+    and definition-time async enforcement."""
+
+    def test_decorators_importable_from_public_path(self) -> None:
+        # F6: authors import from arcagent.tools, not the private ._decorator.
+        from arcagent.tools import background_task, capability, hook, tool
+
+        assert all(callable(d) for d in (tool, hook, background_task, capability))
+
+    def test_capability_meta_public_accessor(self) -> None:
+        # F7: read back stamped metadata without touching _arc_capability_meta.
+        from arcagent.tools import capability_meta, tool
+
+        @tool(description="noop", classification="read_only")
+        async def noop(x: int) -> int:
+            return x
+
+        meta = capability_meta(noop)
+        assert meta is not None
+        assert meta.kind == "tool"
+        assert meta.name == "noop"
+        assert capability_meta(lambda: None) is None
+
+    def test_tool_rejects_sync_function_at_decoration(self) -> None:
+        # F8: fail fast at the definition site, not later in the loader.
+        import pytest
+
+        from arcagent.tools import tool
+
+        with pytest.raises(TypeError, match="async def"):
+
+            @tool(description="sync is not allowed")
+            def sync_tool(x: int) -> int:
+                return x
+
+    def test_hook_and_background_task_reject_sync(self) -> None:
+        import pytest
+
+        from arcagent.tools import background_task, hook
+
+        with pytest.raises(TypeError, match="async def"):
+
+            @hook(event="agent:ready")
+            def sync_hook(ctx: object) -> None:
+                return None
+
+        with pytest.raises(TypeError, match="async def"):
+
+            @background_task(interval=1.0)
+            def sync_task() -> None:
+                return None

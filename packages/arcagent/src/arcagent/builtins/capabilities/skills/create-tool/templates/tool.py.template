@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from arcagent.builtins.capabilities import _runtime
-from arcagent.tools._decorator import tool
+from arcagent.tools import tool
 
 
 @tool(
