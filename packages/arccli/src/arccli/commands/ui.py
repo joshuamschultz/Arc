@@ -12,9 +12,12 @@ arc ui tail       — Connect to a running dashboard and stream events to stdout
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
 from pathlib import Path
+from types import FrameType
 from typing import Any, Protocol
 
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
@@ -232,6 +235,8 @@ def _start(args: argparse.Namespace) -> None:
             "token and paste it into the dashboard's auth field."
         )
 
+    import asyncio
+
     import uvicorn
 
     if is_loopback and not no_browser:
@@ -253,8 +258,45 @@ def _start(args: argparse.Namespace) -> None:
 
         app.state._extra_startup_hooks.append(_open_browser_on_ready)
 
+    # When a team_root is set, auto-start the messaging infra (NATS JetStream +
+    # agent registration) before serving, so the fleet works out of the box.
+    # The broker is spawned in its own bootstrap loop and reaped by PID after
+    # the (blocking) server returns — loop-independent, so uvicorn's own signal
+    # handling can never orphan it.
+    infra = None
+    if team_root is not None:
+        from arccli.commands._serve import bootstrap_infra
+
+        infra = asyncio.run(bootstrap_infra(team_root))
+        if infra is not None:
+            _install_infra_reaper(infra)
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
-    uvicorn.Server(config).run()
+    try:
+        uvicorn.Server(config).run()
+    finally:
+        if infra is not None:
+            infra.terminate_sync()
+
+
+def _install_infra_reaper(infra: Any) -> None:
+    """Reap the managed NATS broker on SIGTERM.
+
+    uvicorn's ``.run()`` returns cleanly on SIGINT (Ctrl-C) and normal exit — the
+    ``finally`` reaps the broker there. A raw SIGTERM does not trigger uvicorn's
+    clean shutdown on every platform, so install a process handler that
+    terminates the broker before re-raising the default action; the child broker
+    never outlives the dashboard.
+    """
+    import signal
+
+    def _on_sigterm(signum: int, _frame: FrameType | None) -> None:
+        infra.terminate_sync()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    with contextlib.suppress(ValueError):  # not main thread → uvicorn handles it
+        signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 # ---------------------------------------------------------------------------
