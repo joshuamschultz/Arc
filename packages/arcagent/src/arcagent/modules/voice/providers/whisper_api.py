@@ -30,6 +30,7 @@ import httpx
 
 from arcagent.modules.voice.errors import STTFailed
 from arcagent.modules.voice.protocols import TranscriptionResult
+from arcagent.utils.http import LazyHttpProvider
 
 _logger = logging.getLogger("arcagent.modules.voice.providers.whisper_api")
 
@@ -38,7 +39,7 @@ _DEFAULT_MODEL = "whisper-1"
 _DEFAULT_TIMEOUT_S = 60
 
 
-class WhisperApiProvider:
+class WhisperApiProvider(LazyHttpProvider):
     """STT provider using the OpenAI Whisper API.
 
     Satisfies the STTProvider Protocol via duck-typing.
@@ -55,20 +56,6 @@ class WhisperApiProvider:
         self._model = model
         self._timeout_s = timeout_s
         self._base_url = base_url
-        # Long-lived client; populated on first use via _get_client().
-        self._client: httpx.AsyncClient | None = None
-
-    def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared client, creating it lazily on first call."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout_s)
-        return self._client
-
-    async def close(self) -> None:
-        """Close the shared httpx client and release its connection pool."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
     async def transcribe(
         self,

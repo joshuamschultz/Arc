@@ -30,6 +30,7 @@ from pathlib import Path
 import httpx
 
 from arcagent.modules.voice.errors import TTSFailed
+from arcagent.utils.http import LazyHttpProvider
 
 _logger = logging.getLogger("arcagent.modules.voice.providers.elevenlabs")
 
@@ -41,7 +42,7 @@ _DEFAULT_TIMEOUT_S = 30
 _DEFAULT_MODEL_ID = "eleven_turbo_v2"
 
 
-class ElevenLabsProvider:
+class ElevenLabsProvider(LazyHttpProvider):
     """TTS provider using the ElevenLabs REST API.
 
     Satisfies the TTSProvider Protocol via duck-typing.
@@ -60,20 +61,6 @@ class ElevenLabsProvider:
         self._default_voice_id = default_voice_id
         self._model_id = model_id
         self._timeout_s = timeout_s
-        # Long-lived client; populated on first use via _get_client().
-        self._client: httpx.AsyncClient | None = None
-
-    def _get_client(self) -> httpx.AsyncClient:
-        """Return the shared client, creating it lazily on first call."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout_s)
-        return self._client
-
-    async def close(self) -> None:
-        """Close the shared httpx client and release its connection pool."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
 
     async def synthesize(
         self,
