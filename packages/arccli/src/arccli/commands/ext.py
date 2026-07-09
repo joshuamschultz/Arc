@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import logging
 import shutil
 import sys
 from pathlib import Path
+
+_logger = logging.getLogger("arccli.commands.ext")
 
 _GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
@@ -225,6 +228,125 @@ def _validate(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Extension-point inspection (SPEC-047) — the 4-family view over the live config
+# + CapabilityRegistry. Folded INTO `arc ext` (WIRE-don't-rebuild) rather than a
+# colliding new top-level `arc extensions` command.
+# ---------------------------------------------------------------------------
+
+
+def _inspect(args: argparse.Namespace) -> None:
+    """Render the selected/available/signed state of all four extension-point families."""
+    from arcagent.extension.inspect import inspect_extensions
+
+    config, registry = _resolve_inspect_context(getattr(args, "agent", None))
+    rows = [
+        [r.family, r.kind, r.selected, "yes" if r.available else "no", r.signed]
+        for r in inspect_extensions(config, registry)
+    ]
+    if rows:
+        _print_table(["Family", "Kind", "Selected", "Available", "Signed"], rows)
+    else:
+        _write("No extension-point families to report.")
+
+
+def _verify_extensions(args: argparse.Namespace) -> None:
+    """Report any selection/capability that would be REFUSED at load under the tier.
+
+    Exits non-zero when a refusal is found so it is usable as a federal change-control gate.
+    """
+    from arcagent.extension.inspect import inspect_extensions
+
+    config, registry = _resolve_inspect_context(getattr(args, "agent", None))
+    tier = _config_tier(config)
+    refused = [r for r in inspect_extensions(config, registry) if _would_refuse(r, tier)]
+    if not refused:
+        _write(f"All extension-point selections load-clean at tier {tier!r}.")
+        return
+    _write(f"Refusals at tier {tier!r}:")
+    for r in refused:
+        _write(f"  [REFUSED] {r.family}/{r.kind}: {r.selected} ({r.signed})")
+    sys.exit(1)
+
+
+def _would_refuse(row: object, tier: str) -> bool:
+    """A row that would be refused at load: an unavailable/refused select-one, or an
+    unsigned scan-many capability above personal (the loader's signature floor)."""
+    signed = getattr(row, "signed", "")
+    kind = getattr(row, "kind", "")
+    available = getattr(row, "available", True)
+    if kind == "select_one":
+        return signed == "refused" or not available
+    return tier in ("enterprise", "federal") and signed == "unsigned"
+
+
+def _resolve_inspect_context(agent_dir: str | None) -> tuple[object, object | None]:
+    """Load the config the agent runtime flat-reads + a populated CapabilityRegistry."""
+    config = _load_flat_config(agent_dir)
+    registry = _build_registry(Path(agent_dir).expanduser().resolve() if agent_dir else None)
+    return config, registry
+
+
+def _load_flat_config(agent_dir: str | None) -> object:
+    """Flat-read the target arcagent.toml (matching the __main__ runtime path).
+
+    Injects placeholder ``agent``/``llm`` when absent (a user-wide ~/.arc file omits
+    them) so the real ``ArcAgentConfig`` validates — inspection reads only tier + modules.
+    """
+    import tomllib
+
+    from arcagent.core.config import ArcAgentConfig
+
+    base = Path(agent_dir).expanduser().resolve() if agent_dir else Path.home() / ".arc"
+    path = base / "arcagent.toml"
+    if not path.is_file():
+        sys.stderr.write(f"Error: no arcagent.toml at {path}. Pass --agent DIR.\n")
+        sys.exit(1)
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw.setdefault("agent", {"name": "inspect"})
+    raw.setdefault("llm", {"model": "none"})
+    return ArcAgentConfig.model_validate(raw)
+
+
+def _config_tier(config: object) -> str:
+    try:
+        return str(config.security.tier)  # type: ignore[attr-defined]
+    except AttributeError:
+        return "personal"
+
+
+def _build_registry(agent_root: Path | None) -> object | None:
+    """Build a CapabilityRegistry over the standard scan roots (inspection posture)."""
+    import asyncio
+
+    import arcagent.builtins.capabilities as builtins_pkg
+    from arcagent.capabilities.capability_loader import CapabilityLoader
+    from arcagent.capabilities.capability_registry import CapabilityRegistry
+
+    builtins_root = Path(builtins_pkg.__file__).parent
+    roots: list[tuple[str, Path]] = [
+        ("builtins", builtins_root),
+        ("builtins-skills", builtins_root / "skills"),
+    ]
+    global_root = Path("~/.arc/capabilities").expanduser()
+    if global_root.is_dir():
+        roots.append(("global", global_root))
+    if agent_root is not None:
+        for name, sub in (("agent", "capabilities"), ("workspace", "workspace/capabilities")):
+            path = agent_root / sub
+            if path.is_dir():
+                roots.append((name, path))
+
+    registry = CapabilityRegistry()
+    loader = CapabilityLoader(scan_roots=roots, registry=registry, allow_all_imports=True)
+    try:
+        asyncio.run(loader.scan_and_register())
+    except Exception:  # reason: inspection is best-effort — degrade to select-one only
+        _logger.warning("could not build capability registry for inspection", exc_info=True)
+        return None
+    return registry
+
+
+# ---------------------------------------------------------------------------
 # Argparse-based dispatcher
 # ---------------------------------------------------------------------------
 
@@ -261,6 +383,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p = subs.add_parser("validate", help="Validate a capability file.")
     p.add_argument("path", help="Path to the capability .py file.")
 
+    p = subs.add_parser(
+        "inspect", help="Show selected/available/signed state of all extension-point families."
+    )
+    p.add_argument("--agent", dest="agent", default=None, help="Agent dir (config + registry).")
+
+    p = subs.add_parser(
+        "verify", help="Report extension-point selections that would be refused at load."
+    )
+    p.add_argument("--agent", dest="agent", default=None, help="Agent dir (config + registry).")
+
     return parser
 
 
@@ -269,6 +401,8 @@ _SUBCOMMAND_MAP = {
     "create": _create,
     "install": _install,
     "validate": _validate,
+    "inspect": _inspect,
+    "verify": _verify_extensions,
 }
 
 

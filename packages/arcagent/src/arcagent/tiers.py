@@ -144,10 +144,33 @@ def _tier_may_relax(knob: RelaxableKnob, tier: str) -> bool:
     return False
 
 
+def audit_tier_relaxations(
+    security: dict[str, Any],
+    tier: str,
+    *,
+    audit: Callable[[str, dict[str, Any]], None],
+) -> None:
+    """Audit every granted relaxation in a resolved ``[security]`` block (REQ-023).
+
+    Runs each explicitly-set SecurityConfig-enforced knob through
+    :func:`resolve_tier_floor` so a personal/enterprise value looser than the federal
+    floor emits ``tier.relaxation_granted``. Federal grants nothing (floors are forced),
+    so this is a no-op there. This is the production producer for the relaxation audit on
+    the blueprint-apply path — the Pydantic validator cannot do I/O, so the audit is
+    driven here where an operator explicitly applies a preset.
+    """
+    if str(tier).lower() == Tier.FEDERAL:
+        return
+    for knob in SECURITY_CONFIG_KNOBS:
+        if knob.name in security:
+            resolve_tier_floor(knob, tier, security[knob.name], was_set=True, audit=audit)
+
+
 __all__ = [
     "RELAXABLE_KNOBS",
     "SECURITY_CONFIG_KNOBS",
     "RelaxableKnob",
+    "audit_tier_relaxations",
     "resolve_tier_floor",
     "stricter_tier",
     "tier_rank",

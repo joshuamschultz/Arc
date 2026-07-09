@@ -17,7 +17,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
-    "open": {
+    "personal": {
         "routing": {"enabled": False},
         "telemetry": {"enabled": False},
         "audit": {"enabled": False},
@@ -160,52 +160,56 @@ def _generate_arcllm_toml(tier: str, provider: str = "anthropic") -> str:
     return "\n".join(lines) + "\n"
 
 
-def _generate_arcagent_toml(tier: str) -> str:
-    """Generate ~/.arc/arcagent.toml content for a given tier.
+def _arcagent_base_config(tier: str) -> dict[str, Any]:
+    """User-wide arcagent DEFAULTS as a dict (so a blueprint can deep-merge under them).
 
-    User-wide DEFAULTS only — no agent identity (name/did live in
-    team/<agent>/arcagent.toml).
+    No agent identity — name/did live in team/<agent>/arcagent.toml. ``tier`` is already
+    a security-vocab value (personal/enterprise/federal); there is no normalization fork.
     """
-    lines = [
-        _USER_CONFIG_HEADER.format(pkg="arcagent", tier=tier),
-        "[security]",
-        f'tier = "{tier if tier in ("federal", "enterprise") else "personal"}"',
-        "",
-        "[telemetry]",
-        "enabled = true",
-        'log_level = "INFO"',
-        "export_traces = false",
-        "",
-        "[context]",
-        "max_tokens = 200000",
-        "prune_threshold = 0.70",
-        "compact_threshold = 0.85",
-        "emergency_threshold = 0.95",
-        "",
-        "[eval]",
-        'provider = ""    # empty = inherit from agent',
-        'model = ""       # empty = inherit from agent',
-        "max_tokens = 1024",
-        "temperature = 0.2",
-        "",
-        "[session]",
-        "retention_count = 50",
-        "retention_days = 30",
-        "",
-        "[security.validators]",
-        "auto_run_agent_code = false",
-        "",
-    ]
-    return "\n".join(lines) + "\n"
+    return {
+        "security": {"tier": tier, "validators": {"auto_run_agent_code": False}},
+        "telemetry": {"enabled": True, "log_level": "INFO", "export_traces": False},
+        "context": {
+            "max_tokens": 200000,
+            "prune_threshold": 0.70,
+            "compact_threshold": 0.85,
+            "emergency_threshold": 0.95,
+        },
+        "eval": {"provider": "", "model": "", "max_tokens": 1024, "temperature": 0.2},
+        "session": {"retention_count": 50, "retention_days": 30},
+    }
+
+
+def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tuple[str, str]:
+    """Render ~/.arc/arcagent.toml. Returns ``(content, effective_tier)``.
+
+    With ``blueprint_name`` the preset is verified + deep-merged UNDER the init defaults
+    (defaults win over the blueprint), the tier floored by stringency-max, and the apply
+    audited. Written concretely (dict -> TOML) so the layered CLI/gateway load reads it.
+    """
+    from arcagent.blueprints import dumps_toml
+
+    base = _arcagent_base_config(tier)
+    effective = tier
+    if blueprint_name:
+        from arcagent.blueprints import apply_blueprint, resolve_blueprint
+
+        from arccli.commands.blueprint import audit_apply
+
+        bp = resolve_blueprint(blueprint_name, tier=tier)
+        base = apply_blueprint(bp, base, deployment_tier=tier)
+        effective = str(base.get("security", {}).get("tier", tier))
+        audit_apply(bp, base, Path.home() / ".arc")
+    header = _USER_CONFIG_HEADER.format(pkg="arcagent", tier=tier)
+    return header + "\n" + dumps_toml(base), effective
 
 
 def _generate_gateway_toml(tier: str) -> str:
     """Generate ~/.arc/gateway.toml content for a given tier."""
-    gw_tier = tier if tier in ("federal", "enterprise") else "personal"
     lines = [
         _USER_CONFIG_HEADER.format(pkg="gateway", tier=tier),
         "[gateway]",
-        f'tier = "{gw_tier}"',
+        f'tier = "{tier}"',
         'agent_did = ""',
         "",
         "[security]",
@@ -245,6 +249,7 @@ def _init(args: argparse.Namespace) -> None:
     config_dir: str | None = getattr(args, "config_dir", None)
     provider: str | None = getattr(args, "provider", None)
     quick: bool = getattr(args, "quick", False)
+    blueprint: str | None = getattr(args, "blueprint", None)
 
     _write("")
     _write("  Arc — Security-First Agent Framework")
@@ -252,18 +257,18 @@ def _init(args: argparse.Namespace) -> None:
     _write("")
 
     if quick:
-        tier = "open"
+        tier = "personal"
     elif tier is None:
         _write("  How do you want to deploy?")
         _write("")
         _write("  1) quick start  — Minimal config, create an agent immediately")
-        _write("  2) open         — No security modules, basic defaults")
+        _write("  2) personal     — No security modules, basic defaults")
         _write("  3) enterprise   — Telemetry, audit, rate limiting, retry + fallback")
         _write("  4) federal      — Full security: routing, PII, signing, OTel, audit")
         _write("")
         choice = input("  Select [1/2/3/4] (default: 1): ").strip() or "1"
-        tier_map = {"1": "open", "2": "open", "3": "enterprise", "4": "federal"}
-        tier = tier_map.get(choice, "open")
+        tier_map = {"1": "personal", "2": "personal", "3": "enterprise", "4": "federal"}
+        tier = tier_map.get(choice, "personal")
         quick = choice == "1"
 
     if provider is None:
@@ -280,9 +285,15 @@ def _init(args: argparse.Namespace) -> None:
     arc_dir = Path(config_dir) if config_dir else Path.home() / ".arc"
     arc_dir.mkdir(parents=True, exist_ok=True)
 
+    try:
+        arcagent_content, effective_tier = _generate_arcagent_toml(tier, blueprint)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        sys.exit(1)
+
     targets: list[tuple[Path, str]] = [
         (arc_dir / "arcllm.toml", _generate_arcllm_toml(tier, provider)),
-        (arc_dir / "arcagent.toml", _generate_arcagent_toml(tier)),
+        (arc_dir / "arcagent.toml", arcagent_content),
         (arc_dir / "gateway.toml", _generate_gateway_toml(tier)),
     ]
 
@@ -320,17 +331,20 @@ def _init(args: argparse.Namespace) -> None:
     key_ok = _check_provider_key(provider)
     env_var = _PROVIDER_ENV_VARS.get(provider, "")
 
+    tier_display = tier if effective_tier == tier else f"{effective_tier} (raised from {tier})"
+    summary = [
+        ("Tier", tier_display),
+        ("Provider", provider),
+        ("Config dir", str(arc_dir)),
+        ("Files", ", ".join(p.name for p, _ in targets)),
+        ("API key", "OK" if key_ok else f"MISSING ({env_var})"),
+    ]
+    if blueprint:
+        summary.insert(1, ("Blueprint", blueprint))
+
     _write("")
     _write("  Configuration Summary:")
-    _print_kv(
-        [
-            ("Tier", tier),
-            ("Provider", provider),
-            ("Config dir", str(arc_dir)),
-            ("Files", ", ".join(p.name for p, _ in targets)),
-            ("API key", "OK" if key_ok else f"MISSING ({env_var})"),
-        ]
-    )
+    _print_kv(summary)
 
     if not key_ok:
         _write("")
@@ -359,13 +373,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tier",
         choices=_VALID_TIERS,
         default=None,
-        help="Deployment tier (open/enterprise/federal).",
+        help="Deployment tier (personal/enterprise/federal).",
     )
     parser.add_argument(
         "--dir", dest="config_dir", default=None, help="Config directory (default: ~/.arc)."
     )
     parser.add_argument("--provider", default=None, help="Default LLM provider.")
-    parser.add_argument("--quick", action="store_true", help="Quick start — open tier.")
+    parser.add_argument("--quick", action="store_true", help="Quick start — personal tier.")
+    parser.add_argument(
+        "--blueprint",
+        default=None,
+        help="Bootstrap from a preset blueprint (deep-merged UNDER init defaults).",
+    )
     return parser
 
 
