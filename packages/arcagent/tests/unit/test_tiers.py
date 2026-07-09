@@ -10,6 +10,7 @@ from arcagent.tiers import (
     RELAXABLE_KNOBS,
     SECURITY_CONFIG_KNOBS,
     RelaxableKnob,
+    audit_tier_relaxations,
     resolve_tier_floor,
     stricter_tier,
     tier_rank,
@@ -115,3 +116,46 @@ def test_security_config_knobs_are_the_five_enforced() -> None:
         "runaway_max_repeat",
         "error_cascade_max",
     }
+
+
+# --- audit_tier_relaxations (the blueprint-apply relaxation producer) ---------
+
+
+def test_audit_tier_relaxations_fires_for_relaxed_enterprise_knob() -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    # runaway_max_repeat=20 is looser than the federal floor 8 (smaller is stricter).
+    audit_tier_relaxations(
+        {"tier": "enterprise", "runaway_max_repeat": 20},
+        "enterprise",
+        audit=lambda n, p: events.append((n, p)),
+    )
+    granted = [p for n, p in events if n == "tier.relaxation_granted"]
+    assert any(p["knob"] == "runaway_max_repeat" for p in granted)
+
+
+def test_audit_tier_relaxations_is_noop_at_federal() -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    audit_tier_relaxations(
+        {"tier": "federal", "runaway_max_repeat": 20},
+        "federal",
+        audit=lambda n, p: events.append((n, p)),
+    )
+    assert events == []
+
+
+def test_audit_tier_relaxations_silent_when_at_floor() -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    # A stricter-than-floor value (3 < 8) is not a relaxation — no audit.
+    audit_tier_relaxations(
+        {"runaway_max_repeat": 3},
+        "enterprise",
+        audit=lambda n, p: events.append((n, p)),
+    )
+    assert events == []
+
+
+def test_larger_is_stricter_floor_rejects_smaller_at_federal() -> None:
+    # Exercise the "larger" ordering branch: a smaller value is weaker than the floor.
+    knob = RelaxableKnob("allow_set", federal_floor=5, relax_personal=True, relax_enterprise=True, stricter_is="larger")
+    with pytest.raises(ValueError, match="allow_set"):
+        resolve_tier_floor(knob, "federal", 2, was_set=True)

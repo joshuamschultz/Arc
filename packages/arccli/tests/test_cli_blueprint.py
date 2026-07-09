@@ -11,9 +11,9 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from arcagent.capabilities import artifact_signing
 from arctrust.identity import AgentIdentity
 
-from arcagent.capabilities import artifact_signing
 from arccli.commands import blueprint as bp_cmd
 
 
@@ -114,7 +114,7 @@ def test_apply_unsigned_user_blueprint_above_personal_errors(tmp_path: Path) -> 
         encoding="utf-8",
     )
     target = _write_agent(tmp_path, tier="enterprise")
-    with pytest.raises(ValueError, match="unsigned|signature"):
+    with pytest.raises(ValueError, match=r"unsigned|signature"):
         bp_cmd.apply_to_disk(
             "team",
             target=target,

@@ -23,11 +23,10 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from arcagent.tiers import SECURITY_CONFIG_KNOBS, resolve_tier_floor
-
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ConfigError
+from arcagent.tiers import SECURITY_CONFIG_KNOBS, resolve_tier_floor
 
 _logger = logging.getLogger("arcagent.config")
 
