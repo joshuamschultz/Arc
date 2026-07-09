@@ -6,12 +6,14 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from arcteam.config import default_team_root
+
 
 class TeamMemoryConfig(BaseModel):
     """Team memory configuration. All fields have defaults."""
 
     enabled: bool = True
-    root: Path = Path.home() / ".arc" / "team"
+    root: Path = Field(default_factory=default_team_root)
 
     # Entity settings
     entity_types: list[str] = Field(
