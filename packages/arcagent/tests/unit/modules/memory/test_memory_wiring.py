@@ -22,6 +22,7 @@ from arcagent.modules.memory.capabilities import (
     capture_respond,
     capture_tool,
     consolidate_poll_once,
+    inject_memory_disabled_note,
     inject_recall,
     memory_search,
 )
@@ -97,6 +98,28 @@ async def test_memory_less_is_silent_noop_and_writes_no_files(tmp_path: Path) ->
     assert "recall" not in sections  # nothing injected
     assert ran is False
     assert not (tmp_path / "memory").exists(), "memory-less agent must write no files"
+
+
+# -- Honesty: memory-disabled prompt note (NullBrain) --------------------
+
+
+async def test_memory_less_injects_disabled_note(tmp_path: Path) -> None:
+    """brain='none' -> a prompt note tells the model durable memory is off (F10)."""
+    _runtime.configure(config={"brain": "none"}, workspace=tmp_path, agent_did=_DID)
+    sections: dict[str, str] = {}
+    await inject_memory_disabled_note(_ctx({"sections": sections}))
+    assert "memory_status" in sections
+    note = sections["memory_status"].lower()
+    assert "disabled" in note
+    assert "saved to memory" in note or "not claim" in note
+
+
+async def test_active_brain_injects_no_disabled_note() -> None:
+    """A live brain stays silent — no over-claim note when memory actually works (F10)."""
+    _configure_with(_SpyBrain())
+    sections: dict[str, str] = {}
+    await inject_memory_disabled_note(_ctx({"sections": sections}))
+    assert "memory_status" not in sections
 
 
 # -- Acceptance: wired (real arcmemory ArcMemoryBrain) -------------------

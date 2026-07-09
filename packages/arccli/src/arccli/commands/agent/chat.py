@@ -17,7 +17,7 @@ from arccli.commands.agent._common import (
     _resolve_agent_dir,
     _scaffold_workspace,
 )
-from arccli.commands.agent.run import _agent_run_once
+from arccli.commands.agent.run import _agent_run_once, _default_session_id
 
 
 async def _chat_interactive(
@@ -235,6 +235,7 @@ def _chat(args: argparse.Namespace) -> None:
                 context=getattr(args, "context", None),
                 verbose=verbose,
                 as_json=False,
+                session_id=session_id or _default_session_id(),
             )
         )
     else:

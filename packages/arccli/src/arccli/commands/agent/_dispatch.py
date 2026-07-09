@@ -117,6 +117,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--max-turns", dest="max_turns", type=int, default=None)
+    p.add_argument(
+        "--session",
+        default=None,
+        help="Session id to open/resume (default: dated 'cli:run:<YYYY-MM-DD>').",
+    )
 
     # serve
     p = subs.add_parser("serve", help="Start agent daemon.")
