@@ -25,4 +25,4 @@ __all__ = [
 try:
     __version__ = version("arc-agent")
 except PackageNotFoundError:  # reason: source checkout without an installed distribution
-    __version__ = "0.14.0"
+    __version__ = "0.15.0"

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from arcagent.brain import select
+from arcagent.extension import select as ext_select
 
 
 class _FakeBrain:
@@ -36,7 +37,9 @@ def _patch_import(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         calls["imports"] += 1
         return mod
 
-    monkeypatch.setattr(select.importlib, "import_module", fake_import)
+    # SPEC-047: the dotted-path import now lives in the shared select_extension
+    # mechanism, so the BYO import is intercepted at arcagent.extension.select.
+    monkeypatch.setattr(ext_select.importlib, "import_module", fake_import)
     return calls
 
 

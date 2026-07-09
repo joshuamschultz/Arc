@@ -26,6 +26,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ConfigError
+from arcagent.tiers import SECURITY_CONFIG_KNOBS, resolve_tier_floor
 
 _logger = logging.getLogger("arcagent.config")
 
@@ -334,13 +335,6 @@ class ValidatorsConfig(BaseModel):
     )
 
 
-# SPEC-043 REQ-024 — non-relaxable federal circuit-breaker floors. When a federal
-# deployment leaves a breaker unset it is pinned to these; an explicit looser
-# (larger, or disabled) value fails closed in the tier validator.
-_FEDERAL_RUNAWAY_FLOOR = 8
-_FEDERAL_CASCADE_FLOOR = 5
-
-
 class SecurityConfig(BaseModel):
     """Security and tier configuration.
 
@@ -478,64 +472,27 @@ class SecurityConfig(BaseModel):
 
     @model_validator(mode="after")
     def _enforce_tier_crypto_floor(self) -> SecurityConfig:
-        """Couple the crypto posture to the tier (SPEC-037 F2, ADR-019).
+        """Couple the crypto + breaker posture to the tier (SPEC-037/043, ADR-019).
 
-        Federal MUST sign out-of-process with FIPS-approved ECDSA-P256 — the
-        composite audit-forgery defense requires all three together, so the tier
-        forces them. An explicit weaker value fails closed rather than being
-        silently honored. Enterprise defaults to vault_transit (REQ-007) but may
-        relax to in_process; personal stays in_process.
+        Every federal floor is delegated to the shared
+        :func:`arcagent.tiers.resolve_tier_floor` (SPEC-047 dedup): federal forces
+        FIPS + vault_transit + ecdsa-p256 and pins the loop-breaker floors, rejecting
+        any explicit weaker/disabled value fail-closed. Enterprise defaults to
+        vault_transit (REQ-007) but may relax to in_process; personal stays in_process.
+        The enforcement policy lives in ``arcagent/tiers.py``; this validator is the hook.
         """
         if self.tier == "federal":
-            self._reject_weaker_federal_override()
-            self.require_fips = True
-            self.custody = "vault_transit"
-            self.signing_algorithm = "ecdsa-p256"
-            self._apply_federal_breaker_floors()
+            for knob in SECURITY_CONFIG_KNOBS:
+                resolved = resolve_tier_floor(
+                    knob,
+                    "federal",
+                    getattr(self, knob.name),
+                    was_set=knob.name in self.model_fields_set,
+                )
+                setattr(self, knob.name, resolved)
         elif self.tier == "enterprise" and "custody" not in self.model_fields_set:
             self.custody = "vault_transit"
         return self
-
-    def _apply_federal_breaker_floors(self) -> None:
-        """Pin the loop circuit breaker to non-relaxable federal floors (REQ-024).
-
-        A federal deployment that leaves a breaker unset gets the floor; one that
-        explicitly disables it (``None``) or sets a looser (larger) cap fails
-        closed — an agent-supplied param can never exceed the floor.
-        """
-        if self.runaway_max_repeat is None or self.runaway_max_repeat > _FEDERAL_RUNAWAY_FLOOR:
-            if "runaway_max_repeat" in self.model_fields_set:
-                raise ValueError(
-                    "federal tier caps runaway_max_repeat at "
-                    f"{_FEDERAL_RUNAWAY_FLOOR} (SC-5) — refusing a looser/disabled value"
-                )
-            self.runaway_max_repeat = _FEDERAL_RUNAWAY_FLOOR
-        if self.error_cascade_max is None or self.error_cascade_max > _FEDERAL_CASCADE_FLOOR:
-            if "error_cascade_max" in self.model_fields_set:
-                raise ValueError(
-                    "federal tier caps error_cascade_max at "
-                    f"{_FEDERAL_CASCADE_FLOOR} (SC-5) — refusing a looser/disabled value"
-                )
-            self.error_cascade_max = _FEDERAL_CASCADE_FLOOR
-
-    def _reject_weaker_federal_override(self) -> None:
-        """Fail closed if a federal config explicitly set a weaker crypto value."""
-        set_fields = self.model_fields_set
-        if "require_fips" in set_fields and not self.require_fips:
-            raise ValueError(
-                "federal tier requires require_fips=true (SC-13/IA-7) — refusing "
-                "to run a federal deployment with the FIPS floor disabled"
-            )
-        if "custody" in set_fields and self.custody != "vault_transit":
-            raise ValueError(
-                "federal tier requires custody=vault_transit (SPEC-037 REQ-006) — "
-                "the operator seed must never enter the agent process at federal"
-            )
-        if "signing_algorithm" in set_fields and self.signing_algorithm != "ecdsa-p256":
-            raise ValueError(
-                "federal tier requires signing_algorithm=ecdsa-p256 (Arc's Ed25519 "
-                "is PyNaCl/libsodium with no CMVP validation path)"
-            )
 
 
 class CapabilitiesConfig(BaseModel):

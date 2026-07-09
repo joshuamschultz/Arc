@@ -1,0 +1,23 @@
+# SPEC-047 packaged blueprint — provenance-trusted (ships read-only in the wheel).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+
+[blueprint]
+name = "personal-assistant"
+version = "1.0.0"
+tier = "personal"
+description = "Personal assistant: memory + skills on, zero-config, no signing floors."
+
+[security]
+tier = "personal"
+
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
