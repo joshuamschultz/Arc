@@ -37,12 +37,15 @@ class FakeBackend:
         table: str,
         *,
         where: dict[str, Any] | None = None,
+        ts_gte: str | None = None,
         order_by: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
         rows = [copy.deepcopy(r) for r in self._tables.get(table, {}).values()]
         if where:
             rows = [r for r in rows if all(r.get(k) == v for k, v in where.items())]
+        if ts_gte is not None:
+            rows = [r for r in rows if (r.get("ts") or "") >= ts_gte]
         if order_by:
             column, reverse = _parse_order_by(order_by)
             rows.sort(key=lambda r: (r.get(column) is None, r.get(column)), reverse=reverse)

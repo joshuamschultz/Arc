@@ -13,6 +13,7 @@ from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry
 from arcteam.storage import MemoryBackend
 from arcteam.types import Channel, Entity, EntityType, Message
+from arctrust.signer import InProcessSigner
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig
@@ -25,7 +26,7 @@ async def svc_with_channel() -> MessagingService:
     messages already sent — enough for the routes to surface real
     payloads without each test re-staging the world."""
     backend = MemoryBackend()
-    audit = AuditLogger(backend, hmac_key=b"team-chat-test")
+    audit = AuditLogger(backend, InProcessSigner(b"\x11" * 32))
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     svc = MessagingService(backend, registry, audit)

@@ -158,10 +158,6 @@ _CASES: list[tuple[type[schemas.BaseModel], dict]] = [
         {"agents": [{"agent_id": "a1", "name": "demo"}]},
     ),
     (
-        schemas.ControlResponseEnvelope,
-        {"response": {"status": "ok", "request_id": "r1"}},
-    ),
-    (
         schemas.ExportTracesResponse,
         {"traces": [], "count": 0},
     ),

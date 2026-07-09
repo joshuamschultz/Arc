@@ -180,6 +180,11 @@ def _collect_builtin_tools() -> list[dict[str, str]]:
     return out
 
 
+def _stem_row(child: Path, transport: str) -> dict[str, str]:
+    """Metadata-less fallback row for a tool file with no ``@tool(...)`` block."""
+    return {"name": child.stem, "transport": transport, "classification": "", "description": ""}
+
+
 def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
     """Scan agent-local + workspace tool directories for .py modules and
     parse `@tool(...)` blocks for name/classification/description metadata.
@@ -219,14 +224,7 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
                 try:
                     text = child.read_text(encoding="utf-8", errors="replace")
                 except OSError:
-                    out.append(
-                        {
-                            "name": child.stem,
-                            "transport": transport,
-                            "classification": "",
-                            "description": "",
-                        }
-                    )
+                    out.append(_stem_row(child, transport))
                     continue
                 blocks = _parse_tool_blocks(text)
                 if blocks:
@@ -240,35 +238,22 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
                             }
                         )
                 else:
-                    out.append(
-                        {
-                            "name": child.stem,
-                            "transport": transport,
-                            "classification": "",
-                            "description": "",
-                        }
-                    )
+                    out.append(_stem_row(child, transport))
             # Subdirs are NOT tools. The loader treats a capabilities subdir as a
             # skill (when it holds a SKILL.md) or ignores it — never as a tool.
             # ``skills/`` and each authored skill folder must not leak in here.
     return out
 
 
-async def get_tools(request: Request) -> JSONResponse:
-    agent_id = request.path_params["id"]
-    agent_root = _agent_root(request, agent_id)
-    if agent_root is None:
-        return JSONResponse(
-            ErrorResponse(error="Agent not found").model_dump(mode="json"),
-            status_code=404,
-        )
+def _load_tool_policy(
+    agent_id: str, agent_root: Path
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    """Read ``[tools.policy]`` allow/deny lists and ``[modules]`` from arcagent.toml.
 
-    # Live registration — only available when the agent is connected.
-    registry = request.app.state.agent_registry
-    entry = registry.get(agent_id)
-    live_tools: list[str] = list(entry.registration.tools) if entry is not None else []
-
-    # Static config: [tools.policy] allowlist + denylist from arcagent.toml.
+    Returns ``(allowlist, denylist, enabled_modules)``; defaults to empty when
+    the file is absent, unreadable, or malformed — the tools route stays robust
+    to a partial install.
+    """
     allowlist: list[str] = []
     denylist: list[str] = []
     enabled_modules: dict[str, Any] = {}
@@ -295,6 +280,24 @@ async def get_tools(request: Request) -> JSONResponse:
             enabled_modules = cfg["modules"]
     except (FileNotFoundError, PathTraversalError, FileTooLargeError, tomllib.TOMLDecodeError):
         pass
+    return allowlist, denylist, enabled_modules
+
+
+async def get_tools(request: Request) -> JSONResponse:
+    agent_id = request.path_params["id"]
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return JSONResponse(
+            ErrorResponse(error="Agent not found").model_dump(mode="json"),
+            status_code=404,
+        )
+
+    # Live registration — only available when the agent is connected.
+    registry = request.app.state.agent_registry
+    entry = registry.get(agent_id)
+    live_tools: list[str] = list(entry.registration.tools) if entry is not None else []
+
+    allowlist, denylist, enabled_modules = _load_tool_policy(agent_id, agent_root)
 
     # Build a single deduplicated tool list spanning all sources. Order:
     # 1) live registry → 2) builtins → 3) module-derived → 4) disk → 5) policy

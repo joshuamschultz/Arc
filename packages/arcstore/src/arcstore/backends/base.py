@@ -73,10 +73,16 @@ class StorageBackend(Protocol):
         table: str,
         *,
         where: dict[str, Any] | None = None,
+        ts_gte: str | None = None,
         order_by: str | None = None,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Return rows as plain dicts (no driver cursors leak)."""
+        """Return rows as plain dicts (no driver cursors leak).
+
+        ``ts_gte`` adds a ``ts >= ?`` lower bound (ISO-8601 lexicographic
+        compare), letting a time window filter push down to the store so the
+        ``limit`` applies after the cutoff instead of over the whole table.
+        """
         ...
 
     async def get_cursor(self, name: str) -> int:

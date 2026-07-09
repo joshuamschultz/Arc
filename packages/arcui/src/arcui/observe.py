@@ -190,15 +190,6 @@ class Observe:
         rows = await self._backend.query("llm_calls", where={"record_id": trace_id}, limit=1)
         return _row_to_trace(rows[0]) if rows else None
 
-    async def run_events(
-        self, *, agent: str | None = None, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        await self._ensure()
-        where = {"actor_did": agent} if agent else None
-        return await self._backend.query(
-            "run_events", where=where, order_by="ts DESC", limit=limit
-        )
-
     async def audit(self, *, agent: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         await self._ensure()
         where = {"actor_did": agent} if agent else None
@@ -209,14 +200,20 @@ class Observe:
     async def _llm_rows_in_window(
         self, window: str, *, agent: str | None = None
     ) -> list[dict[str, Any]]:
-        """All ``llm_calls`` rows within ``window`` (optionally one agent)."""
+        """All ``llm_calls`` rows within ``window`` (optionally one agent).
+
+        The ``ts >= cutoff`` bound is pushed into the store so the window filter
+        runs in SQL and the ``limit`` applies after it — not over the whole table.
+        """
         await self._ensure()
         where = {"agent_label": agent} if agent else None
-        cutoff = _window_cutoff(window)
-        rows = await self._backend.query(
-            "llm_calls", where=where, order_by="ts DESC", limit=100_000
+        return await self._backend.query(
+            "llm_calls",
+            where=where,
+            ts_gte=_window_cutoff(window),
+            order_by="ts DESC",
+            limit=100_000,
         )
-        return [r for r in rows if (r.get("ts") or "") >= cutoff]
 
     async def stats(self, window: str = "24h", *, agent: str | None = None) -> dict[str, Any]:
         """Aggregate LLM telemetry over a window directly from the store.
@@ -244,14 +241,6 @@ class Observe:
         return compute_cost_efficiency(rows, window=window)
 
     # -- SPEC-028 tool / code / spawn surfaces (FR-4) ----------------------
-
-    async def tool_events(self, *, run_id: str, limit: int = 500) -> list[dict[str, Any]]:
-        """Ordered tool/code events for a run (FR-1/FR-2). Code-exec is identified
-        by ``tool_name`` (e.g. ``execute_python``) on the client."""
-        await self._ensure()
-        return await self._backend.query(
-            "tool_events", where={"request_id": run_id}, order_by="ts", limit=limit
-        )
 
     async def runs(
         self, *, agent: str | None = None, limit: int = 200, scan: int = 20_000

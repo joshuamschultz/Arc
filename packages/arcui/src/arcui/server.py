@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections import deque as _deque
 from pathlib import Path
 from typing import Any
 
@@ -338,7 +337,6 @@ def create_app(
     # never signs — see ``team_ws`` route.
     app.state.team_post_forwarder = team_post_forwarder
     app.state.agent_registry = agent_registry
-    app.state.pending_controls = {}
     app.state.circuit_breakers = []
     app.state.telemetry_modules = []
     app.state.queue_modules = []
@@ -349,9 +347,6 @@ def create_app(
     # call this through app.state — they never import the registry or
     # team_root directly.
     app.state.team_root = team_root
-    # Bounded ring of recent gateway/UI audit events surfaced through the
-    # /api/agents/{id}/audit and fleet /api/team/audit endpoints.
-    app.state.audit_buffer = _deque(maxlen=1000)
 
     def _roster_provider() -> list[team_roster.RosterEntry]:
         if app.state.team_root is None:

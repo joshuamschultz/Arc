@@ -297,15 +297,3 @@ class ExportTracesResponse(BaseModel):
 
     traces: list[dict[str, Any]]
     count: int
-
-
-class ControlResponseEnvelope(BaseModel):
-    """Body of ``POST /api/agents/{id}/control`` happy-path response.
-
-    Wraps the raw ``ControlResponse.model_dump()`` shape under a
-    ``response`` key.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    response: dict[str, Any]

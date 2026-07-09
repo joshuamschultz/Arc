@@ -178,9 +178,9 @@ class TestSessionStartHasRequiredFields:
         assert "remote_addr" in details
         assert isinstance(details["remote_addr"], str)
 
-        # auth_method: one of three labels per SR-3.
+        # auth_method: one of two labels per SR-3.
         assert "auth_method" in details
-        assert details["auth_method"] in {"browser_bootstrap", "manual_token", "agent_token"}
+        assert details["auth_method"] in {"browser_bootstrap", "manual_token"}
 
     def test_session_id_unique_per_session(self, caplog: pytest.LogCaptureFixture) -> None:
         """Two different (token, addr) pairs MUST get different session_ids.
