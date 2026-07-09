@@ -19,6 +19,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "arctrust>=0.1",
     "pydantic>=2.0,<3",
 ]
 
