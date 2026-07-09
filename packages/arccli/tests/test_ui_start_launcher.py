@@ -29,28 +29,15 @@ from arccli.commands.ui import (
 
 
 class TestBrowserOpenFallback:
-    """`_print_browser_open_fallback` must never emit `#auth=...`."""
+    """`_print_browser_open_fallback` is a token-free nudge to the link above."""
 
-    def test_fallback_url_carries_no_auth_fragment(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _print_browser_open_fallback("127.0.0.1", 8420, "viewer-token-value", show_tokens=False)
+    def test_fallback_is_a_token_free_nudge(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _print_browser_open_fallback("127.0.0.1", 8420)
         out = capsys.readouterr().out
-        assert "viewer-token-value" not in out, (
-            "review C-2: token MUST NOT appear in stdout when masked"
-        )
-        assert "#auth=" not in out, "review C-2: URL+token combination MUST NOT appear in stdout"
-        assert "http://127.0.0.1:8420/" in out
-
-    def test_fallback_shows_token_when_show_tokens(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        _print_browser_open_fallback("127.0.0.1", 8420, "viewer-token-value", show_tokens=True)
-        out = capsys.readouterr().out
-        # When the operator explicitly asks for tokens, show them — but on
-        # a separate line from the URL, never in `#auth=` form.
-        assert "viewer-token-value" in out
+        # The fallback itself carries no token/hash — `_start` already
+        # printed the full magic-link above on the loopback path.
         assert "#auth=" not in out
+        assert "http://127.0.0.1:8420/" in out
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +118,31 @@ class TestStartLoopback:
         # Browser is NOT opened synchronously — only when the lifespan fires.
         mock_open.assert_not_called()
 
+    def test_loopback_banner_prints_full_token_and_magic_link(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        full_viewer = "a" * 64  # a realistic-length token, not "v"
+
+        class _SpyServer:
+            def __init__(self, config: object) -> None:
+                pass
+
+            def run(self) -> None:
+                pass
+
+        with (
+            patch("uvicorn.Server", _SpyServer),
+            patch("arccli.commands.ui._maybe_open_browser"),
+        ):
+            _start(_make_args(host="127.0.0.1", viewer_token=full_viewer))
+
+        out = capsys.readouterr().out
+        # Symptom 3: the FULL viewer token is printed, not truncated.
+        assert full_viewer in out
+        assert "..." not in out.split(full_viewer)[0].splitlines()[-1]
+        # Symptom 2: a working magic-link with the token in the hash.
+        assert f"http://127.0.0.1:18420/#{BOOTSTRAP_HASH_KEY}={full_viewer}" in out
+
     def test_marks_bootstrap_token_for_session_audit(self) -> None:
         captured = {}
 
@@ -208,3 +220,22 @@ class TestStartNonLoopback:
             _start(_make_args(host="0.0.0.0"))  # noqa: S104
         out = capsys.readouterr().out
         assert "non-loopback" in out.lower()
+
+    def test_non_loopback_masks_token_and_omits_magic_link(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        full_viewer = "b" * 64
+
+        class _SpyServer:
+            def __init__(self, config: object) -> None:
+                pass
+
+            def run(self) -> None:
+                pass
+
+        with patch("uvicorn.Server", _SpyServer):
+            _start(_make_args(host="0.0.0.0", viewer_token=full_viewer))  # noqa: S104
+        out = capsys.readouterr().out
+        # Non-loopback stays strict: token masked, no token-bearing URL.
+        assert full_viewer not in out
+        assert "#auth=" not in out
