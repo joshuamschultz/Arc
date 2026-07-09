@@ -95,12 +95,3 @@ async def test_get_secret_raises_vault_unreachable_on_network_error() -> None:
         backend = AzureKeyVaultBackend(vault_url="https://my-vault.vault.azure.net/")
         with pytest.raises(VaultUnreachable):
             await backend.get_secret("my-key")
-
-
-def test_cache_ttl_accepted_for_backward_compat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """cache_ttl_seconds is accepted (backward compat) without breaking."""
-    monkeypatch.setenv("AZURE_KEYVAULT_URL", "https://my-vault.vault.azure.net/")
-    backend = AzureKeyVaultBackend(cache_ttl_seconds=600)
-    assert backend._cache_ttl_seconds == 600

@@ -66,18 +66,25 @@ def _bind_caller_did(
     args: dict[str, Any],
     real_did: str,
     *,
+    declared: frozenset[str] = frozenset(),
     telemetry: Any,
 ) -> dict[str, Any]:
-    """Strip LLM-supplied identity fields and inject the real agent DID.
+    """Strip UNDECLARED identity fields and inject the real agent DID.
 
     This is the transport-layer defence against ASI03 (Identity & Privilege
     Abuse) and LLM01 (Prompt Injection via identity fields).
 
     For memory tools only:
-    - Any field in ``_IDENTITY_ARG_NAMES`` is removed from the args copy.
-    - ``caller_did`` is set to *real_did*.
-    - If any identity field was stripped, a ``security.caller_did_override_attempt``
-      audit event is emitted so operators can detect injection probes.
+    - Any field in ``_IDENTITY_ARG_NAMES`` that the tool does NOT declare in
+      its schema is removed from the args copy. A declared ``user_did`` /
+      ``owner_did`` is the tool's legitimate contract (e.g.
+      ``user_profile_read(user_did=...)``), not an impersonation attempt, so it
+      is preserved — stripping it would break the tool's required argument.
+    - ``caller_did`` is set to *real_did* (the caller then drops it again for
+      tools whose schema does not declare it).
+    - If any undeclared identity field was stripped, a
+      ``security.caller_did_override_attempt`` audit event is emitted so
+      operators can detect injection probes.
 
     For non-memory tools the args dict is returned unchanged (no ``caller_did``
     injection) because most tools don't have an identity contract.
@@ -86,6 +93,8 @@ def _bind_caller_did(
         tool_name: Name of the tool being called.
         args: Original arguments dict (NOT mutated).
         real_did: The agent's authoritative DID from RunState/identity.
+        declared: Property names declared in the tool's input schema. Identity
+            fields in this set are the tool's real contract and are kept.
         telemetry: AgentTelemetry instance for audit events, or None.
 
     Returns:
@@ -96,11 +105,12 @@ def _bind_caller_did(
         # most tools don't have an identity contract.
         return dict(args)
 
-    # Work on a copy so the original caller's dict is never mutated.
-    cleaned = {k: v for k, v in args.items() if k not in _IDENTITY_ARG_NAMES}
+    # Strip only identity fields the tool does NOT legitimately declare.
+    strip = _IDENTITY_ARG_NAMES - declared
+    cleaned = {k: v for k, v in args.items() if k not in strip}
 
-    # Detect injection attempt: did the LLM supply any identity field?
-    stripped = [k for k in _IDENTITY_ARG_NAMES if k in args]
+    # Detect injection attempt: did the LLM supply an undeclared identity field?
+    stripped = [k for k in strip if k in args]
     if stripped and telemetry is not None:
         telemetry.audit_event(
             "security.caller_did_override_attempt",

@@ -405,6 +405,21 @@ class ToolRegistry:
             if tool.input_schema:
                 _validate_tool_args(tool.name, args, tool.input_schema)
 
+            # 0.5 ASI-03 / LLM-01 transport defence — strip UNDECLARED LLM-supplied
+            # identity fields from memory-tool arguments before they reach the
+            # policy pipeline or execute(). Runs regardless of whether a policy
+            # pipeline is configured. Identity fields the tool legitimately
+            # declares (e.g. ``user_profile_read(user_did=...)``) are preserved;
+            # only injected, undeclared identity args are dropped. ``caller_did``
+            # is forwarded only to tools whose schema declares it.
+            if _is_memory_tool(tool.name):
+                declared = frozenset(tool.input_schema.get("properties", {}))
+                args = _bind_caller_did(
+                    tool.name, args, agent_did, declared=declared, telemetry=telemetry
+                )
+                if "caller_did" not in declared:
+                    args.pop("caller_did", None)
+
             # 1. Policy pipeline — the single, authoritative deny path.
             # No sudo mode, no bypass flag. Exceptions in layers are
             # caught by the pipeline and returned as DENY (fail-closed).

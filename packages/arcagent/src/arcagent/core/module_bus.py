@@ -1,4 +1,4 @@
-"""Module Bus — async event dispatch with priority, veto, and lifecycle.
+"""Module Bus — async event dispatch with priority and veto.
 
 Priority ordering: lower values run first (10=policy, 50=security,
 100=default, 200=logging). Same-priority handlers run concurrently.
@@ -13,7 +13,7 @@ from collections import defaultdict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 from arcagent.core.config import ArcAgentConfig, LLMConfig
 
@@ -88,24 +88,11 @@ class ModuleContext:
     llm_config: LLMConfig
 
 
-@runtime_checkable
-class Module(Protocol):
-    """Protocol for modules that register with the bus."""
-
-    @property
-    def name(self) -> str: ...
-
-    async def startup(self, ctx: ModuleContext) -> None: ...
-
-    async def shutdown(self) -> None: ...
-
-
 class ModuleBus:
-    """Async event bus with priority dispatch, veto, and module lifecycle."""
+    """Async event bus with priority dispatch and veto."""
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[_HandlerRegistration]] = defaultdict(list)
-        self._modules: list[Module] = []
 
     def subscribe(
         self,
@@ -136,20 +123,6 @@ class ModuleBus:
         across reloads so we never double-subscribe.
         """
         return sum(1 for h in self._handlers.get(event, ()) if h.module_name == module_name)
-
-    def unsubscribe_by_module_prefix(self, prefix: str) -> int:
-        """Remove all handlers whose module_name starts with prefix.
-
-        Returns the total number of handlers removed. Used by the
-        extension system for hot-reload cleanup.
-        """
-        removed = 0
-        for event in list(self._handlers):
-            original = self._handlers[event]
-            filtered = [h for h in original if not h.module_name.startswith(prefix)]
-            removed += len(original) - len(filtered)
-            self._handlers[event] = filtered
-        return removed
 
     async def emit(
         self,
@@ -208,29 +181,3 @@ class ModuleBus:
                 reg.module_name or reg.handler.__name__,
                 reg.event,
             )
-
-    def get_module(self, name: str) -> Module | None:
-        """Look up a registered module by name."""
-        return next((mod for mod in self._modules if mod.name == name), None)
-
-    def register_module(self, module: Module) -> None:
-        """Register a module for lifecycle management."""
-        self._modules.append(module)
-
-    async def startup(self, ctx: ModuleContext) -> None:
-        """Call module.startup(ctx) for all registered modules in order."""
-        for module in self._modules:
-            try:
-                await module.startup(ctx)
-                _logger.info("Module %s started", module.name)
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("Module %s failed to start", module.name)
-
-    async def shutdown(self) -> None:
-        """Call module.shutdown() for all modules in reverse order."""
-        for module in reversed(self._modules):
-            try:
-                await module.shutdown()
-                _logger.info("Module %s shut down", module.name)
-            except Exception:  # reason: fail-open — log + continue
-                _logger.exception("Module %s failed to shut down", module.name)

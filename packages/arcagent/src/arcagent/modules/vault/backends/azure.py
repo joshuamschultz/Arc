@@ -44,24 +44,14 @@ class AzureKeyVaultBackend:
     Args:
         vault_url: Full Azure Key Vault URL.  Falls back to
             ``AZURE_KEYVAULT_URL`` env var if empty.
-        cache_ttl_seconds: Unused here — caching is handled by
-            ``CachedVaultBackend`` in the layer above. Retained on the
-            constructor signature so config TOMLs that pass it don't error.
 
     Raises:
         ValueError: If the vault URL cannot be resolved from either the
             constructor argument or the environment variable.
     """
 
-    def __init__(
-        self,
-        vault_url: str = "",
-        cache_ttl_seconds: int = 300,
-    ) -> None:
+    def __init__(self, vault_url: str = "") -> None:
         self._vault_url = vault_url or os.environ.get("AZURE_KEYVAULT_URL", "")
-        # cache_ttl_seconds is accepted but unused here; caching lives in
-        # CachedVaultBackend above this layer.
-        self._cache_ttl_seconds = cache_ttl_seconds
         # Typed as Any to avoid union-attr noise from the late-bound SDK client.
         self._client: Any = None
 

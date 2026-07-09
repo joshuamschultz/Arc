@@ -48,9 +48,11 @@ def _validate_vault_backend(backend_ref: str) -> None:
 def create_vault_resolver(config: ArcAgentConfig) -> Any:
     """Create a vault resolver instance from config, or return None.
 
-    Validates the backend reference format before importing.
-    Returns the instantiated vault backend (with cache_ttl_seconds
-    threaded through).
+    Validates the backend reference format before importing, then wraps the
+    instantiated backend in a ``CachedVaultBackend`` so successful secret reads
+    are served from an in-process TTL cache for ``config.vault.cache_ttl_seconds``
+    instead of hitting the live secret store on every resolution — a real
+    availability concern at federal tier where the vault is mandatory.
     """
     backend_ref = config.vault.backend
     if not backend_ref:
@@ -59,10 +61,13 @@ def create_vault_resolver(config: ArcAgentConfig) -> Any:
     _validate_vault_backend(backend_ref)
 
     try:
+        from arcagent.modules.vault.cache import CachedVaultBackend
+
         module_path, class_name = backend_ref.rsplit(":", 1)
         module = importlib.import_module(module_path)
         backend_cls = getattr(module, class_name)
-        return backend_cls(cache_ttl_seconds=config.vault.cache_ttl_seconds)
+        backend = backend_cls()
+        return CachedVaultBackend(backend, config.vault.cache_ttl_seconds)
     except Exception:  # reason: re-raise after log
         _logger.exception("Failed to create vault resolver: %s", backend_ref)
         raise
