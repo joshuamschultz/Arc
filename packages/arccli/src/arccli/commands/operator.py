@@ -108,9 +108,10 @@ def _resolve_transit(sec: Any) -> FileNotaryTransit:
         transit.public_key(_OPERATOR_KEY_REF)
     except OSError as exc:
         raise SignerError(
-            f"custody=vault_transit but the transit at {keystore} cannot serve "
-            f"the operator key — refusing to fall back to in-process signing "
-            "(fail-closed, NFR-3). Provision the notary keystore or a Vault/HSM adapter."
+            f"custody=vault_transit (tier={sec.tier}) but the transit at {keystore} "
+            f"cannot serve the operator key — refusing to fall back to in-process "
+            "signing (fail-closed, NFR-3). Provision the notary keystore or a "
+            "Vault/HSM adapter, or run at tier=personal for on-disk in-process signing."
         ) from exc
     return transit
 
