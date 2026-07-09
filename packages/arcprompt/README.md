@@ -3,7 +3,7 @@
 # 💬 arcprompt
 
 ### **Strategy Prompt Provider for Arc**
-*Serves model-facing guidance — system prompts and strategy context — to arcrun and arcagent.*
+*Reserved home for model-facing guidance — system prompts and strategy context — currently served by `arcrun.prompts`.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Status: Scaffolding](https://img.shields.io/badge/status-early_scaffolding-F68D2E.svg)](#status)
@@ -14,23 +14,25 @@
 
 ## ✨ What is arcprompt?
 
-`arcprompt` is the prompt provider for arcrun strategies. It serves the system prompts and strategy-specific guidance that the agent's loop hands to the model — so prompt content lives outside agent code, can be versioned independently, and can be swapped without recompiling.
+`arcprompt` is reserved as the future home of the strategy prompt provider — the system prompts and strategy-specific guidance the agent's loop hands to the model. The intent is for prompt content to live outside runtime code, versioned independently and swappable without recompiling. Today that logic lives in `arcrun.prompts` (`get_strategy_prompts`, built on `arcrun.strategies`); arcprompt is the reserved package it is slated to move into.
 
-> ⚠️ **Status: early scaffolding.** The package installs but exposes no stable public surface yet beyond what `arcrun` uses internally via `arcrun.prompts.get_strategy_prompts`.
+> ⚠️ **Status: early scaffolding.** The package installs and exports `__version__` only — no public API yet.
 
 ---
 
 ## 🏗️ Where It Fits
+
+Reserved to sit beside `arcrun`, lifting strategy-prompt content out of runtime code. The dotted edge is planned, not yet wired — `arcrun.prompts` currently owns `get_strategy_prompts`.
 
 ```mermaid
 flowchart LR
     classDef runtime fill:#0055BC,stroke:#003B82,color:#FFFFFF
     classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
-    arcrun[arcrun]:::runtime --> arcprompt[arcprompt<br/>strategy prompts]:::other
+    arcrun[arcrun]:::runtime -. "planned: strategy prompts" .-> arcprompt[arcprompt<br/>strategy prompts]:::other
 ```
 
-A leaf-level utility. `arcrun` depends on it for `get_strategy_prompts`. No other Arc package currently consumes it.
+A leaf-level utility. No Arc package currently depends on it.
 
 ---
 

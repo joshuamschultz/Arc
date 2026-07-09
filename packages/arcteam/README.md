@@ -6,7 +6,7 @@
 *Entity registry. Channels and DMs. Operator-signed audit chain. Pluggable storage backends.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-307-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-364-0055BC.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Signed Audit](https://img.shields.io/badge/audit-Ed25519_signed-F68D2E.svg)](#%EF%B8%8F-security-architecture)
 
@@ -189,6 +189,13 @@ Entities (agents and humans) each have:
 
 **No shared credentials. No privilege inheritance.** A new role isn't automatic — it's an audited registration change.
 
+### `TeamFileStore` Path Containment
+
+`TeamFileStore` (shared-file workspace, e.g. `arcteam.files`) validates every resolved path
+against the team root before a read or write — `path.resolve().is_relative_to(root.resolve())`
+— so an entity ID or filename containing `..`, an absolute path, or a symlink escape can't
+write or read outside the shared directory.
+
 ### Pluggable Storage
 
 | Backend | Use For |
@@ -225,7 +232,7 @@ The `StorageBackend` Protocol is small enough to roll your own — point at SQLi
 uv run --no-sync pytest packages/arcteam/tests
 ```
 
-- **Tests:** 307
+- **Tests:** 364+
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
 

@@ -21,7 +21,7 @@ allowed_user_ids = ["UABC123"]   # empty = deny all (fail-closed)
 ```
 
 ```bash
-arc gateway start
+arcgateway start
 ```
 
 ## Layout

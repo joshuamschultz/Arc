@@ -6,7 +6,7 @@
 *Direct HTTP to every major model provider. PII redaction, request signing, OpenTelemetry, and audit baked in.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-885-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-1%2C209%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/coverage-99%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Providers](https://img.shields.io/badge/providers-16-F68D2E.svg)](#-supported-providers)
@@ -344,7 +344,7 @@ Provider adapters are lazy-imported — they're only loaded when you call `load_
 uv run --no-sync pytest packages/arcllm/tests
 ```
 
-- **Tests:** 885
+- **Tests:** 1,209+
 - **Coverage:** 99%
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean

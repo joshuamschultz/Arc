@@ -6,7 +6,7 @@
 *Identity · Signing · Audit · Policy — the leaf every other Arc package depends on.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-176-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-346%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/coverage-99%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Ed25519](https://img.shields.io/badge/crypto-Ed25519-F68D2E.svg)](#cryptography)
@@ -195,6 +195,17 @@ Detached content-hash + Ed25519 signing for arbitrary bytes — the primitive be
 
 **Honest semantics:** a valid signature proves the bytes are *unmodified since the signer wrote them* and *attributed* to the signer's DID key. It does **not** prove the content is safe — a compromised signer produces a perfectly valid signature over malicious bytes. Safety belongs to the caller's TOFU gate and execution sandbox, never to this primitive.
 
+### Canonical Serialization (`arctrust.canonical`)
+
+| Symbol | What It Does |
+|---|---|
+| `canonical_json(obj) -> bytes` | Deterministic canonical-JSON bytes a signature binds to: `sort_keys=True`, compact separators, `ensure_ascii=True`. Input must be JSON-serialisable with the stdlib encoder — no silent `default=` coercion |
+
+The one serializer every signing package reuses (arcllm request signing, arcagent checkpoint
+signing) instead of hand-rolling per-package JSON serialization — a compact-vs-default
+separator or `ensure_ascii` mismatch would silently diverge the bytes and break
+cross-package signature verification. A byte-identity test proves every adopter agrees.
+
 ### Trust Store (`arctrust.trust_store`)
 
 | Symbol | What It Does |
@@ -251,7 +262,7 @@ Detached content-hash + Ed25519 signing for arbitrary bytes — the primitive be
 uv run --no-sync pytest packages/arctrust/tests
 ```
 
-- **Tests:** 176
+- **Tests:** 346+
 - **Coverage:** 99%
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean

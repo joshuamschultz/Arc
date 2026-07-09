@@ -37,7 +37,7 @@ allowed_user_ids = [123456789]   # empty = deny all (fail-closed)
 ```
 
 ```bash
-arc gateway start
+arcgateway start
 ```
 
 DM the bot, run `arc gateway pair` to approve your user, and chat with the agent.

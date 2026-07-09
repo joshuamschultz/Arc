@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dead agent-control path + vestigial agent auth role (simplification sweep)** — there was
+  no live push wire from agent processes into the dashboard (SPEC-026 FR-5 already made
+  `arcui` a pure reader of the `arcstore` durable record), so the unused third "agent" auth
+  role/token, the unwired `audit_buffer`, and several dead `observe` methods are deleted.
+  Auth is two roles (`viewer`/`operator`) only — there was never an on-disk token file for
+  either.
+
+### Changed
+
+- **`observe`/`observe_stats` windowed stats computed SQL-side** — `arcstore` backends
+  (`base.py`/`memory.py`/`sqlite.py`) gained the aggregation so `arcui` no longer pulls a full
+  window into Python to compute it.
+- **`registry.get_tools` decomposed** into smaller helpers (no behavior change).
+
 ## [0.2.0] - 2026-04-26
 
 Major refactor: full multi-agent observability platform, hardened auth, and `UIBridgeSink` for live agent telemetry.

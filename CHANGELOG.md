@@ -12,6 +12,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **README + documentation rebrand** — Root and per-package READMEs realigned to the CTG Federal brand system (navy `#002550` → azure `#0073FE` blues with a single orange `#F68D2E` accent, replacing the prior rainbow Tailwind palette). New TUI-framed banner on the root README.
 - **Architecture diagram corrected and redrawn** — The dependency graph now reflects the real layered direction (every edge points down toward the `arctrust` / `arcstore` foundation: `arcrun → arcllm`, `arcagent → arcrun`, surfaces → agent, entry → surfaces). Added a branded SVG stack diagram at `docs/assets/arc-architecture.svg`. `arcstore` (operational storage) is now shown as a foundation package alongside `arctrust`; mermaid `classDef` colors switched to the brand palette.
 
+## [2026-07-08] — SPEC-044 skill self-improvement, SPEC-047 extensibility, simplification sweep
+
+Ships as:
+
+- `arc-agent` 0.13.1 → 0.15.0
+- `arccmd` (arccli) 0.5.1 → 0.6.0
+- `arcskill` 0.1.2 → 0.2.0
+
+See each package `CHANGELOG.md` for full detail. Highlights:
+
+### Added
+
+- **SPEC-044 — `arcskill` becomes the optional skill self-improvement supercharger.**
+  The `arcagent/modules/skill_improver/` logic relocated to `arcskill.improver` (no-legacy;
+  arcagent source net **down** ~2,400 LOC) and grew into a code-repairing, golden-task-gated,
+  bounded, reversible self-modification system: `BundlePatch`/`LLMCodeMutator` code-repair
+  mutation, a hard golden-task eval acceptance gate (judge only ranks), per-tier `ChangeBound`
+  edit budgets, a nudge → usage → retire `SkillLifecycle`, and an integrity chain that
+  re-signs + re-verifies every patched file. arcagent gained the thin `arcagent.skilladapt`
+  seam (`SkillAdapter` Protocol + `NullSkillAdapter` + config-select `none`/`arcskill`/signed
+  BYO) — arcagent runs skills fine on its own; installing `arcskill` and selecting it
+  supercharges them.
+- **SPEC-047 — extensibility as a first-class product property.** Generalized the Brain
+  (SPEC-041) and SkillAdapter (SPEC-044) select-one seams into one `arcagent.extension`
+  (`ExtensionPoint` + `select_extension`) mechanism covering four families (`brain`/`skills`
+  select-one, `tools`/`hook-builds` scan-many). Added signed, versioned TOML **blueprints**
+  (`arcagent.blueprints`) — three provenance-trusted packaged presets
+  (`personal-assistant`/`enterprise-ops`/`federal-analyst`) plus signed `~/.arc/blueprints/`
+  user presets — and `arcagent.tiers` (`RelaxableKnob` + `resolve_tier_floor`), the one
+  declared config-relaxable tier surface. New `arccli` operator surface: `arc blueprint
+  list/show/apply/verify/sign`, `arc ext inspect/verify`, `arc init --blueprint`.
+- **Tier vocabulary unified to `personal`/`enterprise`/`federal` everywhere** — `open` is
+  removed (no alias) from `arc init`, `arcllm.toml`, `arcagent.toml`, and `gateway.toml`.
+
+### Changed
+
+- **Simplification sweep (−18.7k LOC)** — a cross-package refactor that deleted dead and
+  unwired code and wired several previously-inert features onto their real execution paths:
+  the legacy `browser`/`scheduler`/`session`/`voice`/`pulse`/`web`/`policy`/`memory_acl`
+  `Module` classes and their duplicate tooling layers are gone in favor of the live
+  capability-loader path (`web_search`/`web_extract` now actually work in production);
+  `arcagent.core.metrics`, `settings_manager.py`, and `protocols.py` dead lifecycle code
+  removed; 7 legacy `create_tool` factories and the dead `DynamicToolLoader` sandbox deleted;
+  duplicated formulas (exponential backoff, provider-name regexes, canonical-JSON signing)
+  deduped into shared helpers (`arctrust` now owns one canonical JSON serializer, adopted
+  cross-package with a byte-identity test); `RootTokenBudget` (LLM10) now enforced on the
+  real spawn paths; `arcteam` gained `TeamFileStore` path-traversal hardening and dropped the
+  unwired `Roster`/presence surface; `arcui` dropped the dead agent-control path and vestigial
+  agent auth role (there is no more on-disk UI token file — tokens live only in the running
+  process).
+
 ## [2026-04-26] — Major monorepo refactor
 
 Cross-cutting refactor that promotes `arctrust` to the canonical leaf for the four pillars (Identity, Sign, Authorize, Audit), splits orchestration cleanly between `arcrun` (loop) and `arcagent` (spawn primitives), removes legacy duplicates, hardens audit emission to a single point, and lifts `arcskill` to a real public release. Implements ADR-019 four-pillar universality.

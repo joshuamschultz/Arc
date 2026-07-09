@@ -36,7 +36,11 @@ pip install "arcmemory[local]"   # + offline local embedder (bge-small / MiniLM)
 
 ## Status
 
-Foundation (SPEC-041 Phases 0/2/3): scaffold, types, per-agent SQLite substrate,
-four stores, weighted graph (Hebbian/decay/spreading), index rebuild, and the
-zero-LLM deterministic capture path. Surface/structural retrieval, consolidation,
-and arcagent wiring land in later phases.
+All SPEC-041 phases have landed and are live as of **0.6.0**: the zero-LLM
+deterministic capture path, surface + structural/analogical retrieval, slow-path
+consolidation (distill facts/insights, promote procedures, decay unreinforced edges,
+merge near-duplicate cues), the classification-gated no-read-up recall path, and the
+`Brain` plug-in for `arcagent` with the arcllm-backed embedder + distiller seams
+wired async-safe — so semantic vector recall and the analogical trigger channel run
+in production. With neither seam injected the Brain still runs: capture stays
+zero-LLM, recall degrades to BM25 + graph, and consolidation is a no-op.

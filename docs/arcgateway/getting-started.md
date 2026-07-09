@@ -48,7 +48,7 @@ The `GatewayConfig` Pydantic model (see `arcgateway/config.py`) loads this via `
 1. Create a bot via [@BotFather](https://t.me/BotFather) → `/newbot` → save token
 2. `export TELEGRAM_BOT_TOKEN="123456789:ABCdef..."`
 3. Add your Telegram user id to `allowed_user_ids` (send `/start` to your bot, it won't reply yet — check Telegram logs or use `@userinfobot`)
-4. `arc gateway start`
+4. `arcgateway start`
 
 ## Slack
 
@@ -56,7 +56,7 @@ The `GatewayConfig` Pydantic model (see `arcgateway/config.py`) loads this via `
 2. Generate app-level token with `connections:write` scope (`xapp-...`)
 3. Add bot scopes: `chat:write`, `im:history`, `im:read`; install; copy `xoxb-...` bot token
 4. Set both env vars + add your Slack user id to `allowed_user_ids`
-5. `arc gateway start`
+5. `arcgateway start`
 
 ## First-time pairing
 
@@ -77,16 +77,19 @@ Codes expire in 1h. Max 3 pending per platform. 5 failed approvals → 1h platfo
 ## CLI reference
 
 ```bash
-arc gateway setup                         # write starter gateway.toml
-arc gateway start                         # start daemon (blocks)
-arc gateway stop --runtime-dir ~/.arc     # SIGTERM via PID file
-arc gateway status --runtime-dir ~/.arc   # health check
-arc gateway pair approve <CODE>           # approve pending pairing
+arcgateway setup                          # write starter gateway.toml
+arcgateway start                          # start daemon (blocks)
+arcgateway stop --runtime-dir ~/.arc      # SIGTERM via PID file
+arcgateway status --runtime-dir ~/.arc    # health check
+arc gateway pair approve <CODE>           # approve pending pairing (via arccli)
 arc gateway pair list                     # list pending
 arc gateway pair revoke <CODE>            # revoke
 ```
 
-All commands dispatch through `arccli.commands.registry` (centralized `CommandDef` list — one source of truth for CLI + gateway + platform-menu generators).
+`arcgateway start/stop/status/setup` run through the `arcgateway` console script directly.
+The operator pairing commands (`arc gateway pair *`) dispatch through `arccli.commands.registry`
+(centralized `CommandDef` list — one source of truth for CLI + gateway + platform-menu
+generators) so they're available from `arc` without a separate install.
 
 ## Next
 
