@@ -12,9 +12,9 @@ Lives outside ``arcagent/core`` (LOC budget) — pure wiring over arctrust.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
+from arctrust import canonical_json
 from arctrust.signer import Signer, verify_signature
 
 # Envelope keys wrapped around the signed scalar metadata by the persistence
@@ -27,7 +27,7 @@ _ENVELOPE = frozenset({"type", "timestamp", "signature"})
 def _canonical_bytes(record: dict[str, Any]) -> bytes:
     """Deterministic bytes over the signed scalar metadata (envelope excluded)."""
     payload = {k: v for k, v in record.items() if k not in _ENVELOPE}
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return canonical_json(payload)
 
 
 def sign_record(record: dict[str, Any], signer: Signer) -> str:
