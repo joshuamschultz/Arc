@@ -83,9 +83,7 @@ class TestChainIntegrity:
 
         record = backend._streams["audit"]["audit"][0]
         signature = bytes.fromhex(record["signature"])
-        assert verify_signature(
-            ED25519, _signing_input(record, ""), signature, signer.public_key
-        )
+        assert verify_signature(ED25519, _signing_input(record, ""), signature, signer.public_key)
 
 
 class TestTamperDetection:

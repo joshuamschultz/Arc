@@ -6,7 +6,7 @@
 *Slash-command registry. JSON output on every data command. The single front door to the entire Arc stack.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-303-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-330%2B-0055BC.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Slash-command registry](https://img.shields.io/badge/registry-slash_commands-0073FE.svg)](#)
 
@@ -72,7 +72,7 @@ arc                             # interactive REPL with tab-completion
 # First-time setup (interactive: tier, provider, API key)
 arc init
 
-# Or quick-start with open tier
+# Or quick-start with personal tier
 arc init --quick
 
 # Create an agent
@@ -101,11 +101,12 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 | **`arc llm`** | LLM provider operations — version, config, providers, provider, models, prompt, validate |
 | **`arc run`** | arcrun loop without an agent directory — version, exec, task |
 | **`arc skill`** | Skill management — list, create, validate, search |
-| **`arc ext`** | Extension management — list, create, install, validate |
+| **`arc ext`** | Capability + extension-point management — list, create, install, validate, inspect, verify |
+| **`arc blueprint`** | Signed preset-config bootstrap — list, show, apply, verify, sign |
 | **`arc team`** | Team messaging — status, config, init, register, entities, channels, memory-status, backfill-workspaces |
 | **`arc ui`** | Multi-agent dashboard — start, tail |
 | **`arc gateway pair`** | Gateway pairing operator commands — list, approve, revoke |
-| **`arc init`** | Interactive first-time setup wizard with tier presets |
+| **`arc init`** | Interactive first-time setup wizard with tier presets, optional `--blueprint` bootstrap |
 | **`arc help`, `arc version`** | Info and REPL utilities |
 
 `--json` is supported on every data-returning subcommand for CI/CD integration.
@@ -118,7 +119,8 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 # === Setup ===
 arc init                                                  # tier wizard (interactive)
 arc init --tier federal --provider anthropic               # non-interactive
-arc init --quick                                          # quick-start with open tier
+arc init --quick                                          # quick-start, personal tier
+arc init --blueprint enterprise-ops                       # bootstrap from a packaged preset
 
 # === Agents ===
 arc agent create my-agent --model anthropic/claude-sonnet-4-5-20250929
@@ -185,6 +187,17 @@ arc ext create scraper --dir my-agent/capabilities              # per-agent (tru
 arc ext create scraper --dir my-agent/workspace/.capabilities   # agent-authored (UNTRUSTED, AST-validated)
 arc ext install ./my_capability.py                              # copies to ~/.arc/capabilities/
 arc ext validate ./my_capability.py
+arc ext inspect                                                  # selected/available/signed, all 4 extension families
+arc ext inspect --agent my-agent
+arc ext verify --agent my-agent                                  # non-zero exit on a refused selection
+
+# === Blueprints (signed preset-config bootstrap) ===
+arc blueprint list                                               # packaged + ~/.arc/blueprints presets
+arc blueprint show enterprise-ops
+arc blueprint apply enterprise-ops --agent my-agent               # verify -> deep-merge -> write
+arc blueprint apply enterprise-ops --agent my-agent --dry-run     # print merged config, no write
+arc blueprint verify enterprise-ops
+arc blueprint sign ./my-preset.toml                               # operator-sign, writes .arcsig sidecar
 
 # === Team messaging ===
 arc team init
@@ -251,9 +264,11 @@ While inside `arc agent chat`:
 
 | Tier | Telemetry | Audit | Retry | Fallback | OpenTelemetry | PII redaction + signing |
 |---|---|---|---|---|---|---|
-| `open` | off | off | off | off | off | off |
+| `personal` | off | off | off | off | off | off |
 | `enterprise` | ✅ | ✅ | ✅ (3x) | ✅ | off | off |
 | `federal` | ✅ | ✅ | ✅ (3x) | ✅ | ✅ (OTLP) | ✅ |
+
+Tiers are config-relaxable within limits (`arcagent.tiers.RELAXABLE_KNOBS`) — personal/enterprise may relax specific knobs, federal floors are never relaxable. A signed **blueprint** (`arc blueprint apply`) can only raise a deployment's tier floor (stringency-max merge), never lower it.
 
 `[security] tier` also sets the `execute_python` isolation floor: `federal` → VM (Firecracker/KVM), `enterprise`/`personal` → container. A `personal`-tier agent can opt into `[execution] relax_isolation = "off"` in its `config.toml` to run code directly on the host (no container) — rejected at `enterprise`/`federal`, which cannot go below their tier floor. `arc` forwards the agent's tier and this config to arcrun on every `execute_python` call.
 
@@ -283,7 +298,7 @@ Why this design:
 
 - **No reflection on user input.** All commands flow through argparse subparsers — no `eval`, no `getattr` on user strings.
 - **`--json` everywhere.** Structured output is the default for any data-returning command, so CI/CD pipelines can parse without scraping.
-- **Audited side-effects.** `arc gateway pair approve`, `arc team register`, `arc skill validate` — every operator action emits an arctrust audit event before completing.
+- **Audited side-effects.** `arc gateway pair approve`, `arc team register`, `arc skill validate`, `arc blueprint apply`/`sign` — every operator action emits an arctrust audit event before completing (`arc blueprint apply --dry-run` writes nothing and audits nothing).
 - **No interactive defaults.** Every interactive command has a non-interactive equivalent (e.g. `arc init --tier`, `arc agent build --check`) so it can be scripted without `expect`.
 
 ---

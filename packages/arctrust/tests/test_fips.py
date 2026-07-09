@@ -44,7 +44,9 @@ class TestAssertGate:
         with pytest.raises(ArcTrustFipsError):
             assert_fips_if_required(require_fips=True, algorithm="ecdsa-p256")
 
-    def test_required_rejects_non_approved_algorithm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_required_rejects_non_approved_algorithm(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # With a (simulated) validated backend, Ed25519 is still rejected —
         # the algorithm floor forces ECDSA-P256 at federal.
         monkeypatch.setattr("arctrust.fips.fips_backend_active", lambda: True)

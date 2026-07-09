@@ -8,6 +8,10 @@ dependencies = [
     "arc-agent",
     "arccmd",
     "arcgateway",
+    # arcmemory ships in the default workspace env so scaffolded agents
+    # (brain = "arcmemory") have a working Brain out of the box. arc-agent
+    # itself keeps it optional (no static import); this is the deployment env.
+    "arcmemory",
     "croniter>=6.2.2",
 ]
 
@@ -92,7 +96,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 # (arrows, ×) and a status print — line-length/ambiguous-unicode/print lints
 # do not apply to generated report content.
 "sbom/_gen_report.py" = ["E501", "RUF001", "T201"]
-"walkthroughs/**/*.ipynb" = ["S101", "B007", "S307", "S110", "T20", "F401", "F811", "E501", "F821", "E741", "E402", "I001"]
+"walkthroughs/**/*.ipynb" = ["S101", "B007", "S307", "S110", "T20", "F401", "F811", "E501", "F821", "E741", "E402", "I001", "S603", "S108", "A002"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -121,8 +125,23 @@ module = [
     "opentelemetry.exporter.otlp.*",
     "sqlite_vec",
     "sqlite_vec.*",
+    "sentence_transformers",
+    "sentence_transformers.*",
+    "slack_bolt",
+    "slack_bolt.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The Slack integration's @app.event handlers are decorated by the stub-less
+# optional slack_bolt lib (its decorators resolve to Any), so strict
+# untyped-decorator checks don't apply to this optional-dependency module.
+module = ["arcagent.modules.slack.bot"]
+disallow_untyped_decorators = false
+# slack_bolt has no stubs: connect_async is untyped when [slack] is installed
+# (needs a per-call ignore), but resolves to Any when it is not (ignore unused).
+# Don't warn on the ignore in the extra-absent env.
+warn_unused_ignores = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

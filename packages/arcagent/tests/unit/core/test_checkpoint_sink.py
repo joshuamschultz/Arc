@@ -26,7 +26,9 @@ def test_checkpoint_lands_in_operator_signed_worm(tmp_path: Path) -> None:
     agent_root.mkdir()
     operator = OperatorKey.generate()
 
-    sink = build_checkpoint_sink(agent_root, operator.into_signer(), actor_did="did:arc:test:exec/aa")
+    sink = build_checkpoint_sink(
+        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/aa"
+    )
     cp = _checkpoint("f" * 64)
     sink(cp)
 

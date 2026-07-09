@@ -92,9 +92,7 @@ def _reverify(path: Path, content: bytes) -> bool:
     return verify_artifact(content, manifest)
 
 
-def _restore(
-    snapshot: dict[Path, bytes | None], sidecar_snapshot: dict[Path, str | None]
-) -> None:
+def _restore(snapshot: dict[Path, bytes | None], sidecar_snapshot: dict[Path, str | None]) -> None:
     """Roll back written files + sidecars to their pre-patch state."""
     for path, original in snapshot.items():
         if original is None:

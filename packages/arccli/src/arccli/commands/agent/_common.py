@@ -160,7 +160,13 @@ allow_imports = []
 enabled = true
 
 [modules.memory.config]
-brain = "none"
+# Dual-speed analogical memory (arcmemory). Fresh agents get memory ON:
+# zero-LLM capture writes daily-log bullets (workspace/memory/daily-log/
+# YYYY-MM-DD.md), the episodic index (workspace/memory/index.db), and the
+# entity graph on every turn. Set brain = "none" for a memory-less agent.
+# Consolidation (entity cards + facts + insights) is opt-in — set
+# distill_provider/distill_model to an LLM to enable it.
+brain = "arcmemory"
 
 [modules.policy]
 enabled = true
@@ -195,7 +201,7 @@ from __future__ import annotations
 import ast
 import operator
 
-from arcagent.tools._decorator import tool
+from arcagent.tools import tool
 
 _OPS = {
     ast.Add: operator.add,
@@ -347,19 +353,11 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     (agent_dir / "capabilities").mkdir(exist_ok=True)
     (workspace / "capabilities").mkdir(exist_ok=True)
 
-    for subdir in [
-        "notes",
-        "entities",
-        "sessions",
-        "archive",
-        "library",
-        "library/scripts",
-        "library/templates",
-        "library/prompts",
-        "library/data",
-        "library/snippets",
-    ]:
-        (workspace / subdir).mkdir(parents=True, exist_ok=True)
+    # Only scaffold directories the runtime actually reads. Session transcripts
+    # land in workspace/sessions/. Memory (workspace/memory/index.db + entities)
+    # is created lazily by arcmemory when a Brain is selected, so it is not
+    # pre-made here.
+    (workspace / "sessions").mkdir(exist_ok=True)
 
 
 def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
@@ -373,9 +371,8 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
     sys.stdout.write("    workspace/\n")
     sys.stdout.write("      identity.md, policy.md, context.md\n")
     sys.stdout.write("      capabilities/          # agent-authored (UNTRUSTED, AST-validated)\n")
-    sys.stdout.write("      notes/, entities/\n")
-    sys.stdout.write("      sessions/, archive/\n")
-    sys.stdout.write("      library/scripts/, templates/, prompts/, data/, snippets/\n")
+    sys.stdout.write("      sessions/              # chat transcripts (JSONL)\n")
+    sys.stdout.write("      memory/                # lazily created when a Brain is enabled\n")
     sys.stdout.write("\n")
     sys.stdout.write("Next steps:\n")
     sys.stdout.write(f"  arc agent build {agent_dir}\n")

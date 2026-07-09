@@ -17,9 +17,7 @@ from arcrun.builtins.execute import (
 
 class TestFederalRouting:
     def test_federal_routes_to_vm(self) -> None:
-        assert (
-            resolve_execution_backend("federal", relax=None, platform_supports_vm=True) == "vm"
-        )
+        assert resolve_execution_backend("federal", relax=None, platform_supports_vm=True) == "vm"
 
     def test_federal_refuses_without_vm_support(self) -> None:
         # Fail closed — never a silent downgrade to container/local (REQ-003/030).
@@ -61,8 +59,7 @@ class TestEnterpriseRouting:
 class TestPersonalRouting:
     def test_personal_defaults_to_container(self) -> None:
         assert (
-            resolve_execution_backend("personal", relax=None, platform_supports_vm=True)
-            == "docker"
+            resolve_execution_backend("personal", relax=None, platform_supports_vm=True) == "docker"
         )
 
     def test_personal_container_relax(self) -> None:
@@ -75,8 +72,7 @@ class TestPersonalRouting:
     def test_personal_off_routes_to_local(self, relax: str) -> None:
         # Sandbox OFF is a first-class personal mode (REQ-020) → LocalBackend.
         assert (
-            resolve_execution_backend("personal", relax=relax, platform_supports_vm=True)
-            == "local"
+            resolve_execution_backend("personal", relax=relax, platform_supports_vm=True) == "local"
         )
 
     def test_personal_unknown_relax_rejected(self) -> None:
@@ -91,6 +87,5 @@ class TestRouterPurity:
 
     def test_tier_is_case_insensitive(self) -> None:
         assert (
-            resolve_execution_backend("PERSONAL", relax="OFF", platform_supports_vm=True)
-            == "local"
+            resolve_execution_backend("PERSONAL", relax="OFF", platform_supports_vm=True) == "local"
         )

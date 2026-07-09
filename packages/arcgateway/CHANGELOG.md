@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Simplification-sweep cleanup (no version bump — internal only, no public API change).
+
+### Changed
+- **`agent_did` now threads through the Slack and Mattermost adapters**, mirroring what
+  Telegram already did — `test_dual_adapter_chat` asserts the wired DID instead of the old
+  hardcoded `""`.
+- **Shared exponential-backoff helper** (`adapters/_backoff.py`) — the Telegram adapter's
+  hand-rolled formula and `_reconnect.py` now share one implementation; distinct per-adapter
+  policies stay parameterized, not collapsed into one.
+- Ed25519 signature checks now go through `arctrust.verify` instead of a hand-rolled PyNaCl
+  call.
+- Telegram's message splitting now uses the shared `_text` splitter helper.
+
+### Removed
+- **Unreachable Telegram retry-escalation path and the dead `DeliverySenderImpl` plumbing**
+  — no live caller; `delivery.py` shrank accordingly. `DeliveryTarget` (the parsed
+  `"platform:chat_id[:thread_id]"` address) is unaffected and still exported.
+
 ## [0.2.0] - 2026-04-26
 
 Audit hardening, pairing-signature enforcement at every tier, and broader executor coverage.

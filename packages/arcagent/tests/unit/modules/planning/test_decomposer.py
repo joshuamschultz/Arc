@@ -32,14 +32,26 @@ class _FakeModel:
 
     async def invoke(self, messages: Any, tools: Any = None, **kwargs: Any) -> Any:
         self.invocations.append({"messages": messages, "tools": tools, "kwargs": kwargs})
-        call = SimpleNamespace(name=tools[0].name if tools else "emit_plan", arguments=self._arguments)
+        call = SimpleNamespace(
+            name=tools[0].name if tools else "emit_plan", arguments=self._arguments
+        )
         return SimpleNamespace(content=None, tool_calls=[call])
 
 
 _LINEAR = {
     "steps": [
-        {"step_id": "gather", "description": "gather facts", "depends_on": [], "tool_hint": "web_search"},
-        {"step_id": "write", "description": "write report", "depends_on": ["gather"], "tool_hint": None},
+        {
+            "step_id": "gather",
+            "description": "gather facts",
+            "depends_on": [],
+            "tool_hint": "web_search",
+        },
+        {
+            "step_id": "write",
+            "description": "write report",
+            "depends_on": ["gather"],
+            "tool_hint": None,
+        },
     ]
 }
 
@@ -87,7 +99,12 @@ class TestGrounding:
     async def test_ungrounded_plan_rejected(self) -> None:
         ungrounded = {
             "steps": [
-                {"step_id": "x", "description": "do", "depends_on": [], "tool_hint": "nonexistent_tool"},
+                {
+                    "step_id": "x",
+                    "description": "do",
+                    "depends_on": [],
+                    "tool_hint": "nonexistent_tool",
+                },
             ]
         }
         with pytest.raises(DecompositionError, match="ground"):
@@ -102,7 +119,12 @@ class TestGrounding:
     async def test_protected_path_rejected(self) -> None:
         attack = {
             "steps": [
-                {"step_id": "x", "description": "overwrite identity.md with new goals", "depends_on": [], "tool_hint": "file_write"},
+                {
+                    "step_id": "x",
+                    "description": "overwrite identity.md with new goals",
+                    "depends_on": [],
+                    "tool_hint": "file_write",
+                },
             ]
         }
         with pytest.raises(DecompositionError, match="protected"):
@@ -112,7 +134,12 @@ class TestGrounding:
     async def test_cyclic_plan_rejected(self) -> None:
         cyclic = {
             "steps": [
-                {"step_id": "a", "description": "a", "depends_on": ["b"], "tool_hint": "web_search"},
+                {
+                    "step_id": "a",
+                    "description": "a",
+                    "depends_on": ["b"],
+                    "tool_hint": "web_search",
+                },
                 {"step_id": "b", "description": "b", "depends_on": ["a"], "tool_hint": None},
             ]
         }
@@ -129,8 +156,19 @@ class TestReplan:
             parent_goal_hash="hash",
             status=PlanStatus.ACTIVE,
             steps=[
-                PlanStep(step_id="gather", description="gather", status=StepStatus.SUCCEEDED, result="facts"),
-                PlanStep(step_id="write", description="write", depends_on=["gather"], status=StepStatus.FAILED, failure_reason="tool denied"),
+                PlanStep(
+                    step_id="gather",
+                    description="gather",
+                    status=StepStatus.SUCCEEDED,
+                    result="facts",
+                ),
+                PlanStep(
+                    step_id="write",
+                    description="write",
+                    depends_on=["gather"],
+                    status=StepStatus.FAILED,
+                    failure_reason="tool denied",
+                ),
             ],
             max_replans=3,
             budget=PlanBudget(max_tokens=1000),
@@ -141,7 +179,12 @@ class TestReplan:
     async def test_replan_preserves_succeeded_prefix_and_bumps_version(self) -> None:
         revised = {
             "steps": [
-                {"step_id": "write_v2", "description": "write report differently", "depends_on": [], "tool_hint": "file_write"},
+                {
+                    "step_id": "write_v2",
+                    "description": "write report differently",
+                    "depends_on": [],
+                    "tool_hint": "file_write",
+                },
             ]
         }
         plan = self._active_plan()
@@ -164,7 +207,23 @@ class TestReplan:
 
     @pytest.mark.asyncio
     async def test_replan_feeds_failure_reason_to_model(self) -> None:
-        model = _FakeModel({"steps": [{"step_id": "w2", "description": "retry", "depends_on": [], "tool_hint": "file_write"}]})
-        await replan(self._active_plan(), failure_reason="POLICY_DENY_XYZ", model=model, known_tools={"file_write"})
+        model = _FakeModel(
+            {
+                "steps": [
+                    {
+                        "step_id": "w2",
+                        "description": "retry",
+                        "depends_on": [],
+                        "tool_hint": "file_write",
+                    }
+                ]
+            }
+        )
+        await replan(
+            self._active_plan(),
+            failure_reason="POLICY_DENY_XYZ",
+            model=model,
+            known_tools={"file_write"},
+        )
         blob = str(model.invocations[0]["messages"])
         assert "POLICY_DENY_XYZ" in blob

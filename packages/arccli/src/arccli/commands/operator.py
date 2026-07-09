@@ -41,6 +41,25 @@ def load_operator_key(arc_dir: Path | None = None) -> OperatorKey:
     return OperatorKey.load(operator_key_path(base), generate_if_absent=True)
 
 
+def operator_public_key(arc_dir: Path | None = None) -> bytes | None:
+    """Resolve the on-disk operator public key for signature PINNING (read-only).
+
+    This is the key ``arc blueprint sign`` signs a preset with, so verification pins
+    a user blueprint's ``.arcsig`` against it: an attacker who self-signs with a random
+    keypair is refused because the manifest's key is not this one (SPEC-047 HIGH-1).
+
+    Read-only and side-effect-free — it NEVER bootstraps a key (unlike
+    :func:`load_operator_key`). Returns ``None`` when no operator key exists so the
+    caller can fail closed above the personal tier (an unpinned floor is no floor). A
+    present-but-tampered key raises through ``OperatorKey.load`` (covert-erasure guard).
+    """
+    base = Path(arc_dir).expanduser() if arc_dir is not None else DEFAULT_OPERATOR_DIR.parent
+    try:
+        return OperatorKey.load(operator_key_path(base), generate_if_absent=False).public_key
+    except FileNotFoundError:
+        return None
+
+
 def ensure_operator_key(arc_dir: Path) -> OperatorKey:
     """Generate + persist the operator key under ``arc_dir`` if it does not exist.
 
@@ -108,9 +127,10 @@ def _resolve_transit(sec: Any) -> FileNotaryTransit:
         transit.public_key(_OPERATOR_KEY_REF)
     except OSError as exc:
         raise SignerError(
-            f"custody=vault_transit but the transit at {keystore} cannot serve "
-            f"the operator key — refusing to fall back to in-process signing "
-            "(fail-closed, NFR-3). Provision the notary keystore or a Vault/HSM adapter."
+            f"custody=vault_transit (tier={sec.tier}) but the transit at {keystore} "
+            f"cannot serve the operator key — refusing to fall back to in-process "
+            "signing (fail-closed, NFR-3). Provision the notary keystore or a "
+            "Vault/HSM adapter, or run at tier=personal for on-disk in-process signing."
         ) from exc
     return transit
 
@@ -120,5 +140,6 @@ __all__ = [
     "ensure_operator_key",
     "load_operator_key",
     "operator_key_path",
+    "operator_public_key",
     "resolve_operator_signer",
 ]

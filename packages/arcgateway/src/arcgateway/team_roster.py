@@ -49,13 +49,15 @@ class RosterEntry:
 def list_team(*, team_root: Path, online_ids: set[str]) -> list[RosterEntry]:
     """Enumerate all agents under ``team_root`` and overlay online status.
 
-    Walks ``team_root`` for directories matching ``*_agent`` that contain an
-    ``arcagent.toml``. Skips other directories silently. Each TOML parse error
-    is logged at WARN and that agent is omitted (we never fail the whole
-    roster on one bad file — the fleet stays observable).
+    An agent is any immediate subdirectory of ``team_root`` that contains an
+    ``arcagent.toml`` — the presence of that file is the sole discovery signal,
+    so both ``arc agent create <name>`` (bare ``<name>/``) and the legacy
+    ``<name>_agent/`` layout are surfaced. Other directories are skipped
+    silently. Each TOML parse error is logged at WARN and that agent is omitted
+    (we never fail the whole roster on one bad file — the fleet stays observable).
 
     Args:
-        team_root: Directory containing ``<name>_agent/`` subdirs.
+        team_root: Directory containing per-agent subdirs.
         online_ids: Set of agent ids the caller knows are currently connected.
 
     Returns:
@@ -65,11 +67,9 @@ def list_team(*, team_root: Path, online_ids: set[str]) -> list[RosterEntry]:
     if not team_root.exists():
         return entries
 
-    for agent_dir in sorted(team_root.glob("*_agent")):
+    for toml_path in sorted(team_root.glob("*/arcagent.toml")):
+        agent_dir = toml_path.parent
         if not agent_dir.is_dir():
-            continue
-        toml_path = agent_dir / "arcagent.toml"
-        if not toml_path.exists():
             continue
         entry = _load_agent(agent_dir, toml_path, online_ids)
         if entry is not None:

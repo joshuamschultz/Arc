@@ -12,9 +12,12 @@ arc ui tail       — Connect to a running dashboard and stream events to stdout
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
 from pathlib import Path
+from types import FrameType
 from typing import Any, Protocol
 
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
@@ -119,27 +122,29 @@ def _maybe_open_browser(host: str, port: int, viewer_token: str) -> bool:
     return DefaultBrowserLauncher().open_dashboard(host, port, viewer_token)
 
 
-def _print_browser_open_fallback(
-    host: str,
-    port: int,
-    viewer_token: str,
-    *,
-    show_tokens: bool,
-) -> None:
-    """Print bootstrap instructions when `webbrowser.open` could not run.
+def _magic_link(host: str, port: int, viewer_token: str) -> str:
+    """Build the one-click, pre-authenticated dashboard URL.
 
-    Splits the URL and the token across two lines so neither carries the
-    other; the URL is safe to log, the token follows the same
-    masked-unless-`--show-tokens` rule as the rest of the startup banner.
-    No `#auth=...` fragment is ever emitted from this path (review C-2).
+    The viewer token rides in the URL *hash* (`#auth=<token>`), which the
+    browser never sends to the server — so it cannot land in uvicorn access
+    logs or a Referer header. The SPA's `bootstrapAuth()` consumes it on
+    load, persists it to localStorage, and strips the fragment.
     """
-    fmt = str if show_tokens else _mask_token
+    return f"http://{host}:{port}/#{BOOTSTRAP_HASH_KEY}={viewer_token}"
+
+
+def _print_browser_open_fallback(host: str, port: int) -> None:
+    """Point the operator at the magic-link when `webbrowser.open` failed.
+
+    Only reached on a loopback bind (the auto-open hook is registered
+    nowhere else), where `_start` has already printed the full magic-link
+    and token above. So this is a one-line nudge — the link is already on
+    screen for copy-paste.
+    """
     _write(
-        "  Browser did not auto-open. Visit the URL below and paste the "
-        "viewer token into the auth field:"
+        f"  Browser did not auto-open — copy the link above into a browser "
+        f"to reach http://{host}:{port}/ pre-authenticated."
     )
-    _write(f"    URL:          http://{host}:{port}/")
-    _write(f"    Viewer token: {fmt(viewer_token)}")
 
 
 # ---------------------------------------------------------------------------
@@ -197,26 +202,44 @@ def _start(args: argparse.Namespace) -> None:
     )
 
     is_loopback = host in LOOPBACK_HOSTS
-    # SR-4: tokens are masked unless --show-tokens; loopback never needs them
-    # (browser auto-bootstraps), so do not auto-flip show.
-    fmt = str if show_tokens else _mask_token
-    _write(f"ArcUI dashboard: http://{host}:{port}")
-    _write(f"  Viewer token:   {fmt(app.state.auth_config.viewer_token)}")
-    _write(f"  Operator token: {fmt(app.state.auth_config.operator_token)}")
-    _write(f"  Max agents:     {max_agents}")
+    viewer_token_value = app.state.auth_config.viewer_token
+    operator_token_value = app.state.auth_config.operator_token
 
-    if not is_loopback:
+    if is_loopback:
+        # Personal/local-dev: the whole point of `arc ui start` is a working
+        # one-click link. Print the full magic-link (token in the URL hash,
+        # never sent to the server) plus the bare token for the sign-in field
+        # fallback. The operator token stays masked unless --show-tokens —
+        # it grants control, and viewing the dashboard only needs the viewer.
+        _write("ArcUI dashboard is running. Open this link (already signed in):")
+        _write(f"    {_magic_link(host, port, viewer_token_value)}")
+        _write("")
+        _write("  Or open the dashboard and paste this token into the sign-in field:")
+        _write(f"    Dashboard:      http://{host}:{port}")
+        _write(f"    Viewer token:   {viewer_token_value}")
+        op_display = operator_token_value if show_tokens else _mask_token(operator_token_value)
+        _write(f"    Operator token: {op_display}")
+        _write(f"    Max agents:     {max_agents}")
+    else:
+        # Non-loopback: the link/token could reach a remote log shipper, so
+        # keep the strict masked-unless-`--show-tokens` posture and never
+        # emit the token inside a URL (review C-2).
+        fmt = str if show_tokens else _mask_token
+        _write(f"ArcUI dashboard: http://{host}:{port}")
+        _write(f"  Viewer token:   {fmt(viewer_token_value)}")
+        _write(f"  Operator token: {fmt(operator_token_value)}")
+        _write(f"  Max agents:     {max_agents}")
         _write(
             "  WARNING: bound to a non-loopback address. "
             "Tokens above are required for browser access; copy the viewer "
             "token and paste it into the dashboard's auth field."
         )
 
+    import asyncio
+
     import uvicorn
 
     if is_loopback and not no_browser:
-        viewer_token_value = app.state.auth_config.viewer_token
-
         # SPEC-019 T5.3: mark the bootstrapped token so AuthMiddleware emits
         # `ui.session_start` with auth_method="browser_bootstrap" on first
         # request from this token.
@@ -231,14 +254,49 @@ def _start(args: argparse.Namespace) -> None:
         async def _open_browser_on_ready() -> None:
             opened = _maybe_open_browser(host, port, viewer_token_value)
             if not opened:
-                _print_browser_open_fallback(
-                    host, port, viewer_token_value, show_tokens=show_tokens
-                )
+                _print_browser_open_fallback(host, port)
 
         app.state._extra_startup_hooks.append(_open_browser_on_ready)
 
+    # When a team_root is set, auto-start the messaging infra (NATS JetStream +
+    # agent registration) before serving, so the fleet works out of the box.
+    # The broker is spawned in its own bootstrap loop and reaped by PID after
+    # the (blocking) server returns — loop-independent, so uvicorn's own signal
+    # handling can never orphan it.
+    infra = None
+    if team_root is not None:
+        from arccli.commands._serve import bootstrap_infra
+
+        infra = asyncio.run(bootstrap_infra(team_root))
+        if infra is not None:
+            _install_infra_reaper(infra)
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
-    uvicorn.Server(config).run()
+    try:
+        uvicorn.Server(config).run()
+    finally:
+        if infra is not None:
+            infra.terminate_sync()
+
+
+def _install_infra_reaper(infra: Any) -> None:
+    """Reap the managed NATS broker on SIGTERM.
+
+    uvicorn's ``.run()`` returns cleanly on SIGINT (Ctrl-C) and normal exit — the
+    ``finally`` reaps the broker there. A raw SIGTERM does not trigger uvicorn's
+    clean shutdown on every platform, so install a process handler that
+    terminates the broker before re-raising the default action; the child broker
+    never outlives the dashboard.
+    """
+    import signal
+
+    def _on_sigterm(signum: int, _frame: FrameType | None) -> None:
+        infra.terminate_sync()
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    with contextlib.suppress(ValueError):  # not main thread → uvicorn handles it
+        signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 # ---------------------------------------------------------------------------

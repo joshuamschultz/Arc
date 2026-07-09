@@ -3,12 +3,12 @@
 # 📊 arcui
 
 ### **Real-Time Multi-Agent Dashboard**
-*Live WebSocket telemetry. Three-token auth. Filter by layer, agent, or team. Watch your fleet think in real time.*
+*Read-on-demand from the shared arcstore record. Two-token auth. Filter by layer, agent, or team. Watch your fleet think in near-real-time.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-300-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-386%2B-0055BC.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
-[![FastAPI](https://img.shields.io/badge/FastAPI-WebSocket-0073FE.svg)](#)
+[![Starlette](https://img.shields.io/badge/Starlette-WebSocket-0073FE.svg)](#)
 
 </div>
 
@@ -16,11 +16,15 @@
 
 ## ✨ What is arcui?
 
-`arcui` is the dashboard. Run it once. Point your agents at it. Watch them work.
+`arcui` is the dashboard. Run it once. Point it at your team directory. Watch your fleet work.
 
-It's a FastAPI server with WebSocket transport that receives live telemetry from running agents and renders a real-time UI for monitoring LLM calls, tool invocations, costs, and audit events. You can filter by layer (LLM / run / agent / team), by agent DID, or by team.
+It's a Starlette server, backed by `arcstore`'s durable spool + WORM record (the **Observe
+plane**), that renders a real-time UI for LLM calls, tool invocations, costs, and audit
+events read back on demand — agents don't need an opt-in reporter module to show up. You can
+filter by layer (LLM / run / agent / team), by agent DID, or by team. A WebSocket also pushes
+live team-chat messages (`/ws/chat/{agent_id}`).
 
-> 📡 **Live, per-event streaming. No polling. Three-token auth. Warm-start from JSONL traces.**
+> 📡 **Reads on demand from the shared arcstore record. Two-token auth (viewer/operator).**
 
 ---
 
@@ -31,16 +35,21 @@ flowchart TB
     classDef surface fill:#5A9CFF,stroke:#003B82,color:#002550
     classDef agent fill:#0073FE,stroke:#0055BC,color:#FFFFFF
     classDef llm fill:#003B82,stroke:#002550,color:#FFFFFF
+    classDef found fill:#002550,stroke:#001A38,color:#FFFFFF
     classDef other fill:#E9EAEB,stroke:#7F7F7F,color:#0B1220
 
-    arcagent[arcagent<br/>+ ui_reporter module]:::agent -.->|WebSocket events| arcui
+    arcagent[arcagent]:::agent -->|writes| arcstore[arcstore<br/>durable spool + WORM]:::found
+    arcstore -.->|Observe plane, read on demand| arcui
     arcllm[arcllm<br/>JSONLTraceStore]:::llm -->|attach_llm| arcui
     arcgateway[arcgateway<br/>fs / roster data plane]:::surface -->|in-process read| arcui
-    arcui[arcui<br/>FastAPI · WebSocket · UI]:::surface --> Browser[🖥 Browser]:::other
+    arcui[arcui<br/>Starlette · WebSocket · UI]:::surface --> Browser[🖥 Browser]:::other
     arcui --> Terminal[⌨ arc ui tail]:::other
 ```
 
-Depends on `arcllm` (for `JSONLTraceStore`), `arcgateway` (the read-only fs / roster data plane), and `arcstore`. `arcagent` and `arccli` depend on `arcui` for the `ui_reporter` module and `arc ui` commands.
+Depends on `arcllm` (for `JSONLTraceStore`), `arcgateway` (the read-only fs / roster data
+plane), and `arcstore` (the Observe-plane mirror it reads from). Nothing needs to import
+`arcui` to show up in it — `arcagent` writes through `arcstore` like everything else; `arccli`
+depends on `arcui` only for the `arc ui` commands.
 
 ---
 
@@ -55,19 +64,19 @@ pip install arcmas              # arcui is included in the meta package
 ## 🎬 Two-Terminal Quickstart
 
 ```bash
-# Terminal 1 — start the dashboard
-arc ui start --show-tokens
-# Output:
-#   viewer:    abc123...
-#   operator:  def456...
-#   agent:     ghi789...
-#   listening on http://127.0.0.1:8420
+# Terminal 1 — run an agent (writes activity through arcstore as it goes)
+arc agent serve my-agent
 
-# Terminal 2 — run an agent that streams to the dashboard
-arc agent serve my-agent --ui
+# Terminal 2 — start the dashboard, pointed at the team directory the agent lives in
+arc ui start --team-root ./team --show-tokens
+# Output:
+#   Viewer token:   abc123...
+#   Operator token: def456...
+#   ArcUI dashboard: http://127.0.0.1:8420
 ```
 
-Open http://127.0.0.1:8420 with the **viewer** token. Or stream to terminal:
+Open http://127.0.0.1:8420 with the **viewer** token — on a loopback bind the browser opens
+pre-authenticated, no copy-paste needed. Or stream to terminal:
 
 ```bash
 # Terminal 3 — JSONL stream of every event
@@ -83,7 +92,8 @@ from arcui import create_app
 import uvicorn
 
 app = create_app()
-# Tokens print to stdout on first run; persisted to ~/.arcagent/ui-token
+# Viewer/operator tokens print to stdout on first run (masked unless --show-tokens);
+# they live only in the running process, no on-disk token file.
 uvicorn.run(app, host="127.0.0.1", port=8420)
 ```
 
@@ -100,17 +110,14 @@ attach_llm(app, model)
 
 ---
 
-## 🔐 Three-Token Auth
+## 🔐 Two-Token Auth
 
-`arcui` uses three role-separated tokens. **All three are auto-generated at startup if you don't supply them.**
+`arcui` uses two role-separated tokens. **Both are auto-generated at startup if you don't supply them**, and printed masked (`--show-tokens` prints them in full). Tokens live only in the running process — there is no on-disk token file and no separate "agent" token or role.
 
 | Token | Lets You |
 |---|---|
 | **viewer** | Read events, view the dashboard, run `arc ui tail` |
-| **operator** | Approve pairings, kill sessions, push admin commands |
-| **agent** | Push events into the dashboard (used by `ui_reporter` module) |
-
-The agent token is auto-persisted to `~/.arcagent/ui-token` so any agent on the host can stream to the dashboard without re-discovering it.
+| **operator** | Mutate runtime config (PATCH `/api/arcllm-config`, `/api/config`), see unredacted LLM config |
 
 ```bash
 # Auto-generate tokens
@@ -119,11 +126,12 @@ arc ui start --show-tokens
 # Supply your own
 arc ui start \
   --viewer-token mytoken \
-  --operator-token optoken \
-  --agent-token agtoken
+  --operator-token optoken
 ```
 
-> ⚠️ `arc ui tail` requires `--viewer-token` explicitly. It does **not** auto-read `~/.arcagent/ui-token` — that file holds the *agent* token, not the viewer token.
+> ⚠️ `arc ui tail` requires `--viewer-token` explicitly.
+
+Agents don't push events into the dashboard over a token-authenticated channel at all (SPEC-026 FR-5): `arcui` is a pure **reader** of the durable record. It runs its own `StoreIngest` over the shared `arcstore` spool + WORM files (everything `arcllm`/`arcrun`/`arcagent` already wrote, whether or not `arcui` was running) into its own SQLite mirror, then serves read-on-demand REST from that mirror. There is no live push wire, so there's nothing for a compromised or crashed agent to leave dangling.
 
 ---
 
@@ -136,7 +144,10 @@ arc ui start --port 9000
 arc ui start --host 0.0.0.0                   # bind all interfaces (careful!)
 arc ui start --show-tokens                    # print full tokens
 arc ui start --max-agents 500                 # default 100
-arc ui start --traces-dir /var/arc/traces     # warm-start from JSONL traces
+arc ui start --team-root ./team               # agent-discovery root (SPEC-022 routes)
+arc ui start --gateway-config ./gateway.toml  # enable Slack/Telegram; default enables the web platform
+arc ui start --no-browser                     # headless / CI
+arc ui start --no-chat                        # disable the in-process web chat platform
 
 # Stream events
 arc ui tail --viewer-token <t>                # all events
@@ -154,25 +165,21 @@ arc ui tail --viewer-token <t> --group research-team       # filter by team
 
 ```python
 from arcui import (
-    create_app,            # FastAPI factory; takes AuthConfig, max_agents, JSONLTraceStore
+    create_app,            # Starlette factory; takes AuthConfig, max_agents, team_root, gateway_config, data_dir, ...
     serve,                 # convenience: create_app + uvicorn.run
     attach_llm,            # connect an arcllm model so traces stream live
 )
-
-# Used by arcagent's ui_reporter module:
-from arcagent.modules.ui_reporter import UIBridgeSink
 ```
 
-### How agents stream into the dashboard
+### How agent data reaches the dashboard
 
-`UIBridgeSink` is an arctrust audit sink. When the `ui_reporter` module is enabled in `arcagent.toml`, every audit event the agent emits also gets pushed to the dashboard over WebSocket:
-
-```toml
-[modules.ui_reporter]
-enabled = true
-```
-
-Then run with `arc agent serve my-agent --ui`. The agent automatically discovers the dashboard URL + agent token from `~/.arcagent/ui-token`.
+There is no live push wire from the agent process (SPEC-026 FR-5 tore it out — see
+**Two-Token Auth** above). `arcui` runs its own `StoreIngest` over the shared `arcstore`
+spool + WORM files and serves everything read-on-demand from its own SQLite mirror, so any
+agent that already wrote to the shared store shows up whether or not `arcui` was running when
+it did. `arc ui start --team-root <dir>` just points `arcui` at the right `arcstore` data
+dir / team directory to read from — nothing is registered or authenticated from the agent
+side, and there is no corresponding flag on `arc agent serve`.
 
 ---
 
@@ -203,38 +210,20 @@ The dashboard is a React single-page app with path-based routing. Bookmark a rou
 | Knowledge | `/knowledge` | `/api/knowledge/{id}` — context budget, memory, workspace tree, graph |
 | Tasks | `/tasks` | `/api/team/tasks` — across all agents, filter by status |
 | Tools & Skills | `/tools-skills` | `/api/team/tools-skills` — tools matrix + skills directory |
-| Security | `/security` | `/api/team/audit` + control actions + policy denials + connection panel |
+| Security | `/security` | `/api/team/audit` + policy denials + connection panel |
 | Policy | `/policy` | `/api/team/policy/{bullets,stats}` — fleet-wide ACE bullets |
 | Settings | `/settings` | arcllm config (PATCH `/api/arcllm-config`), operator-gated |
 
-### WS Subscribe Protocol (SPEC-022)
+### WebSockets
 
-In addition to the existing event_batch stream, `/ws` accepts:
+There is **no** `/ws` event-push / `subscribe:agent` feed — SPEC-026 FR-5 removed the live push
+pipeline (EventBuffer, SubscriptionManager, the per-agent `file_change` bridge), and the REST
+views read the `arcstore` mirror on demand instead. Two WebSockets remain:
 
-```json
-// Browser → server
-{"type": "subscribe:agent",   "agent_id": "alpha"}
-{"type": "unsubscribe:agent", "agent_id": "alpha"}
-
-// Server → browser
-{"type": "file_change", "agent_id": "alpha",
- "event_type": "policy:bullets_updated",
- "path": "workspace/policy.md",
- "payload": {"bullets": [...]}}
-```
-
-Page-specific event mapping:
-
-| Tab / Page | Subscribed events |
-|------------|-------------------|
-| Overview | `config:updated`, `pulse:updated`, `tasks:updated`, `schedules:updated` |
-| Sessions | `session:changed` |
-| Memory | `memory:updated`, `skills:updated` |
-| Policy | `policy:bullets_updated` |
-| Files | all of the above |
-| Agents fleet | `agent:online`, `agent:offline`, `roster:changed` |
-
-Reconnect handler re-fires `subscribe:agent` for every tracked agent automatically.
+| Socket | Direction | Purpose |
+|--------|-----------|---------|
+| `/ws/chat/{agent_id}` | bidirectional | interactive chat with a running agent |
+| `/ws/team` | read-only stream + one-way post | drains the arcteam bus to the browser (frames carry handles, mark `@mentions`); a `{"type": "post", "channel": ..., "text": ...}` frame is forwarded and signed as the human entity. `viewer`/`operator` tokens only. |
 
 ### Frontend (`web/`)
 
@@ -252,7 +241,7 @@ arc ui start --no-browser --show-tokens   # terminal 1 (note the viewer token)
 npm run dev                                # terminal 2 — proxies /api + /ws to :8420
 ```
 
-Key modules: `lib/api.ts` (bearer client), `lib/ws.ts` + `lib/arc-socket.ts` (RobustWebSocket + subscribe protocol), `store/live.ts` (zustand live store, `llm`/`run` layer routing), `hooks/use-chat.ts` (chat session with seq-gap reconnect), and reusable components `DataTable` / `FileTree` / `TraceDrawer` / `RunReplayDrawer` / `PolicyBulletCard`.
+Key modules: `lib/api.ts` (bearer client), `hooks/use-chat.ts` and `hooks/use-team-stream.ts` (the `/ws/chat` + `/ws/team` WebSocket clients), and reusable components `data-table.tsx` / `file-tree.tsx` / `trace-drawer.tsx` / `run-replay-drawer.tsx` / `policy-bullet.tsx`.
 
 ---
 
@@ -260,19 +249,19 @@ Key modules: `lib/api.ts` (bearer client), `lib/ws.ts` + `lib/arc-socket.ts` (Ro
 
 ### Token Separation
 
-Three tokens with three different scopes prevents the common "anyone with the URL can do anything" failure mode. A read-only viewer can't approve pairings. An agent token can push events but can't read other agents' streams.
+Two tokens with two different scopes prevents the common "anyone with the URL can do anything" failure mode. A read-only viewer can't mutate the runtime LLM/app config or see unredacted config secrets.
 
-### Token Persistence
+### No Token Persistence
 
-The agent token (and only the agent token) lives at `~/.arcagent/ui-token` with `0600` permissions, so any agent process on the host can find the dashboard without env vars or external service discovery.
+Both tokens are generated fresh in the running process on every `arc ui start` (or supplied explicitly via `--viewer-token`/`--operator-token`) and printed masked unless `--show-tokens`. There is no on-disk token file and no separate agent-facing token or role — see **Two-Token Auth** above for why agents don't need one.
 
 ### Default Bind Address
 
 `arc ui start` defaults to `127.0.0.1` — **not** `0.0.0.0`. The dashboard is local-by-default. Binding all interfaces requires explicit `--host 0.0.0.0`, and you should put it behind mTLS or a reverse proxy when you do.
 
-### Warm-Start Replay
+### Warm Start Is Automatic
 
-`arc ui start --traces-dir <path>` warm-starts the dashboard by replaying historical JSONL traces. This is how you get a meaningful view after a restart, without needing live agents to backfill state. The replay is read-only — it cannot inject events that look "live."
+There's no explicit "replay" flag: `arcui` runs its own `StoreIngest` over the shared `arcstore` spool + WORM files into its own SQLite mirror on every read, so a freshly-started dashboard already has the full durable history — including everything written while `arcui` wasn't running — without any live agents needing to backfill state.
 
 ---
 
@@ -282,9 +271,9 @@ The agent token (and only the agent token) lives at `~/.arcagent/ui-token` with 
 |---|---|
 | AU-2 | Live event surface for human review of all agent operations |
 | AU-9 | Read-only display of audit events; cannot modify the underlying log |
-| AU-11 | Long-term retention via JSONL trace dir; warm-start replay |
-| SI-4 | Continuous monitoring with sub-second event latency |
-| SC-13 | Three-token role-separated auth |
+| AU-11 | Long-term retention via the shared `arcstore` durable record; automatic warm start on restart |
+| SI-4 | Near-real-time monitoring, read-on-demand from the `arcstore` mirror |
+| SC-13 | Two-token role-separated auth |
 
 | OWASP Agentic | Mitigation |
 |---|---|
@@ -299,7 +288,7 @@ The agent token (and only the agent token) lives at `~/.arcagent/ui-token` with 
 uv run --no-sync pytest packages/arcui/tests
 ```
 
-- **Tests:** 300
+- **Tests:** 386+
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
 

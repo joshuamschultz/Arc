@@ -7,13 +7,18 @@ This command creates ONE Ed25519 keypair + DID up front and stores it under
 action is attributable and audited — the same Identity + Audit pillars an agent
 gets, for ad-hoc terminal work.
 
+The key dir defaults to ``${ARC_CONFIG_DIR:-~/.arc}/identity``; ``--dir`` sets the
+Arc config base (key lands under ``<dir>/identity``), and ``--key-dir`` pins the
+exact directory.
+
 Subcommands:
-    arc identity init   [--org ORG] [--type TYPE] [--key-dir DIR] [--force]
-    arc identity show   [--key-dir DIR]
+    arc identity init   [--org ORG] [--type TYPE] [--dir DIR] [--key-dir DIR] [--force]
+    arc identity show   [--dir DIR] [--key-dir DIR]
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -27,17 +32,40 @@ DEFAULT_KEY_DIR = Path("~/.arc/identity").expanduser()
 _ACTIVE_FILE = "active.did"
 
 
+def _default_key_dir() -> Path:
+    """Resolve the signing-authority dir: ``${ARC_CONFIG_DIR:-~/.arc}/identity``.
+
+    Mirrors ``arc init``'s config-dir resolution so an isolated ``ARC_CONFIG_DIR``
+    keeps the key alongside the rest of the Arc config instead of leaking to
+    ``~/.arc``.
+    """
+    env = os.environ.get("ARC_CONFIG_DIR")
+    base = Path(env).expanduser() if env else Path.home() / ".arc"
+    return base / "identity"
+
+
+def _resolve_key_dir(args: list[str]) -> Path:
+    """Pick the key dir from flags/env: ``--key-dir`` > ``--dir`` > ``ARC_CONFIG_DIR``."""
+    explicit = _parse_opt(args, "--key-dir", "")
+    if explicit:
+        return Path(explicit).expanduser()
+    base = _parse_opt(args, "--dir", "")
+    if base:
+        return Path(base).expanduser() / "identity"
+    return _default_key_dir()
+
+
 def _active_did_path(key_dir: Path) -> Path:
     return key_dir / _ACTIVE_FILE
 
 
-def load_signing_authority(key_dir: Path = DEFAULT_KEY_DIR) -> AgentIdentity | None:
+def load_signing_authority(key_dir: Path | None = None) -> AgentIdentity | None:
     """Load the stored signing authority, or None if none has been created.
 
     This is the function ``arcrun``/``arcllm`` direct-CLI entry points call to
     obtain an identity to sign/attribute a terminal run.
     """
-    key_dir = Path(key_dir).expanduser()
+    key_dir = _default_key_dir() if key_dir is None else Path(key_dir).expanduser()
     active = _active_did_path(key_dir)
     if not active.exists():
         return None
@@ -57,7 +85,7 @@ def _parse_opt(args: list[str], name: str, default: str) -> str:
 
 
 def _init(args: list[str]) -> None:
-    key_dir = Path(_parse_opt(args, "--key-dir", str(DEFAULT_KEY_DIR))).expanduser()
+    key_dir = _resolve_key_dir(args)
     org = _parse_opt(args, "--org", "default")
     agent_type = _parse_opt(args, "--type", "operator")
     force = "--force" in args
@@ -81,7 +109,7 @@ def _init(args: list[str]) -> None:
 
 
 def _show(args: list[str]) -> None:
-    key_dir = Path(_parse_opt(args, "--key-dir", str(DEFAULT_KEY_DIR))).expanduser()
+    key_dir = _resolve_key_dir(args)
     identity = load_signing_authority(key_dir)
     if identity is None:
         _out("No signing authority yet. Run: arc identity init")
@@ -93,9 +121,10 @@ def _show(args: list[str]) -> None:
 def identity_handler(args: list[str]) -> None:
     """Dispatch ``arc identity <subcommand>``."""
     if not args or args[0] in ("-h", "--help", "help"):
-        _out("Usage: arc identity <init|show> [options]")
+        _out("Usage: arc identity <init|show> [--dir DIR] [--key-dir DIR]")
         _out("  init   Create + store the signing authority (one time).")
         _out("  show   Show the current signing authority DID.")
+        _out("  Key dir defaults to ${ARC_CONFIG_DIR:-~/.arc}/identity.")
         return
     sub, rest = args[0], args[1:]
     if sub == "init":

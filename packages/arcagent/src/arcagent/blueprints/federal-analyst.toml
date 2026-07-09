@@ -1,0 +1,33 @@
+# SPEC-047 packaged blueprint — provenance-trusted (ships read-only in the wheel).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+#
+# NOTE: this preset sets ONLY security.tier=federal. It deliberately does NOT hand-set
+# require_fips / custody / signing_algorithm — the real SecurityConfig model_validator
+# forces those federal floors at load, so the floor holds by construction (AC-4).
+
+[blueprint]
+name = "federal-analyst"
+version = "1.0.0"
+tier = "federal"
+description = "SCIF-ready analyst: memory + skills on, FIPS + vault_transit floors forced at load."
+
+[security]
+tier = "federal"
+
+[telemetry]
+enabled = true
+export_traces = true
+
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+tier = "federal"
+
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
+tier = "federal"

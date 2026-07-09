@@ -84,8 +84,7 @@ def resolve_execution_backend(
     if tier_norm == "federal":
         if relax_norm is not None:
             raise IsolationRelaxationError(
-                "federal tier cannot be relaxed below its VM floor (relax="
-                f"{relax!r})."
+                f"federal tier cannot be relaxed below its VM floor (relax={relax!r})."
             )
         if not platform_supports_vm:
             raise IsolationUnavailableError(
@@ -97,8 +96,7 @@ def resolve_execution_backend(
     if tier_norm == "enterprise":
         if relax_norm is not None and relax_norm != "container":
             raise IsolationRelaxationError(
-                "enterprise tier cannot be relaxed below its container floor "
-                f"(relax={relax!r})."
+                f"enterprise tier cannot be relaxed below its container floor (relax={relax!r})."
             )
         return "docker"
 
@@ -392,9 +390,7 @@ async def run_shell(
 
     start = time.time()
     try:
-        result = await backend.run_separated(
-            command, cwd=cwd, env=_DEFAULT_ENV, timeout=timeout
-        )
+        result = await backend.run_separated(command, cwd=cwd, env=_DEFAULT_ENV, timeout=timeout)
     finally:
         await backend.close()
 

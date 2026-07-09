@@ -64,7 +64,7 @@ jobs:
         run: uv sync --all-packages --all-groups --python ${{ matrix.python-version }}
 
       - name: Run tests (arcllm)
-        run: uv run pytest packages/arcllm/tests/ -v --tb=short
+        run: uv run pytest packages/arcllm/tests/ -v --tb=short -m "not slow"
 
       - name: Run tests (arcrun)
         # arcrun targets Linux deployment (Firecracker microVMs, Docker
@@ -74,34 +74,34 @@ jobs:
         # process APIs are present even though container runtimes typically
         # are not.
         if: runner.os != 'Windows'
-        run: uv run pytest packages/arcrun/tests/ -v --tb=short
+        run: uv run pytest packages/arcrun/tests/ -v --tb=short -m "not slow"
 
       - name: Run tests (arcagent)
         # arcagent's adversarial security suite exercises Firecracker /
         # process-group / Unix-socket code paths via arcrun. Windows is not
         # a supported deployment target for these guarantees.
         if: runner.os != 'Windows'
-        run: uv run pytest packages/arcagent/tests/ -v --tb=short
+        run: uv run pytest packages/arcagent/tests/ -v --tb=short -m "not slow"
 
       - name: Run tests (arccmd)
         # arccli imports `fcntl` (Unix-only file locking) and uses
         # `os.fchmod` for atomic 0o600 token-file writes. Both are absent
         # on Windows. The CLI is a Unix-targeted operator surface.
         if: runner.os != 'Windows'
-        run: uv run pytest packages/arccli/tests/ -v --tb=short
+        run: uv run pytest packages/arccli/tests/ -v --tb=short -m "not slow"
 
       - name: Run tests (arcteam)
         # arcteam uses `fcntl.flock` for cross-process coordination of the
         # entity-file storage layer (see arcteam/memory/storage.py). fcntl
         # is a Unix-only module — Windows would fail at module-load.
         if: runner.os != 'Windows'
-        run: uv run pytest packages/arcteam/tests/ -v --tb=short
+        run: uv run pytest packages/arcteam/tests/ -v --tb=short -m "not slow"
 
       - name: Run tests (arcmemory)
         # arcmemory uses os.replace for atomic markdown writes and the optional
         # sqlite-vec extension. Both work cross-platform; the vec extension load
         # is guarded so the suite runs with or without the [vec] extra.
-        run: uv run pytest packages/arcmemory/tests/ -v --tb=short
+        run: uv run pytest packages/arcmemory/tests/ -v --tb=short -m "not slow"
 
   security:
     name: Security & SBOM

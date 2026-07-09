@@ -55,6 +55,7 @@ def _eval_arith(node: ast.AST) -> float:
         return op_fn(_eval_arith(node.operand))
     raise ValueError("Unsupported expression")
 
+
 _ENV_PATHS = [
     Path.cwd() / ".env",
     Path.home() / ".arc" / ".env",
@@ -213,9 +214,7 @@ def _exec_cmd(args: argparse.Namespace) -> None:
     tier, relax = _machine_isolation()
     caller_did, audit_sink = _direct_run_identity()
     asyncio.run(
-        _run_exec_async(
-            code, timeout, max_output, as_json, tier, relax, caller_did, audit_sink
-        )
+        _run_exec_async(code, timeout, max_output, as_json, tier, relax, caller_did, audit_sink)
     )
 
 

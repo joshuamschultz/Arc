@@ -191,7 +191,6 @@ class TestAzureOpenaiURL:
         url = call_args[0][0]
         assert "//" not in url.replace("https://", "")
 
-
     @pytest.mark.asyncio
     async def test_stream_uses_v1_path(self, monkeypatch):
         """invoke_stream() must hit the same Azure v1 path as invoke().

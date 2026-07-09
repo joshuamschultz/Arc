@@ -35,8 +35,12 @@ async def test_prose_path_seed_result_does_not_apply(tmp_path: Path) -> None:
     skill_md.write_text("## Steps\n1. do a thing\n", encoding="utf-8")
     reloaded: list[bool] = []
     imp = ArcSkillImprover(
-        tmp_path / "ws", config=_cfg(), tier="personal", llm=_EmptyLLM(),
-        skill_path=lambda name: skill_md, reload=lambda: reloaded.append(True),
+        tmp_path / "ws",
+        config=_cfg(),
+        tier="personal",
+        llm=_EmptyLLM(),
+        skill_path=lambda name: skill_md,
+        reload=lambda: reloaded.append(True),
     )
     await imp.observe(skill_name="s", tool_name="run", status="error", error_type="E")
     await imp.on_turn_end(turn=0, outcome="failure")
@@ -53,8 +57,9 @@ def test_skill_override_read_from_frontmatter(tmp_path: Path) -> None:
         "---\nname: s\nimprover:\n  max_lines_changed: 5\n  max_files_touched: 1\n---\n# body\n",
         encoding="utf-8",
     )
-    imp = ArcSkillImprover(tmp_path / "ws", config=_cfg(), tier="personal",
-                           skill_path=lambda name: skill_md)
+    imp = ArcSkillImprover(
+        tmp_path / "ws", config=_cfg(), tier="personal", skill_path=lambda name: skill_md
+    )
     override = imp._skill_override("s")
     assert isinstance(override, ChangeBoundConfig)
     assert override.max_lines_changed == 5
@@ -65,8 +70,9 @@ def test_skill_override_none_without_frontmatter(tmp_path: Path) -> None:
     sk.mkdir()
     skill_md = sk / "SKILL.md"
     skill_md.write_text("# no frontmatter\n", encoding="utf-8")
-    imp = ArcSkillImprover(tmp_path / "ws", config=_cfg(), tier="personal",
-                           skill_path=lambda name: skill_md)
+    imp = ArcSkillImprover(
+        tmp_path / "ws", config=_cfg(), tier="personal", skill_path=lambda name: skill_md
+    )
     assert imp._skill_override("s") is None
 
 
@@ -88,8 +94,13 @@ async def test_exempt_skill_is_not_optimized(tmp_path: Path) -> None:
             _Mut.called = True
             return None
 
-    imp = ArcSkillImprover(tmp_path / "ws", config=_cfg(), tier="personal",
-                           mutator=_Mut(), skill_path=lambda name: skill_md)
+    imp = ArcSkillImprover(
+        tmp_path / "ws",
+        config=_cfg(),
+        tier="personal",
+        mutator=_Mut(),
+        skill_path=lambda name: skill_md,
+    )
     await imp.observe(skill_name="s", tool_name="run", status="error", error_type="E")
     await imp.on_turn_end(turn=0, outcome="failure")
     await imp.maybe_improve()
@@ -107,10 +118,19 @@ def test_should_repair_code_false_without_scripts(tmp_path: Path) -> None:
         async def propose(self, **kw: object) -> None:
             return None
 
-    imp = ArcSkillImprover(tmp_path / "ws", config=_cfg(), tier="personal",
-                           mutator=_Mut(), skill_path=lambda name: skill_md)
+    imp = ArcSkillImprover(
+        tmp_path / "ws",
+        config=_cfg(),
+        tier="personal",
+        mutator=_Mut(),
+        skill_path=lambda name: skill_md,
+    )
     trace = SkillTrace(
-        trace_id="t", session_id="s", skill_name="s", skill_version=0, turn_number=0,
+        trace_id="t",
+        session_id="s",
+        skill_name="s",
+        skill_version=0,
+        turn_number=0,
         started_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
     )
     assert imp._should_repair_code(skill_md, [trace]) is False

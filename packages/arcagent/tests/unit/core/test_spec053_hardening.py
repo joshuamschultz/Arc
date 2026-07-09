@@ -68,7 +68,9 @@ def test_no_witness_below_federal(tmp_path: Path) -> None:
 
 def _anchor_head(agent_root: Path, operator: OperatorKey, head: str) -> dict[str, Any]:
     checkpoint = {"head_hash": head, "record_count": 1, "files": ["t.jsonl"]}
-    sink = build_checkpoint_sink(agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a")
+    sink = build_checkpoint_sink(
+        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a"
+    )
     sink(checkpoint)
     return checkpoint
 
@@ -129,8 +131,11 @@ def test_federal_witness_submit_failure_fails_closed(tmp_path: Path) -> None:
     agent_root.mkdir()
     operator = OperatorKey.generate()
     sink = build_checkpoint_sink(
-        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a",
-        witness=_FailingWitness(), federal=True,
+        agent_root,
+        operator.into_signer(),
+        actor_did="did:arc:test:exec/a",
+        witness=_FailingWitness(),
+        federal=True,
     )
     with pytest.raises(OSError, match="witness medium unavailable"):
         sink({"head_hash": "f" * 64, "record_count": 1, "files": []})
@@ -141,8 +146,11 @@ def test_nonfederal_witness_submit_failure_is_swallowed(tmp_path: Path) -> None:
     agent_root.mkdir()
     operator = OperatorKey.generate()
     sink = build_checkpoint_sink(
-        agent_root, operator.into_signer(), actor_did="did:arc:test:exec/a",
-        witness=_FailingWitness(), federal=False,
+        agent_root,
+        operator.into_signer(),
+        actor_did="did:arc:test:exec/a",
+        witness=_FailingWitness(),
+        federal=False,
     )
     sink({"head_hash": "0" * 64, "record_count": 1, "files": []})  # no raise (AU-5)
 

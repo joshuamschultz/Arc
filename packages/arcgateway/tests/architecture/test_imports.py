@@ -60,9 +60,8 @@ def test_arcui_does_not_import_arcagent() -> None:
     if not _ARCUI_SRC.exists():
         pytest.skip("arcui package not found in this checkout")
     bad = _violations(_ARCUI_SRC, ("arcagent",))
-    assert not bad, (
-        "arcui imports arcagent (forbidden by SDD §2.2):\n"
-        + "\n".join(f"  {p}: {m}" for p, m in bad)
+    assert not bad, "arcui imports arcagent (forbidden by SDD §2.2):\n" + "\n".join(
+        f"  {p}: {m}" for p, m in bad
     )
 
 
@@ -74,9 +73,8 @@ def test_arcgateway_does_not_import_arcui() -> None:
     if not _ARCGATEWAY_SRC.exists():
         pytest.skip("arcgateway package not found in this checkout")
     bad = _violations(_ARCGATEWAY_SRC, ("arcui",))
-    assert not bad, (
-        "arcgateway imports arcui (forbidden by SDD §2.2):\n"
-        + "\n".join(f"  {p}: {m}" for p, m in bad)
+    assert not bad, "arcgateway imports arcui (forbidden by SDD §2.2):\n" + "\n".join(
+        f"  {p}: {m}" for p, m in bad
     )
 
 
@@ -89,9 +87,8 @@ def test_adapters_do_not_import_arcui_or_arcagent() -> None:
     if not adapters_dir.exists():
         pytest.skip("arcgateway.adapters not present")
     bad = _violations(adapters_dir, ("arcui", "arcagent"))
-    assert not bad, (
-        "adapter imports an upstream module (forbidden by SDD §2.2):\n"
-        + "\n".join(f"  {p}: {m}" for p, m in bad)
+    assert not bad, "adapter imports an upstream module (forbidden by SDD §2.2):\n" + "\n".join(
+        f"  {p}: {m}" for p, m in bad
     )
 
 

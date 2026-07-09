@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Simplification-sweep cleanup (no version bump — internal only, no public API change).
+
+### Changed
+- `run()`/`run_async()` forwarding deduped; `verify_allowed_backends_signature` decomposed,
+  fail-closed semantics preserved.
+- Ed25519 signature checks in `backends/_verifier.py` now go through `arctrust.verify`
+  instead of a hand-rolled PyNaCl call.
+
+### Removed
+- The write-only `parallel_safe` field on `Tool`/capabilities — `Tool.classification`
+  (`read_only`/`state_modifying`) is the sole signal `BatchClassifier` reads to decide a
+  parallel batch. No behavior change; the field was never read.
+
 ## [0.9.0] - 2026-07-07
 
 SPEC-043 SOTA loop controls: arcrun gains the six loop-control mechanisms as pure mechanism (the guards and persistence live in arcagent). Every wired seam deletes its dead predecessor in the same change — no two implementations.

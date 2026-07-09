@@ -306,7 +306,9 @@ class TestConfigLimitsHonored:
         self._configure(tmp_path, default_timeout_seconds=120)
 
         created = json.loads(
-            await schedule_create(type="interval", prompt="Uses default timeout", every_seconds=300)
+            await schedule_create(
+                type="interval", prompt="Uses default timeout", every_seconds=300
+            )
         )
         assert created["timeout_seconds"] == 120
 

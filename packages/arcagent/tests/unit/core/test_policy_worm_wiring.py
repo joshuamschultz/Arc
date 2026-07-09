@@ -45,9 +45,7 @@ def _unsigned_call(agent_did: str) -> ToolCall:
 
 
 class TestPolicyWormWiring:
-    async def test_denied_evaluation_lands_in_verifiable_worm_chain(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_denied_evaluation_lands_in_verifiable_worm_chain(self, tmp_path: Path) -> None:
         from arcagent.core.agent import ArcAgent
 
         agent = ArcAgent(config=_config(tmp_path), config_path=tmp_path / "arcagent.toml")

@@ -455,11 +455,7 @@ class ToolRegistry:
                 # sees the union → GlobalLayer denies). The lock covers ONLY the
                 # O(1) decision; tool.execute and the human-approval await below
                 # run outside it (no over-locking, no human timeout under lock).
-                lock = (
-                    ledger.admission_lock(session_id)
-                    if ledger is not None
-                    else nullcontext()
-                )
+                lock = ledger.admission_lock(session_id) if ledger is not None else nullcontext()
                 async with lock:
                     accumulated = (
                         ledger.snapshot(session_id) if ledger is not None else frozenset()

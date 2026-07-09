@@ -6,7 +6,7 @@
 *Async ReAct execution engine. Tool sandbox, streaming, parallel dispatch, hash-chained event log.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-513-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-531%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/coverage-spawn_92%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![asyncio](https://img.shields.io/badge/runtime-asyncio-0073FE.svg)](#)
@@ -218,7 +218,7 @@ This is the foundation that makes the agent loop **forensically auditable**.
 
 ## ⚡ Parallel Tool Dispatch
 
-When the model returns multiple tool calls in one turn, `arcrun` can dispatch them in parallel — significantly cutting wall-clock time on independent calls. Each dispatch:
+When the model returns multiple tool calls in one turn, `arcrun` can dispatch them in parallel — significantly cutting wall-clock time on independent calls. `BatchClassifier` reads each call's `Tool.classification` (`read_only` vs `state_modifying`) — the sole signal that decides the batch: a read-only batch runs concurrently, semaphore-bounded; anything state-modifying or unclassified runs sequential, fail-closed. Each dispatch:
 
 - Runs in its own subprocess (sandbox boundary)
 - Gets its own `ToolContext` with per-call audit emission
@@ -296,7 +296,7 @@ This is what makes Arc usable for human-in-the-loop workflows — the human can 
 uv run --no-sync pytest packages/arcrun/tests
 ```
 
-- **Tests:** 513
+- **Tests:** 531+
 - **Coverage:** spawn module 92%; overall high
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean

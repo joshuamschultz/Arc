@@ -7,10 +7,98 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+Rough edges surfaced by a live manufacturing customer test (4 agents on real
+part/vendor/BOM data), fixed at the repo level so all future builds inherit them:
+
+- **F1 — bare `arc` crashed on non-TTY stdin.** Piped/CI/`arc < file` invocations threw a
+  prompt_toolkit `KeyError` from the raw-mode REPL. `arccli` now prints help and exits 0 when
+  stdin is not a terminal.
+- **F6 — `@tool` was only importable from a private module.** `tool`/`hook`/`background_task`/
+  `capability` are now re-exported from `arcagent.tools`; the scaffold, `arc ext create`, and the
+  create-tool skill templates use the public path.
+- **F7 — no public accessor for stamped tool metadata.** Added `arcagent.tools.capability_meta(fn)`.
+- **F8 — `@tool` accepted a sync function silently.** `@tool`/`@hook`/`@background_task` now raise
+  `TypeError` at decoration time on a non-`async def`.
+- **F9 — an unreachable NATS server dumped a ~30-line traceback** on every solo-agent run before
+  degrading. The messaging bootstrap now bounds the connect, quiets nats-py's async error callback,
+  and degrades to the in-memory bus with a single clean warning.
+
 ### Changed
 
+- **Memory ON by default in scaffolded agents.** `arc agent create` and `arc init` now write
+  `[modules.memory].config.brain = "arcmemory"` (matching all three SPEC-047 blueprints), and
+  `arcmemory` ships in the full-stack (`arcmas`) and workspace dev installs. A fresh agent now
+  has a working Brain out of the box: zero-LLM capture writes daily-log bullets to
+  `workspace/memory/daily-log/YYYY-MM-DD.md`, the episodic index to `workspace/memory/index.db`,
+  and the entity graph each turn. Consolidation (entity cards + facts + insights) stays opt-in
+  via `distill_provider`. The framework *code* default (no `[modules.memory]` config at all)
+  remains `none`, so federal absent-config deployments stay memory-off unless a config or
+  blueprint opts in. Fixes the prior state where a scaffolded agent had `brain = "none"` and
+  `arcmemory` was not installed, so `workspace/memory/` was never created and nothing persisted.
+- **Agent scaffold trimmed to used directories.** `arc agent create` no longer materializes the
+  unused `workspace/{notes,entities,archive,library/*}` dirs (no runtime code read them); it
+  scaffolds only `capabilities/` + `sessions/`. `workspace/memory/` is created lazily by
+  arcmemory on first write. The daily-log (`memory/daily-log/`) — not the old empty `notes/` —
+  is the per-day context journal.
+- **`scripts/arc-stack.sh` repaired against current code.** Dropped the removed `--agent-token`
+  flag (which hard-failed `arc ui start`) and the removed `ui_reporter` handshake probe (which
+  reported `0/N connected` and exited 1 on every start); agent liveness is now "process survived
+  boot," matching the SPEC-026 arcstore read-on-demand model (no agent-side push wire).
 - **README + documentation rebrand** — Root and per-package READMEs realigned to the CTG Federal brand system (navy `#002550` → azure `#0073FE` blues with a single orange `#F68D2E` accent, replacing the prior rainbow Tailwind palette). New TUI-framed banner on the root README.
 - **Architecture diagram corrected and redrawn** — The dependency graph now reflects the real layered direction (every edge points down toward the `arctrust` / `arcstore` foundation: `arcrun → arcllm`, `arcagent → arcrun`, surfaces → agent, entry → surfaces). Added a branded SVG stack diagram at `docs/assets/arc-architecture.svg`. `arcstore` (operational storage) is now shown as a foundation package alongside `arctrust`; mermaid `classDef` colors switched to the brand palette.
+
+## [2026-07-08] — SPEC-044 skill self-improvement, SPEC-047 extensibility, simplification sweep
+
+Ships as:
+
+- `arc-agent` 0.13.1 → 0.15.0
+- `arccmd` (arccli) 0.5.1 → 0.6.0
+- `arcskill` 0.1.2 → 0.2.0
+
+See each package `CHANGELOG.md` for full detail. Highlights:
+
+### Added
+
+- **SPEC-044 — `arcskill` becomes the optional skill self-improvement supercharger.**
+  The `arcagent/modules/skill_improver/` logic relocated to `arcskill.improver` (no-legacy;
+  arcagent source net **down** ~2,400 LOC) and grew into a code-repairing, golden-task-gated,
+  bounded, reversible self-modification system: `BundlePatch`/`LLMCodeMutator` code-repair
+  mutation, a hard golden-task eval acceptance gate (judge only ranks), per-tier `ChangeBound`
+  edit budgets, a nudge → usage → retire `SkillLifecycle`, and an integrity chain that
+  re-signs + re-verifies every patched file. arcagent gained the thin `arcagent.skilladapt`
+  seam (`SkillAdapter` Protocol + `NullSkillAdapter` + config-select `none`/`arcskill`/signed
+  BYO) — arcagent runs skills fine on its own; installing `arcskill` and selecting it
+  supercharges them.
+- **SPEC-047 — extensibility as a first-class product property.** Generalized the Brain
+  (SPEC-041) and SkillAdapter (SPEC-044) select-one seams into one `arcagent.extension`
+  (`ExtensionPoint` + `select_extension`) mechanism covering four families (`brain`/`skills`
+  select-one, `tools`/`hook-builds` scan-many). Added signed, versioned TOML **blueprints**
+  (`arcagent.blueprints`) — three provenance-trusted packaged presets
+  (`personal-assistant`/`enterprise-ops`/`federal-analyst`) plus signed `~/.arc/blueprints/`
+  user presets — and `arcagent.tiers` (`RelaxableKnob` + `resolve_tier_floor`), the one
+  declared config-relaxable tier surface. New `arccli` operator surface: `arc blueprint
+  list/show/apply/verify/sign`, `arc ext inspect/verify`, `arc init --blueprint`.
+- **Tier vocabulary unified to `personal`/`enterprise`/`federal` everywhere** — `open` is
+  removed (no alias) from `arc init`, `arcllm.toml`, `arcagent.toml`, and `gateway.toml`.
+
+### Changed
+
+- **Simplification sweep (−18.7k LOC)** — a cross-package refactor that deleted dead and
+  unwired code and wired several previously-inert features onto their real execution paths:
+  the legacy `browser`/`scheduler`/`session`/`voice`/`pulse`/`web`/`policy`/`memory_acl`
+  `Module` classes and their duplicate tooling layers are gone in favor of the live
+  capability-loader path (`web_search`/`web_extract` now actually work in production);
+  `arcagent.core.metrics`, `settings_manager.py`, and `protocols.py` dead lifecycle code
+  removed; 7 legacy `create_tool` factories and the dead `DynamicToolLoader` sandbox deleted;
+  duplicated formulas (exponential backoff, provider-name regexes, canonical-JSON signing)
+  deduped into shared helpers (`arctrust` now owns one canonical JSON serializer, adopted
+  cross-package with a byte-identity test); `RootTokenBudget` (LLM10) now enforced on the
+  real spawn paths; `arcteam` gained `TeamFileStore` path-traversal hardening and dropped the
+  unwired `Roster`/presence surface; `arcui` dropped the dead agent-control path and vestigial
+  agent auth role (there is no more on-disk UI token file — tokens live only in the running
+  process).
 
 ## [2026-04-26] — Major monorepo refactor
 

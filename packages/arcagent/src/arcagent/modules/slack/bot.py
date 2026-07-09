@@ -155,8 +155,11 @@ class SlackBot:
         # Create Socket Mode handler and connect
         self._handler = AsyncSocketModeHandler(self._app, app_token)
         try:
-            # reason: slack_sdk's AsyncSocketModeHandler ships no type stubs
-            await self._handler.connect_async()  # type: ignore[no-untyped-call]  # Non-blocking — NOT start_async()
+            # Non-blocking — NOT start_async(). slack_bolt ships no type stubs, so
+            # connect_async is an untyped call when the optional [slack] extra is
+            # installed (the module override drops the unused-ignore warning when
+            # it is not).
+            await self._handler.connect_async()  # type: ignore[no-untyped-call]
         except Exception:  # reason: fail-open — log + continue
             _logger.exception("Failed to establish Socket Mode connection")
             self._emit_event("slack:error", {"error": "connection_failed"})

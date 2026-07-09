@@ -104,22 +104,21 @@ class TestCreate:
         assert config["agent"]["name"] == "test-bot"
         assert config["telemetry"]["service_name"] == "test-bot"
 
+    def test_create_defaults_memory_to_arcmemory(self, tmp_path):
+        # Fresh agents get memory ON so daily-log + episodic index populate.
+        _arc("agent", "create", "mem-bot", "--dir", str(tmp_path))
+        config = tomllib.loads((tmp_path / "mem-bot" / "arcagent.toml").read_text())
+        assert config["modules"]["memory"]["enabled"] is True
+        assert config["modules"]["memory"]["config"]["brain"] == "arcmemory"
+
     def test_create_workspace_structure(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
         agent_root = tmp_path / "my-agent"
         ws = agent_root / "workspace"
+        # Only directories the runtime actually reads are scaffolded.
         expected_workspace_dirs = [
-            "notes",
-            "entities",
             "capabilities",
             "sessions",
-            "archive",
-            "library",
-            "library/scripts",
-            "library/templates",
-            "library/prompts",
-            "library/data",
-            "library/snippets",
         ]
         for subdir in expected_workspace_dirs:
             assert (ws / subdir).is_dir(), f"Missing workspace dir: {subdir}"
@@ -128,6 +127,14 @@ class TestCreate:
         # Old SPEC-021-deprecated layout must not reappear.
         assert not (ws / "extensions").exists(), "workspace/extensions/ should be gone"
         assert not (ws / "skills").exists(), "workspace/skills/ should be gone"
+        # Dead scaffold no code ever read — removed to keep the workspace lean.
+        for gone in ("notes", "entities", "archive", "library"):
+            assert not (ws / gone).exists(), f"workspace/{gone}/ should no longer be scaffolded"
+        # memory/ is created lazily by arcmemory when a Brain is selected,
+        # not pre-made by the scaffold.
+        assert not (ws / "memory").exists(), (
+            "workspace/memory/ should be created lazily, not scaffolded"
+        )
 
     def test_create_identity_file(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`arcmemory` added to the full-stack install.** Scaffolded agents now default to
+  `brain = "arcmemory"`, so the whole-stack meta-package ships the memory substrate — a fresh
+  `pip install arcmas` agent has a working Brain (daily-log + episodic index + entity graph) out
+  of the box. `arc-agent` keeps arcmemory an optional import (clean layering); arcmas provides it.
+
 ## [0.3.0] - 2026-04-26
 
 Refreshed package map for the post-refactor monorepo. README rewritten around the four pillars (ADR-019).

@@ -236,6 +236,7 @@ dependencies = [
     { name = "arc-agent" },
     { name = "arccmd" },
     { name = "arcgateway" },
+    { name = "arcmemory" },
     { name = "croniter" },
 ]
 
@@ -272,6 +273,7 @@ requires-dist = [
     { name = "arc-agent", editable = "packages/arcagent" },
     { name = "arccmd", editable = "packages/arccli" },
     { name = "arcgateway", editable = "packages/arcgateway" },
+    { name = "arcmemory", editable = "packages/arcmemory" },
     { name = "croniter", specifier = ">=6.2.2" },
 ]
 
@@ -305,7 +307,7 @@ tutorial = [
 
 [[package]]
 name = "arc-agent"
-version = "0.14.0"
+version = "0.15.0"
 source = { editable = "packages/arcagent" }
 dependencies = [
     { name = "aiorwlock" },
@@ -389,7 +391,7 @@ dev = [
 
 [[package]]
 name = "arccmd"
-version = "0.5.1"
+version = "0.6.0"
 source = { editable = "packages/arccli" }
 dependencies = [
     { name = "arc-agent", extra = ["telegram"] },
@@ -548,10 +550,14 @@ version = "0.3.0"
 source = { editable = "packages/arcmas" }
 dependencies = [
     { name = "arccmd" },
+    { name = "arcmemory" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "arccmd", editable = "packages/arccli" }]
+requires-dist = [
+    { name = "arccmd", editable = "packages/arccli" },
+    { name = "arcmemory", editable = "packages/arcmemory" },
+]
 
 [[package]]
 name = "arcmemory"
@@ -563,6 +569,7 @@ dependencies = [
     { name = "arctrust" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "sqlite-vec" },
 ]
 
 [package.optional-dependencies]
@@ -590,6 +597,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=3.0" },
+    { name = "sqlite-vec", specifier = ">=0.1.6" },
     { name = "sqlite-vec", marker = "extra == 'vec'", specifier = ">=0.1.6" },
 ]
 provides-extras = ["vec", "local"]
@@ -649,6 +657,7 @@ name = "arcstore"
 version = "0.1.0"
 source = { editable = "packages/arcstore" }
 dependencies = [
+    { name = "arctrust" },
     { name = "pydantic" },
 ]
 
@@ -669,6 +678,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "arctrust", editable = "packages/arctrust" },
     { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.29" },
     { name = "boto3", marker = "extra == 'cloud'", specifier = ">=1.34" },
     { name = "pydantic", specifier = ">=2.0,<3" },

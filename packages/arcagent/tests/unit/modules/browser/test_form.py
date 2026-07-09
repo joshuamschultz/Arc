@@ -64,9 +64,7 @@ async def _snapshot(config: BrowserConfig) -> tuple[AsyncMock, AccessibilityMana
 class TestBrowserFillForm:
     """browser_fill_form compound tool."""
 
-    async def test_fill_multiple_fields(
-        self, configure_browser: Callable[..., _State]
-    ) -> None:
+    async def test_fill_multiple_fields(self, configure_browser: Callable[..., _State]) -> None:
         config = BrowserConfig()
         cdp, ax = await _snapshot(config)
         configure_browser(config, cdp=cdp, ax=ax)

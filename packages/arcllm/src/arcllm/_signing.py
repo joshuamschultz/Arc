@@ -49,9 +49,7 @@ def _decode_seed(value: str) -> bytes:
             "signing key must be a hex-encoded 32-byte seed for asymmetric signing"
         ) from e
     if len(seed) != _SEED_BYTES:
-        raise ArcLLMConfigError(
-            f"signing key must decode to {_SEED_BYTES} bytes, got {len(seed)}"
-        )
+        raise ArcLLMConfigError(f"signing key must decode to {_SEED_BYTES} bytes, got {len(seed)}")
     return seed
 
 

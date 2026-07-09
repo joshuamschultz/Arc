@@ -36,9 +36,7 @@ class _ScriptedExecutor:
 
     async def run_step(self, step: PlanStep, *, plan: Plan) -> StepOutcome:
         self.ran.append(step.step_id)
-        return self._outcomes.get(
-            step.step_id, StepOutcome(StepStatus.SUCCEEDED, result="ok")
-        )
+        return self._outcomes.get(step.step_id, StepOutcome(StepStatus.SUCCEEDED, result="ok"))
 
 
 def _plan(steps: list[PlanStep], *, max_replans: int = 2) -> Plan:
@@ -102,7 +100,9 @@ class TestHappyPath:
 
 class TestReplan:
     @pytest.mark.asyncio
-    async def test_failed_step_triggers_bounded_replan_then_completes(self, tmp_path: Path) -> None:
+    async def test_failed_step_triggers_bounded_replan_then_completes(
+        self, tmp_path: Path
+    ) -> None:
         sink = _CapturingSink()
         store = _store(tmp_path, sink)
         plan = _plan([PlanStep(step_id="a", description="a")])
@@ -197,9 +197,7 @@ class TestAggregateBudget:
 
             async def run_step(self, step: PlanStep, *, plan: Plan) -> StepOutcome:
                 self.ran.append(step.step_id)
-                return StepOutcome(
-                    StepStatus.SUCCEEDED, result="ok", tokens_used=500
-                )
+                return StepOutcome(StepStatus.SUCCEEDED, result="ok", tokens_used=500)
 
         ex = _Burner()
         orch = PlanOrchestrator(store, ex, replan_fn=_never_replan)

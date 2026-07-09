@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bare `arc` no longer crashes on non-TTY stdin (F1)** — piped/CI/`arc < file` invocations print
+  help and exit 0 instead of throwing a prompt_toolkit `KeyError` from the raw-mode REPL.
+
+### Changed
+
+- **Scaffold/`arc ext create` templates use the public tool import** — `from arcagent.tools import
+  tool` instead of the private `arcagent.tools._decorator` (F6).
+- **`arc agent create` / `arc init` default memory ON** — both now scaffold
+  `[modules.memory].config.brain = "arcmemory"` (matching the SPEC-047 blueprints), so a fresh
+  agent captures daily-log bullets (`workspace/memory/daily-log/YYYY-MM-DD.md`), the episodic
+  index, and the entity graph out of the box. Set `brain = "none"` for a memory-less agent.
+- **`arc agent create` scaffold trimmed** — only the directories the runtime reads
+  (`capabilities/`, `sessions/`) are created; the unused `workspace/{notes,entities,archive,library/*}`
+  dirs are gone. `workspace/memory/` is created lazily by arcmemory on first write.
+
+## [0.6.0] - 2026-07-08
+
+SPEC-047 — the operator surface for extensibility: preset-config blueprints, extension-point
+inspection, and a tier-vocabulary cleanup.
+
+### Added
+- `arc blueprint` — `list` / `show` / `apply [--agent] [--dry-run]` / `verify` / `sign`.
+  `apply` verifies (fail-closed above personal), deep-merges the preset UNDER the target's
+  existing config (preserving identity + user keys — NOT a clobber-write), floors the tier by
+  stringency-max, materializes the concrete `arcagent.toml`, and audits the apply (operator
+  WORM sink at enterprise/federal, else structured log).
+- `arc ext inspect` / `arc ext verify` — the four-family extension-point view (selected /
+  available / signed) over the live config + `CapabilityRegistry`. `verify` exits non-zero on a
+  refusal (federal change-control gate). Folded into the existing `arc ext` (no colliding
+  top-level command).
+- `arc init --blueprint <name>` — bootstrap from a preset, deep-merged UNDER the init defaults.
+
+### Changed
+- **Tier vocabulary unified to `personal` everywhere.** `arc init` no longer accepts `open`
+  (removed, no alias); all three generated files (`arcllm.toml`, `arcagent.toml`, `gateway.toml`)
+  now use the security vocab `personal` / `enterprise` / `federal`, fixing the arcllm.toml leak.
+  The generated `arcagent.toml` is now assembled as a dict and serialized, enabling the
+  `--blueprint` deep-merge.
+- `arccli.__version__` now derives from the installed distribution metadata (fallback literal).
+
+### Security
+- **Blueprint apply/verify pins to the deployment operator key (adversarial-review HIGH-1).**
+  `apply_to_disk`, `arc blueprint show/verify/list`, and `arc init --blueprint` resolve the
+  operator public key read-only via the new `operator_public_key(arc_dir)` and pass it to
+  `resolve_blueprint`/`list_blueprints`, so above personal a user preset must be signed by the
+  operator key (`arc blueprint sign`), not merely self-consistent. An unresolvable operator key
+  denies fail-closed.
+- **`arc blueprint apply --dry-run` no longer writes a false WORM audit record (MED-2).**
+  `audit_apply` moved inside the `if not dry_run` write guard — a dry run now writes no config
+  and emits no `blueprint.applied` record.
+- **`arc ext inspect`/`verify` pins capability signed-status to the agent DID key (HIGH-1)**, so a
+  wrong-key self-signed capability is labeled unsigned rather than falsely signed.
+
 ## [0.5.1] - 2026-07-06
 
 SPEC-037: WORM/audit signing goes through the arctrust `Signer` seam.

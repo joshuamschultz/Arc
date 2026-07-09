@@ -68,8 +68,9 @@ async def test_ac6_operator_audit_vs_agent_did_artifact(tmp_path: Path) -> None:
     sink = WormSink(chain, operator.into_signer())
     imp = ArcSkillImprover(
         tmp_path / "ws",
-        config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                              min_golden_cases=1),
+        config=ImproverConfig(
+            min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+        ),
         tier="enterprise",
         mutator=_FixMutator(),
         eval_runner=_Runner(),
@@ -106,8 +107,9 @@ def test_rollback_cools_off_and_audits(tmp_path: Path) -> None:
             self.events.append(e)
 
     sink = _Sink()
-    imp = ArcSkillImprover(ws, config=ImproverConfig(cooloff_turns=100), tier="federal",
-                           audit_sink=sink)
+    imp = ArcSkillImprover(
+        ws, config=ImproverConfig(cooloff_turns=100), tier="federal", audit_sink=sink
+    )
     imp._candidate_store.save("sk", Candidate(id="abc123", text="v1\n", generation=1), active=True)
 
     imp.rollback("sk", "abc123")

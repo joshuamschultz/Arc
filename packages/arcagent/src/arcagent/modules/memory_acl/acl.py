@@ -150,9 +150,7 @@ class SessionACL(BaseModel):
                 cross_session_visibility=config.default_for_tier(),
             )
 
-        visibility = _coerce_visibility(
-            acl_data.get("cross_session_visibility", ""), config
-        )
+        visibility = _coerce_visibility(acl_data.get("cross_session_visibility", ""), config)
 
         classification_raw: str = parsed.get("classification", "unclassified")
         valid_cls = {"unclassified", "cui", "secret"}

@@ -149,9 +149,7 @@ class HumanGate:
         if channel is None:
             return False
         try:
-            return await asyncio.wait_for(
-                channel(request), timeout=self._config.timeout_seconds
-            )
+            return await asyncio.wait_for(channel(request), timeout=self._config.timeout_seconds)
         except TimeoutError:
             return False
         except Exception:  # reason: fail-closed — any channel error denies
@@ -194,9 +192,7 @@ class _OperatorApprovalAuthority:
 
     @property
     def did(self) -> str:
-        return did_from_public_key(
-            self._signer.public_key, org="operator", agent_type="approver"
-        )
+        return did_from_public_key(self._signer.public_key, org="operator", agent_type="approver")
 
     @property
     def public_key(self) -> bytes:

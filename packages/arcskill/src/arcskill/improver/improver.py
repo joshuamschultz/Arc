@@ -185,7 +185,9 @@ class ArcSkillImprover:
             skill_name, self._store.turn_number + self._config.cooloff_turns
         )
         self._emit_audit(
-            skill_name, "skill.mutation.rolled_back", "rolled_back",
+            skill_name,
+            "skill.mutation.rolled_back",
+            "rolled_back",
             extra={"candidate_id": candidate_id},
         )
 
@@ -430,7 +432,10 @@ class ArcSkillImprover:
             trace_ids=trace_ids,
         )
         self._emit_audit(
-            skill_name, "skill.mutation.applied", "applied", payload_hash=new_hash,
+            skill_name,
+            "skill.mutation.applied",
+            "applied",
+            payload_hash=new_hash,
             extra=event.to_dict(),
         )
 
@@ -464,9 +469,7 @@ class ArcSkillImprover:
     def _emit_lifecycle_audit(self, event: LifecycleEvent) -> None:
         """Emit a tier-stamped lifecycle-transition audit event (operator-signed WORM)."""
         action = (
-            "skill.lifecycle.revived"
-            if event.to_state == "active"
-            else "skill.lifecycle.retired"
+            "skill.lifecycle.revived" if event.to_state == "active" else "skill.lifecycle.retired"
         )
         self._emit_audit(event.skill_name, action, event.to_state, extra=event.to_dict())
 

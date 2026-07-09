@@ -92,9 +92,7 @@ def test_federal_env_routes_to_vm_no_local_relax(
     assert run_cmd._machine_isolation() == ("federal", None)
 
 
-def test_machine_config_tier_is_sourced(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_machine_config_tier_is_sourced(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     cfg = tmp_path / "arcagent.toml"
     cfg.write_text('[security]\ntier = "enterprise"\n')
     monkeypatch.setattr(run_cmd, "_MACHINE_CONFIG", cfg)

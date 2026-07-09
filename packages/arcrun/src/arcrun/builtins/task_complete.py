@@ -103,9 +103,7 @@ def make_task_complete_tool() -> Tool:
     )
 
 
-BudgetBreachReason = Literal[
-    "max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade"
-]
+BudgetBreachReason = Literal["max_turns", "max_cost", "max_tokens", "runaway_loop", "error_cascade"]
 
 _BREACH_SUMMARIES: dict[str, str] = {
     "max_turns": "Turn limit reached before task completed.",

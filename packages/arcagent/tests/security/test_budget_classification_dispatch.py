@@ -91,7 +91,9 @@ class TestProviderSeamLive:
         identity = AgentIdentity.generate("org", "agent")
         reg = _registry(
             identity,
-            provider_limits={"anthropic": ProviderLimit(max_tokens=100, max_cost=10.0, max_requests=99)},
+            provider_limits={
+                "anthropic": ProviderLimit(max_tokens=100, max_cost=10.0, max_requests=99)
+            },
             provider_label="anthropic",
         )
         wrapped = reg._create_wrapped_execute(reg.tools["do_thing"])
@@ -103,7 +105,9 @@ class TestProviderSeamLive:
         identity = AgentIdentity.generate("org", "agent")
         reg = _registry(
             identity,
-            provider_limits={"anthropic": ProviderLimit(max_tokens=1000, max_cost=10.0, max_requests=99)},
+            provider_limits={
+                "anthropic": ProviderLimit(max_tokens=1000, max_cost=10.0, max_requests=99)
+            },
             provider_label="anthropic",
         )
         wrapped = reg._create_wrapped_execute(reg.tools["do_thing"])
@@ -116,7 +120,9 @@ class TestProviderSeamLive:
         identity = AgentIdentity.generate("org", "agent")
         reg = _registry(
             identity,
-            provider_limits={"anthropic": ProviderLimit(max_tokens=100, max_cost=10.0, max_requests=99)},
+            provider_limits={
+                "anthropic": ProviderLimit(max_tokens=100, max_cost=10.0, max_requests=99)
+            },
             provider_label="anthropic",
         )
         wrapped = reg._create_wrapped_execute(reg.tools["do_thing"])

@@ -1,0 +1,30 @@
+# SPEC-047 packaged blueprint — provenance-trusted (ships read-only in the wheel).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+
+[blueprint]
+name = "enterprise-ops"
+version = "1.0.0"
+tier = "enterprise"
+description = "Enterprise ops: memory + skills, telemetry/audit, vault_transit custody."
+
+[security]
+tier = "enterprise"
+custody = "vault_transit"
+
+[telemetry]
+enabled = true
+export_traces = true
+
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+tier = "enterprise"
+
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
+tier = "enterprise"

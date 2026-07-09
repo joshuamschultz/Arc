@@ -4,6 +4,16 @@ All notable changes to the `arcmemory` package are documented here. Format follo
 [Keep a Changelog](https://keepachangelog.com/); this package adheres to semantic
 versioning.
 
+## [Unreleased]
+
+### Changed
+
+- **`sqlite-vec` is now a base dependency** (was the optional `[vec]` extra). Semantic
+  vector recall (surface + structural channels) works **out of the box** — no
+  `arcmemory[vec]` install step. Load-time guarding is unchanged: if the extension
+  is somehow unavailable, retrieval still degrades to BM25 + graph and never fails.
+  `arcmemory[vec]` is retained as a no-op alias. *(Live-test follow-up — Josh: "full use out of the box".)*
+
 ## [0.6.0] — 2026-07-07
 
 The embedder + distiller seams go **live in production** (SPEC-041, Phases 10/11).

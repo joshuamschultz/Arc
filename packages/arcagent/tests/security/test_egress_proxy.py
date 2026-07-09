@@ -157,9 +157,7 @@ class TestDynamicToolEgressWiring:
         finally:
             _runtime.reset()
 
-    async def test_dynamic_tool_egress_denied_when_no_proxy_wired(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_dynamic_tool_egress_denied_when_no_proxy_wired(self, tmp_path: Path) -> None:
         """No proxy configured → outbound is denied by absence, never silent no-op."""
         from arcagent.builtins.capabilities import _runtime
         from arcagent.core.errors import ToolError

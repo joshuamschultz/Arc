@@ -233,9 +233,7 @@ class TestTeamLayer:
     async def test_out_of_scope_denies(self) -> None:
         layer = TeamLayer(roles={"analyst": frozenset({"read_file"})})
         scope = TeamScope(role="analyst", authorized_tools=frozenset({"read_file"}))
-        d = await layer.evaluate(
-            make_call(tool_name="delete_all"), make_ctx(team_scope=scope)
-        )
+        d = await layer.evaluate(make_call(tool_name="delete_all"), make_ctx(team_scope=scope))
         assert d.outcome == "deny"
         assert d.layer == "team"
         assert d.rule_id == "team.scope_violation"
@@ -322,9 +320,7 @@ class TestSandboxLayer:
 
     async def test_isolation_unsatisfiable_denies(self) -> None:
         layer = SandboxLayer()
-        rt = ToolRuntimeStatus(
-            verified=True, required_isolation="vm", available_isolation="host"
-        )
+        rt = ToolRuntimeStatus(verified=True, required_isolation="vm", available_isolation="host")
         d = await layer.evaluate(make_call(), make_ctx(tool_runtime=rt))
         assert d.outcome == "deny"
         assert d.rule_id == "sandbox.isolation_unsatisfiable"
@@ -350,9 +346,7 @@ class TestSandboxLayer:
             ("vm", "vm", "allow"),
         ],
     )
-    async def test_isolation_ladder(
-        self, available: str, required: str, expected: str
-    ) -> None:
+    async def test_isolation_ladder(self, available: str, required: str, expected: str) -> None:
         layer = SandboxLayer()
         rt = ToolRuntimeStatus(
             verified=True, required_isolation=required, available_isolation=available
@@ -370,9 +364,7 @@ class TestBuildPipelineConfig:
     def test_federal_layers_carry_provider_and_team_config(self) -> None:
         limits = {"anthropic": ProviderLimit(max_tokens=1, max_cost=1.0, max_requests=1)}
         roles = {"analyst": frozenset({"read_file"})}
-        pipeline = build_pipeline(
-            tier="federal", provider_limits=limits, team_roles=roles
-        )
+        pipeline = build_pipeline(tier="federal", provider_limits=limits, team_roles=roles)
         names = [layer.name for layer in pipeline.layers]
         assert names == [
             "identity",
@@ -438,9 +430,7 @@ class TestFullPipelineFirstDenyWins:
         usage = ProviderUsage(
             provider="anthropic", tokens_used=1, cost_used=0.0, requests_in_window=0
         )
-        rt = ToolRuntimeStatus(
-            verified=True, required_isolation="host", available_isolation="vm"
-        )
+        rt = ToolRuntimeStatus(verified=True, required_isolation="host", available_isolation="vm")
         ctx = PolicyContext(
             tier="federal",
             policy_version="1.0",
@@ -470,12 +460,8 @@ class TestDefaultConfigDoesNotBrick:
         validly-signed call whose context carries no provider_usage/tool_runtime,
         must ALLOW — the tier is not bricked while producers are unwired."""
         ident = AgentIdentity.generate(org="test", agent_type="exec")
-        pipeline = build_pipeline(
-            tier="enterprise", agent_registry={ident.did: ident.public_key}
-        )
-        ctx = PolicyContext(
-            tier="enterprise", policy_version="1.0", bundle_age_seconds=0.0
-        )
+        pipeline = build_pipeline(tier="enterprise", agent_registry={ident.did: ident.public_key})
+        ctx = PolicyContext(tier="enterprise", policy_version="1.0", bundle_age_seconds=0.0)
         d = await pipeline.evaluate(self._signed(ident), ctx)
         assert d.outcome == "allow"
 
@@ -486,12 +472,8 @@ class TestDefaultConfigDoesNotBrick:
         Provider/Sandbox stay no-ops when unconfigured; ClassificationLayer does
         not."""
         ident = AgentIdentity.generate(org="test", agent_type="exec")
-        pipeline = build_pipeline(
-            tier="federal", agent_registry={ident.did: ident.public_key}
-        )
-        ctx = PolicyContext(
-            tier="federal", policy_version="1.0", bundle_age_seconds=0.0
-        )
+        pipeline = build_pipeline(tier="federal", agent_registry={ident.did: ident.public_key})
+        ctx = PolicyContext(tier="federal", policy_version="1.0", bundle_age_seconds=0.0)
         d = await pipeline.evaluate(self._signed(ident), ctx)
         assert d.outcome == "deny"
         assert d.rule_id == "classification.state_missing"
@@ -500,9 +482,7 @@ class TestDefaultConfigDoesNotBrick:
         """With a cleared context the federal default pipeline allows — the floor
         gates on MISSING labels, not on federal per se."""
         ident = AgentIdentity.generate(org="test", agent_type="exec")
-        pipeline = build_pipeline(
-            tier="federal", agent_registry={ident.did: ident.public_key}
-        )
+        pipeline = build_pipeline(tier="federal", agent_registry={ident.did: ident.public_key})
         ctx = PolicyContext(
             tier="federal",
             policy_version="1.0",

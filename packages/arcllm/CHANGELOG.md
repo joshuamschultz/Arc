@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Simplification-sweep cleanup (no version bump — internal only, no public API change).
+
+### Fixed
+- **Google adapter streaming URL bug.** `GoogleAdapter`/`Azure_OpenaiAdapter` previously
+  hand-rolled their own `invoke()`; deduping them onto the shared `OpenaiAdapter` base
+  (each now overrides only `_completions_url()`) fixed a URL-construction bug specific to
+  the Google streaming path.
+
+### Changed
+- Provider-name regexes deduped; `load_model` wrapper blocks and the SSE parser
+  (`_parse_openai_sse_line` + new `_parse_stream_usage`/`_parse_stream_tool_call` helpers)
+  decomposed for readability. No change to `load_model`'s public signature or behavior.
+
 ## [0.7.0] - 2026-07-07
 
 SPEC-041 Phase 1: an embeddings capability. arcllm now owns embedding *inference* (arcmemory and other consumers obtain vectors only through it; arcllm persists/indexes/ranks nothing).

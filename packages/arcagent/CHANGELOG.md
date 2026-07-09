@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Public tool-authoring surface (F6/F7).** `tool`/`hook`/`background_task`/`capability` and the
+  new `capability_meta(fn)` accessor are re-exported from `arcagent.tools` — authors no longer import
+  the private `arcagent.tools._decorator` or read `_arc_capability_meta` directly.
+
+### Fixed
+- **`@tool`/`@hook`/`@background_task` reject sync functions at decoration time (F8)** — a clear
+  `TypeError` at the definition site instead of an opaque failure later in the loader.
+- **Unreachable NATS degrades quietly (F9)** — the messaging bootstrap bounds the connect, quiets
+  nats-py's async error callback, and degrades to the in-memory bus with a single warning instead of
+  dumping a ConnectionRefused traceback on every solo-agent run.
+
+## [0.15.0] - 2026-07-08
+
+SPEC-047 — **extensibility as a first-class product property**. Generalized the two
+select-one extension seams (Brain / SPEC-041, SkillAdapter / SPEC-044) into one
+`ExtensionPoint` + `select_extension` mechanism, added signed preset-config **blueprints**,
+and gave config-relaxable tiers one declared surface.
+
+### Added
+- `arcagent.extension`: the `ExtensionPoint` descriptor + one `select_extension` (shared
+  choice dispatch + fail-closed refuse-before-import BYO gate + dotted-path importer), the
+  four-family registry (`brain`/`skills` select-one, `tools`/`hook-builds` scan-many views
+  over the SPEC-021 `CapabilityRegistry`), and pure-read `inspect_extensions`.
+- `arcagent.blueprints`: signed, versioned TOML preset-config bootstrap. `resolve_blueprint`
+  (verify-before-use, fail-closed above personal), `apply_blueprint` (deep-merge UNDER user
+  values, stringency-max tier floor — a blueprint can only RAISE a floor), `dumps_toml`
+  (materialize the concrete `arcagent.toml` the runtime flat-reads), `list_blueprints`. Three
+  provenance-trusted packaged presets: `personal-assistant`, `enterprise-ops`, `federal-analyst`.
+- `arcagent.tiers`: `RELAXABLE_KNOBS` table + `resolve_tier_floor` (the `SecurityConfig`
+  federal-floor validators delegate to it — dedup) + `audit_tier_relaxations` (the blueprint-
+  apply producer for `tier.relaxation_granted`) + tier stringency ordering.
+
+### Changed
+- `brain/select.py` + `skilladapt/select.py` are now thin `ExtensionPoint` instances; the
+  duplicated dispatch / BYO gate / dotted-path importer was **deleted** (behavior-preserving —
+  public `select_brain` / `select_skill_adapter` signatures unchanged).
+- `core/config.py` `SecurityConfig` federal-floor enforcement delegates to
+  `arcagent.tiers.resolve_tier_floor` (core NCLOC 3498 → 3463).
+
+### Security
+- **Blueprint signature verification is PINNED, not TOFU-only (adversarial-review HIGH-1).**
+  `resolve_blueprint` / `list_blueprints` now take an `operator_public_key` and, above personal,
+  verify a user preset's `.arcsig` against it. Previously the gate called `verify_file` with no
+  pinned key, so any self-consistent signature was accepted — an attacker could self-sign a
+  malicious preset with a random keypair. An unsigned, tampered, or wrong-key preset is now
+  refused before merge; when the operator key cannot be resolved above personal, resolution
+  denies fail-closed (an unpinned floor is no floor).
+- **`arc ext inspect`/`verify` signed-status is pinned to the agent DID key (HIGH-1).**
+  `inspect_extensions` / `_signed_status` accept a `trusted_public_key` so a wrong-key
+  self-signed capability reads "unsigned" instead of a false "signed".
+- **Blueprint overlay denylist extended (LOW-3):** `security.operator_key_dir`,
+  `operator_vault_path`, `notary_keystore`, and `witness_medium_path` are now stripped from a
+  blueprint overlay before merge — a preset can no longer redirect operator-key or federal-witness
+  custody (co-locating the witness with the operator key would make rollback detection illusory).
+
 ## [0.14.0] - 2026-07-08
 
 SPEC-044 — the optional **`SkillAdapter`** self-improvement seam (mirrors the SPEC-041

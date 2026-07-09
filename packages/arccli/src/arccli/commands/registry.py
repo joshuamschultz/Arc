@@ -122,6 +122,13 @@ def _ext_handler(args: list[str]) -> None:
     ext_handler(args)
 
 
+def _blueprint_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.blueprint import blueprint_handler
+
+    blueprint_handler(args)
+
+
 def _identity_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.identity import identity_handler
@@ -408,10 +415,18 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         name="ext",
-        description="Extension management — list, create, install, validate",
+        description="Extension management — list, create, install, validate, inspect, verify",
         category="Tools & Skills",
         args_hint="<subcommand>",
         handler=_ext_handler,
+    ),
+    CommandDef(
+        name="blueprint",
+        description="Preset-config bootstrap — list, show, apply, verify, sign",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_blueprint_handler,
     ),
     CommandDef(
         name="team",

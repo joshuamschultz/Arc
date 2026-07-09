@@ -27,11 +27,15 @@ dependencies = [
     "arcstore>=0.1",
     "pydantic>=2.0,<3",
     "pyyaml>=6.0",
+    # In-process vector index (surface + structural channels) — shipped by
+    # default so semantic recall works out of the box. Still guarded at load
+    # time; absence degrades retrieval to BM25 + graph (never fails).
+    "sqlite-vec>=0.1.6",
 ]
 
 [project.optional-dependencies]
-# In-process cosine vector index (surface + structural channels). Guarded at
-# load time; absence degrades retrieval to BM25 + graph (never fails).
+# Retained as a no-op alias: `arcmemory[vec]` still resolves, but sqlite-vec is
+# now a base dependency (see above), so the vector channel is always available.
 vec = ["sqlite-vec>=0.1.6"]
 # Offline, deterministic local embedder (bge-small / MiniLM). Federal air-gap
 # path — no network embeddings API.

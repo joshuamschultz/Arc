@@ -194,9 +194,7 @@ class TestExternalContentMarking:
         result = await browser_read_page()
         assert "[EXTERNAL WEB CONTENT]" in result
 
-    async def test_navigate_marks_external(
-        self, configure_browser: Callable[..., _State]
-    ) -> None:
+    async def test_navigate_marks_external(self, configure_browser: Callable[..., _State]) -> None:
         cdp = AsyncMock()
         cdp.send.side_effect = [
             {"frameId": "f1"},  # Page.navigate

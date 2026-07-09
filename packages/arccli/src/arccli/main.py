@@ -77,6 +77,16 @@ def _run_repl() -> None:
     """Start the interactive slash-command REPL."""
     from arccli.commands.registry import resolve_command
 
+    # Non-interactive stdin (pipe, CI, `arc < file`): a raw-mode prompt_toolkit
+    # session crashes on add_reader ("KeyError: '0 is not registered'"). There's
+    # nothing to interact with, so print help and exit cleanly instead of
+    # entering the REPL.
+    if not sys.stdin.isatty():
+        help_cmd = resolve_command("help")
+        if help_cmd is not None and help_cmd.handler is not None:
+            help_cmd.handler([])
+        return
+
     # Try to use prompt_toolkit for rich readline-like editing; fall back to
     # plain input() if not available (e.g., non-interactive CI environments).
     try:

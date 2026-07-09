@@ -23,7 +23,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-0073FE.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-6%2C400%2B-0055BC.svg)](#-status)
+[![Tests](https://img.shields.io/badge/tests-7%2C000%2B-0055BC.svg)](#-status)
 [![Coverage](https://img.shields.io/badge/coverage-90%25%2B-003B82.svg)](#-status)
 [![Providers](https://img.shields.io/badge/LLM_providers-16-F68D2E.svg)](#-supported-llm-providers)
 [![SCIF Ready](https://img.shields.io/badge/SCIF-ready-002550.svg)](#-air-gapped-and-on-premises)
@@ -142,9 +142,10 @@ flowchart TB
     arcgateway --> arcagent
     arcui --> arcgateway
     arcui --> arcllm
+    arcui -. "reads on demand" .-> arcstore
     arcagent --> arcrun
     arcagent --> arctrust
-    arcagent -. "serve --ui" .-> arcui
+    arcagent -. "skilladapt = arcskill" .-> arcskill
     arcskill --> arctrust
     arcrun --> arcllm
     arcrun --> arctrust
@@ -157,10 +158,10 @@ flowchart TB
 | Entry | [**arccli**](packages/arccli/) | The unified `arc` command-line tool |
 | Entry | [**arctui**](packages/arctui/) · [**arcmas**](packages/arcmas/) | Terminal UI · the `pip install arcmas` meta-package that pulls the whole stack |
 | Surface | [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
-| Surface | [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, HMAC-signed audit trail |
-| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — live WebSocket telemetry, three-token auth, layer/agent/team filtering |
+| Surface | [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, operator-key-signed audit trail |
+| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth, layer/agent/team filtering |
 | Agent | [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
-| Agent | [**arcskill**](packages/arcskill/) | Skill hub — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list |
+| Agent | [**arcskill**](packages/arcskill/) *(optional)* | Skill supercharger — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list, plus golden-task-gated self-improvement (`arcskill.improver`). arcagent runs skills fine without it. |
 | Runtime | [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
 | LLM | [**arcllm**](packages/arcllm/) | Talk to 16 LLM providers via direct HTTP — no SDKs. PII/secret redaction, prompt-injection + output guardrails, full encrypted trace capture, load balancing, request signing, OpenTelemetry, audit |
 | Foundation | [**arctrust**](packages/arctrust/) | The cryptographic leaf — Ed25519 keypairs, DID identity, audit emission, the deny-by-default policy pipeline |
@@ -204,7 +205,7 @@ Pick a tier — this is the **only** dial that controls strictness:
 
 | Tier | Telemetry | Audit | Retry | Fallback | OpenTelemetry | PII redaction + signing |
 |---|---|---|---|---|---|---|
-| `open` | off | off | off | off | off | off |
+| `personal` | off | off | off | off | off | off |
 | `enterprise` | ✅ | ✅ | ✅ (3x) | ✅ | off | off |
 | `federal` | ✅ | ✅ | ✅ (3x) | ✅ | ✅ (OTLP) | ✅ |
 
@@ -256,23 +257,35 @@ arc agent run my-agent "Read the CSVs in workspace/data/ and summarize the trend
 
 Inside the chat REPL: `/help`, `/tools`, `/cost`, `/skills`, `/sessions`, `/switch <id>`, `/identity`, `/quit`.
 
-### 6. (Optional) Watch It Run in a Browser
+### 6. (Optional) Watch It Run — and Message It — in a Browser
+
+The dashboard is also a chat surface. Point it at a team directory and it serves a web
+chat box per agent (`/ws/chat/{agent_id}`) plus live telemetry, both read on demand from
+the shared `arcstore` record — the agent does **not** push to it.
 
 ```bash
-# Terminal 1
-arc ui start --show-tokens          # prints viewer / operator / agent tokens
+# 1. Start the dashboard, pointed at the directory your agents live in.
+#    --team-root turns on the in-process web chat platform.
+arc ui start --team-root ./team --show-tokens
+#    Prints a viewer token + operator token and the URL (default 127.0.0.1:8420).
 
-# Terminal 2
-arc agent serve my-agent --ui       # runs the agent as a daemon, streams events
+# 2. In another terminal, run the agent so it's live to answer.
+arc agent serve ./team/my_agent
+
+# 3. Open the printed http://127.0.0.1:8420/ URL with the viewer token
+#    (on a loopback bind the browser opens pre-authenticated) and message the agent.
 ```
 
-Open http://127.0.0.1:8420 with the viewer token. You'll see live LLM calls, tool invocations, costs, and audit events.
-
-Stream to terminal instead:
+There is no `--agent-token` and no agent-side `--ui` push flag — `arcui` reads everything
+from `arcstore`, so any agent that already wrote to the shared store shows up whether or not
+the dashboard was running when it did. Prefer the terminal?
 
 ```bash
 arc ui tail --viewer-token <token> --layer llm
 ```
+
+> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status wrapper for the
+> dashboard plus every `*_agent` under `./team`.
 
 ---
 
@@ -484,7 +497,6 @@ arc agent build my-agent --check                          # validate
 arc agent chat my-agent                                   # interactive REPL
 arc agent run my-agent "task description"                 # one-shot
 arc agent serve my-agent                                  # long-running daemon
-arc agent serve my-agent --ui                             # daemon + push events to dashboard
 
 # Inspect
 arc agent status my-agent                                 # DID, model, tool/skill/extension counts
@@ -510,7 +522,7 @@ arc skill list --agent my-agent
 arc ext list --agent my-agent
 
 # Team messaging (multi-agent)
-arc team init                                             # create team data dir + HMAC key
+arc team init                                             # create team data dir + operator audit key
 arc team register agent-1 --name "Analyst" --type agent
 arc team entities
 
@@ -756,15 +768,15 @@ All three can run simultaneously.
 
 | Package | Tests | Coverage |
 |---|---|---|
-| arctrust | 176 | 99% |
-| arcllm | 885 | 99% |
-| arcrun | 513 | high (spawn 92%) |
-| arcagent | 3,136+ | core ≥ 90% |
-| arcgateway | 494 | 94% |
-| arcskill | 342 | 86% |
-| arcteam | 307 | — |
-| arcui | 300 | — |
-| arccli | 283 | — |
+| arctrust | 346 | 99% |
+| arcllm | 1,209 | 99% |
+| arcrun | 531 | high (spawn 92%) |
+| arcagent | 2,301+ | core ≥ 90% |
+| arcgateway | 566 | 94% |
+| arcskill | 642 | 86% |
+| arcteam | 364 | — |
+| arcui | 386 | — |
+| arccli | 333 | — |
 
 `uv run --no-sync pytest` runs the full suite. Per-package: `uv run --no-sync pytest packages/<pkg>/tests`.
 

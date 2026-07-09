@@ -6,7 +6,7 @@
 *DID-required at construction. Unified capability loader (tools · skills · hooks · background tasks), sessions, module bus. Wraps arcrun + arcllm with everything an autonomous agent needs to be accountable.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-2%2C805%2B-0055BC.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-2%2C301%2B-0055BC.svg)](#status)
 [![Coverage](https://img.shields.io/badge/core_coverage-≥90%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![DID Required](https://img.shields.io/badge/DID-required-F68D2E.svg)](#-the-four-pillars-built-in)
@@ -50,10 +50,9 @@ flowchart TB
     arcagent --> arcllm[arcllm]:::llm
     arcagent --> arctrust[arctrust]:::found
     arcagent --> arcstore[arcstore]:::found
-    arcagent -. serve --ui .-> arcui[arcui]:::surface
 ```
 
-Depends on `arcrun`, `arcllm`, `arctrust`, `arcstore`; manages `arcskill` capabilities and streams to `arcui` under `arc agent serve --ui`.
+Depends on `arcrun`, `arcllm`, `arctrust`, `arcstore`; manages `arcskill` capabilities. `arcui` reads agent activity from `arcstore` on demand (the Observe plane) — arcagent doesn't push to it directly.
 
 ---
 
@@ -200,9 +199,6 @@ enabled = true
 
 [modules.policy]
 enabled = true
-
-[modules.ui_reporter]
-enabled = false                           # set true with `arc agent serve --ui`
 ```
 
 **Three rules to know:**
@@ -366,6 +362,61 @@ mutation, golden-task gate, change-bound edits, Curator lifecycle).
 
 ---
 
+## 🧩 Extension Points & Blueprints (SPEC-047)
+
+Every place arcagent lets an operator swap in optional, potentially third-party behavior is
+generalized into one mechanism: `arcagent.extension.ExtensionPoint` + `select_extension` —
+shared choice dispatch, a fail-closed refuse-before-import BYO gate, and one dotted-path
+importer. Four families:
+
+| Family | Kind | Built-in / null default | Optional package |
+|---|---|---|---|
+| `brain` | select-one | `NullBrain` (no-op, zero memory files) | `arcmemory` (dual-speed analogical memory, SPEC-041) |
+| `skills` | select-one | `NullSkillAdapter` (no-op) | `arcskill` (self-improvement, SPEC-044) |
+| `tools` | scan-many | the unified `CapabilityLoader` scan roots | — |
+| `hook-builds` | scan-many | module-bus hook registrations | — |
+
+`brain` and `skills` each resolve via `[modules.memory].config.brain` / `[modules.skills].adapter`
+= the package name / `none` / a signed `pkg.mod:Class` BYO path. **Scaffolded agents default
+`brain = "arcmemory"`** (`arc agent create`, `arc init`, and all three blueprints), so a fresh
+agent has memory on: zero-LLM capture writes daily-log bullets to
+`workspace/memory/daily-log/YYYY-MM-DD.md`, the episodic index (`workspace/memory/index.db`),
+and the entity graph each turn (consolidation into entity cards + facts + insights is opt-in
+via `distill_provider`). The framework *code* default — no `[modules.memory]` config at all —
+stays `none` (federal absent-config safety). `arc ext inspect` (read-only) shows the
+selected/available/signed state of all four families for an agent; `arc ext verify` reports any
+selection that would be refused at load (federal change-control gate, non-zero exit on a refusal).
+
+### Blueprints — signed preset-config bootstrap
+
+A **blueprint** is a versioned, signed TOML preset that bootstraps a deployment's
+`arcagent.toml` in one command (`arcagent.blueprints`). `apply_blueprint` verifies the
+signature (fail-closed above `personal`), deep-merges the preset **under** the target's
+existing config (identity + user values always win — not a clobber-write), and floors the
+tier by **stringency-max**: a blueprint can only raise a tier floor, never weaken federal.
+Three packaged presets ship provenance-trusted: `personal-assistant`, `enterprise-ops`,
+`federal-analyst`. User presets live in `~/.arc/blueprints/` and must be signed to the
+deployment operator key above `personal` (`arc blueprint sign`) — an unsigned, tampered, or
+wrong-key preset is refused before merge.
+
+```bash
+arc blueprint list
+arc blueprint show enterprise-ops
+arc blueprint apply enterprise-ops --agent my-agent      # verify -> deep-merge -> write
+arc blueprint apply enterprise-ops --agent my-agent --dry-run
+arc init --blueprint federal-analyst                     # bootstrap a new deployment from a preset
+```
+
+### Config-relaxable tiers
+
+`arcagent.tiers` declares, in one table (`RELAXABLE_KNOBS`), every tier-relaxable config
+knob, its federal floor, and whether `personal`/`enterprise` may relax it; `resolve_tier_floor`
+is the one shared decision the `SecurityConfig` validators and the blueprint-apply floor
+delegate to (an explicit weaker value at a tier that forbids relaxation fails closed). Tier
+vocabulary is `personal` / `enterprise` / `federal` everywhere — there is no `open` tier.
+
+---
+
 ## 💾 Sessions
 
 Every conversation persists as a JSONL transcript:
@@ -405,7 +456,7 @@ Inside `arcagent`, every event flows through a priority-ordered module bus. Modu
 | **10** | policy | Hardest gate — first to see, last to fail. Veto here = call denied |
 | **50** | security | PII detection, classification checks |
 | **100** | memory, default handlers | Standard processing |
-| **200** | ui_reporter, logging | Observation only |
+| **200** | logging | Observation only |
 
 **Same-priority handlers run concurrently. Cross-priority groups run sequentially.**
 
@@ -419,10 +470,11 @@ enabled = true
 
 [modules.policy]
 enabled = true
-
-[modules.ui_reporter]
-enabled = true                            # streams events to the arcui dashboard
 ```
+
+Agent activity shows up in `arcui` without any opt-in module: agents write through `arcstore`
+(the durable spool + WORM), and `arc ui start` reads it back on demand (the Observe plane) —
+see `packages/arcui/README.md`.
 
 ---
 
@@ -476,7 +528,6 @@ arc agent reload my-agent                 # re-walk all four capability scan roo
 arc agent chat my-agent                   # interactive REPL
 arc agent run my-agent "task"             # one-shot
 arc agent serve my-agent                  # long-running daemon
-arc agent serve my-agent --ui             # daemon + push events to dashboard
 
 # Inspect
 arc agent status my-agent                 # DID, model, counts
@@ -577,7 +628,7 @@ Every operation emits arctrust audit events.
 uv run --no-sync pytest packages/arcagent/tests
 ```
 
-- **Tests:** 2,805+ (16 skipped)
+- **Tests:** 2,301+
 - **Coverage:** core components ≥ 90%
 - **Type check:** `mypy --strict` (active cleanup in progress)
 - **Lint:** `ruff check`
