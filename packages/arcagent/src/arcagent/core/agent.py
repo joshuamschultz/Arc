@@ -276,7 +276,7 @@ class ArcAgent:
         candidates = (
             self._policy_audit_log_path(),
             self._trace_checkpoint_chain_path(),
-            audit_dir / "skill_improver.worm",
+            audit_dir / "skills.worm",
         )
         return any(p.exists() for p in candidates)
 
@@ -435,7 +435,11 @@ class ArcAgent:
         # collects it to a final result.
         await self._bus.emit(
             "agent:ready",
-            {"run_fn": self.run_collected, "deliver_fn": self.deliver_message},
+            {
+                "run_fn": self.run_collected,
+                "deliver_fn": self.deliver_message,
+                "skill_registry": self._capability_registry,
+            },
         )
 
         await self._bus.emit("agent:init", {"config": self._config.agent.name})

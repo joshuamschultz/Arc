@@ -42,6 +42,16 @@ from arcgateway_slack.adapter import SlackAdapter, split_message
 _ASYNC_APP_PATH = "slack_bolt.async_app.AsyncApp"
 _HANDLER_PATH = "slack_bolt.adapter.socket_mode.async_handler.AsyncSocketModeHandler"
 
+# The slack_bolt modules connect() lazily imports. Setting each to None in sys.modules
+# forces those imports to raise ImportError deterministically (import-order independent).
+_SLACK_BOLT_MODULES = (
+    "slack_bolt",
+    "slack_bolt.async_app",
+    "slack_bolt.adapter",
+    "slack_bolt.adapter.socket_mode",
+    "slack_bolt.adapter.socket_mode.async_handler",
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -334,18 +344,12 @@ class TestConnectDisconnect:
         """If slack-bolt is not installed, connect() raises ImportError."""
         adapter, _ = _make_adapter()
 
-        # Force the lazy imports inside connect() to fail even when slack-bolt
-        # IS installed: a None entry in sys.modules makes `import x` raise
-        # ImportError. Patching only already-imported keys is not enough — in a
-        # fresh venv nothing is imported yet and connect() would hit the real
-        # network with a fake token.
-        blocked = {
-            "slack_bolt": None,
-            "slack_bolt.async_app": None,
-            "slack_bolt.adapter": None,
-            "slack_bolt.adapter.socket_mode": None,
-            "slack_bolt.adapter.socket_mode.async_handler": None,
-        }
+        # Force the slack_bolt imports inside connect() to fail deterministically, REGARDLESS
+        # of import order: setting these keys to None makes ``import slack_bolt...`` raise
+        # ImportError. Building the set from already-imported modules would be empty when this
+        # test runs first, no-op the patch, and let connect() do live Socket Mode network I/O
+        # (the unit-test hang this guards against). patch.dict tolerates keys not present.
+        blocked = {name: None for name in _SLACK_BOLT_MODULES}
         with patch.dict(sys.modules, blocked):  # type: ignore[arg-type]
             with pytest.raises(ImportError, match="slack-bolt is not installed"):
                 await adapter.connect()

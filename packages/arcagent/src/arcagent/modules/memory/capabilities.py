@@ -109,6 +109,31 @@ def _cache_recall(st: _runtime._State, key: int, text: str) -> None:
     st.recall_cache[key] = text
 
 
+@hook(event="agent:pre_respond", priority=100)
+async def inject_insight(ctx: Any) -> None:
+    """Produce the skills-improver ``insight`` from Brain recall (SPEC-044 REQ-060 / MED-4).
+
+    Runs before the skills reader (priority 150, lower runs first) and places Brain-derived
+    recall text on ``ctx.data["insight"]`` so the improver's code/prose mutator gets
+    grounded context. ACL-gated like every Brain read; empty/absent when memory is off, so
+    the improver stays fully memory-less. (A narrower failure-only insight channel is a
+    possible arcmemory/SPEC-047 follow-on.)
+    """
+    st = _runtime.state()
+    if not st.active:
+        return
+    query = str(ctx.data.get("task") or "").strip()
+    if not query:
+        return
+    if not await _acl_allows("memory.search", st.agent_did):
+        return
+    text = await st.brain.retrieve(
+        query, clearance="unclassified", top_k=st.config.top_k, budget=st.config.budget
+    )
+    if text:
+        ctx.data["insight"] = text
+
+
 # -- Capture hooks -------------------------------------------------------
 
 
@@ -220,6 +245,7 @@ __all__ = [
     "capture_respond",
     "capture_tool",
     "consolidate_poll_once",
+    "inject_insight",
     "inject_recall",
     "memory_consolidate_loop",
     "memory_search",

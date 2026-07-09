@@ -118,18 +118,13 @@ async def build_run_context(
 
 
 def _agent_skills(agent: ArcAgent) -> list[_Skill]:
-    """Snapshot the agent's registered skills as lean, loadable specs."""
+    """Registered skills as lean specs — retired ones are already suppressed from _skills."""
     registry = agent._capability_registry
     if registry is None:
         return []
     return [
-        _Skill(
-            name=entry.name,
-            description=entry.description,
-            location=entry.location,
-            scan_root=entry.scan_root,
-        )
-        for entry in registry._skills.values()
+        _Skill(name=e.name, description=e.description, location=e.location, scan_root=e.scan_root)
+        for e in registry._skills.values()
     ]
 
 

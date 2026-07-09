@@ -89,6 +89,7 @@ __all__ = [
     "_docker_available",
     "_run_docker",
     "_run_firecracker",
+    "execute_in_sandbox",
     "is_firecracker_available",
     "run_dry_run",
 ]
@@ -146,11 +147,36 @@ def run_dry_run(
 # ---------------------------------------------------------------------------
 
 
+async def execute_in_sandbox(
+    skill_dir: Path,
+    command: str,
+    config: HubConfig,
+    *,
+    timeout_s: int = 10,
+    mount: bool = False,
+    audit_sink: AuditSink | None = None,
+) -> DryRunResult:
+    """Run ``command`` over ``skill_dir`` in the tier-appropriate sandbox.
+
+    The public async entry the golden-task eval runner drives (SPEC-044 P3.3,
+    DC-5). Unlike :func:`run_dry_run` it takes an explicit command + directory
+    (no tarball), threads a per-skill ``timeout_s``, and can ``mount`` the
+    directory read-write so the eval harness sees the materialized bundle.
+    Backend selection and the federal fail-closed contract are shared with the
+    install dry-run via :func:`_run_in_sandbox`.
+    """
+    return await _run_in_sandbox(
+        command, skill_dir, config, timeout_s=timeout_s, mount=mount, audit_sink=audit_sink
+    )
+
+
 async def _run_in_sandbox(
     fixture_cmd: str,
     skill_dir: Path,
     config: HubConfig,
     *,
+    timeout_s: int = 10,
+    mount: bool = False,
     audit_sink: AuditSink | None = None,
 ) -> DryRunResult:
     """Select sandbox backend and run the fixture command.
@@ -161,7 +187,7 @@ async def _run_in_sandbox(
     3. Scan-only skip with audit WARNING (non-federal last resort)
     """
     if is_firecracker_available():
-        return await _run_firecracker(fixture_cmd, skill_dir)
+        return await _run_firecracker(fixture_cmd, skill_dir, timeout_s=timeout_s)
 
     if config.is_federal:
         raise SandboxRequired(
@@ -173,7 +199,7 @@ async def _run_in_sandbox(
 
     # Non-federal: prefer Docker.
     if _docker_available():
-        return await _run_docker(fixture_cmd, skill_dir)
+        return await _run_docker(fixture_cmd, skill_dir, mount=mount, timeout_s=timeout_s)
 
     # Final fallback: scan-only verdict with prominent warning and audit event.
     logger.warning(

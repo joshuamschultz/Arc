@@ -14,7 +14,24 @@ from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
 
 _SKILLS_SUBDIR = "capabilities/skills"
-_SUB_FOLDERS = ("references", "scripts", "templates", "assets")
+# ``evals/`` ships a runnable golden-task scaffold so the skill is improvable from
+# creation (SPEC-044 REQ-070) — the improver's code-repair gate needs a suite.
+_SUB_FOLDERS = ("references", "scripts", "templates", "assets", "evals")
+
+_EVAL_SCAFFOLD = '''\
+"""Golden-task suite for this skill (SPEC-044 REQ-070).
+
+These deterministic pytest cases are the skill improver's HARD acceptance gate: a
+code repair is applied only if it makes a previously-failing case pass and regresses
+none. Replace the placeholder with real cases — at enterprise/federal at least three
+human-authored cases are required before code mutation is unlocked.
+"""
+
+
+def test_placeholder() -> None:
+    """Runnable-but-empty scaffold. Replace with a real golden-task assertion."""
+    assert True
+'''
 _REQUIRED_SECTIONS = (
     "## Resources",
     "## Contract",
@@ -84,6 +101,7 @@ async def create_skill(
     folder.mkdir(parents=True)
     for sub in _SUB_FOLDERS:
         (folder / sub).mkdir()
+    (folder / "evals" / "test_golden.py").write_text(_EVAL_SCAFFOLD, encoding="utf-8")
     skill_md = folder / "SKILL.md"
     rendered = _render_skill_md(
         name=name,

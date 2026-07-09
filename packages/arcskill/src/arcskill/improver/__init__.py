@@ -7,3 +7,8 @@ imports no ``arcagent``/``arcllm``/``arcmemory`` (REQ-004, D-3). arcagent wires
 the seams through ``arcagent.skilladapt`` and drives it via the ``SkillAdapter``
 Protocol.
 """
+
+from arcskill.improver.config import ImproverConfig
+from arcskill.improver.improver import ArcSkillImprover
+
+__all__ = ["ArcSkillImprover", "ImproverConfig"]
