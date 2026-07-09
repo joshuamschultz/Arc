@@ -36,7 +36,6 @@ def make_peer_entity(
 def make_config_dict(
     entity_id: str = "agent://test_agent",
     entity_name: str = "Test Agent",
-    poll_interval_seconds: float = 0.1,
     auto_ack: bool = True,
 ) -> dict[str, Any]:
     """Build a config dict for MessagingConfig."""
@@ -44,7 +43,6 @@ def make_config_dict(
         "enabled": True,
         "entity_id": entity_id,
         "entity_name": entity_name,
-        "poll_interval_seconds": poll_interval_seconds,
         "auto_ack": auto_ack,
         "max_messages_per_poll": 20,
     }

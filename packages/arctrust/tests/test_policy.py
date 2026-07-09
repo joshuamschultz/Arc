@@ -16,7 +16,6 @@ from arctrust.policy import (
     ProviderLayer,
     ProviderLimit,
     ProviderUsage,
-    TierConfig,
     ToolCall,
     ToolRuntimeStatus,
     build_pipeline,
@@ -366,32 +365,6 @@ class TestPolicyLayerProtocol:
     def test_deny_layer_satisfies_protocol(self) -> None:
         layer = DenyLayer()
         assert isinstance(layer, PolicyLayer)
-
-
-# ---------------------------------------------------------------------------
-# TierConfig
-# ---------------------------------------------------------------------------
-
-
-class TestTierConfig:
-    def test_personal_tier_config(self) -> None:
-        tc = TierConfig.for_tier("personal")
-        assert tc.tier == "personal"
-        assert tc.max_parallel_tools >= 1
-
-    def test_enterprise_tier_config(self) -> None:
-        tc = TierConfig.for_tier("enterprise")
-        assert tc.tier == "enterprise"
-
-    def test_federal_tier_config(self) -> None:
-        tc = TierConfig.for_tier("federal")
-        assert tc.tier == "federal"
-        # Federal caps parallel HTTPS tools at 4 per SPEC-017 R-025
-        assert tc.max_parallel_tools <= 4
-
-    def test_invalid_tier_raises(self) -> None:
-        with pytest.raises(ValueError):
-            TierConfig.for_tier("unknown")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

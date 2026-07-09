@@ -13,7 +13,6 @@ class TestMessagingConfig:
         cfg = MessagingConfig()
         assert cfg.enabled is False
         assert cfg.entity_id == ""
-        assert cfg.poll_interval_seconds == 5.0
         assert cfg.auto_ack is True
         assert cfg.max_messages_per_poll == 20
 
@@ -22,11 +21,9 @@ class TestMessagingConfig:
             enabled=True,
             entity_id="agent://brad",
             entity_name="Brad",
-            poll_interval_seconds=2.0,
         )
         assert cfg.entity_id == "agent://brad"
         assert cfg.entity_name == "Brad"
-        assert cfg.poll_interval_seconds == 2.0
 
     def test_extra_forbid(self) -> None:
         """Typos in config keys should raise ValidationError."""

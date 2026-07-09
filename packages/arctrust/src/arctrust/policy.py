@@ -7,7 +7,6 @@ arcagent.core.tool_policy). What lives here:
   - ToolCall / PolicyContext / Decision: the contract types
   - PolicyLayer: the Protocol every layer must satisfy
   - PolicyPipeline: the ordered, short-circuiting, fail-closed evaluator
-  - TierConfig: deployment tier metadata consumed by build_pipeline
   - build_pipeline(): factory that assembles the correct layer set per tier
   - Concrete layers: IdentityLayer, GlobalLayer, ClassificationLayer,
     ProviderLayer, AgentLayer, TeamLayer, SandboxLayer — kept here so
@@ -857,57 +856,6 @@ class SandboxLayer:
 
 
 # ---------------------------------------------------------------------------
-# TierConfig — deployment tier metadata
-# ---------------------------------------------------------------------------
-
-
-class TierConfig(BaseModel):
-    """Deployment tier configuration.
-
-    Controls which pipeline layers are active and what resource limits apply
-    for that tier. Consumers call ``TierConfig.for_tier(tier_name)`` to get
-    the correct config.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    tier: _Tier
-    max_parallel_tools: int
-    """Maximum concurrent tool executions. Federal caps HTTPS tools at 4 (R-025)."""
-
-    layer_names: tuple[str, ...]
-    """Ordered layer names active for this tier."""
-
-    @classmethod
-    def for_tier(cls, tier: _Tier) -> TierConfig:
-        """Return the TierConfig for a deployment tier.
-
-        Raises:
-            ValueError: tier is not one of federal/enterprise/personal.
-        """
-        configs: dict[str, TierConfig] = {
-            "federal": cls(
-                tier="federal",
-                max_parallel_tools=4,  # R-025: FIPS cap
-                layer_names=("global", "classification", "provider", "agent", "team", "sandbox"),
-            ),
-            "enterprise": cls(
-                tier="enterprise",
-                max_parallel_tools=10,
-                layer_names=("global", "classification", "provider", "agent", "sandbox"),
-            ),
-            "personal": cls(
-                tier="personal",
-                max_parallel_tools=10,
-                layer_names=("global",),
-            ),
-        }
-        if tier not in configs:
-            raise ValueError(f"Unknown tier {tier!r}. Must be one of: {list(configs.keys())}")
-        return configs[tier]
-
-
-# ---------------------------------------------------------------------------
 # PolicyPipeline
 # ---------------------------------------------------------------------------
 
@@ -1336,7 +1284,6 @@ __all__ = [
     "SandboxLayer",
     "TeamLayer",
     "TeamScope",
-    "TierConfig",
     "ToolCall",
     "ToolRuntimeStatus",
     "build_pipeline",
