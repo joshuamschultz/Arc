@@ -58,10 +58,19 @@ def team_root(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
+    # Dave — BARE directory name (no _agent suffix), as produced by
+    # `arc agent create dave`. Must still be discovered (SPEC folder-serve).
+    dave = root / "dave"
+    dave.mkdir()
+    (dave / "arcagent.toml").write_text(
+        '[agent]\nname = "dave"\ntype = "executor"\n',
+        encoding="utf-8",
+    )
+
     # Skipped: dir without arcagent.toml
     (root / "stub_agent").mkdir()
 
-    # Skipped: dir not matching *_agent
+    # Skipped: bare dir without arcagent.toml
     (root / "not-an-agent").mkdir()
 
     return root
@@ -71,14 +80,22 @@ class TestDiscovery:
     def test_finds_all_agent_dirs(self, team_root: Path) -> None:
         roster = list_team(team_root=team_root, online_ids=set())
         ids = {r.agent_id for r in roster}
-        assert ids == {"alice", "bob", "carol"}
+        assert ids == {"alice", "bob", "carol", "dave"}
+
+    def test_finds_bare_named_agent_dir(self, team_root: Path) -> None:
+        # `arc agent create dave` produces a bare `dave/` dir (no _agent
+        # suffix). Discovery keys on the presence of arcagent.toml, not the
+        # directory name — otherwise these agents are invisible to the UI.
+        roster = list_team(team_root=team_root, online_ids=set())
+        ids = {r.agent_id for r in roster}
+        assert "dave" in ids
 
     def test_skips_dirs_without_arcagent_toml(self, team_root: Path) -> None:
         roster = list_team(team_root=team_root, online_ids=set())
         ids = {r.agent_id for r in roster}
         assert "stub" not in ids
 
-    def test_skips_dirs_not_matching_pattern(self, team_root: Path) -> None:
+    def test_skips_dirs_without_toml_regardless_of_name(self, team_root: Path) -> None:
         roster = list_team(team_root=team_root, online_ids=set())
         ids = {r.agent_id for r in roster}
         assert "not-an-agent" not in ids
