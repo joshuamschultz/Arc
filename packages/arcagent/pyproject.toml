@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arc-agent"
-version = "0.14.0"
+version = "0.15.0"
 description = "Enterprise-grade autonomous agent nucleus"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -114,6 +114,9 @@ addopts = "--strict-markers -v"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcagent"]
+# SPEC-047: guarantee the packaged blueprint presets ship in the wheel regardless of
+# VCS state (they are loaded at runtime by arcagent.blueprints — not optional data).
+artifacts = ["src/arcagent/blueprints/*.toml"]
 
 [tool.coverage.run]
 source = ["arcagent"]
