@@ -19,6 +19,7 @@ from arccli.commands.team import (
     TeamSupervisor,
     _add_member,
     _build_supervisor,
+    _channels,
     _create_team,
     _init_cmd,
     _read,
@@ -98,6 +99,39 @@ class TestTeamLifecycle:
         assert len(teams) == 1
         assert teams[0]["name"] == "Alpha Squad"
         assert teams[0]["default_channel"] == "general"
+
+    def test_create_materializes_default_channel(
+        self, tmp_path: Path, team_backend: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Creating a team with ``--channel ops`` materializes a real, listable
+        channel that ``arc team channels`` enumerates (regression: the value was
+        stored on the Team but never registered as a Channel)."""
+        root = _init_root(tmp_path)
+        _register_user(root, "bob")
+        _create_team(
+            argparse.Namespace(
+                root=str(root),
+                team_id="mfg",
+                name="Mfg",
+                channel="ops",
+                members="user://bob",
+                goal=None,
+            )
+        )
+
+        # Enumerated by the same API `arc team channels` uses (list_channels).
+        capsys.readouterr()
+        _channels(argparse.Namespace(root=str(root), use_json=False))
+        out = capsys.readouterr().out
+        assert "ops" in out
+        assert "No channels" not in out
+
+        # The channel carries the resolved member DIDs so team send/read work.
+        channels = _query(team_backend, "messages/channels")
+        assert len(channels) == 1
+        assert channels[0]["name"] == "ops"
+        assert channels[0]["members"]
+        assert channels[0]["members"][0].startswith("did:")
 
     def test_add_and_remove_member(self, tmp_path: Path, team_backend: Any) -> None:
         root = _init_root(tmp_path)

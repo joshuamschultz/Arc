@@ -537,6 +537,7 @@ def _create_team(args: argparse.Namespace) -> None:
     """Create a team on the new ``TeamStore`` (REQ-010, REQ-012)."""
     from arcteam.registry import resolve
     from arcteam.team import Team, TeamStore
+    from arcteam.types import Channel
 
     root = _get_root(args)
     team_id: str = args.team_id
@@ -546,7 +547,7 @@ def _create_team(args: argparse.Namespace) -> None:
     goal: str | None = getattr(args, "goal", None)
 
     async def _run() -> None:
-        _, registry, audit, backend = await _build_service(root)
+        svc, registry, audit, backend = await _build_service(root)
         try:
             member_dids = [await resolve(registry, ref) for ref in _split_csv(members_raw)]
             store = TeamStore(backend, audit)
@@ -559,6 +560,10 @@ def _create_team(args: argparse.Namespace) -> None:
                     goal_ref=goal,
                 )
             )
+            # Materialize the default channel so it is a real, listable channel
+            # (arc team channels, ArcUI Messages) whose members can use team
+            # send/read — the same store list_channels enumerates.
+            await svc.create_channel(Channel(name=channel, members=member_dids))
         finally:
             await _shutdown(backend)
 
