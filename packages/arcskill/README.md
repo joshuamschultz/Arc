@@ -6,8 +6,8 @@
 *Sigstore + Rekor signature verification. Static scan. Sandboxed dry-run. Atomic activation. Revocation list.*
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-002550.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Tests](https://img.shields.io/badge/tests-342-0055BC.svg)](#status)
-[![Coverage](https://img.shields.io/badge/coverage-86%25-003B82.svg)](#status)
+[![Tests](https://img.shields.io/badge/tests-622-0055BC.svg)](#status)
+[![Coverage](https://img.shields.io/badge/coverage-90%25-003B82.svg)](#status)
 [![Strict mypy](https://img.shields.io/badge/mypy-strict-0073FE.svg)](#status)
 [![Sigstore](https://img.shields.io/badge/Sigstore-verified-0073FE.svg)](#-the-install-pipeline)
 
@@ -318,11 +318,11 @@ Federal tier additionally requires:
 - ✅ Validate, signed install, scan, partial version-control via lock, CRL lifecycle
 - ✅ Sigstore + Rekor verification
 - ✅ Sandboxed dry-run
+- ✅ Skill self-improvement (`arcskill.improver`, SPEC-044) — code-repair mutation, golden-task gate, bounded edits, Curator lifecycle
+- ✅ Eval harness for golden-task quality scoring (`arcskill.improver.evalgate`, sandboxed via `hub.dry_run`)
 
 **Wave-3 (deferred):**
 
-- ⏳ GEPA skill-improvement loop (currently in arcagent — relocating)
-- ⏳ Eval harness for automated skill quality scoring
 - ⏳ Three-target skill loaders exposed as public API
 - ⏳ `arc skill upgrade` workflow
 - ⏳ Full version control beyond lock file (semver history, rollback)
@@ -331,8 +331,8 @@ Federal tier additionally requires:
 uv run --no-sync pytest packages/arcskill/tests
 ```
 
-- **Tests:** 342 (5 skipped)
-- **Coverage:** 86%
+- **Tests:** 622 (5 skipped)
+- **Coverage:** 90%
 - **Type check:** `mypy --strict` clean
 - **Lint:** `ruff check` clean
 
