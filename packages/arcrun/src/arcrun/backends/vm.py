@@ -226,9 +226,7 @@ class VmBackend:
         stdin: str | None = None,
     ) -> ExecHandle:
         """Launch a microVM guest. Fails closed if KVM is unavailable."""
-        result = await self.run_separated(
-            command, cwd=cwd, env=env, timeout=timeout, stdin=stdin
-        )
+        result = await self.run_separated(command, cwd=cwd, env=env, timeout=timeout, stdin=stdin)
         return ExecHandle(
             handle_id=self._jailer_id(),
             backend_name=self.name,
@@ -367,9 +365,7 @@ class VmBackend:
         if workspace is None:
             return None
         readonly = [
-            str(sub)
-            for sub in (self._readonly_subpaths or [])
-            if (workspace / sub).exists()
+            str(sub) for sub in (self._readonly_subpaths or []) if (workspace / sub).exists()
         ]
         return {
             "host_path": str(workspace),

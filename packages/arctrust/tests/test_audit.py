@@ -440,9 +440,7 @@ class TestOutOfProcessAuditCustody:
     """SPEC-037 REQ-006 — the WORM chain signs by reference under vault-transit;
     the operator seed NEVER materialises in the agent process."""
 
-    def test_chain_signed_by_reference_seed_never_materialises(
-        self, tmp_path: Path
-    ) -> None:
+    def test_chain_signed_by_reference_seed_never_materialises(self, tmp_path: Path) -> None:
         from arctrust.signer import VaultSigner
 
         operator = generate_keypair()

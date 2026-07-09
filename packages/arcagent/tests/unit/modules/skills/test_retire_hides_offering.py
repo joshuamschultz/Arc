@@ -18,8 +18,13 @@ from arcagent.core.agent_dispatch import _agent_skills
 
 def _entry(name: str) -> SkillEntry:
     return SkillEntry(
-        name=name, version="1.0.0", description=f"{name} desc", triggers=(), tools=(),
-        location=Path(f"skills/{name}/SKILL.md"), scan_root="builtin",
+        name=name,
+        version="1.0.0",
+        description=f"{name} desc",
+        triggers=(),
+        tools=(),
+        location=Path(f"skills/{name}/SKILL.md"),
+        scan_root="builtin",
     )
 
 

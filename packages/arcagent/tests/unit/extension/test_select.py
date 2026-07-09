@@ -72,14 +72,21 @@ def _patch_import(monkeypatch: pytest.MonkeyPatch, *, degrade: bool = False) -> 
 @pytest.mark.parametrize("setting", ["none", "", "null", "  none  "])
 def test_none_family_selects_null(setting: str) -> None:
     ctx: dict[str, Any] = {"workspace": "/ws"}
-    got = select_extension(_POINT, setting, tier="personal", allowlist=(), context=ctx, logger=_logger)
+    got = select_extension(
+        _POINT, setting, tier="personal", allowlist=(), context=ctx, logger=_logger
+    )
     assert isinstance(got, _Null)
 
 
 def test_builtin_name_builds_builtin(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_import(monkeypatch)
     got = select_extension(
-        _POINT, "builtin", tier="personal", allowlist=(), context={"workspace": "/ws"}, logger=_logger
+        _POINT,
+        "builtin",
+        tier="personal",
+        allowlist=(),
+        context={"workspace": "/ws"},
+        logger=_logger,
     )
     assert isinstance(got, _Builtin)
 
@@ -90,7 +97,12 @@ def test_builtin_not_importable_degrades_to_null(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(ext_select.importlib, "import_module", raising_import)
     got = select_extension(
-        _POINT, "builtin", tier="personal", allowlist=(), context={"workspace": "/ws"}, logger=_logger
+        _POINT,
+        "builtin",
+        tier="personal",
+        allowlist=(),
+        context={"workspace": "/ws"},
+        logger=_logger,
     )
     assert isinstance(got, _Null)
 
@@ -101,7 +113,12 @@ def test_auto_degrades_silently_when_unavailable(
     _patch_import(monkeypatch, degrade=True)
     with caplog.at_level(logging.WARNING, logger="test.extension.select"):
         got = select_extension(
-            _POINT, "auto", tier="personal", allowlist=(), context={"workspace": "/ws"}, logger=_logger
+            _POINT,
+            "auto",
+            tier="personal",
+            allowlist=(),
+            context={"workspace": "/ws"},
+            logger=_logger,
         )
     assert isinstance(got, _Null)
     assert caplog.records == [], "auto must degrade silently — no warning"
@@ -113,7 +130,12 @@ def test_explicit_builtin_warns_when_unavailable(
     _patch_import(monkeypatch, degrade=True)
     with caplog.at_level(logging.WARNING, logger="test.extension.select"):
         got = select_extension(
-            _POINT, "builtin", tier="personal", allowlist=(), context={"workspace": "/ws"}, logger=_logger
+            _POINT,
+            "builtin",
+            tier="personal",
+            allowlist=(),
+            context={"workspace": "/ws"},
+            logger=_logger,
         )
     assert isinstance(got, _Null)
     assert caplog.records, "explicit builtin must warn when it degrades"
@@ -122,7 +144,12 @@ def test_explicit_builtin_warns_when_unavailable(
 def test_byo_loads_at_personal(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _patch_import(monkeypatch)
     got = select_extension(
-        _POINT, "stub_mod:_Byo", tier="personal", allowlist=(), context={"workspace": "/ws"}, logger=_logger
+        _POINT,
+        "stub_mod:_Byo",
+        tier="personal",
+        allowlist=(),
+        context={"workspace": "/ws"},
+        logger=_logger,
     )
     assert isinstance(got, _Byo)
     assert got.workspace == "/ws"
@@ -136,7 +163,12 @@ def test_byo_refused_before_import_above_personal(
     calls = _patch_import(monkeypatch)
     with pytest.raises(ValueError, match="allowlist"):
         select_extension(
-            _POINT, "stub_mod:_Byo", tier=tier, allowlist=(), context={"workspace": "/ws"}, logger=_logger
+            _POINT,
+            "stub_mod:_Byo",
+            tier=tier,
+            allowlist=(),
+            context={"workspace": "/ws"},
+            logger=_logger,
         )
     assert calls["imports"] == 0, "must fail closed BEFORE importing an unverified class-path"
 

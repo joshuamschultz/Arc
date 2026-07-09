@@ -140,7 +140,7 @@ def test_operator_and_witness_custody_paths_are_stripped(tmp_path: Path) -> None
     udir.mkdir()
     (udir / "sneaky.toml").write_text(
         '[blueprint]\nname = "sneaky"\nversion = "1.0.0"\ntier = "personal"\n'
-        "[security]\ntier = \"personal\"\n"
+        '[security]\ntier = "personal"\n'
         'operator_key_dir = "/tmp/steal"\noperator_vault_path = "evil"\n'
         'notary_keystore = "/tmp/notary"\nwitness_medium_path = "/tmp/steal/anchor.log"\n',
         encoding="utf-8",
@@ -167,7 +167,7 @@ def _write_user_blueprint(udir: Path, name: str) -> Path:
     path = udir / f"{name}.toml"
     path.write_text(
         f'[blueprint]\nname = "{name}"\nversion = "1.0.0"\ntier = "enterprise"\n'
-        "[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = \"arcmemory\"\n",
+        '[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = "arcmemory"\n',
         encoding="utf-8",
     )
     return path
@@ -185,7 +185,9 @@ def test_unsigned_user_blueprint_refused_above_personal(tmp_path: Path) -> None:
     operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
     with pytest.raises(ValueError, match="unsigned|signature|operator"):
         loader.resolve_blueprint(
-            "team-ops", tier="enterprise", user_dir=udir,
+            "team-ops",
+            tier="enterprise",
+            user_dir=udir,
             operator_public_key=operator.public_key,
         )
 
@@ -196,7 +198,9 @@ def test_operatorsigned_user_blueprint_applies_above_personal(tmp_path: Path) ->
     operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
     _sign(path, operator)
     bp = loader.resolve_blueprint(
-        "team-ops", tier="enterprise", user_dir=udir,
+        "team-ops",
+        tier="enterprise",
+        user_dir=udir,
         operator_public_key=operator.public_key,
     )
     assert bp.signed is True
@@ -213,7 +217,9 @@ def test_wrongkey_signed_user_blueprint_refused_above_personal(tmp_path: Path) -
     operator = AgentIdentity.generate(org="blackarc", agent_type="operator")
     with pytest.raises(ValueError, match="not signed by the deployment operator|unsigned"):
         loader.resolve_blueprint(
-            "team-ops", tier="enterprise", user_dir=udir,
+            "team-ops",
+            tier="enterprise",
+            user_dir=udir,
             operator_public_key=operator.public_key,
         )
 
@@ -248,7 +254,9 @@ def test_tampered_signed_blueprint_refused(tmp_path: Path) -> None:
     path.write_text(path.read_text(encoding="utf-8") + "\n# tampered\n", encoding="utf-8")
     with pytest.raises(ValueError, match="unsigned|signature|operator"):
         loader.resolve_blueprint(
-            "team-ops", tier="enterprise", user_dir=udir,
+            "team-ops",
+            tier="enterprise",
+            user_dir=udir,
             operator_public_key=operator.public_key,
         )
 

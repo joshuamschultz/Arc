@@ -74,7 +74,9 @@ def test_policy_context_session_capabilities_default_none() -> None:
 
 
 def test_capability_tags_construct() -> None:
-    call = _call(agent_did="did:arc:test:exec/aabbccdd", capability_tags=frozenset({"private_data"}))
+    call = _call(
+        agent_did="did:arc:test:exec/aabbccdd", capability_tags=frozenset({"private_data"})
+    )
     assert call.capability_tags == frozenset({"private_data"})
 
 
@@ -82,7 +84,9 @@ def test_signing_bytes_excludes_new_fields() -> None:
     """capability_tags/approval are attestation metadata, NOT signed content."""
     agent = AgentIdentity.generate(org="test", agent_type="exec")
     base = _call(agent_did=agent.did)
-    tagged = _call(agent_did=agent.did, capability_tags=frozenset({"private_data", "external_comms"}))
+    tagged = _call(
+        agent_did=agent.did, capability_tags=frozenset({"private_data", "external_comms"})
+    )
     assert base.signing_bytes() == tagged.signing_bytes()
 
 

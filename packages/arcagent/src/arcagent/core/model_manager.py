@@ -74,9 +74,7 @@ def build_checkpoint_sink(
     return _sink
 
 
-def _anchor_local(
-    chain: Path, signer: Signer, actor_did: str, checkpoint: dict[str, Any]
-) -> None:
+def _anchor_local(chain: Path, signer: Signer, actor_did: str, checkpoint: dict[str, Any]) -> None:
     """Append the operator-signed checkpoint to the local WORM chain (fail-open)."""
     try:
         worm = WormSink(chain, signer)

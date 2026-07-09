@@ -50,9 +50,15 @@ def _seed_inactive_trace(ws: Path) -> None:
     traces_dir = ws / "skill_traces" / "old-skill"
     traces_dir.mkdir(parents=True)
     trace = {
-        "trace_id": "t", "session_id": "s", "skill_name": "old-skill", "skill_version": 0,
-        "turn_number": 0, "started_at": old.isoformat(), "ended_at": old.isoformat(),
-        "tool_calls": [], "task_outcome": "success",
+        "trace_id": "t",
+        "session_id": "s",
+        "skill_name": "old-skill",
+        "skill_version": 0,
+        "turn_number": 0,
+        "started_at": old.isoformat(),
+        "ended_at": old.isoformat(),
+        "tool_calls": [],
+        "task_outcome": "success",
     }
     (traces_dir / "traces-2020-01.jsonl").write_text(json.dumps(trace) + "\n", encoding="utf-8")
 
@@ -61,8 +67,13 @@ async def _registry_with(name: str, location: Path) -> CapabilityRegistry:
     reg = CapabilityRegistry()
     await reg.register_skill(
         SkillEntry(
-            name=name, version="1.0.0", description=name, triggers=(), tools=(),
-            location=location, scan_root="builtin",
+            name=name,
+            version="1.0.0",
+            description=name,
+            triggers=(),
+            tools=(),
+            location=location,
+            scan_root="builtin",
         )
     )
     return reg

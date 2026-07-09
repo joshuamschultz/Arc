@@ -48,9 +48,7 @@ class TestParseHostPort:
 
 class TestBrokerListening:
     async def test_true_when_socket_open(self) -> None:
-        server = await asyncio.start_server(
-            lambda r, w: w.close(), "127.0.0.1", 0
-        )
+        server = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
         try:
             assert await broker_listening("127.0.0.1", port) is True

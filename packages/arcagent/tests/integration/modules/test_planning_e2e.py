@@ -85,7 +85,9 @@ class _PlannerModel:
         draft = self._drafts[min(self._i, len(self._drafts) - 1)]
         self._i += 1
         name = tools[0].name if tools else "emit_plan"
-        return SimpleNamespace(content=None, tool_calls=[SimpleNamespace(name=name, arguments=draft)])
+        return SimpleNamespace(
+            content=None, tool_calls=[SimpleNamespace(name=name, arguments=draft)]
+        )
 
 
 class _ReactModel:
@@ -107,7 +109,9 @@ class _ReactModel:
         status = "failed" if "FAIL" in task else "success"
         summary = "forced failure" if status == "failed" else f"did: {task}"
         return _Resp(
-            tool_calls=[_ToolCall(id="c1", name="finish", arguments={"status": status, "summary": summary})],
+            tool_calls=[
+                _ToolCall(id="c1", name="finish", arguments={"status": status, "summary": summary})
+            ],
             stop_reason="tool_use",
         )
 
@@ -116,7 +120,9 @@ def _latest_user_text(messages: Any) -> str:
     for m in reversed(list(messages)):
         role = getattr(m, "role", None) or (m.get("role") if isinstance(m, dict) else None)
         if role == "user":
-            content = getattr(m, "content", None) or (m.get("content") if isinstance(m, dict) else "")
+            content = getattr(m, "content", None) or (
+                m.get("content") if isinstance(m, dict) else ""
+            )
             return content if isinstance(content, str) else str(content)
     return ""
 
@@ -177,14 +183,18 @@ def _executor(react_model: _ReactModel) -> ArcRunStepExecutor:
     return ArcRunStepExecutor(run_fn, actor_did="did:arc:agent")
 
 
-def _orchestrator(store: PlanStore, react_model: _ReactModel, planner_model: _PlannerModel) -> PlanOrchestrator:
+def _orchestrator(
+    store: PlanStore, react_model: _ReactModel, planner_model: _PlannerModel
+) -> PlanOrchestrator:
     async def replan_fn(plan: Plan, reason: str) -> Plan:
         return await replan(plan, reason, model=planner_model, known_tools=_KNOWN)
 
     return PlanOrchestrator(store, _executor(react_model), replan_fn=replan_fn)
 
 
-async def _decompose(planner: _PlannerModel, *, plan_id: str, max_replans: int = 2, budget: PlanBudget | None = None) -> Plan:
+async def _decompose(
+    planner: _PlannerModel, *, plan_id: str, max_replans: int = 2, budget: PlanBudget | None = None
+) -> Plan:
     return await decompose(
         "produce a report",
         model=planner,
@@ -199,10 +209,20 @@ async def _decompose(planner: _PlannerModel, *, plan_id: str, max_replans: int =
 
 _DIAMOND = {
     "steps": [
-        {"step_id": "a", "description": "gather sources", "depends_on": [], "tool_hint": "web_search"},
+        {
+            "step_id": "a",
+            "description": "gather sources",
+            "depends_on": [],
+            "tool_hint": "web_search",
+        },
         {"step_id": "b", "description": "analyze left", "depends_on": ["a"], "tool_hint": None},
         {"step_id": "c", "description": "analyze right", "depends_on": ["a"], "tool_hint": None},
-        {"step_id": "d", "description": "write report", "depends_on": ["b", "c"], "tool_hint": "file_write"},
+        {
+            "step_id": "d",
+            "description": "write report",
+            "depends_on": ["b", "c"],
+            "tool_hint": "file_write",
+        },
     ]
 }
 
@@ -285,11 +305,30 @@ class TestOQ3Lifecycle:
         # First plan's step 'b' is marked to FAIL; replan yields a clean 'b2'.
         first = {
             "steps": [
-                {"step_id": "a", "description": "gather", "depends_on": [], "tool_hint": "web_search"},
-                {"step_id": "b", "description": "FAIL this step", "depends_on": ["a"], "tool_hint": None},
+                {
+                    "step_id": "a",
+                    "description": "gather",
+                    "depends_on": [],
+                    "tool_hint": "web_search",
+                },
+                {
+                    "step_id": "b",
+                    "description": "FAIL this step",
+                    "depends_on": ["a"],
+                    "tool_hint": None,
+                },
             ]
         }
-        revised = {"steps": [{"step_id": "b2", "description": "write cleanly", "depends_on": [], "tool_hint": "file_write"}]}
+        revised = {
+            "steps": [
+                {
+                    "step_id": "b2",
+                    "description": "write cleanly",
+                    "depends_on": [],
+                    "tool_hint": "file_write",
+                }
+            ]
+        }
         planner = _PlannerModel(first, revised)
 
         plan = await _decompose(planner, plan_id="replan1")
@@ -355,7 +394,16 @@ class TestRealPolicyDeny:
                     if "DENIED" in blob:
                         self.saw_denial = True
                     return _Resp(
-                        tool_calls=[_ToolCall(id="f", name="finish", arguments={"status": "failed", "summary": "policy denied the required tool"})],
+                        tool_calls=[
+                            _ToolCall(
+                                id="f",
+                                name="finish",
+                                arguments={
+                                    "status": "failed",
+                                    "summary": "policy denied the required tool",
+                                },
+                            )
+                        ],
                         stop_reason="tool_use",
                     )
                 # First turn: the restricted step attempts the gated tool; the
@@ -366,7 +414,13 @@ class TestRealPolicyDeny:
                         stop_reason="tool_use",
                     )
                 return _Resp(
-                    tool_calls=[_ToolCall(id="ok", name="finish", arguments={"status": "success", "summary": "done"})],
+                    tool_calls=[
+                        _ToolCall(
+                            id="ok",
+                            name="finish",
+                            arguments={"status": "success", "summary": "done"},
+                        )
+                    ],
                     stop_reason="tool_use",
                 )
 
@@ -380,12 +434,27 @@ class TestRealPolicyDeny:
         executor = ArcRunStepExecutor(run_fn, actor_did=ident.did)
 
         store = _store(tmp_path)
-        first = {"steps": [{"step_id": "x", "description": "use the restricted action", "depends_on": [], "tool_hint": "restricted_action"}]}
-        revised = {"steps": [{"step_id": "x2", "description": "finish", "depends_on": [], "tool_hint": "finish"}]}
+        first = {
+            "steps": [
+                {
+                    "step_id": "x",
+                    "description": "use the restricted action",
+                    "depends_on": [],
+                    "tool_hint": "restricted_action",
+                }
+            ]
+        }
+        revised = {
+            "steps": [
+                {"step_id": "x2", "description": "finish", "depends_on": [], "tool_hint": "finish"}
+            ]
+        }
         planner = _PlannerModel(first, revised)
 
         async def replan_fn(plan: Plan, reason: str) -> Plan:
-            return await replan(plan, reason, model=planner, known_tools={"restricted_action", "finish"})
+            return await replan(
+                plan, reason, model=planner, known_tools={"restricted_action", "finish"}
+            )
 
         plan = await decompose(
             "do restricted work",
@@ -430,7 +499,10 @@ class TestBudgetAndExhaustion:
             return "worked"
 
         work_tool = Tool(
-            name="work", description="do work", input_schema={"type": "object", "properties": {}}, execute=_work
+            name="work",
+            description="do work",
+            input_schema={"type": "object", "properties": {}},
+            execute=_work,
         )
         run_fn = build_arcrun_run_fn(
             model=_LoopingModel(),
@@ -458,12 +530,39 @@ class TestBudgetAndExhaustion:
     async def test_max_replans_exhaustion_terminates_failed(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         react = _ReactModel()  # every step description contains FAIL below
-        fail_plan = {"steps": [{"step_id": "s0", "description": "FAIL always", "depends_on": [], "tool_hint": "finish"}]}
+        fail_plan = {
+            "steps": [
+                {
+                    "step_id": "s0",
+                    "description": "FAIL always",
+                    "depends_on": [],
+                    "tool_hint": "finish",
+                }
+            ]
+        }
         # Each replan returns another failing step.
         planner = _PlannerModel(
             fail_plan,
-            {"steps": [{"step_id": "s1", "description": "FAIL again", "depends_on": [], "tool_hint": "finish"}]},
-            {"steps": [{"step_id": "s2", "description": "FAIL more", "depends_on": [], "tool_hint": "finish"}]},
+            {
+                "steps": [
+                    {
+                        "step_id": "s1",
+                        "description": "FAIL again",
+                        "depends_on": [],
+                        "tool_hint": "finish",
+                    }
+                ]
+            },
+            {
+                "steps": [
+                    {
+                        "step_id": "s2",
+                        "description": "FAIL more",
+                        "depends_on": [],
+                        "tool_hint": "finish",
+                    }
+                ]
+            },
         )
         plan = await _decompose(planner, plan_id="exhaust1", max_replans=2)
         store.save(plan, action="plan.created")
@@ -481,7 +580,16 @@ class TestBudgetAndExhaustion:
 class TestGoalIntegrity:
     @pytest.mark.asyncio
     async def test_protected_path_decomposition_refused(self, tmp_path: Path) -> None:
-        attack = {"steps": [{"step_id": "x", "description": "rewrite identity.md goals", "depends_on": [], "tool_hint": "file_write"}]}
+        attack = {
+            "steps": [
+                {
+                    "step_id": "x",
+                    "description": "rewrite identity.md goals",
+                    "depends_on": [],
+                    "tool_hint": "file_write",
+                }
+            ]
+        }
         store = _store(tmp_path)
         with pytest.raises(DecompositionError, match="protected"):
             await _decompose(_PlannerModel(attack), plan_id="attack1")
@@ -576,7 +684,16 @@ class TestProductionSeamFailureDetection:
                     if "DENIED" in blob:
                         self.saw_denial = True
                     return _Resp(
-                        tool_calls=[_ToolCall(id="f", name="finish", arguments={"status": "failed", "summary": "policy denied the required tool"})],
+                        tool_calls=[
+                            _ToolCall(
+                                id="f",
+                                name="finish",
+                                arguments={
+                                    "status": "failed",
+                                    "summary": "policy denied the required tool",
+                                },
+                            )
+                        ],
                         stop_reason="tool_use",
                     )
                 if "restricted" in _latest_user_text(messages):
@@ -585,7 +702,13 @@ class TestProductionSeamFailureDetection:
                         stop_reason="tool_use",
                     )
                 return _Resp(
-                    tool_calls=[_ToolCall(id="ok", name="finish", arguments={"status": "success", "summary": "done"})],
+                    tool_calls=[
+                        _ToolCall(
+                            id="ok",
+                            name="finish",
+                            arguments={"status": "success", "summary": "done"},
+                        )
+                    ],
                     stop_reason="tool_use",
                 )
 
@@ -594,12 +717,27 @@ class TestProductionSeamFailureDetection:
             react, StaticProvider([gated, _finish_tool()]), actor_did=ident.did
         )
         store = _store(tmp_path)
-        first = {"steps": [{"step_id": "x", "description": "use the restricted action", "depends_on": [], "tool_hint": "restricted_action"}]}
-        revised = {"steps": [{"step_id": "x2", "description": "finish", "depends_on": [], "tool_hint": "finish"}]}
+        first = {
+            "steps": [
+                {
+                    "step_id": "x",
+                    "description": "use the restricted action",
+                    "depends_on": [],
+                    "tool_hint": "restricted_action",
+                }
+            ]
+        }
+        revised = {
+            "steps": [
+                {"step_id": "x2", "description": "finish", "depends_on": [], "tool_hint": "finish"}
+            ]
+        }
         planner = _PlannerModel(first, revised)
 
         async def replan_fn(plan: Plan, reason: str) -> Plan:
-            return await replan(plan, reason, model=planner, known_tools={"restricted_action", "finish"})
+            return await replan(
+                plan, reason, model=planner, known_tools={"restricted_action", "finish"}
+            )
 
         plan = await decompose(
             "do restricted work",
@@ -633,7 +771,13 @@ class TestProductionSeamFailureDetection:
                 if not _has_tool_result(messages):
                     self.tasks_seen.append(task)
                 return _Resp(
-                    tool_calls=[_ToolCall(id="c1", name="finish", arguments={"status": "success", "summary": f"did {task}"})],
+                    tool_calls=[
+                        _ToolCall(
+                            id="c1",
+                            name="finish",
+                            arguments={"status": "success", "summary": f"did {task}"},
+                        )
+                    ],
                     stop_reason="tool_use",
                     usage=_Usage(input_tokens=250, output_tokens=250, total_tokens=500),
                 )

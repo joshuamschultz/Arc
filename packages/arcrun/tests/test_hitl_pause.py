@@ -64,9 +64,7 @@ class TestApprovalPause:
             seen.append(tc.name)
             return object()  # opaque grant → proceed
 
-        state = _state(
-            bus, approval_provider=provider, approval_required_tools=frozenset({"echo"})
-        )
+        state = _state(bus, approval_provider=provider, approval_required_tools=frozenset({"echo"}))
         sandbox = Sandbox(config=None, event_bus=bus)
         result = await react_loop(_one_call_then_done(), state, sandbox, max_turns=5)
         assert seen == ["echo"]  # loop awaited the provider before dispatch
@@ -131,9 +129,7 @@ class TestApprovalPause:
             return object()
 
         # No tools flagged → provider never consulted.
-        state = _state(
-            bus, approval_provider=provider, approval_required_tools=frozenset()
-        )
+        state = _state(bus, approval_provider=provider, approval_required_tools=frozenset())
         sandbox = Sandbox(config=None, event_bus=bus)
         result = await react_loop(_one_call_then_done(), state, sandbox, max_turns=5)
         assert called is False

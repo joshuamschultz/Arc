@@ -33,9 +33,7 @@ def _capture_run_argv(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
         seen.append(argv)
         return _FakeProc(stdout=b"container-cafe\n")
 
-    monkeypatch.setattr(
-        "arcrun.backends.docker.asyncio.create_subprocess_exec", fake_exec
-    )
+    monkeypatch.setattr("arcrun.backends.docker.asyncio.create_subprocess_exec", fake_exec)
     return seen
 
 
@@ -109,8 +107,6 @@ async def test_docker_run_without_workspace_has_no_bind_mount(
 
 
 def test_backend_stores_workspace_mount(tmp_path: Path) -> None:
-    backend = DockerBackend(
-        workspace_mount=tmp_path, readonly_subpaths=[Path("identity.md")]
-    )
+    backend = DockerBackend(workspace_mount=tmp_path, readonly_subpaths=[Path("identity.md")])
     assert backend._workspace_mount == tmp_path
     assert backend._readonly_subpaths == [Path("identity.md")]

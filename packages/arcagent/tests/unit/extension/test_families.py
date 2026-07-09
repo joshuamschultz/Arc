@@ -11,7 +11,9 @@ from arcagent.extension.families import FAMILIES, ScanManyFamily, SelectOneFamil
 from arcagent.extension.inspect import inspect_extensions
 
 
-def _config(modules: dict[str, dict[str, object]] | None = None, tier: str = "personal") -> ArcAgentConfig:
+def _config(
+    modules: dict[str, dict[str, object]] | None = None, tier: str = "personal"
+) -> ArcAgentConfig:
     raw: dict[str, object] = {
         "agent": {"name": "t", "org": "o"},
         "llm": {"model": "anthropic/claude-3-5-sonnet"},

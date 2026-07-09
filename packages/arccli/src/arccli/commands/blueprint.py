@@ -222,8 +222,10 @@ def _verify(args: argparse.Namespace) -> None:
     except (FileNotFoundError, ValueError) as exc:
         sys.stderr.write(f"Error: {exc}\n")
         sys.exit(1)
-    label = "provenance-trusted" if bp.source == "packaged" else (
-        f"signed by {bp.signer_did}" if bp.signed else "UNSIGNED"
+    label = (
+        "provenance-trusted"
+        if bp.source == "packaged"
+        else (f"signed by {bp.signer_did}" if bp.signed else "UNSIGNED")
     )
     _write(f"{bp.name} v{bp.version}: {label} (tier={bp.tier}, sha256={bp.sha256[:16]})")
 

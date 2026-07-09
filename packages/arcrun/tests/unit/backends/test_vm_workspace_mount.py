@@ -24,9 +24,7 @@ def test_workspace_share_rendered_into_vmconfig(tmp_path: Path) -> None:
         workspace_mount=ws,
         readonly_subpaths=[Path("identity.md"), Path("policy.md")],
     )
-    config_path = backend._write_vmconfig(
-        "arc-vm-ws", "echo hi", cwd="/workspace", env=None
-    )
+    config_path = backend._write_vmconfig("arc-vm-ws", "echo hi", cwd="/workspace", env=None)
     data = json.loads(Path(config_path).read_text())
 
     share = data["workspace"]

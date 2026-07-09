@@ -20,19 +20,31 @@ from arcskill.improver.models import SkillTrace
 
 def _trace(skill: str, outcome: str, ended: datetime) -> SkillTrace:
     return SkillTrace(
-        trace_id="t", session_id="s", skill_name=skill, skill_version=0, turn_number=0,
-        started_at=ended, ended_at=ended, task_outcome=outcome,
+        trace_id="t",
+        session_id="s",
+        skill_name=skill,
+        skill_version=0,
+        turn_number=0,
+        started_at=ended,
+        ended_at=ended,
+        task_outcome=outcome,
     )
 
 
-def _lifecycle(tmp_path: Path, traces: dict[str, list[SkillTrace]], *, gen: int = 0,
-               config: LifecycleConfig | None = None) -> tuple[SkillLifecycle, CandidateStore]:
+def _lifecycle(
+    tmp_path: Path,
+    traces: dict[str, list[SkillTrace]],
+    *,
+    gen: int = 0,
+    config: LifecycleConfig | None = None,
+) -> tuple[SkillLifecycle, CandidateStore]:
     store = CandidateStore(tmp_path)
     # Seed a candidate dir per skill so list_skills() discovers it.
     for name in traces:
         (tmp_path / "skill_traces" / name).mkdir(parents=True, exist_ok=True)
     lc = SkillLifecycle(
-        store, config or LifecycleConfig(),
+        store,
+        config or LifecycleConfig(),
         load_traces=lambda n: traces.get(n, []),
         generation_of=lambda n: gen,
     )
@@ -76,7 +88,9 @@ def test_pending_retirements_flags_exhausted_underperformer(tmp_path: Path) -> N
     now = datetime.now(UTC)
     failing = [_trace("bad", "failure", now) for _ in range(6)]
     lc, store = _lifecycle(
-        tmp_path, {"bad": failing}, gen=3,
+        tmp_path,
+        {"bad": failing},
+        gen=3,
         config=LifecycleConfig(min_uses_before_retire=5, improve_attempts_before_retire=3),
     )
     pending = lc.pending_retirements()

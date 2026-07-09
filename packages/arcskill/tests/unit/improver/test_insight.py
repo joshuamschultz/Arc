@@ -43,8 +43,9 @@ async def _drive(tmp_path: Path, mutator: _CapturingMutator, insight: str) -> No
     skill_md = _skill(tmp_path)
     imp = ArcSkillImprover(
         tmp_path / "ws",
-        config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                              min_golden_cases=1),
+        config=ImproverConfig(
+            min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+        ),
         tier="personal",
         mutator=mutator,
         eval_runner=_Runner(),

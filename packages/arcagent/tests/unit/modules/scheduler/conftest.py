@@ -26,7 +26,6 @@ def make_config() -> MagicMock:
 def make_entry(
     id: str = "sched_test",  # noqa: A002 - matches ScheduleEntry field
     type: Literal["cron", "interval", "once"] = "interval",  # noqa: A002 - matches field
-
     prompt: str = "Heartbeat",
     every_seconds: int = 300,
     enabled: bool = True,

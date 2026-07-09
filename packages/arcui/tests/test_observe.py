@@ -19,7 +19,9 @@ from arcstore.spool import record as spool_record
 from arcui.observe import Observe
 
 
-def _write_audit(data_dir: Path, *, seq: int, actor_did: str, action: str = "gateway.fs.read") -> None:
+def _write_audit(
+    data_dir: Path, *, seq: int, actor_did: str, action: str = "gateway.fs.read"
+) -> None:
     """Append one signed-chain record to the durable WORM file arcstore mirrors."""
     worm = data_dir / "worm"
     worm.mkdir(parents=True, exist_ok=True)

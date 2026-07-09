@@ -33,8 +33,13 @@ async def _registry(*skills: tuple[str, Path]) -> CapabilityRegistry:
     for name, loc in skills:
         await reg.register_skill(
             SkillEntry(
-                name=name, version="1.0.0", description=name, triggers=(), tools=(),
-                location=loc, scan_root="builtin",
+                name=name,
+                version="1.0.0",
+                description=name,
+                triggers=(),
+                tools=(),
+                location=loc,
+                scan_root="builtin",
             )
         )
     return reg

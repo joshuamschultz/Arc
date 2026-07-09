@@ -78,9 +78,7 @@ class TestMakeBackend:
         assert "in-memory" in warnings[0].getMessage()
 
     @pytest.mark.asyncio
-    async def test_timeout_degrades_to_memory(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_timeout_degrades_to_memory(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A bounded-connect timeout is a connection failure → degrade, not crash."""
 
         from arcteam.backends import nats as nats_backend
@@ -95,9 +93,7 @@ class TestMakeBackend:
         assert isinstance(backend, MemoryBackend)
 
     @pytest.mark.asyncio
-    async def test_unexpected_error_still_surfaces(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_unexpected_error_still_surfaces(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Only connection errors degrade quietly; an unexpected error propagates."""
         from arcteam.backends import nats as nats_backend
 

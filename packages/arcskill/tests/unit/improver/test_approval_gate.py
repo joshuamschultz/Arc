@@ -66,8 +66,9 @@ def _make(
 ) -> ArcSkillImprover:
     return ArcSkillImprover(
         root / "ws",
-        config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                              min_golden_cases=1),
+        config=ImproverConfig(
+            min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+        ),
         tier=tier,
         mutator=_FixMutator(),
         eval_runner=_PassRunner(),

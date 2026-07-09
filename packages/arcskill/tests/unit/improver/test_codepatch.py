@@ -70,8 +70,9 @@ async def test_facade_drives_code_repair_end_to_end(tmp_path: Path) -> None:
     reloaded: list[bool] = []
     imp = ArcSkillImprover(
         tmp_path / "ws",
-        config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                              min_golden_cases=1),
+        config=ImproverConfig(
+            min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+        ),
         tier="personal",
         mutator=_FakeMutator(BundlePatch(files={"scripts/calc.py": _FIXED}, summary="fix add")),
         eval_runner=_FakeRunner(),
@@ -79,8 +80,9 @@ async def test_facade_drives_code_repair_end_to_end(tmp_path: Path) -> None:
         reload=lambda: reloaded.append(True),
     )
 
-    await imp.observe(skill_name="calc-skill", tool_name="run", status="error",
-                      error_type="AssertionError")
+    await imp.observe(
+        skill_name="calc-skill", tool_name="run", status="error", error_type="AssertionError"
+    )
     await imp.on_turn_end(turn=0, outcome="failure")
     await imp.maybe_improve()
     await imp.aclose()
@@ -96,8 +98,9 @@ async def test_facade_rejects_patch_that_does_not_fix_suite(tmp_path: Path) -> N
     reloaded: list[bool] = []
     imp = ArcSkillImprover(
         tmp_path / "ws",
-        config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                              min_golden_cases=1),
+        config=ImproverConfig(
+            min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+        ),
         tier="personal",
         # Patch keeps the bug → runner reports fail before AND after → no improvement.
         mutator=_FakeMutator(BundlePatch(files={"scripts/calc.py": _BUGGY}, summary="noop")),
@@ -105,8 +108,9 @@ async def test_facade_rejects_patch_that_does_not_fix_suite(tmp_path: Path) -> N
         skill_path=lambda name: skill_md,
         reload=lambda: reloaded.append(True),
     )
-    await imp.observe(skill_name="calc-skill", tool_name="run", status="error",
-                      error_type="AssertionError")
+    await imp.observe(
+        skill_name="calc-skill", tool_name="run", status="error", error_type="AssertionError"
+    )
     await imp.on_turn_end(turn=0, outcome="failure")
     await imp.maybe_improve()
     await imp.aclose()

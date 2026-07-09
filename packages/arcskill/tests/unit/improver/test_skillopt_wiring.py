@@ -36,8 +36,9 @@ def _seed(root: Path, *, files: int = 1) -> Path:
 
 
 def _cfg() -> ImproverConfig:
-    return ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                          min_golden_cases=1)
+    return ImproverConfig(
+        min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+    )
 
 
 async def _drive(imp: ArcSkillImprover) -> None:
@@ -57,15 +58,24 @@ async def test_cosine_edit_budget_threaded_into_change_bound(tmp_path: Path) -> 
             return BundlePatch(files={"scripts/f0.py": b"x = 2\n"}, summary="tweak")
 
     imp = ArcSkillImprover(
-        tmp_path / "ws", config=_cfg(), tier="enterprise",  # ceiling 4, floor 2, cosine/3
-        mutator=_Mut(), eval_runner=_AllFailRunner(), approval_provider=None,
+        tmp_path / "ws",
+        config=_cfg(),
+        tier="enterprise",  # ceiling 4, floor 2, cosine/3
+        mutator=_Mut(),
+        eval_runner=_AllFailRunner(),
+        approval_provider=None,
         skill_path=lambda name: skill_md,
     )
     captured: dict[str, int | None] = {}
     real_check = imp._change_bound.check
 
-    def _spy(patch: object, base: object, *, skill_override: object = None,
-             edit_budget: int | None = None) -> tuple[bool, str]:
+    def _spy(
+        patch: object,
+        base: object,
+        *,
+        skill_override: object = None,
+        edit_budget: int | None = None,
+    ) -> tuple[bool, str]:
         captured["edit_budget"] = edit_budget
         return real_check(patch, base, skill_override=skill_override, edit_budget=edit_budget)
 
@@ -95,8 +105,12 @@ async def test_rejected_patch_feeds_next_mutation(tmp_path: Path) -> None:
 
     mut = _OverBoundMut()
     imp = ArcSkillImprover(
-        tmp_path / "ws", config=_cfg(), tier="personal",
-        mutator=mut, eval_runner=_AllFailRunner(), skill_path=lambda name: skill_md,
+        tmp_path / "ws",
+        config=_cfg(),
+        tier="personal",
+        mutator=mut,
+        eval_runner=_AllFailRunner(),
+        skill_path=lambda name: skill_md,
     )
 
     await _drive(imp)  # round 1 → over-bound → rejected + buffered
@@ -112,7 +126,8 @@ def test_rejected_buffer_is_bounded(tmp_path: Path) -> None:
     """The rejected-edit buffer never grows unbounded (last N kept)."""
     imp = ArcSkillImprover(tmp_path / "ws", config=_cfg(), tier="personal")
     for i in range(10):
-        imp._record_rejection("s", BundlePatch(files={"scripts/a.py": b"x\n"}, summary=f"p{i}"),
-                              "rejected")
+        imp._record_rejection(
+            "s", BundlePatch(files={"scripts/a.py": b"x\n"}, summary=f"p{i}"), "rejected"
+        )
     assert len(imp._rejected["s"]) == 5  # _REJECTED_BUFFER_MAX
     assert "p9" in imp._rejected["s"][-1]  # newest retained

@@ -75,7 +75,12 @@ class TestInterruptDecision:
 class TestBindDeliverFn:
     @pytest.mark.asyncio
     async def test_bind_stores_deliver_fn(self, tmp_path: Path) -> None:
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=_identity(), operator_signer=make_operator_signer())
+        _runtime.configure(
+            config=make_config_dict(),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
         run_fn = AsyncMock()
         deliver_fn = AsyncMock()
         ctx = MagicMock()
@@ -89,13 +94,23 @@ class TestBindDeliverFn:
 class TestSignerInjection:
     def test_configure_injects_signer(self, tmp_path: Path) -> None:
         ident = _identity()
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=ident, operator_signer=make_operator_signer())
+        _runtime.configure(
+            config=make_config_dict(),
+            workspace=tmp_path,
+            identity=ident,
+            operator_signer=make_operator_signer(),
+        )
         signer = _runtime.state().svc._signer
         assert signer is not None
         assert signer.did == ident.did
 
     def test_configure_without_identity_has_no_signer(self, tmp_path: Path) -> None:
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=None, operator_signer=make_operator_signer())
+        _runtime.configure(
+            config=make_config_dict(),
+            workspace=tmp_path,
+            identity=None,
+            operator_signer=make_operator_signer(),
+        )
         assert _runtime.state().svc._signer is None
 
 
@@ -226,7 +241,12 @@ class TestInboxLoopPush:
 class TestEnsureLiveBackend:
     @pytest.mark.asyncio
     async def test_noop_without_url(self, tmp_path: Path) -> None:
-        _runtime.configure(config=make_config_dict(), workspace=tmp_path, identity=_identity(), operator_signer=make_operator_signer())
+        _runtime.configure(
+            config=make_config_dict(),
+            workspace=tmp_path,
+            identity=_identity(),
+            operator_signer=make_operator_signer(),
+        )
         before = _runtime.state().svc
         await _runtime.ensure_live_backend()
         assert _runtime.state().svc is before

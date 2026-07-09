@@ -220,9 +220,7 @@ class TestVoiceMemoToAgentIntegration:
             mock_cls.return_value = mock_http_client
 
             _runtime.configure(config={"tier": "personal", "stt_provider": "whisper_api"})
-            transcript = await handle_voice_memo(
-                adapter=adapter, agent=agent, tmp_path=tmp_path
-            )
+            transcript = await handle_voice_memo(adapter=adapter, agent=agent, tmp_path=tmp_path)
 
         assert transcript == "transcribed from whisper api"
         assert agent.received_inputs == ["transcribed from whisper api"]

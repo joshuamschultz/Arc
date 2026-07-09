@@ -26,8 +26,6 @@ def _arc(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-
-
 # ---------------------------------------------------------------------------
 # arc init --help
 # ---------------------------------------------------------------------------
@@ -63,12 +61,16 @@ class TestInitHelp:
 class TestInitTierPersonal:
     def test_init_personal_exits_zero(self, tmp_path: Path) -> None:
         """arc init --tier personal --provider anthropic exits 0."""
-        result = _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
+        result = _arc(
+            "init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path)
+        )
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
 
     def test_init_personal_output_nonempty(self, tmp_path: Path) -> None:
         """arc init produces non-empty stdout."""
-        result = _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
+        result = _arc(
+            "init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path)
+        )
         assert result.stdout.strip()
 
     def test_init_personal_writes_config(self, tmp_path: Path) -> None:
@@ -84,7 +86,9 @@ class TestInitTierPersonal:
 
     def test_init_shows_summary(self, tmp_path: Path) -> None:
         """arc init shows configuration summary."""
-        result = _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
+        result = _arc(
+            "init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path)
+        )
         assert "Tier" in result.stdout or "tier" in result.stdout.lower()
 
 
@@ -113,6 +117,7 @@ class TestInitQuick:
         _arc("init", "--quick", "--provider", "anthropic", "--dir", str(tmp_path))
         assert (tmp_path / "arcllm.toml").exists()
 
+
 class TestInitQuickNonInteractive:
     """F3 — `--quick` must never prompt (dies on EOF non-interactively otherwise).
 
@@ -127,9 +132,7 @@ class TestInitQuickNonInteractive:
 
         monkeypatch.setattr("builtins.input", _boom)
 
-    def test_quick_does_not_prompt(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_quick_does_not_prompt(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from arccli.commands.init import init_handler
 
         self._no_input(monkeypatch)

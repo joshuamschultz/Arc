@@ -97,6 +97,7 @@ class TestAuditRecords:
         assert len(records) >= 1
         assert records[0]["event_type"] == "entity.registered"
 
+
 class TestUpdateEntity:
     """SPEC-019 T1.2: write-through entity updates with audit emission."""
 

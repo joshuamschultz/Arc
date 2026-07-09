@@ -46,9 +46,7 @@ def test_sidecar_path_convention() -> None:
     assert artifact_signing.sidecar_path(Path("/x/hello.py")) == Path("/x/hello.py.arcsig")
 
 
-def test_verify_file_true_for_valid_sidecar(
-    tmp_path: Path, identity: AgentIdentity
-) -> None:
+def test_verify_file_true_for_valid_sidecar(tmp_path: Path, identity: AgentIdentity) -> None:
     artifact = tmp_path / "hello.py"
     content = b"async def fn(): return 1\n"
     artifact.write_bytes(content)
@@ -57,9 +55,10 @@ def test_verify_file_true_for_valid_sidecar(
     )
     assert artifact_signing.verify_file(artifact, content) is True
     # Pin to the signer's key.
-    assert artifact_signing.verify_file(
-        artifact, content, trusted_public_key=identity.public_key
-    ) is True
+    assert (
+        artifact_signing.verify_file(artifact, content, trusted_public_key=identity.public_key)
+        is True
+    )
 
 
 def test_verify_file_false_when_unsigned(tmp_path: Path) -> None:

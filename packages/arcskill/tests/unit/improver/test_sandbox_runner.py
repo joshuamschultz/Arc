@@ -58,11 +58,7 @@ def _cases() -> list[EvalCase]:
 
 def test_parse_outcomes_maps_lines_to_cases() -> None:
     """Harness ``ARC_EVAL`` lines map to per-case pass/fail; missing → fail."""
-    stdout = (
-        "noise\n"
-        f"ARC_EVAL\t{_NODE_SUM}\tPASS\n"
-        f"ARC_EVAL\t{_NODE_ZERO}\tFAIL\tAssertionError\n"
-    )
+    stdout = f"noise\nARC_EVAL\t{_NODE_SUM}\tPASS\nARC_EVAL\t{_NODE_ZERO}\tFAIL\tAssertionError\n"
     outcomes = _parse_outcomes(stdout, _cases())
     by_id = {o.case_id: o for o in outcomes}
     assert by_id[_NODE_SUM].passed is True

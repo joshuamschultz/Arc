@@ -51,18 +51,12 @@ class TestLeaderBackendSelection:
         # A misconfigured multi-instance deployment must not silently degrade
         # to NoOp (every replica self-elects and ticks — violates R-048).
         with pytest.raises(ValueError, match="redis_url"):
-            _runtime.configure(
-                config={"leader": "redis"}, workspace=tmp_path, agent_name="a"
-            )
+            _runtime.configure(config={"leader": "redis"}, workspace=tmp_path, agent_name="a")
 
     def test_k8s_without_lease_params_fails_loud(self, tmp_path: Any) -> None:
         with pytest.raises(ValueError, match="k8s_namespace"):
-            _runtime.configure(
-                config={"leader": "k8s"}, workspace=tmp_path, agent_name="a"
-            )
+            _runtime.configure(config={"leader": "k8s"}, workspace=tmp_path, agent_name="a")
 
     def test_unknown_backend_fails_loud(self, tmp_path: Any) -> None:
         with pytest.raises(ValueError, match="unknown proactive leader backend"):
-            _runtime.configure(
-                config={"leader": "consul"}, workspace=tmp_path, agent_name="a"
-            )
+            _runtime.configure(config={"leader": "consul"}, workspace=tmp_path, agent_name="a")

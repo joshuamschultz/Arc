@@ -142,9 +142,7 @@ class TestPlanFileSignature:
         # Agent with workspace write flips a FAILED step to SUCCEEDED on disk.
         forged = plan.model_copy(deep=True)
         forged.get_step("a").status = StepStatus.SUCCEEDED
-        (plans_dir / "plan_1.json").write_text(
-            forged.model_dump_json(indent=2), encoding="utf-8"
-        )
+        (plans_dir / "plan_1.json").write_text(forged.model_dump_json(indent=2), encoding="utf-8")
         with pytest.raises(PlanIntegrityError, match="tampered"):
             store.load("plan_1")
 
@@ -164,8 +162,6 @@ class TestPlanFileSignature:
         store.save(plan, action="plan.created")
         forged = plan.model_copy(deep=True)
         forged.get_step("a").status = StepStatus.SUCCEEDED
-        (plans_dir / "plan_1.json").write_text(
-            forged.model_dump_json(indent=2), encoding="utf-8"
-        )
+        (plans_dir / "plan_1.json").write_text(forged.model_dump_json(indent=2), encoding="utf-8")
         # active_plan() skips the tampered file rather than resuming a forgery.
         assert store.active_plan() is None

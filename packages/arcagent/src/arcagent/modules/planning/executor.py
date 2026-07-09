@@ -101,9 +101,7 @@ class ArcRunStepExecutor:
         if (max_tokens is not None and max_tokens <= 0) or (
             max_cost is not None and max_cost <= 0
         ):
-            return StepOutcome(
-                StepStatus.FAILED, failure_reason="plan budget exhausted"
-            )
+            return StepOutcome(StepStatus.FAILED, failure_reason="plan budget exhausted")
         try:
             result = await self._run_fn(
                 task=step.description,
@@ -184,9 +182,7 @@ class ConcurrentStepExecutor:
 
         return await self._dispatcher.run_ready(reserved, _run, max_parallel=self._max_parallel)
 
-    async def _run_branch(
-        self, step: PlanStep, plan: Plan, grant: BudgetGrant
-    ) -> StepOutcome:
+    async def _run_branch(self, step: PlanStep, plan: Plan, grant: BudgetGrant) -> StepOutcome:
         """Run one bounded branch capped at its reservation, then settle (REQ-055).
 
         ``_settle`` runs in a ``finally`` so the reservation is released exactly

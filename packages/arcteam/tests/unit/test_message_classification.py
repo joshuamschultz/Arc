@@ -57,13 +57,17 @@ async def _svc(*, strict: bool = False) -> MessagingService:
 class TestNoWriteDown:
     async def test_secret_message_to_cui_recipient_refused(self) -> None:
         svc = await _svc()
-        msg = Message(sender="agent://sender", to=["agent://lo"], body="x", classification="SECRET")
+        msg = Message(
+            sender="agent://sender", to=["agent://lo"], body="x", classification="SECRET"
+        )
         with pytest.raises(ValueError, match="classification"):
             await svc.send(msg)
 
     async def test_secret_message_to_secret_recipient_delivered(self) -> None:
         svc = await _svc()
-        msg = Message(sender="agent://sender", to=["agent://hi"], body="x", classification="SECRET")
+        msg = Message(
+            sender="agent://sender", to=["agent://hi"], body="x", classification="SECRET"
+        )
         sent = await svc.send(msg)
         assert sent.status == "sent"
 

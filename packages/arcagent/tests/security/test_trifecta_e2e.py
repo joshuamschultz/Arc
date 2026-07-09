@@ -85,9 +85,7 @@ def _build_proxy(ledger: SessionCapabilityLedger) -> tuple[EgressProxy, list[str
         if event == "egress.allowed":
             ledger.record(current_session_id(), frozenset({EXTERNAL_COMMS}))
 
-    proxy = EgressProxy(
-        allowlist={"https://api.example.com"}, send_fn=send_fn, audit_sink=audit
-    )
+    proxy = EgressProxy(allowlist={"https://api.example.com"}, send_fn=send_fn, audit_sink=audit)
     return proxy, sent
 
 

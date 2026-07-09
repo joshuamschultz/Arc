@@ -54,9 +54,7 @@ def parse_host_port(url: str) -> tuple[str, int]:
 async def broker_listening(host: str, port: int, *, timeout: float = 0.5) -> bool:
     """Return True iff a TCP connection to ``host:port`` succeeds within timeout."""
     try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=timeout
-        )
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
     except (TimeoutError, OSError):
         return False
     writer.close()
@@ -121,8 +119,7 @@ async def ensure_nats_server(
     binary = shutil.which("nats-server")
     if binary is None:
         raise NatsServerUnavailableError(
-            f"no NATS broker reachable at {url} and `nats-server` is not on PATH — "
-            f"{_INSTALL_HINT}"
+            f"no NATS broker reachable at {url} and `nats-server` is not on PATH — {_INSTALL_HINT}"
         )
 
     store_dir.mkdir(parents=True, exist_ok=True)

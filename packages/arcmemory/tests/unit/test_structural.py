@@ -443,8 +443,9 @@ async def test_match_folds_enrichment_into_recall_content(workspace, db, scope) 
         workspace,
         db,
         scope,
-        Insight(id="cousin", statement="A neighbouring abstraction.", trigger="t2",
-                cues=["shared-cue"]),
+        Insight(
+            id="cousin", statement="A neighbouring abstraction.", trigger="t2", cues=["shared-cue"]
+        ),
     )
 
     # No embedder -> the cue-graph channel alone promotes it (degraded), exercising the

@@ -59,9 +59,7 @@ class ArtifactSignature(BaseModel):
         return cls.model_validate_json(raw)
 
 
-def sign_artifact(
-    content: bytes, *, signer_did: str, private_key: bytes
-) -> ArtifactSignature:
+def sign_artifact(content: bytes, *, signer_did: str, private_key: bytes) -> ArtifactSignature:
     """Sign ``content`` with an Ed25519 private-key seed under ``signer_did``."""
     public_key = KeyPair.from_seed(private_key).public_key
     signature = sign(content, private_key)

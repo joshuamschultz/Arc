@@ -242,9 +242,7 @@ def make_spawn_tool(
 
         # Clamp the child's token ceiling to what the shared pool still allows,
         # so arcrun's breaker stops a child that would overrun the pool.
-        child_max_tokens = (
-            root_token_budget.remaining if root_token_budget is not None else None
-        )
+        child_max_tokens = root_token_budget.remaining if root_token_budget is not None else None
 
         try:
             async with spawn_semaphore:

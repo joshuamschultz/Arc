@@ -311,9 +311,7 @@ async def messaging_send(
         # this session exceeds its clearance, so the clearance is the honest
         # floor; the messenger's no-write-down gate then refuses any recipient
         # who cannot receive it. Default UNCLASSIFIED clearance = no change.
-        sender_floor = (
-            st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
-        )
+        sender_floor = st.identity.clearance.name if st.identity is not None else "UNCLASSIFIED"
         msg = Message(
             sender=st.config.entity_id,
             to=targets,
@@ -532,9 +530,7 @@ async def store_team_file(file_path: str) -> str:
 
 @tool(
     name="list_team_files",
-    description=(
-        "List files in the team's shared directory. Optionally filter by agent name."
-    ),
+    description=("List files in the team's shared directory. Optionally filter by agent name."),
     classification="read_only",
     when_to_use="Discover files teammates have shared in the team directory.",
 )

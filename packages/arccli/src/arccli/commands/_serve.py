@@ -121,8 +121,10 @@ async def bootstrap_infra(team_root: Path) -> Any:
         handle = await ensure_nats_server(url=url, store_dir=_jetstream_store_dir())
     except NatsServerUnavailableError as exc:
         _write(f"  Messaging: {exc}")
-        _write("  Messaging: agents still appear in the roster (folder scan); "
-               "team status/send are unavailable until a broker is running.")
+        _write(
+            "  Messaging: agents still appear in the roster (folder scan); "
+            "team status/send are unavailable until a broker is running."
+        )
         return None
 
     if handle is None:
