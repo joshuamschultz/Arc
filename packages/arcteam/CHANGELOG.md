@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`NatsBackend.connect` bounds the initial connect (F9)** — `asyncio.wait_for` (3s) so an
+  unreachable server fails fast instead of looping nats-py's ~2min reconnect budget, plus a quiet
+  `error_cb` so nats-py async errors log at debug rather than surfacing as a raw stderr traceback.
+  The caller (arcagent messaging bootstrap) degrades to the in-memory bus with a single warning.
+
 ### Security
 
 - **`TeamFileStore` path-traversal hardening** — every resolved path is checked against the

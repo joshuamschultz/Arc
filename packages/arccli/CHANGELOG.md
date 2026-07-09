@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bare `arc` no longer crashes on non-TTY stdin (F1)** — piped/CI/`arc < file` invocations print
+  help and exit 0 instead of throwing a prompt_toolkit `KeyError` from the raw-mode REPL.
+
 ### Changed
 
+- **Scaffold/`arc ext create` templates use the public tool import** — `from arcagent.tools import
+  tool` instead of the private `arcagent.tools._decorator` (F6).
 - **`arc agent create` / `arc init` default memory ON** — both now scaffold
   `[modules.memory].config.brain = "arcmemory"` (matching the SPEC-047 blueprints), so a fresh
   agent captures daily-log bullets (`workspace/memory/daily-log/YYYY-MM-DD.md`), the episodic
