@@ -54,35 +54,35 @@ class TestInitHelp:
 
 
 # ---------------------------------------------------------------------------
-# arc init --tier open --provider anthropic --dir <tmp>
+# arc init --tier personal --provider anthropic --dir <tmp>
 # ---------------------------------------------------------------------------
 
 
-class TestInitTierOpen:
-    def test_init_open_exits_zero(self, tmp_path: Path) -> None:
-        """arc init --tier open --provider anthropic exits 0."""
-        result = _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
+class TestInitTierPersonal:
+    def test_init_personal_exits_zero(self, tmp_path: Path) -> None:
+        """arc init --tier personal --provider anthropic exits 0."""
+        result = _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
         assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
 
-    def test_init_open_output_nonempty(self, tmp_path: Path) -> None:
+    def test_init_personal_output_nonempty(self, tmp_path: Path) -> None:
         """arc init produces non-empty stdout."""
-        result = _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
+        result = _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
         assert result.stdout.strip()
 
-    def test_init_open_writes_config(self, tmp_path: Path) -> None:
-        """arc init --tier open writes arcllm.toml (primary config file)."""
-        _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
+    def test_init_personal_writes_config(self, tmp_path: Path) -> None:
+        """arc init --tier personal writes arcllm.toml (primary config file)."""
+        _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
         assert (tmp_path / "arcllm.toml").exists()
 
-    def test_init_open_config_has_tier(self, tmp_path: Path) -> None:
-        """arc init --tier open writes tier comment into arcllm.toml."""
-        _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
+    def test_init_personal_config_has_tier(self, tmp_path: Path) -> None:
+        """arc init --tier personal writes tier comment into arcllm.toml."""
+        _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
         content = (tmp_path / "arcllm.toml").read_text()
-        assert "open" in content
+        assert "personal" in content
 
     def test_init_shows_summary(self, tmp_path: Path) -> None:
         """arc init shows configuration summary."""
-        result = _arc("init", "--tier", "open", "--provider", "anthropic", "--dir", str(tmp_path))
+        result = _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
         assert "Tier" in result.stdout or "tier" in result.stdout.lower()
 
 
