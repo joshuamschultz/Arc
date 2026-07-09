@@ -281,6 +281,7 @@ def _task(args: argparse.Namespace) -> None:
     code_timeout: float = getattr(args, "code_timeout", 30.0)
     with_calc: bool = getattr(args, "with_calc", False)
     no_spawn: bool = getattr(args, "no_spawn", False)
+    spawn_token_budget: int | None = getattr(args, "spawn_token_budget", None)
     verbose: bool = getattr(args, "verbose", False)
     show_events: bool = getattr(args, "show_events", False)
     as_json: bool = getattr(args, "as_json", False)
@@ -297,6 +298,7 @@ def _task(args: argparse.Namespace) -> None:
             code_timeout=code_timeout,
             with_calc=with_calc,
             with_spawn=not no_spawn,
+            spawn_token_budget=spawn_token_budget,
             verbose=verbose,
             show_events=show_events,
             as_json=as_json,
@@ -316,11 +318,12 @@ async def _execute_task(
     code_timeout: float,
     with_calc: bool,
     with_spawn: bool,
+    spawn_token_budget: int | None,
     verbose: bool,
     show_events: bool,
     as_json: bool,
 ) -> None:
-    from arcagent.orchestration import make_spawn_tool
+    from arcagent.orchestration import RootTokenBudget, make_spawn_tool
     from arcllm import load_model
     from arcrun import StaticProvider, Tool, ToolContext, make_execute_tool, run
 
@@ -397,6 +400,9 @@ async def _execute_task(
             model=llm,
             tools=tools,
             system_prompt=system_prompt,
+            root_token_budget=(
+                RootTokenBudget(spawn_token_budget) if spawn_token_budget else None
+            ),
         )
         tools.append(spawn_tool)
 
@@ -542,6 +548,13 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="no_spawn",
         action="store_true",
         help="Disable spawn_task tool (default: registered for parallel sub-task fan-out).",
+    )
+    p.add_argument(
+        "--spawn-token-budget",
+        dest="spawn_token_budget",
+        type=int,
+        default=None,
+        help="Shared token pool (LLM10) across all spawned children; omit to leave uncapped.",
     )
     p.add_argument("--verbose", "-v", action="store_true")
     p.add_argument("--show-events", dest="show_events", action="store_true")
