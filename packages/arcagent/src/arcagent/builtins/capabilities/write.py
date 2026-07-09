@@ -1,4 +1,4 @@
-"""Built-in ``write`` tool — SPEC-021 port of arcagent.tools.write.
+"""Built-in ``write`` tool.
 
 Writes ``content`` to ``file_path`` inside the workspace, creating
 parent directories as needed. Overwrites existing files.

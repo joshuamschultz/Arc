@@ -1,4 +1,4 @@
-"""Built-in ``bash`` tool — SPEC-021 port of arcagent.tools.bash.
+"""Built-in ``bash`` tool.
 
 Runs a shell command in the workspace directory and returns combined
 stdout/stderr. Output is truncated at 30,000 characters and the
