@@ -88,6 +88,84 @@ def reset() -> None:
     _state = None
 
 
+async def get_search_provider() -> WebSearchProvider:
+    """Return (and lazily build) the configured search provider."""
+    st = state()
+    if st.search_provider is None:
+        st.search_provider = await _build_provider(st.config.search_provider, st.config)
+    return st.search_provider
+
+
+async def get_extract_provider() -> WebExtractProvider:
+    """Return (and lazily build) the configured extract provider."""
+    st = state()
+    if st.extract_provider is None:
+        st.extract_provider = await _build_provider(st.config.extract_provider, st.config)
+    return st.extract_provider
+
+
+# --- Provider construction ---------------------------------------------------
+
+
+async def _build_provider(name: str, cfg: WebConfig) -> Any:
+    """Resolve the API key and construct the named provider adapter.
+
+    Returns Any: the concrete provider classes satisfy both the search and
+    extract Protocols via duck-typing, so a single builder serves both.
+    """
+    api_key = await _resolve_api_key(name, cfg.tier)
+    return _make_provider(name, api_key, cfg.request_timeout_s)
+
+
+async def _resolve_api_key(provider_name: str, tier: str) -> str:
+    """Resolve the provider API key via the tier-aware secret resolver.
+
+    No vault backend is threaded into module runtimes, so resolution follows
+    the resolver's env/file fallback: personal and enterprise honor the
+    provider env var, while federal fails closed (VaultUnreachable) because
+    a vault-backed secret is mandatory there and none is wired in.
+    """
+    env_var_map: dict[str, str] = {
+        "parallel": "PARALLEL_API_KEY",
+        "firecrawl": "FIRECRAWL_API_KEY",
+        "tavily": "TAVILY_API_KEY",
+    }
+    secret_name = f"{provider_name}_api_key"
+    env_var = env_var_map.get(provider_name)
+
+    try:
+        from arcagent.modules.vault.resolver import resolve_secret
+
+        resolved: str = await resolve_secret(
+            secret_name,
+            tier=tier,
+            backend=None,
+            env_fallback_var=env_var,
+        )
+        return resolved
+    except Exception as exc:  # reason: re-raise as a typed provider error
+        from arcagent.modules.web.errors import ProviderConfigMissing
+
+        raise ProviderConfigMissing(provider_name, secret_name) from exc
+
+
+def _make_provider(name: str, api_key: str, timeout_s: float) -> Any:
+    """Construct the named provider adapter."""
+    from arcagent.modules.web.providers.firecrawl import FirecrawlProvider
+    from arcagent.modules.web.providers.parallel import ParallelProvider
+    from arcagent.modules.web.providers.tavily import TavilyProvider
+
+    provider_map: dict[str, Any] = {
+        "parallel": ParallelProvider,
+        "firecrawl": FirecrawlProvider,
+        "tavily": TavilyProvider,
+    }
+    cls = provider_map.get(name)
+    if cls is None:
+        raise ValueError(f"Unknown web provider: {name!r}")
+    return cls.create(api_key=api_key, timeout_s=timeout_s)
+
+
 # --- Tier enforcement --------------------------------------------------------
 
 
@@ -108,6 +186,8 @@ def _enforce_tier_policy(cfg: WebConfig) -> None:
 
 __all__ = [
     "configure",
+    "get_extract_provider",
+    "get_search_provider",
     "reset",
     "state",
 ]

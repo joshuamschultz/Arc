@@ -1,151 +1,65 @@
-"""Tests for browser sandbox policy enforcement (T4.9).
+"""Tests for the browser federal remote-browser policy.
 
 Critical invariants:
-- Federal tier ALWAYS enforces strict sandbox, even if config says loose
-- strict sandbox + local mode → LocalBrowserNotAllowedError
-- loose sandbox + local mode → allowed
-- strict sandbox + remote mode → allowed
+- Federal tier + local (empty cdp_url) → LocalBrowserNotAllowedError
+- Federal tier + remote cdp_url → allowed
+- Non-federal tiers → local always allowed
 """
 
 from __future__ import annotations
 
 import pytest
 
-from arcagent.modules.browser.config import PlaywrightConfig
+from arcagent.modules.browser.config import BrowserConnectionConfig
 from arcagent.modules.browser.errors import LocalBrowserNotAllowedError
-from arcagent.modules.browser.policy import effective_sandbox, enforce_sandbox_policy
+from arcagent.modules.browser.policy import enforce_sandbox_policy
 
-
-class TestEffectiveSandbox:
-    """effective_sandbox() returns the policy-adjusted sandbox mode."""
-
-    def test_federal_always_strict_regardless_of_config(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        assert effective_sandbox("federal", cfg) == "strict"
-
-    def test_federal_strict_config_stays_strict(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        assert effective_sandbox("federal", cfg) == "strict"
-
-    def test_enterprise_loose_config_stays_loose(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        assert effective_sandbox("enterprise", cfg) == "loose"
-
-    def test_enterprise_strict_config_stays_strict(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        assert effective_sandbox("enterprise", cfg) == "strict"
-
-    def test_personal_loose_config_stays_loose(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        assert effective_sandbox("personal", cfg) == "loose"
-
-    def test_personal_strict_config_stays_strict(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        assert effective_sandbox("personal", cfg) == "strict"
+_REMOTE = "ws://remote-browser.internal:9222/devtools/browser/abc"
 
 
 class TestEnforceSandboxPolicyFederal:
-    """Federal tier: local mode MUST raise LocalBrowserNotAllowedError."""
+    """Federal tier: a local auto-launched browser MUST raise."""
 
-    def test_federal_local_mode_raises(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
+    def test_federal_local_raises(self) -> None:
+        conn = BrowserConnectionConfig()  # empty cdp_url → local launch
         with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("federal", cfg)
+            enforce_sandbox_policy("federal", conn)
         assert exc_info.value.details["tier"] == "federal"
 
-    def test_federal_local_mode_with_strict_config_raises(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        with pytest.raises(LocalBrowserNotAllowedError):
-            enforce_sandbox_policy("federal", cfg)
-
-    def test_federal_remote_mode_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="loose",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com",
-        )
-        enforce_sandbox_policy("federal", cfg)  # must not raise
-
-    def test_federal_remote_mode_strict_config_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="strict",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com",
-        )
-        enforce_sandbox_policy("federal", cfg)  # must not raise
+    def test_federal_remote_does_not_raise(self) -> None:
+        conn = BrowserConnectionConfig(cdp_url=_REMOTE)
+        enforce_sandbox_policy("federal", conn)  # must not raise
 
 
-class TestEnforceSandboxPolicyEnterprise:
-    """Enterprise tier: raises only when sandbox=strict + mode=local."""
+class TestEnforceSandboxPolicyNonFederal:
+    """Non-federal tiers allow local browsers."""
 
-    def test_enterprise_loose_local_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        enforce_sandbox_policy("enterprise", cfg)
+    def test_enterprise_local_does_not_raise(self) -> None:
+        enforce_sandbox_policy("enterprise", BrowserConnectionConfig())
 
-    def test_enterprise_strict_local_raises(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
+    def test_personal_local_does_not_raise(self) -> None:
+        enforce_sandbox_policy("personal", BrowserConnectionConfig())
+
+    def test_enterprise_remote_does_not_raise(self) -> None:
+        enforce_sandbox_policy("enterprise", BrowserConnectionConfig(cdp_url=_REMOTE))
+
+
+class TestLocalBrowserNotAllowedErrorDetails:
+    """The error carries useful diagnostic context."""
+
+    def test_error_carries_tier(self) -> None:
         with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("enterprise", cfg)
-        assert exc_info.value.details["tier"] == "enterprise"
-
-    def test_enterprise_strict_remote_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="strict",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com",
-        )
-        enforce_sandbox_policy("enterprise", cfg)
-
-    def test_enterprise_loose_remote_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="loose",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com",
-        )
-        enforce_sandbox_policy("enterprise", cfg)
-
-
-class TestEnforceSandboxPolicyPersonal:
-    """Personal tier: local is always OK unless explicitly strict."""
-
-    def test_personal_loose_local_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        enforce_sandbox_policy("personal", cfg)
-
-    def test_personal_strict_local_raises(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="strict")
-        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("personal", cfg)
-        assert exc_info.value.details["tier"] == "personal"
-
-    def test_personal_loose_remote_does_not_raise(self) -> None:
-        cfg = PlaywrightConfig(
-            mode="remote",
-            sandbox="loose",
-            remote_provider="browserbase",
-            remote_endpoint="wss://connect.browserbase.com",
-        )
-        enforce_sandbox_policy("personal", cfg)
-
-
-class TestLocalBrowserNotAllowedErrorErrorDetails:
-    """LocalBrowserNotAllowedError carries useful diagnostic context."""
-
-    def test_error_carries_tier_and_mode(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
-        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("federal", cfg)
-        err = exc_info.value
-        assert err.details["tier"] == "federal"
-        assert err.details["mode"] == "local"
-        assert err.details["sandbox"] == "strict"
+            enforce_sandbox_policy("federal", BrowserConnectionConfig())
+        assert exc_info.value.details["tier"] == "federal"
 
     def test_error_code_is_correct(self) -> None:
-        cfg = PlaywrightConfig(mode="local", sandbox="loose")
         with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
-            enforce_sandbox_policy("federal", cfg)
+            enforce_sandbox_policy("federal", BrowserConnectionConfig())
         assert exc_info.value.code == "BROWSER_LOCAL_NOT_ALLOWED"
+
+    def test_error_message_is_actionable(self) -> None:
+        with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
+            enforce_sandbox_policy("federal", BrowserConnectionConfig())
+        msg = exc_info.value.message.lower()
+        assert "remote" in msg
+        assert "endpoint" in msg

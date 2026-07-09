@@ -130,11 +130,19 @@ def make_spawn_tool(
     spawn_timeout_seconds: int = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
     max_concurrent_spawns: int = _DEFAULT_MAX_CONCURRENT_SPAWNS,
     max_child_turns: int = _DEFAULT_MAX_CHILD_TURNS,
+    root_token_budget: RootTokenBudget | None = None,
 ) -> Tool:
     """Create a spawn_task tool that starts a child run().
 
     State is read from ``ctx.parent_state`` at execute time, set by the
     arcrun executor.
+
+    When ``root_token_budget`` is supplied, it is a pool shared by every child
+    this tool spawns during the run (LLM10). Each child runs with its
+    ``max_tokens`` clamped to the pool's remaining balance, and its actual usage
+    is debited on completion; once the pool is exhausted, further spawns are
+    refused. This is the cross-child cap that stops one run from silently
+    spending several times its allocation.
     """
     # Semaphore limits concurrent child runs (ASI-08, LLM10)
     spawn_semaphore = asyncio.Semaphore(max_concurrent_spawns)
@@ -147,6 +155,10 @@ def make_spawn_tool(
         # Depth guard
         if run_state.depth >= run_state.max_depth:
             return f"Error: max spawn depth ({run_state.max_depth}) reached"
+
+        # Cross-child token cap (LLM10): refuse once the shared pool is spent.
+        if root_token_budget is not None and root_token_budget.is_exhausted():
+            return "Error: spawn token budget exhausted for this run"
 
         child_task = params["task"]
         requested_tools = params.get("tools")
@@ -177,7 +189,21 @@ def make_spawn_tool(
             child_tools = list(tools)
 
         child_run_id = str(uuid.uuid4())
-        bubble_handler = _make_bubble_handler(child_run_id, run_state.event_bus)
+        event_bus = run_state.event_bus
+        parent_run_id = run_state.run_id
+        bubble_handler = _make_bubble_handler(child_run_id, event_bus)
+
+        def _complete(success: bool, **extra: Any) -> None:
+            """Emit spawn.complete with the shared run ids plus caller extras."""
+            event_bus.emit(
+                "spawn.complete",
+                {
+                    "child_run_id": child_run_id,
+                    "parent_run_id": parent_run_id,
+                    "success": success,
+                    **extra,
+                },
+            )
 
         # Audit event: spawn start (NIST AU-2/AU-3)
         run_state.event_bus.emit(
@@ -214,6 +240,12 @@ def make_spawn_tool(
                 outcome="allow",
             )
 
+        # Clamp the child's token ceiling to what the shared pool still allows,
+        # so arcrun's breaker stops a child that would overrun the pool.
+        child_max_tokens = (
+            root_token_budget.remaining if root_token_budget is not None else None
+        )
+
         try:
             async with spawn_semaphore:
                 # agent_identity is a sync contextmanager (task-local identity);
@@ -233,21 +265,17 @@ def make_spawn_tool(
                             allowed_strategies=allowed_strategies,
                             actor_did=child_actor,
                             store_raw_bodies=run_state.event_bus.store_raw_bodies,
+                            max_tokens=child_max_tokens,
                         ),
                         timeout=spawn_timeout_seconds,
                     )
 
+            # Debit the child's actual usage from the shared pool (LLM10).
+            if root_token_budget is not None:
+                await root_token_budget.record_actual(int(result.tokens_used.get("total", 0)))
+
             # Audit event: spawn complete
-            run_state.event_bus.emit(
-                "spawn.complete",
-                {
-                    "child_run_id": child_run_id,
-                    "parent_run_id": run_state.run_id,
-                    "turns_used": result.turns,
-                    "cost_usd": result.cost_usd,
-                    "success": True,
-                },
-            )
+            _complete(True, turns_used=result.turns, cost_usd=result.cost_usd)
 
             return result.content or "(no content)"
 
@@ -257,15 +285,7 @@ def make_spawn_tool(
                 child_run_id,
                 spawn_timeout_seconds,
             )
-            run_state.event_bus.emit(
-                "spawn.complete",
-                {
-                    "child_run_id": child_run_id,
-                    "parent_run_id": run_state.run_id,
-                    "success": False,
-                    "error": "timeout",
-                },
-            )
+            _complete(False, error="timeout")
             return f"Error: child task timed out after {spawn_timeout_seconds}s"
 
         except Exception as exc:  # reason: fail-open — log + continue
@@ -276,15 +296,7 @@ def make_spawn_tool(
                 type(exc).__name__,
                 str(exc)[:_MAX_ERROR_LEN],
             )
-            run_state.event_bus.emit(
-                "spawn.complete",
-                {
-                    "child_run_id": child_run_id,
-                    "parent_run_id": run_state.run_id,
-                    "success": False,
-                    "error": type(exc).__name__,
-                },
-            )
+            _complete(False, error=type(exc).__name__)
             # Sanitized error — no internal details leaked to LLM (LLM02)
             return "Error: child task failed"
 
@@ -322,7 +334,6 @@ def make_spawn_tool(
         },
         execute=_execute,
         timeout_seconds=spawn_timeout_seconds,
-        parallel_safe=True,
     )
 
 
@@ -365,8 +376,7 @@ def _start_child_span(
         span.set_attribute("arc.delegation.depth", delegation_depth)
         token = otel_context.attach(trace.set_span_in_context(span))
         return span, token
-    except (ImportError, Exception):
-        # Degrade gracefully — OTel optional in local/air-gapped deployments
+    except Exception:  # reason: OTel optional — degrade gracefully (air-gapped)
         return None, None
 
 
@@ -387,8 +397,7 @@ def _end_child_span(span: Any | None, token: Any | None, status: str) -> None:
         span.end()
         if token is not None:
             otel_context.detach(token)
-    except (ImportError, Exception):
-        # OTel optional — log at debug so nothing is silently swallowed
+    except Exception:  # reason: OTel optional — log at debug, never fatal
         _logger.debug("OTel span end failed (non-fatal)", exc_info=True)
 
 
@@ -422,6 +431,29 @@ def _make_error_result(
         duration_s=duration_s,
         error=error_msg,
     )
+
+
+# arcrun's circuit breaker records why a child halted in
+# ``completion_payload['error']`` (its budget-breach vocabulary). Map each reason
+# onto the spawn terminal status so a truncated child is never reported as a
+# genuine completion (audit honesty). A clean end_turn / task_complete leaves no
+# breach reason and stays "completed".
+_BREACH_TO_STATUS: dict[str, _SpawnStatus] = {
+    "max_turns": "max_iterations",
+    "max_tokens": "budget_exhausted",
+    "max_cost": "budget_exhausted",
+    "runaway_loop": "error",
+    "error_cascade": "error",
+}
+
+
+def _status_from_loop_result(loop_result: Any) -> _SpawnStatus:
+    """Derive the child's terminal status from its LoopResult."""
+    payload = loop_result.completion_payload or {}
+    reason = payload.get("error")
+    if not isinstance(reason, str):
+        return "completed"
+    return _BREACH_TO_STATUS.get(reason, "completed")
 
 
 async def spawn(
@@ -616,8 +648,9 @@ async def spawn(
             total=loop_result.tokens_used.get("total", 0),
         )
 
-        # Determine status from loop result
-        result_status: _SpawnStatus = "completed"
+        # Determine status from loop result — honor a breaker-truncated child
+        # rather than reporting its partial output as a completion.
+        result_status: _SpawnStatus = _status_from_loop_result(loop_result)
 
         parent_state.event_bus.emit(
             "spawn.complete",

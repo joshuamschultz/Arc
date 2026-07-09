@@ -37,6 +37,12 @@ class PlanningConfig(ModuleConfig):
     # Aggregate plan budget, sliced onto per-step run ceilings (REQ-022).
     max_tokens: int | None = None
     max_cost_usd: float | None = None
+    # SPEC-043 concurrent Plan-Execute. Default False = interim sequential
+    # walk (one ready step at a time). When True the orchestrator dispatches
+    # the whole ready DAG frontier concurrently under reserve-then-settle.
+    concurrent: bool = False
+    # Max branches dispatched at once when ``concurrent`` is set (REQ-056).
+    max_parallel: int = 8
 
 
 @dataclass
@@ -105,7 +111,7 @@ def configure(
         audit_sink=_build_worm_sink(ws, operator_signer, telemetry),
         operator_signer=operator_signer,
         telemetry=telemetry,
-        actor_did=agent_did or f"did:arc:{agent_name}" if agent_name else "did:arc:planner",
+        actor_did=agent_did or (f"did:arc:{agent_name}" if agent_name else "did:arc:planner"),
     )
     _state = _State(
         plans_dir=plans_dir,

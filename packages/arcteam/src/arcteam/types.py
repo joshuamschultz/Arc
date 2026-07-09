@@ -19,17 +19,9 @@ class EntityType(StrEnum):
 
 
 class EntityStatus(StrEnum):
-    """Presence state of a registered entity (REQ-021).
-
-    Drives message routing: the router pushes to ``active`` members and relies
-    on the durable-consumer inbox to cover ``offline`` ones.
-    """
+    """Registration state of an entity. A registered entity is ``active``."""
 
     active = "active"
-    idle = "idle"
-    blocked = "blocked"
-    waiting = "waiting"
-    offline = "offline"
 
 
 class MsgType(StrEnum):

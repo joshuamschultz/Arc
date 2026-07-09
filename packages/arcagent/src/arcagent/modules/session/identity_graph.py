@@ -31,7 +31,6 @@ DID generation strategy:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import sqlite3
@@ -84,11 +83,6 @@ class IdentityGraph:
       - A single long-lived sqlite3.Connection(check_same_thread=False)
         is opened in __init__.  WAL mode serialises concurrent writers.
       - The LRU cache is guarded by threading.Lock.
-
-    Async variants:
-      resolve_user_identity_async, lookup_user_did_async,
-      link_identities_async, unlink_identity_async, list_links_async
-      offload their sync counterparts to asyncio.to_thread.
     """
 
     def __init__(
@@ -230,47 +224,6 @@ class IdentityGraph:
             )
             for row in rows
         ]
-
-    # ------------------------------------------------------------------
-    # Async variants (Wave B2 callers await these)
-    # ------------------------------------------------------------------
-
-    async def resolve_user_identity_async(self, platform: str, platform_user_id: str) -> str:
-        """Async variant of resolve_user_identity."""
-        return await asyncio.to_thread(self.resolve_user_identity, platform, platform_user_id)
-
-    async def lookup_user_did_async(self, platform: str, platform_user_id: str) -> str | None:
-        """Async variant of lookup_user_did."""
-        return await asyncio.to_thread(self.lookup_user_did, platform, platform_user_id)
-
-    async def link_identities_async(
-        self,
-        user_did: str,
-        platform: str,
-        platform_user_id: str,
-        linked_by_did: str,
-    ) -> None:
-        """Async variant of link_identities."""
-        await asyncio.to_thread(
-            self.link_identities,
-            user_did,
-            platform,
-            platform_user_id,
-            linked_by_did,
-        )
-
-    async def unlink_identity_async(
-        self,
-        user_did: str,
-        platform: str,
-        platform_user_id: str,
-    ) -> None:
-        """Async variant of unlink_identity."""
-        await asyncio.to_thread(self.unlink_identity, user_did, platform, platform_user_id)
-
-    async def list_links_async(self, user_did: str) -> list[Link]:
-        """Async variant of list_links."""
-        return await asyncio.to_thread(self.list_links, user_did)
 
     # ------------------------------------------------------------------
     # Private helpers

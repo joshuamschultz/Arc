@@ -21,11 +21,12 @@ from typing import Protocol
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
+from arcmemory.index.source import iter_source_chunks
 from arcmemory.mdfile import parse_document
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import extract_wiki_links
-from arcmemory.tagging import tag_entities
+from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Scope
 
 try:  # optional [vec] extra
@@ -34,9 +35,6 @@ try:  # optional [vec] extra
     _SQLITE_VEC_IMPORTABLE = True
 except ImportError:  # pragma: no cover
     _SQLITE_VEC_IMPORTABLE = False
-
-# Curated markdown source directories, in a fixed order (determinism).
-_SOURCE_SUBDIRS = ("entities", "insights", "procedures", "daily-log")
 
 
 class EmbeddingUnavailableError(Exception):
@@ -101,11 +99,18 @@ class IndexRebuilder:
         self._seed_vocab = set(seed_vocabulary or [])
 
     async def rebuild(self) -> None:
-        """Wipe all derived tables and re-derive them from truth (idempotent)."""
+        """Wipe every derived table and re-derive it from truth (idempotent).
+
+        The single canonical wipe: ``chunks`` is cleared so rows for deleted sources
+        do not survive as orphans, and ``insight_trigger`` is cleared so a poisoned or
+        orphaned abstraction-space vector cannot outlive the rebuild that is meant to
+        fix it (the next ``trigger_index`` re-embeds the current insight set).
+        """
         conn = self._db.connect()
         conn.execute("DELETE FROM fts_chunks")
         conn.execute("DELETE FROM edges")
         conn.execute("DELETE FROM chunks")
+        conn.execute("DELETE FROM insight_trigger")
         if self._db.vec_available:
             conn.execute("DELETE FROM vec0")
         conn.commit()
@@ -117,44 +122,32 @@ class IndexRebuilder:
     # -- chunks + fts + vectors -------------------------------------------
 
     async def _rebuild_chunks(self) -> None:
-        """Chunk every source file + every raw event; index into fts + vec."""
+        """Chunk every source file + every raw event; index into fts + vec.
+
+        ``mtime`` is written ``None`` (not the file/event time the shared iterator
+        carries) so a rebuild is byte-identical regardless of on-disk stats.
+        """
         conn = self._db.connect()
-        chunks: list[tuple[str, str, str, str]] = []  # (chunk_id, source, text, classification)
+        events = self._episodic.events(self._scope.key)
+        chunks = list(iter_source_chunks(self._mem_dir, self._workspace, events))
 
-        for subdir in _SOURCE_SUBDIRS:
-            directory = self._mem_dir / subdir
-            if not directory.exists():
-                continue
-            for path in sorted(directory.glob("*.md")):
-                text = path.read_text(encoding="utf-8")
-                fm, _ = parse_document(text)
-                # A genuinely missing label passes through empty — the no-read-up gate
-                # decides fail-closed (federal) vs default (personal), never the index.
-                classification = str(fm.get("classification") or "")
-                rel = str(path.relative_to(self._workspace))
-                chunks.append((f"file:{rel}", rel, text, classification))
-
-        for event in self._episodic.events(self._scope.key):
-            chunks.append(
-                (f"event:{event.event_id}", "episodic", event.text, event.classification)
-            )
-
-        embeddings = await self._embed([text for _, _, text, _ in chunks])
-        for i, (chunk_id, source, text, classification) in enumerate(chunks):
+        embeddings = await self._embed([sc.text for sc in chunks])
+        for i, sc in enumerate(chunks):
             conn.execute(
                 "INSERT OR REPLACE INTO chunks "
                 "(chunk_id, scope, source_path, mtime, classification, content_hash) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (chunk_id, self._scope.key, source, None, classification, content_hash(text)),
+                (sc.chunk_id, self._scope.key, sc.source_path, None, sc.classification,
+                 content_hash(sc.text)),
             )
             conn.execute(
                 "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",
-                (chunk_id, self._scope.key, text),
+                (sc.chunk_id, self._scope.key, sc.text),
             )
             if embeddings is not None:
                 conn.execute(
                     "INSERT INTO vec0 (chunk_id, embedding) VALUES (?, ?)",
-                    (chunk_id, sqlite_vec.serialize_float32(embeddings[i])),
+                    (sc.chunk_id, sqlite_vec.serialize_float32(embeddings[i])),
                 )
         conn.commit()
 
@@ -183,11 +176,7 @@ class IndexRebuilder:
 
     def _rebuild_assoc_edges(self) -> None:
         """Replay the raw stream to reproduce Hebbian co-activation edges."""
-        vocab = set(self._seed_vocab)
-        entities_dir = self._mem_dir / "entities"
-        if entities_dir.exists():
-            vocab.update(p.stem for p in entities_dir.glob("*.md"))
-
+        vocab = entity_vocabulary(self._mem_dir, self._seed_vocab)
         for event in self._episodic.events(self._scope.key):
             tags = tag_entities(event.text, vocab)
             for a, b in combinations(tags, 2):

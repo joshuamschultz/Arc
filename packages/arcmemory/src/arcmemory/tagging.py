@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from functools import lru_cache
+from pathlib import Path
 
 
 @lru_cache(maxsize=2048)
@@ -27,4 +28,18 @@ def tag_entities(text: str, vocabulary: Iterable[str]) -> list[str]:
     return sorted(found)
 
 
-__all__ = ["tag_entities"]
+def entity_vocabulary(mem_dir: Path, seed_vocab: Iterable[str] = ()) -> set[str]:
+    """Seed terms unioned with the slugs of the entity files under ``mem_dir``.
+
+    The one builder the fast-capture path, both retrieval channels, and the rebuild
+    replay share, so the controlled tagging vocabulary can never silently diverge
+    between the site that *writes* an edge and the site that *reads* it.
+    """
+    vocab = set(seed_vocab)
+    entities_dir = mem_dir / "entities"
+    if entities_dir.exists():
+        vocab.update(p.stem for p in entities_dir.glob("*.md"))
+    return vocab
+
+
+__all__ = ["entity_vocabulary", "tag_entities"]

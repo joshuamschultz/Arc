@@ -32,6 +32,7 @@ class _State:
     config: SlackConfig
     workspace: Path
     telemetry: AgentTelemetry | None
+    egress: Any = None
     bot: SlackBot | None = None
 
 
@@ -43,14 +44,20 @@ def configure(
     config: dict[str, Any] | None = None,
     workspace: Path = Path("."),
     telemetry: Any = None,
+    egress_proxy: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup."""
+    """Bind module state. Called once at agent startup.
+
+    ``egress_proxy`` is the agent's shared EgressProxy; outbound notifications
+    are mediated through it (SPEC-038 REQ-031).
+    """
     global _state
     cfg = SlackConfig(**(config or {}))
     _state = _State(
         config=cfg,
         workspace=workspace.resolve(),
         telemetry=telemetry,
+        egress=egress_proxy,
     )
 
 

@@ -33,7 +33,6 @@ Streaming:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any, ClassVar
 
@@ -85,7 +84,6 @@ class ArcTUI(App[None]):
         self._transcript: TranscriptView | None = None
         self._activity: ActivityView | None = None
         self._composer: InputComposer | None = None
-        self._turn_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Layout
@@ -258,15 +256,14 @@ class ArcTUI(App[None]):
         from arcrun import TokenEvent
 
         try:
-            async with self._turn_lock:
-                self._transcript.start_streaming(MessageRole.ASSISTANT)
-                session = await self._agent.session("tui:main")
-                async for event in self._agent.run(text, session=session):
-                    if isinstance(event, TokenEvent):
-                        self._transcript.append_delta(event.text)
-                    # tool_start / tool_end events are handled by ActivityView
-                    # via the module bus bridge — no transcript update needed.
-                self._transcript.finish_streaming()
+            self._transcript.start_streaming(MessageRole.ASSISTANT)
+            session = await self._agent.session("tui:main")
+            async for event in self._agent.run(text, session=session):
+                if isinstance(event, TokenEvent):
+                    self._transcript.append_delta(event.text)
+                # tool_start / tool_end events are handled by ActivityView
+                # via the module bus bridge — no transcript update needed.
+            self._transcript.finish_streaming()
         except Exception as exc:  # reason: fail-open — log + continue
             _logger.exception("Agent stream turn failed: %s", exc)
             self._transcript.finish_streaming()

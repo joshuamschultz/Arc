@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,15 @@ _TWO_STEP = {
     "steps": [
         {"step_id": "a", "description": "gather", "depends_on": [], "tool_hint": "web_search"},
         {"step_id": "b", "description": "write", "depends_on": ["a"], "tool_hint": None},
+    ]
+}
+
+# Two INDEPENDENT steps — the whole ready frontier is dispatchable at once, so a
+# concurrent executor runs both in parallel while a sequential one runs a→b.
+_TWO_INDEP = {
+    "steps": [
+        {"step_id": "a", "description": "task a", "depends_on": [], "tool_hint": None},
+        {"step_id": "b", "description": "task b", "depends_on": [], "tool_hint": None},
     ]
 }
 
@@ -89,6 +99,70 @@ class TestPlanCreate:
         result = json.loads(await capabilities.plan_create("goal"))
         assert "error" in result
         assert "rejected" in result["error"]
+
+
+class TestConcurrentWiring:
+    """SPEC-043 — the ``concurrent`` PlanningConfig flag selects the concurrent
+    executor on the REAL orchestrator-build path (``_build_orchestrator``)."""
+
+    @pytest.mark.asyncio
+    async def test_default_flag_builds_sequential_executor(self, tmp_path: Path) -> None:
+        from arcagent.modules.planning.executor import ArcRunStepExecutor
+
+        _configure(tmp_path, _TWO_INDEP)
+        assert _runtime.state().config.concurrent is False
+        orch = capabilities._build_orchestrator("pid-seq")
+        assert isinstance(orch._executor, ArcRunStepExecutor)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_flag_dispatches_frontier_in_parallel(
+        self, tmp_path: Path
+    ) -> None:
+        from arcagent.modules.planning.executor import ConcurrentStepExecutor
+
+        _runtime.configure(
+            workspace=tmp_path,
+            agent_name="tester",
+            agent_did="did:arc:tester",
+            config={"enabled": True, "concurrent": True},
+        )
+        st = _runtime.state()
+        st.eval_model = _FakeModel(_TWO_INDEP)
+        st.known_tools = set()
+
+        # Both independent branches must be in-flight simultaneously to clear
+        # the barrier; a sequential executor would deadlock (and time out).
+        barrier = asyncio.Barrier(2)
+
+        async def _concurrent_run(
+            input_text: str,
+            *,
+            session_key: str,
+            max_tokens: int | None = None,
+            max_cost_usd: float | None = None,
+        ) -> Any:
+            await asyncio.wait_for(barrier.wait(), timeout=1.0)
+            return SimpleNamespace(
+                content=f"ran: {input_text}",
+                turns=1,
+                tool_calls_made=0,
+                cost_usd=0.0,
+                tokens_used={"total": 1},
+                completion_payload=None,
+                completion_tool=None,
+            )
+
+        st.run_fn = _concurrent_run
+
+        # The real build path yields the concurrent executor.
+        assert isinstance(
+            capabilities._build_orchestrator("pid-conc")._executor,
+            ConcurrentStepExecutor,
+        )
+
+        result = json.loads(await capabilities.plan_create("do two things"))
+        assert result["status"] == "completed"
+        assert all(s["status"] == "succeeded" for s in result["steps"])
 
 
 class TestPlanStatus:

@@ -80,11 +80,6 @@ class TestUiStartHelp:
         result = _arc("ui", "start", "--help")
         assert "--operator-token" in result.stdout
 
-    def test_start_help_shows_agent_token(self) -> None:
-        """arc ui start --help mentions --agent-token option."""
-        result = _arc("ui", "start", "--help")
-        assert "--agent-token" in result.stdout
-
     def test_start_help_shows_max_agents(self) -> None:
         """arc ui start --help mentions --max-agents option."""
         result = _arc("ui", "start", "--help")

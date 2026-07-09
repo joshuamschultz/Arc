@@ -5,17 +5,11 @@ accessibility manager lifecycle (setup launches Chrome / connects;
 teardown closes the WebSocket and reaps the Chrome process).
 
 Module-level ``@tool`` functions delegate to
-``_runtime.state().cdp_client`` and ``ax_manager``, mirroring the
-behaviour of the legacy ``create_*_tools`` factories.
+``_runtime.state().cdp_client`` and ``ax_manager``.
 
 State is shared via :mod:`arcagent.modules.browser._runtime`. The agent
 configures it once at startup; the capability ``setup()`` populates the
 CDP client; the @tool functions read state lazily.
-
-The legacy :class:`BrowserModule` class still exists alongside this
-module to keep its existing test surface working; both forms route to
-the same :class:`CDPClientManager` and :class:`AccessibilityManager`
-classes internally.
 """
 
 from __future__ import annotations
@@ -26,11 +20,9 @@ from typing import Any
 from arcagent.modules.browser import _runtime
 from arcagent.modules.browser.accessibility import AccessibilityManager
 from arcagent.modules.browser.cdp_client import CDPClientManager
-from arcagent.modules.browser.errors import URLBlockedError
-from arcagent.modules.browser.tools.navigate import (
-    _check_url_policy,
-    _get_current_url,
-)
+from arcagent.modules.browser.errors import CapabilityDisabledError, URLBlockedError
+from arcagent.modules.browser.policy import enforce_sandbox_policy
+from arcagent.modules.browser.url_policy import _check_url_policy, _get_current_url
 from arcagent.tools._decorator import capability, tool
 
 _logger = logging.getLogger("arcagent.modules.browser.capabilities")
@@ -50,8 +42,13 @@ class BrowserCapability:
     """
 
     async def setup(self, _ctx: Any) -> None:
-        """Connect CDP and prepare the accessibility manager."""
+        """Connect CDP and prepare the accessibility manager.
+
+        Enforces the federal remote-browser requirement before launching:
+        a federal deployment may not auto-launch a local headless Chrome.
+        """
         st = _runtime.state()
+        enforce_sandbox_policy(st.config.tier, st.config.connection)
         cdp = CDPClientManager(st.config.connection)
         await cdp.connect()
         st.cdp_client = cdp
@@ -499,6 +496,8 @@ async def browser_set_cookies(cookies: list[dict[str, Any]]) -> str:
 )
 async def browser_execute_js(expression: str) -> str:
     """Execute JavaScript in the page context, return the result."""
+    if not _runtime.state().config.security.allow_js_execution:
+        raise CapabilityDisabledError("browser_execute_js")
     result = await _cdp().send(
         "Runtime",
         "evaluate",
@@ -535,8 +534,10 @@ async def browser_execute_js(expression: str) -> str:
 )
 async def browser_download_file(url: str) -> str:
     """Download a file by navigating to its URL."""
-    cdp = _cdp()
     cfg = _runtime.state().config
+    if not cfg.security.allow_downloads:
+        raise CapabilityDisabledError("browser_download_file")
+    cdp = _cdp()
     _check_url_policy(url, cfg.security)
     download_path = cfg.security.download_path
     await cdp.send(

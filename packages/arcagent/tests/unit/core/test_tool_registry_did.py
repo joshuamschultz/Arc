@@ -6,7 +6,7 @@ An unidentified caller (did:arc:unknown) triggers a security audit event.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 from arcagent.core.config import AgentConfig, ArcAgentConfig, LLMConfig
@@ -17,7 +17,7 @@ from arcagent.core.tool_registry import RegisteredTool, ToolRegistry, ToolTransp
 def _make_registry(
     *,
     agent_did: str = "did:arc:testorg:executor/abc123",
-    tier: str = "personal",
+    tier: Literal["federal", "enterprise", "personal"] = "personal",
 ) -> tuple[ToolRegistry, MagicMock]:
     from unittest.mock import AsyncMock
 
@@ -54,6 +54,87 @@ def _make_tool(name: str = "echo_tool") -> RegisteredTool:
         transport=ToolTransport.NATIVE,
         execute=execute,
     )
+
+
+def _make_capturing_tool(name: str, captured: dict[str, Any]) -> RegisteredTool:
+    async def execute(**kwargs: Any) -> str:
+        captured.clear()
+        captured.update(kwargs)
+        return "ok"
+
+    return RegisteredTool(
+        name=name,
+        description="test",
+        input_schema={"type": "object", "properties": {"key": {"type": "string"}}},
+        transport=ToolTransport.NATIVE,
+        execute=execute,
+    )
+
+
+class TestCallerDidBindingDispatch:
+    """ASI-03 / LLM-01 — the transport strips LLM-supplied identity args."""
+
+    async def test_memory_tool_strips_injected_identity_args(self) -> None:
+        real_did = "did:arc:testorg:executor/real"
+        registry, mock_telemetry = _make_registry(agent_did=real_did)
+        captured: dict[str, Any] = {}
+        registry.register(_make_capturing_tool("memory.read", captured))
+
+        arcrun_tools = registry.to_arcrun_tools()
+        await arcrun_tools[0].execute(
+            {"key": "k", "user_did": "did:evil", "owner_did": "did:evil"},
+            MagicMock(),
+        )
+
+        # Identity args stripped; memory.read declares no caller_did, so none injected.
+        assert captured == {"key": "k"}
+        events = [call[0][0] for call in mock_telemetry.audit_event.call_args_list]
+        assert "security.caller_did_override_attempt" in events
+
+    async def test_memory_tool_preserves_declared_user_did(self) -> None:
+        """A memory-family tool whose schema legitimately declares ``user_did``
+        (e.g. user_profile_read/write/tombstone) must receive it — the defence
+        strips only injected, undeclared identity args."""
+        real_did = "did:arc:testorg:executor/real"
+        registry, _ = _make_registry(agent_did=real_did)
+        captured: dict[str, Any] = {}
+
+        async def execute(**kwargs: Any) -> str:
+            captured.clear()
+            captured.update(kwargs)
+            return "ok"
+
+        registry.register(
+            RegisteredTool(
+                name="user_profile_read",
+                description="read a user profile",
+                input_schema={
+                    "type": "object",
+                    "properties": {"user_did": {"type": "string"}},
+                    "required": ["user_did"],
+                },
+                transport=ToolTransport.NATIVE,
+                execute=execute,
+            )
+        )
+
+        arcrun_tools = registry.to_arcrun_tools()
+        await arcrun_tools[0].execute({"user_did": "did:arc:alice"}, MagicMock())
+
+        # The declared, required user_did survived to the tool; no caller_did
+        # was injected because the schema does not declare it.
+        assert captured == {"user_did": "did:arc:alice"}
+
+    async def test_non_memory_tool_args_pass_through_untouched(self) -> None:
+        registry, _ = _make_registry(agent_did="did:arc:testorg:executor/real")
+        captured: dict[str, Any] = {}
+        registry.register(_make_capturing_tool("bash", captured))
+
+        arcrun_tools = registry.to_arcrun_tools()
+        await arcrun_tools[0].execute({"key": "ls", "user_did": "did:evil"}, MagicMock())
+
+        # Non-memory tools are outside the identity contract — args untouched.
+        assert captured == {"key": "ls", "user_did": "did:evil"}
 
 
 class TestToolDispatchAuditActorDID:

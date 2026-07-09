@@ -14,15 +14,18 @@ a shared, typed vocabulary so tier branches are always ``if policy.tier ==
 Tier.FEDERAL`` rather than ``if tier == "federal"`` strings scattered through
 business logic.
 
-Usage example (scheduler/nl_parser.py)::
+Usage example (core/tofu_layer.py)::
 
-    from arcagent.core.tier import PolicyContext, Tier, tier_from_config
+    from arcagent.core.tier import Tier
 
-    async def parse(text: str, user_tz: str, policy: PolicyContext) -> Schedule:
-        ...
-        if policy.tier == Tier.FEDERAL:
-            raise ParseError("deterministic-only mode")
-        ...
+    class TofuLayer:
+        def __init__(self, tier: Tier, validators: ValidatorsConfig) -> None:
+            self._tier = tier
+            ...
+
+        def evaluate(self, target: CapabilitySource) -> Decision:
+            if self._tier == Tier.FEDERAL:
+                ...
 """
 
 from __future__ import annotations
@@ -83,41 +86,7 @@ class PolicyContext:
         return self.tier == Tier.PERSONAL
 
 
-def tier_from_config(cfg: Any) -> Tier:
-    """Read the deployment tier from an ArcAgent config object.
-
-    Reads ``cfg.security.tier`` (a string) and converts to ``Tier``.
-    Falls back to ``Tier.PERSONAL`` when the attribute chain is absent
-    (e.g. in tests with minimal configs).
-
-    Args:
-        cfg: Any object with an optional ``security.tier`` attribute.
-             Typically ``arcagent.core.config.ArcAgentConfig``.
-
-    Returns:
-        The resolved ``Tier`` enum value.
-
-    Raises:
-        ValueError: When ``security.tier`` is present but not a valid tier
-                    string.  This surfaces misconfiguration at startup rather
-                    than at the first policy check.
-    """
-    try:
-        tier_str: str = cfg.security.tier
-    except AttributeError:
-        return Tier.PERSONAL
-
-    try:
-        return Tier(tier_str.lower())
-    except ValueError as exc:
-        valid = [t.value for t in Tier]
-        raise ValueError(
-            f"Invalid security.tier {tier_str!r} in config.  Must be one of: {valid}"
-        ) from exc
-
-
 __all__ = [
     "PolicyContext",
     "Tier",
-    "tier_from_config",
 ]

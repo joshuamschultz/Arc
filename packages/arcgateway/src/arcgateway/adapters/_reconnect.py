@@ -19,8 +19,8 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-import math
 
+from arcgateway.adapters._backoff import exponential_backoff
 from arcgateway.adapters.base import BasePlatformAdapter
 
 _logger = logging.getLogger("arcgateway.adapters.base")
@@ -53,8 +53,9 @@ class FailedAdapter:
         Returns:
             Seconds to wait before the next reconnect attempt.
         """
-        n = max(1, self.attempt)
-        return float(min(_BACKOFF_BASE_SECONDS * math.pow(2, n - 1), _BACKOFF_MAX_SECONDS))
+        return exponential_backoff(
+            self.attempt, base=_BACKOFF_BASE_SECONDS, factor=2, cap=_BACKOFF_MAX_SECONDS
+        )
 
 
 async def reconnect_watcher(

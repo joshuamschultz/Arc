@@ -4,12 +4,13 @@ Many modules need to emit audit events without letting a telemetry
 failure cascade into the business operation (e.g. a memory-read veto
 must still be enforced even if the audit sink is unavailable).
 
-This helper consolidates the three-line try/except pattern that
-previously lived inline in:
+This helper backs the audit-emission hooks in the module capability
+layers, e.g.:
 
-    arcagent.modules.voice.voice_module._emit_audit
-    arcagent.modules.memory_acl.memory_acl_module._emit_veto_audit
-    arcagent.modules.memory_acl.memory_acl_module._emit_cross_session_read_audit
+    arcagent.modules.voice.capabilities
+    arcagent.modules.memory.capabilities
+    arcagent.modules.memory_acl.capabilities._emit_veto_audit
+    arcagent.modules.memory_acl.capabilities._emit_cross_session_read_audit
 
 NIST 800-53 AU-5 (Response to Audit Processing Failures):
     Audit failures are logged locally at WARNING level but never

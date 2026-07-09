@@ -683,10 +683,10 @@ class TestRegistryUncoveredPaths:
             )
 
     def test_validate_provider_name_empty_string_raises(self):
-        """Line 55-59: empty string fails regex match → ArcLLMConfigError."""
+        """Empty provider name fails the shared validator → ArcLLMConfigError."""
         from arcllm.registry import _validate_provider_name
 
-        with pytest.raises(ArcLLMConfigError, match="Invalid provider name"):
+        with pytest.raises(ArcLLMConfigError, match="cannot be empty"):
             _validate_provider_name("")
 
     def test_get_adapter_class_cache_hit_on_second_call(self):

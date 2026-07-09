@@ -44,6 +44,20 @@ def test_build_returns_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     assert adapter.name == "slack"
 
 
+def test_build_threads_agent_did_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-abc")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-abc")
+    adapter = build(_ctx({"enabled": True, "agent_did": "did:arc:agent:slack"}))
+    assert adapter._agent_did == "did:arc:agent:slack"
+
+
+def test_build_uses_default_agent_did(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-abc")
+    monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-abc")
+    adapter = build(_ctx({"enabled": True}))
+    assert adapter._agent_did == "did:arc:agent:default"
+
+
 def test_build_raises_without_bot_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
     monkeypatch.setenv("SLACK_APP_TOKEN", "xapp-abc")

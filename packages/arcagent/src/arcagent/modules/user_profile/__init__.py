@@ -11,7 +11,9 @@ Public surface:
     TombstoneEvent     — immutable compliance record for GDPR erasure
     UserProfile        — full profile model (YAML frontmatter + markdown body)
     UserProfileConfig  — configuration (profile_dir, body_cap_bytes, etc.)
-    UserProfileModule  — module that integrates with the module bus
+
+The read/write/tombstone tools and bus hooks are the decorator-form
+capabilities in :mod:`arcagent.modules.user_profile.capabilities`.
 """
 
 from arcagent.modules.user_profile.config import UserProfileConfig
@@ -19,7 +21,6 @@ from arcagent.modules.user_profile.errors import ACLViolation, BodyOverflow, Pro
 from arcagent.modules.user_profile.models import ACL, DurableFact, UserProfile
 from arcagent.modules.user_profile.store import ProfileStore
 from arcagent.modules.user_profile.tombstone import TombstoneEvent, apply_tombstone
-from arcagent.modules.user_profile.user_profile_module import UserProfileModule
 
 __all__ = [
     "ACL",
@@ -31,6 +32,5 @@ __all__ = [
     "TombstoneEvent",
     "UserProfile",
     "UserProfileConfig",
-    "UserProfileModule",
     "apply_tombstone",
 ]

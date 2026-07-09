@@ -13,8 +13,9 @@ from arctrust.policy import (
     PolicyContext,
     PolicyLayer,
     PolicyPipeline,
+    ProviderLayer,
+    ProviderLimit,
     ProviderUsage,
-    TierConfig,
     ToolCall,
     ToolRuntimeStatus,
     build_pipeline,
@@ -288,6 +289,45 @@ class TestPipelineCache:
         await pipeline.evaluate(make_call(tool_name="tool_b"), ctx)
         assert call_count == 2
 
+    async def test_crossing_provider_budget_misses_stale_allow(self) -> None:
+        """A repeated identical call must re-evaluate — never replay a cached
+        ALLOW — once the provider budget is crossed within the cache TTL.
+
+        The ProviderLayer decides purely from ``ctx.provider_usage``, which
+        accumulates over the window. Two identical signed calls 30s apart share
+        one cache entry unless the mutable ctx state is bound into the key.
+        """
+        layer = ProviderLayer(
+            limits_by_provider={
+                "anthropic": ProviderLimit(max_tokens=1000, max_cost=10.0, max_requests=100)
+            }
+        )
+        pipeline = PolicyPipeline(layers=[layer], cache_ttl_seconds=30.0)
+        call = make_call()
+
+        under_budget = PolicyContext(
+            tier="federal",  # type: ignore[arg-type]
+            policy_version="1.0",
+            bundle_age_seconds=0.0,
+            provider_usage=ProviderUsage(
+                provider="anthropic", tokens_used=500, cost_used=1.0, requests_in_window=1
+            ),
+        )
+        first = await pipeline.evaluate(call, under_budget)
+        assert first.outcome == "allow"
+
+        over_budget = PolicyContext(
+            tier="federal",  # type: ignore[arg-type]
+            policy_version="1.0",
+            bundle_age_seconds=0.0,
+            provider_usage=ProviderUsage(
+                provider="anthropic", tokens_used=2000, cost_used=1.0, requests_in_window=1
+            ),
+        )
+        second = await pipeline.evaluate(call, over_budget)
+        assert second.outcome == "deny"
+        assert second.rule_id == "provider.budget_exceeded"
+
 
 class TestPipelineAuditSink:
     async def test_audit_sink_called_on_evaluate(self) -> None:
@@ -325,32 +365,6 @@ class TestPolicyLayerProtocol:
     def test_deny_layer_satisfies_protocol(self) -> None:
         layer = DenyLayer()
         assert isinstance(layer, PolicyLayer)
-
-
-# ---------------------------------------------------------------------------
-# TierConfig
-# ---------------------------------------------------------------------------
-
-
-class TestTierConfig:
-    def test_personal_tier_config(self) -> None:
-        tc = TierConfig.for_tier("personal")
-        assert tc.tier == "personal"
-        assert tc.max_parallel_tools >= 1
-
-    def test_enterprise_tier_config(self) -> None:
-        tc = TierConfig.for_tier("enterprise")
-        assert tc.tier == "enterprise"
-
-    def test_federal_tier_config(self) -> None:
-        tc = TierConfig.for_tier("federal")
-        assert tc.tier == "federal"
-        # Federal caps parallel HTTPS tools at 4 per SPEC-017 R-025
-        assert tc.max_parallel_tools <= 4
-
-    def test_invalid_tier_raises(self) -> None:
-        with pytest.raises(ValueError):
-            TierConfig.for_tier("unknown")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

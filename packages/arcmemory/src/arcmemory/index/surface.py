@@ -35,12 +35,13 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
+from arcmemory.fusion import rrf_fuse
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, embed_or_none
-from arcmemory.mdfile import parse_document
+from arcmemory.index.source import iter_source_chunks
 from arcmemory.security import content_hash
 from arcmemory.stores.episodic import EpisodicStore
-from arcmemory.tagging import tag_entities
+from arcmemory.tagging import entity_vocabulary, tag_entities
 from arcmemory.types import Recall, Scope
 
 try:  # optional [vec] extra — guarded, mirrors db.py
@@ -49,10 +50,6 @@ try:  # optional [vec] extra — guarded, mirrors db.py
     _SQLITE_VEC_IMPORTABLE = True
 except ImportError:  # pragma: no cover - exercised only where the extra is absent
     _SQLITE_VEC_IMPORTABLE = False
-
-_RRF_K = 60
-# Curated markdown source directories, fixed order (determinism), matching rebuild.
-_SOURCE_SUBDIRS = ("entities", "insights", "procedures", "daily-log")
 
 
 class SurfaceResult(BaseModel):
@@ -121,42 +118,18 @@ class SurfaceIndex:
 
     def _collect_chunks(self) -> list[_Chunk]:
         """Every source file + every raw event, as gate-hashed chunks (fixed order)."""
-        chunks: list[_Chunk] = []
-        for subdir in _SOURCE_SUBDIRS:
-            directory = self._mem_dir / subdir
-            if not directory.exists():
-                continue
-            for path in sorted(directory.glob("*.md")):
-                text = path.read_text(encoding="utf-8")
-                fm, _ = parse_document(text)
-                rel = str(path.relative_to(self._workspace))
-                chunks.append(
-                    _Chunk(
-                        chunk_id=f"file:{rel}",
-                        source_path=rel,
-                        text=text,
-                        # A genuinely missing label passes through empty — the
-                        # no-read-up gate decides fail-closed (federal) vs default
-                        # (personal), never the index (SDD §8).
-                        classification=str(fm.get("classification") or ""),
-                        mtime=path.stat().st_mtime,
-                        content_hash=content_hash(text),
-                    )
-                )
-        for event in self._episodic.events(self._scope.key):
-            chunks.append(
-                _Chunk(
-                    chunk_id=f"event:{event.event_id}",
-                    source_path="episodic",
-                    text=event.text,
-                    # The stored stream label — NOT a literal — so a classified capture
-                    # is gated on the raw-stream channel too (empty => fail-closed).
-                    classification=event.classification,
-                    mtime=_iso_epoch(event.ts),
-                    content_hash=content_hash(event.text),
-                )
+        events = self._episodic.events(self._scope.key)
+        return [
+            _Chunk(
+                chunk_id=sc.chunk_id,
+                source_path=sc.source_path,
+                text=sc.text,
+                classification=sc.classification,
+                mtime=sc.mtime,
+                content_hash=content_hash(sc.text),
             )
-        return chunks
+            for sc in iter_source_chunks(self._mem_dir, self._workspace, events)
+        ]
 
     def _upsert_chunk(
         self, conn: sqlite3.Connection, chunk: _Chunk, embedding: list[float] | None
@@ -206,17 +179,12 @@ class SurfaceIndex:
         if vec_ranked is not None:
             ranked_lists.append(vec_ranked)
 
-        fused = self._rrf(ranked_lists)
+        fused = rrf_fuse(ranked_lists)
         hydrated = (self._to_recall(cid, score) for cid, score in fused[:top_k])
         recalls = [r for r in hydrated if r is not None]
         if degraded:
             self._emit_degraded(text)
         return SurfaceResult(recalls=recalls, degraded=degraded)
-
-    def bm25_only(self, text: str, *, top_k: int = 5) -> list[str]:
-        """BM25 result *content* only — a baseline for 'fusion beats BM25-alone'."""
-        recalls = [self._to_recall(cid, 0.0) for cid in self._bm25_search(text)[:top_k]]
-        return [r.content for r in recalls if r is not None]
 
     async def _vec_search(self, text: str) -> list[str] | None:
         """Brute-force cosine over ``vec0``; None when embeddings are unavailable."""
@@ -262,7 +230,8 @@ class SurfaceIndex:
         for chunk_id, chunk_text in conn.execute(
             "SELECT chunk_id, text FROM fts_chunks WHERE scope=?", (self._scope.key,)
         ).fetchall():
-            hit = sum(act for node, act in activation.items() if node in chunk_text.lower())
+            lowered = chunk_text.lower()
+            hit = sum(act for node, act in activation.items() if node in lowered)
             if hit > 0.0:
                 scored.append((hit, chunk_id))
         scored.sort(key=lambda pair: (-pair[0], pair[1]))
@@ -276,14 +245,6 @@ class SurfaceIndex:
             (self._scope.key,),
         ).fetchall()
         return [r[0] for r in rows]
-
-    def _rrf(self, ranked_lists: list[list[str]]) -> list[tuple[str, float]]:
-        """Reciprocal-rank-fuse ranked lists into one descending (id, score) list."""
-        scores: dict[str, float] = {}
-        for ranked in ranked_lists:
-            for rank, chunk_id in enumerate(ranked):
-                scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (_RRF_K + rank)
-        return sorted(scores.items(), key=lambda pair: (-pair[1], pair[0]))
 
     def _to_recall(self, chunk_id: str, score: float) -> Recall | None:
         """Hydrate a fused chunk id into a ``Recall`` (None if it vanished)."""
@@ -308,11 +269,7 @@ class SurfaceIndex:
 
     def _vocabulary(self) -> set[str]:
         """Tagging vocabulary: seed terms + slugs of existing entity files."""
-        vocab = set(self._seed_vocab)
-        entities_dir = self._mem_dir / "entities"
-        if entities_dir.exists():
-            vocab.update(p.stem for p in entities_dir.glob("*.md"))
-        return vocab
+        return entity_vocabulary(self._mem_dir, self._seed_vocab)
 
     def _emit_degraded(self, text: str) -> None:
         """Signal (never raise) that retrieval ran without the vector channel."""
@@ -349,16 +306,6 @@ def _fts_query(text: str) -> str:
 def _tokenize(text: str) -> list[str]:
     """Lowercase alphanumeric tokens (FTS-safe; drops punctuation/operators)."""
     return ["".join(ch for ch in word if ch.isalnum()).lower() for word in text.split()]
-
-
-def _iso_epoch(ts: str) -> float:
-    """Best-effort epoch seconds from an ISO timestamp (0.0 when unparseable)."""
-    from datetime import datetime
-
-    try:
-        return datetime.fromisoformat(ts).timestamp()
-    except ValueError:
-        return 0.0
 
 
 __all__ = ["SurfaceIndex", "SurfaceResult"]

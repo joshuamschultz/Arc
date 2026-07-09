@@ -11,11 +11,12 @@ import asyncio
 import json
 import logging
 import os
-import re
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from arcagent.utils.text import split_message, user_facing_error
 
 if TYPE_CHECKING:
     from arcagent.core.telemetry import AgentTelemetry
@@ -23,92 +24,6 @@ if TYPE_CHECKING:
     from arcagent.modules.telegram.config import TelegramConfig
 
 _logger = logging.getLogger("arcagent.telegram.bot")
-
-# Sentence-ending punctuation for boundary detection
-_SENTENCE_END = re.compile(r"[.!?]\s")
-
-
-def _user_facing_error(exc: Exception) -> str:
-    """Map exceptions to user-friendly error messages.
-
-    Avoids leaking internal details while giving the user
-    actionable information about what went wrong.
-    """
-    try:
-        from arcllm.exceptions import ArcLLMAPIError
-    except ImportError:
-        return "Error processing your message. Please try again."
-
-    if isinstance(exc, ArcLLMAPIError) and exc.status_code == 429:
-        return (
-            "I'm currently rate limited by the LLM provider. Please try again in a minute or two."
-        )
-    if isinstance(exc, ArcLLMAPIError) and exc.status_code in {500, 502, 503}:
-        return "The LLM provider is temporarily unavailable. Please try again shortly."
-    return "Error processing your message. Please try again."
-
-
-def split_message(text: str, max_length: int = 4096) -> list[str]:
-    """Split text into chunks respecting natural boundaries.
-
-    Priority order:
-    1. Double-newline (paragraph boundary)
-    2. Single newline
-    3. Sentence boundary (. ! ?)
-    4. Hard split at max_length
-
-    Args:
-        text: The text to split.
-        max_length: Maximum characters per chunk (Telegram limit: 4096).
-
-    Returns:
-        List of text chunks, each <= max_length characters.
-    """
-    if not text:
-        return []
-
-    if len(text) <= max_length:
-        return [text]
-
-    chunks: list[str] = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_length:
-            chunks.append(remaining)
-            break
-
-        chunk = remaining[:max_length]
-
-        # Try paragraph boundary (double-newline)
-        split_pos = chunk.rfind("\n\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 2 :]
-            continue
-
-        # Try single newline
-        split_pos = chunk.rfind("\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 1 :]
-            continue
-
-        # Try sentence boundary — find last match without materializing all
-        last_match = None
-        for m in _SENTENCE_END.finditer(chunk):
-            last_match = m
-        if last_match is not None:
-            split_pos = last_match.end() - 1  # Include punctuation, not space
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos:].lstrip()
-            continue
-
-        # Hard split — no natural boundary found
-        chunks.append(remaining[:max_length])
-        remaining = remaining[max_length:]
-
-    return chunks
 
 
 # The single external origin the Telegram Bot API talks to; the egress proxy
@@ -658,7 +573,7 @@ class TelegramBot:
                 if update and update.message:
                     try:
                         await update.message.reply_text(
-                            _user_facing_error(exc),
+                            user_facing_error(exc),
                         )
                     except Exception:  # reason: Best-effort notification must not crash queue
                         _logger.exception("Failed to send error reply")

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -336,8 +335,7 @@ def _read_agent_skills(entry: Any) -> list[dict[str, Any]]:
 
 
 async def get_audit(request: Request) -> JSONResponse:
-    """GET /api/team/audit — fleet audit ring buffer (last N)."""
-    buffer: deque[dict[str, Any]] = getattr(request.app.state, "audit_buffer", None) or deque()
+    """GET /api/team/audit — fleet audit chain (last N), newest first."""
     limit, err = safe_int(
         request.query_params.get("limit"),
         default=100,
@@ -347,7 +345,7 @@ async def get_audit(request: Request) -> JSONResponse:
     )
     if err is not None:
         return err
-    events = list(buffer)[-limit:]
+    events = await request.app.state.observe.audit(limit=limit)
     return JSONResponse(AuditEventsResponse(events=events).model_dump(mode="json"))
 
 

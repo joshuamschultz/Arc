@@ -146,12 +146,15 @@ class TestMultiplePiiInText:
         assert applied is False
 
 
-class TestRedactionExceptionSafety:
-    def test_returns_original_on_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """If the redaction loop raises, original text is returned safely.
+class TestRedactionFailsClosed:
+    def test_propagates_on_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failing redaction pass must propagate — never leak raw text.
 
-        re.Pattern.subn is immutable in CPython, so we patch _REDACTION_RULES
-        to inject a fake pattern whose sub() raises instead.
+        The security contract is fail-closed: if the redaction loop raises,
+        the exception propagates so the caller's transcription fails rather
+        than silently returning unredacted PII. re.Pattern.subn is immutable
+        in CPython, so we patch _REDACTION_RULES to inject a pattern whose
+        subn() raises.
         """
         import arcagent.modules.voice.redaction as redaction_mod
 
@@ -161,18 +164,11 @@ class TestRedactionExceptionSafety:
             def subn(self, repl: str, string: str) -> tuple[str, int]:
                 raise RuntimeError("simulated regex failure")
 
-        # Replace the rules list with one exploding entry
-        original_rules = redaction_mod._REDACTION_RULES
         monkeypatch.setattr(
             redaction_mod,
             "_REDACTION_RULES",
             [(_ExplodingPattern(), "[BANG]")],  # type: ignore[list-item]
         )
 
-        text, applied = redact_transcript("test 123-45-6789")
-        # Original text returned with no crash
-        assert text == "test 123-45-6789"
-        assert applied is False
-
-        # Restore original rules
-        monkeypatch.setattr(redaction_mod, "_REDACTION_RULES", original_rules)
+        with pytest.raises(RuntimeError, match="simulated regex failure"):
+            redact_transcript("test 123-45-6789")

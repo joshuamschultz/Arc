@@ -9,13 +9,17 @@ Provides pluggable web search and content extraction with:
 
 Public surface::
 
-    from arcagent.modules.web import WebModule, WebConfig
+    from arcagent.modules.web import WebConfig
     from arcagent.modules.web import WebSearchProvider, WebExtractProvider
     from arcagent.modules.web import SearchHit, ExtractResult
     from arcagent.modules.web import (
         WebError, SearchFailed, ExtractFailed,
         URLNotAllowed, ContentTooLarge, ProviderConfigMissing
     )
+
+The web_search / web_extract tools are the decorator-form capabilities in
+:mod:`arcagent.modules.web.capabilities`, configured via
+:mod:`arcagent.modules.web._runtime`.
 
 Spec: SPEC-018 T4.8
 """
@@ -35,7 +39,6 @@ from arcagent.modules.web.protocols import (
     WebExtractProvider,
     WebSearchProvider,
 )
-from arcagent.modules.web.web_module import WebModule
 
 __all__ = [
     "ContentTooLarge",
@@ -48,6 +51,5 @@ __all__ = [
     "WebConfig",
     "WebError",
     "WebExtractProvider",
-    "WebModule",
     "WebSearchProvider",
 ]

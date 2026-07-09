@@ -20,6 +20,7 @@ from typing import Any
 
 from arcllm.types import Message
 
+from arcagent.modules.policy._bullet_parse import parse_bullets
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.utils.io import atomic_write_text, extract_json, format_messages
 
@@ -100,15 +101,6 @@ class PolicyDelta:
     updates: list[BulletUpdate] = field(default_factory=list)
     rewrites: list[BulletRewrite] = field(default_factory=list)
     session_id: str = ""
-
-
-# Regex for parsing structured bullets from policy.md
-_BULLET_RE = re.compile(
-    r"^-\s+\[(?P<id>P\d+)\]\s+(?P<text>.+?)\s+"
-    r"\{score:(?P<score>\d+),\s*uses:(?P<uses>\d+),\s*"
-    r"reviewed:(?P<reviewed>[^,]+),\s*created:(?P<created>[^,]+),\s*"
-    r"source:(?P<source>[^}]*)\}",
-)
 
 
 class PolicyEngine:
@@ -331,23 +323,19 @@ class PolicyEngine:
         _logger.info("policy.curate: wrote %d bullet(s) to %s", len(bullets), target)
 
     def _parse_policy(self, content: str) -> list[PolicyBullet]:
-        """Parse policy.md into structured bullets."""
-        bullets: list[PolicyBullet] = []
-        for line in content.split("\n"):
-            match = _BULLET_RE.match(line.strip())
-            if match:
-                bullets.append(
-                    PolicyBullet(
-                        id=match.group("id"),
-                        text=match.group("text").strip(),
-                        score=int(match.group("score")),
-                        uses=int(match.group("uses")),
-                        reviewed=match.group("reviewed").strip(),
-                        created=match.group("created").strip(),
-                        source=match.group("source").strip(),
-                    )
-                )
-        return bullets
+        """Parse policy.md into structured bullets with typed metadata."""
+        return [
+            PolicyBullet(
+                id=b["id"],
+                text=b["text"],
+                score=int(b["score"]),
+                uses=int(b["uses"]),
+                reviewed=b["reviewed"],
+                created=b["created"],
+                source=b["source"],
+            )
+            for b in parse_bullets(content)
+        ]
 
     def _serialize_policy(self, bullets: list[PolicyBullet]) -> str:
         """Render bullets back to policy.md format."""

@@ -10,10 +10,10 @@ REQ-001, boundary).
 
 from __future__ import annotations
 
-import json
 import os
 from typing import Any
 
+from arctrust import canonical_json
 from arctrust.signer import ECDSA_P256, ED25519, InProcessSigner, Signer
 
 from arcllm.exceptions import ArcLLMConfigError
@@ -27,16 +27,13 @@ def canonical_payload(
     tools: list[Tool] | None,
     model: str,
 ) -> bytes:
-    """Serialize request content to deterministic canonical JSON bytes.
-
-    Uses sorted keys and compact separators for determinism.
-    """
+    """Serialize request content to deterministic canonical JSON bytes."""
     data: dict[str, Any] = {
         "messages": [m.model_dump() for m in messages],
         "model": model,
         "tools": [t.model_dump() for t in tools] if tools else [],
     }
-    return json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return canonical_json(data)
 
 
 def _decode_seed(value: str) -> bytes:

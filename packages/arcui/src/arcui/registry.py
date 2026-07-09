@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from arcui.types import AgentRegistration
 
@@ -18,10 +17,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentEntry:
-    """A connected agent with its WebSocket handle."""
+    """A connected agent's registration record."""
 
     registration: AgentRegistration
-    ws: Any  # starlette.websockets.WebSocket at runtime
 
 
 class AgentRegistry:
@@ -39,7 +37,6 @@ class AgentRegistry:
     def register(
         self,
         agent_id: str,
-        ws: Any,
         registration: AgentRegistration,
     ) -> AgentEntry:
         """Register a new agent connection.
@@ -47,7 +44,7 @@ class AgentRegistry:
         Returns the created AgentEntry. Caller should check is_full()
         before calling this to enforce capacity limits.
         """
-        entry = AgentEntry(registration=registration, ws=ws)
+        entry = AgentEntry(registration=registration)
         self._agents[agent_id] = entry
         logger.info("Agent registered: %s (%s)", agent_id, registration.agent_name)
         return entry

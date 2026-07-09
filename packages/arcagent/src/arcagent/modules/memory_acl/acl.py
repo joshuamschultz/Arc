@@ -29,6 +29,26 @@ _logger = logging.getLogger("arcagent.modules.memory_acl.acl")
 # Matches the first --- ... --- block at the top of the file.
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
+# The three visibility levels defined in SDD §3.3.
+_VALID_VISIBILITY = {"private", "shared-with-agent", "shared-with-others-via-agent"}
+
+
+def _coerce_visibility(raw: str, config: MemoryACLConfig) -> CrossSessionVisibility:
+    """Validate a raw visibility string, falling back to the tier default.
+
+    The single place that decides how an unknown or adversarial visibility
+    string is resolved: reject it and use the configured tier default
+    (``private`` — the most restrictive value — for the federal tier).
+    Logs genuinely unknown values so the fallback is observable on every
+    parse path.
+    """
+    if raw in _VALID_VISIBILITY:
+        # Safe: raw has been validated against the Literal set.
+        return raw  # type: ignore[return-value]  # reason: raw ∈ _VALID_VISIBILITY == the Literal members; mypy can't narrow str to Literal
+    if raw:
+        _logger.warning("Unknown cross_session_visibility '%s'; using tier default", raw)
+    return config.default_for_tier()
+
 
 class SessionACL(BaseModel):
     """Access control list for a session.
@@ -81,13 +101,16 @@ class SessionACL(BaseModel):
     ) -> SessionACL:
         """Parse a SessionACL from YAML-frontmatter in markdown content.
 
-        If no frontmatter is found or the acl section is absent, falls
-        back to the tier default from config. Never raises — returns
-        the most restrictive default on any parse error (fail-closed).
+        If no frontmatter is found, the ``acl`` section is absent, the
+        visibility value is unknown, or parsing raises, falls back to the
+        configured tier default (``config.default_for_tier()``). For the
+        federal tier that default is ``private`` — the most restrictive
+        value; personal and enterprise tiers deliberately default to
+        ``shared-with-agent``. Never raises.
         """
         try:
             return cls._parse_frontmatter(content, config, owner_did)
-        except Exception:  # reason: fail-open — log + continue
+        except Exception:  # reason: never raise — fall back to the tier default
             _logger.warning(
                 "Failed to parse ACL frontmatter; using tier default",
                 exc_info=True,
@@ -127,19 +150,9 @@ class SessionACL(BaseModel):
                 cross_session_visibility=config.default_for_tier(),
             )
 
-        visibility_raw: str = acl_data.get("cross_session_visibility", "")
-        valid_values = {"private", "shared-with-agent", "shared-with-others-via-agent"}
-
-        visibility: CrossSessionVisibility
-        if visibility_raw not in valid_values:
-            _logger.warning(
-                "Unknown cross_session_visibility '%s'; using tier default",
-                visibility_raw,
-            )
-            visibility = config.default_for_tier()
-        else:
-            # Safe: visibility_raw has been validated against the literal set
-            visibility = visibility_raw  # type: ignore[assignment]  # reason: visibility_raw is `str` validated against valid_values above; mypy can't narrow str to Literal
+        visibility = _coerce_visibility(
+            acl_data.get("cross_session_visibility", ""), config
+        )
 
         classification_raw: str = parsed.get("classification", "unclassified")
         valid_cls = {"unclassified", "cui", "secret"}
@@ -180,7 +193,7 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         import yaml
 
         return yaml.safe_load(text) or {}
-    except Exception:  # reason: fail-open — log + continue
+    except Exception:  # reason: never raise — empty dict makes the caller use the tier default
         _logger.debug("YAML parse failed, returning empty dict", exc_info=True)
         return {}
 
@@ -199,17 +212,9 @@ def _extract_acl_from_session_data(
     if not isinstance(acl_raw, dict):
         return SessionACL.default(config, owner_did)
 
-    visibility_raw: str = acl_raw.get("cross_session_visibility", "")
-    valid_values = {"private", "shared-with-agent", "shared-with-others-via-agent"}
-
-    visibility: CrossSessionVisibility
-    if visibility_raw not in valid_values:
-        visibility = config.default_for_tier()
-    else:
-        # Safe: visibility_raw has been validated against the literal set
-        visibility = visibility_raw  # type: ignore[assignment]
-
     return SessionACL(
         owner_did=owner_did,
-        cross_session_visibility=visibility,
+        cross_session_visibility=_coerce_visibility(
+            acl_raw.get("cross_session_visibility", ""), config
+        ),
     )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -72,23 +74,6 @@ class TestBrowserConnectionConfig:
             BrowserConnectionConfig(headles=True)  # type: ignore[call-arg]
 
 
-class TestBrowserTimeoutConfig:
-    """Per-tool timeout defaults."""
-
-    def test_defaults(self) -> None:
-        from arcagent.modules.browser.config import BrowserTimeoutConfig
-
-        cfg = BrowserTimeoutConfig()
-        assert cfg.navigate == 30
-        assert cfg.click == 5
-        assert cfg.type_ == 5
-        assert cfg.screenshot == 10
-        assert cfg.read_page == 15
-        assert cfg.execute_js == 10
-        assert cfg.fill_form == 30
-        assert cfg.default == 10
-
-
 class TestBrowserCookieConfig:
     """Cookie persistence settings."""
 
@@ -108,10 +93,10 @@ class TestBrowserConfig:
         from arcagent.modules.browser.config import BrowserConfig
 
         cfg = BrowserConfig()
+        assert cfg.tier == "personal"
         assert cfg.accessibility_tree_depth == 10
         assert cfg.security.url_mode == "denylist"
         assert cfg.connection.headless is True
-        assert cfg.timeouts.navigate == 30
         assert cfg.cookies.persist is False
 
     def test_nested_override(self) -> None:
@@ -129,15 +114,15 @@ class TestBrowserConfig:
         """Config can be constructed from a raw dict (as passed by module loader)."""
         from arcagent.modules.browser.config import BrowserConfig
 
-        raw = {
+        raw: dict[str, Any] = {
+            "tier": "federal",
             "accessibility_tree_depth": 5,
             "security": {"allow_js_execution": False},
-            "timeouts": {"navigate": 60},
         }
         cfg = BrowserConfig(**raw)
+        assert cfg.tier == "federal"
         assert cfg.accessibility_tree_depth == 5
         assert cfg.security.allow_js_execution is False
-        assert cfg.timeouts.navigate == 60
 
     def test_extra_forbid_root(self) -> None:
         from arcagent.modules.browser.config import BrowserConfig

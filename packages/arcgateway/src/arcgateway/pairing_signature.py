@@ -18,8 +18,9 @@ Design (four-pillar mandate — ID + sign + authorize + audit ON BY DEFAULT):
                      chain required. Key loaded via arctrust.trust_store the same way
                      as at higher tiers.
 
-The verifier uses PyNaCl via a lazy import so this module stays importable
-in minimal test environments that lack the native extensions.
+The verifier delegates Ed25519 checks to ``arctrust.verify`` via a lazy
+import so this module stays importable in minimal test environments that
+lack the native crypto extensions.
 """
 
 from __future__ import annotations
@@ -243,12 +244,11 @@ class PairingSignatureVerifier:
             )
 
         try:
+            import arctrust
             from arctrust.trust_store import TrustStoreError, load_operator_pubkey
-            from nacl.exceptions import BadSignatureError
-            from nacl.signing import VerifyKey
         except ImportError as exc:  # pragma: no cover — arctrust is a required dep
             raise PairingSignatureInvalid(
-                f"PyNaCl / arctrust trust store not available; cannot verify signatures: {exc}"
+                f"arctrust trust store not available; cannot verify signatures: {exc}"
             ) from exc
 
         try:
@@ -270,9 +270,7 @@ class PairingSignatureVerifier:
             ) from exc
 
         challenge = build_pairing_challenge(code, minted_at)
-        try:
-            VerifyKey(pubkey).verify(challenge, signature)
-        except BadSignatureError as exc:
+        if not arctrust.verify(challenge, signature, pubkey):
             record_failure_fn(conn, platform, now)
             conn.commit()
             audit_fn(
@@ -286,7 +284,7 @@ class PairingSignatureVerifier:
             )
             raise PairingSignatureInvalid(
                 f"Ed25519 signature for approver_did={approver_did!r} did not verify."
-            ) from exc
+            )
 
         audit_fn(
             "gateway.pairing.signature_verified",

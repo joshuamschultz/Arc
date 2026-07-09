@@ -2,8 +2,8 @@
 
 Covers:
 - Constructor: defaults, adapter storage
-- add_adapter: updates index and delivery sender
-- delivery_sender and session_router properties
+- add_adapter: updates index
+- session_router property
 - _handle_shutdown_signal: sets shutdown event
 - _install_signal_handlers: registers SIGTERM/SIGINT without error
 - _write_clean_shutdown_marker: creates file with ISO timestamp
@@ -133,23 +133,6 @@ def test_add_adapter_registers_in_index(tmp_path: Path) -> None:
     adapter = _StubAdapter("slack")
     runner.add_adapter(adapter)
     assert "slack" in runner._adapter_index
-
-
-def test_add_adapter_registers_with_delivery_sender(tmp_path: Path) -> None:
-    """add_adapter() registers adapter with the DeliverySenderImpl."""
-    runner = GatewayRunner(runtime_dir=tmp_path)
-    adapter = _StubAdapter("telegram")
-    runner.add_adapter(adapter)
-    # DeliverySenderImpl should have the adapter in its routing table.
-    assert runner.delivery_sender is not None
-
-
-def test_delivery_sender_property(tmp_path: Path) -> None:
-    """delivery_sender property returns the DeliverySenderImpl."""
-    from arcgateway.delivery import DeliverySenderImpl
-
-    runner = GatewayRunner(runtime_dir=tmp_path)
-    assert isinstance(runner.delivery_sender, DeliverySenderImpl)
 
 
 def test_session_router_property(tmp_path: Path) -> None:

@@ -26,10 +26,11 @@ import ast
 import builtins as _builtins
 import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
-from arcagent.core.errors import ArcAgentError
+from arcagent.core.errors import ArcAgentError, ToolError
 
 # --- Rejection categories -------------------------------------------------
 
@@ -525,10 +526,9 @@ def _make_denylist_import(
 ) -> Callable[..., Any]:
     """Return an ``__import__`` refusing the AST-blocked privileged modules.
 
-    Unlike :func:`_make_restricted_import` (a narrow allowlist for the pure
-    single-tool dynamic path), this mirrors the AST validator's denylist so
-    multi-capability workspace files may still use ordinary stdlib
-    (``json``/``re``/...) while ``os``/``sys``/``subprocess`` stay blocked.
+    Mirrors the AST validator's denylist so multi-capability workspace files
+    may still use ordinary stdlib (``json``/``re``/...) while
+    ``os``/``sys``/``subprocess`` stay blocked.
     """
     real_import = _builtins.__import__
 
@@ -550,246 +550,10 @@ def _make_denylist_import(
     return _restricted
 
 
-# --- DynamicToolLoader ----------------------------------------------------
-
-import logging  # noqa: E402
-from collections.abc import Callable  # noqa: E402
-from typing import Any, Literal  # noqa: E402
-
-from arcagent.core.errors import ToolError  # noqa: E402
-from arcagent.core.tool_registry import RegisteredTool, ToolTransport  # noqa: E402
-
-_loader_logger = logging.getLogger("arcagent.tools.dynamic_loader")
-
-CollisionPolicy = Literal["error", "replace", "warn", "ignore"]
-AuditSink = Callable[[str, dict[str, Any]], None]
-
-
-class DynamicToolLoader:
-    """Load agent-authored Python source as a safe :class:`RegisteredTool`.
-
-    Pipeline on each :meth:`load`:
-
-      1. Encoding check  (reject non-UTF-8 coding declarations)
-      2. AST validation  (:class:`AstValidator`)
-      3. Compile with ``RESTRICTED_BUILTINS`` scrubbed dict
-      4. Locate the ``@tool``-decorated async function
-      5. Build :class:`RegisteredTool` with classification + tags
-      6. Apply collision policy for previously-loaded names
-      7. Emit structured audit event
-
-    The loader is stateful — it remembers previously loaded tools so
-    collisions can be detected. Reload semantics create a fresh
-    module object each time; ``sys.modules`` is never mutated.
-
-    Parameters
-    ----------
-    on_collision:
-        What to do when ``name`` has already been loaded. ``"error"``
-        raises, ``"replace"`` silently overwrites, ``"warn"`` logs
-        and overwrites (default), ``"ignore"`` keeps the prior tool.
-    audit_sink:
-        Callback fired for every load attempt — both success
-        (``dynamic_tool.loaded``) and failure (``dynamic_tool.rejected``).
-    """
-
-    def __init__(
-        self,
-        *,
-        on_collision: CollisionPolicy = "warn",
-        audit_sink: AuditSink | None = None,
-    ) -> None:
-        self._on_collision = on_collision
-        self._audit_sink = audit_sink
-        self._loaded: dict[str, RegisteredTool] = {}
-
-    def load(self, source: str, *, name: str) -> RegisteredTool:
-        """Validate, compile, and register one tool from ``source``.
-
-        Raises :class:`ASTValidationError` on static check failures,
-        :class:`ToolError` on semantic problems (no decorated
-        callable, namespace collision under ``"error"`` policy).
-        """
-        try:
-            AstValidator().validate(source)
-        except ASTValidationError as err:
-            self._emit("dynamic_tool.rejected", {"name": name, "reason": str(err)})
-            raise
-
-        content_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
-        module = self._compile_in_sandbox(source, name=name, content_hash=content_hash)
-        tool_fn, meta = _find_decorated_tool(module)
-        if tool_fn is None or meta is None:
-            self._emit(
-                "dynamic_tool.rejected",
-                {"name": name, "reason": "no @tool-decorated function found"},
-            )
-            raise ToolError(
-                code="DYNAMIC_TOOL_NO_DECORATOR",
-                message=(f"Dynamic source for {name!r} contains no function decorated with @tool"),
-                details={"name": name},
-            )
-
-        prior = self._loaded.get(name)
-        if prior is not None:
-            handled = self._handle_collision(name)
-            if handled is False:
-                # "ignore" — keep the prior tool as-is
-                return prior
-
-        async def _execute(**kwargs: Any) -> Any:
-            return await tool_fn(**kwargs)
-
-        registered = RegisteredTool(
-            name=name,
-            description=meta.description,
-            input_schema=meta.input_schema,
-            transport=ToolTransport.NATIVE,
-            execute=_execute,
-            source=f"dynamic:{name}:{content_hash}",
-            classification=meta.classification,
-            capability_tags=list(meta.capability_tags),
-        )
-        self._loaded[name] = registered
-        self._emit(
-            "dynamic_tool.loaded",
-            {
-                "name": name,
-                "classification": meta.classification,
-                "content_hash": content_hash,
-            },
-        )
-        return registered
-
-    def get(self, name: str) -> RegisteredTool | None:
-        return self._loaded.get(name)
-
-    def names(self) -> list[str]:
-        return sorted(self._loaded)
-
-    # --- Internals --------------------------------------------------------
-
-    def _compile_in_sandbox(self, source: str, *, name: str, content_hash: str) -> dict[str, Any]:
-        """Compile ``source`` into a fresh namespace with restricted builtins.
-
-        The namespace doubles as the module's globals and is returned
-        to the caller. No entry is added to ``sys.modules`` — SPEC-017
-        R-052 forbids that to prevent leaks across reloads.
-
-        ``__import__`` is wrapped by :func:`_make_restricted_import` so
-        even if the AST validator misses a bypass, runtime import
-        attempts against anything outside the safe surface raise
-        :class:`ASTValidationError`. Defense in depth.
-        """
-        code = compile(source, f"<dynamic:{name}>", "exec")
-        module_globals: dict[str, Any] = {
-            "__name__": f"_agent_tools.{name}_{content_hash}",
-            "__builtins__": {
-                **RESTRICTED_BUILTINS,
-                "egress": _egress_accessor,
-                "__import__": _make_restricted_import(),
-            },
-        }
-        exec(code, module_globals)  # noqa: S102 — sandboxed source
-        return module_globals
-
-    def _handle_collision(self, name: str) -> bool:
-        """Apply the configured collision policy. Returns True if the
-        caller should overwrite, False if the prior tool stays."""
-        policy = self._on_collision
-        if policy == "error":
-            raise ToolError(
-                code="DYNAMIC_TOOL_COLLISION",
-                message=f"Tool name {name!r} already registered",
-                details={"name": name},
-            )
-        if policy == "warn":
-            _loader_logger.warning("Dynamic tool name collision — replacing %r", name)
-            return True
-        if policy == "ignore":
-            _loader_logger.debug("Dynamic tool name collision — keeping prior %r", name)
-            return False
-        # "replace" — silent overwrite
-        return True
-
-    def _emit(self, event: str, payload: dict[str, Any]) -> None:
-        if self._audit_sink is None:
-            return
-        try:
-            self._audit_sink(event, payload)
-        except Exception:  # reason: fail-open — log + continue
-            _loader_logger.exception("dynamic_tool audit sink raised; continuing")
-
-
-# --- Sandboxed __import__ -------------------------------------------------
-
-# Narrow whitelist — the ONLY modules dynamic tools may import at
-# runtime. The decorator provides the ``@tool`` metadata hook; typing
-# is needed for type hints to survive ``from __future__ import
-# annotations``; dataclasses and ``collections.abc`` support safe
-# primitives without exposing side-effectful surfaces.
-_SANDBOX_IMPORT_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "arcagent.tools._decorator",
-        "typing",
-        "dataclasses",
-        "collections.abc",
-    }
-)
-
-
-def _make_restricted_import() -> Callable[..., Any]:
-    """Return an ``__import__`` replacement that refuses non-allowlist modules.
-
-    Even when the AST validator is bypassed (new CVE class, missed
-    attribute traversal), runtime import attempts for disallowed
-    modules raise :class:`ASTValidationError`. The whitelist is narrow
-    by design — dynamic tools don't need general library access to do
-    useful work.
-    """
-    real_import = _builtins.__import__
-
-    def _restricted_import(
-        name: str,
-        globals: dict[str, Any] | None = None,  # noqa: A002 — mirrors builtin signature
-        locals: dict[str, Any] | None = None,  # noqa: A002
-        fromlist: tuple[str, ...] = (),
-        level: int = 0,
-    ) -> Any:
-        if name not in _SANDBOX_IMPORT_ALLOWLIST:
-            raise ASTValidationError(
-                category=f"import:{name}",
-                detail=(
-                    f"runtime import of {name!r} is blocked in dynamic tools; "
-                    f"only {sorted(_SANDBOX_IMPORT_ALLOWLIST)} are allowed"
-                ),
-            )
-        return real_import(name, globals, locals, fromlist, level)
-
-    return _restricted_import
-
-
-def _find_decorated_tool(
-    module_globals: dict[str, Any],
-) -> tuple[Callable[..., Any] | None, Any]:
-    """Scan the compiled module's globals for a ``@tool``-decorated fn.
-
-    Returns ``(callable, metadata)``, either of which may be ``None``
-    if no decorated tool is found.
-    """
-    for value in module_globals.values():
-        meta = getattr(value, "_arc_capability_meta", None)
-        if meta is not None and callable(value):
-            return value, meta
-    return None, None
-
-
 __all__ = [
     "RESTRICTED_BUILTINS",
     "ASTValidationError",
     "AstValidationCache",
     "AstValidator",
-    "CollisionPolicy",
-    "DynamicToolLoader",
     "build_restricted_builtins",
 ]

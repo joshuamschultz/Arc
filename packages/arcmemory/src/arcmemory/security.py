@@ -145,6 +145,24 @@ def dominating_classification(labels: list[str]) -> str:
     return "" if saw_unknown else "unclassified"
 
 
+def readable_within(ceiling: str, label: str) -> bool:
+    """True iff a caller cleared exactly for ``ceiling`` may read ``label`` (fail-closed).
+
+    Used to fold only classification-safe neighbours into an enriched recall: since a
+    caller who receives that recall must already dominate the insight's own label
+    (``ceiling``), anything this returns True for is content the caller is cleared to
+    see — the enrichment can never smuggle a higher-classified neighbour past the
+    no-read-up gate. Any unparseable label fails closed (excluded).
+    """
+    try:
+        return dominates(
+            parse_classification(ceiling, strict=True),
+            parse_classification(label, strict=True),
+        )
+    except ValueError:
+        return False
+
+
 def gate_no_read_up(
     recalls: list[Recall],
     *,
@@ -285,6 +303,7 @@ __all__ = [
     "enforce_budget",
     "gate_no_read_up",
     "privacy_filter",
+    "readable_within",
     "render_recalls",
     "sanitize",
 ]

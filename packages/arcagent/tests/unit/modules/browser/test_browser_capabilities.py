@@ -11,9 +11,6 @@ class plus N module-level ``@tool`` functions. This file verifies:
      (Chrome process is reaped via ``CDPClientManager.disconnect``).
   5. Tool functions raise :class:`RuntimeError` when called before
      ``setup()`` runs.
-
-Legacy :class:`BrowserModule` tests continue to verify behaviour at the
-wrapper level.
 """
 
 from __future__ import annotations

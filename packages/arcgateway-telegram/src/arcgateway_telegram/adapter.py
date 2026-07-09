@@ -8,18 +8,17 @@ Design (SDD §3.1, PLAN T1.7.1 + T1.10):
 Polling-conflict pattern (T1.10):
     Exactly one process can long-poll a given bot token. If a second gateway
     process is already polling, python-telegram-bot raises an exception whose
-    message contains "terminated by other getUpdates request". We detect this,
-    retry up to 3 times with escalating backoff (1s, 2s, 4s), and after the
-    third failure call _set_fatal_error(retryable=True) so GatewayRunner's
-    reconnect watcher restarts us cleanly rather than silently looping.
+    message contains "terminated by other getUpdates request". A running
+    polling loop cannot resolve this in place — a fresh process is the only
+    remedy — so we log a LOUD warning (silent failure here is the #1
+    production bug), back off briefly, and call _set_fatal_error(retryable=True)
+    so GatewayRunner's reconnect watcher restarts us cleanly.
 
-    Silent failure on polling conflict is the #1 production bug — we log LOUD
-    warnings at each retry and ERROR on escalation.
-
-NetworkError reconnect:
-    Transient network failures (no internet, DNS blip) are retried up to 5
-    times with exponential backoff capped at 60 s. After 5 failures we set
-    a fatal-retryable error so the runner can restart.
+NetworkError:
+    During initialization, transient network failures (no internet, DNS blip)
+    are retried up to 5 times with exponential backoff capped at 60 s. In the
+    polling loop, a NetworkError backs off once then sets a fatal-retryable
+    error so GatewayRunner restarts the adapter.
 
 Auth:
     Inbound user_id must be in allowed_user_ids. Empty allowlist = deny all
@@ -46,6 +45,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from arcgateway.adapters._backoff import exponential_backoff
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
 
@@ -57,9 +57,8 @@ _SENTENCE_END = re.compile(r"[.!?]\s")
 # Telegram API hard limit for sendMessage
 _TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
-# ── Polling-conflict retry parameters (T1.10) ────────────────────────────────
-_CONFLICT_MAX_RETRIES = 3
-_CONFLICT_BACKOFF_SECONDS = (1.0, 2.0, 4.0)  # per retry index 0, 1, 2
+# ── Polling-conflict backoff before hand-off to GatewayRunner ────────────────
+_CONFLICT_BACKOFF_SECONDS = 1.0
 
 # ── NetworkError retry parameters ────────────────────────────────────────────
 _NETWORK_MAX_RETRIES = 5
@@ -75,6 +74,20 @@ _EVENT_MSG_RECEIVED = "gateway.message.received"
 _EVENT_MSG_SENT = "gateway.message.sent"
 
 
+def _last_sentence_boundary(window: str) -> int | None:
+    """Return the index just past the last ``.!?`` in ``window`` (or None).
+
+    The returned index keeps the punctuation in the left chunk; the shared
+    splitter ``lstrip``-s the trailing whitespace from the remainder.
+    """
+    last: re.Match[str] | None = None
+    for m in _SENTENCE_END.finditer(window):
+        last = m
+    if last is None:
+        return None
+    return last.end() - 1
+
+
 def split_message(text: str, max_length: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> list[str]:
     """Split text into chunks respecting natural boundaries.
 
@@ -84,7 +97,9 @@ def split_message(text: str, max_length: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> 
     3. Sentence boundary (. ! ?)
     4. Hard split at max_length
 
-    Ported from arcagent.modules.telegram.bot to keep proven behaviour.
+    Delegates to the shared ``arcgateway.adapters._text.split_message`` (the
+    one canonical splitter) with Telegram's sentence-ending fallback and 4096
+    limit, so paragraph → newline → sentence → hard-cut behaviour is preserved.
 
     Args:
         text: The text to split.
@@ -93,51 +108,14 @@ def split_message(text: str, max_length: int = _TELEGRAM_MAX_MESSAGE_LENGTH) -> 
     Returns:
         List of text chunks, each <= max_length characters.
     """
-    if not text:
-        return []
+    from arcgateway.adapters._text import split_message as _shared_split
 
-    if len(text) <= max_length:
-        return [text]
-
-    chunks: list[str] = []
-    remaining = text
-
-    while remaining:
-        if len(remaining) <= max_length:
-            chunks.append(remaining)
-            break
-
-        chunk = remaining[:max_length]
-
-        # Try paragraph boundary (double-newline)
-        split_pos = chunk.rfind("\n\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 2 :]
-            continue
-
-        # Try single newline
-        split_pos = chunk.rfind("\n")
-        if split_pos > 0:
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos + 1 :]
-            continue
-
-        # Try sentence boundary — find last match
-        last_match = None
-        for m in _SENTENCE_END.finditer(chunk):
-            last_match = m
-        if last_match is not None:
-            split_pos = last_match.end() - 1  # Include punctuation, not space
-            chunks.append(remaining[:split_pos])
-            remaining = remaining[split_pos:].lstrip()
-            continue
-
-        # Hard split — no natural boundary found
-        chunks.append(remaining[:max_length])
-        remaining = remaining[max_length:]
-
-    return chunks
+    return _shared_split(
+        text,
+        max_length,
+        boundaries=("\n\n", "\n"),
+        final_boundary=_last_sentence_boundary,
+    )
 
 
 class TelegramAdapter:
@@ -512,17 +490,17 @@ class TelegramAdapter:
     # ── Internal: Polling Loop ────────────────────────────────────────────────
 
     async def _run_polling_loop(self) -> None:
-        """Run the Telegram polling loop, handling errors with bounded retries.
+        """Run the Telegram polling loop, handing failures to GatewayRunner.
 
         This task lives for the lifetime of the adapter. It:
         1. Starts the application and updater.
-        2. Catches polling-conflict errors with bounded retries (T1.10).
-        3. Catches NetworkErrors with bounded retries.
-        4. On exhausted retries, calls _set_fatal_error(retryable=True).
+        2. On a polling-conflict or NetworkError, backs off once then sets
+           _set_fatal_error(retryable=True) so GatewayRunner's reconnect
+           watcher restarts the adapter cleanly (a fresh process is the only
+           thing that resolves a getUpdates conflict — looping in-place cannot).
+        3. On any other exception, sets _set_fatal_error(retryable=False) and
+           re-raises for human attention.
         """
-        conflict_attempts = 0
-        network_attempts = 0
-
         try:
             from telegram import Update
         except ImportError:
@@ -555,68 +533,33 @@ class TelegramAdapter:
 
         except Exception as exc:  # reason: fail-open — log + continue
             if _is_conflict_error(exc):
-                conflict_attempts += 1
                 _logger.warning(
-                    "TelegramAdapter: POLLING CONFLICT detected (attempt %d/%d). "
-                    "Another gateway process may be polling this bot token. "
-                    "Error: %s",
-                    conflict_attempts,
-                    _CONFLICT_MAX_RETRIES,
+                    "TelegramAdapter: POLLING CONFLICT detected. Another gateway "
+                    "process may be polling this bot token. Only one gateway "
+                    "instance may poll a given bot token — use NATS routing for "
+                    "multi-instance. Handing off to GatewayRunner in %.0fs. Error: %s",
+                    _CONFLICT_BACKOFF_SECONDS,
                     exc,
                 )
-                if conflict_attempts <= _CONFLICT_MAX_RETRIES:
-                    backoff = _CONFLICT_BACKOFF_SECONDS[min(conflict_attempts - 1, 2)]
-                    _logger.warning(
-                        "TelegramAdapter: retrying in %.0fs (conflict attempt %d/%d)",
-                        backoff,
-                        conflict_attempts,
-                        _CONFLICT_MAX_RETRIES,
-                    )
-                    await asyncio.sleep(backoff)
-                    # Signal runner to restart the adapter cleanly
-                    self._set_fatal_error(exc, retryable=True)
-                    return
-                else:
-                    _logger.error(
-                        "TelegramAdapter: POLLING CONFLICT exceeded max retries (%d). "
-                        "Escalating to fatal-retryable. Only one gateway instance may "
-                        "poll a given bot token — use NATS routing for multi-instance. "
-                        "Error: %s",
-                        _CONFLICT_MAX_RETRIES,
-                        exc,
-                    )
-                    self._set_fatal_error(exc, retryable=True)
-                    return
+                await asyncio.sleep(_CONFLICT_BACKOFF_SECONDS)
+                self._set_fatal_error(exc, retryable=True)
+                return
 
-            elif _is_network_error(exc):
-                network_attempts += 1
-                backoff = _network_backoff(network_attempts)
+            if _is_network_error(exc):
+                backoff = _network_backoff(1)
                 _logger.warning(
-                    "TelegramAdapter: NetworkError in polling loop (attempt %d/%d): %s. "
-                    "Retrying in %.0fs.",
-                    network_attempts,
-                    _NETWORK_MAX_RETRIES,
+                    "TelegramAdapter: NetworkError in polling loop: %s. "
+                    "Handing off to GatewayRunner in %.0fs.",
                     exc,
                     backoff,
                 )
-                if network_attempts < _NETWORK_MAX_RETRIES:
-                    await asyncio.sleep(backoff)
-                    self._set_fatal_error(exc, retryable=True)
-                    return
-                else:
-                    _logger.error(
-                        "TelegramAdapter: persistent NetworkError after %d attempts. "
-                        "Escalating to fatal-retryable. Error: %s",
-                        _NETWORK_MAX_RETRIES,
-                        exc,
-                    )
-                    self._set_fatal_error(exc, retryable=True)
-                    return
+                await asyncio.sleep(backoff)
+                self._set_fatal_error(exc, retryable=True)
+                return
 
-            else:
-                _logger.exception("TelegramAdapter: unhandled error in polling loop: %s", exc)
-                self._set_fatal_error(exc, retryable=False)
-                raise
+            _logger.exception("TelegramAdapter: unhandled error in polling loop: %s", exc)
+            self._set_fatal_error(exc, retryable=False)
+            raise
 
     # ── Internal: Message Handling ────────────────────────────────────────────
 
@@ -831,5 +774,9 @@ def _network_backoff(attempt: int) -> float:
     Returns:
         Seconds to sleep before the next attempt.
     """
-    raw = _NETWORK_BACKOFF_BASE_SECONDS * (2.0 ** (attempt - 1))
-    return min(raw, _NETWORK_BACKOFF_CAP_SECONDS)
+    return exponential_backoff(
+        attempt,
+        base=_NETWORK_BACKOFF_BASE_SECONDS,
+        factor=2.0,
+        cap=_NETWORK_BACKOFF_CAP_SECONDS,
+    )

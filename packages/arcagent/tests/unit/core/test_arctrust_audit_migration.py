@@ -114,31 +114,33 @@ class TestTelemetryEmitsStructuredEvents:
 
 
 class TestMemoryACLEmitsAuditEvents:
-    """MemoryACLModule veto must emit structured audit events."""
+    """The memory_acl veto hook must emit structured audit events."""
 
     async def test_acl_veto_emits_structured_audit(self) -> None:
-        from arcagent.modules.memory_acl.memory_acl_module import MemoryACLModule
+        from arcagent.core.module_bus import EventContext
+        from arcagent.modules.memory_acl import _runtime
+        from arcagent.modules.memory_acl.capabilities import memory_acl_read
 
+        _runtime.reset()
         telemetry = MagicMock()
         telemetry.audit_event = MagicMock()
+        _runtime.configure(config={"tier": "personal"}, telemetry=telemetry)
+        try:
+            # A cross-user read the ACL denies must veto and audit.
+            ctx = EventContext(
+                event="memory.read",
+                data={
+                    "caller_did": "did:arc:testorg:executor/other",
+                    "target_user_did": "did:arc:testorg:user/owner",
+                },
+                agent_did="did:arc:testorg:agent/agent1",
+                trace_id="trace-test",
+            )
 
-        module = MemoryACLModule(
-            config={"tier": "personal"},
-            telemetry=telemetry,
-        )
+            await memory_acl_read(ctx)
 
-        # Simulate a memory.read event with mismatched caller
-        ctx = MagicMock()
-        ctx.veto = MagicMock()
-        ctx.is_vetoed = False
-        ctx.data = {
-            "caller_did": "did:arc:testorg:executor/other",
-            "session_id": "sess-123",
-            "session_data": None,
-        }
-
-        await module._on_memory_read(ctx)
-
-        # Should have called audit_event (whether veto or allow)
-        # We just verify it doesn't crash and telemetry is wired
-        assert telemetry.audit_event.called or not ctx.veto.called
+            assert ctx.is_vetoed
+            assert telemetry.audit_event.called
+            assert telemetry.audit_event.call_args[0][0] == "session.acl.veto"
+        finally:
+            _runtime.reset()

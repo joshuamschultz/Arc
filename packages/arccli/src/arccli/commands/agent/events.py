@@ -36,6 +36,5 @@ def _events(_args: argparse.Namespace) -> None:
         ("agent:post_tool", "After tool execution", "name, result_length"),
         ("agent:extensions_loaded", "Extensions discovered", "count"),
         ("agent:skills_loaded", "Skills discovered", "count"),
-        ("agent:settings_changed", "Runtime setting changed", "key, value"),
     ]
     _print_table(["Event", "When", "Data Keys"], [[e, w, d] for e, w, d in events])

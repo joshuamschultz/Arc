@@ -12,6 +12,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arccli.commands._shared import print_kv as _print_kv
+from arccli.commands._shared import write as _write
+
 # ---------------------------------------------------------------------------
 # Tier / provider data (duplicated from init_wizard.py to avoid click import)
 # ---------------------------------------------------------------------------
@@ -86,23 +89,6 @@ _VALID_PROVIDERS = list(_PROVIDER_ENV_VARS.keys())
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _write(msg: str = "") -> None:
-    """Write a line to stdout."""
-    sys.stdout.write(msg + "\n")
-
-
-def _print_kv(pairs: list[tuple[str, str]]) -> None:
-    """Print key-value pairs in aligned format."""
-    try:
-        from arccli.formatting import print_kv
-
-        print_kv(pairs)
-    except ImportError:
-        width = max(len(k) for k, _ in pairs) if pairs else 0
-        for k, v in pairs:
-            sys.stdout.write(f"  {k:<{width}}  {v}\n")
 
 
 _USER_CONFIG_HEADER = """# Arc {pkg} config — user-wide overrides

@@ -17,10 +17,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from arcagent.modules.user_profile._fsutil import atomic_write
 from arcagent.modules.user_profile.config import UserProfileConfig
 from arcagent.modules.user_profile.errors import BodyOverflow, ProfileNotFound
 from arcagent.modules.user_profile.models import ACL, UserProfile
-from arcagent.modules.user_profile.store import ProfileStore, _atomic_write, _body_size
+from arcagent.modules.user_profile.store import ProfileStore, _body_size
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -168,9 +169,9 @@ class TestAtomicWrite:
     """T4: simulate kill mid-write → no partial file left on disk."""
 
     def test_atomic_write_creates_file(self, tmp_path: Path) -> None:
-        """_atomic_write creates the target file from a temp file."""
+        """atomic_write creates the target file from a temp file."""
         target = tmp_path / "profile.md"
-        _atomic_write(target, "hello world")
+        atomic_write(target, "hello world")
         assert target.exists()
         assert target.read_text() == "hello world"
 

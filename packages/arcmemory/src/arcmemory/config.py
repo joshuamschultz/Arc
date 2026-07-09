@@ -32,7 +32,6 @@ class MemoryConfig(BaseModel):
 
     # Decay (w * e^(-lambda*dt)), salience-slowed (lambda_eff = lambda*(1 - beta*s))
     lambda_fast: float = Field(default=0.15, description="recent-context edge decay (per day)")
-    lambda_slow: float = Field(default=0.01, description="durable edge decay (per day)")
     beta: float = Field(default=0.6, description="salience damping on decay")
     forget_floor: float = Field(default=0.02, description="edge weight below this is forgotten")
 
@@ -40,9 +39,7 @@ class MemoryConfig(BaseModel):
     gamma: float = Field(default=0.536, description="confidence growth; 3 hits -> ~0.8")
     known_threshold: float = Field(default=0.8, description="confidence at/above which -> known")
 
-    # Spreading activation (ACT-R)
-    act_r_decay: float = Field(default=0.5, description="ACT-R base-level decay d")
-    retrieval_threshold: float = Field(default=3.5, description="tau — activation to surface")
+    # Spreading activation (ACT-R fan effect)
     fan_strength: float = Field(default=1.6, description="S in S_ji = S - ln(fan)")
     max_hops: int = Field(default=3, description="spreading-activation hop cap")
 
@@ -71,14 +68,12 @@ class MemoryConfig(BaseModel):
             return cls(
                 tier="federal",
                 alpha=0.15,
-                lambda_slow=0.008,
                 beta=0.5,
                 gamma=0.7,
-                retrieval_threshold=4.5,
                 forget_floor=0.05,
             )
         if tier == "enterprise":
-            return cls(tier="enterprise", alpha=0.2, retrieval_threshold=4.0)
+            return cls(tier="enterprise", alpha=0.2)
         return cls(tier="personal")
 
 

@@ -507,6 +507,55 @@ class TestSendNotification:
         app.client.conversations_open.assert_called_once()
 
 
+class TestNotifyRoutesThroughEgress:
+    """SPEC-038 REQ-031 — notifications are mediated by the injected EgressProxy
+    (allowlist slack.com, no-exfil, external_comms leg), not sent raw."""
+
+    @staticmethod
+    def _bot_with_egress(tmp_path: Path, egress: object) -> SlackBot:
+        bot = SlackBot(
+            config=_make_config(), telemetry=MagicMock(), workspace=tmp_path, egress=egress
+        )
+        bot._user_id = "U123"
+        bot._dm_channel_id = "D12345"
+        _attach_mock_app(bot)
+        return bot
+
+    @pytest.mark.asyncio
+    async def test_allowlisted_send_authorizes_then_delivers(self, tmp_path: Path) -> None:
+        from arcagent.tools._egress import EgressProxy
+
+        legs: list[str] = []
+
+        async def _send(url: str, method: str, **_k: object) -> object:
+            raise AssertionError("send_fn must not run for a mediated (authorize) send")
+
+        def _sink(event: str, _payload: dict) -> None:
+            if event == "egress.allowed":
+                legs.append("external_comms")
+
+        proxy = EgressProxy(allowlist={"https://slack.com"}, send_fn=_send, audit_sink=_sink)
+        bot = self._bot_with_egress(tmp_path, proxy)
+        await bot.send_notification("hello human")
+
+        bot._app.client.chat_postMessage.assert_called_once()
+        assert legs == ["external_comms"]  # the trifecta leg was recorded
+
+    @pytest.mark.asyncio
+    async def test_non_allowlisted_destination_blocks_send(self, tmp_path: Path) -> None:
+        from arcagent.tools._egress import EgressDenied, EgressProxy
+
+        async def _send(url: str, method: str, **_k: object) -> object:
+            return MagicMock(status_code=200)
+
+        proxy = EgressProxy(allowlist=set(), send_fn=_send)  # nothing allowlisted
+        bot = self._bot_with_egress(tmp_path, proxy)
+        with pytest.raises(EgressDenied):
+            await bot.send_notification("secret leak")
+
+        bot._app.client.chat_postMessage.assert_not_called()
+
+
 # ── Start / Token Handling ─────────────────────────────────────
 
 

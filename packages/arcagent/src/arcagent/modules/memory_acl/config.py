@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 # Type alias for the three visibility levels defined in SDD §3.3
 CrossSessionVisibility = Literal[
@@ -35,12 +35,6 @@ class MemoryACLConfig(BaseModel):
     enterprise_default: CrossSessionVisibility = "shared-with-agent"
     personal_default: CrossSessionVisibility = "shared-with-agent"
 
-    # When True, any veto also emits a telemetry audit event
-    audit_on_veto: bool = True
-
-    # When True, memory provider also re-checks capability (defense in depth)
-    require_capability: bool = True
-
     def default_for_tier(self) -> CrossSessionVisibility:
         """Return the default visibility for the configured tier."""
         if self.tier == "federal":
@@ -50,17 +44,3 @@ class MemoryACLConfig(BaseModel):
         return self.personal_default
 
     model_config = {"frozen": True, "extra": "forbid"}
-
-
-class TierDefaults(BaseModel):
-    """Mapping from tier name to default cross-session visibility.
-
-    Used to communicate tier defaults to external consumers without
-    coupling them to the full MemoryACLConfig.
-    """
-
-    federal: CrossSessionVisibility = "private"
-    enterprise: CrossSessionVisibility = Field(default="shared-with-agent")
-    personal: CrossSessionVisibility = Field(default="shared-with-agent")
-
-    model_config = {"frozen": True}

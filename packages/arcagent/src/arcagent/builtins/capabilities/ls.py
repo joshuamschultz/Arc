@@ -1,4 +1,4 @@
-"""Built-in ``ls`` tool — SPEC-021 port of arcagent.tools.ls.
+"""Built-in ``ls`` tool.
 
 Lists directory contents with one entry per line. Directories first
 (``d  name/``), then files (``f  name (size)``), each sub-list sorted

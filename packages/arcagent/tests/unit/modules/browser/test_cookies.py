@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 
-from arcagent.modules.browser.config import BrowserConfig
+from arcagent.modules.browser._runtime import _State
+from arcagent.modules.browser.capabilities import (
+    browser_get_cookies,
+    browser_set_cookies,
+)
 
 
 def _make_cdp() -> AsyncMock:
@@ -13,18 +18,10 @@ def _make_cdp() -> AsyncMock:
     return cdp
 
 
-def _make_bus() -> MagicMock:
-    bus = MagicMock()
-    bus.emit = AsyncMock()
-    return bus
-
-
 class TestBrowserGetCookies:
     """browser_get_cookies tool."""
 
-    async def test_get_cookies(self) -> None:
-        from arcagent.modules.browser.tools.cookies import create_cookie_tools
-
+    async def test_get_cookies(self, configure_browser: Callable[..., _State]) -> None:
         cdp = _make_cdp()
         cdp.send.return_value = {
             "cookies": [
@@ -32,13 +29,9 @@ class TestBrowserGetCookies:
                 {"name": "theme", "value": "dark", "domain": ".example.com"},
             ]
         }
-        config = BrowserConfig()
-        bus = _make_bus()
+        configure_browser(cdp=cdp)
 
-        tools = create_cookie_tools(cdp, config, bus)
-        get_tool = next(t for t in tools if t.name == "browser_get_cookies")
-
-        result = await get_tool.execute()
+        result = await browser_get_cookies()
         assert "session_id" in result
         assert "theme" in result
 
@@ -46,18 +39,12 @@ class TestBrowserGetCookies:
 class TestBrowserSetCookies:
     """browser_set_cookies tool."""
 
-    async def test_set_cookies(self) -> None:
-        from arcagent.modules.browser.tools.cookies import create_cookie_tools
-
+    async def test_set_cookies(self, configure_browser: Callable[..., _State]) -> None:
         cdp = _make_cdp()
         cdp.send.return_value = {}
-        config = BrowserConfig()
-        bus = _make_bus()
+        configure_browser(cdp=cdp)
 
-        tools = create_cookie_tools(cdp, config, bus)
-        set_tool = next(t for t in tools if t.name == "browser_set_cookies")
-
-        result = await set_tool.execute(
+        result = await browser_set_cookies(
             cookies=[{"name": "token", "value": "xyz", "domain": ".example.com"}]
         )
         assert "Set 1 cookie" in result

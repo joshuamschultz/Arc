@@ -113,7 +113,12 @@ class PlanOrchestrator:
         return first_failure
 
     def _apply_outcome(self, plan: Plan, step: PlanStep, outcome: StepOutcome) -> None:
-        """Commit one branch outcome onto the plan + checkpoint (REQ-011/055)."""
+        """Commit one step's terminal outcome onto the plan + checkpoint (REQ-011/055).
+
+        Shared by the sequential (:meth:`_run_one`) and concurrent
+        (:meth:`_run_frontier`) paths so the SUCCEEDED/FAILED persistence never
+        drifts between them; token accrual stays in the callers.
+        """
         if outcome.status is StepStatus.SUCCEEDED:
             step.status = StepStatus.SUCCEEDED
             step.result = outcome.result
@@ -145,24 +150,11 @@ class PlanOrchestrator:
         step.status = StepStatus.RUNNING
         self._store.save(plan, action="plan.step.started", target=step.step_id)
         outcome = await self._executor.run_step(step, plan=plan)
-        # Accrue actual consumption onto the durable aggregate before any
-        # branch so the running total is checkpointed with the plan (REQ-022).
+        # Accrue actual consumption onto the durable aggregate before the
+        # commit so the running total is checkpointed with the plan (REQ-022).
         plan.tokens_spent += outcome.tokens_used
         plan.cost_spent += outcome.cost_usd
-        if outcome.status is StepStatus.SUCCEEDED:
-            step.status = StepStatus.SUCCEEDED
-            step.result = outcome.result
-            self._store.save(plan, action="plan.step.succeeded", target=step.step_id)
-        else:
-            step.status = StepStatus.FAILED
-            step.failure_reason = outcome.failure_reason
-            self._store.save(
-                plan,
-                action="plan.step.failed",
-                target=step.step_id,
-                outcome="error",
-                extra={"reason": outcome.failure_reason},
-            )
+        self._apply_outcome(plan, step, outcome)
 
     async def _replan(self, plan: Plan, reason: str) -> Plan:
         """Revise the remainder (arcllm) and audit the version delta (REQ-032)."""

@@ -1,6 +1,6 @@
 """Decorator-form messaging module — SPEC-021.
 
-The live messaging surface. Nine capabilities register on load:
+The live messaging surface. Capabilities register on load:
 
   * ``agent:assemble_prompt`` (priority 50)  — inject team context + roster.
   * ``agent:ready``           (priority 100) — bind agent.run_collected() callback.
@@ -10,16 +10,13 @@ The live messaging surface. Nine capabilities register on load:
   * ``messaging_read_thread`` (@tool)        — read full conversation thread.
   * ``messaging_list_entities`` (@tool)      — list registered team entities.
   * ``messaging_list_channels`` (@tool)      — list available channels.
+  * ``store_team_file``       (@tool)        — share a file in the team directory.
+  * ``list_team_files``       (@tool)        — list files in the team directory.
   * ``messaging_inbox_loop``  (@background_task) — durable PUSH inbox consumer.
 
-File tools (``store_team_file`` / ``list_team_files``) are not decorated here
-because the decorator pattern does not support conditional registration at
-decoration time; they are built by
-:func:`arcagent.modules.messaging.tools.create_messaging_tools` and registered
-manually when ``team_root`` resolves to an existing path.
-
 State is shared via :mod:`arcagent.modules.messaging._runtime`; the agent
-configures it once at startup and the capabilities read it lazily.
+configures it once at startup and the capabilities read it lazily. The file
+tools read the resolved ``team_root`` from that state.
 """
 
 from __future__ import annotations
@@ -29,6 +26,7 @@ import json
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape as xml_escape
 
@@ -506,6 +504,53 @@ async def messaging_list_channels() -> str:
         return json.dumps({"error": str(exc)})
 
 
+@tool(
+    name="store_team_file",
+    description=(
+        "Store a file in the team's shared directory so other agents "
+        "can access it. Use the file path from a received attachment."
+    ),
+    classification="state_modifying",
+    when_to_use="Share a downloaded attachment or artifact with teammates.",
+)
+async def store_team_file(file_path: str) -> str:
+    """Store a file in the team's shared directory."""
+    from arcteam.files import TeamFileStore
+
+    st = _runtime.state()
+    entity_name = st.config.entity_name or st.config.entity_id
+    try:
+        store = TeamFileStore(st.team_root)
+        result = await store.store(
+            source_path=Path(file_path),
+            agent_name=entity_name,
+        )
+        return json.dumps({"status": "stored", **result})
+    except (FileNotFoundError, ValueError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@tool(
+    name="list_team_files",
+    description=(
+        "List files in the team's shared directory. Optionally filter by agent name."
+    ),
+    classification="read_only",
+    when_to_use="Discover files teammates have shared in the team directory.",
+)
+async def list_team_files(agent_name: str = "") -> str:
+    """List files in the team's shared directory."""
+    from arcteam.files import TeamFileStore
+
+    st = _runtime.state()
+    try:
+        store = TeamFileStore(st.team_root)
+        files = await store.list_files(agent_name=agent_name or None)
+        return json.dumps({"files": files, "count": len(files)})
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # Background task
 # ---------------------------------------------------------------------------
@@ -546,6 +591,7 @@ async def messaging_inbox_loop(_ctx: Any) -> None:
 
 __all__ = [
     "inject_messaging_sections",
+    "list_team_files",
     "messaging_bind_run_fn",
     "messaging_check_inbox",
     "messaging_inbox_loop",
@@ -554,4 +600,5 @@ __all__ = [
     "messaging_read_thread",
     "messaging_send",
     "messaging_shutdown",
+    "store_team_file",
 ]

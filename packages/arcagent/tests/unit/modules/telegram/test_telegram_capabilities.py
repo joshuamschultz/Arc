@@ -16,9 +16,6 @@ This file verifies:
   4. ``on_schedule_failed`` calls ``bot.send_notification`` with the
      failure error message.
   5. The poll loop drains cleanly on cancellation (R-062).
-
-Legacy :class:`TelegramModule` tests in ``test_module.py`` continue
-to verify the wrapper-class behavior unchanged.
 """
 
 from __future__ import annotations

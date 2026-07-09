@@ -15,10 +15,6 @@ capability loader:
 
 State is shared via :mod:`arcagent.modules.telegram._runtime`. The
 agent configures it once at startup; capabilities read state lazily.
-
-The legacy :class:`TelegramModule` class still exists alongside this
-module to keep its existing test surface working; both forms route
-through the same :class:`TelegramBot` instance internally.
 """
 
 from __future__ import annotations

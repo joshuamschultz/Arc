@@ -20,6 +20,10 @@ import shutil
 import sys
 from pathlib import Path
 
+from arccli.commands._shared import dispatch
+from arccli.commands._shared import print_table as _print_table
+from arccli.commands._shared import write as _write
+
 _logger = logging.getLogger("arccli.commands.ext")
 
 _GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
@@ -51,21 +55,6 @@ async def {name}(arg: str) -> str:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _write(msg: str = "") -> None:
-    sys.stdout.write(msg + "\n")
-
-
-def _print_table(headers: list[str], rows: list[list[str]]) -> None:
-    try:
-        from arccli.formatting import print_table
-
-        print_table(headers, rows)
-    except ImportError:
-        sys.stdout.write("  " + "  ".join(headers) + "\n")
-        for row in rows:
-            sys.stdout.write("  " + "  ".join(row) + "\n")
 
 
 def _stamped_capabilities(module: object) -> list[tuple[str, str]]:
@@ -431,21 +420,4 @@ _SUBCOMMAND_MAP = {
 
 def ext_handler(args: list[str]) -> None:
     """Top-level handler for `arc ext <sub> [args]`."""
-    parser = _build_parser()
-
-    if not args:
-        parser.print_help()
-        sys.exit(0)
-
-    parsed = parser.parse_args(args)
-
-    if parsed.subcmd is None:
-        parser.print_help()
-        sys.exit(0)
-
-    fn = _SUBCOMMAND_MAP.get(parsed.subcmd)
-    if fn is None:
-        sys.stderr.write(f"arc ext: unknown subcommand '{parsed.subcmd}'\n")
-        sys.exit(1)
-
-    fn(parsed)
+    dispatch(_build_parser(), _SUBCOMMAND_MAP, args)

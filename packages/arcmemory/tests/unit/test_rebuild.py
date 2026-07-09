@@ -63,11 +63,31 @@ async def test_wipe_rebuild_is_byte_identical(
     await rebuilder.rebuild()
     first = _snapshot(db)
 
-    db.wipe_derived()
+    # rebuild wipes every derived table itself, so a second pass must reproduce the
+    # first byte-for-byte (idempotent from any starting index state).
     await rebuilder.rebuild()
     second = _snapshot(db)
 
     assert first == second, "rebuild must reproduce every derived table identically"
+
+
+async def test_rebuild_clears_orphaned_trigger_vectors(
+    workspace: Path, db: MemoryDB, scope: Scope, embedder
+) -> None:
+    _seed_agent(workspace, db, scope)
+    conn = db.connect()
+    # A poisoned/orphaned abstraction-space vector for an insight that no longer exists.
+    conn.execute(
+        "INSERT INTO insight_trigger (insight_id, scope, content_hash, embedding) "
+        "VALUES (?, ?, ?, ?)",
+        ("ghost", scope.key, "deadbeef", b"\x00\x00\x00\x00"),
+    )
+    conn.commit()
+
+    await IndexRebuilder(db, workspace, scope, embedder=embedder, seed_vocabulary=_VOCAB).rebuild()
+
+    # rebuild is the documented poison-fix path — the orphan must not survive it.
+    assert conn.execute("SELECT COUNT(*) FROM insight_trigger").fetchone()[0] == 0
 
 
 async def test_rebuild_produces_a_retrievable_set(

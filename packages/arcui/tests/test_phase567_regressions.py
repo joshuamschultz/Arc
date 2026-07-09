@@ -31,9 +31,7 @@ Issues covered:
 from __future__ import annotations
 
 import inspect
-from collections import deque
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from arcgateway import team_roster
 from starlette.applications import Starlette
@@ -71,9 +69,7 @@ def _build_app(team_root: Path | None) -> tuple[Starlette, AuthConfig, AgentRegi
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.agent_registry = registry
-    app.state.pending_controls = {}
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.audit_buffer = deque(maxlen=1000)
     app.state.team_root = team_root
     app.state.trace_store = None
 
@@ -130,7 +126,7 @@ class TestR1OfflineAgentMetaFallback:
             provider="custom",
             connected_at="2026-01-01T00:00:00Z",
         )
-        registry.register("alpha", MagicMock(), reg)
+        registry.register("alpha", reg)
         client = TestClient(app)
 
         resp = client.get("/api/agents/alpha", headers=_viewer(auth))

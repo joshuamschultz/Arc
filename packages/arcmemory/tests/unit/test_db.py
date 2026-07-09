@@ -43,16 +43,3 @@ def test_two_agents_are_separate_files(tmp_path: Path) -> None:
     a.connect().commit()
     # Agent B's file has no visibility into agent A's rows — hard isolation.
     assert b.connect().execute("SELECT COUNT(*) FROM episodic").fetchone()[0] == 0
-
-
-def test_wipe_derived_preserves_raw_stream(db: MemoryDB) -> None:
-    conn = db.connect()
-    conn.execute(
-        "INSERT INTO episodic (event_id, ts, scope, kind, text, seq) VALUES "
-        "('e','t','did:a','k','x',0)"
-    )
-    conn.execute("INSERT INTO fts_chunks (chunk_id, scope, text) VALUES ('c','did:a','x')")
-    conn.commit()
-    db.wipe_derived()
-    assert conn.execute("SELECT COUNT(*) FROM episodic").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0] == 0
