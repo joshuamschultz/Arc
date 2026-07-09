@@ -85,9 +85,7 @@ class TestBrowserReadPage:
 class TestBrowserGetElementText:
     """browser_get_element_text tool."""
 
-    async def test_get_element_text_by_ref(
-        self, configure_browser: Callable[..., _State]
-    ) -> None:
+    async def test_get_element_text_by_ref(self, configure_browser: Callable[..., _State]) -> None:
         cdp = _make_cdp()
         config = BrowserConfig()
         ax = AccessibilityManager(cdp, config)

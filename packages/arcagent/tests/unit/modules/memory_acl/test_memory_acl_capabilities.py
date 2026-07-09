@@ -229,7 +229,10 @@ class TestVetoEmitsAuditEvent:
         await memory_acl_read(ctx)
 
         telemetry.audit_event.assert_called()
-        event_name, payload = telemetry.audit_event.call_args[0][0], telemetry.audit_event.call_args[0][1]
+        event_name, payload = (
+            telemetry.audit_event.call_args[0][0],
+            telemetry.audit_event.call_args[0][1],
+        )
         assert event_name == "session.acl.veto"
         assert "caller_did" in payload
         assert "target_user_did" in payload

@@ -18,7 +18,9 @@ class _FakeModel:
         self._arguments = arguments
 
     async def invoke(self, messages: Any, tools: Any = None, **kwargs: Any) -> Any:
-        call = SimpleNamespace(name=tools[0].name if tools else "emit_plan", arguments=self._arguments)
+        call = SimpleNamespace(
+            name=tools[0].name if tools else "emit_plan", arguments=self._arguments
+        )
         return SimpleNamespace(content=None, tool_calls=[call])
 
 
@@ -95,7 +97,19 @@ class TestPlanCreate:
 
     @pytest.mark.asyncio
     async def test_ungrounded_decomposition_rejected(self, tmp_path: Path) -> None:
-        _configure(tmp_path, {"steps": [{"step_id": "x", "description": "x", "depends_on": [], "tool_hint": "ghost_tool"}]})
+        _configure(
+            tmp_path,
+            {
+                "steps": [
+                    {
+                        "step_id": "x",
+                        "description": "x",
+                        "depends_on": [],
+                        "tool_hint": "ghost_tool",
+                    }
+                ]
+            },
+        )
         result = json.loads(await capabilities.plan_create("goal"))
         assert "error" in result
         assert "rejected" in result["error"]
@@ -115,9 +129,7 @@ class TestConcurrentWiring:
         assert isinstance(orch._executor, ArcRunStepExecutor)
 
     @pytest.mark.asyncio
-    async def test_concurrent_flag_dispatches_frontier_in_parallel(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_concurrent_flag_dispatches_frontier_in_parallel(self, tmp_path: Path) -> None:
         from arcagent.modules.planning.executor import ConcurrentStepExecutor
 
         _runtime.configure(
@@ -228,9 +240,7 @@ class TestGoalDriftBinding:
     """F5: parent_goal_hash binds to identity.md; drift refuses further execution."""
 
     @pytest.mark.asyncio
-    async def test_plan_create_binds_to_identity_md_not_goal_string(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_plan_create_binds_to_identity_md_not_goal_string(self, tmp_path: Path) -> None:
         import hashlib
 
         (tmp_path / "identity.md").write_text("Goals: serve the mission", encoding="utf-8")
@@ -240,8 +250,7 @@ class TestGoalDriftBinding:
         # Bound to the identity.md charter (ASI01), not the plan's own goal text.
         assert plan.parent_goal_hash == _runtime.identity_goal_hash()
         assert (
-            plan.parent_goal_hash
-            != hashlib.sha256(b"did:arc:tester::write a report").hexdigest()
+            plan.parent_goal_hash != hashlib.sha256(b"did:arc:tester::write a report").hexdigest()
         )
 
     @pytest.mark.asyncio
@@ -291,9 +300,7 @@ class TestOperatorSignedAudit:
     """F3: with an operator signer, every plan transition lands on the WORM chain."""
 
     @pytest.mark.asyncio
-    async def test_plan_lifecycle_recorded_on_verifiable_worm_chain(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_plan_lifecycle_recorded_on_verifiable_worm_chain(self, tmp_path: Path) -> None:
         from arctrust import generate_keypair
         from arctrust.signer import InProcessSigner
 

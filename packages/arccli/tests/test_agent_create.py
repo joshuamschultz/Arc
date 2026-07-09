@@ -132,7 +132,9 @@ class TestCreate:
             assert not (ws / gone).exists(), f"workspace/{gone}/ should no longer be scaffolded"
         # memory/ is created lazily by arcmemory when a Brain is selected,
         # not pre-made by the scaffold.
-        assert not (ws / "memory").exists(), "workspace/memory/ should be created lazily, not scaffolded"
+        assert not (ws / "memory").exists(), (
+            "workspace/memory/ should be created lazily, not scaffolded"
+        )
 
     def test_create_identity_file(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))

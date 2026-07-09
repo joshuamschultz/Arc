@@ -87,9 +87,7 @@ class PlanOrchestrator:
         await self._run_one(plan, step)
         return step.failure_reason if step.status is StepStatus.FAILED else None
 
-    async def _run_frontier(
-        self, plan: Plan, ready: list[PlanStep], run_ready: Any
-    ) -> str | None:
+    async def _run_frontier(self, plan: Plan, ready: list[PlanStep], run_ready: Any) -> str | None:
         """Dispatch the whole ready frontier concurrently, checkpoint each result.
 
         The executor reserves each branch's budget, runs the reserved branches

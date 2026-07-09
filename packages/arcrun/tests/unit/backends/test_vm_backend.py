@@ -154,9 +154,7 @@ class TestVmGuestPostureConfig:
         assert "arc-vm-abc123" in config_path
 
     def test_network_enabled_policy_adds_nic(self, tmp_path: Path) -> None:
-        backend = VmBackend(
-            chroot_base=str(tmp_path), policy=VmGuestPolicy(network=True)
-        )
+        backend = VmBackend(chroot_base=str(tmp_path), policy=VmGuestPolicy(network=True))
         config_path = backend._write_vmconfig("arc-vm-net", "python3 -", cwd=None, env=None)
         data = json.loads(Path(config_path).read_text())
         assert data["network-interfaces"] != []

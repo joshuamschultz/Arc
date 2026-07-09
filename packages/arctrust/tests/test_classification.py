@@ -102,7 +102,9 @@ class TestClassificationLayer:
 class TestProviderUnknownLabel:
     async def test_unknown_label_denies_when_not_relaxable(self) -> None:
         layer = ProviderLayer(
-            limits_by_provider={"anthropic": ProviderLimit(max_tokens=100, max_cost=1.0, max_requests=10)}
+            limits_by_provider={
+                "anthropic": ProviderLimit(max_tokens=100, max_cost=1.0, max_requests=10)
+            }
         )
         usage = ProviderUsage(provider="bogus", tokens_used=1, cost_used=0.0, requests_in_window=1)
         decision = await layer.evaluate(_call(), _ctx(provider_usage=usage))
@@ -111,7 +113,9 @@ class TestProviderUnknownLabel:
 
     async def test_unknown_label_allowed_when_relaxable(self) -> None:
         layer = ProviderLayer(
-            limits_by_provider={"anthropic": ProviderLimit(max_tokens=100, max_cost=1.0, max_requests=10)},
+            limits_by_provider={
+                "anthropic": ProviderLimit(max_tokens=100, max_cost=1.0, max_requests=10)
+            },
             relaxable=True,
         )
         usage = ProviderUsage(provider="bogus", tokens_used=1, cost_used=0.0, requests_in_window=1)

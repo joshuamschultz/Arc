@@ -150,7 +150,7 @@ def _entry_row(entry: Any) -> tuple[str, Any, str]:
 
 
 def _signed_status(source_path: Any, trusted_public_key: bytes | None = None) -> str:
-    """"signed" if the source file's ``.arcsig`` verifies, else "unsigned"/"unknown".
+    """ "signed" if the source file's ``.arcsig`` verifies, else "unsigned"/"unknown".
 
     Pinned to ``trusted_public_key`` (the agent DID key) when supplied so a wrong-key
     self-signed artifact reads "unsigned" rather than falsely "signed" (SPEC-047 HIGH-1).

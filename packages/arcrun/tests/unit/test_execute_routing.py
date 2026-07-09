@@ -115,9 +115,7 @@ class TestDevFallback:
 
     def test_non_federal_no_kvm_emits_no_downgrade(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Force platform_supports_vm False regardless of host.
-        monkeypatch.setattr(
-            "arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False
-        )
+        monkeypatch.setattr("arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False)
         sink = CaptureSink()
         make_execute_tool(tier="enterprise", audit_sink=sink)
         selected = next(e for e in sink.events if e.action == "code_exec.backend.selected")
@@ -132,16 +130,12 @@ class TestFederalFailClosed:
     """REQ-003/030: federal refuses (no silent downgrade) when VM is unavailable."""
 
     def test_federal_no_kvm_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False
-        )
+        monkeypatch.setattr("arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False)
         with pytest.raises(IsolationUnavailableError):
             make_execute_tool(tier="federal")
 
     def test_federal_refusal_is_audited(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False
-        )
+        monkeypatch.setattr("arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: False)
         sink = CaptureSink()
         with pytest.raises(IsolationUnavailableError):
             make_execute_tool(tier="federal", audit_sink=sink)
@@ -154,9 +148,7 @@ class TestFederalFailClosed:
         assert refusals[0].tier == "federal"
 
     def test_federal_on_kvm_selects_vm(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: True
-        )
+        monkeypatch.setattr("arcrun.builtins.execute.platform_supports_vm", lambda *a, **k: True)
         sink = CaptureSink()
         make_execute_tool(tier="federal", audit_sink=sink)
         ev = next(e for e in sink.events if e.action == "code_exec.backend.selected")

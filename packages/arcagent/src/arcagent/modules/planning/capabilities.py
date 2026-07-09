@@ -102,9 +102,7 @@ def _build_orchestrator(plan_id: str) -> PlanOrchestrator:
     st = _runtime.state()
 
     async def replan_fn(plan: Plan, reason: str) -> Plan:
-        return await replan(
-            plan, reason, model=_runtime.get_model(), known_tools=st.known_tools
-        )
+        return await replan(plan, reason, model=_runtime.get_model(), known_tools=st.known_tools)
 
     executor: StepExecutor
     if st.config.concurrent:

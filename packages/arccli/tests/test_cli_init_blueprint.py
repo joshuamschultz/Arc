@@ -25,8 +25,15 @@ def _arc(*args: str) -> subprocess.CompletedProcess[str]:
 
 def test_init_blueprint_writes_merged_arcagent_config(tmp_path: Path) -> None:
     result = _arc(
-        "init", "--tier", "personal", "--provider", "anthropic",
-        "--blueprint", "personal-assistant", "--dir", str(tmp_path),
+        "init",
+        "--tier",
+        "personal",
+        "--provider",
+        "anthropic",
+        "--blueprint",
+        "personal-assistant",
+        "--dir",
+        str(tmp_path),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
     written = tomllib.loads((tmp_path / "arcagent.toml").read_text(encoding="utf-8"))
@@ -37,8 +44,15 @@ def test_init_blueprint_writes_merged_arcagent_config(tmp_path: Path) -> None:
 def test_init_blueprint_floors_tier_up(tmp_path: Path) -> None:
     # personal deployment + federal blueprint -> federal (blueprint can only RAISE).
     result = _arc(
-        "init", "--tier", "personal", "--provider", "anthropic",
-        "--blueprint", "federal-analyst", "--dir", str(tmp_path),
+        "init",
+        "--tier",
+        "personal",
+        "--provider",
+        "anthropic",
+        "--blueprint",
+        "federal-analyst",
+        "--dir",
+        str(tmp_path),
     )
     assert result.returncode == 0, f"stderr: {result.stderr}"
     written = tomllib.loads((tmp_path / "arcagent.toml").read_text(encoding="utf-8"))

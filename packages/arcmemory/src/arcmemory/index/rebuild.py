@@ -137,8 +137,14 @@ class IndexRebuilder:
                 "INSERT OR REPLACE INTO chunks "
                 "(chunk_id, scope, source_path, mtime, classification, content_hash) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
-                (sc.chunk_id, self._scope.key, sc.source_path, None, sc.classification,
-                 content_hash(sc.text)),
+                (
+                    sc.chunk_id,
+                    self._scope.key,
+                    sc.source_path,
+                    None,
+                    sc.classification,
+                    content_hash(sc.text),
+                ),
             )
             conn.execute(
                 "INSERT INTO fts_chunks (chunk_id, scope, text) VALUES (?, ?, ?)",

@@ -536,8 +536,7 @@ class GlobalLayer:
                 layer=self.name,
                 rule_id="global.forbidden_composition",
                 reason=(
-                    f"forbidden capability composition {sorted(matched)} "
-                    "requires human approval"
+                    f"forbidden capability composition {sorted(matched)} requires human approval"
                 ),
                 input_hash=_hash_call(call),
                 evaluated_at_us=now_us,
@@ -804,9 +803,7 @@ def _isolation_satisfies(available: str, required: str) -> bool:
     if required not in _ISOLATION_LADDER:
         return False
     required_rank = _ISOLATION_LADDER.index(required)
-    available_rank = (
-        _ISOLATION_LADDER.index(available) if available in _ISOLATION_LADDER else -1
-    )
+    available_rank = _ISOLATION_LADDER.index(available) if available in _ISOLATION_LADDER else -1
     return available_rank >= required_rank
 
 

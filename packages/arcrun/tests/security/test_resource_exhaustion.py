@@ -89,7 +89,9 @@ except Exception as e:
         """Excessive output should be truncated."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=5, max_output_bytes=100, tier="personal", relax="local")
+        tool = make_execute_tool(
+            timeout_seconds=5, max_output_bytes=100, tier="personal", relax="local"
+        )
         code = "print('A' * 10000)"
         result = await tool.execute({"code": code}, make_ctx())
         parsed = json.loads(result)

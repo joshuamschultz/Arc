@@ -135,9 +135,7 @@ class Plan(BaseModel):
         for step in self.steps:
             for dep in step.depends_on:
                 if dep not in known:
-                    raise ValueError(
-                        f"step {step.step_id!r} depends on unknown step {dep!r}"
-                    )
+                    raise ValueError(f"step {step.step_id!r} depends on unknown step {dep!r}")
         self._reject_cycles()
 
     def _reject_cycles(self) -> None:
@@ -169,9 +167,7 @@ class Plan(BaseModel):
         Order follows step declaration (a valid topological order for a
         well-formed DAG).
         """
-        succeeded = {
-            s.step_id for s in self.steps if s.status is StepStatus.SUCCEEDED
-        }
+        succeeded = {s.step_id for s in self.steps if s.status is StepStatus.SUCCEEDED}
         return [
             step
             for step in self.steps
@@ -181,10 +177,7 @@ class Plan(BaseModel):
 
     def is_complete(self) -> bool:
         """True when every step succeeded or was skipped."""
-        return all(
-            s.status in (StepStatus.SUCCEEDED, StepStatus.SKIPPED)
-            for s in self.steps
-        )
+        return all(s.status in (StepStatus.SUCCEEDED, StepStatus.SKIPPED) for s in self.steps)
 
     def has_running(self) -> bool:
         """True when any step is mid-flight."""

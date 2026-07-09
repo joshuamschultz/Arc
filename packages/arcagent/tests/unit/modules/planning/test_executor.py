@@ -101,7 +101,11 @@ class TestClassification:
     async def test_tool_reported_failure_fails(self) -> None:
         failed = _loop_result(
             content=None,
-            completion_payload={"status": "failed", "summary": "denied by policy", "error": "denied"},
+            completion_payload={
+                "status": "failed",
+                "summary": "denied by policy",
+                "error": "denied",
+            },
             completion_tool="task_complete",
         )
         ex = ArcRunStepExecutor(_RecordingRunFn(failed))

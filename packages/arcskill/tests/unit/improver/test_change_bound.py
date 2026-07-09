@@ -120,8 +120,9 @@ async def test_ac4_over_bound_rejected_pre_eval_and_audited(tmp_path: Path) -> N
     sink = _Sink()
     imp = ArcSkillImprover(
         tmp_path / "ws",
-        config=ImproverConfig(min_traces=1, trace_buffer_turns=0, optimize_after_uses=1,
-                              min_golden_cases=1),
+        config=ImproverConfig(
+            min_traces=1, trace_buffer_turns=0, optimize_after_uses=1, min_golden_cases=1
+        ),
         tier="federal",
         mutator=_OverBoundMutator(),
         eval_runner=runner,

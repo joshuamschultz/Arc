@@ -152,9 +152,7 @@ class TestBrowserType:
 class TestBrowserSelect:
     """browser_select tool."""
 
-    async def test_select_uses_arguments(
-        self, configure_browser: Callable[..., _State]
-    ) -> None:
+    async def test_select_uses_arguments(self, configure_browser: Callable[..., _State]) -> None:
         """Select uses callFunctionOn with arguments (no JS injection)."""
         config = BrowserConfig()
         cdp, ax = await _snapshot(config)

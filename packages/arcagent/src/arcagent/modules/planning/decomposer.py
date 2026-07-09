@@ -106,9 +106,7 @@ def _ground(steps: Sequence[PlanStep], known_tools: Iterable[str]) -> None:
     known = set(known_tools)
     hints = [s.tool_hint for s in steps if s.tool_hint]
     if known and hints and not any(hint in known for hint in hints):
-        raise DecompositionError(
-            "plan references no known capability — cannot be grounded"
-        )
+        raise DecompositionError("plan references no known capability — cannot be grounded")
 
 
 def _steps_from_draft(draft: _PlanDraft) -> list[PlanStep]:

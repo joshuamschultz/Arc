@@ -172,9 +172,7 @@ class TestFailOpenOnAudit:
             def write(self, event: AuditEvent) -> None:
                 raise OSError("disk full")
 
-        pipeline = PolicyPipeline(
-            layers=[DenyLayer()], audit_sink=worm_policy_sink(Broken())
-        )
+        pipeline = PolicyPipeline(layers=[DenyLayer()], audit_sink=worm_policy_sink(Broken()))
         assert (await pipeline.evaluate(make_call(), make_ctx())).outcome == "deny"
 
 

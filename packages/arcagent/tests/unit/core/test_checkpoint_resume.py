@@ -73,6 +73,7 @@ class MockModel:
     async def close(self) -> None:
         return None
 
+
 _SESSION_KEY = "resume:job"
 
 
@@ -94,9 +95,7 @@ def _config(tmp_path: Path, workspace: Path) -> ArcAgentConfig:
         context=ContextConfig(max_tokens=10000),
         # in_process operator key in a tmp dir so both the crashed + restarted
         # agent share the same signer (the checkpoint verifies across restart).
-        security=SecurityConfig(
-            tier="personal", operator_key_dir=str(tmp_path / "operator")
-        ),
+        security=SecurityConfig(tier="personal", operator_key_dir=str(tmp_path / "operator")),
     )
 
 
@@ -111,7 +110,9 @@ async def _started_agent(tmp_path: Path, workspace: Path, model: MockModel) -> A
 
 def _resp(text: str) -> LLMResponse:
     return LLMResponse(
-        content=text, stop_reason="end_turn", usage=Usage(input_tokens=10, output_tokens=5, total_tokens=15)
+        content=text,
+        stop_reason="end_turn",
+        usage=Usage(input_tokens=10, output_tokens=5, total_tokens=15),
     )
 
 
@@ -182,9 +183,7 @@ class TestResumeToCompletion:
 
 class TestTamperFailsClosed:
     @pytest.mark.asyncio
-    async def test_tampered_tokens_refuse_resume(
-        self, tmp_path: Path, workspace: Path
-    ) -> None:
+    async def test_tampered_tokens_refuse_resume(self, tmp_path: Path, workspace: Path) -> None:
         """Zeroing tokens_used to reset the budget breaker fails closed (LLM10)."""
         agent1 = await _started_agent(tmp_path, workspace, MockModel([_resp("progress")]))
         try:

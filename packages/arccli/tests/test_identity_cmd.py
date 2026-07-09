@@ -59,9 +59,7 @@ def test_default_key_dir_is_under_home() -> None:
     assert DEFAULT_KEY_DIR == Path("~/.arc/identity").expanduser()
 
 
-def test_init_honors_arc_config_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_init_honors_arc_config_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """ARC_CONFIG_DIR redirects the key under <dir>/identity, not ~/.arc (F5)."""
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
     identity_handler(["init"])

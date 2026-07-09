@@ -50,7 +50,9 @@ def test_tampered_chain_emits_alert_at_load(tmp_path: Path) -> None:
     for i in range(2):
         seed.write(
             AuditEvent(
-                actor_did="did:arc:test", action="skill.mutate", target=f"skill-{i}",
+                actor_did="did:arc:test",
+                action="skill.mutate",
+                target=f"skill-{i}",
                 outcome="allow",
             )
         )

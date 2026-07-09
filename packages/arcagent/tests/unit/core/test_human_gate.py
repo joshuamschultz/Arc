@@ -93,10 +93,12 @@ class TestHumanGate:
 
         signer = _operator_signer()
         agent_did = "did:arc:example:org:agent:abc"
-        approving = HumanGate(operator_signer=signer, agent_did=agent_did, tier="enterprise",
-                              channel=approve)
-        denying = HumanGate(operator_signer=signer, agent_did=agent_did, tier="enterprise",
-                            channel=deny)
+        approving = HumanGate(
+            operator_signer=signer, agent_did=agent_did, tier="enterprise", channel=approve
+        )
+        denying = HumanGate(
+            operator_signer=signer, agent_did=agent_did, tier="enterprise", channel=deny
+        )
         assert await approving.request(_call(), legs=_TRIFECTA) is not None
         assert await denying.request(_call(), legs=_TRIFECTA) is None
 
@@ -118,8 +120,12 @@ class TestHumanGate:
         # REQ-015: a grant for one call does not validate a different call.
         signer = _operator_signer()
         agent_did = "did:arc:example:org:agent:abc"
-        gate = HumanGate(operator_signer=signer, agent_did=agent_did, tier="personal",
-                         config=HumanGateConfig(auto_approve=[_TRIFECTA]))
+        gate = HumanGate(
+            operator_signer=signer,
+            agent_did=agent_did,
+            tier="personal",
+            config=HumanGateConfig(auto_approve=[_TRIFECTA]),
+        )
         call_a = _call(agent_did)
         call_b = call_a.model_copy(update={"arguments": {"url": "https://different"}})
         grant = await gate.request(call_a, legs=_TRIFECTA)

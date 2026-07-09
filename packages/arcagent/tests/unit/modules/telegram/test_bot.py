@@ -108,7 +108,9 @@ class TestNotifyRoutesThroughEgress:
 
     @staticmethod
     def _bot_with_egress(tmp_path: Path, egress: object) -> TelegramBot:
-        bot = TelegramBot(config=_make_config(), telemetry=MagicMock(), workspace=tmp_path, egress=egress)
+        bot = TelegramBot(
+            config=_make_config(), telemetry=MagicMock(), workspace=tmp_path, egress=egress
+        )
         bot._chat_id = 123
         app = MagicMock()
         app.bot = MagicMock()

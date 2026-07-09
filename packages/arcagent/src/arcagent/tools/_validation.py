@@ -119,8 +119,7 @@ def enforce_protected_path(
     raise ToolError(
         code="TOOL_PROTECTED_PATH",
         message=(
-            f"'{file_path}' is a protected, operator-authored path and is "
-            "read-only to the agent"
+            f"'{file_path}' is a protected, operator-authored path and is read-only to the agent"
         ),
         details={"path": str(resolved), "tool": tool_name},
     )

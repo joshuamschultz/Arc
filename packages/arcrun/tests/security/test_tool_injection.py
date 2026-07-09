@@ -18,7 +18,9 @@ class TestToolInjection:
         """Extremely large code parameter should not crash."""
         from security.conftest import make_ctx
 
-        tool = make_execute_tool(timeout_seconds=5, max_output_bytes=1024, tier="personal", relax="local")
+        tool = make_execute_tool(
+            timeout_seconds=5, max_output_bytes=1024, tier="personal", relax="local"
+        )
         # 1MB of code
         large_code = "x = 1\n" * 100_000
         result = await tool.execute({"code": large_code}, make_ctx())

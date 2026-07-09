@@ -101,9 +101,7 @@ async def _capture_run_async_kwargs(agent: ArcAgent) -> dict[str, Any]:
         captured.update(kwargs)
         return _FakeHandle()
 
-    with patch(
-        "arcagent.core.agent_dispatch.arcrun_run_async", side_effect=_fake_run_async
-    ):
+    with patch("arcagent.core.agent_dispatch.arcrun_run_async", side_effect=_fake_run_async):
         await agent.start_tracked_run("do it", session_key="tracked:1")
     return captured
 
@@ -144,7 +142,12 @@ class TestTrackedPathAppliesLoopControls:
         finally:
             await agent.shutdown()
 
-        for key in ("approval_required_tools", "max_repeat", "max_consecutive_errors", "max_parallel"):
+        for key in (
+            "approval_required_tools",
+            "max_repeat",
+            "max_consecutive_errors",
+            "max_parallel",
+        ):
             assert captured[key] == expected[key]
         # Provider + checkpoint hook are both bound callables on the tracked path.
         assert callable(captured["approval_provider"])

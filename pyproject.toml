@@ -96,7 +96,7 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "A", "S", "T20", "RUF"]
 # (arrows, ×) and a status print — line-length/ambiguous-unicode/print lints
 # do not apply to generated report content.
 "sbom/_gen_report.py" = ["E501", "RUF001", "T201"]
-"walkthroughs/**/*.ipynb" = ["S101", "B007", "S307", "S110", "T20", "F401", "F811", "E501", "F821", "E741", "E402", "I001"]
+"walkthroughs/**/*.ipynb" = ["S101", "B007", "S307", "S110", "T20", "F401", "F811", "E501", "F821", "E741", "E402", "I001", "S603", "S108", "A002"]
 
 [tool.mypy]
 python_version = "3.11"

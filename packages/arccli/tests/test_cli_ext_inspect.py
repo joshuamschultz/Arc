@@ -20,10 +20,10 @@ from arccli.commands import ext
 
 def _write_agent(tmp_path: Path, *, tier: str, brain: str) -> Path:
     (tmp_path / "arcagent.toml").write_text(
-        "[agent]\nname = \"aria\"\n[llm]\nmodel = \"x/y\"\n"
-        f"[security]\ntier = \"{tier}\"\n"
-        f"[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = \"{brain}\"\n"
-        "[modules.skills]\nenabled = true\n[modules.skills.config]\nadapter = \"arcskill\"\n",
+        '[agent]\nname = "aria"\n[llm]\nmodel = "x/y"\n'
+        f'[security]\ntier = "{tier}"\n'
+        f'[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = "{brain}"\n'
+        '[modules.skills]\nenabled = true\n[modules.skills.config]\nadapter = "arcskill"\n',
         encoding="utf-8",
     )
     return tmp_path
@@ -73,9 +73,9 @@ def _agent_with_identity(tmp_path: Path):  # type: ignore[no-untyped-def]
     agent_id = AgentIdentity.generate(org="blackarc", agent_type="executor")
     agent_id.save_keys(key_dir)
     (tmp_path / "arcagent.toml").write_text(
-        "[agent]\nname = \"aria\"\n[llm]\nmodel = \"x/y\"\n"
-        f"[identity]\ndid = \"{agent_id.did}\"\nkey_dir = \"{key_dir}\"\n"
-        "[security]\ntier = \"enterprise\"\n",
+        '[agent]\nname = "aria"\n[llm]\nmodel = "x/y"\n'
+        f'[identity]\ndid = "{agent_id.did}"\nkey_dir = "{key_dir}"\n'
+        '[security]\ntier = "enterprise"\n',
         encoding="utf-8",
     )
     (tmp_path / "capabilities").mkdir()

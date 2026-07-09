@@ -101,9 +101,7 @@ class AuditLogger:
             detail=detail,
         )
         record_dict = record.model_dump()
-        signature = self._signer.sign(
-            _signing_input(record_dict, self._prev_signature)
-        ).hex()
+        signature = self._signer.sign(_signing_input(record_dict, self._prev_signature)).hex()
         record_dict["signature"] = signature
         record_dict["public_key"] = self._signer.public_key.hex()
         record_dict["algorithm"] = self._signer.algorithm

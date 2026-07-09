@@ -20,8 +20,8 @@ from arccli.commands import blueprint as bp_cmd
 def _write_agent(tmp_path: Path, tier: str = "personal") -> Path:
     target = tmp_path / "arcagent.toml"
     target.write_text(
-        "[agent]\nname = \"aria\"\n[llm]\nmodel = \"x/y\"\n"
-        f"[identity]\ndid = \"did:arc:test:aria\"\n[security]\ntier = \"{tier}\"\n",
+        '[agent]\nname = "aria"\n[llm]\nmodel = "x/y"\n'
+        f'[identity]\ndid = "did:arc:test:aria"\n[security]\ntier = "{tier}"\n',
         encoding="utf-8",
     )
     return target
@@ -184,7 +184,7 @@ def test_apply_operatorsigned_blueprint_accepted_above_personal(tmp_path: Path) 
     path = udir / "team.toml"
     path.write_text(
         '[blueprint]\nname = "team"\nversion = "1.0.0"\ntier = "enterprise"\n'
-        "[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = \"arcmemory\"\n",
+        '[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = "arcmemory"\n',
         encoding="utf-8",
     )
     _operator_sign(tmp_path, path)

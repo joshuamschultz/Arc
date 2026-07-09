@@ -88,9 +88,7 @@ class TestReadySteps:
 
     def test_diamond_frontier(self) -> None:
         # a -> {b, c} -> d
-        plan = _plan(
-            [_step("a"), _step("b", ["a"]), _step("c", ["a"]), _step("d", ["b", "c"])]
-        )
+        plan = _plan([_step("a"), _step("b", ["a"]), _step("c", ["a"]), _step("d", ["b", "c"])])
         plan.get_step("a").status = StepStatus.SUCCEEDED
         assert {s.step_id for s in plan.ready_steps()} == {"b", "c"}
 

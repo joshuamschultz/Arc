@@ -50,9 +50,7 @@ def verify_record(record: dict[str, Any], *, public_key: bytes, algorithm: str) 
     except (TypeError, ValueError) as exc:
         raise ValueError("checkpoint resume refused: malformed signature") from exc
     if not verify_signature(algorithm, _canonical_bytes(record), raw, public_key):
-        raise ValueError(
-            "checkpoint resume refused: signature verification failed (tampered)"
-        )
+        raise ValueError("checkpoint resume refused: signature verification failed (tampered)")
 
 
 __all__ = ["sign_record", "verify_record"]

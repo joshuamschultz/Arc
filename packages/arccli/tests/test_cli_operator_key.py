@@ -44,9 +44,7 @@ def test_init_is_idempotent_on_operator_key(tmp_path: Path) -> None:
     assert first == second
 
 
-def test_init_prints_operator_fingerprint_at_federal(
-    tmp_path: Path, capsys: object
-) -> None:
+def test_init_prints_operator_fingerprint_at_federal(tmp_path: Path, capsys: object) -> None:
     _run_init("federal", tmp_path)
     out = capsys.readouterr().out  # type: ignore[attr-defined]
     key = tmp_path / "operator" / "operator.key"

@@ -119,9 +119,7 @@ class TestProviderConstructionWiring:
         assert built_with["name"] == "tavily"
         assert built_with["api_key"] == "test-key"
 
-    async def test_provider_built_once_and_cached(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_provider_built_once_and_cached(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         stub = MagicMock()
         stub.search = AsyncMock(return_value=[])

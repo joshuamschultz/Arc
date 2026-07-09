@@ -54,7 +54,9 @@ def test_federal_rejects_explicit_weaker_exact() -> None:
 
 
 def test_federal_accepts_exact_floor_value() -> None:
-    assert resolve_tier_floor(_CUSTODY, "federal", "vault_transit", was_set=True) == "vault_transit"
+    assert (
+        resolve_tier_floor(_CUSTODY, "federal", "vault_transit", was_set=True) == "vault_transit"
+    )
 
 
 # --- smaller knobs: federal pins floor, rejects looser/disabled ---------------
@@ -97,13 +99,19 @@ def test_personal_relaxation_returns_requested_and_audits() -> None:
 def test_no_audit_when_value_matches_floor() -> None:
     events: list[tuple[str, dict[str, Any]]] = []
     resolve_tier_floor(
-        _CUSTODY, "enterprise", "vault_transit", was_set=True, audit=lambda n, p: events.append((n, p))
+        _CUSTODY,
+        "enterprise",
+        "vault_transit",
+        was_set=True,
+        audit=lambda n, p: events.append((n, p)),
     )
     assert events == []
 
 
 def test_non_relaxable_knob_at_tier_raises() -> None:
-    frozen = RelaxableKnob("x", federal_floor=True, relax_personal=False, relax_enterprise=False, stricter_is="exact")
+    frozen = RelaxableKnob(
+        "x", federal_floor=True, relax_personal=False, relax_enterprise=False, stricter_is="exact"
+    )
     with pytest.raises(ValueError, match="x"):
         resolve_tier_floor(frozen, "personal", False, was_set=True)
 
@@ -156,6 +164,12 @@ def test_audit_tier_relaxations_silent_when_at_floor() -> None:
 
 def test_larger_is_stricter_floor_rejects_smaller_at_federal() -> None:
     # Exercise the "larger" ordering branch: a smaller value is weaker than the floor.
-    knob = RelaxableKnob("allow_set", federal_floor=5, relax_personal=True, relax_enterprise=True, stricter_is="larger")
+    knob = RelaxableKnob(
+        "allow_set",
+        federal_floor=5,
+        relax_personal=True,
+        relax_enterprise=True,
+        stricter_is="larger",
+    )
     with pytest.raises(ValueError, match="allow_set"):
         resolve_tier_floor(knob, "federal", 2, was_set=True)
