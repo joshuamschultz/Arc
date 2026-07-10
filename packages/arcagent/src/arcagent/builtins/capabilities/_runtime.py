@@ -268,6 +268,25 @@ def check_protected(resolved: Path, file_path: str, *, tool_name: str) -> None:
     )
 
 
+def check_secret_content(content: str, file_path: str, *, tool_name: str) -> None:
+    """Deny + audit a write whose payload looks like a live credential.
+
+    Thin binding of :func:`arcagent.tools._secret_guard.enforce_no_secret_content`
+    to the per-agent runtime state (identity, audit sink) — the same
+    "delegate the audit-then-raise shape" pattern as :func:`check_protected`.
+    """
+    from arcagent.tools._secret_guard import enforce_no_secret_content
+
+    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    enforce_no_secret_content(
+        content,
+        tool_name=tool_name,
+        file_path=file_path,
+        caller_did=caller,
+        audit_sink=_audit_sink,
+    )
+
+
 def check_shell_command(command: str, *, tool_name: str = "bash") -> None:
     """Advisory host-bash goal-lock: deny obvious writes to protected paths.
 
@@ -330,6 +349,7 @@ def reset() -> None:
 __all__ = [
     "allowed_paths",
     "check_protected",
+    "check_secret_content",
     "check_shell_command",
     "configure",
     "egress",

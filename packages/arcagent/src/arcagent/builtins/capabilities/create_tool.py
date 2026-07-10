@@ -36,6 +36,9 @@ async def create_tool(name: str, source: str) -> str:
     """
     if not name.isidentifier():
         return f"Error: name {name!r} is not a valid Python identifier"
+    _runtime.check_secret_content(
+        source, f"{_CAPABILITIES_SUBDIR}/{name}.py", tool_name="create_tool"
+    )
     workspace = _runtime.workspace()
     target = _runtime.resolve_workspace_path(
         f"{_CAPABILITIES_SUBDIR}/{name}.py", tool_name="create_tool"

@@ -94,6 +94,8 @@ async def create_skill(
     """Scaffold ``workspace/capabilities/skills/<name>/`` and return path."""
     if not name.replace("-", "_").isidentifier():
         return f"Error: name {name!r} must be alphanumeric (dashes allowed)"
+    if body:
+        _runtime.check_secret_content(body, f"{_SKILLS_SUBDIR}/{name}", tool_name="create_skill")
     workspace = _runtime.workspace()
     folder = _runtime.resolve_workspace_path(f"{_SKILLS_SUBDIR}/{name}", tool_name="create_skill")
     if folder.exists():
