@@ -123,6 +123,14 @@ class MemoryDB:
             "classification TEXT DEFAULT 'unclassified', refs TEXT, seq INTEGER, "
             "salience REAL NOT NULL DEFAULT 0.0, entities TEXT)"
         )
+        # T-702/703 added salience/entities to a table that already existed on
+        # every deployed agent — CREATE TABLE IF NOT EXISTS no-ops there, so a
+        # real self-migration is required (task 37). _ensure_columns is the
+        # general seam: the NEXT column added to an existing table lists here
+        # instead of repeating this bug.
+        self._ensure_columns(
+            conn, "episodic", {"salience": "REAL NOT NULL DEFAULT 0.0", "entities": "TEXT"}
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic(scope, seq)")
 
         # Index provenance for rebuild + the no-read-up classification label.
@@ -168,6 +176,24 @@ class MemoryDB:
             "CREATE INDEX IF NOT EXISTS idx_insight_trigger_scope ON insight_trigger(scope)"
         )
 
+        conn.commit()
+
+    @staticmethod
+    def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        """Add any of ``columns`` missing from an already-existing ``table``.
+
+        ``CREATE TABLE IF NOT EXISTS`` only applies a schema to a table that
+        doesn't exist yet — a column added to that statement is silently
+        absent on every DB created before the change shipped (task 37). This
+        is the general seam: ``columns`` maps column name -> its DDL type/
+        default, and each missing one gets ``ALTER TABLE ... ADD COLUMN``.
+        A no-op migration framework on purpose — just enough to stop this
+        exact failure mode from recurring on the next added column.
+        """
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
         conn.commit()
 
 
