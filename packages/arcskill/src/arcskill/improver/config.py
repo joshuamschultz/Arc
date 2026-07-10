@@ -47,6 +47,26 @@ class LifecycleConfig(BaseModel):
     min_uses_before_retire: int = Field(default=5, ge=1)
 
 
+class SuiteConfig(BaseModel):
+    """Suite auto-generation settings (SPEC-054 REQ-112, COMP-003).
+
+    Governs golden-suite bootstrap: whether suites are auto-generated, how many
+    cases a suite carries, and the candidate/flake budgets for the adoption
+    cascade (COMP-001 pins ``flake_runs=5``). All fields default so the
+    zero-config experience matches the sibling blocks.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    autogen: bool = True
+    min_cases: int = Field(default=3, ge=1)
+    max_cases: int = Field(default=10, ge=1)
+    generate_on_create: bool = True
+    extend_after_mutation: bool = True
+    candidate_budget: int = Field(default=20, ge=1)
+    flake_runs: int = Field(default=5, ge=1)
+
+
 class ImproverConfig(BaseModel):
     """Skill improver configuration.
 
@@ -62,6 +82,9 @@ class ImproverConfig(BaseModel):
     trace_buffer_turns: int = Field(default=50, ge=0)
     trace_similarity_threshold: float = Field(default=0.85, gt=0.0, le=1.0)
     optimize_after_uses: int = Field(default=50, ge=1)
+    # Persist scrubbed tool-call args in traces (SPEC-054 REQ-117, COMP-007).
+    # Default OFF: hash-only. Federal stays hash-only regardless (TraceStore enforces).
+    capture_args: bool = False
 
     # Optimization engine
     max_iterations: int = Field(default=10, ge=1, le=100)
@@ -95,5 +118,8 @@ class ImproverConfig(BaseModel):
     # Curator usage-sweep + retire/revive lifecycle (REQ-041..045).
     lifecycle: LifecycleConfig = Field(default_factory=LifecycleConfig)
 
+    # Golden-suite auto-generation (SPEC-054 REQ-112).
+    suite: SuiteConfig = Field(default_factory=SuiteConfig)
 
-__all__ = ["ChangeBoundConfig", "ImproverConfig", "LifecycleConfig"]
+
+__all__ = ["ChangeBoundConfig", "ImproverConfig", "LifecycleConfig", "SuiteConfig"]

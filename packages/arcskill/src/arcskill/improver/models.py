@@ -21,11 +21,16 @@ class EvalCase:
     ``evals/test_golden.py::test_happy_path``). The suite is the hard acceptance gate
     (REQ-020/022); a case's identity lets the strict-improvement gate compare which
     cases a candidate flips from fail→pass without regressing any pass→fail.
+
+    ``machine_authored`` records provenance (REQ-109): cases bootstrapped by the
+    improver are supplemental at enterprise/federal tiers and never count toward
+    ``min_golden_cases`` there.
     """
 
     id: str
     node: str = ""
     description: str = ""
+    machine_authored: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,7 @@ class ToolCallRecord:
     result_status: str  # "ok" | "error" | "vetoed"
     duration_ms: float
     error_type: str | None = None
+    args: dict[str, Any] | None = None  # scrubbed args, only when capture is ON
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,16 +107,19 @@ class ToolCallRecord:
             "result_status": self.result_status,
             "duration_ms": self.duration_ms,
             "error_type": self.error_type,
+            "args": self.args,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ToolCallRecord:
+        args_raw = data.get("args")
         return cls(
             tool_name=str(data["tool_name"]),
             args_hash=str(data["args_hash"]),
             result_status=str(data["result_status"]),
             duration_ms=float(data["duration_ms"]),
             error_type=str(data["error_type"]) if data.get("error_type") else None,
+            args=dict(args_raw) if isinstance(args_raw, dict) else None,
         )
 
 

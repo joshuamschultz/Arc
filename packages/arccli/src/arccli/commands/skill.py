@@ -17,6 +17,7 @@ from typing import Any
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
+from arccli.commands.skill_evals import evals_handler
 
 _GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
@@ -351,6 +352,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--agent", dest="agent", default=None, help="Agent directory to include per-agent roots."
     )
 
+    p = subs.add_parser("evals", help="List, edit, or regen a skill's golden eval suite.")
+    p.add_argument(
+        "target",
+        nargs="+",
+        help="<skill_path> | edit <skill_path> <file> | regen <skill_path>",
+    )
+    p.add_argument("--force", action="store_true", help="Commit an edit despite warnings.")
+    p.add_argument("--yes", action="store_true", help="Skip the regen confirmation prompt.")
+
     return parser
 
 
@@ -359,6 +369,7 @@ _SUBCOMMAND_MAP = {
     "create": _create,
     "validate": _validate,
     "search": _search,
+    "evals": evals_handler,
 }
 
 

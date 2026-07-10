@@ -10,11 +10,22 @@ Tier no-suite policy (REQ-021, fail-closed):
 * **code** mutation with no suite → blocked at **every** tier (never unsafe self-mod).
 * **prose** mutation with no suite → personal allows (audit-warn); enterprise/federal block.
 * code mutation also requires **≥ ``min_golden_cases``** human-authorable cases (OQ-3).
+
+Provenance (REQ-109/110/111): a case is machine-authored when its file's module
+docstring carries the ``@generated`` token — cross-checked against the harness-written
+manifest at ``evals/.manifest.json``, so the model can never self-assert human
+authorship. A hash mismatch means a human edited the file, which reclassifies it as
+human-authored. Enterprise/federal count only human-authored cases toward
+``min_golden_cases``; machine cases still run and count in strict improvement.
+Placeholder scaffold functions (docstring and/or ``assert True`` only) are dropped so
+a placeholder-only suite classifies as empty and ``no_suite_policy`` governs.
 """
 
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,20 +54,77 @@ def load_suite(skill_dir: Path | None) -> list[EvalCase]:
     evals_dir = skill_dir / "evals"
     if not evals_dir.is_dir():
         return []
+    manifest = _load_manifest(evals_dir)
     cases: list[EvalCase] = []
     for path in sorted(evals_dir.rglob("test_*.py")):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except (OSError, SyntaxError):
             continue
+        machine = _is_machine_authored(path, tree, evals_dir, manifest)
         rel = path.relative_to(skill_dir).as_posix()
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith(
-                "test"
+            if (
+                isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+                and node.name.startswith("test")
+                and not _is_placeholder(node)
             ):
                 nodeid = f"{rel}::{node.name}"
-                cases.append(EvalCase(id=nodeid, node=nodeid))
+                cases.append(EvalCase(id=nodeid, node=nodeid, machine_authored=machine))
     return cases
+
+
+def _load_manifest(evals_dir: Path) -> dict[str, str]:
+    """Read the harness manifest: evals-relative filename → recorded sha256 of file bytes."""
+    try:
+        raw = json.loads((evals_dir / ".manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    files = raw.get("files") if isinstance(raw, dict) else None
+    if not isinstance(files, dict):
+        return {}
+    return {
+        str(name): str(entry["sha256"])
+        for name, entry in files.items()
+        if isinstance(entry, dict) and "sha256" in entry
+    }
+
+
+def _is_machine_authored(
+    path: Path, tree: ast.Module, evals_dir: Path, manifest: dict[str, str]
+) -> bool:
+    """Classify one eval file's provenance (REQ-109/111).
+
+    The ``@generated`` docstring marker alone is model-forgeable, so it never grants
+    human status: marker without a manifest entry stays machine-authored. A manifest
+    hash mismatch means a human edited the file since the harness wrote it, which
+    reclassifies the cases as human-authored.
+    """
+    docstring = ast.get_docstring(tree) or ""
+    if "@generated" not in docstring:
+        return False
+    recorded = manifest.get(path.relative_to(evals_dir).as_posix())
+    if recorded is None:
+        return True
+    return hashlib.sha256(path.read_bytes()).hexdigest() == recorded
+
+
+def _is_placeholder(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """True when the body is only docstring(s) and/or ``assert True`` — scaffold, not a case."""
+    for stmt in func.body:
+        is_docstring = (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        )
+        is_assert_true = (
+            isinstance(stmt, ast.Assert)
+            and isinstance(stmt.test, ast.Constant)
+            and stmt.test.value is True
+        )
+        if not (is_docstring or is_assert_true):
+            return False
+    return True
 
 
 class EvalGate:
@@ -78,11 +146,11 @@ class EvalGate:
         """Return the accept/reject decision for a candidate ``after`` vs ``before``."""
         if not cases:
             return self._no_suite_decision(tier, kind)
-        if kind == "code" and len(cases) < self._min_cases:
+        if kind == "code" and _countable_cases(cases, tier) < self._min_cases:
             return GateDecision(
                 accepted=False,
                 reason=f"code mutation requires >= {self._min_cases} golden cases "
-                f"(have {len(cases)})",
+                f"(have {_countable_cases(cases, tier)} countable at tier={tier})",
             )
         before_pass = {o.case_id for o in await self._runner.run(before, cases) if o.passed}
         after_outcomes = await self._runner.run(after, cases)
@@ -119,6 +187,17 @@ class EvalGate:
 
     def _no_suite_decision(self, tier: str, kind: str) -> GateDecision:
         return no_suite_policy(tier, kind)
+
+
+def _countable_cases(cases: list[EvalCase], tier: str) -> int:
+    """Cases counting toward ``min_golden_cases`` (REQ-110).
+
+    Machine-authored cases are supplemental at enterprise/federal — only human-authored
+    cases satisfy the minimum there. Personal counts all cases.
+    """
+    if tier in ("enterprise", "federal"):
+        return sum(1 for c in cases if not c.machine_authored)
+    return len(cases)
 
 
 def no_suite_policy(tier: str, kind: str) -> GateDecision:

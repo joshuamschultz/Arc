@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from arcskill.improver._util import read_frontmatter
 from arcskill.improver.candidate_store import CandidateStore
@@ -40,6 +40,7 @@ from arcskill.improver.models import (
 from arcskill.improver.mutate import LLMCodeMutator, SkillReflector
 from arcskill.improver.sandbox_runner import HubEvalRunner
 from arcskill.improver.seams import ApprovalProvider, EvalRunner, LLMInvoker, Mutator, Signer
+from arcskill.improver.suitegen import SuiteGenerator
 from arcskill.improver.trace_store import TraceStore
 
 _logger = logging.getLogger("arcskill.improver.improver")
@@ -52,6 +53,33 @@ _REJECTED_BUFFER_MAX = 5
 def _fingerprint(content: bytes) -> str:
     """SHA-256 hex digest of bundle content for audit hashing."""
     return hashlib.sha256(content).hexdigest()
+
+
+class SuiteTrigger(Protocol):
+    """Injected suite-generation seam (SPEC-054 COMP-004).
+
+    The improver only routes trigger events; arcagent wires an adapter over the
+    concrete :class:`~arcskill.improver.suitegen.SuiteGenerator`.
+    """
+
+    async def generate(self, *, skill_name: str, skill_dir: Path, kind: str) -> None:
+        """Bootstrap (``kind="create"``) or add-only extend (``kind="extend"``) a suite."""
+        ...
+
+
+class _SuiteGeneratorTrigger:
+    """Default production :class:`SuiteTrigger` over the concrete SuiteGenerator.
+
+    ``create`` and ``extend`` both route to ``generate()`` — the generator is add-only
+    by construction, so an extend is just another bounded adoption pass (REQ-106).
+    """
+
+    def __init__(self, generator: SuiteGenerator) -> None:
+        self._generator = generator
+
+    async def generate(self, *, skill_name: str, skill_dir: Path, kind: str) -> None:
+        view = build_bundle_view(skill_name, skill_dir / "SKILL.md")
+        await self._generator.generate(skill_name, view)
 
 
 class ArcSkillImprover:
@@ -67,6 +95,7 @@ class ArcSkillImprover:
         signer: Signer | None = None,
         eval_runner: EvalRunner | None = None,
         mutator: Mutator | None = None,
+        suite_generator: SuiteTrigger | None = None,
         approval_provider: ApprovalProvider | None = None,
         audit_sink: Any = None,
         agent_did: str = "",
@@ -95,9 +124,23 @@ class ArcSkillImprover:
         # Code-repair mutator (SPEC-044 P4): default to the arcllm-backed proposer when an
         # LLM seam is present; provider-free, so tests inject a deterministic Mutator.
         self._mutator: Mutator | None = mutator or (LLMCodeMutator(llm) if llm else None)
+        # Suite trigger (SPEC-054 COMP-004): default to the production adapter over the
+        # concrete SuiteGenerator when an LLM seam is present — mirrors the mutator default.
+        self._suite_generator: SuiteTrigger | None = suite_generator or (
+            _SuiteGeneratorTrigger(
+                SuiteGenerator(llm=llm, runner=self._eval_runner, config=self._config.suite)
+            )
+            if llm
+            else None
+        )
         self._skill_path = skill_path
         self._reload = reload
-        self._store = TraceStore(workspace, session_id=session_id)
+        self._store = TraceStore(
+            workspace,
+            session_id=session_id,
+            capture_args=self._config.capture_args,
+            tier=tier,
+        )
         self._guardrails = Guardrails(self._config)
         self._change_bound = ChangeBound(tier, self._config.change_bound)
         self._audit_sink = audit_sink
@@ -115,6 +158,10 @@ class ArcSkillImprover:
         )
         self._tasks: set[asyncio.Task[None]] = set()
         self._semaphore = asyncio.Semaphore(max_concurrent)
+        # Per-skill single-flight (REQ-108): one optimization pass or suite generation
+        # per skill at a time; the in-flight set lets the sweep skip without blocking.
+        self._skill_locks: dict[str, asyncio.Lock] = {}
+        self._generating: set[str] = set()
 
     @property
     def tier(self) -> str:
@@ -143,9 +190,14 @@ class ArcSkillImprover:
         status: str,
         error_type: str | None,
         session_id: str | None = None,
+        args: dict[str, Any] | None = None,
     ) -> None:
         self._store.observe(
-            skill_name=skill_name, tool_name=tool_name, status=status, error_type=error_type
+            skill_name=skill_name,
+            tool_name=tool_name,
+            status=status,
+            error_type=error_type,
+            args=args,
         )
 
     async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
@@ -157,6 +209,22 @@ class ArcSkillImprover:
             if count >= self._config.optimize_after_uses:
                 self._store.reset_count(skill_name)
                 self._spawn(self._optimize(skill_name, insight))
+
+    async def sweep_suites(self) -> None:
+        """Backstop (REQ-107): bootstrap suites for suite-less skills, most-used-first."""
+        if self._suite_generator is None or self._skill_path is None:
+            return
+        if not self._config.suite.autogen:
+            return
+        by_usage = sorted(self._store.usage_counts.items(), key=lambda kv: kv[1], reverse=True)
+        for skill_name, _count in by_usage:
+            if skill_name in self._generating:
+                continue
+            path = self._skill_path(skill_name)
+            if path is None or load_suite(path.parent):
+                continue
+            async with self._skill_lock(skill_name):
+                await self._generate_suite(skill_name, path.parent, kind="create")
 
     async def review_lifecycle(self, *, turn: int) -> None:
         """Curator sweep: retire inactive/failing skills, each an audited transition (AC-5).
@@ -206,7 +274,36 @@ class ArcSkillImprover:
             except Exception:  # reason: background improvement must never crash the loop
                 _logger.warning("skill improvement pass failed", exc_info=True)
 
+    def _skill_lock(self, skill_name: str) -> asyncio.Lock:
+        lock = self._skill_locks.get(skill_name)
+        if lock is None:
+            lock = self._skill_locks[skill_name] = asyncio.Lock()
+        return lock
+
+    async def _generate_suite(self, skill_name: str, skill_dir: Path, kind: str) -> None:
+        """One guarded suite generation; the caller holds the skill's lock.
+
+        ``create`` is idempotent (skipped once anchors exist); the in-flight set is
+        what stops the sweep double-claiming a generation already running (REQ-108).
+        """
+        if self._suite_generator is None or not self._config.suite.autogen:
+            return
+        if kind == "create" and load_suite(skill_dir):
+            return
+        self._generating.add(skill_name)
+        try:
+            await self._suite_generator.generate(
+                skill_name=skill_name, skill_dir=skill_dir, kind=kind
+            )
+        finally:
+            self._generating.discard(skill_name)
+
     async def _optimize(self, skill_name: str, insight: str) -> None:
+        """Serialize the whole pass — suite generation included — per skill (REQ-108)."""
+        async with self._skill_lock(skill_name):
+            await self._optimize_pass(skill_name, insight)
+
+    async def _optimize_pass(self, skill_name: str, insight: str) -> None:
         if self._skill_path is None:
             return
         current_turn = self._store.turn_number
@@ -225,6 +322,9 @@ class ArcSkillImprover:
         skill_path = self._skill_path(skill_name)
         if skill_path is None:
             return
+        # Lazy bootstrap (REQ-101): a suite-less skill gets its golden suite generated
+        # before any gate decision, so acceptance is decided on anchors, not policy.
+        await self._generate_suite(skill_name, skill_path.parent, kind="create")
 
         # Code-repair path (SPEC-044 P4): a skill with scripts + a golden suite whose
         # failing traces carry code error signals is repaired as bounded, gated,
@@ -278,6 +378,10 @@ class ArcSkillImprover:
         self._guardrails.set_generation(skill_name, candidate.generation)
         if self._reload is not None:
             self._reload()
+        if self._config.suite.extend_after_mutation:
+            # Post-mutation extension (REQ-106): add-only anchors covering the new prose;
+            # adopted anchor files are never rewritten (the generator owns add-only).
+            await self._generate_suite(skill_name, skill_path.parent, kind="extend")
 
     def _should_repair_code(self, skill_path: Path, traces: list[SkillTrace]) -> bool:
         """Code-repair is eligible: mutator present, scripts + golden suite exist, and a
@@ -523,4 +627,4 @@ class ArcSkillImprover:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
 
-__all__ = ["ArcSkillImprover"]
+__all__ = ["ArcSkillImprover", "SuiteTrigger"]

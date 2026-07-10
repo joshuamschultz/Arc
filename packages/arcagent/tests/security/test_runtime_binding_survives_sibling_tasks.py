@@ -97,9 +97,7 @@ async def _started_agent(config: ArcAgentConfig) -> ArcAgent:
     return await asyncio.create_task(_do())
 
 
-def _fake_run_stream_recording(
-    observed: dict[str, _Observation], key: str
-) -> Callable[..., Any]:
+def _fake_run_stream_recording(observed: dict[str, _Observation], key: str) -> Callable[..., Any]:
     """Build an arcrun_run_stream stand-in that records the CURRENT task's
     builtin-runtime state at the exact point a real tool call would read
     it — i.e. after activate_runtime_bindings() has (or hasn't) run."""
@@ -204,7 +202,9 @@ class TestSameAgentTwoSiblingTurns:
             f"raise 'not configured': {observed['turn2']}"
         )
         expected_workspace = str(workspace.resolve())
-        assert observed["turn1"]["workspace"] == observed["turn2"]["workspace"] == expected_workspace
+        assert (
+            observed["turn1"]["workspace"] == observed["turn2"]["workspace"] == expected_workspace
+        )
         assert observed["turn1"]["identity_did"] == observed["turn2"]["identity_did"] == real_did
 
         await agent.shutdown()

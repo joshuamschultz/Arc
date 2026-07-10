@@ -21,6 +21,7 @@ With a :class:`~arcagent.skilladapt.NullSkillAdapter` selected, ``state().active
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,21 @@ def _call_status(ctx: Any) -> tuple[str, str | None]:
     return "ok", None
 
 
+def _observe_accepts_args(adapter: Any) -> bool:
+    """Whether the adapter's ``observe`` takes the optional ``args`` kwarg (REQ-117).
+
+    A BYO adapter written against the pre-args protocol must keep working: args are
+    forwarded only to adapters that declare the parameter (or accept ``**kwargs``).
+    """
+    try:
+        params = inspect.signature(adapter.observe).parameters
+    except (TypeError, ValueError):
+        return False
+    return "args" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
 @hook(event="agent:post_tool", priority=200)
 async def skills_post_tool(ctx: Any) -> None:
     """Detect skill reads; forward subsequent tool calls to the adapter as observations."""
@@ -67,25 +83,62 @@ async def skills_post_tool(ctx: Any) -> None:
 
     if st.active_skill is not None and tool:
         status, error_type = _call_status(ctx)
+        if status == "error":
+            st.error_counts[st.active_skill] = st.error_counts.get(st.active_skill, 0) + 1
+        # Arg forwarding (REQ-117): arcagent only forwards; the scrub/persist decision
+        # lives entirely adapter-side (the arcskill TraceStore).
+        extra: dict[str, Any] = (
+            {"args": ctx.data.get("args") or None} if _observe_accepts_args(st.adapter) else {}
+        )
         await st.adapter.observe(
             skill_name=st.active_skill,
             tool_name=tool,
             status=status,
             error_type=error_type,
+            **extra,
         )
 
 
 @hook(event="agent:post_plan", priority=200)
 async def skills_post_plan(ctx: Any) -> None:
-    """Close the active span at turn end, stash the turn, and clear the active-skill tracker."""
+    """Close the active span at turn end, stash the turn, and clear the active-skill tracker.
+
+    With a configured OutcomeClassifier (SPEC-054 REQ-115/116), the turn's messages are
+    classified and a non-abstaining label supersedes the raw ``task_outcome`` — the
+    producer for the trace store's ``outcome_source='evaluator'`` slot.
+    """
     st = _runtime.state()
     if not st.active:
         return
     outcome = str(ctx.data.get("task_outcome", ""))
     turn = int(ctx.data.get("turn_number", 0))
     _runtime.record_turn(turn)
+    outcome = await _classify_outcome(st, ctx) or outcome
     await st.adapter.on_turn_end(turn=turn, outcome=outcome)
     st.active_skill = None
+    st.error_counts.clear()
+
+
+async def _classify_outcome(st: _runtime._State, ctx: Any) -> str:
+    """Consult the turn-end classifier; '' when unconfigured, signal-less, or failing.
+
+    Fail-open (REQ-115): classification is a background labeler — an exception must
+    never break turn close. Skipped without messages or an active-skill context, since
+    a label could not be attributed anyway.
+    """
+    messages = ctx.data.get("messages") or []
+    if st.outcome_classifier is None or not messages or st.active_skill is None:
+        return ""
+    try:
+        label = await st.outcome_classifier.classify(
+            transcript_window=messages,
+            active_skills=[st.active_skill],
+            error_counts=dict(st.error_counts),
+        )
+    except Exception:  # reason: fail-open — labeling must never break turn end
+        _logger.warning("turn-end outcome classification failed", exc_info=True)
+        return ""
+    return label.outcome
 
 
 @hook(event="agent:pre_respond", priority=150)

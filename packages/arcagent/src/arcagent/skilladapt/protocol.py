@@ -15,7 +15,7 @@ ever written** (REQ-002, AC-1).
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -36,8 +36,13 @@ class SkillAdapter(Protocol):
         status: str,
         error_type: str | None,
         session_id: str | None = None,
+        args: dict[str, Any] | None = None,
     ) -> None:
-        """Record one tool call inside an active skill-usage span."""
+        """Record one tool call inside an active skill-usage span.
+
+        ``args`` is the raw tool-call argument dict (REQ-117). arcagent only forwards;
+        whether args are scrubbed, hashed, or persisted is the adapter's decision.
+        """
         ...
 
     async def on_turn_end(self, *, turn: int, outcome: str, session_id: str | None = None) -> None:
@@ -55,6 +60,10 @@ class SkillAdapter(Protocol):
 
     async def review_lifecycle(self, *, turn: int) -> None:
         """Run the retire/revive lifecycle sweep on the proactive tick."""
+        ...
+
+    async def sweep_suites(self) -> None:
+        """Bootstrap golden suites for suite-less skills on the Curator tick (REQ-107)."""
         ...
 
     def retired_skills(self) -> frozenset[str]:
@@ -78,6 +87,7 @@ class NullSkillAdapter:
         status: str,
         error_type: str | None,
         session_id: str | None = None,
+        args: dict[str, Any] | None = None,
     ) -> None:
         return None
 
@@ -88,6 +98,9 @@ class NullSkillAdapter:
         return None
 
     async def review_lifecycle(self, *, turn: int) -> None:
+        return None
+
+    async def sweep_suites(self) -> None:
         return None
 
     def retired_skills(self) -> frozenset[str]:

@@ -91,14 +91,11 @@ class TestCreateSkill:
         assert (folder / "scripts").is_dir()
         assert (folder / "templates").is_dir()
         assert (folder / "assets").is_dir()
-        # SPEC-044 REQ-070: a runnable golden-task scaffold ships so the skill is
-        # improvable from creation (the improver's code-repair gate needs a suite).
-        eval_file = folder / "evals" / "test_golden.py"
-        assert eval_file.exists()
-        import ast
-
-        ast.parse(eval_file.read_text(encoding="utf-8"))  # scaffold is valid, runnable Python
-        assert "def test_" in eval_file.read_text(encoding="utf-8")
+        # SPEC-054 REQ-105: evals/ exists but is empty so the fail-closed
+        # no_suite_policy governs a fresh skill from birth.
+        evals_dir = folder / "evals"
+        assert evals_dir.is_dir()
+        assert list(evals_dir.iterdir()) == []
         body = (folder / "SKILL.md").read_text()
         assert "name: my-skill" in body
         for header in [

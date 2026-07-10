@@ -26,6 +26,11 @@ OPERATIONAL_TABLES: tuple[str, ...] = (
 # The arctrust WORM mirror (with a per-row ``verified`` flag set on ingest).
 AUDIT_TABLE = "audit_chain"
 
+# The arcskill candidate-store mirror (SPEC-054 REQ-120): version metadata rows
+# keyed by content hash, and candidate bodies keyed by their sha256 body hash.
+SKILL_CANDIDATES_TABLE = "skill_candidates"
+SKILL_BODIES_TABLE = "skill_candidate_bodies"
+
 _KIND_TABLE = {
     "llm_call": "llm_calls",
     "run_event": "run_events",

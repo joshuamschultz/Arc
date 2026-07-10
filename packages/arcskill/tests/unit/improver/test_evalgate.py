@@ -35,7 +35,8 @@ def test_load_suite_discovers_pytest_cases(tmp_path: Path) -> None:
     evals = tmp_path / "evals"
     evals.mkdir()
     (evals / "test_golden.py").write_text(
-        "def test_happy():\n    assert True\n\nasync def test_async():\n    assert True\n\n"
+        "def test_happy():\n    assert 1 + 1 == 2\n\n"
+        "async def test_async():\n    assert 'a'.upper() == 'A'\n\n"
         "def helper():\n    pass\n",
         encoding="utf-8",
     )

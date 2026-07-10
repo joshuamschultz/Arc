@@ -24,6 +24,10 @@ class SkillsConfig(ModuleConfig):
     adapter: str = "none"
     tier: str = "personal"
 
+    # Turn-end outcome classification (SPEC-054 REQ-115/116): consult the eval-LLM
+    # OutcomeClassifier at agent:post_plan and forward its label into on_turn_end.
+    classify_outcomes: bool = False
+
     # Curator lifecycle-sweep POLL cadence (Josh-LOCKED: all sweep settings config-adjustable).
     # This is how often the @background_task sweep loop WAKES — distinct from the 30-day
     # inactivity *window* (in the improver's LifecycleConfig) the sweep evaluates. Default:

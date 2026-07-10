@@ -19,7 +19,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from arcstore.backends.base import AUDIT_TABLE, OPERATIONAL_TABLES
+from arcstore.backends.base import (
+    AUDIT_TABLE,
+    OPERATIONAL_TABLES,
+    SKILL_BODIES_TABLE,
+    SKILL_CANDIDATES_TABLE,
+)
 
 _BUSY_TIMEOUT_MS = 5000
 _BATCH_SIZE = 500
@@ -66,14 +71,38 @@ _AUDIT_COLUMNS = (
     "signature",
     "verified",
 )
+# The arcskill candidate-store mirror (SPEC-054 REQ-120). ``body_hash`` NULL
+# marks a pending/pruned body (manifest-present, file-absent).
+_SKILL_CANDIDATE_COLUMNS = (
+    "record_id",
+    "skill_name",
+    "candidate_id",
+    "generation",
+    "parent_id",
+    "scores",
+    "active",
+    "body_hash",
+    "ts",
+)
+_SKILL_BODY_COLUMNS = ("record_id", "body")
 
 # Columns that carry structured JSON (stored as TEXT, decoded on read).
-_JSON_COLUMNS = frozenset({"extra"})
+_JSON_COLUMNS = frozenset({"extra", "scores"})
 # Columns stored as INTEGER but exposed as bool.
-_BOOL_COLUMNS = frozenset({"verified"})
+_BOOL_COLUMNS = frozenset({"verified", "active"})
 # SQLite affinities for ALTER TABLE reconciliation (TEXT is the default).
 _INTEGER_COLUMNS = frozenset(
-    {"prompt_tokens", "completion_tokens", "args_size", "result_size", "depth", "seq", "verified"}
+    {
+        "prompt_tokens",
+        "completion_tokens",
+        "args_size",
+        "result_size",
+        "depth",
+        "seq",
+        "verified",
+        "generation",
+        "active",
+    }
 )
 _REAL_COLUMNS = frozenset({"cost_usd", "latency_ms"})
 
@@ -89,6 +118,8 @@ def _column_sql_type(col: str) -> str:
 _TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
     **{t: _OPERATIONAL_COLUMNS for t in OPERATIONAL_TABLES},
     AUDIT_TABLE: _AUDIT_COLUMNS,
+    SKILL_CANDIDATES_TABLE: _SKILL_CANDIDATE_COLUMNS,
+    SKILL_BODIES_TABLE: _SKILL_BODY_COLUMNS,
 }
 
 
@@ -139,6 +170,21 @@ _SCHEMA_SQL = (
         prev_hash TEXT,
         signature TEXT,
         verified INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS {SKILL_CANDIDATES_TABLE}(
+        record_id TEXT PRIMARY KEY,
+        skill_name TEXT,
+        candidate_id TEXT,
+        generation INTEGER,
+        parent_id TEXT,
+        scores TEXT,
+        active INTEGER,
+        body_hash TEXT,
+        ts TEXT
+    );
+    CREATE TABLE IF NOT EXISTS {SKILL_BODIES_TABLE}(
+        record_id TEXT PRIMARY KEY,
+        body TEXT
     );
     CREATE TABLE IF NOT EXISTS sync_state(
         source TEXT PRIMARY KEY,

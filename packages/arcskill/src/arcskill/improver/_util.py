@@ -24,6 +24,12 @@ _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u2028-\u202f\u2060-\u206f\ufeff]")
 _INVISIBLE_RE = re.compile(r"[\u00ad\u180e\ufe00-\ufe0f\U000e0000-\U000e007f]")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+# Secret-looking tokens redacted before args ever persist (LLM02): sk-* API keys
+# and eyJ*-prefixed dotted JWTs (with or without a Bearer prefix).
+_SECRET_TOKEN_RE = re.compile(
+    r"\bsk-[A-Za-z0-9_-]{16,}\b|\beyJ[A-Za-z0-9_=-]+(?:\.[A-Za-z0-9_=-]+)+\b"
+)
+
 
 def atomic_write_text(path: Path, content: str) -> None:
     """Write *content* to *path* atomically via tmp + rename (POSIX same-device)."""
@@ -91,6 +97,26 @@ def sanitize_text(text: str, max_length: int = 2000, truncation_suffix: str = ""
     return clean
 
 
+def _scrub_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _SECRET_TOKEN_RE.sub("[REDACTED]", sanitize_text(value))
+    if isinstance(value, dict):
+        return {key: _scrub_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub_value(item) for item in value]
+    return value
+
+
+def scrub_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Non-mutating recursive copy of *args* safe to persist (LLM02 + ASI-06).
+
+    Every string rides :func:`sanitize_text` (invisible/zero-width chars stripped),
+    then secret-looking tokens are replaced token-level with ``[REDACTED]`` so
+    surrounding prose survives.
+    """
+    return {key: _scrub_value(value) for key, value in args.items()}
+
+
 def read_frontmatter(path: Path) -> dict[str, Any] | None:
     """Parse YAML frontmatter from a markdown file, or None if absent/invalid."""
     try:
@@ -109,4 +135,4 @@ def read_frontmatter(path: Path) -> dict[str, Any] | None:
         return None
 
 
-__all__ = ["atomic_write_text", "extract_json", "read_frontmatter", "sanitize_text"]
+__all__ = ["atomic_write_text", "extract_json", "read_frontmatter", "sanitize_text", "scrub_args"]

@@ -31,6 +31,7 @@ from typing import Any
 
 from arcagent.capabilities import artifact_signing
 from arcagent.core.config import EvalConfig
+from arcagent.modules.skills.outcome import OutcomeClassifier
 from arcagent.skilladapt import NullSkillAdapter, SkillAdapter, select_skill_adapter
 from arcagent.utils.model_helpers import get_eval_model
 
@@ -63,6 +64,10 @@ class _State:
     # resolved SKILL.md path -> skill name, and the currently active skill span.
     skill_paths: dict[Path, str] = field(default_factory=dict)
     active_skill: str | None = None
+    # Turn-end outcome classifier (SPEC-054 REQ-115/116) and the turn's per-skill error
+    # counts feeding its attribution fallback; both reset as the turn closes.
+    outcome_classifier: OutcomeClassifier | None = None
+    error_counts: dict[str, int] = field(default_factory=dict)
     # Curator lifecycle-sweep cadence (CRITICAL-1): how often the @background_task loop
     # wakes. The 30-day inactivity *window* lives in the improver's LifecycleConfig.
     sweep_poll_seconds: float = 3_600.0
@@ -136,6 +141,9 @@ def configure(
         workspace=ws,
         telemetry=telemetry,
         sweep_poll_seconds=cfg.sweep_poll_seconds,
+        # Built even when the eval LLM is unavailable — classify() abstains without one,
+        # keeping the flag's behavior fail-open instead of silently off.
+        outcome_classifier=OutcomeClassifier(llm=llm) if cfg.classify_outcomes else None,
     )
     _state_var.set(new_state)
     _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, new_state.active)
@@ -202,6 +210,11 @@ async def run_lifecycle_sweep() -> None:
         return
     st.sweep_turn += 1
     await st.adapter.review_lifecycle(turn=st.last_turn or st.sweep_turn)
+    # Suite-bootstrap backstop (SPEC-054 REQ-107) piggybacks the Curator cadence.
+    # getattr-guarded so a BYO adapter predating sweep_suites never breaks the sweep.
+    sweep_suites = getattr(st.adapter, "sweep_suites", None)
+    if sweep_suites is not None:
+        await sweep_suites()
     await reconcile_suppression()
 
 
@@ -215,7 +228,11 @@ async def reconcile_suppression() -> None:
     st = _state_var.get()
     if st is None or not st.active or st.skill_registry is None:
         return
-    retired = st.adapter.retired_skills()
+    try:
+        retired = st.adapter.retired_skills()
+    except Exception:  # reason: fail-open — an adapter without lifecycle must not break ready
+        _logger.warning("skill retire/revive reconcile unavailable", exc_info=True)
+        return
     registry = st.skill_registry
     for name in retired:
         await registry.suppress_skill(name)

@@ -8,6 +8,7 @@ per-tool signals off the bus; this module owns span assembly, JSONL persistence
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -15,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from arcskill.improver._util import sanitize_text
+from arcskill.improver._util import sanitize_text, scrub_args
 from arcskill.improver.models import SkillTrace, ToolCallRecord
 
 _logger = logging.getLogger("arcskill.improver.trace_store")
@@ -24,9 +25,18 @@ _logger = logging.getLogger("arcskill.improver.trace_store")
 class TraceStore:
     """Assemble skill-usage spans from primitive signals and persist them as JSONL."""
 
-    def __init__(self, workspace: Path, *, session_id: str = "") -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        session_id: str = "",
+        capture_args: bool = False,
+        tier: str = "personal",
+    ) -> None:
         self._workspace = workspace
         self._session_id = session_id or str(uuid.uuid4())[:8]
+        # Federal stays hash-only regardless of the knob (SI-12(2), non-overridable).
+        self._capture_args = capture_args and tier != "federal"
         self._active: dict[str, SkillTrace] = {}  # skill_name -> open span
         self._usage_counts: dict[str, int] = {}
         self._turn_number = 0
@@ -43,7 +53,13 @@ class TraceStore:
         self._usage_counts[skill_name] = 0
 
     def observe(
-        self, *, skill_name: str, tool_name: str, status: str, error_type: str | None
+        self,
+        *,
+        skill_name: str,
+        tool_name: str,
+        status: str,
+        error_type: str | None,
+        args: dict[str, Any] | None = None,
     ) -> None:
         """Open a span for ``skill_name`` on first sight this turn, then record the call."""
         span = self._active.get(skill_name)
@@ -58,13 +74,23 @@ class TraceStore:
             )
             self._active[skill_name] = span
             self._usage_counts[skill_name] = self._usage_counts.get(skill_name, 0) + 1
+        args_hash = ""
+        captured: dict[str, Any] | None = None
+        if args is not None:
+            scrubbed = scrub_args(args)  # scrub BEFORE hashing and persistence (REQ-117)
+            args_hash = hashlib.sha256(
+                json.dumps(scrubbed, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()
+            if self._capture_args:
+                captured = scrubbed
         span.tool_calls.append(
             ToolCallRecord(
                 tool_name=tool_name,
-                args_hash="",  # extension forwards no args (privacy); shape only
+                args_hash=args_hash,
                 result_status=status,
                 duration_ms=0.0,
                 error_type=error_type,
+                args=captured,
             )
         )
 

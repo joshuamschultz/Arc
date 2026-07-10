@@ -55,6 +55,7 @@ class CapabilityInventoryItem(BaseModel):
     version: str
     description: str
     source_root: str
+    source_path: str
     status: str
     status_detail: str
 
@@ -143,6 +144,7 @@ async def collect_capability_inventory(
             version=outcome.version,
             description=outcome.description,
             source_root=outcome.scan_root,
+            source_path=outcome.source_path,
             status=outcome.status,
             status_detail=outcome.status_detail,
         )
