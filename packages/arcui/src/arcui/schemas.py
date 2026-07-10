@@ -86,6 +86,23 @@ class FileReadResponse(BaseModel):
     content_type: str
 
 
+class FileWriteResponse(BaseModel):
+    """Body of ``PUT /api/agents/{id}/files/read`` (COMP-012 / REQ-099).
+
+    ``signature_stale`` is True when the saved file has an ``.arcsig`` sidecar
+    that the write invalidated — the UI holds no agent identity and cannot
+    re-sign, so ``message`` tells the operator the agent must.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    size: int
+    mtime: float
+    signature_stale: bool
+    message: str
+
+
 # ---------------------------------------------------------------------------
 # Agent detail — sessions / tasks / schedules
 # ---------------------------------------------------------------------------
