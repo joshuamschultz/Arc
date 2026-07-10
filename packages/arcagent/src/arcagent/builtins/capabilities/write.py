@@ -31,5 +31,7 @@ async def write(file_path: str, content: str) -> str:
     resolved.parent.mkdir(parents=True, exist_ok=True)
     encoded = content.encode("utf-8")
     resolved.write_text(content, encoding="utf-8")
-    _runtime.resign_if_previously_signed(resolved, encoded)
-    return f"Written {len(encoded)} bytes to {file_path}"
+    message = f"Written {len(encoded)} bytes to {file_path}"
+    if _runtime.resign_if_previously_signed(resolved, encoded) is False:
+        message += _runtime.audit_unsigned_artifact(resolved, tool_name="write")
+    return message

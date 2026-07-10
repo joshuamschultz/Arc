@@ -54,5 +54,7 @@ async def create_tool(name: str, source: str) -> str:
         return f"Error: AST validation rejected source — {exc}"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding="utf-8")
-    _runtime.sign_artifact_file(target, source.encode("utf-8"))
-    return f"Created tool {name!r} at {target.relative_to(workspace)}"
+    message = f"Created tool {name!r} at {target.relative_to(workspace)}"
+    if not _runtime.sign_artifact_file(target, source.encode("utf-8")):
+        message += _runtime.audit_unsigned_artifact(target, tool_name="create_tool")
+    return message

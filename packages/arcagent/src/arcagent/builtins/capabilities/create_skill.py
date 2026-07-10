@@ -114,5 +114,7 @@ async def create_skill(
         body=body,
     )
     skill_md.write_text(rendered, encoding="utf-8")
-    _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8"))
-    return f"Created skill {name!r} at {folder.relative_to(workspace)}"
+    message = f"Created skill {name!r} at {folder.relative_to(workspace)}"
+    if not _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8")):
+        message += _runtime.audit_unsigned_artifact(skill_md, tool_name="create_skill")
+    return message

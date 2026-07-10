@@ -20,6 +20,7 @@ falling back — a misconfigured agent must fail loudly.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from arctrust.identity import AgentIdentity
 
     from arcagent.capabilities.capability_loader import CapabilityLoader
+
+_logger = logging.getLogger("arcagent.builtins.capabilities.runtime")
 
 _workspace: Path | None = None
 _allowed_paths: list[Path] | None = None
@@ -74,26 +77,39 @@ def configure(
         _tier = tier
 
 
-def sign_artifact_file(artifact: Path, content: bytes) -> None:
-    """Sign an agent-authored artifact on write with the agent's own DID key.
+def sign_artifact_file(artifact: Path, content: bytes) -> bool:
+    """Sign an agent-authored artifact with the agent's own DID key.
 
-    No-op when the agent has no signing identity (verify-only, or an
-    unconfigured test harness) — the loader's per-tier gate then decides
-    whether an unsigned artifact may still run (only personal may relax).
+    Returns True iff ``artifact`` now carries a valid signature over
+    ``content``. Returns False — NEVER raises — when the agent has no
+    signing identity (verify-only, or an unconfigured test harness) or the
+    underlying signing operation itself fails (crypto error, disk error).
+
+    Doctrine (packages/arcagent/CLAUDE.md, task #28 "fail honest"): a False
+    return MUST be surfaced to the model by the caller (via
+    :func:`audit_unsigned_artifact`) — the write already happened, so a
+    signing failure must not look like a plain success. The loader's
+    per-tier gate then decides whether an unsigned artifact may still run
+    (only personal may relax).
     """
     if _identity is None or not _identity.can_sign:
-        return
+        return False
     from arcagent.capabilities import artifact_signing
 
-    artifact_signing.write_signature(
-        artifact,
-        content,
-        signer_did=_identity.did,
-        private_key=_identity.signing_seed,
-    )
+    try:
+        artifact_signing.write_signature(
+            artifact,
+            content,
+            signer_did=_identity.did,
+            private_key=_identity.signing_seed,
+        )
+    except Exception:  # reason: signing must never crash the tool — caller reports UNSIGNED
+        _logger.exception("Signing failed for %s", artifact)
+        return False
+    return True
 
 
-def resign_if_previously_signed(artifact: Path, content: bytes) -> None:
+def resign_if_previously_signed(artifact: Path, content: bytes) -> bool | None:
     """Refresh a stale signature after a GENERIC tool mutates a signed artifact.
 
     Task #28 root cause: create_skill/create_tool/update_skill/update_tool all
@@ -109,13 +125,42 @@ def resign_if_previously_signed(artifact: Path, content: bytes) -> None:
     participates in the Sign pillar — checking for it (rather than a
     hardcoded ``capabilities/`` path prefix) means write/edit never start
     signing ordinary workspace files, only keep a promise that already
-    existed. No-op when the artifact was never signed, or the agent has no
-    signing identity.
+    existed.
+
+    Returns None when the artifact was never signed (nothing to do — no
+    warning needed). Returns True/False when a signature already existed and
+    the refresh succeeded/failed; False MUST be surfaced to the model by the
+    caller (via :func:`audit_unsigned_artifact`).
     """
     from arcagent.capabilities.artifact_signing import sidecar_path
 
-    if sidecar_path(artifact).exists():
-        sign_artifact_file(artifact, content)
+    if not sidecar_path(artifact).exists():
+        return None
+    return sign_artifact_file(artifact, content)
+
+
+def audit_unsigned_artifact(artifact: Path, *, tool_name: str) -> str:
+    """Audit an unsigned (or now-unsigned) artifact; return a warning suffix.
+
+    Doctrine (task #28, "fail honest"): every caller whose
+    :func:`sign_artifact_file`/:func:`resign_if_previously_signed` call
+    returned False MUST append the returned string to its success message —
+    never report plain "Created"/"Updated"/"Written" when the artifact will
+    in fact be denied at next load.
+    """
+    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    if _audit_sink is not None:
+        try:
+            _audit_sink(
+                "tool.artifact_unsigned",
+                {"tool": tool_name, "actor_did": caller, "path": str(artifact)},
+            )
+        except Exception:  # reason: fail-open — audit must not mask the warning
+            _logger.exception("Unsigned-artifact audit sink raised; continuing")
+    return (
+        f" WARNING: {artifact.name} is UNSIGNED and will be denied at next load "
+        "(TOFU) unless this tier relaxes the signature requirement."
+    )
 
 
 def workspace() -> Path:
@@ -373,6 +418,7 @@ def reset() -> None:
 
 __all__ = [
     "allowed_paths",
+    "audit_unsigned_artifact",
     "check_protected",
     "check_secret_content",
     "check_shell_command",

@@ -233,4 +233,7 @@ class TestSelfModToolsConfinement:
         result = await create_tool(name="hello", source="# x\n")
         assert "Created tool 'hello'" in result
         assert (team["josh"] / "capabilities" / "hello.py").exists()
-        assert audit_events == []
+        # No CONFINEMENT denial — a "tool.artifact_unsigned" advisory event is
+        # expected here (task #28: this fixture has no signing identity) and
+        # is orthogonal to what this test proves.
+        assert all(event_type != "tool.workspace_path.denied" for event_type, _ in audit_events)

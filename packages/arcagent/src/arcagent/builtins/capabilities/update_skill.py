@@ -78,5 +78,7 @@ async def update_skill(
     new_frontmatter = yaml.safe_dump(fm, sort_keys=False).strip()
     rendered = f"---\n{new_frontmatter}\n---\n\n{new_body}\n"
     skill_md.write_text(rendered, encoding="utf-8")
-    _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8"))
-    return f"Updated skill {name!r} {current_version} → {new_version}"
+    message = f"Updated skill {name!r} {current_version} → {new_version}"
+    if not _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8")):
+        message += _runtime.audit_unsigned_artifact(skill_md, tool_name="update_skill")
+    return message
