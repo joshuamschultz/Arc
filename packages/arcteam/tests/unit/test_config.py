@@ -16,16 +16,11 @@ class TestJetstreamStoreDir:
     def test_honors_arc_config_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """An isolated ARC_CONFIG_DIR keeps the NATS store local (leak bug)."""
         monkeypatch.setenv("ARC_CONFIG_DIR", "/tmp/isotest/config")
-        assert default_jetstream_store_dir() == Path(
-            "/tmp/isotest/config/nats/jetstream"
-        )
+        assert default_jetstream_store_dir() == Path("/tmp/isotest/config/nats/jetstream")
 
     def test_falls_back_without_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
-        assert (
-            default_jetstream_store_dir()
-            == Path.home() / ".arc" / "nats" / "jetstream"
-        )
+        assert default_jetstream_store_dir() == Path.home() / ".arc" / "nats" / "jetstream"
 
 
 class TestTeamConfig:
