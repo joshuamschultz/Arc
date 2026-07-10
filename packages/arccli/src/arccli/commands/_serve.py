@@ -29,11 +29,6 @@ def nats_url() -> str:
     return os.environ.get("ARCTEAM_NATS_URL", _DEFAULT_NATS_URL)
 
 
-def _jetstream_store_dir() -> Path:
-    """Persistent JetStream store so registrations survive a broker restart."""
-    return Path("~/.arc/nats/jetstream").expanduser()
-
-
 def discover_agent_dirs(team_root: Path) -> list[Path]:
     """Immediate subdirectories of ``team_root`` that contain an arcagent.toml."""
     if not team_root.is_dir():
@@ -110,7 +105,7 @@ async def bootstrap_infra(team_root: Path) -> Any:
     describing what came up. Fail-open throughout — the dashboard still serves
     the folder-scanned roster even if messaging infra is unavailable.
     """
-    from arcteam.config import TeamConfig
+    from arcteam.config import TeamConfig, default_jetstream_store_dir
     from arcteam.nats_server import NatsServerUnavailableError, ensure_nats_server
 
     url = nats_url()
@@ -118,7 +113,7 @@ async def bootstrap_infra(team_root: Path) -> Any:
 
     handle = None
     try:
-        handle = await ensure_nats_server(url=url, store_dir=_jetstream_store_dir())
+        handle = await ensure_nats_server(url=url, store_dir=default_jetstream_store_dir())
     except NatsServerUnavailableError as exc:
         _write(f"  Messaging: {exc}")
         _write(
