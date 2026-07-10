@@ -77,6 +77,47 @@ class TestMessagingEnabledByDefault:
         assert block.lstrip().startswith("enabled = true")
 
 
+class TestSkillsEnabledByDefault:
+    """`arc agent create`'s scaffold must enable the skills module.
+
+    Root pyproject.toml declares arcskill as the default skills adapter, but
+    the scaffolded arcagent.toml previously omitted [modules.skills]
+    entirely — SkillsConfig.adapter defaults to "none", so every freshly
+    created agent's skills/improver silently never ran.
+    """
+
+    def test_default_config_enables_skills_module(self) -> None:
+        from arccli.commands.agent._common import _DEFAULT_CONFIG
+
+        cfg = _DEFAULT_CONFIG.format(name="probe")
+        assert "[modules.skills]" in cfg
+        block = cfg.split("[modules.skills]", 1)[1]
+        assert block.lstrip().startswith("enabled = true")
+
+    def test_default_config_skills_block_round_trips_through_real_config_model(self) -> None:
+        """The generated skills block must be understood by ModuleEntry/SkillsConfig.
+
+        ModuleConfig uses extra="forbid" — a regression to a flat
+        [modules.skills] adapter="arcskill" (siblings of enabled/config,
+        instead of nested under .config) would raise here.
+        """
+        import tomllib
+
+        from arcagent.core.config import ModuleEntry
+        from arcagent.modules.skills.config import SkillsConfig
+
+        from arccli.commands.agent._common import _DEFAULT_CONFIG
+
+        cfg = _DEFAULT_CONFIG.format(name="probe")
+        parsed = tomllib.loads(cfg)
+
+        skills_entry = ModuleEntry.model_validate(parsed["modules"]["skills"])
+        assert skills_entry.enabled is True
+
+        skills_config = SkillsConfig.model_validate(skills_entry.config)
+        assert skills_config.adapter == "arcskill"
+
+
 # ---------------------------------------------------------------------------
 # C4 — team lifecycle verbs: create / add-member / remove-member
 # ---------------------------------------------------------------------------

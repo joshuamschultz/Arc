@@ -18,6 +18,13 @@ dependencies = [
     # builtin adapter as unavailable in a default-synced env. Pin it here for the
     # same reason as arcmemory: the default extension must load out of the box.
     "arcskill",
+    # arcgateway-telegram is the default remote gateway adapter — same reason
+    # as arcmemory/arcskill: without this edge it's only present under
+    # `uv sync --all-packages`, so a bare `uv sync` + an enabled
+    # [platforms.telegram] block in gateway.toml starts a gateway with no
+    # Telegram adapter (registry.build_adapters skips it, silently, at
+    # personal/enterprise tier). Pin it here so it ships out of the box.
+    "arcgateway-telegram",
     "croniter>=6.2.2",
 ]
 
@@ -87,6 +94,7 @@ arcmodel = { workspace = true }
 arccmd = { workspace = true, editable = true }
 arc-agent = { workspace = true, editable = true }
 arcgateway = { workspace = true, editable = true }
+arcgateway-telegram = { workspace = true }
 
 [tool.ruff]
 target-version = "py311"

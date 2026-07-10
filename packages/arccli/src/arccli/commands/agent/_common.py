@@ -189,6 +189,16 @@ enabled = true
 # backend (with a warning) if no server is reachable, so a solo agent still runs.
 nats_url = "nats://127.0.0.1:4222"
 
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+# arcskill is the workspace-declared default skills adapter (see root
+# pyproject.toml) — without this block SkillsConfig defaults to
+# adapter = "none" and the agent's scaffolded skills/improver never run.
+adapter = "arcskill"
+tier = "personal"
+
 [arcstore]
 enabled = true
 store_raw_bodies = false
