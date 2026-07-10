@@ -41,6 +41,9 @@ class ModelMetadata(BaseModel):
     supports_tools: bool
     supports_vision: bool
     supports_thinking: bool
+    # Claude 5-family models reject non-default sampling params with HTTP 400;
+    # adapters omit temperature from the wire body when this is false.
+    supports_temperature: bool = True
     input_modalities: list[str]
     cost_input_per_1m: float
     cost_output_per_1m: float

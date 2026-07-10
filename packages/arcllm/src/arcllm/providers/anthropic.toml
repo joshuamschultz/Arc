@@ -15,6 +15,7 @@ max_output_tokens = 128000
 supports_tools = true
 supports_vision = true
 supports_thinking = true
+supports_temperature = false
 input_modalities = ["text", "image"]
 cost_input_per_1m = 3.00
 cost_output_per_1m = 15.00

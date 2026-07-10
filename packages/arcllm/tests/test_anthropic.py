@@ -379,6 +379,32 @@ class TestAnthropicRequestBuilding:
         assert body["max_tokens"] == 1000
         assert body["temperature"] == 0.2
 
+    def test_temperature_omitted_when_model_rejects_sampling_params(self):
+        """Models with supports_temperature=false (Claude 5 family) 400 on a
+        non-default temperature — the adapter must omit it from the wire body,
+        including when a caller passes it explicitly (eval configs set 0.2
+        generically across models)."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        no_temp_meta = FAKE_MODEL_META.model_copy(update={"supports_temperature": False})
+        config = ProviderConfig(
+            provider=FAKE_PROVIDER_SETTINGS,
+            models={FAKE_MODEL: no_temp_meta},
+        )
+        adapter = AnthropicAdapter(config, FAKE_MODEL)
+        messages = [Message(role="user", content="Hi")]
+
+        assert "temperature" not in adapter._build_request_body(messages)
+        assert "temperature" not in adapter._build_request_body(messages, temperature=0.2)
+
+    def test_temperature_sent_for_undeclared_model(self):
+        """A model with no TOML metadata keeps the current wire shape."""
+        from arcllm.adapters.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(FAKE_CONFIG, "claude-undeclared-9")
+        body = adapter._build_request_body([Message(role="user", content="Hi")])
+        assert body["temperature"] == 0.7
+
     def test_response_format_rejected(self):
         """Anthropic has no server-side JSON mode — silent drop is a
         confusing failure mode, so we raise instead."""
