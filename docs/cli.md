@@ -209,7 +209,9 @@ Manage arcteam entity registries, channels, and messaging.
 | `arc team register <id> --roles <r>` | Register with comma-separated roles | `arc team register agent-1 --name "Lead" --type agent --roles lead,reviewer` |
 | `arc team entities` | List all registered entities | `arc team entities` |
 | `arc team entities --role <r>` | Filter by role | `arc team entities --role lead` |
+| `arc team update-entity <ref>` | Update an existing entity's name/roles (`register` is create-only and errors on a duplicate DID/handle) | `arc team update-entity agent-1 --name "Lead Analyst" --roles lead,reviewer` |
 | `arc team channels` | List available channels | `arc team channels` |
+| `arc team create-channel <name>` | Create a channel; standalone or `--team <id>`-scoped (defaults membership to the team's members unless `--members` is given) | `arc team create-channel brand-room --members agent-1,agent-2` |
 | `arc team memory-status` | Show team memory index status | `arc team memory-status` |
 
 **Global options (apply to all `arc team` subcommands):**
