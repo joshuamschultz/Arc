@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from arcstore import query as store_query
 from arcstore.backends import open_backend
 from arcstore.config import resolve_data_dir
 from arcstore.ingest import StoreIngest
@@ -132,17 +133,26 @@ class Observe:
     lifespan (``start``/``stop``); all reads are synchronous request/response.
     """
 
-    def __init__(self, *, data_dir: Path | None = None, backend: str = "sqlite") -> None:
+    def __init__(
+        self,
+        *,
+        data_dir: Path | None = None,
+        backend: str = "sqlite",
+        workspace_dir: Path | None = None,
+    ) -> None:
         base = data_dir if data_dir is not None else resolve_data_dir()
         self._data_dir = base
         # Backend selected by name via the factory — Observe only ever depends on
         # the StorageBackend Protocol, so switching storage (Phase 5 config) does
         # not touch this read plane.
         self._backend = open_backend(backend, base / "store" / "arcui.db")
+        # workspace_dir enables the arcskill candidate-store + skills-WORM scan
+        # (SPEC-054 REQ-120); None keeps the ingest on spool + audit WORM only.
         self._ingest = StoreIngest(
             self._backend,
             spool_dir=base / "spool",
             worm_dir=base / "worm",
+            workspace_dir=workspace_dir,
         )
         self._started = False
 
@@ -293,3 +303,15 @@ class Observe:
         """Per-identity LLM cost/count — parent vs each child (FR-4 / UC-3)."""
         rows = await self._llm_rows_in_window(window)
         return compute_llm_by_identity(rows, window=window)
+
+    # -- SPEC-054 skill version surfaces (REQ-120) --------------------------
+
+    async def skill_versions(self, skill_name: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Metadata-only version timeline for one skill, ordered by generation."""
+        await self._ensure()
+        return await store_query.skill_versions(self._backend, skill_name, limit=limit)
+
+    async def skill_candidate_body(self, skill_name: str, candidate_id: str) -> str | None:
+        """Full candidate text, or ``None`` when the body is pending/pruned."""
+        await self._ensure()
+        return await store_query.skill_candidate_body(self._backend, skill_name, candidate_id)

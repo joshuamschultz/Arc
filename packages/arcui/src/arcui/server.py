@@ -121,6 +121,7 @@ def create_app(
     team_post_forwarder: Any | None = None,
     team_stream_interval: float = 1.0,
     data_dir: Path | None = None,
+    workspace_dir: Path | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -147,6 +148,9 @@ def create_app(
             the arcteam bus that feed the read-only ``/ws/team`` stream.
         data_dir: Arc data directory for the Observe mirror (spool + WORM +
             store). Defaults to ``arcstore.config.resolve_data_dir()``.
+        workspace_dir: Agent workspace root for the Observe ingest's arcskill
+            candidate-store + skills-WORM scan (SPEC-054 REQ-120). ``None``
+            keeps the mirror on spool + audit WORM only.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -364,7 +368,7 @@ def create_app(
     app.state.auth_config = auth
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
-    app.state.observe = Observe(data_dir=data_dir)
+    app.state.observe = Observe(data_dir=data_dir, workspace_dir=workspace_dir)
     app.state.config_controller = config_controller
     # arcteam MessagingService used by the Team Chat routes. ``None`` is
     # a supported state — the routes degrade to empty payloads so the

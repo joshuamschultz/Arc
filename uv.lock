@@ -770,6 +770,7 @@ source = { editable = "packages/arcui" }
 dependencies = [
     { name = "arcgateway" },
     { name = "arcllm" },
+    { name = "arcskill" },
     { name = "arcstore" },
     { name = "arcteam" },
     { name = "arctrust" },
@@ -783,6 +784,7 @@ dependencies = [
 requires-dist = [
     { name = "arcgateway", editable = "packages/arcgateway" },
     { name = "arcllm", editable = "packages/arcllm" },
+    { name = "arcskill", editable = "packages/arcskill" },
     { name = "arcstore", editable = "packages/arcstore" },
     { name = "arcteam", editable = "packages/arcteam" },
     { name = "arctrust", editable = "packages/arctrust" },

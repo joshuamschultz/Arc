@@ -218,6 +218,76 @@ class ToolsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Agent detail — skill evals + version timeline (SPEC-054 COMP-010)
+# ---------------------------------------------------------------------------
+
+
+class SkillEvalCase(BaseModel):
+    """One golden eval case: pytest nodeid + machine/human provenance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodeid: str
+    provenance: str  # "machine" | "human"
+
+
+class SkillEvalCasesResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/skills/{skill_name}/evals``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[SkillEvalCase]
+
+
+class SkillVersionsResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/skills/{skill_name}/versions``.
+
+    Metadata only — candidate bodies never ride the list payload; a
+    ``body_hash`` of ``None`` marks a pending/pruned body (``tombstone``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[dict[str, Any]]
+
+
+class SkillVersionBodyResponse(BaseModel):
+    """Body of ``GET .../skills/{skill_name}/versions/{candidate_id}/body``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_id: str
+    body: str
+
+
+class SkillVersionDiffResponse(BaseModel):
+    """Body of ``GET .../skills/{skill_name}/versions/diff?a=&b=``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    a: str
+    b: str
+    diff: str
+
+
+class SkillRollbackResponse(BaseModel):
+    """Body of ``POST .../skills/{skill_name}/rollback``.
+
+    ``warning`` reminds the operator that the target's stored scores are
+    historical — they were measured when the candidate was produced and are
+    not re-validated by the flip.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    skill_name: str
+    from_candidate_id: str | None
+    to_candidate_id: str
+    warning: str
+
+
+# ---------------------------------------------------------------------------
 # Agent detail — policy
 # ---------------------------------------------------------------------------
 

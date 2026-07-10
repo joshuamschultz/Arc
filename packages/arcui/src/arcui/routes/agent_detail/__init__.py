@@ -56,6 +56,13 @@ from arcui.routes.agent_detail.sessions import (
     get_sessions,
     get_tasks,
 )
+from arcui.routes.agent_detail.skill_versions import (
+    get_skill_evals,
+    get_skill_version_body,
+    get_skill_version_diff,
+    get_skill_versions,
+    post_skill_rollback,
+)
 from arcui.routes.agent_detail.skills import get_skills
 from arcui.routes.agent_detail.telemetry import get_audit, get_stats, get_traces
 from arcui.routes.agent_detail.tools import get_tools
@@ -66,6 +73,23 @@ routes = [
     Route("/api/agents/{id}/files/read", get_file_read, methods=["GET"]),
     Route("/api/agents/{id}/files/read", put_file_write, methods=["PUT"]),
     Route("/api/agents/{id}/skills", get_skills, methods=["GET"]),
+    Route("/api/agents/{id}/skills/{skill_name}/evals", get_skill_evals, methods=["GET"]),
+    Route("/api/agents/{id}/skills/{skill_name}/versions", get_skill_versions, methods=["GET"]),
+    Route(
+        "/api/agents/{id}/skills/{skill_name}/versions/diff",
+        get_skill_version_diff,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/agents/{id}/skills/{skill_name}/versions/{candidate_id}/body",
+        get_skill_version_body,
+        methods=["GET"],
+    ),
+    Route(
+        "/api/agents/{id}/skills/{skill_name}/rollback",
+        post_skill_rollback,
+        methods=["POST"],
+    ),
     Route("/api/agents/{id}/tools", get_tools, methods=["GET"]),
     Route("/api/agents/{id}/capabilities", get_capabilities, methods=["GET"]),
     Route("/api/agents/{id}/sessions", get_sessions, methods=["GET"]),
