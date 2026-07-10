@@ -29,6 +29,7 @@ async def write(file_path: str, content: str) -> str:
     if resolved.exists() and not resolved.is_file():
         return f"Error: Not a file: {file_path}"
     resolved.parent.mkdir(parents=True, exist_ok=True)
+    encoded = content.encode("utf-8")
     resolved.write_text(content, encoding="utf-8")
-    byte_count = len(content.encode("utf-8"))
-    return f"Written {byte_count} bytes to {file_path}"
+    _runtime.resign_if_previously_signed(resolved, encoded)
+    return f"Written {len(encoded)} bytes to {file_path}"

@@ -93,6 +93,31 @@ def sign_artifact_file(artifact: Path, content: bytes) -> None:
     )
 
 
+def resign_if_previously_signed(artifact: Path, content: bytes) -> None:
+    """Refresh a stale signature after a GENERIC tool mutates a signed artifact.
+
+    Task #28 root cause: create_skill/create_tool/update_skill/update_tool all
+    sign on write, but ``write``/``edit`` are general-purpose tools that know
+    nothing about the Sign pillar — an agent that hand-edits an already-signed
+    ``SKILL.md`` or ``capabilities/*.py`` with the plain ``edit``/``write``
+    tool (instead of the matching self-modification tool) silently leaves a
+    stale ``.arcsig`` sidecar: bytes changed, signature didn't. The next
+    load-time verify fails closed (the reported symptom: "artifact_sha256 no
+    longer matches content").
+
+    The presence of a ``.arcsig`` sidecar IS the signal that a file
+    participates in the Sign pillar — checking for it (rather than a
+    hardcoded ``capabilities/`` path prefix) means write/edit never start
+    signing ordinary workspace files, only keep a promise that already
+    existed. No-op when the artifact was never signed, or the agent has no
+    signing identity.
+    """
+    from arcagent.capabilities.artifact_signing import sidecar_path
+
+    if sidecar_path(artifact).exists():
+        sign_artifact_file(artifact, content)
+
+
 def workspace() -> Path:
     """Return the current agent's workspace root.
 
@@ -357,6 +382,7 @@ __all__ = [
     "loader",
     "protected_paths",
     "reset",
+    "resign_if_previously_signed",
     "resolve_workspace_path",
     "run_sandboxed_bash",
     "sign_artifact_file",

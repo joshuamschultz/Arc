@@ -60,4 +60,5 @@ async def edit(
         new_content = content.replace(old_string, new_string, 1)
         replaced = 1
     resolved.write_text(new_content, encoding="utf-8")
+    _runtime.resign_if_previously_signed(resolved, new_content.encode("utf-8"))
     return f"Replaced {replaced} occurrence(s) in {file_path}"
