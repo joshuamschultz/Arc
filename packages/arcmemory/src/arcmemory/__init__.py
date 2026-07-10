@@ -35,6 +35,15 @@ from arcmemory.index.structural import (
     StructuralResult,
 )
 from arcmemory.index.surface import SurfaceIndex, SurfaceResult
+from arcmemory.operator import (
+    EntityRecord,
+    LinkRecord,
+    MemoryOperator,
+    MemoryPage,
+    MemoryRecord,
+    MutationResult,
+    MutationStatus,
+)
 from arcmemory.retrieve import Retriever
 from arcmemory.security import (
     boundary_mark,
@@ -74,6 +83,7 @@ __all__ = [
     "Embedder",
     "EmbeddingUnavailableError",
     "Entity",
+    "EntityRecord",
     "EpisodicStore",
     "Event",
     "Fact",
@@ -86,8 +96,14 @@ __all__ = [
     "InsightCandidate",
     "InsightMint",
     "InsightStore",
+    "LinkRecord",
     "MemoryConfig",
     "MemoryDB",
+    "MemoryOperator",
+    "MemoryPage",
+    "MemoryRecord",
+    "MutationResult",
+    "MutationStatus",
     "ProceduralStore",
     "Procedure",
     "Recall",

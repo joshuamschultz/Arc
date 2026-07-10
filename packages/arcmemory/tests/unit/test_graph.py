@@ -22,6 +22,17 @@ def test_hebbian_bump_saturates_at_ceiling(db: MemoryDB) -> None:
     assert weights[-1] >= weights[-2]  # saturating: later gains vanish
 
 
+def test_neighbor_edges_carry_kind_and_weight(db: MemoryDB) -> None:
+    graph = WeightedGraph(db, MemoryConfig())
+    graph.link(_SCOPE, "alice", "bob", kind="link")
+    graph.hebbian_bump(_SCOPE, "alice", "carol")  # kind defaults to "assoc"
+
+    edges = {(dst, kind): weight for dst, kind, weight in graph.neighbor_edges(_SCOPE, "alice")}
+    assert ("bob", "link") in edges
+    assert ("carol", "assoc") in edges
+    assert edges[("carol", "assoc")] > 0.0
+
+
 def test_unreinforced_edge_decays_below_floor(db: MemoryDB) -> None:
     cfg = MemoryConfig()
     graph = WeightedGraph(db, cfg)

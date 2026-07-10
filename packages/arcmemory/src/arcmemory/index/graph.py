@@ -137,6 +137,20 @@ class WeightedGraph:
         ).fetchall()
         return [(r[0], float(r[1])) for r in rows]
 
+    def neighbor_edges(self, scope: str, node: str) -> list[tuple[str, str, float]]:
+        """Undirected neighbors of ``node`` as ``(neighbor, kind, weight)`` triples.
+
+        Carries the edge ``kind`` (``assoc`` co-occurrence vs ``link`` wiki-edge) so a
+        caller can render *why* two nodes are linked, not just that they are.
+        """
+        conn = self._db.connect()
+        rows = conn.execute(
+            "SELECT dst, kind, weight FROM edges WHERE scope=? AND src=? "
+            "UNION ALL SELECT src, kind, weight FROM edges WHERE scope=? AND dst=?",
+            (scope, node, scope, node),
+        ).fetchall()
+        return [(r[0], r[1], float(r[2])) for r in rows]
+
     def rename_node(self, scope: str, old: str, new: str) -> int:
         """Repoint every edge touching ``old`` onto ``new`` (cue-merge, T-054).
 

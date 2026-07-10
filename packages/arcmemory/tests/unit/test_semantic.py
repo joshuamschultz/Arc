@@ -22,6 +22,14 @@ def test_fact_written_and_parsed(workspace: Path, db: MemoryDB) -> None:
     assert entity.facts[0].value == "Acme"
 
 
+def test_slugs_lists_entities_on_disk(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    assert store.slugs() == []  # nothing written yet
+    store.write_fact("bob", "role", "designer")
+    store.write_fact("alice", "role", "engineer")
+    assert store.slugs() == ["alice", "bob"]  # sorted
+
+
 def test_contradiction_writes_was_trail_additively(workspace: Path, db: MemoryDB) -> None:
     store = _store(workspace, db)
     store.write_fact("alice", "works_at", "Acme", confidence=0.9)

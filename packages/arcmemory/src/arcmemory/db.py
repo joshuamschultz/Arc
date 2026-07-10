@@ -120,7 +120,8 @@ class MemoryDB:
             "CREATE TABLE IF NOT EXISTS episodic ("
             "event_id TEXT PRIMARY KEY, ts TEXT NOT NULL, scope TEXT NOT NULL, "
             "kind TEXT NOT NULL, text TEXT NOT NULL, hash TEXT, "
-            "classification TEXT DEFAULT 'unclassified', refs TEXT, seq INTEGER)"
+            "classification TEXT DEFAULT 'unclassified', refs TEXT, seq INTEGER, "
+            "salience REAL NOT NULL DEFAULT 0.0, entities TEXT)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_scope ON episodic(scope, seq)")
 
