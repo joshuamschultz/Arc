@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Simplification-sweep cleanup (no version bump — internal only, no public API change).
+### Added
+- **`claude-sonnet-5` added to the Anthropic catalog and made the default model.** 1M context,
+  128K max output, tools/vision/thinking, $3/$15 per MTok (cache read $0.30, write $3.75).
+  `default_model` moves from `claude-sonnet-4-6`.
 
 ### Fixed
+- **`claude-sonnet-5` rejected any non-default `temperature` with `HTTP 400`.** New per-model
+  catalog flag `supports_temperature` (default `true`); the Anthropic adapter drops the parameter
+  from the wire body when `false` — including explicitly-passed values, since eval configs set
+  `temperature` generically across models. Mirrors the OpenAI adapter's reasoning-model handling.
 - **Google adapter streaming URL bug.** `GoogleAdapter`/`Azure_OpenaiAdapter` previously
   hand-rolled their own `invoke()`; deduping them onto the shared `OpenaiAdapter` base
   (each now overrides only `_completions_url()`) fixed a URL-construction bug specific to

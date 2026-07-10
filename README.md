@@ -159,7 +159,7 @@ flowchart TB
 | Entry | [**arctui**](packages/arctui/) · [**arcmas**](packages/arcmas/) | Terminal UI · the `pip install arcmas` meta-package that pulls the whole stack |
 | Surface | [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
 | Surface | [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, operator-key-signed audit trail |
-| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth, layer/agent/team filtering |
+| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth (viewer/operator), layer/agent/team filtering, plus a per-agent Knowledge view (memories + entities, operator edit/delete), a workspace file editor with signature-stale honesty, live channel management, and a Capabilities view rendering the loader's own trust verdicts |
 | Agent | [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
 | Agent | [**arcskill**](packages/arcskill/) *(optional)* | Skill supercharger — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list, plus golden-task-gated self-improvement (`arcskill.improver`). arcagent runs skills fine without it. |
 | Runtime | [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
@@ -371,7 +371,11 @@ agent, out of the box:
   conversation is still there (replayed from `workspace/sessions/<chat_id>.jsonl`).
 - **Live LLM calls** in the **ArcLLM / Observe** tab (scoped to this fleet via
   `ARCSTORE_DATA_DIR`).
-- **Memory** written under each `workspace/memory/`.
+- **Memory** written under each `workspace/memory/`, browsable (and, with the
+  operator token, editable) in the **Knowledge** tab.
+- **Capabilities** — a per-agent view of every skill/tool across all four scan
+  roots, with the loader's own trust verdict (loaded / denied / unsigned) —
+  what actually loaded, not what's configured.
 
 **6. (Optional) Team collaboration — agents in channels:**
 
@@ -385,6 +389,11 @@ arc team create mfg --channel ops --members "procurement,picking,demand-planning
 arc team up mfg          # boot members as supervised daemons on NATS
 # watch them talk in the dashboard's "Messages" tab, or:  arc team read ops
 ```
+
+Once the team exists, day-to-day channel work — adding a channel, adding or
+removing a member — doesn't need the CLI: the dashboard's **Channels** tab
+does the same thing live, gated to the operator token (viewer sees the
+roster read-only).
 
 > `scripts/arc-stack.sh` is a non-canonical, dev-convenience start/stop/status
 > wrapper predating the embedded gateway (SPEC-023) — it runs every agent as

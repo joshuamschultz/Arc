@@ -6,6 +6,28 @@ versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`MemoryOperator`** (`arcmemory.operator`, T-702/703, COMP-001) — the single typed
+  read/search/mutation facade arcui (and any other consumer) uses instead of touching SQLite
+  directly (REQ-087). Paged episodic listing with created/recency/importance(1–10)/source
+  metadata, entity listing + graph link traversal, ranked search delegating to the production
+  `Retriever`, and honest mutations (`edit_entry`, `set_metadata`, `delete_entry` →
+  `MutationResult` applied|error, never partial) accepting an actor DID for the audit trail.
+
+### Fixed
+
+- **CRITICAL — the episodic table's `salience`/`entities` columns were missing on every
+  pre-existing database.** Both were added to `episodic`'s `CREATE TABLE IF NOT EXISTS` — a
+  no-op against a table that already existed on every deployed agent, so every capture, recall,
+  and facade call threw `OperationalError: no such column: salience` (memory silently down
+  fleet-wide; fresh agents were unaffected). `MemoryDB` now runs a generalized
+  `_ensure_columns` self-migration (`PRAGMA table_info` → `ALTER TABLE ADD COLUMN`) idempotently
+  at `connect()` — the seam so the *next* added column doesn't repeat this, not a migration
+  framework. Verified with a fixture hand-written from the exact pre-migration schema (git
+  history, not inferred): zero data loss, capture and the `MemoryOperator` facade both work
+  post-migration.
+
 ### Changed
 
 - **`sqlite-vec` is now a base dependency** (was the optional `[vec]` extra). Semantic

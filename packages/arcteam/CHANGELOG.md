@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`MessagingService.create_channel` overwrote an existing channel's membership on a name
+  collision** instead of refusing. Any caller bypassing the CLI's own pre-check could silently
+  clobber membership on a duplicate name. The service now reads first and raises `ValueError`,
+  matching `TeamStore.create`'s duplicate-team convention — a defense-in-depth fix for the
+  check-then-write race the CLI's pre-check alone couldn't close.
 - **`NatsBackend.connect` bounds the initial connect (F9)** — `asyncio.wait_for` (3s) so an
   unreachable server fails fast instead of looping nats-py's ~2min reconnect budget, plus a quiet
   `error_cb` so nats-py async errors log at debug rather than surfacing as a raw stderr traceback.

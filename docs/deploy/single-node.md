@@ -332,6 +332,37 @@ Telegram: message the bot directly. Only user ids in
 else is rejected and audited (their `user_id` is logged, so you can add it
 after the fact without guesswork).
 
+## Dashboard capabilities (Reality Mirror)
+
+Beyond chat, the dashboard is a real window into each agent's on-disk
+state — reads it live, not a synced copy — and, for a few mutation paths,
+an operator can act directly through the UI instead of SSHing in. Auth is
+two roles, same tokens as above:
+
+- **viewer** (`VIEWER_TOKEN`) — read-only across every view below: chat,
+  browse memories/entities, read workspace files, list channels.
+- **operator** (`OPERATOR_TOKEN`) — everything a viewer can do, plus every
+  mutation: edit/delete a memory, save a workspace file, create a channel,
+  add/remove channel members. Every operator mutation is audited through
+  a single emission point (`emit_mutation_audit`) — actor role, session
+  id, target, operation, and outcome, not a synthesized "success" flag.
+
+| View | What it shows | Mutations (operator only) |
+|---|---|---|
+| **Knowledge** | An agent's episodic memories and entities — paged, ranked search, link navigation between a memory and the entities it tagged. Metadata columns: created, recency, importance (1–10), source. | Edit a memory's text, adjust importance/salience, delete an entry. |
+| **File editor** | Rendered markdown (or raw text) for any file under the agent's workspace, opened from the file tree. | Save changes in place. If the file has a signature sidecar (`.arcsig`), the response after saving says **signature_stale** — the UI holds no agent identity and never signs on the agent's behalf; the agent re-signs it on next load. |
+| **Channels** | Every `arcteam` channel and its members, sourced live from the messaging service (503 with a clear error if the service isn't wired, not a silent empty list). | Create a channel, add or remove members (resolves agent refs the same way the CLI does). |
+| **Capabilities** | Every skill and tool an agent can load, across all four scan roots, with the loader's own verdict rendered verbatim (loaded / denied / unsigned / invalid) as a status badge — not a UI guess. Denial reasons are visible in a popover. | Read-only — capability trust decisions are made by the loader at agent startup, not from the dashboard. |
+
+An empty Knowledge/Channels view (nothing captured yet, service not
+configured) is shown distinctly from an *unreadable* one (a real error —
+disk, permissions, an unwired service) — the dashboard never silently
+collapses "nothing here" and "something's broken" into the same blank
+state.
+
+All of the above works per-agent from the same `arc ui start --team-root`
+process described above — no extra flags, no separate service.
+
 ## Troubleshooting
 
 **`arcgateway start` refuses immediately, prints a message about

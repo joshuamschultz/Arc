@@ -155,6 +155,22 @@ curl -s -H "Authorization: Bearer $VIEWER_TOKEN" \
   http://127.0.0.1:8420/api/team/roster            # UI-facing roster: model, provider, online status per agent
 ```
 
+## 8. Manage the fleet from the dashboard
+
+Everything in §4–5 has a UI equivalent once the fleet is serving — the
+**Channels** view lists every `arcteam` channel live from the messaging
+service and lets an **operator** (not viewer — see
+[single-node.md § Dashboard capabilities](./single-node.md#dashboard-capabilities-reality-mirror))
+create a channel or add/remove members without a CLI round trip. Each
+agent's **Knowledge** view shows its captured memories and entities
+(paged, searchable, with importance/recency metadata) — useful for
+spot-checking that a department agent is actually retaining what its
+persona says it should, e.g. confirming `quality_auditor_agent` recorded
+a flagged batch. The **Capabilities** view renders each agent's real
+loader verdict per skill/tool, across all four scan roots — the fastest
+way to confirm a department agent's least-privilege posture (§ below)
+matches what's actually loaded, not just what's configured.
+
 ## Patterns for departments
 
 Personas as one-liners, written into each agent's `workspace/identity.md`.
