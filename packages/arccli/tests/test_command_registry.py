@@ -273,6 +273,112 @@ class TestResolveCommand:
 
 
 # ---------------------------------------------------------------------------
+# resolve_command_and_args tests — task #35
+#
+# Live bug: `arc gateway pair approve CODE` errored "unknown command
+# 'gateway'" because the dispatcher only ever looked up argv[0]. Registered
+# multi-word command names (e.g. "gateway pair approve") could only resolve
+# if the ENTIRE phrase was quoted as one shell token — undocumented and not
+# what any real invocation (or docs/cli.md) actually shows.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCommandAndArgs:
+    """resolve_command_and_args(argv) -> (CommandDef | None, remaining_args)."""
+
+    def test_importable(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args  # noqa: F401
+
+    def test_three_word_command_resolves_from_unquoted_argv(self) -> None:
+        """The literal live bug: `gateway pair approve CODE`, unquoted."""
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["gateway", "pair", "approve", "ABCD1234"])
+        assert cmd is not None
+        assert cmd.name == "gateway pair approve"
+        assert args == ["ABCD1234"]
+
+    def test_three_word_command_with_extra_flag(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(
+            ["gateway", "adapter", "install", "telegram", "--upgrade"]
+        )
+        assert cmd is not None
+        assert cmd.name == "gateway adapter install"
+        assert args == ["telegram", "--upgrade"]
+
+    def test_two_word_command_no_trailing_args(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["gateway", "pair", "list"])
+        assert cmd is not None
+        assert cmd.name == "gateway pair list"
+        assert args == []
+
+    def test_single_word_command_unaffected(self) -> None:
+        """Single-word commands must resolve exactly as before — no regression."""
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["agent", "status", "."])
+        assert cmd is not None
+        assert cmd.name == "agent"
+        assert args == ["status", "."]
+
+    def test_previously_required_quoting_still_works(self) -> None:
+        """Backward compat: a pre-quoted single argv token must still resolve."""
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["gateway pair approve", "ABCD1234"])
+        assert cmd is not None
+        assert cmd.name == "gateway pair approve"
+        assert args == ["ABCD1234"]
+
+    def test_alias_still_resolves(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["exit"])
+        assert cmd is not None
+        assert cmd.name == "quit"
+        assert args == []
+
+    def test_case_insensitive_multiword(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["Gateway", "Pair", "Approve", "ABCD1234"])
+        assert cmd is not None
+        assert cmd.name == "gateway pair approve"
+        assert args == ["ABCD1234"]
+
+    def test_unknown_command_returns_none_and_empty_args(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["totally", "bogus", "thing"])
+        assert cmd is None
+        assert args == []
+
+    def test_empty_argv_returns_none(self) -> None:
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args([])
+        assert cmd is None
+        assert args == []
+
+    def test_longer_match_wins_over_shorter_prefix(self) -> None:
+        """`gateway pair approve` (3 words) must NOT resolve as some shorter
+        registered prefix consuming fewer words — longest match wins by
+        construction (tried first), so this can't happen for the current
+        static registry, but the ordering itself is the guarantee under test.
+        """
+        from arccli.commands.registry import resolve_command_and_args
+
+        cmd, args = resolve_command_and_args(["gateway", "pair", "approve", "X"])
+        assert cmd is not None
+        assert cmd.name == "gateway pair approve"
+        assert args == ["X"]
+
+
+# ---------------------------------------------------------------------------
 # render helpers tests
 # ---------------------------------------------------------------------------
 

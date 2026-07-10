@@ -607,3 +607,40 @@ def resolve_command(name: str) -> CommandDef | None:
                 return cmd
 
     return None
+
+
+def resolve_command_and_args(argv: list[str]) -> tuple[CommandDef | None, list[str]]:
+    """Resolve a command from ``argv`` via longest-prefix matching.
+
+    Registered command names may be multi-word (e.g. ``"gateway pair
+    approve"``). A naive ``argv[0]``-only lookup can never match these
+    unless the caller quotes the whole phrase as one shell token — which no
+    real invocation, and no example in docs/cli.md, actually does (task
+    #35: ``arc gateway pair approve CODE`` errored "unknown command
+    'gateway'").
+
+    Tries the longest possible word-count prefix of ``argv`` first, walking
+    down to a single word, so ``arc gateway pair approve CODE`` resolves
+    the same way the previously-required ``arc "gateway pair approve"
+    CODE`` always did. Single-word commands are unaffected — the first
+    (and only) prefix tried for a 1-word registered name is 1 word.
+
+    Ambiguity is impossible by construction: ``COMMAND_REGISTRY`` is a
+    static, known list, so for any given ``argv`` there is at most one
+    exact-match name/alias at each prefix length, and the longest length is
+    tried first — a shorter registered name can never shadow a longer,
+    more specific match that also fits.
+
+    Returns:
+        ``(CommandDef, remaining_args)`` on match, or ``(None, [])`` when no
+        prefix of ``argv`` matches any registered name or alias.
+    """
+    if not argv:
+        return None, []
+    max_words = max((len(cmd.name.split()) for cmd in COMMAND_REGISTRY), default=1)
+    for word_count in range(min(max_words, len(argv)), 0, -1):
+        candidate = " ".join(argv[:word_count])
+        cmd = resolve_command(candidate)
+        if cmd is not None:
+            return cmd, argv[word_count:]
+    return None, []

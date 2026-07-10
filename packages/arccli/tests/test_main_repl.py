@@ -75,3 +75,46 @@ class TestReplNonTty:
         except KeyboardInterrupt:
             pass
         assert entered["built"], "TTY stdin must still enter the interactive REPL"
+
+
+class TestReplMultiWordDispatch:
+    """Task #35: the REPL loop must resolve multi-word commands too, not
+    just `_dispatch_oneshot` — both call sites had the same argv[0]-only bug.
+    """
+
+    def test_repl_resolves_multiword_command_unquoted(self, monkeypatch) -> None:
+        monkeypatch.setattr(main_mod.sys, "stdin", _FakeStdin(tty=True))
+
+        import arccli.commands.registry as registry_mod
+        from arccli.commands.registry import CommandDef
+
+        calls: list[list[str]] = []
+
+        def _stub_handler(args: list[str]) -> None:
+            calls.append(args)
+            raise SystemExit(0)  # end the REPL loop after one command
+
+        fake_cmd = CommandDef(
+            name="gateway pair approve",
+            description="stub",
+            category="Configuration",
+            handler=_stub_handler,
+        )
+        monkeypatch.setattr(registry_mod, "COMMAND_REGISTRY", [fake_cmd])
+
+        import prompt_toolkit
+
+        lines = iter(["gateway pair approve ABCD1234"])
+
+        class _FakeSession:
+            def prompt(self, *_args, **_kwargs):
+                return next(lines)
+
+        monkeypatch.setattr(prompt_toolkit, "PromptSession", lambda **_kwargs: _FakeSession())
+
+        try:
+            main_mod._run_repl()
+        except SystemExit:
+            pass
+
+        assert calls == [["ABCD1234"]]
