@@ -79,27 +79,6 @@ def test_web_platform_config_default_when_section_absent() -> None:
 
 
 # ---------------------------------------------------------------------------
-# [gateway].team_root — standalone daemon agent wiring (T8)
-# ---------------------------------------------------------------------------
-
-
-def test_team_root_defaults_to_none() -> None:
-    """No [gateway].team_root configured means the standalone daemon has no agents."""
-    cfg = GatewayConfig.from_toml_str("")
-    assert cfg.gateway.team_root is None
-
-
-def test_team_root_parses_and_resolves(tmp_path: Path) -> None:
-    """A configured team_root is expanded/resolved to an absolute path."""
-    toml = f"""
-[gateway]
-team_root = "{tmp_path}"
-"""
-    cfg = GatewayConfig.from_toml_str(toml)
-    assert cfg.gateway.team_root == Path(str(tmp_path)).expanduser().resolve()
-
-
-# ---------------------------------------------------------------------------
 # Defaults honor ARC_CONFIG_DIR (matches arctrust.trust_store's own fix)
 # ---------------------------------------------------------------------------
 

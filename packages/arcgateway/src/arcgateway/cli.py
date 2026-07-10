@@ -1,7 +1,9 @@
 """CLI entry point for arcgateway.
 
 Provides ``arc gateway`` subcommands:
-    start   — Start the gateway daemon with config from TOML
+    start   — Refuses to start (no working standalone agent-execution path;
+              see cmd_start's docstring). Use the embedded gateway instead:
+              ``arc ui start --team-root <dir> --gateway-config <path>``.
     stop    — Stop a running gateway daemon (sends SIGTERM to PID file)
     status  — Report gateway health (clean-shutdown marker + basic state)
     setup   — Write a starter gateway.toml for personal-tier configuration
@@ -22,7 +24,6 @@ TODO T1.1: Wire through arccli.commands.registry.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import sys
@@ -59,85 +60,65 @@ def _echo(msg: str, *, stream: IO[str] | None = None) -> None:
     print(msg, file=out)  # intentional CLI output
 
 
-def cmd_start(
-    *,
-    config_path: Path | None = None,
-    runtime_dir: Path | None = None,
-    team_root: Path | None = None,
-) -> None:
-    """Start the gateway daemon.
+_STANDALONE_REFUSAL = (
+    "arcgateway start: the standalone daemon has no working agent-execution path "
+    "and refuses to start rather than silently serve none.\n"
+    "  - personal/enterprise tier: AsyncioExecutor has no agent_factory here — "
+    "echo stub only.\n"
+    "  - federal tier: SubprocessExecutor's arc-agent-worker ignores the "
+    "requested agent_did for config selection (it always reads the same fixed "
+    "cwd-relative arcagent.toml / ~/.arc/agent.toml) — it cannot correctly "
+    "serve a multi-platform gateway's per-agent_did routing.\n"
+    "The embedded gateway is the canonical single-node pattern. Use:\n"
+    "  arc ui start --team-root <dir> --gateway-config <path>\n"
+)
 
-    Loads GatewayConfig from the specified TOML path, or — when
-    ``config_path`` is omitted — via ``GatewayConfig.load()``'s
-    ``${ARC_CONFIG_DIR:-~/.arc}/gateway.toml`` discovery (an isolated
-    ``ARC_CONFIG_DIR`` deployment now resolves the same config file the rest
-    of Arc's tooling would find, instead of always reading the real
-    ``~/.arc``). Selects executor based on tier: personal/enterprise →
-    AsyncioExecutor, federal → SubprocessExecutor.
 
-    Personal/enterprise tier REQUIRES an agent team_root (``--team-root`` or
-    ``[gateway].team_root`` in config; the flag overrides the config value)
-    so the daemon can resolve agent_did values to real agents the same way
-    the arcui-embedded path does. Without one, startup fails closed with a
-    clear error rather than silently running the echo-stub executor —
-    the embedded path (``arc ui start --team-root --gateway-config``) is
-    the canonical single-node pattern; standalone start exists for
-    federal-tier subprocess isolation and explicit team_root use.
+def cmd_start(*, config_path: Path | None = None) -> None:
+    """Refuse to start the standalone gateway daemon.
 
-    Remote platform adapters are built from the config via the generic
-    adapter-plugin registry: each ``[platforms.<name>]`` block with
-    ``enabled = true`` loads its plugin from the matching extension package
-    (e.g. ``arcgateway-telegram``). The gateway core names no platform.
+    The embedded gateway (``arc ui start --team-root --gateway-config``) is
+    the canonical single-node architecture at every tier — one process
+    serves the dashboard, web chat, and every enabled remote platform, with
+    a real agent_factory resolving agent_did values against team_root the
+    same way at every tier.
 
-    Token credentials are read from environment variable names specified
-    in each plugin's own config block (never inlined in the config file).
+    The standalone daemon this module drives has no equivalent: personal/
+    enterprise tier's AsyncioExecutor has no agent_factory (echo stub only),
+    and federal tier's SubprocessExecutor spawns arc-agent-worker, which
+    ignores the requested agent_did for config selection entirely — it
+    always reads the same fixed-location arcagent.toml regardless of which
+    agent a platform message was addressed to (arccli/agent_worker.py
+    ``_CONFIG_SEARCH_PATHS`` / ``_run_with_arcagent``). Neither path can
+    correctly serve a multi-platform gateway, so this refuses to start at
+    every tier rather than silently serving no real agent (or the wrong
+    one). ``arcgateway stop``/``status`` remain functional for managing a
+    daemon started before this change, or a future daemon once a real
+    per-agent_did execution path exists standalone.
 
-    Federal-tier vault: If tier=federal and a platform credential env var
-    is missing, gateway startup hard-fails with an error message rather than
-    silently proceeding with no adapters (VaultUnreachable).
+    Still resolves GatewayConfig first (ARC_CONFIG_DIR-aware via
+    GatewayConfig.load() when config_path is omitted) so the refusal
+    message reflects the actual discovered config, not a guess.
 
     Args:
         config_path: Path to gateway.toml. Defaults to ARC_CONFIG_DIR-aware
             discovery via GatewayConfig.load().
-        runtime_dir: Path for PID file and .clean_shutdown marker.
-        team_root: Overrides [gateway].team_root — directory containing one
-            ``<name>/arcagent.toml`` per agent.
     """
     from arcgateway.config import GatewayConfig
-    from arcgateway.runner import GatewayMisconfiguredError, GatewayRunner
 
     if config_path is not None:
         resolved_config_path = config_path.expanduser().resolve()
         _logger.info("arcgateway start: loading config from %s", resolved_config_path)
-        config = GatewayConfig.from_toml(resolved_config_path)
+        GatewayConfig.from_toml(resolved_config_path)
     else:
-        config = GatewayConfig.load()
+        GatewayConfig.load()
         _logger.info(
             "arcgateway start: no --config given — loaded via GatewayConfig.load() "
             "(honors ARC_CONFIG_DIR)"
         )
 
-    if runtime_dir:
-        config.gateway.runtime_dir = runtime_dir.expanduser().resolve()
-
-    if team_root:
-        config.gateway.team_root = team_root.expanduser().resolve()
-
-    try:
-        runner = GatewayRunner.from_config(config)
-    except GatewayMisconfiguredError as exc:
-        _echo(f"arcgateway start: {exc}")
-        sys.exit(1)
-
-    # Wire platform adapters from config
-    _wire_adapters(runner, config)
-
-    _logger.info(
-        "arcgateway: starting daemon (tier=%s adapters=%d)",
-        config.gateway.tier,
-        len(runner._adapters),
-    )
-    asyncio.run(runner.run())
+    _echo(_STANDALONE_REFUSAL)
+    sys.exit(1)
 
 
 def _wire_adapters(runner: object, config: object) -> None:
@@ -301,11 +282,10 @@ def cmd_setup() -> None:
 tier = "personal"
 agent_did = "did:arc:agent:default"
 # runtime_dir = "~/.arc/gateway/run"
-# team_root = "~/.arc/team"
-# team_root is REQUIRED to start standalone at this tier (see `arcgateway
-# start --help`). The embedded path (`arc ui start --team-root ...`) is
-# the recommended single-node pattern; this standalone daemon is for
-# federal-tier isolation or explicit standalone use.
+# NOTE: `arcgateway start` (the standalone daemon) refuses to start — it has
+# no working agent-execution path. Use the embedded gateway instead:
+#   arc ui start --team-root <dir> --gateway-config <this file>
+# This gateway.toml is still read by the embedded path via --gateway-config.
 
 [security]
 require_pairing = false
@@ -398,17 +378,11 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command", help="Subcommand")
 
-    # start
-    start_parser = subparsers.add_parser("start", help="Start the gateway daemon")
-    start_parser.add_argument("--config", type=Path, default=None, help="Path to gateway.toml")
-    start_parser.add_argument("--runtime-dir", type=Path, default=None)
-    start_parser.add_argument(
-        "--team-root",
-        type=Path,
-        default=None,
-        help="Directory of <name>/arcagent.toml agents. Overrides [gateway].team_root. "
-        "Required at personal/enterprise tier.",
+    # start — always refuses (see cmd_start); --config only shapes the error message.
+    start_parser = subparsers.add_parser(
+        "start", help="Refuses to start — see `arcgateway start --help`"
     )
+    start_parser.add_argument("--config", type=Path, default=None, help="Path to gateway.toml")
 
     # stop
     stop_parser = subparsers.add_parser("stop", help="Stop a running gateway daemon")
@@ -434,7 +408,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "start":
-        cmd_start(config_path=args.config, runtime_dir=args.runtime_dir, team_root=args.team_root)
+        cmd_start(config_path=args.config)
     elif args.command == "stop":
         cmd_stop(runtime_dir=args.runtime_dir)
     elif args.command == "status":

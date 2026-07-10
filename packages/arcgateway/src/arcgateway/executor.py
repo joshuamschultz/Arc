@@ -160,8 +160,15 @@ class AsyncioExecutor:
         ``TokenEvent`` into a token ``Delta``.
 
         When ``agent_factory`` is None the executor falls back to the
-        echo stub so all existing tests continue to pass without an
-        installed ArcAgent configuration.
+        echo stub so tests can exercise routing/session mechanics without
+        an installed ArcAgent configuration. No production code path
+        constructs an ``AsyncioExecutor`` with no ``agent_factory``:
+        ``bootstrap.build_for_embedded`` (the embedded gateway, canonical
+        at every tier) always supplies a real one, and the standalone
+        ``arc gateway start`` CLI (``cli.cmd_start``) refuses to start at
+        all rather than reach this fallback. Reaching the echo stub means
+        either a test, or code that bypassed both of those and constructed
+        this class directly.
 
         The factory is called once per event — the caller is responsible
         for caching agents if startup cost is significant.

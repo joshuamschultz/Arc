@@ -250,32 +250,81 @@ def test_cmd_setup_does_not_overwrite_existing(
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_start_calls_asyncio_run(tmp_path: Path) -> None:
-    """cmd_start calls asyncio.run() to start the daemon event loop."""
-    toml_text = f"""
+def test_cmd_start_fails_closed_personal_tier(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """cmd_start refuses to start at personal tier — no real agent execution path exists.
+
+    AsyncioExecutor has no agent_factory in the standalone path (echo stub
+    only). The embedded path (arc ui start --team-root --gateway-config) is
+    canonical; the standalone daemon must never silently serve no real agent.
+    """
+    toml_text = """
 [gateway]
 tier = "personal"
 agent_did = "did:arc:agent:test"
-team_root = "{tmp_path / "team"}"
 """
     config_file = tmp_path / "gateway.toml"
     config_file.write_text(toml_text, encoding="utf-8")
 
-    # Patch asyncio.run to capture the coroutine without actually running it.
-    with patch("asyncio.run") as mock_run:
-        cmd_start(config_path=config_file, runtime_dir=tmp_path)
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit) as excinfo:
+        cmd_start(config_path=config_file)
 
-    assert mock_run.called, "asyncio.run() must be called to start the daemon"
+    assert excinfo.value.code == 1
+    assert not mock_run.called, "asyncio.run() must NOT be called — startup failed closed"
+    err = capsys.readouterr().err
+    assert "arc ui start" in err
 
 
-def test_cmd_start_missing_config_fails_closed_no_team_root(tmp_path: Path) -> None:
-    """cmd_start with a missing config file fails closed (no team_root -> no echo stub).
+def test_cmd_start_fails_closed_enterprise_tier(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """cmd_start refuses to start at enterprise tier for the same reason as personal."""
+    toml_text = """
+[gateway]
+tier = "enterprise"
+agent_did = "did:arc:agent:test"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
 
-    GatewayConfig.from_toml() returns all-defaults when the file is missing
-    (personal tier, no team_root). Previously this silently started an
-    echo-stub daemon regardless of the missing config; it must now refuse
-    to start and name the fix rather than serve no real agent silently.
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit):
+        cmd_start(config_path=config_file)
+
+    assert not mock_run.called
+
+
+def test_cmd_start_fails_closed_federal_tier(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """cmd_start ALSO refuses to start at federal tier.
+
+    Evidence: arc-agent-worker (the SubprocessExecutor's per-session
+    subprocess) ignores --did for config selection — it always looks in the
+    same fixed cwd-relative arcagent.toml / ~/.arc/agent.toml regardless of
+    which agent_did the request targets (arccli/agent_worker.py
+    _CONFIG_SEARCH_PATHS + _run_with_arcagent). It cannot correctly serve a
+    multi-platform gateway's per-agent_did routing, so federal gets no
+    exemption from the fail-closed rule either.
     """
+    toml_text = """
+[gateway]
+tier = "federal"
+agent_did = "did:arc:agent:test"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit):
+        cmd_start(config_path=config_file)
+
+    assert not mock_run.called
+    err = capsys.readouterr().err
+    assert "arc ui start" in err
+
+
+def test_cmd_start_missing_config_fails_closed(tmp_path: Path) -> None:
+    """A missing config file (defaults to personal tier) also fails closed."""
     nonexistent = tmp_path / "missing.toml"
     assert not nonexistent.exists()
 
@@ -283,112 +332,45 @@ def test_cmd_start_missing_config_fails_closed_no_team_root(tmp_path: Path) -> N
         cmd_start(config_path=nonexistent)
 
     assert excinfo.value.code == 1
-    assert not mock_run.called, "asyncio.run() must NOT be called — startup failed closed"
-
-
-def test_cmd_start_applies_runtime_dir_override(tmp_path: Path) -> None:
-    """cmd_start uses the provided runtime_dir override (no daemon started)."""
-    toml_text = f"""
-[gateway]
-tier = "personal"
-agent_did = "did:arc:agent:test"
-team_root = "{tmp_path / "team"}"
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-    custom_runtime = tmp_path / "custom_run"
-
-    with patch("asyncio.run"):
-        # Must not raise with a custom runtime_dir.
-        cmd_start(config_path=config_file, runtime_dir=custom_runtime)
-
-
-def test_cmd_start_personal_tier_no_adapters(tmp_path: Path) -> None:
-    """cmd_start on personal tier with no platforms enabled completes cleanly."""
-    toml_text = f"""
-[gateway]
-tier = "personal"
-agent_did = "did:arc:agent:test"
-team_root = "{tmp_path / "team"}"
-
-[platforms.telegram]
-enabled = false
-
-[platforms.slack]
-enabled = false
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-
-    with patch("asyncio.run") as mock_run:
-        cmd_start(config_path=config_file, runtime_dir=tmp_path)
-
-    assert mock_run.called
-
-
-def test_cmd_start_team_root_flag_overrides_config(tmp_path: Path) -> None:
-    """--team-root (the team_root kwarg) takes precedence over [gateway].team_root."""
-    from arcgateway.runner import GatewayRunner
-
-    config_team_root = tmp_path / "config_team"
-    flag_team_root = tmp_path / "flag_team"
-    toml_text = f"""
-[gateway]
-tier = "personal"
-agent_did = "did:arc:agent:test"
-team_root = "{config_team_root}"
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-
-    captured: dict[str, object] = {}
-    real_from_config = GatewayRunner.from_config
-
-    def _capture(config: object) -> object:
-        captured["team_root"] = config.gateway.team_root  # type: ignore[attr-defined]
-        return real_from_config(config)  # type: ignore[arg-type]
-
-    with (
-        patch("asyncio.run"),
-        patch("arcgateway.runner.GatewayRunner.from_config", side_effect=_capture),
-    ):
-        cmd_start(config_path=config_file, runtime_dir=tmp_path, team_root=flag_team_root)
-
-    assert captured["team_root"] == flag_team_root.expanduser().resolve()
+    assert not mock_run.called
 
 
 def test_cmd_start_no_config_path_uses_arc_config_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Omitting config_path resolves gateway.toml via GatewayConfig.load() (ARC_CONFIG_DIR)."""
+    """Omitting config_path still resolves via GatewayConfig.load() before failing closed.
+
+    Proves the ARC_CONFIG_DIR-aware discovery genuinely runs (not skipped by
+    the fail-closed check) — patches GatewayConfig.load to observe it was
+    called, since cmd_start exits before reaching asyncio.run either way.
+    """
     monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
-    team_root = tmp_path / "team"
     (tmp_path / "gateway.toml").write_text(
-        f"""
+        """
 [gateway]
 tier = "personal"
 agent_did = "did:arc:agent:isolated"
-team_root = "{team_root}"
 """,
         encoding="utf-8",
     )
 
-    from arcgateway.runner import GatewayRunner
+    from arcgateway.config import GatewayConfig
 
-    captured: dict[str, object] = {}
-    real_from_config = GatewayRunner.from_config
+    real_load = GatewayConfig.load
+    calls: list[bool] = []
 
-    def _capture(config: object) -> object:
-        captured["agent_did"] = config.gateway.agent_did  # type: ignore[attr-defined]
-        return real_from_config(config)  # type: ignore[arg-type]
+    def _spy() -> GatewayConfig:
+        calls.append(True)
+        return real_load()
 
     with (
         patch("asyncio.run"),
-        patch("arcgateway.runner.GatewayRunner.from_config", side_effect=_capture),
+        patch("arcgateway.config.GatewayConfig.load", side_effect=_spy),
+        pytest.raises(SystemExit),
     ):
         cmd_start()
 
-    assert captured["agent_did"] == "did:arc:agent:isolated"
+    assert calls, "GatewayConfig.load() must be used for ARC_CONFIG_DIR-aware discovery"
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +394,6 @@ def _make_real_runner_and_config(
 tier = "{tier}"
 agent_did = "did:arc:agent:test"
 runtime_dir = "{tmp_path}"
-team_root = "{tmp_path / "team"}"
 
 [platforms.telegram]
 enabled = {"true" if telegram_enabled else "false"}

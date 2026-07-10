@@ -327,7 +327,12 @@ async def test_run_raises_already_running_before_starting(tmp_path: Path) -> Non
 
 
 def test_from_config_personal_tier_uses_asyncio_executor(tmp_path: Path) -> None:
-    """from_config() with personal tier + a configured team_root creates an AsyncioExecutor."""
+    """from_config() with personal tier creates an AsyncioExecutor.
+
+    from_config is a plain scaffold factory — it does not itself require or
+    verify a real agent-execution path (see cli.cmd_start, which fails
+    closed before ever calling this, for that concern).
+    """
     from arcgateway.config import GatewayConfig
 
     toml_text = f"""
@@ -335,7 +340,6 @@ def test_from_config_personal_tier_uses_asyncio_executor(tmp_path: Path) -> None
 tier = "personal"
 agent_did = "did:arc:agent:test"
 runtime_dir = "{tmp_path}"
-team_root = "{tmp_path / "team"}"
 """
     config_file = tmp_path / "gateway.toml"
     config_file.write_text(toml_text, encoding="utf-8")
@@ -346,7 +350,7 @@ team_root = "{tmp_path / "team"}"
 
 
 def test_from_config_enterprise_tier_uses_asyncio_executor(tmp_path: Path) -> None:
-    """from_config() with enterprise tier + a configured team_root creates an AsyncioExecutor."""
+    """from_config() with enterprise tier creates an AsyncioExecutor."""
     from arcgateway.config import GatewayConfig
 
     toml_text = f"""
@@ -354,7 +358,6 @@ def test_from_config_enterprise_tier_uses_asyncio_executor(tmp_path: Path) -> No
 tier = "enterprise"
 agent_did = "did:arc:agent:test"
 runtime_dir = "{tmp_path}"
-team_root = "{tmp_path / "team"}"
 """
     config_file = tmp_path / "gateway.toml"
     config_file.write_text(toml_text, encoding="utf-8")
@@ -362,72 +365,6 @@ team_root = "{tmp_path / "team"}"
 
     runner = GatewayRunner.from_config(config)
     assert isinstance(runner._executor, AsyncioExecutor)
-
-
-def test_from_config_personal_tier_uses_real_agent_factory_not_echo_stub(tmp_path: Path) -> None:
-    """A configured team_root gives the AsyncioExecutor a real agent_factory.
-
-    Regression guard for the "built-but-dead" bug: `arc gateway start` at
-    personal tier used to silently construct AsyncioExecutor() with NO
-    agent_factory (agent_factory=None -> echo stub), regardless of what
-    gateway.toml enabled. team_root wiring must produce a real, callable
-    factory — not leave the daemon permanently echoing.
-    """
-    from arcgateway.config import GatewayConfig
-
-    team_root = tmp_path / "team"
-    toml_text = f"""
-[gateway]
-tier = "personal"
-agent_did = "did:arc:agent:test"
-runtime_dir = "{tmp_path}"
-team_root = "{team_root}"
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-    config = GatewayConfig.from_toml(config_file)
-
-    runner = GatewayRunner.from_config(config)
-    assert isinstance(runner._executor, AsyncioExecutor)
-    assert runner._executor.agent_factory is not None
-
-
-def test_from_config_personal_tier_no_team_root_fails_closed(tmp_path: Path) -> None:
-    """No [gateway].team_root at personal tier refuses to start — no echo-stub fallback."""
-    from arcgateway.config import GatewayConfig
-    from arcgateway.runner import GatewayMisconfiguredError
-
-    toml_text = f"""
-[gateway]
-tier = "personal"
-agent_did = "did:arc:agent:test"
-runtime_dir = "{tmp_path}"
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-    config = GatewayConfig.from_toml(config_file)
-
-    with pytest.raises(GatewayMisconfiguredError, match="team_root"):
-        GatewayRunner.from_config(config)
-
-
-def test_from_config_enterprise_tier_no_team_root_fails_closed(tmp_path: Path) -> None:
-    """No [gateway].team_root at enterprise tier also refuses to start."""
-    from arcgateway.config import GatewayConfig
-    from arcgateway.runner import GatewayMisconfiguredError
-
-    toml_text = f"""
-[gateway]
-tier = "enterprise"
-agent_did = "did:arc:agent:test"
-runtime_dir = "{tmp_path}"
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-    config = GatewayConfig.from_toml(config_file)
-
-    with pytest.raises(GatewayMisconfiguredError, match="team_root"):
-        GatewayRunner.from_config(config)
 
 
 def test_from_config_federal_tier_uses_subprocess_executor(tmp_path: Path) -> None:
@@ -468,7 +405,6 @@ def test_from_config_require_pairing_false_leaves_pairing_store_unset(tmp_path: 
 tier = "personal"
 agent_did = "did:arc:agent:test"
 runtime_dir = "{tmp_path}"
-team_root = "{tmp_path / "team"}"
 
 [security]
 require_pairing = false
@@ -500,7 +436,6 @@ def test_from_config_require_pairing_true_wires_pairing_store(tmp_path: Path) ->
 tier = "personal"
 agent_did = "did:arc:agent:test"
 runtime_dir = "{tmp_path}"
-team_root = "{tmp_path / "team"}"
 
 [security]
 require_pairing = true
@@ -531,7 +466,6 @@ def test_from_config_require_pairing_true_uses_configured_db_path(tmp_path: Path
 tier = "personal"
 agent_did = "did:arc:agent:test"
 runtime_dir = "{tmp_path}"
-team_root = "{tmp_path / "team"}"
 
 [security]
 require_pairing = true

@@ -6,12 +6,6 @@ Sections mirror the TOML structure used by ``arc gateway start --config``:
     tier = "personal"        # "personal" | "enterprise" | "federal"
     agent_did = "did:arc:agent:default"
     runtime_dir = "~/.arc/gateway/run"
-    team_root = "~/.arc/team"  # Required at personal/enterprise tier — the
-                                # standalone daemon resolves agent_did -> a
-                                # <team_root>/<name>/arcagent.toml directory
-                                # the same way the embedded arcui path does.
-                                # Unset: startup fails closed (never silently
-                                # serves an echo-stub agent).
 
     [security]
     require_pairing = false  # Require DM pairing before routing to agent
@@ -83,26 +77,15 @@ def _config_base_dir() -> Path:
 
 
 class GatewaySection(BaseModel):
-    """[gateway] section.
-
-    ``team_root`` gives the STANDALONE daemon (``arc gateway start``) the
-    same agent-resolution capability the embedded arcui path already has
-    via ``bootstrap.build_for_embedded``. Without it, personal/enterprise
-    tier has no agent to run — see ``GatewayRunner.from_config``, which
-    fails closed rather than silently falling back to the echo-stub
-    executor when this is unset.
-    """
+    """[gateway] section."""
 
     tier: Literal["personal", "enterprise", "federal"] = "personal"
     agent_did: str = "did:arc:agent:default"
     runtime_dir: Path = Field(default_factory=lambda: _config_base_dir() / "gateway" / "run")
-    team_root: Path | None = None
 
     @model_validator(mode="after")
     def _expand_paths(self) -> GatewaySection:
         self.runtime_dir = Path(str(self.runtime_dir)).expanduser().resolve()
-        if self.team_root is not None:
-            self.team_root = Path(str(self.team_root)).expanduser().resolve()
         return self
 
 

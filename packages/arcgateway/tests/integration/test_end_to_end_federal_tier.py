@@ -77,18 +77,12 @@ runtime_dir = "{tmp_path / "run"}"
 
 
 def _personal_config(tmp_path: Path) -> GatewayConfig:
-    """Return a minimal personal-tier GatewayConfig.
-
-    team_root is required at personal/enterprise tier — GatewayRunner.from_config
-    fails closed (GatewayMisconfiguredError) without it rather than silently
-    falling back to the echo-stub executor.
-    """
+    """Return a minimal personal-tier GatewayConfig."""
     return GatewayConfig.from_toml_str(f"""
 [gateway]
 tier = "personal"
 agent_did = "did:arc:agent:personal_test"
 runtime_dir = "{tmp_path / "run"}"
-team_root = "{tmp_path / "team"}"
 """)
 
 
@@ -122,7 +116,6 @@ class TestTierExecutorSelection:
 [gateway]
 tier = "enterprise"
 runtime_dir = "{tmp_path / "run"}"
-team_root = "{tmp_path / "team"}"
 """)
         runner = GatewayRunner.from_config(config)
         assert isinstance(runner._executor, AsyncioExecutor), (
