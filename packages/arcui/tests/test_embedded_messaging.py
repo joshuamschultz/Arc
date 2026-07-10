@@ -141,15 +141,19 @@ class TestBuilder:
         # Fail-safe: no audit authority => no service (routes degrade to an
         # explicit error) rather than a service on a wrong-key audit chain.
         monkeypatch.setattr(messaging, "_operator_signer", lambda: None)
-        service, backend = await messaging.build_messaging_service(backend=MemoryBackend())
+        service, registry, backend = await messaging.build_messaging_service(
+            backend=MemoryBackend()
+        )
         assert service is None
+        assert registry is None
         assert backend is None
 
     async def test_build_over_injected_backend(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(messaging, "_operator_signer", lambda: InProcessSigner(_SIGNER_SEED))
         backend = await _staged_backend()
-        service, returned = await messaging.build_messaging_service(backend=backend)
+        service, registry, returned = await messaging.build_messaging_service(backend=backend)
         assert service is not None
+        assert registry is not None
         assert returned is backend
         channels = await service.list_channels()
         assert [c.name for c in channels] == ["work"]

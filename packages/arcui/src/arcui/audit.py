@@ -31,6 +31,11 @@ class UIAuditEvent(StrEnum):
     AUTH_FAILURE = "auth.failure"
     AUTH_SUCCESS = "auth.success"
     AUTH_REJECTED = "auth.rejected"
+    # COMP-010: one event name for every UI-originated mutation (memory
+    # edit/delete, channel create/membership, workspace-file save). The
+    # specific verb rides in the ``operation`` field, so the taxonomy stays
+    # stable as mutation routes are added.
+    UI_MUTATION = "ui.mutation"
 
 
 class SessionStartFields(BaseModel):
@@ -67,6 +72,24 @@ class AgentAutoconnectFields(BaseModel):
     uid: int
     url: str
     reason: str
+
+
+class MutationAuditFields(BaseModel):
+    """Required fields for a UI-originated mutation (COMP-010, NIST AU-3).
+
+    Pydantic enforces presence at construction so a mutation route can never
+    silently emit a partial audit record. ``actor_role`` + ``session_id`` bind
+    the change to the authenticated operator session; ``target`` names the
+    thing changed (agent DID, channel name, memory id); ``operation`` is the
+    verb (``channel.create``); ``outcome`` records whether it took effect.
+    """
+
+    actor_role: str
+    session_id: str
+    target: str
+    operation: str
+    outcome: str  # "applied" | "denied" | "error"
+    detail: str = ""
 
 
 # Key names that mark a value as sensitive.
@@ -196,9 +219,44 @@ class UIAuditLogger:
                 )
 
 
+def emit_mutation_audit(
+    request: Any,
+    *,
+    target: str,
+    operation: str,
+    outcome: str,
+    detail: str = "",
+) -> None:
+    """Single emission point for every UI-originated mutation (COMP-010).
+
+    Resolves the actor (role + session id) from the auth layer's per-request
+    state and emits one ``ui.mutation`` audit event through the shared
+    ``app.state.audit`` sink. Mutation routes call this — never ``audit_event``
+    directly — so actor/target/operation/outcome are recorded uniformly.
+    Absent audit sink (a bare test app) is a no-op, matching the session-start
+    emitter's tolerance.
+    """
+    audit = getattr(request.app.state, "audit", None)
+    if audit is None:
+        return
+    role = getattr(request.state, "role", None) or "unknown"
+    session_id = getattr(request.state, "session_id", None) or "unknown"
+    fields = MutationAuditFields(
+        actor_role=role,
+        session_id=session_id,
+        target=target,
+        operation=operation,
+        outcome=outcome,
+        detail=detail,
+    )
+    audit.audit_event(UIAuditEvent.UI_MUTATION, fields.model_dump())
+
+
 __all__ = [
     "AgentAutoconnectFields",
+    "MutationAuditFields",
     "SessionStartFields",
     "UIAuditEvent",
     "UIAuditLogger",
+    "emit_mutation_audit",
 ]

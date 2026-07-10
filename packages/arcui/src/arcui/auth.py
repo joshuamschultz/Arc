@@ -155,6 +155,22 @@ class SessionTracker:
             return session_id, "browser_bootstrap"
         return session_id, "manual_token"
 
+    def session_id_for(self, token: str, remote_addr: str) -> str:
+        """Return the stable session id for a (token, addr), creating if absent.
+
+        Unlike :meth:`observe` this never gates on first-sight — it always
+        yields the id so a mutation audit (COMP-010) can attribute the change
+        to the session on every request, not only the session-start one.
+        """
+        key = (self._hash(token), remote_addr)
+        existing = self._sessions.get(key)
+        if existing is not None:
+            self._sessions.touch(key)
+            return str(existing)
+        session_id = secrets.token_hex(8)
+        self._sessions.put(key, session_id)
+        return session_id
+
 
 class AuthConfig:
     """Token-to-role mapping. Auto-generates tokens if not provided."""
@@ -223,8 +239,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.role = role
         # SPEC-019 T5.3: emit session_start at-most-once per (token, addr).
         self._maybe_emit_session_start(request, token)
+        # COMP-010: expose the session id so mutation routes can attribute an
+        # audit event to this operator session on every request.
+        self._set_session_id(request, token)
         logger.debug("auth.ok path=%s role=%s", path, role)
         return await call_next(request)
+
+    @staticmethod
+    def _set_session_id(request: Request, token: str) -> None:
+        """Stash the auth-layer session id on request.state (COMP-010).
+
+        Runs after ``_maybe_emit_session_start`` so first-sight session
+        creation (and its at-most-once audit) has already happened; this just
+        reads back the stable id. No tracker (a bare test app) leaves the
+        attribute unset — the mutation audit helper then falls back to
+        ``"unknown"``.
+        """
+        tracker = getattr(request.app.state, "session_tracker", None)
+        if tracker is None:
+            return
+        client = request.client
+        remote_addr = client.host if client is not None else "unknown"
+        request.state.session_id = tracker.session_id_for(token, remote_addr)
 
     @staticmethod
     def _maybe_emit_session_start(request: Request, token: str) -> None:

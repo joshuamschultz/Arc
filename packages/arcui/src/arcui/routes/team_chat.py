@@ -28,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.audit import emit_mutation_audit
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -141,7 +142,193 @@ async def channel_messages(request: Request) -> JSONResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Channel management (COMP-005 / REQ-091, REQ-092) — operator-only, audited.
+# ---------------------------------------------------------------------------
+
+
+def _registry_or_none(request: Request) -> Any | None:
+    """The arcteam EntityRegistry wired alongside the messaging service."""
+    return getattr(request.app.state, "messaging_registry", None)
+
+
+def _is_operator(request: Request) -> bool:
+    """True when the authenticated caller holds the operator role."""
+    return getattr(request.state, "role", None) == "operator"
+
+
+def _bad_request(message: str) -> JSONResponse:
+    return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=400)
+
+
+def _forbidden() -> JSONResponse:
+    return JSONResponse(
+        ErrorResponse(error="operator_role_required").model_dump(mode="json"),
+        status_code=403,
+    )
+
+
+async def _json_body(request: Request) -> dict[str, Any] | None:
+    """Parse a JSON object body, or None if it is absent/not an object."""
+    try:
+        body = await request.json()
+    except Exception:  # reason: malformed body is a client error, not a 500
+        return None
+    return body if isinstance(body, dict) else None
+
+
+async def create_channel_route(request: Request) -> JSONResponse:
+    """POST /api/team/channels — create a channel (operator only)."""
+    from arcteam.registry import UnknownHandle, resolve
+    from arcteam.types import Channel
+
+    svc = _service_or_none(request)
+    if svc is None:
+        return _unavailable()
+
+    body = await _json_body(request)
+    if body is None:
+        return _bad_request("expected a JSON object body")
+    name = body.get("name")
+    if not isinstance(name, str) or not _VALID_CHANNEL_NAME_RE.match(name):
+        return _bad_request("invalid or missing channel name")
+    target = f"channel://{name}"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="channel.create",
+            outcome="denied",
+            detail="viewer role",
+        )
+        return _forbidden()
+
+    members = body.get("members", [])
+    if not isinstance(members, list):
+        return _bad_request("members must be a list")
+
+    member_dids: list[str] = []
+    if members:
+        registry = _registry_or_none(request)
+        if registry is None:
+            return _unavailable()
+        try:
+            member_dids = [await resolve(registry, ref) for ref in members]
+        except UnknownHandle as exc:
+            emit_mutation_audit(
+                request,
+                target=target,
+                operation="channel.create",
+                outcome="error",
+                detail=str(exc),
+            )
+            return _bad_request(f"unknown member ref: {exc}")
+
+    try:
+        await svc.create_channel(Channel(name=name, members=member_dids))
+    except ValueError as exc:  # arcteam raises on a duplicate name
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="channel.create",
+            outcome="denied",
+            detail="duplicate",
+        )
+        return JSONResponse(ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=409)
+
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation="channel.create",
+        outcome="applied",
+        detail=f"members={member_dids}",
+    )
+    return JSONResponse({"name": name, "members": member_dids}, status_code=201)
+
+
+async def _mutate_member(request: Request, *, operation: str) -> JSONResponse:
+    """Shared add/remove-member handler; ``operation`` picks the service call."""
+    from arcteam.registry import UnknownHandle, resolve
+
+    channel_name = request.path_params["channel_name"]
+    if not _VALID_CHANNEL_NAME_RE.match(channel_name):
+        return _bad_request("invalid channel name")
+    target = f"channel://{channel_name}"
+
+    svc = _service_or_none(request)
+    registry = _registry_or_none(request)
+    if svc is None or registry is None:
+        return _unavailable()
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation=operation,
+            outcome="denied",
+            detail="viewer role",
+        )
+        return _forbidden()
+
+    body = await _json_body(request)
+    member_ref = body.get("member") if body else None
+    if not isinstance(member_ref, str) or not member_ref:
+        return _bad_request("missing member ref")
+
+    try:
+        member_did = await resolve(registry, member_ref)
+    except UnknownHandle as exc:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="error", detail=str(exc)
+        )
+        return _bad_request(f"unknown member ref: {exc}")
+
+    call = svc.join_channel if operation == "channel.member_add" else svc.leave_channel
+    try:
+        await call(channel_name, member_did)
+    except ValueError as exc:  # channel not found
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="error", detail=str(exc)
+        )
+        return JSONResponse(ErrorResponse(error=str(exc)).model_dump(mode="json"), status_code=404)
+
+    emit_mutation_audit(
+        request,
+        target=target,
+        operation=operation,
+        outcome="applied",
+        detail=f"member={member_did}",
+    )
+    return JSONResponse({"channel": channel_name, "member": member_did})
+
+
+async def add_member_route(request: Request) -> JSONResponse:
+    """POST /api/team/channels/{channel_name}/members — add a member."""
+    return await _mutate_member(request, operation="channel.member_add")
+
+
+async def remove_member_route(request: Request) -> JSONResponse:
+    """DELETE /api/team/channels/{channel_name}/members — remove a member."""
+    return await _mutate_member(request, operation="channel.member_remove")
+
+
 routes = [
-    Route("/api/team/channels", list_channels),
-    Route("/api/team/channels/{channel_name}/messages", channel_messages),
+    Route("/api/team/channels", list_channels, methods=["GET"]),
+    Route("/api/team/channels", create_channel_route, methods=["POST"]),
+    Route(
+        "/api/team/channels/{channel_name}/members",
+        add_member_route,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/team/channels/{channel_name}/members",
+        remove_member_route,
+        methods=["DELETE"],
+    ),
+    Route(
+        "/api/team/channels/{channel_name}/messages",
+        channel_messages,
+        methods=["GET"],
+    ),
 ]

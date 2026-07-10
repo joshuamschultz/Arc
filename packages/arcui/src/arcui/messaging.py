@@ -104,22 +104,26 @@ def _operator_signer() -> Any | None:
         return None
 
 
-async def build_messaging_service(*, backend: Any | None = None) -> tuple[Any | None, Any | None]:
-    """Construct the embedded MessagingService, or ``(None, None)``.
+async def build_messaging_service(
+    *, backend: Any | None = None
+) -> tuple[Any | None, Any | None, Any | None]:
+    """Construct the embedded MessagingService, or ``(None, None, None)``.
 
-    Returns ``(service, backend)`` — the caller owns ``backend`` and closes it
-    on shutdown. Returns ``(None, None)`` when the audit authority is absent or
-    the broker is unreachable, so the channel routes surface an explicit
-    service-unavailable error instead of a fabricated empty list.
+    Returns ``(service, registry, backend)`` — the registry lets channel-
+    management routes resolve agent refs to DIDs (COMP-005), and the caller
+    owns ``backend`` and closes it on shutdown. Returns ``(None, None, None)``
+    when the audit authority is absent or the broker is unreachable, so the
+    channel routes surface an explicit service-unavailable error instead of a
+    fabricated empty list.
     """
     signer = _operator_signer()
     if signer is None:
-        return None, None
+        return None, None, None
 
     if backend is None:
         backend = await _connect_backend()
         if backend is None:
-            return None, None
+            return None, None, None
 
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
@@ -129,7 +133,7 @@ async def build_messaging_service(*, backend: Any | None = None) -> tuple[Any | 
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
     service = MessagingService(backend, registry, audit)
-    return service, backend
+    return service, registry, backend
 
 
 __all__ = ["build_messaging_service"]
