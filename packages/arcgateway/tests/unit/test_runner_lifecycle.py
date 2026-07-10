@@ -482,6 +482,76 @@ db_path = "{db_path}"
     assert runner._pairing_store._db_path == db_path.expanduser().resolve()
 
 
+def test_from_config_require_pairing_true_seeds_user_allowlist_from_platforms(
+    tmp_path: Path,
+) -> None:
+    """Task #34: [platforms.telegram].allowed_user_ids must reach the
+    SessionRouter's PairingInterceptor, not just live in unused config.
+
+    Without this, an allowlisted user still fell through to the (empty, for a
+    never-before-paired user) pairing_store lookup on their first message —
+    the static allowlist was pure config-file decoration.
+    """
+    from arcgateway.config import GatewayConfig
+
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{tmp_path / "pairing.db"}"
+
+[platforms.telegram]
+enabled = true
+allowed_user_ids = [555]
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner.session_router._pairing._user_allowlist == {"did:arc:telegram:555"}
+
+
+def test_from_config_require_pairing_false_does_not_seed_user_allowlist(
+    tmp_path: Path,
+) -> None:
+    """require_pairing=false must leave _user_allowlist None even if a platform
+    has allowed_user_ids configured — otherwise PairingInterceptor's "no
+    allowlist AND no store => enforcement disabled" fast path breaks for
+    OTHER platforms (e.g. web) that reach SessionRouter with no allowlist
+    concept of their own — a regression this fix must not introduce.
+    """
+    from arcgateway.config import GatewayConfig
+
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = false
+
+[platforms.telegram]
+enabled = true
+allowed_user_ids = [555]
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner.session_router._pairing._user_allowlist is None
+
+
 # ---------------------------------------------------------------------------
 # reconnect watcher — FailedAdapter dataclass
 # ---------------------------------------------------------------------------

@@ -129,6 +129,7 @@ class GatewayRunner:
         executor: Executor | None = None,
         runtime_dir: Path | None = None,
         pairing_store: Any | None = None,
+        user_allowlist: set[str] | None = None,
     ) -> None:
         """Initialise GatewayRunner.
 
@@ -144,11 +145,22 @@ class GatewayRunner:
                 both concerns, so `arc gateway pair approve` (a separate CLI
                 process writing to the same db_path) takes effect on the
                 live gateway's very next message.
+            user_allowlist: Optional static set of pre-approved user_did
+                values (task #34), wired into the SessionRouter's
+                PairingInterceptor alongside pairing_store so a statically
+                allowlisted user is approved on their FIRST message —
+                without this, every user fell through to the (empty, for a
+                never-before-paired user) pairing_store lookup regardless
+                of a correctly configured allowed_user_ids.
         """
         self._adapters: list[BasePlatformAdapter] = adapters or []
         self._executor: Executor = executor or AsyncioExecutor()
         self._runtime_dir: Path = runtime_dir or _DEFAULT_RUNTIME_DIR
-        self._session_router = SessionRouter(executor=self._executor, pairing_store=pairing_store)
+        self._session_router = SessionRouter(
+            executor=self._executor,
+            pairing_store=pairing_store,
+            user_allowlist=user_allowlist,
+        )
         self._failed_adapters: dict[str, FailedAdapter] = {}
         self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}
         self._shutdown_event = asyncio.Event()
@@ -229,11 +241,21 @@ class GatewayRunner:
         # SessionRouter's PairingInterceptor. Left unset (the default), the
         # interceptor is a no-op — matching every deployment's current
         # behaviour until pairing is explicitly opted into.
+        #
+        # The static user_allowlist is seeded ONLY inside this block, not
+        # unconditionally: seeding it while require_pairing=false would make
+        # PairingInterceptor start denying non-allowlisted users from OTHER
+        # platforms (e.g. web) that reach SessionRouter with no adapter-level
+        # allowlist gate of their own — a regression for the very deployments
+        # this branch is not supposed to touch (task #34).
         pairing_store: Any | None = None
+        user_allowlist: set[str] | None = None
         if config.security.require_pairing:
             from arcgateway.pairing import PairingStore
+            from arcgateway.pairing_allowlist import build_user_allowlist
 
             pairing_store = PairingStore(db_path=config.pairing.db_path, tier=tier)
+            user_allowlist = build_user_allowlist(config.platforms)
             _logger.info(
                 "GatewayRunner.from_config: require_pairing=true — PairingStore wired (db=%s)",
                 config.pairing.db_path,
@@ -244,6 +266,7 @@ class GatewayRunner:
             executor=executor,
             runtime_dir=config.gateway.runtime_dir,
             pairing_store=pairing_store,
+            user_allowlist=user_allowlist,
         )
 
     def add_adapter(self, adapter: BasePlatformAdapter) -> None:

@@ -217,20 +217,33 @@ async def build_for_embedded(
     # not GatewayRunner — so wiring pairing only into GatewayRunner.from_config
     # would leave every real deployment's pairing permanently disabled
     # regardless of config. Mirrors GatewayRunner.from_config's wiring.
+    #
+    # user_allowlist (task #34) is seeded ONLY inside this block — seeding it
+    # while require_pairing=false would make PairingInterceptor start denying
+    # non-allowlisted users from OTHER platforms (e.g. web) that reach
+    # SessionRouter with no adapter-level allowlist gate of their own, a
+    # regression for deployments this branch is not meant to touch.
     pairing_store: Any | None = None
+    user_allowlist: set[str] | None = None
     if gateway_config.security.require_pairing:
         from arcgateway.pairing import PairingStore
+        from arcgateway.pairing_allowlist import build_user_allowlist
 
         pairing_store = PairingStore(
             db_path=gateway_config.pairing.db_path,
             tier=gateway_config.gateway.tier,
         )
+        user_allowlist = build_user_allowlist(gateway_config.platforms)
         _logger.info(
             "bootstrap: require_pairing=true — PairingStore wired (db=%s)",
             gateway_config.pairing.db_path,
         )
 
-    session_router = SessionRouter(executor=executor, pairing_store=pairing_store)
+    session_router = SessionRouter(
+        executor=executor,
+        pairing_store=pairing_store,
+        user_allowlist=user_allowlist,
+    )
     stream_bridge = StreamBridge()
 
     from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters
