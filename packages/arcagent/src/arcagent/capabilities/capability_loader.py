@@ -77,6 +77,52 @@ _logger = logging.getLogger("arcagent.capabilities.capability_loader")
 ScanRoot = tuple[str, Path]
 
 
+@dataclass(frozen=True)
+class CapabilityOutcome:
+    """One discovered artifact's terminal load verdict, recorded verbatim.
+
+    Emitted for every skill folder and capability ``.py`` the loader reaches,
+    whether it loaded or was refused. ``status`` is the verdict as produced at
+    the decision point and is never re-interpreted downstream (the arcui
+    capability inventory renders it as-is, REQ-094):
+
+      * ``"loaded"``            — registered into the :class:`CapabilityRegistry`.
+      * a :class:`Decision` value (``"deny"`` / ``"new_sighting"``) — the
+        TOFU adjudication for an agent-writable source.
+      * ``"unsigned"``          — a required-signature floor refusal (above
+        personal) before TOFU is consulted.
+      * ``"invalid"``           — AST validation, skill-frontmatter validation,
+        or import failed.
+      * ``"error"``             — a fail-closed exception inside the trust gate.
+
+    For a refused ``.py`` the module never executed, so ``version`` /
+    ``description`` are empty and ``name`` falls back to the file stem; a
+    refused skill still carries the metadata parsed before the gate ran.
+    """
+
+    kind: str  # "tool" | "skill"
+    name: str
+    version: str
+    description: str
+    scan_root: str
+    source_path: str
+    status: str
+    status_detail: str
+
+
+@dataclass(frozen=True)
+class _GateResult:
+    """Outcome of :meth:`CapabilityLoader._passes_trust_gate`.
+
+    ``status`` / ``detail`` are populated only on refusal and carry the
+    verbatim verdict the caller records in a :class:`CapabilityOutcome`.
+    """
+
+    allowed: bool
+    status: str = ""
+    detail: str = ""
+
+
 @dataclass
 class _ReloadDelta:
     """Tracks adds/removes/replaces during a single reload pass."""
@@ -85,6 +131,10 @@ class _ReloadDelta:
     replaced: list[tuple[str, str, str]] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     errors: list[tuple[str, str]] = field(default_factory=list)
+    # Per-item verdicts for every artifact reached this pass — the structured
+    # counterpart to the human-readable diff string, consumed by the arcui
+    # capability inventory seam (COMP-007).
+    outcomes: list[CapabilityOutcome] = field(default_factory=list)
 
     def render(self) -> str:
         """Produce the R-005 diff string."""
@@ -222,9 +272,12 @@ class CapabilityLoader:
             except Exception as exc:  # reason: best-effort — record + continue
                 detail = _short_error(exc)
                 delta.errors.append((str(path), detail))
+                self._record_tool_outcome(delta, path, root_name, "invalid", detail)
                 await self._emit_registration_failed(path, "python", detail)
                 return
-            if not await self._passes_trust_gate(path, path.stem, delta):
+            gate = await self._passes_trust_gate(path, path.stem, delta)
+            if not gate.allowed:
+                self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
                 return
             restricted_builtins = build_restricted_builtins(
                 allow_all_imports=self._allow_all_imports,
@@ -235,6 +288,7 @@ class CapabilityLoader:
         except Exception as exc:  # reason: best-effort — record + continue
             detail = _short_error(exc)
             delta.errors.append((str(path), detail))
+            self._record_tool_outcome(delta, path, root_name, "invalid", detail)
             await self._emit_registration_failed(path, "python", detail)
             return
 
@@ -244,7 +298,7 @@ class CapabilityLoader:
                 continue
             await self._dispatch_capability(value, meta, path, root_name, delta, seen_tools)
 
-    async def _passes_trust_gate(self, path: Path, name: str, delta: _ReloadDelta) -> bool:
+    async def _passes_trust_gate(self, path: Path, name: str, delta: _ReloadDelta) -> _GateResult:
         """Fail-closed Sign gate for any agent-writable source (SPEC-033 B2/C2/D1).
 
         ``path`` is the signed artifact (a ``.py`` file or a skill's
@@ -261,11 +315,13 @@ class CapabilityLoader:
         an unpinned floor is no floor. Fail closed.
         """
         if self._tofu is None and not self._require_signature:
-            return True
+            return _GateResult(allowed=True)
         if self._require_signature and self._trusted_public_key is None:
             await self._deny_capability(path, "signature", "signature required but no pinned key")
             delta.errors.append((str(path), "signature: required but no pinned key — denied"))
-            return False
+            return _GateResult(
+                allowed=False, status="unsigned", detail="required but no pinned key"
+            )
         try:
             source_bytes = path.read_bytes()
             signed = self._trust_backend.verify(
@@ -274,9 +330,11 @@ class CapabilityLoader:
             if self._require_signature and not signed:
                 await self._deny_capability(path, "signature", "missing or invalid signature")
                 delta.errors.append((str(path), "signature: unsigned/invalid — denied"))
-                return False
+                return _GateResult(
+                    allowed=False, status="unsigned", detail="missing or invalid signature"
+                )
             if self._tofu is None:
-                return True
+                return _GateResult(allowed=True)
             source_text = source_bytes.decode("utf-8")
             decision = self._tofu.evaluate(
                 CapabilitySource(name=name, source=source_text, signed=signed)
@@ -284,13 +342,15 @@ class CapabilityLoader:
         except Exception as exc:  # reason: fail-closed — any evaluation error denies
             await self._deny_capability(path, "signature", _short_error(exc))
             delta.errors.append((str(path), f"trust-gate error: {_short_error(exc)}"))
-            return False
+            return _GateResult(allowed=False, status="error", detail=_short_error(exc))
         if decision is Decision.ALLOW:
-            return True
+            return _GateResult(allowed=True)
         action = "new_sighting" if decision is Decision.NEW_SIGHTING else "deny"
         await self._deny_capability(path, action, f"tofu decision {decision.value}")
         delta.errors.append((str(path), f"tofu: {decision.value}"))
-        return False
+        return _GateResult(
+            allowed=False, status=decision.value, detail=f"tofu decision {decision.value}"
+        )
 
     async def _deny_capability(self, path: Path, action: str, reason: str) -> None:
         """Emit the bus + audit event for a Sign-gate refusal."""
@@ -363,6 +423,40 @@ class CapabilityLoader:
             delta.added.append(meta.name)
         elif result.outcome == "replaced" and result.previous_version is not None:
             delta.replaced.append((meta.name, result.previous_version, meta.version))
+        delta.outcomes.append(
+            CapabilityOutcome(
+                kind="tool",
+                name=meta.name,
+                version=meta.version,
+                description=meta.description,
+                scan_root=root_name,
+                source_path=str(path),
+                status="loaded",
+                status_detail="",
+            )
+        )
+
+    @staticmethod
+    def _record_tool_outcome(
+        delta: _ReloadDelta, path: Path, root_name: str, status: str, detail: str
+    ) -> None:
+        """Record a refused/invalid ``.py`` tool candidate (never executed).
+
+        Name falls back to the file stem and version/description are empty —
+        the module never ran, so no ``@tool`` metadata exists.
+        """
+        delta.outcomes.append(
+            CapabilityOutcome(
+                kind="tool",
+                name=path.stem,
+                version="",
+                description="",
+                scan_root=root_name,
+                source_path=str(path),
+                status=status,
+                status_detail=detail,
+            )
+        )
 
     async def _register_skill_folder(
         self,
@@ -376,17 +470,41 @@ class CapabilityLoader:
         if not validation.ok or validation.entry is None:
             detail = "; ".join(f"{e.code}: {e.detail}" for e in validation.errors)
             delta.errors.append((str(skill_md), detail))
+            delta.outcomes.append(
+                CapabilityOutcome(
+                    kind="skill",
+                    name=folder.name,
+                    version="",
+                    description="",
+                    scan_root=root_name,
+                    source_path=str(skill_md),
+                    status="invalid",
+                    status_detail=detail,
+                )
+            )
             await self._emit_registration_failed(skill_md, "skill", detail)
             return
+        entry = validation.entry
         # SKILL.md is injected into the agent prompt (LLM01/ASI06), so an
         # agent-writable skill folder passes the same Sign/TOFU gate as a .py.
-        if root_name in _UNTRUSTED_ROOTS and not await self._passes_trust_gate(
-            skill_md, folder.name, delta
-        ):
-            return
+        if root_name in _UNTRUSTED_ROOTS:
+            gate = await self._passes_trust_gate(skill_md, folder.name, delta)
+            if not gate.allowed:
+                delta.outcomes.append(
+                    CapabilityOutcome(
+                        kind="skill",
+                        name=entry.name,
+                        version=entry.version,
+                        description=entry.description,
+                        scan_root=root_name,
+                        source_path=str(skill_md),
+                        status=gate.status,
+                        status_detail=gate.detail,
+                    )
+                )
+                return
         for warning in validation.warnings:
             await self._emit_registration_warning(skill_md, warning.code, warning.detail)
-        entry = validation.entry
         prior = self._known_skills.get(entry.name)
         result = await self._registry.register_skill(entry)
         self._known_skills[entry.name] = entry.version
@@ -395,6 +513,18 @@ class CapabilityLoader:
             delta.added.append(entry.name)
         elif result.outcome == "replaced" and result.previous_version is not None:
             delta.replaced.append((entry.name, result.previous_version, entry.version))
+        delta.outcomes.append(
+            CapabilityOutcome(
+                kind="skill",
+                name=entry.name,
+                version=entry.version,
+                description=entry.description,
+                scan_root=root_name,
+                source_path=str(skill_md),
+                status="loaded",
+                status_detail="",
+            )
+        )
 
     async def _remove_unseen(
         self,
@@ -584,4 +714,4 @@ def _topological_sort(
     return out
 
 
-__all__ = ["CapabilityLoader", "ScanRoot"]
+__all__ = ["CapabilityLoader", "CapabilityOutcome", "ScanRoot"]
