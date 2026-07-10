@@ -1,13 +1,12 @@
-"""Episodic store — the raw event stream (SQLite) + daily-log bullets (markdown).
+"""Episodic store — the raw event stream (SQLite).
 
-Two writes per event, both append-only and order-preserving:
+One append-only, order-preserving write per event: the raw row goes to the per-agent
+``episodic`` table with a per-scope monotonic ``seq`` (so adjacency for enrichment
+survives even if timestamps collide). This is the audit-grade transcript.
 
-* the raw row goes to the per-agent ``episodic`` table with a per-scope monotonic
-  ``seq`` (so adjacency for enrichment survives even if timestamps collide);
-* a human-readable bullet goes to ``memory/daily-log/YYYY-MM-DD.md`` (glass-box,
-  the curated truth a human can read/edit).
-
-Absorbs the old ``bio_memory`` daily-notes / ``working.md`` behavior.
+The human-readable *curated* daily-notes (``memory/daily-log/*.md``) are a separate,
+consolidation-written concern (see :class:`~arcmemory.stores.daily.DailyNotesStore`);
+the raw stream is never duplicated to a glass-box file here.
 """
 
 from __future__ import annotations
@@ -17,18 +16,15 @@ from pathlib import Path
 from typing import Any
 
 from arcmemory.db import MemoryDB
-from arcmemory.mdfile import atomic_write_text, parse_document, render_document
-from arcmemory.security import dominating_classification
 from arcmemory.types import Event
 
 
 class EpisodicStore:
-    """Append raw events + daily-log bullets for one scope."""
+    """Append + read the raw event stream for one scope."""
 
     def __init__(self, db: MemoryDB, workspace: Path) -> None:
         self._db = db
         self._workspace = Path(workspace)
-        self._daily_dir = self._workspace / "memory" / "daily-log"
 
     def append(self, event: Event) -> None:
         """Persist one raw event to the stream with a per-scope monotonic seq."""
@@ -54,26 +50,6 @@ class EpisodicStore:
             ),
         )
         conn.commit()
-
-    def append_bullet(self, event: Event) -> Path:
-        """Append a bullet for ``event`` to today's daily-log; return the file path.
-
-        The day-file carries a frontmatter ``classification`` = the dominating label of
-        every bullet written to it, so the glass-box file channel is gated exactly like
-        the raw stream (no unclassified-plaintext leak of a classified capture).
-        """
-        day = event.ts[:10]  # YYYY-MM-DD prefix of the ISO timestamp
-        self._daily_dir.mkdir(parents=True, exist_ok=True)
-        path = self._daily_dir / f"{day}.md"
-        prior_label, body = "", ""
-        if path.exists():
-            fm, body = parse_document(path.read_text(encoding="utf-8"))
-            prior_label = str(fm.get("classification", ""))
-        label = dominating_classification([prior_label, event.classification])
-        bullet = f"- {event.ts} [{event.kind}] {event.text}"
-        new_body = f"{body.rstrip()}\n{bullet}" if body.strip() else bullet
-        atomic_write_text(path, render_document({"classification": label}, new_body))
-        return path
 
     def events(self, scope_key: str) -> list[Event]:
         """Return all events for a scope, in stream (seq) order."""

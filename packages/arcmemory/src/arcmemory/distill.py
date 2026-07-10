@@ -70,17 +70,34 @@ class InsightMint(BaseModel):
     insights: list[InsightCandidate] = Field(default_factory=list)
 
 
+class DaySummaryDraft(BaseModel):
+    """The distiller's proposed daily rollup (the structured-output shape).
+
+    Bulleted lists only — the curated, high-signal condensation of a day's raw
+    events. ``day`` and ``classification`` are derived by the caller (not the LLM),
+    so they are absent here.
+    """
+
+    summary: list[str] = Field(default_factory=list)
+    people: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    tasks: list[str] = Field(default_factory=list)
+
+
 class Distiller(Protocol):
     """The bounded structured-completion seam. Injected, never imported.
 
-    Two single-shot calls, no agentic loop: ``extract_facts`` reads the window and
-    proposes fact triplets; ``mint_insights`` reads the window + the freshly
-    extracted facts and proposes abstractions.
+    Three single-shot calls, no agentic loop: ``extract_facts`` reads the window and
+    proposes fact triplets; ``mint_insights`` reads the window + the freshly extracted
+    facts and proposes abstractions; ``summarize_day`` condenses a day's events into
+    the curated daily-notes bullets.
     """
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction: ...
 
     async def mint_insights(self, events: list[Event], facts: list[Fact]) -> InsightMint: ...
+
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft: ...
 
 
 def confidence_from_hits(hits: float, gamma: float) -> float:

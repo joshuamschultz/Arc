@@ -112,6 +112,28 @@ class Entity(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class DaySummary(BaseModel):
+    """A curated daily rollup — the human-readable daily notes.
+
+    The distiller condenses a day's raw events into these bulleted lists; the raw
+    transcript stays in the episodic stream + audit log, never here (glass-box,
+    high-signal — the searchable curated truth, not a transcript). ``classification``
+    is the dominating label of the day's events, so the file channel is gated exactly
+    like the raw stream (no unclassified-plaintext leak of a classified day).
+    """
+
+    day: str  # YYYY-MM-DD
+    summary: list[str] = Field(default_factory=list)
+    people: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    tasks: list[str] = Field(default_factory=list)
+    classification: str = "unclassified"
+
+    def is_empty(self) -> bool:
+        """True when no category carries a bullet (nothing worth a file)."""
+        return not (self.summary or self.people or self.decisions or self.tasks)
+
+
 class Procedure(BaseModel):
     """A how-to card promoted from a repeated action-sequence."""
 
@@ -209,6 +231,7 @@ class ConsolidationResult(BaseModel):
     facts_updated: int = 0
     insights_minted: int = 0
     procedures_promoted: int = 0
+    days_summarized: int = 0
     edges_decayed: int = 0
     files_rewritten: int = 0
     window_events: int = 0
@@ -218,6 +241,7 @@ __all__ = [
     "Bundle",
     "Confidence",
     "ConsolidationResult",
+    "DaySummary",
     "Entity",
     "Event",
     "Fact",

@@ -15,6 +15,12 @@ enabled = true
 
 [modules.memory.config]
 brain = "arcmemory"
+# The distiller is the LLM seam that turns the raw event stream into durable
+# curated memory (entity/person/place files, insights, daily summaries). Without
+# it, consolidation is a no-op and only the zero-LLM daily stream is written.
+# Override to match your agent's provider/model.
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
 
 [modules.skills]
 enabled = true

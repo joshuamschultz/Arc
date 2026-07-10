@@ -163,7 +163,7 @@ async def test_active_brain_injects_no_disabled_note() -> None:
 
 
 async def test_wired_arcmemory_capture_and_recall_activate(tmp_path: Path) -> None:
-    """brain='arcmemory' -> capture writes glass-box files; recall activates."""
+    """brain='arcmemory' -> capture persists the raw stream; recall activates."""
     pytest.importorskip("arcmemory")
     _runtime.configure(config={"brain": "arcmemory"}, workspace=tmp_path, agent_did=_DID)
     st = _runtime.state()
@@ -173,8 +173,10 @@ async def test_wired_arcmemory_capture_and_recall_activate(tmp_path: Path) -> No
     await capture_respond(
         _ctx({"messages": [{"role": "assistant", "content": "Ada owns the payments service"}]})
     )
-    daily = list((tmp_path / "memory" / "daily-log").glob("*.md"))
-    assert daily, "wired capture must write a daily-log bullet"
+    # Fast capture persists the raw episodic stream (SQLite). The curated daily-notes
+    # are a consolidation output, so a bare capture writes no glass-box daily-log file.
+    assert (tmp_path / "memory" / "index.db").exists()
+    assert not (tmp_path / "memory" / "daily-log").exists()
 
     sections: dict[str, str] = {}
     await inject_recall(_ctx({"sections": sections, "query": "who owns payments"}))

@@ -105,11 +105,14 @@ class TestCreate:
         assert config["telemetry"]["service_name"] == "test-bot"
 
     def test_create_defaults_memory_to_arcmemory(self, tmp_path):
-        # Fresh agents get memory ON so daily-log + episodic index populate.
+        # Fresh agents get memory ON: raw stream + entity graph populate on capture,
+        # and the distiller is wired so consolidation writes the curated files
+        # (entity cards, insights, daily-notes) — not left a silent no-op.
         _arc("agent", "create", "mem-bot", "--dir", str(tmp_path))
         config = tomllib.loads((tmp_path / "mem-bot" / "arcagent.toml").read_text())
         assert config["modules"]["memory"]["enabled"] is True
         assert config["modules"]["memory"]["config"]["brain"] == "arcmemory"
+        assert config["modules"]["memory"]["config"]["distill_provider"]
 
     def test_create_workspace_structure(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path))

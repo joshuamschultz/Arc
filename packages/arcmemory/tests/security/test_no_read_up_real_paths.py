@@ -2,12 +2,13 @@
 
 The unit tests in ``test_security.py`` feed hand-built ``Recall`` objects (with a
 classification already set) straight into ``gate_no_read_up``. That never exercises
-the paths where the label is *threaded*: an episodic event, a daily-log bullet, and
-an insight minted from them. This module drives the production ``ArcMemoryBrain`` end
-to end — ``capture(text, classification="SECRET")`` then ``retrieve(clearance=…)`` —
-and proves a SECRET memory is dropped for an UNCLASSIFIED caller on **every** channel
-(episodic, daily-log file, minted insight), that a missing label **fails closed** at
-federal, and that a dropped item leaks nothing into the returned bundle.
+the paths where the label is *threaded*: an episodic event, a curated daily-notes
+file, and an insight minted from them. This module drives the production
+``ArcMemoryBrain`` end to end — ``capture(text, classification="SECRET")`` then
+``consolidate()`` then ``retrieve(clearance=…)`` — and proves a SECRET memory is
+dropped for an UNCLASSIFIED caller on **every** channel (episodic, daily-notes file,
+minted insight), that a missing label **fails closed** at federal, and that a dropped
+item leaks nothing into the returned bundle.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from arctrust.classification import Classification
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig
 from arcmemory.db import DEFAULT_DIMS
-from arcmemory.distill import FactExtraction, InsightCandidate, InsightMint
+from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightCandidate, InsightMint
 from arcmemory.types import Event
 
 _DID = "did:arc:secret-agent"
@@ -70,6 +71,11 @@ class SecretInsightDistiller:
             ]
         )
 
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        # The day's curated notes echo the sensitive term; the day is SECRET-labeled
+        # (dominating label of its events), so this file channel must be gated too.
+        return DaySummaryDraft(summary=["the launch override code was discussed"])
+
 
 def _dropped_sources(sink: RecordingSink) -> list[str]:
     return [str(e.extra.get("source")) for e in sink.events if e.action == "recall.dropped"]
@@ -77,22 +83,31 @@ def _dropped_sources(sink: RecordingSink) -> list[str]:
 
 async def test_secret_episodic_and_daily_log_dropped_for_unclassified(workspace: Path) -> None:
     sink = RecordingSink()
-    brain = ArcMemoryBrain(workspace, _DID, audit_sink=sink)  # BM25 + graph (no embedder)
+    brain = ArcMemoryBrain(
+        workspace,
+        _DID,
+        distiller=SecretInsightDistiller(
+            statement="A guarded override procedure recurs across shifts.",
+            trigger="a protected override sequence is asserted",
+        ),
+        audit_sink=sink,
+    )  # BM25 + graph (no embedder)
 
     await brain.capture(
         "the launch override code is alpha-seven", kind="obs", classification="SECRET"
     )
+    await brain.consolidate()  # writes a SECRET-labeled curated daily-notes file
     text = await brain.retrieve(
         "launch override code", clearance=Classification.UNCLASSIFIED.name, top_k=5, budget=10_000
     )
 
     # The SECRET text never reaches an UNCLASSIFIED caller — via EITHER the raw
-    # episodic chunk OR the daily-log file chunk (both carried the real label).
+    # episodic chunk OR the curated daily-notes file chunk (both carried the real label).
     assert "alpha-seven" not in text
     assert "override" not in text
     dropped = _dropped_sources(sink)
     assert any(s.startswith("event:") for s in dropped), "episodic stream leak not gated"
-    assert any("daily-log" in s for s in dropped), "daily-log file channel leak not gated"
+    assert any("daily-log" in s for s in dropped), "daily-notes file channel leak not gated"
 
 
 async def test_secret_insight_dropped_for_unclassified(workspace: Path) -> None:

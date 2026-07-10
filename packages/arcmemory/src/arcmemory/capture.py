@@ -4,10 +4,15 @@ This module has NO import of ``arcllm`` and issues NO embedding: capture is a pu
 CPU/IO operation whose cost is constant regardless of store size. A capture:
 
 1. **sanitize -> privacy_filter -> dedup** the untrusted text (security boundary);
-2. append a raw ``episodic`` event + a daily-log bullet (order preserved);
+2. append a raw ``episodic`` event to the stream (order preserved);
 3. deterministically **tag entities** (controlled vocabulary + regex);
 4. **Hebbian-bump** every co-active entity pair (saturating, salience-carrying);
 5. emit a ``memory.captured`` audit event.
+
+The raw stream is the audit-grade transcript (SQLite + the audit log). The
+human-readable *curated* daily-notes (``memory/daily-log/*.md``) are written by the
+slow consolidation path, not here — capture never dumps raw turn text to a glass-box
+file.
 
 The audit ``ts`` on each edge is the event timestamp, so an ``index/rebuild`` replay
 over the same stream reproduces the graph byte-identically.
@@ -85,7 +90,6 @@ class FastCapture:
         event.entities = tag_entities(clean, self._vocabulary())
 
         self._episodic.append(event)
-        self._episodic.append_bullet(event)
         for a, b in combinations(event.entities, 2):
             self._graph.hebbian_bump(self._scope.key, a, b, salience=salience, ts=event.ts)
 

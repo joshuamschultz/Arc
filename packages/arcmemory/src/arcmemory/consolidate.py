@@ -23,6 +23,7 @@ did land, then clear the marker" — deterministic, no LLM, no partial state.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,12 +37,14 @@ from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _cosine
+from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import (
     ConsolidationResult,
+    DaySummary,
     Event,
     Fact,
     Insight,
@@ -85,6 +88,7 @@ class Consolidator:
         self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
         self._insights = InsightStore(workspace)
         self._procedures = ProceduralStore(workspace)
+        self._daily = DailyNotesStore(workspace)
         self._episodic = EpisodicStore(db, workspace)
         self._surface = SurfaceIndex(
             db,
@@ -116,6 +120,7 @@ class Consolidator:
         facts = await self._extract_facts(events)
         insights = await self._mint_insights(events, [f for _, f in facts])
         procedures = self._promote_procedures(events)
+        days = await self._summarize_days(events)
         decayed = self._decay(now)
         await self._merge_cues_audited()
         await self._surface.index_if_needed()
@@ -125,8 +130,9 @@ class Consolidator:
             facts_updated=len(facts),
             insights_minted=len(insights),
             procedures_promoted=len(procedures),
+            days_summarized=len(days),
             edges_decayed=decayed,
-            files_rewritten=len(facts) + len(insights) + len(procedures),
+            files_rewritten=len(facts) + len(insights) + len(procedures) + len(days),
             window_events=len(events),
         )
 
@@ -165,6 +171,35 @@ class Consolidator:
             self._emit("memory.procedure_promoted", procedure.slug)
             self._emit("memory.file_rewritten", str(self._procedures.path_for(procedure.slug)))
         return promoted
+
+    async def _summarize_days(self, events: list[Event]) -> list[DaySummary]:
+        """Condense each day in the window into its curated daily-notes; audit each write.
+
+        One bounded completion per day (over that day's slice of the window), merged
+        additively into the existing file so a later run grows the notes rather than
+        clobbering them. The raw transcript stays in the episodic stream — never here.
+        """
+        by_day: dict[str, list[Event]] = defaultdict(list)
+        for event in events:
+            by_day[event.ts[:10]].append(event)
+        written: list[DaySummary] = []
+        for day in sorted(by_day):
+            day_events = by_day[day]
+            draft = await self._distiller.summarize_day(day_events)
+            additions = DaySummary(
+                day=day,
+                summary=draft.summary,
+                people=draft.people,
+                decisions=draft.decisions,
+                tasks=draft.tasks,
+            )
+            summary = self._daily.merge(additions, day_events)
+            if summary is None:
+                continue
+            self._emit("memory.day_summarized", day)
+            self._emit("memory.file_rewritten", str(self._daily.path_for(day)))
+            written.append(summary)
+        return written
 
     def _decay(self, now: datetime) -> int:
         """Decay unreinforced edges; audit the sweep (one event, the count)."""

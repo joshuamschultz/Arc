@@ -21,6 +21,11 @@ enabled = true
 [modules.memory.config]
 brain = "arcmemory"
 tier = "enterprise"
+# Distiller LLM seam — turns the raw stream into curated memory (entities,
+# insights, daily summaries). Empty = consolidation is a no-op. Override to match
+# your agent's provider/model.
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
 
 [modules.skills]
 enabled = true

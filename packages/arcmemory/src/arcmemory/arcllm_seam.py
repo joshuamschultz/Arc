@@ -32,7 +32,7 @@ from typing import Any
 
 import arcllm
 
-from arcmemory.distill import FactExtraction, InsightMint
+from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightMint
 from arcmemory.index.rebuild import EmbeddingUnavailableError
 from arcmemory.types import Event, Fact
 
@@ -94,6 +94,17 @@ _INSIGHT_SYSTEM = (
     "'instances' are the event ids the insight generalizes. No prose."
 )
 
+_DAY_SYSTEM = (
+    "You condense one day of raw agent events into CURATED daily notes — a "
+    "high-signal summary a human can skim, NOT a transcript. Return ONLY a JSON "
+    'object of the form {"summary": [str], "people": [str], "decisions": [str], '
+    '"tasks": [str]}. '
+    "'summary' is a few bullets of what happened / was discussed; 'people' names "
+    "the people, places, and organizations that came up; 'decisions' are choices "
+    "made; 'tasks' are action items or todos. Each bullet is one short line. Emit "
+    "nothing you cannot ground in the events; leave a list empty if it has none. No prose."
+)
+
 
 class ArcLLMDistiller:
     """arcmemory ``Distiller`` seam backed by an arcllm structured completion.
@@ -117,6 +128,11 @@ class ArcLLMDistiller:
         user = f"{self._render_events(events)}\n\nKnown facts:\n{self._render_facts(facts)}"
         data = await self._complete(_INSIGHT_SYSTEM, user)
         return InsightMint.model_validate(data)
+
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        """One structured completion → curated daily-notes bullets (the searchable rollup)."""
+        data = await self._complete(_DAY_SYSTEM, self._render_events(events))
+        return DaySummaryDraft.model_validate(data)
 
     async def _complete(self, system: str, user: str) -> dict[str, Any]:
         """Run one bounded JSON completion and parse the object (provider-agnostic)."""

@@ -47,15 +47,17 @@ def test_capture_makes_no_arcllm_call(monkeypatch, workspace, db, scope) -> None
     assert calls == []  # the hot path issued zero embedding calls
 
 
-def test_capture_writes_event_bullet_and_edge(workspace, db, scope) -> None:
+def test_capture_writes_event_and_edge(workspace, db, scope) -> None:
     graph = WeightedGraph(db)
     cap = FastCapture(db, workspace, scope, graph, seed_vocabulary=["alice", "bob"])
     event = cap.capture("alice and bob shipped the feature")
 
     assert event is not None
-    assert db.connect().execute("SELECT COUNT(*) FROM episodic").fetchone()[0] == 1
-    daily = workspace / "memory" / "daily-log" / f"{event.ts[:10]}.md"
-    assert daily.exists() and "alice and bob" in daily.read_text()
+    assert db.connect().execute("SELECT text FROM episodic").fetchone()[0] == (
+        "alice and bob shipped the feature"
+    )
+    # The fast path is SQLite-only: no glass-box daily-log file (that's consolidation).
+    assert not (workspace / "memory" / "daily-log").exists()
     assert graph.weight(scope.key, "alice", "bob") > 0.0  # co-active Hebbian edge
 
 

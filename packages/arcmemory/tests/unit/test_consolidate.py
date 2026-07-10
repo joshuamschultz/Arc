@@ -16,6 +16,7 @@ from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
 from arcmemory.distill import (
+    DaySummaryDraft,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -44,6 +45,9 @@ class FakeDistiller:
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         return self._mint
 
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        return DaySummaryDraft(summary=["the day happened"], people=["Alice"])
+
 
 class RaisingDistiller:
     """Succeeds at facts, then crashes minting — simulates a mid-run failure."""
@@ -56,6 +60,9 @@ class RaisingDistiller:
 
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         raise RuntimeError("boom mid-consolidation")
+
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        return DaySummaryDraft()
 
 
 def _seed_day(workspace: Path, db: MemoryDB, scope: Scope) -> None:

@@ -213,6 +213,7 @@ class ArcMemoryBrain:
             f"Consolidation: {result.facts_updated} fact(s) updated, "
             f"{result.insights_minted} insight(s) minted, "
             f"{result.procedures_promoted} procedure(s) promoted, "
+            f"{result.days_summarized} day(s) summarized, "
             f"{result.edges_decayed} edge(s) decayed over {result.window_events} event(s)."
         )
         data = dict(result.model_dump())

@@ -49,7 +49,6 @@ def _seed_agent(workspace: Path, db: MemoryDB, scope: Scope) -> None:
             entities=tag_entities(text, _VOCAB),
         )
         episodic.append(ev)
-        episodic.append_bullet(ev)
 
 
 async def test_wipe_rebuild_is_byte_identical(

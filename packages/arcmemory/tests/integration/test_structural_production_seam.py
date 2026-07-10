@@ -27,7 +27,7 @@ from arctrust.classification import Classification
 
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.db import DEFAULT_DIMS, MemoryDB
-from arcmemory.distill import FactExtraction, InsightCandidate, InsightMint
+from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightCandidate, InsightMint
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.structural import StructuralIndex
 from arcmemory.retrieve import Retriever
@@ -99,6 +99,9 @@ class PlantingDistiller:
             ]
         )
 
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        return DaySummaryDraft()
+
 
 def _salient(text: str) -> set[str]:
     return {t for t in text.lower().replace("-", " ").split() if len(t) > 3}
@@ -127,7 +130,6 @@ async def _plant_probe(workspace: Path, *, bridge: bool) -> ArcMemoryBrain:
             event_id=f"e{i}", scope=scope.key, kind="obs", text=text, ts=f"2026-01-01T00:00:0{i}Z"
         )
         episodic.append(ev)
-        episodic.append_bullet(ev)
 
     brain = ArcMemoryBrain(
         workspace, _DID, embedder=ConceptEmbedder(), distiller=PlantingDistiller()

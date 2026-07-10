@@ -9,6 +9,7 @@ import pytest
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig
 from arcmemory.distill import (
+    DaySummaryDraft,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -40,13 +41,17 @@ class _FakeDistiller:
             ]
         )
 
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        return DaySummaryDraft(summary=["Ada worked on retries"], people=["Ada"])
 
-async def test_capture_is_zero_llm_and_writes_glass_box_files(workspace: Path) -> None:
+
+async def test_capture_is_zero_llm_and_writes_only_the_raw_stream(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID)
     await brain.capture("Ada shipped the retry fix", kind="observation")
-    daily = list((workspace / "memory" / "daily-log").glob("*.md"))
-    assert daily, "capture must append a daily-log bullet"
+    # Capture writes the raw SQLite stream only; the curated daily-notes are a
+    # consolidation output, so the fast path leaves no glass-box daily-log file.
     assert (workspace / "memory" / "index.db").exists()
+    assert not (workspace / "memory" / "daily-log").exists()
 
 
 async def test_retrieve_returns_boundary_marked_text(workspace: Path) -> None:
@@ -79,7 +84,12 @@ async def test_consolidate_with_distiller_mints_and_summarizes(workspace: Path) 
     result = await brain.consolidate()
     assert result["insights_minted"] == 1
     assert result["facts_updated"] == 1
+    assert result["days_summarized"] == 1
     assert "Consolidation:" in str(result["episode_summary"])
+    # Consolidation — not capture — writes the curated daily-notes.
+    daily = list((workspace / "memory" / "daily-log").glob("*.md"))
+    assert daily, "consolidation must write a curated daily-notes file"
+    assert "Ada worked on retries" in daily[0].read_text(encoding="utf-8")
 
 
 async def test_requires_identity() -> None:

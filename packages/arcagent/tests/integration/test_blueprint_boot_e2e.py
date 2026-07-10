@@ -59,12 +59,21 @@ async def test_blueprint_flat_boot_selects_concrete_brain(tmp_path: Path) -> Non
     config, config_path = _load_config(tmp_path)
     assert config.modules["memory"].config["brain"] == "arcmemory"
 
+    # The distiller is what powers consolidation (entity/insight/daily-summary
+    # files). A blueprint that sets brain=arcmemory but leaves distill_provider
+    # empty boots a live-looking brain whose slow path is DEAD — the exact
+    # producers-unwired trap. Guard the wiring, not just the brain type.
+    assert config.modules["memory"].config["distill_provider"]
+
     agent = ArcAgent(config=config, config_path=config_path)
     await agent.startup()
     try:
         # The memory module's real select_brain ran during startup and picked the concrete brain.
-        assert type(memory_runtime.state().brain).__name__ == "ArcMemoryBrain"
+        brain = memory_runtime.state().brain
+        assert type(brain).__name__ == "ArcMemoryBrain"
         assert memory_runtime.state().active is True
+        # ...and the distiller seam is wired, so consolidation is not a silent no-op.
+        assert brain._distiller is not None, "blueprint must wire the distiller (consolidation dead)"
     finally:
         await agent.shutdown()
 

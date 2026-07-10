@@ -26,7 +26,13 @@ from arctrust.classification import Classification
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.config import MemoryConfig
 from arcmemory.db import DEFAULT_DIMS, MemoryDB, sqlite_vec_loadable
-from arcmemory.distill import FactCandidate, FactExtraction, InsightCandidate, InsightMint
+from arcmemory.distill import (
+    DaySummaryDraft,
+    FactCandidate,
+    FactExtraction,
+    InsightCandidate,
+    InsightMint,
+)
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.semantic import SemanticStore
@@ -89,6 +95,10 @@ class SpyDistiller:
         self.mint_calls += 1
         return InsightMint()
 
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        self.day_calls = getattr(self, "day_calls", 0) + 1
+        return DaySummaryDraft()
+
 
 class ConsolidatingDistiller:
     """Async distiller (arcllm stand-in) that contradicts a fact + mints one insight."""
@@ -111,12 +121,18 @@ class ConsolidatingDistiller:
             ]
         )
 
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        return DaySummaryDraft(summary=["engaged then verified"], people=["Alice"])
+
 
 class PlantingDistiller:
     """Mints the AC-6 probe insight, stated purely in abstraction space (dim 4)."""
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction:
         return FactExtraction()
+
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        return DaySummaryDraft()
 
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         return InsightMint(
@@ -151,7 +167,6 @@ def _seed_events(workspace: Path, events: list[Event]) -> None:
     episodic = EpisodicStore(db, workspace)
     for ev in events:
         episodic.append(ev)
-        episodic.append_bullet(ev)
 
 
 def _write_entity(workspace: Path, slug: str, classification: str, body: str) -> None:
@@ -184,8 +199,10 @@ async def test_t100_capture_is_zero_llm_on_the_hot_path(workspace: Path) -> None
     # The hot path touched NEITHER the embedder NOR the distiller (no arcllm).
     assert embedder.calls == 0
     assert distiller.fact_calls == 0 and distiller.mint_calls == 0
-    # It did the deterministic work: glass-box bullet + a captured audit event.
-    assert list((workspace / "memory" / "daily-log").glob("*.md"))
+    # It did the deterministic work: raw stream row + a captured audit event. The
+    # curated daily-notes are consolidation's job, so the hot path writes no md file.
+    assert brain._db.connect().execute("SELECT COUNT(*) FROM episodic").fetchone()[0] == 1
+    assert not (workspace / "memory" / "daily-log").exists()
     assert any(e.action == "memory.captured" for e in sink.events)
 
 

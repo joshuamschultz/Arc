@@ -163,12 +163,17 @@ enabled = true
 
 [modules.memory.config]
 # Dual-speed analogical memory (arcmemory). Fresh agents get memory ON:
-# zero-LLM capture writes daily-log bullets (workspace/memory/daily-log/
-# YYYY-MM-DD.md), the episodic index (workspace/memory/index.db), and the
-# entity graph on every turn. Set brain = "none" for a memory-less agent.
-# Consolidation (entity cards + facts + insights) is opt-in — set
-# distill_provider/distill_model to an LLM to enable it.
+# zero-LLM capture writes the raw episodic stream (workspace/memory/index.db)
+# and the entity graph every turn. The slow consolidation path (distiller)
+# turns that stream into durable CURATED memory — entity/person/place cards,
+# insights, and the human-readable daily-notes (workspace/memory/daily-log/
+# YYYY-MM-DD.md, a summary — not a transcript). Without distill_provider,
+# consolidation is a no-op and none of those curated files are ever written.
+# Override the provider/model to match your agent's LLM; brain = "none" turns
+# memory off entirely.
 brain = "arcmemory"
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-4-5-20250929"
 
 [modules.policy]
 enabled = true

@@ -24,6 +24,13 @@ enabled = true
 [modules.memory.config]
 brain = "arcmemory"
 tier = "federal"
+# Distiller LLM seam — turns the raw stream into curated memory (entities,
+# insights, daily summaries). Empty = consolidation is a no-op. Federal MUST
+# override this to an on-prem / FIPS-validated provider — never let classified
+# episodes reach a cloud endpoint (LLM02). Set here so consolidation is not
+# silently dead; the operator swaps the provider at deploy.
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
 
 [modules.skills]
 enabled = true

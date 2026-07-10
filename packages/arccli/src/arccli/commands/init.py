@@ -167,12 +167,20 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
         },
         "eval": {"provider": "", "model": "", "max_tokens": 1024, "temperature": 0.2},
         "session": {"retention_count": 50, "retention_days": 30},
-        # Memory ON by default (arcmemory): zero-LLM capture writes daily-log
-        # bullets + the episodic index + entity graph each turn. Consolidation
-        # (facts/insights) is opt-in via distill_provider. brain = "none" for
-        # a memory-less deployment.
+        # Memory ON by default (arcmemory): zero-LLM capture writes the raw
+        # episodic stream + entity graph each turn; the distiller drives the slow
+        # consolidation path that writes the CURATED memory (entity/person cards,
+        # insights, daily-notes summaries). Without distill_provider that path is a
+        # no-op, so it is wired here. brain = "none" for a memory-less deployment.
         "modules": {
-            "memory": {"enabled": True, "config": {"brain": "arcmemory"}},
+            "memory": {
+                "enabled": True,
+                "config": {
+                    "brain": "arcmemory",
+                    "distill_provider": "anthropic",
+                    "distill_model": "claude-sonnet-4-5-20250929",
+                },
+            },
             # arcskill is the workspace-declared default skills adapter (root
             # pyproject.toml) — without this block SkillsConfig defaults to
             # adapter = "none" and scaffolded skills/improver never run.
