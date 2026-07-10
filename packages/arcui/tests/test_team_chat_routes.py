@@ -74,14 +74,16 @@ def _make_client(svc: MessagingService | None = None) -> TestClient:
 
 
 class TestListChannels:
-    def test_returns_empty_when_no_service(self) -> None:
+    def test_reports_unavailable_when_no_service(self) -> None:
+        # REQ-090: a missing service is an explicit error, never a fabricated
+        # empty list (which would hide channels `arc team channels` lists).
         client = _make_client(None)
         resp = client.get(
             "/api/team/channels",
             headers={"Authorization": "Bearer viewer-tok"},
         )
-        assert resp.status_code == 200
-        assert resp.json() == {"channels": []}
+        assert resp.status_code == 503
+        assert resp.json() == {"error": "team_messaging_unavailable"}
 
     async def test_returns_channels_when_service_present(
         self, svc_with_channel: MessagingService
@@ -98,17 +100,14 @@ class TestListChannels:
 
 
 class TestChannelMessages:
-    def test_returns_empty_when_no_service(self) -> None:
+    def test_reports_unavailable_when_no_service(self) -> None:
         client = _make_client(None)
         resp = client.get(
             "/api/team/channels/anything/messages",
             headers={"Authorization": "Bearer viewer-tok"},
         )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["messages"] == []
-        assert body["channel"] == "anything"
-        assert body["next_after_seq"] is None
+        assert resp.status_code == 503
+        assert resp.json() == {"error": "team_messaging_unavailable"}
 
     @pytest.mark.parametrize(
         "bad_name",

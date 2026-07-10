@@ -64,24 +64,33 @@ def _parse_after_seq(raw: str | None) -> int:
 def _service_or_none(request: Request) -> Any | None:
     """Return the configured arcteam MessagingService, or None.
 
-    None means the deployment has no team messaging wiring (e.g. tests
-    that don't inject one, ``arc ui start`` without a team root). Both
-    routes degrade to an empty payload rather than a 500.
+    None means the deployment's team messaging is not wired (no team root,
+    a down broker, or a missing audit authority). The routes surface that as
+    an explicit unavailable error — never a fabricated empty list, which would
+    hide real channels that ``arc team channels`` lists (REQ-090).
     """
     return getattr(request.app.state, "messaging_service", None)
+
+
+def _unavailable() -> JSONResponse:
+    """503 payload distinguishing 'messaging is down' from 'no channels yet'."""
+    return JSONResponse(
+        ErrorResponse(error="team_messaging_unavailable").model_dump(mode="json"),
+        status_code=503,
+    )
 
 
 async def list_channels(request: Request) -> JSONResponse:
     """GET /api/team/channels — channels visible to the operator."""
     svc = _service_or_none(request)
     if svc is None:
-        return JSONResponse({"channels": []})
+        return _unavailable()
 
     try:
         channels = await svc.list_channels()
-    except Exception:  # reason: fail-open — log + degrade
+    except Exception:  # reason: surface failure — never fabricate an empty list
         logger.exception("team_chat: list_channels failed")
-        return JSONResponse({"channels": []})
+        return _unavailable()
 
     return JSONResponse({"channels": [ch.model_dump(mode="json") for ch in channels]})
 
@@ -97,7 +106,7 @@ async def channel_messages(request: Request) -> JSONResponse:
 
     svc = _service_or_none(request)
     if svc is None:
-        return JSONResponse({"channel": channel_name, "messages": [], "next_after_seq": None})
+        return _unavailable()
 
     limit = _parse_limit(
         request.query_params.get("limit"),
@@ -112,9 +121,9 @@ async def channel_messages(request: Request) -> JSONResponse:
             after_seq=after_seq,
             limit=limit,
         )
-    except Exception:  # reason: fail-open — log + degrade
+    except Exception:  # reason: surface failure — never fabricate an empty list
         logger.exception("team_chat: list_channel_messages failed for %s", channel_name)
-        return JSONResponse({"channel": channel_name, "messages": [], "next_after_seq": None})
+        return _unavailable()
 
     # ``next_after_seq`` is set only when we filled the page; an empty or
     # short result means we hit the end of the stream so the SPA can stop

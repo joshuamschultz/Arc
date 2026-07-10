@@ -267,12 +267,29 @@ def create_app(
             for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                 if adapter is not None:
                     await adapter.connect()
+        # COMP-004 / REQ-090: when the deployment has a team but no service was
+        # injected, construct the arcteam MessagingService over the same managed
+        # NATS the bootstrap started. Without this the handle team_chat reads is
+        # never set on a live deployment and channels silently read empty. Build
+        # failures (broker down / no operator key) leave it None so the routes
+        # surface an explicit service-unavailable error, never a fabricated [].
+        resolved_service = messaging_service
+        built_backend: Any | None = None
+        if resolved_service is None and team_root is not None:
+            from arcui.messaging import build_messaging_service
+
+            try:
+                resolved_service, built_backend = await build_messaging_service()
+            except Exception:  # reason: fail-open — dashboard must still serve
+                logger.exception("lifespan: embedded messaging construction failed")
+                resolved_service, built_backend = None, None
+        starlette_app.state.messaging_service = resolved_service
         # SPEC-031 F1: subscribe read-only to the arcteam bus and feed the
         # team-flow stream. Fail-open — a bus problem must never block the
         # dashboard; the stream just stays empty.
         observer_task: asyncio.Task[None] | None = None
-        if messaging_service is not None:
-            observer = TeamBusObserver(messaging_service, starlette_app.state.team_stream)
+        if resolved_service is not None:
+            observer = TeamBusObserver(resolved_service, starlette_app.state.team_stream)
             observer_task = asyncio.create_task(
                 observer.run(interval=team_stream_interval),
                 name="arcui:team-bus-observer",
@@ -289,6 +306,15 @@ def create_app(
                 observer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await observer_task
+            # Close only a backend this lifespan opened — an injected service
+            # (tests) owns its own backend lifecycle.
+            if built_backend is not None:
+                close = getattr(built_backend, "close", None)
+                if close is not None:
+                    try:
+                        await close()
+                    except Exception:  # reason: fail-open — continue shutdown
+                        logger.exception("lifespan: error closing embedded messaging backend")
             try:
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
