@@ -664,6 +664,24 @@ class TestLLMBridgeWiring:
         assert callable(kwargs["on_event"]), "on_event must be a callable"
 
     @patch("arcagent.core.model_manager.load_eval_model")
+    async def test_ensure_model_passes_agent_did_to_load_eval_model(
+        self,
+        mock_load_model: MagicMock,
+        agent: ArcAgent,
+    ) -> None:
+        """Task 27 — the agent's own VERIFIED identity DID reaches
+        load_eval_model(), so TraceRecords carry a trustworthy agent_did
+        rather than only the free-text agent_label."""
+        mock_load_model.return_value = MagicMock()
+
+        await agent.startup()
+        agent._ensure_model()
+
+        _args, kwargs = mock_load_model.call_args
+        assert agent._identity is not None
+        assert kwargs.get("agent_did") == agent._identity.did
+
+    @patch("arcagent.core.model_manager.load_eval_model")
     async def test_ensure_model_forwards_llm_modules_overrides(
         self,
         mock_load_model: MagicMock,

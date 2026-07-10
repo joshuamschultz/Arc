@@ -19,6 +19,7 @@ class TestLoadEvalModel:
                 "claude-haiku",
                 retry=True,
                 agent_label=None,
+                agent_did=None,
                 trace_store=None,
                 on_event=None,
             )
@@ -35,9 +36,23 @@ class TestLoadEvalModel:
                 None,
                 retry=True,
                 agent_label=None,
+                agent_did=None,
                 trace_store=None,
                 on_event=None,
             )
+
+    def test_forwards_agent_did_to_arcllm(self) -> None:
+        """Task 27 — agent_did threads through to arcllm.load_model() so
+        TraceRecords carry the agent's VERIFIED DID, not just its free-text
+        config-name label. Without this, a cross-agent identity incident is
+        undiagnosable from traces alone (agent_did stayed null)."""
+        from arcagent.utils import load_eval_model
+
+        with patch("arcagent.utils.arcllm_load_model") as mock_load:
+            mock_load.return_value = MagicMock()
+            load_eval_model("anthropic/claude-haiku", agent_did="did:arc:agent:josh/c0bef560")
+            _args, kwargs = mock_load.call_args
+            assert kwargs["agent_did"] == "did:arc:agent:josh/c0bef560"
 
     def test_forwards_on_event_to_arcllm(self) -> None:
         """SPEC-017 R-001: on_event parameter threads to arcllm.load_model()."""

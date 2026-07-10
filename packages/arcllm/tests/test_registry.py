@@ -499,6 +499,28 @@ class TestModuleStacking:
         assert isinstance(model, TelemetryModule)
         assert model._lineage_default == lineage
 
+    def test_load_model_agent_did_threads_into_telemetry_config(self):
+        """Task 27 — load_model(agent_did=...) threads through to TraceRecord
+        attribution, mirroring the existing agent_label kwarg. Without a
+        dedicated agent_did kwarg, every caller (arcagent's ensure_model)
+        would have to hand-build a telemetry={"agent_did": ...} dict itself
+        instead of using the same simple keyword arcagent already passes
+        agent_label through — and historically nobody did, so traces carried
+        agent_label (a free-text config name) but agent_did=null, making a
+        cross-agent identity incident undiagnosable from traces alone."""
+        from arcllm.modules.telemetry import TelemetryModule
+        from arcllm.registry import load_model
+
+        model = load_model(
+            "anthropic",
+            telemetry=True,
+            retry=False,
+            queue=False,
+            agent_did="did:arc:agent:josh/c0bef560",
+        )
+        assert isinstance(model, TelemetryModule)
+        assert model._agent_did == "did:arc:agent:josh/c0bef560"
+
     async def test_load_model_lineage_flows_into_trace_record(self):
         """End-to-end: lineage set at load_model() appears on the emitted record."""
         from arcllm.modules.telemetry import TelemetryModule

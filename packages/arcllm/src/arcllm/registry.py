@@ -309,6 +309,7 @@ def _apply_telemetry(
     on_event: Callable[[Any], None] | None,
     trace_store: Any | None,
     agent_label: str | None,
+    agent_did: str | None,
     lineage: dict[str, Any] | None,
     vault_cfg: Any,
 ) -> LLMProvider:
@@ -335,13 +336,15 @@ def _apply_telemetry(
     # Source default_max_tokens from global config defaults
     telemetry_config.setdefault("default_max_tokens", _ensure_global_config().defaults.max_tokens)
 
-    # Thread trace_store, on_event, agent_label, and lineage into config
+    # Thread trace_store, on_event, agent_label, agent_did, and lineage into config
     if on_event is not None:
         telemetry_config["on_event"] = on_event
     if trace_store is not None:
         telemetry_config["trace_store"] = trace_store
     if agent_label is not None:
         telemetry_config["agent_label"] = agent_label
+    if agent_did is not None:
+        telemetry_config["agent_did"] = agent_did
     if lineage is not None:
         telemetry_config["lineage"] = lineage
 
@@ -381,6 +384,7 @@ def load_model(
     on_event: Callable[[Any], None] | None = None,
     trace_store: Any | None = None,
     agent_label: str | None = None,
+    agent_did: str | None = None,
     lineage: dict[str, Any] | None = None,
     routing: bool | dict[str, Any] | None = None,
     retry: bool | dict[str, Any] | None = None,
@@ -433,6 +437,10 @@ def load_model(
         trace_store: Optional TraceStore for persistent recording. Records appended
             after every invoke(). Independent of on_event — either, both, or neither.
         agent_label: Label attached to TraceRecords for multi-agent identification.
+        agent_did: Verified agent DID attached to TraceRecords (AU-2/AU-9
+            attribution). Unlike agent_label, this is not free text — callers
+            should pass the agent's actual identity DID so a trace alone can
+            confirm or refute which agent's key/config a call ran under.
         lineage: Optional provenance token (template source, RAG documents,
             variable substitution) attached VERBATIM to every TraceRecord's
             ``lineage`` field. arcllm never constructs or infers lineage —
@@ -585,6 +593,7 @@ def load_model(
             on_event=on_event,
             trace_store=trace_store,
             agent_label=agent_label,
+            agent_did=agent_did,
             lineage=lineage,
             vault_cfg=vault_cfg,
         )

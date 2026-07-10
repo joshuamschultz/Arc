@@ -3,14 +3,26 @@
 The ``@tool`` decorator stamps a plain async function — there's no
 constructor where the tool can capture state. So workspace path,
 allowed read paths, vault resolver, and the agent's
-:class:`CapabilityLoader` instance live here as module-level state,
-configured once by the agent at startup.
+:class:`CapabilityLoader` instance live here, configured once by the
+agent at startup.
 
-Setting these is *not* a global event bus or shared singleton across
-multiple agents; one agent process owns one set of values. If two
-agents ever shared one process they would step on each other — but
-the existing arcagent runtime model is single-agent-per-process, so
-this matches.
+State is held in :class:`contextvars.ContextVar`, NOT plain module
+globals (task 27 fix). The embedded gateway (SPEC-023, canonical at
+every tier) runs many ``ArcAgent`` instances concurrently in ONE
+process — ``bootstrap._make_agent_factory`` + ``arcui.embedded_agents``
+keep up to 32 loaded agents alive, and ``SessionRouter.handle()`` spawns
+one ``asyncio.Task`` per session, so sessions for DIFFERENT agents
+interleave on the same event loop. A plain module global configured by
+``.startup()`` is silently overwritten by whichever agent's task most
+recently called :func:`configure`, corrupting every OTHER already-loaded
+agent's in-flight tool calls with the wrong workspace, audit sink, and
+— critically — the wrong signing IDENTITY (OWASP ASI03: one agent's
+tool call literally executing with another agent's private key). A
+:class:`~contextvars.ContextVar` gives each ``asyncio.Task`` (and its
+children) its own isolated value: :func:`configure` inside one agent's
+turn is invisible to a sibling agent's concurrently-running turn, with
+no change needed at any of the ~15 call sites that already call
+:func:`configure`/:func:`workspace`/etc.
 
 Tools call :func:`workspace` / :func:`allowed_paths` / :func:`loader`
 / :func:`get_secret` lazily at execute time. If unset, they raise
@@ -20,6 +32,7 @@ falling back — a misconfigured agent must fail loudly.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 from pathlib import Path
@@ -32,15 +45,33 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("arcagent.builtins.capabilities.runtime")
 
-_workspace: Path | None = None
-_allowed_paths: list[Path] | None = None
-_loader: CapabilityLoader | None = None
-_vault_resolver: Any = None
-_identity: AgentIdentity | None = None
-_protected_paths: frozenset[Path] = frozenset()
-_audit_sink: Any = None
-_egress_proxy: Any = None
-_tier: str = "personal"
+_workspace_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "arcagent_builtin_workspace", default=None
+)
+_allowed_paths_var: contextvars.ContextVar[list[Path] | None] = contextvars.ContextVar(
+    "arcagent_builtin_allowed_paths", default=None
+)
+_loader_var: contextvars.ContextVar[CapabilityLoader | None] = contextvars.ContextVar(
+    "arcagent_builtin_loader", default=None
+)
+_vault_resolver_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "arcagent_builtin_vault_resolver", default=None
+)
+_identity_var: contextvars.ContextVar[AgentIdentity | None] = contextvars.ContextVar(
+    "arcagent_builtin_identity", default=None
+)
+_protected_paths_var: contextvars.ContextVar[frozenset[Path]] = contextvars.ContextVar(
+    "arcagent_builtin_protected_paths", default=frozenset()
+)
+_audit_sink_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "arcagent_builtin_audit_sink", default=None
+)
+_egress_proxy_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "arcagent_builtin_egress_proxy", default=None
+)
+_tier_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "arcagent_builtin_tier", default="personal"
+)
 
 
 def configure(
@@ -55,26 +86,26 @@ def configure(
     egress_proxy: Any = None,
     tier: str | None = None,
 ) -> None:
-    """Bind per-agent runtime state. Called once at agent startup.
+    """Bind per-agent runtime state for the CURRENT asyncio task.
 
-    Subsequent calls overwrite — used by tests to reset between
-    runs. Production agents should call exactly once during startup.
+    Called by ``ArcAgent.startup()`` (twice — see agent_lifecycle.py) and
+    read by every builtin tool via the accessor functions below. Scoped to
+    the calling task's context, so concurrently-running turns for other
+    agents in the same process never observe this agent's values.
     """
-    global _workspace, _allowed_paths, _loader, _vault_resolver, _identity
-    global _protected_paths, _audit_sink, _egress_proxy, _tier
-    _workspace = workspace.resolve()
-    _allowed_paths = allowed_paths
-    _loader = loader
-    _vault_resolver = vault_resolver
-    _identity = identity
+    _workspace_var.set(workspace.resolve())
+    _allowed_paths_var.set(allowed_paths)
+    _loader_var.set(loader)
+    _vault_resolver_var.set(vault_resolver)
+    _identity_var.set(identity)
     if protected_paths is not None:
-        _protected_paths = protected_paths
+        _protected_paths_var.set(protected_paths)
     if audit_sink is not None:
-        _audit_sink = audit_sink
+        _audit_sink_var.set(audit_sink)
     if egress_proxy is not None:
-        _egress_proxy = egress_proxy
+        _egress_proxy_var.set(egress_proxy)
     if tier is not None:
-        _tier = tier
+        _tier_var.set(tier)
 
 
 def sign_artifact_file(artifact: Path, content: bytes) -> bool:
@@ -92,7 +123,8 @@ def sign_artifact_file(artifact: Path, content: bytes) -> bool:
     per-tier gate then decides whether an unsigned artifact may still run
     (only personal may relax).
     """
-    if _identity is None or not _identity.can_sign:
+    identity = _identity_var.get()
+    if identity is None or not identity.can_sign:
         return False
     from arcagent.capabilities import artifact_signing
 
@@ -100,8 +132,8 @@ def sign_artifact_file(artifact: Path, content: bytes) -> bool:
         artifact_signing.write_signature(
             artifact,
             content,
-            signer_did=_identity.did,
-            private_key=_identity.signing_seed,
+            signer_did=identity.did,
+            private_key=identity.signing_seed,
         )
     except Exception:  # reason: signing must never crash the tool — caller reports UNSIGNED
         _logger.exception("Signing failed for %s", artifact)
@@ -148,10 +180,12 @@ def audit_unsigned_artifact(artifact: Path, *, tool_name: str) -> str:
     never report plain "Created"/"Updated"/"Written" when the artifact will
     in fact be denied at next load.
     """
-    caller = _identity.did if _identity is not None else "did:arc:unknown"
-    if _audit_sink is not None:
+    identity = _identity_var.get()
+    caller = identity.did if identity is not None else "did:arc:unknown"
+    audit_sink = _audit_sink_var.get()
+    if audit_sink is not None:
         try:
-            _audit_sink(
+            audit_sink(
                 "tool.artifact_unsigned",
                 {"tool": tool_name, "actor_did": caller, "path": str(artifact)},
             )
@@ -168,22 +202,23 @@ def workspace() -> Path:
 
     Raises ``RuntimeError`` if :func:`configure` has not been called.
     """
-    if _workspace is None:
+    ws = _workspace_var.get()
+    if ws is None:
         raise RuntimeError(
             "builtin tool called before runtime is configured; "
             "agent must call _runtime.configure(workspace=...) at startup"
         )
-    return _workspace
+    return ws
 
 
 def allowed_paths() -> list[Path] | None:
     """Return the list of additional readable paths (e.g. memory dirs)."""
-    return _allowed_paths
+    return _allowed_paths_var.get()
 
 
 def protected_paths() -> frozenset[Path]:
     """Return the session-immutable operator-protected path set (SPEC-035)."""
-    return _protected_paths
+    return _protected_paths_var.get()
 
 
 def egress() -> Any:
@@ -193,12 +228,12 @@ def egress() -> Any:
     must route through this proxy so egress is allowlist-gated and audited. No
     tool opens its own socket.
     """
-    return _egress_proxy
+    return _egress_proxy_var.get()
 
 
 def tier() -> str:
     """Return the deployment tier (personal/enterprise/federal)."""
-    return _tier
+    return _tier_var.get()
 
 
 class _ArcRunAuditAdapter:
@@ -232,7 +267,7 @@ def _readonly_protected_subpaths() -> list[Path]:
     """
     ws = workspace()
     subs: list[Path] = []
-    for path in _protected_paths:
+    for path in _protected_paths_var.get():
         try:
             relative = path.relative_to(ws)
         except ValueError:
@@ -258,12 +293,15 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
 
     from arcagent.core.errors import ToolError
 
-    caller = _identity.did if _identity is not None else "did:arc:unknown"
-    audit = _ArcRunAuditAdapter(_audit_sink) if _audit_sink is not None else None
+    identity = _identity_var.get()
+    caller = identity.did if identity is not None else "did:arc:unknown"
+    audit_sink = _audit_sink_var.get()
+    audit = _ArcRunAuditAdapter(audit_sink) if audit_sink is not None else None
+    tier_value = _tier_var.get()
     try:
         raw = await run_shell(
             command,
-            tier=_tier,
+            tier=tier_value,
             workspace=workspace(),
             readonly_subpaths=_readonly_protected_subpaths(),
             caller_did=caller,
@@ -274,7 +312,7 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
         raise ToolError(
             code="TOOL_SANDBOX_UNAVAILABLE",
             message=f"Sandboxed bash refused: {exc}",
-            details={"tier": _tier, "reason": str(exc)},
+            details={"tier": tier_value, "reason": str(exc)},
         ) from exc
 
     result = json.loads(raw)
@@ -307,15 +345,16 @@ def resolve_workspace_path(
     """
     from arcagent.tools._validation import resolve_workspace_path as _resolve
 
-    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    identity = _identity_var.get()
+    caller = identity.did if identity is not None else "did:arc:unknown"
     return _resolve(
         file_path,
         workspace(),
         allow_symlinks=allow_symlinks,
-        allowed_paths=_allowed_paths,
+        allowed_paths=_allowed_paths_var.get(),
         tool_name=tool_name,
         caller_did=caller,
-        audit_sink=_audit_sink,
+        audit_sink=_audit_sink_var.get(),
     )
 
 
@@ -327,14 +366,15 @@ def check_protected(resolved: Path, file_path: str, *, tool_name: str) -> None:
     """
     from arcagent.tools._validation import enforce_protected_path
 
-    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    identity = _identity_var.get()
+    caller = identity.did if identity is not None else "did:arc:unknown"
     enforce_protected_path(
         resolved,
-        _protected_paths,
+        _protected_paths_var.get(),
         tool_name=tool_name,
         file_path=file_path,
         caller_did=caller,
-        audit_sink=_audit_sink,
+        audit_sink=_audit_sink_var.get(),
     )
 
 
@@ -347,13 +387,14 @@ def check_secret_content(content: str, file_path: str, *, tool_name: str) -> Non
     """
     from arcagent.tools._secret_guard import enforce_no_secret_content
 
-    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    identity = _identity_var.get()
+    caller = identity.did if identity is not None else "did:arc:unknown"
     enforce_no_secret_content(
         content,
         tool_name=tool_name,
         file_path=file_path,
         caller_did=caller,
-        audit_sink=_audit_sink,
+        audit_sink=_audit_sink_var.get(),
     )
 
 
@@ -365,7 +406,7 @@ def check_shell_command(command: str, *, tool_name: str = "bash") -> None:
     """
     from arcagent.tools._validation import scan_shell_for_protected_writes
 
-    hit = scan_shell_for_protected_writes(command, workspace(), _protected_paths)
+    hit = scan_shell_for_protected_writes(command, workspace(), _protected_paths_var.get())
     if hit is not None:
         check_protected(hit, str(hit), tool_name=tool_name)
 
@@ -375,9 +416,10 @@ def loader() -> CapabilityLoader:
 
     Required by ``reload``, ``create_tool``, etc. Raises if unset.
     """
-    if _loader is None:
+    current = _loader_var.get()
+    if current is None:
         raise RuntimeError("self-modification tool called before loader is configured")
-    return _loader
+    return current
 
 
 def get_secret(name: str) -> str | None:
@@ -390,9 +432,10 @@ def get_secret(name: str) -> str | None:
 
     Returns ``None`` if neither path resolves.
     """
-    if _vault_resolver is not None:
+    vault_resolver = _vault_resolver_var.get()
+    if vault_resolver is not None:
         try:
-            raw_val = _vault_resolver.get_secret(name)
+            raw_val = vault_resolver.get_secret(name)
         except Exception:  # reason: fail-open — continue
             raw_val = None
         if raw_val:
@@ -403,17 +446,15 @@ def get_secret(name: str) -> str | None:
 
 def reset() -> None:
     """Clear all runtime state. Test-only helper."""
-    global _workspace, _allowed_paths, _loader, _vault_resolver, _identity
-    global _protected_paths, _audit_sink, _egress_proxy, _tier
-    _workspace = None
-    _allowed_paths = None
-    _loader = None
-    _vault_resolver = None
-    _identity = None
-    _protected_paths = frozenset()
-    _audit_sink = None
-    _egress_proxy = None
-    _tier = "personal"
+    _workspace_var.set(None)
+    _allowed_paths_var.set(None)
+    _loader_var.set(None)
+    _vault_resolver_var.set(None)
+    _identity_var.set(None)
+    _protected_paths_var.set(frozenset())
+    _audit_sink_var.set(None)
+    _egress_proxy_var.set(None)
+    _tier_var.set("personal")
 
 
 __all__ = [
