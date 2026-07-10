@@ -507,7 +507,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<code>",
         cli_only=True,
         gateway_only=True,
-        gateway_config_gate="gateway.pairing.enabled",
+        gateway_config_gate="security.require_pairing",
         handler=_gateway_pair_approve_handler,
     ),
     CommandDef(
@@ -516,7 +516,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         category="Configuration",
         cli_only=True,
         gateway_only=True,
-        gateway_config_gate="gateway.pairing.enabled",
+        gateway_config_gate="security.require_pairing",
         handler=_gateway_pair_list_handler,
     ),
     CommandDef(
@@ -526,7 +526,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<code>",
         cli_only=True,
         gateway_only=True,
-        gateway_config_gate="gateway.pairing.enabled",
+        gateway_config_gate="security.require_pairing",
         handler=_gateway_pair_revoke_handler,
     ),
     CommandDef(

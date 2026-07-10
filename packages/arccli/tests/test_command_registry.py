@@ -185,6 +185,32 @@ class TestCommandRegistry:
                     f"Alias must not have leading slash: {alias} in {cmd.name}"
                 )
 
+    def test_gateway_config_gate_paths_resolve_on_gatewayconfig(self) -> None:
+        """Every gateway_config_gate dotpath must resolve on a real
+        GatewayConfig instance.
+
+        A stale dotpath silently gates nothing once a help-menu renderer
+        consumes it (the field's contract per its docstring). Was
+        "gateway.pairing.enabled" for the ``gateway pair *`` commands — no
+        such path exists (``[pairing]`` has no ``enabled`` field). The real
+        toggle is ``[security].require_pairing``.
+        """
+        from arcgateway.config import GatewayConfig
+
+        from arccli.commands.registry import COMMAND_REGISTRY
+
+        config = GatewayConfig()
+        for cmd in COMMAND_REGISTRY:
+            if cmd.gateway_config_gate is None:
+                continue
+            target: object = config
+            for part in cmd.gateway_config_gate.split("."):
+                assert hasattr(target, part), (
+                    f"{cmd.name}: gateway_config_gate={cmd.gateway_config_gate!r} "
+                    f"has no attribute {part!r} on {type(target).__name__}"
+                )
+                target = getattr(target, part)
+
 
 # ---------------------------------------------------------------------------
 # resolve_command tests
