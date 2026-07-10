@@ -128,6 +128,7 @@ class GatewayRunner:
         adapters: list[BasePlatformAdapter] | None = None,
         executor: Executor | None = None,
         runtime_dir: Path | None = None,
+        pairing_store: Any | None = None,
     ) -> None:
         """Initialise GatewayRunner.
 
@@ -136,18 +137,25 @@ class GatewayRunner:
             executor: Executor for running agent turns. Defaults to AsyncioExecutor.
             runtime_dir: Directory for the clean-shutdown marker file and PID file.
                 Defaults to ~/.arc/gateway/run.
+            pairing_store: Optional PairingStore. When provided, it is wired
+                into the SessionRouter's PairingInterceptor (activating DM
+                pairing enforcement) AND scheduled for background
+                cleanup_expired() sweeps — the single source of truth for
+                both concerns, so `arc gateway pair approve` (a separate CLI
+                process writing to the same db_path) takes effect on the
+                live gateway's very next message.
         """
         self._adapters: list[BasePlatformAdapter] = adapters or []
         self._executor: Executor = executor or AsyncioExecutor()
         self._runtime_dir: Path = runtime_dir or _DEFAULT_RUNTIME_DIR
-        self._session_router = SessionRouter(executor=self._executor)
+        self._session_router = SessionRouter(executor=self._executor, pairing_store=pairing_store)
         self._failed_adapters: dict[str, FailedAdapter] = {}
         self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}
         self._shutdown_event = asyncio.Event()
 
-        # Optional PairingStore for background cleanup scheduling.
-        # Set via set_pairing_store() before run() is called.
-        self._pairing_store: Any | None = None
+        # PairingStore for background cleanup scheduling — set at construction
+        # when require_pairing is on, or later via set_pairing_store().
+        self._pairing_store: Any | None = pairing_store
 
     def set_pairing_store(self, pairing_store: Any) -> None:
         """Register a PairingStore for background cleanup scheduling.
@@ -207,10 +215,26 @@ class GatewayRunner:
                 tier,
             )
 
+        # [security].require_pairing activates DM pairing enforcement: a
+        # PairingStore is built from [pairing].db_path and wired into the
+        # SessionRouter's PairingInterceptor. Left unset (the default), the
+        # interceptor is a no-op — matching every deployment's current
+        # behaviour until pairing is explicitly opted into.
+        pairing_store: Any | None = None
+        if config.security.require_pairing:
+            from arcgateway.pairing import PairingStore
+
+            pairing_store = PairingStore(db_path=config.pairing.db_path, tier=tier)
+            _logger.info(
+                "GatewayRunner.from_config: require_pairing=true — PairingStore wired (db=%s)",
+                config.pairing.db_path,
+            )
+
         return cls(
             adapters=[],
             executor=executor,
             runtime_dir=config.gateway.runtime_dir,
+            pairing_store=pairing_store,
         )
 
     def add_adapter(self, adapter: BasePlatformAdapter) -> None:

@@ -382,6 +382,102 @@ runtime_dir = "{tmp_path}"
 
 
 # ---------------------------------------------------------------------------
+# from_config — require_pairing wiring (SDD §3.1 DM Pairing)
+# ---------------------------------------------------------------------------
+
+
+def test_from_config_require_pairing_false_leaves_pairing_store_unset(tmp_path: Path) -> None:
+    """Default (require_pairing=false) does not construct a PairingStore.
+
+    This preserves the current no-enforcement default for every existing
+    deployment: SessionRouter's PairingInterceptor is a no-op when both
+    user_allowlist and pairing_store are None.
+    """
+    from arcgateway.config import GatewayConfig
+
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = false
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner._pairing_store is None
+    assert runner.session_router._pairing._pairing_store is None
+
+
+def test_from_config_require_pairing_true_wires_pairing_store(tmp_path: Path) -> None:
+    """require_pairing=true builds a PairingStore and wires it into SessionRouter.
+
+    This is the fix for the "built but dead" pairing system: without this,
+    GatewayRunner.__init__ built SessionRouter with no pairing_store at all,
+    so PairingInterceptor.is_user_approved was always a no-op regardless of
+    config — DM pairing enforcement never actually engaged.
+    """
+    from arcgateway.config import GatewayConfig
+    from arcgateway.pairing import PairingStore
+
+    db_path = tmp_path / "pairing.db"
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{db_path}"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert isinstance(runner._pairing_store, PairingStore)
+    # SessionRouter's own PairingInterceptor must hold the SAME store instance
+    # so `arc gateway pair approve` (writing to db_path from a separate
+    # process) is visible on the very next message the router handles.
+    assert runner.session_router._pairing._pairing_store is runner._pairing_store
+
+
+def test_from_config_require_pairing_true_uses_configured_db_path(tmp_path: Path) -> None:
+    """The wired PairingStore honors [pairing].db_path, not PairingStore's own default."""
+    from arcgateway.config import GatewayConfig
+
+    db_path = tmp_path / "custom" / "pairing.db"
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{db_path}"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner._pairing_store._db_path == db_path.expanduser().resolve()
+
+
+# ---------------------------------------------------------------------------
 # reconnect watcher — FailedAdapter dataclass
 # ---------------------------------------------------------------------------
 

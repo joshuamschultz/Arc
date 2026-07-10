@@ -103,6 +103,12 @@ class AdapterBuildContext:
             (wired to ``SessionRouter.handle`` in production).
         default_agent_did: The gateway-level ``[gateway].agent_did``.
         tier: Deployment tier — ``personal`` | ``enterprise`` | ``federal``.
+        require_pairing: ``[security].require_pairing`` — when True, an
+            adapter's own static allowlist gate becomes an OR-condition
+            rather than the sole gate: a message from a user who fails the
+            static check is forwarded to ``on_message`` instead of being
+            dropped, so SessionRouter's PairingInterceptor can mint/DM a
+            pairing code or route an already-approved user through.
     """
 
     name: str
@@ -110,6 +116,7 @@ class AdapterBuildContext:
     on_message: OnMessage
     default_agent_did: str
     tier: str
+    require_pairing: bool = False
 
     def agent_did(self) -> str:
         """Return the DID this adapter serves — block override or gateway default."""
@@ -181,6 +188,7 @@ def build_adapters(
     on_message: OnMessage,
     default_agent_did: str,
     tier: str,
+    require_pairing: bool = False,
     plugins: dict[str, AdapterPlugin] | None = None,
 ) -> list[BasePlatformAdapter]:
     """Build adapters for every enabled platform block, generically.
@@ -191,6 +199,8 @@ def build_adapters(
         on_message: Inbound callback wired to ``SessionRouter.handle``.
         default_agent_did: ``[gateway].agent_did``.
         tier: ``personal`` | ``enterprise`` | ``federal``.
+        require_pairing: ``[security].require_pairing`` — forwarded to every
+            adapter's :class:`AdapterBuildContext` (see its docstring).
         plugins: Pre-discovered plugins (defaults to :func:`discover_plugins`).
             Injected directly in tests.
 
@@ -247,6 +257,7 @@ def build_adapters(
             on_message=on_message,
             default_agent_did=default_agent_did,
             tier=tier,
+            require_pairing=require_pairing,
         )
         try:
             adapter = plugin.build(ctx)

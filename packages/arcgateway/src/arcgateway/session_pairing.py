@@ -4,11 +4,20 @@ Holds the pairing-check and DM-delivery logic so SessionRouter's core
 (race-guard + task spawn) stays free of pairing concerns.
 
 Design (SDD §3.1 DM Pairing / T1.8):
-    - Checks whether a user is in the approved allowlist.
+    - Authorization is static allowlist OR store-approved: is_user_approved()
+      checks the in-memory user_allowlist first, then falls through to a
+      LIVE SQLite lookup via pairing_store.is_approved() — this is what
+      makes `arc gateway pair approve` (a separate CLI process writing to
+      the same db_path) take effect on the running gateway's next message,
+      with no frozen in-memory list to go stale.
     - When not approved: mints a pairing code and DMs the user via the adapter.
-    - Receives the adapter_map at construction time and calls adapter.send() directly.
-    - No-op (all users approved) when user_allowlist is None.
-    - Duck-typed for testability: pairing_store only needs .mint_code() coroutine.
+    - Receives the adapter_map at construction time and calls adapter.send()
+      directly, with a DeliveryTarget (not a raw chat_id) — adapters expect
+      the same shape SessionRouter uses for turn replies.
+    - No-op (all users approved) when BOTH user_allowlist and pairing_store
+      are None — the enforcement-disabled default (require_pairing=false).
+    - Duck-typed for testability: pairing_store only needs .mint_code() and
+      .is_approved() coroutines.
 """
 
 from __future__ import annotations
@@ -17,6 +26,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcgateway.delivery import DeliveryTarget
 from arcgateway.telemetry import hash_user_did
 
 if TYPE_CHECKING:
@@ -33,8 +43,11 @@ class PairingInterceptor:
     subclassing PairingStore).
 
     Attributes:
-        _user_allowlist: Set of approved user_did values.  None = all approved.
-        _pairing_store:  Optional store with mint_code() coroutine.
+        _user_allowlist: Set of approved user_did values, checked first (no
+                         SQLite round-trip). None AND no pairing_store means
+                         enforcement is disabled entirely (all approved).
+        _pairing_store:  Optional store with mint_code() and is_approved()
+                         coroutines — the live cross-process approval check.
         _adapter_map:    Maps platform name → adapter for DM delivery.
     """
 
@@ -72,18 +85,40 @@ class PairingInterceptor:
     # Allowlist management
     # -----------------------------------------------------------------------
 
-    def is_user_approved(self, user_did: str) -> bool:
-        """Return True if the user is approved or pairing enforcement is disabled.
+    async def is_user_approved(self, user_did: str, platform: str) -> bool:
+        """Return True if the user is approved to route to the agent.
+
+        Authorization is static-allowlist OR store-approved:
+          1. Enforcement disabled entirely (no allowlist AND no store) → True.
+          2. In the static allowlist (``add_approved_user`` / construction-time
+             ``user_allowlist``) → True. Checked first so operators/known
+             users skip a SQLite round-trip entirely.
+          3. Otherwise, when a pairing_store is wired, the LIVE SQLite
+             ``pairing_approvals`` table is consulted via
+             ``pairing_store.is_approved()`` — this is what makes
+             ``arc gateway pair approve`` (a separate CLI process writing to
+             the same db_path) take effect on the next message, with no
+             frozen in-memory list to go stale.
+          4. Otherwise: not approved.
 
         Args:
             user_did: The user's DID to check.
+            platform: Platform the message arrived on (e.g. "telegram") —
+                      required so the SQLite lookup hashes the same
+                      (platform, user_did) pair ``mint_code()`` hashed.
 
         Returns:
-            True when approved or when allowlist is None (enforcement off).
+            True when approved by either path.
         """
-        if self._user_allowlist is None:
+        if self._user_allowlist is None and self._pairing_store is None:
             return True
-        return user_did in self._user_allowlist
+        if self._user_allowlist is not None and user_did in self._user_allowlist:
+            return True
+        if self._pairing_store is not None:
+            is_approved = getattr(self._pairing_store, "is_approved", None)
+            if is_approved is not None:
+                return bool(await is_approved(platform, user_did))
+        return False
 
     def add_approved_user(self, user_did: str) -> None:
         """Add a user DID to the allowlist (called after operator approval).
@@ -151,6 +186,12 @@ class PairingInterceptor:
         )
 
         adapter = self._adapter_map.get(event.platform)
+        # adapter.send()'s real Protocol (BasePlatformAdapter.send) takes a
+        # DeliveryTarget, not a raw chat_id string. Building it once here
+        # (instead of passing event.chat_id directly, as this method used
+        # to) is what makes DM delivery work against a real adapter —
+        # a plain str crashes on `target.chat_id` inside TelegramAdapter.send().
+        target = DeliveryTarget(platform=event.platform, chat_id=event.chat_id)
 
         try:
             # Duck-typed call: works with PairingStore or any compatible mock.
@@ -166,7 +207,7 @@ class PairingInterceptor:
             # Deliver the pairing code via adapter DM.
             if adapter is not None:
                 await adapter.send(
-                    event.chat_id,
+                    target,
                     f"To pair with this agent, share this code with your operator: "
                     f"{pairing_code.code}\n\n"
                     f"Code expires in 1 hour.\n"
@@ -184,7 +225,7 @@ class PairingInterceptor:
             # Re-send reminder.
             if adapter is not None:
                 await adapter.send(
-                    event.chat_id,
+                    target,
                     "You already have a pending pairing code. "
                     "Please share it with your operator or wait for it to expire.",
                 )
@@ -198,7 +239,7 @@ class PairingInterceptor:
             # Notify user that pairing is at capacity.
             if adapter is not None:
                 await adapter.send(
-                    event.chat_id,
+                    target,
                     "Pairing is temporarily unavailable. Please try again later.",
                 )
 
@@ -211,7 +252,7 @@ class PairingInterceptor:
             # Notify user that pairing is locked.
             if adapter is not None:
                 await adapter.send(
-                    event.chat_id,
+                    target,
                     "Pairing is currently locked due to suspicious activity. "
                     "Contact your operator.",
                 )

@@ -35,6 +35,7 @@ def build(ctx: AdapterBuildContext) -> TelegramAdapter:
         allowed_user_ids=cfg.allowed_user_ids,
         on_message=ctx.on_message,
         agent_did=ctx.agent_did(),
+        require_pairing=ctx.require_pairing,
     )
 
 

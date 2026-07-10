@@ -87,6 +87,61 @@ def test_context_agent_did_falls_back_to_default() -> None:
     assert ctx.agent_did() == "did:arc:agent:default"
 
 
+def test_context_require_pairing_defaults_false() -> None:
+    """Omitting require_pairing preserves every pre-existing caller's behaviour."""
+    ctx = AdapterBuildContext(
+        name="telegram",
+        raw_config={"enabled": True},
+        on_message=_noop_on_message,
+        default_agent_did="did:arc:agent:default",
+        tier="personal",
+    )
+    assert ctx.require_pairing is False
+
+
+# ── build_adapters: require_pairing plumbing ─────────────────────────────────
+
+
+def test_build_adapters_forwards_require_pairing_to_context() -> None:
+    """[security].require_pairing reaches each plugin's AdapterBuildContext."""
+    seen_ctx: list[AdapterBuildContext] = []
+
+    def _build(ctx: AdapterBuildContext) -> _FakeAdapter:
+        seen_ctx.append(ctx)
+        return _FakeAdapter(name=ctx.name, agent_did=ctx.agent_did())
+
+    build_adapters(
+        platforms={"telegram": {"enabled": True}},
+        on_message=_noop_on_message,
+        default_agent_did="did:arc:agent:default",
+        tier="personal",
+        require_pairing=True,
+        plugins={"telegram": AdapterPlugin(name="telegram", build=_build)},
+    )
+
+    assert len(seen_ctx) == 1
+    assert seen_ctx[0].require_pairing is True
+
+
+def test_build_adapters_defaults_require_pairing_false() -> None:
+    """Omitting require_pairing at build_adapters() preserves the disabled default."""
+    seen_ctx: list[AdapterBuildContext] = []
+
+    def _build(ctx: AdapterBuildContext) -> _FakeAdapter:
+        seen_ctx.append(ctx)
+        return _FakeAdapter(name=ctx.name, agent_did=ctx.agent_did())
+
+    build_adapters(
+        platforms={"telegram": {"enabled": True}},
+        on_message=_noop_on_message,
+        default_agent_did="did:arc:agent:default",
+        tier="personal",
+        plugins={"telegram": AdapterPlugin(name="telegram", build=_build)},
+    )
+
+    assert seen_ctx[0].require_pairing is False
+
+
 # ── build_adapters: enable filtering ─────────────────────────────────────────
 
 

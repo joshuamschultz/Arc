@@ -147,6 +147,7 @@ def _wire_adapters(runner: object, config: object) -> None:
             on_message=runner.session_router.handle,
             default_agent_did=config.gateway.agent_did,
             tier=tier,
+            require_pairing=config.security.require_pairing,
         )
     except AdapterUnavailableError as exc:
         # Federal tier fails closed: an enabled adapter that cannot load is a

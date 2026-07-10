@@ -148,17 +148,26 @@ class TelegramAdapter:
         *,
         agent_did: str = "did:arc:agent:default",
         poll_interval: float = 0.5,
+        require_pairing: bool = False,
     ) -> None:
         """Initialise TelegramAdapter.
 
         Args:
             bot_token: Telegram Bot API token. Never logged or persisted.
             allowed_user_ids: Allowlist of authorised Telegram user IDs.
-                An empty list means deny all (fail-closed).
+                An empty list means deny all (fail-closed) UNLESS
+                require_pairing is True, in which case unlisted users fall
+                through to the DM pairing flow instead of being dropped.
             on_message: Async callback receiving normalised InboundEvents.
                 Typically SessionRouter.handle, wired by GatewayRunner.
             agent_did: DID of the ArcAgent this adapter serves.
             poll_interval: Seconds between Telegram long-poll requests.
+            require_pairing: Mirrors ``[security].require_pairing``. Auth is
+                "static allowed_user_ids OR approved-paired": when True, a
+                user who fails the static check is still forwarded to
+                on_message so SessionRouter's PairingInterceptor can mint/DM
+                a pairing code or route an already-approved user through,
+                instead of being silently dropped.
         """
         if not bot_token:
             msg = "bot_token must not be empty"
@@ -169,6 +178,7 @@ class TelegramAdapter:
         self._on_message = on_message
         self._agent_did = agent_did
         self._poll_interval = poll_interval
+        self._require_pairing = require_pairing
 
         # Type is Any because python-telegram-bot is an optional dep and we
         # cannot reference its concrete type at import time without installing it.
@@ -585,24 +595,38 @@ class TelegramAdapter:
         if self._bot_id is not None and user_id == self._bot_id:
             return
 
-        # Auth check — empty allowlist = deny all (fail-closed).
+        # Auth: static allowed_user_ids OR approved-paired.
+        #
+        # Static check first (empty allowlist = deny all, fail-closed). On
+        # failure: require_pairing=False preserves the original silent-drop
+        # behaviour (no reply — avoids confirming bot existence to an
+        # attacker). require_pairing=True forwards to on_message instead —
+        # SessionRouter's PairingInterceptor makes the final call (mint+DM a
+        # pairing code, or route through if `arc gateway pair approve` has
+        # already approved this user via the shared PairingStore).
         if not self._is_authorized(user_id):
-            _logger.warning(
-                "TelegramAdapter: auth rejected for user_id=%d (allowed_user_ids count=%d)",
+            if not self._require_pairing:
+                _logger.warning(
+                    "TelegramAdapter: auth rejected for user_id=%d (allowed_user_ids count=%d)",
+                    user_id,
+                    len(self._allowed_user_ids),
+                )
+                self._audit(
+                    _EVENT_AUTH_REJECTED,
+                    {
+                        "platform": "telegram",
+                        "user_id": user_id,
+                        "chat_id": chat_id,
+                        "agent_did": self._agent_did,
+                    },
+                )
+                # Silent ignore — no reply (avoids confirming bot existence to attacker)
+                return
+            _logger.info(
+                "TelegramAdapter: user_id=%d not in static allowlist — forwarding for "
+                "pairing check (require_pairing=true)",
                 user_id,
-                len(self._allowed_user_ids),
             )
-            self._audit(
-                _EVENT_AUTH_REJECTED,
-                {
-                    "platform": "telegram",
-                    "user_id": user_id,
-                    "chat_id": chat_id,
-                    "agent_did": self._agent_did,
-                },
-            )
-            # Silent ignore — no reply (avoids confirming bot existence to attacker)
-            return
 
         text: str | None = update.effective_message.text
         if not text:

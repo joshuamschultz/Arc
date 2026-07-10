@@ -204,7 +204,26 @@ async def build_for_embedded(
 
     agent_factory = _make_agent_factory(team_root)
     executor = _build_executor(gateway_config.gateway.tier, agent_factory)
-    session_router = SessionRouter(executor=executor)
+
+    # [security].require_pairing activates DM pairing enforcement. This is
+    # the PRODUCTION path — arcui hosts the runtime via build_for_embedded,
+    # not GatewayRunner — so wiring pairing only into GatewayRunner.from_config
+    # would leave every real deployment's pairing permanently disabled
+    # regardless of config. Mirrors GatewayRunner.from_config's wiring.
+    pairing_store: Any | None = None
+    if gateway_config.security.require_pairing:
+        from arcgateway.pairing import PairingStore
+
+        pairing_store = PairingStore(
+            db_path=gateway_config.pairing.db_path,
+            tier=gateway_config.gateway.tier,
+        )
+        _logger.info(
+            "bootstrap: require_pairing=true — PairingStore wired (db=%s)",
+            gateway_config.pairing.db_path,
+        )
+
+    session_router = SessionRouter(executor=executor, pairing_store=pairing_store)
     stream_bridge = StreamBridge()
 
     from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters
@@ -220,6 +239,7 @@ async def build_for_embedded(
             on_message=session_router.handle,
             default_agent_did=gateway_config.gateway.agent_did,
             tier=gateway_config.gateway.tier,
+            require_pairing=gateway_config.security.require_pairing,
         )
     except AdapterUnavailableError:
         _logger.exception("bootstrap: refusing to start — enabled adapter unavailable")

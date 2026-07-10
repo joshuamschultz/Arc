@@ -207,6 +207,91 @@ async def test_consumed_code_not_reusable(
 
 
 # ---------------------------------------------------------------------------
+# is_approved — SQLite-backed approval lookups (cross-process wiring)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_is_approved_false_before_consume(store: PairingStore) -> None:
+    """A user with a pending (not-yet-approved) code is not approved."""
+    await store.mint_code(platform="telegram", platform_user_id="eve")
+    assert await store.is_approved("telegram", "eve") is False
+
+
+@pytest.mark.asyncio
+async def test_is_approved_true_after_consume(
+    signed_store: PairingStore, signing_key: SigningKey
+) -> None:
+    """After verify_and_consume succeeds, the minting user is approved."""
+    from tests.unit.conftest import _UNIT_TEST_DID
+
+    code = await signed_store.mint_code(platform="telegram", platform_user_id="frank")
+    result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
+    assert result is not None
+
+    assert await signed_store.is_approved("telegram", "frank") is True
+
+
+@pytest.mark.asyncio
+async def test_is_approved_survives_new_store_instance(
+    tmp_path: Path, signing_key: SigningKey
+) -> None:
+    """Approval is visible from a second PairingStore instance on the same db_path.
+
+    This is the cross-process contract the gateway daemon relies on: a
+    separate `arc gateway pair approve` process consumes the code against
+    the same SQLite file, and the live gateway's PairingStore (a different
+    Python object, same db_path) must see the approval on its next check.
+    """
+    from tests.unit.conftest import _UNIT_TEST_DID
+
+    trust_dir = tmp_path / "trust"
+    trust_dir.mkdir()
+    import base64
+
+    from arctrust import invalidate_cache
+
+    pub_b64 = base64.b64encode(bytes(signing_key.verify_key)).decode("ascii")
+    (trust_dir / "operators.toml").write_text(
+        f'[operators."{_UNIT_TEST_DID}"]\npublic_key = "{pub_b64}"\n',
+        encoding="utf-8",
+    )
+    (trust_dir / "operators.toml").chmod(0o600)
+    invalidate_cache()
+
+    db_path = tmp_path / "shared.db"
+
+    # Process A: the live gateway daemon mints the code.
+    daemon_store = PairingStore(db_path=db_path, tier="personal", trust_dir=trust_dir)
+    code = await daemon_store.mint_code(platform="telegram", platform_user_id="grace")
+
+    # Process B: a separate `arc gateway pair approve` CLI invocation —
+    # a brand-new PairingStore object pointed at the same db_path.
+    cli_store = PairingStore(db_path=db_path, tier="personal", trust_dir=trust_dir)
+    result = await _signed_consume(cli_store, code, signing_key, _UNIT_TEST_DID)
+    assert result is not None
+
+    # The daemon's own (already-constructed) store must see the approval —
+    # not a frozen in-memory list, a live SQLite check.
+    assert await daemon_store.is_approved("telegram", "grace") is True
+
+
+@pytest.mark.asyncio
+async def test_is_approved_scoped_per_platform(
+    signed_store: PairingStore, signing_key: SigningKey
+) -> None:
+    """Approval on one platform does not leak to the same raw ID on another."""
+    from tests.unit.conftest import _UNIT_TEST_DID
+
+    code = await signed_store.mint_code(platform="telegram", platform_user_id="shared_id")
+    result = await _signed_consume(signed_store, code, signing_key, _UNIT_TEST_DID)
+    assert result is not None
+
+    assert await signed_store.is_approved("telegram", "shared_id") is True
+    assert await signed_store.is_approved("slack", "shared_id") is False
+
+
+# ---------------------------------------------------------------------------
 # Rate limit tests
 # ---------------------------------------------------------------------------
 

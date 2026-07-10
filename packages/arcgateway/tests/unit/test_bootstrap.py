@@ -136,6 +136,94 @@ def _write_agent_dir(root: Path, dir_name: str, did: str, name: str) -> None:
     )
 
 
+# ── require_pairing wiring (SDD §3.1 DM Pairing — embedded/production path) ──
+
+
+@pytest.mark.asyncio
+async def test_build_for_embedded_require_pairing_false_leaves_pairing_store_unset(
+    empty_team_root: Path,
+) -> None:
+    """Default (require_pairing=false) does not construct a PairingStore.
+
+    This is the embedded-gateway counterpart of the same fix in
+    GatewayRunner.from_config — arcui hosts the runtime via
+    build_for_embedded, NOT via GatewayRunner, so wiring only runner.py
+    left the actual production path (arcui) with pairing permanently
+    disabled regardless of config.
+    """
+    cfg = _config(
+        """
+[gateway]
+agent_did = "did:arc:agent:default"
+
+[security]
+require_pairing = false
+"""
+    )
+    bundle = await build_for_embedded(empty_team_root, cfg)
+    assert bundle.session_router._pairing._pairing_store is None
+
+
+@pytest.mark.asyncio
+async def test_build_for_embedded_require_pairing_true_wires_pairing_store(
+    empty_team_root: Path, tmp_path: Path
+) -> None:
+    """require_pairing=true builds a PairingStore and wires it into SessionRouter."""
+    from arcgateway.pairing import PairingStore
+
+    db_path = tmp_path / "pairing.db"
+    cfg = _config(
+        f"""
+[gateway]
+agent_did = "did:arc:agent:default"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{db_path}"
+"""
+    )
+    bundle = await build_for_embedded(empty_team_root, cfg)
+    assert isinstance(bundle.session_router._pairing._pairing_store, PairingStore)
+    assert bundle.session_router._pairing._pairing_store._db_path == db_path.expanduser().resolve()
+
+
+@pytest.mark.asyncio
+async def test_build_for_embedded_forwards_require_pairing_to_adapters(
+    empty_team_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """[security].require_pairing reaches build_adapters -> AdapterBuildContext.
+
+    Without this, a statically-unauthorized Telegram user's message would be
+    dropped by the adapter itself before ever reaching the (correctly wired)
+    SessionRouter/PairingInterceptor.
+    """
+    pytest.importorskip("arcgateway_telegram")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "1234:test-token")
+    db_path = tmp_path / "pairing.db"
+    cfg = _config(
+        f"""
+[gateway]
+agent_did = "did:arc:agent:default"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{db_path}"
+
+[platforms.telegram]
+enabled = true
+"""
+    )
+    bundle = await build_for_embedded(empty_team_root, cfg)
+    telegram_adapter = next(a for a in bundle.adapters if a.name == "telegram")
+    assert telegram_adapter._require_pairing is True  # type: ignore[attr-defined]
+
+
 def test_load_did_index_resolves_bare_and_suffixed_dirs(tmp_path: Path) -> None:
     """`arc agent create <name>` makes a bare `<name>/` dir; the legacy layout is
     `<name>_agent/`. Both must resolve, matching team_roster's discovery — else the

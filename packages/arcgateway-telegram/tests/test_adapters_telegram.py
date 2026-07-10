@@ -41,6 +41,7 @@ from arcgateway_telegram.adapter import (
 def _make_adapter(
     allowed_user_ids: list[int] | None = None,
     on_message: Any = None,
+    require_pairing: bool = False,
 ) -> TelegramAdapter:
     """Create a TelegramAdapter with sensible test defaults."""
     if on_message is None:
@@ -50,6 +51,7 @@ def _make_adapter(
         allowed_user_ids=allowed_user_ids if allowed_user_ids is not None else [42],
         on_message=on_message,
         agent_did="did:arc:agent:test",
+        require_pairing=require_pairing,
     )
 
 
@@ -360,6 +362,64 @@ async def test_unauthorized_empty_allowlist_denies_all() -> None:
     await adapter._handle_update(update, context=MagicMock())
 
     on_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_user_forwarded_when_require_pairing() -> None:
+    """With require_pairing=True, a statically-unauthorized user IS forwarded.
+
+    Auth is "static allowed_user_ids OR approved-paired": when the static
+    check fails, the message must still reach on_message (SessionRouter's
+    PairingInterceptor) so it can mint+DM a pairing code or route an
+    already-approved (via `arc gateway pair approve`) user through. Dropping
+    it here — as the require_pairing=False path still correctly does —
+    would make live pairing unreachable for Telegram.
+    """
+    on_message = AsyncMock()
+    adapter = _make_adapter(allowed_user_ids=[100], on_message=on_message, require_pairing=True)
+    adapter._bot_id = 999
+
+    # user_id=42 is NOT in allowed_user_ids=[100], but pairing is enabled.
+    update = _make_update(user_id=42, text="hello agent")
+    await adapter._handle_update(update, context=MagicMock())
+
+    on_message.assert_called_once()
+    event: InboundEvent = on_message.call_args[0][0]
+    assert event.user_did == "did:arc:telegram:42"
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_user_still_dropped_when_pairing_disabled() -> None:
+    """require_pairing=False (the default) preserves the original fail-closed drop.
+
+    Zero behaviour change for every existing deployment that hasn't opted
+    into DM pairing.
+    """
+    on_message = AsyncMock()
+    adapter = _make_adapter(allowed_user_ids=[100], on_message=on_message, require_pairing=False)
+    adapter._bot_id = 999
+
+    update = _make_update(user_id=42, text="hello agent")
+    await adapter._handle_update(update, context=MagicMock())
+
+    on_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_statically_authorized_user_bypasses_pairing_even_when_enabled() -> None:
+    """A user in allowed_user_ids is routed directly — no pairing lookup needed.
+
+    This is the "OR" fast path: static allowlist membership alone is
+    sufficient, at any require_pairing setting.
+    """
+    on_message = AsyncMock()
+    adapter = _make_adapter(allowed_user_ids=[42], on_message=on_message, require_pairing=True)
+    adapter._bot_id = 999
+
+    update = _make_update(user_id=42, text="hello agent")
+    await adapter._handle_update(update, context=MagicMock())
+
+    on_message.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -192,6 +192,13 @@ CREATE TABLE IF NOT EXISTS pairing_lockouts (
     locked_until REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pairing_approvals (
+    platform    TEXT NOT NULL,
+    user_hash   TEXT NOT NULL,
+    approved_at REAL NOT NULL,
+    PRIMARY KEY (platform, user_hash)
+);
+
 CREATE INDEX IF NOT EXISTS idx_pairing_codes_platform_expires
     ON pairing_codes(platform, expires_at, consumed);
 
@@ -539,6 +546,25 @@ class PairingStore:
         now = time.time()
         return await asyncio.to_thread(self._is_platform_locked_sync, platform, now)
 
+    async def is_approved(self, platform: str, platform_user_id: str) -> bool:
+        """Return True if this (platform, platform_user_id) has an approved pairing.
+
+        This is the live cross-process check: it reads the ``pairing_approvals``
+        table via ``asyncio.to_thread()`` on every call, so an ``arc gateway
+        pair approve`` invocation from a separate CLI process — which writes
+        to the same SQLite db_path — takes effect on the very next inbound
+        message the gateway daemon routes, with no in-process state to refresh.
+
+        Args:
+            platform:         Platform identifier (e.g. "telegram").
+            platform_user_id: Raw user ID on the platform (hashed before lookup).
+
+        Returns:
+            True if an approval record exists for this user; False otherwise.
+        """
+        user_hash = _hash_user_id(platform, platform_user_id)
+        return await asyncio.to_thread(self._is_approved_sync, platform, user_hash)
+
     async def list_pending(self) -> list[PairingCode]:
         """Return all unexpired, unconsumed pairing codes across all platforms.
 
@@ -661,6 +687,16 @@ class PairingStore:
                 "UPDATE pairing_codes SET consumed = 1, signed_by_did = ? WHERE code = ?",
                 (approver_did, code),
             )
+            # Record the approval so is_approved() can answer a live SQLite
+            # check from ANY PairingStore instance pointed at this db_path —
+            # not just the process that happened to mint/consume the code.
+            conn.execute(
+                """INSERT INTO pairing_approvals (platform, user_hash, approved_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(platform, user_hash)
+                   DO UPDATE SET approved_at = excluded.approved_at""",
+                (row["platform"], row["user_hash"], now),
+            )
             conn.commit()
 
         pairing_code = PairingCode(
@@ -696,6 +732,23 @@ class PairingStore:
         """
         with self._connect() as conn:
             return self._throttle.is_locked(conn, platform, now)
+
+    def _is_approved_sync(self, platform: str, user_hash: str) -> bool:
+        """Check the pairing_approvals table for a live approval record.
+
+        Args:
+            platform:  Platform name.
+            user_hash: Pre-hashed platform_user_id (see _hash_user_id).
+
+        Returns:
+            True if an approval row exists.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM pairing_approvals WHERE platform = ? AND user_hash = ?",
+                (platform, user_hash),
+            ).fetchone()
+        return row is not None
 
     def _list_pending_sync(self) -> list[PairingCode]:
         """Fetch pending codes from DB in a thread.
