@@ -59,8 +59,8 @@ class TestLoadModelHappyPath:
         from arcllm.registry import load_model
 
         model = load_model("anthropic")
-        # default_model from anthropic.toml is claude-sonnet-4-6
-        assert model.model_name == "claude-sonnet-4-6"
+        # default_model from anthropic.toml is claude-sonnet-5
+        assert model.model_name == "claude-sonnet-5"
 
     def test_load_explicit_model(self):
         from arcllm.registry import load_model

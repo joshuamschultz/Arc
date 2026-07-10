@@ -64,7 +64,7 @@ def test_load_provider_config_anthropic():
     assert config.provider.api_format == "anthropic-messages"
     assert config.provider.base_url == "https://api.anthropic.com"
     assert config.provider.api_key_env == "ANTHROPIC_API_KEY"
-    assert config.provider.default_model == "claude-sonnet-4-6"
+    assert config.provider.default_model == "claude-sonnet-5"
     assert config.provider.default_temperature == 0.7
 
 

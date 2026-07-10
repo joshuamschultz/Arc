@@ -323,7 +323,7 @@ export ARC_CONFIG_DIR="$PWD/config"
 arc init --tier personal --provider anthropic
 
 for a in procurement picking demand-planning inventory; do
-  arc agent create "$a" --dir ./agents --model anthropic/claude-sonnet-4-6
+  arc agent create "$a" --dir ./agents --model anthropic/claude-sonnet-5
 done
 ```
 
