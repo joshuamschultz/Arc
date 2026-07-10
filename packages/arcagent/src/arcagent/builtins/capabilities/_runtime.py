@@ -24,6 +24,26 @@ turn is invisible to a sibling agent's concurrently-running turn, with
 no change needed at any of the ~15 call sites that already call
 :func:`configure`/:func:`workspace`/etc.
 
+Task 27 FOLLOW-UP (hotfix, same day): a bare ContextVar is only visible to
+the task that set it and any CHILD task spawned from within it — never to
+a SIBLING task. ``SessionRouter.handle()`` spawns a brand-new, SIBLING
+``asyncio.Task`` for every inbound turn. An agent's first-ever turn (cache
+miss) happens to run ``ArcAgent.startup()`` — and thus :func:`configure`
+— inside that turn's own task, so turn 1 works. But the agent is then
+cached (:mod:`arcui.embedded_agents`) and every SUBSEQUENT turn gets a
+fresh sibling task that never re-runs :func:`configure` — every builtin
+tool call would raise "not configured" starting on message 2, forever.
+Fix: :func:`snapshot` captures the fully-configured state ONCE, right
+after :func:`setup_capabilities` finishes calling :func:`configure`
+(agent_lifecycle.py); the immutable :class:`RuntimeSnapshot` is stored on
+the ``ArcAgent`` instance; :func:`bind` — cheap, idempotent, construction-
+free — re-applies it via ``.set()`` at the top of every turn-dispatch
+entry point (``dispatch_stream``, ``start_tracked_run``, ``resume_stream``),
+regardless of which literal task is running that turn. Background tasks
+(``@background_task`` loops) are unaffected — they inherit the startup
+task's context automatically via ``asyncio.create_task()``'s context-copy
+and don't need re-binding (see capability_registry.py:register_task).
+
 Tools call :func:`workspace` / :func:`allowed_paths` / :func:`loader`
 / :func:`get_secret` lazily at execute time. If unset, they raise
 :class:`RuntimeError` with a clear message rather than silently
@@ -35,6 +55,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -106,6 +127,67 @@ def configure(
         _egress_proxy_var.set(egress_proxy)
     if tier is not None:
         _tier_var.set(tier)
+
+
+@dataclass(frozen=True)
+class RuntimeSnapshot:
+    """Immutable capture of all nine builtin-runtime ContextVars.
+
+    Built once via :func:`snapshot` after startup's two :func:`configure`
+    calls have both run; re-applied via :func:`bind` at the top of every
+    turn so state survives the sibling ``asyncio.Task`` per-turn dispatch
+    creates (see module docstring, "Task 27 FOLLOW-UP").
+    """
+
+    workspace: Path
+    allowed_paths: list[Path] | None
+    loader: CapabilityLoader | None
+    vault_resolver: Any
+    identity: AgentIdentity | None
+    protected_paths: frozenset[Path]
+    audit_sink: Any
+    egress_proxy: Any
+    tier: str
+
+
+def snapshot() -> RuntimeSnapshot:
+    """Capture the CURRENT task's bound state into an immutable snapshot.
+
+    Call once, after startup's :func:`configure` calls have both run.
+    Uses :func:`workspace` (not a raw ``.get()``) so an unconfigured
+    caller fails loudly here rather than producing a snapshot with a
+    missing workspace that only breaks later.
+    """
+    return RuntimeSnapshot(
+        workspace=workspace(),
+        allowed_paths=_allowed_paths_var.get(),
+        loader=_loader_var.get(),
+        vault_resolver=_vault_resolver_var.get(),
+        identity=_identity_var.get(),
+        protected_paths=_protected_paths_var.get(),
+        audit_sink=_audit_sink_var.get(),
+        egress_proxy=_egress_proxy_var.get(),
+        tier=_tier_var.get(),
+    )
+
+
+def bind(snap: RuntimeSnapshot) -> None:
+    """Idempotently bind a previously-built snapshot into the CURRENT task.
+
+    Cheap — nine ``.set()`` calls, no construction, no I/O. Called at the
+    top of every turn-dispatch entry point so a turn running in a fresh
+    sibling ``asyncio.Task`` (not a descendant of the task that ran
+    :func:`configure`) still sees this agent's state.
+    """
+    _workspace_var.set(snap.workspace)
+    _allowed_paths_var.set(snap.allowed_paths)
+    _loader_var.set(snap.loader)
+    _vault_resolver_var.set(snap.vault_resolver)
+    _identity_var.set(snap.identity)
+    _protected_paths_var.set(snap.protected_paths)
+    _audit_sink_var.set(snap.audit_sink)
+    _egress_proxy_var.set(snap.egress_proxy)
+    _tier_var.set(snap.tier)
 
 
 def sign_artifact_file(artifact: Path, content: bytes) -> bool:
@@ -458,8 +540,10 @@ def reset() -> None:
 
 
 __all__ = [
+    "RuntimeSnapshot",
     "allowed_paths",
     "audit_unsigned_artifact",
+    "bind",
     "check_protected",
     "check_secret_content",
     "check_shell_command",
@@ -473,6 +557,7 @@ __all__ = [
     "resolve_workspace_path",
     "run_sandboxed_bash",
     "sign_artifact_file",
+    "snapshot",
     "tier",
     "workspace",
 ]

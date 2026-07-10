@@ -167,6 +167,9 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         egress_proxy=egress_proxy,
         tier=agent._config.security.tier,
     )
+    # Task 27 follow-up (hotfix) — this is the FINAL builtin_runtime.configure()
+    # call, so its snapshot is the one every turn must rebind.
+    agent._runtime_bindings.append((builtin_runtime.bind, builtin_runtime.snapshot()))
 
     diff = await agent._capability_loader.scan_and_register()
     if diff.errors:
@@ -236,6 +239,28 @@ def configure_module_runtimes(
             configure_fn(**kwargs)
         except Exception:  # reason: fail-open — log + continue
             _logger.exception("Module %s _runtime.configure failed", mod_name)
+            continue
+
+        # Task 27 follow-up (hotfix) — record the built state so every turn
+        # can rebind it in whatever asyncio.Task actually dispatches it.
+        bind_fn = getattr(runtime_mod, "bind", None)
+        state_fn = getattr(runtime_mod, "state", None)
+        if bind_fn is not None and state_fn is not None:
+            agent._runtime_bindings.append((bind_fn, state_fn()))
+
+
+def activate_runtime_bindings(agent: ArcAgent) -> None:
+    """Rebind every built runtime state into the CURRENT asyncio task.
+
+    ``ContextVar`` values set during ``startup()`` are visible only to that
+    task and its descendants — never to a sibling task created later (task
+    27 follow-up hotfix). ``SessionRouter.handle()`` spawns exactly such a
+    sibling per turn, so this must run at the top of every turn-dispatch
+    entry point before any builtin or module tool reads its runtime state.
+    Cheap and idempotent — each ``bind`` call is a single ``ContextVar.set``.
+    """
+    for bind_fn, built_state in agent._runtime_bindings:
+        bind_fn(built_state)
 
 
 async def bridge_capability_tools_to_registry(agent: ArcAgent) -> None:

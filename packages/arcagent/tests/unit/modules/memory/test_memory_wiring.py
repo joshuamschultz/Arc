@@ -81,6 +81,41 @@ def _configure_with(brain: Any, cfg: dict[str, Any] | None = None) -> None:
     )
 
 
+# -- Hotfix: bind() survives a sibling asyncio.Task (task 36) ------------
+
+
+async def test_bind_makes_state_visible_in_a_sibling_task(tmp_path: Path) -> None:
+    """configure() only binds the CURRENT task's ContextVar — invisible to a
+    BRAND NEW sibling task (exactly what SessionRouter.handle() spawns per
+    turn: turn 1's task completes, turn 2 gets an independent task created
+    later from a common ancestor, not a child of turn 1). bind() with the
+    already-built _State object must re-apply it in the new task without
+    rebuilding anything (cheap, idempotent)."""
+    import asyncio
+
+    built_state: _runtime._State | None = None
+
+    async def turn_one() -> None:
+        nonlocal built_state
+        _runtime.configure(config={"brain": "none"}, workspace=tmp_path, agent_did=_DID)
+        built_state = _runtime.state()
+
+    # turn_one's task runs to completion and ENDS before turn_two's task is
+    # created — turn_two is therefore NOT a child of turn_one, exactly like
+    # SessionRouter.handle()'s per-turn asyncio.create_task() calls.
+    await asyncio.create_task(turn_one())
+    assert built_state is not None
+
+    async def turn_two() -> object:
+        with pytest.raises(RuntimeError, match="before runtime is configured"):
+            _runtime.state()
+        _runtime.bind(built_state)
+        return _runtime.state()
+
+    result = await asyncio.create_task(turn_two())
+    assert result is built_state, "bind() must re-apply the SAME state object, no rebuild"
+
+
 # -- Acceptance: memory-less (NullBrain) ---------------------------------
 
 

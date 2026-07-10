@@ -150,9 +150,20 @@ def state() -> _State:
     return current
 
 
+def bind(state_obj: _State) -> None:
+    """Idempotently bind an already-built ``_State`` into the CURRENT task.
+
+    Cheap — one ``.set()`` call, no construction. Called at the top of
+    every turn-dispatch entry point (task 27 follow-up hotfix) so a turn
+    running in a fresh sibling ``asyncio.Task`` — not a descendant of the
+    task that ran ``configure()`` — still sees this agent's state.
+    """
+    _state_var.set(state_obj)
+
+
 def reset() -> None:
     """Test-only: clear runtime state."""
     _state_var.set(None)
 
 
-__all__ = ["configure", "reset", "state"]
+__all__ = ["bind", "configure", "reset", "state"]

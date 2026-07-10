@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -159,6 +159,14 @@ class ArcAgent:
         # from the capability loader. Tracked so reload() can drop them
         # cleanly and re-register the latest set.
         self._capability_tool_names: set[str] = set()
+        # Task 27 follow-up (hotfix) — every ``_runtime.bind`` built during
+        # startup, paired with the already-built state to rebind. A turn
+        # dispatched in a fresh sibling asyncio.Task (SessionRouter spawns
+        # one per turn; a cached agent's SECOND+ turn never re-runs
+        # startup()) would otherwise see none of this agent's ContextVar
+        # state. ``agent_lifecycle.activate_runtime_bindings`` replays this
+        # list at the top of every turn-dispatch entry point.
+        self._runtime_bindings: list[tuple[Callable[[Any], None], Any]] = []
 
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).

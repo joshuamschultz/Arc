@@ -25,6 +25,7 @@ from arcrun import run_async as arcrun_run_async
 from arcrun import run_stream as arcrun_run_stream
 
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
+from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import SessionManager
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
@@ -176,6 +177,7 @@ async def dispatch_stream(
     Emits ``agent:pre_respond`` (via ``build_run_context``) before the loop and
     ``agent:post_respond`` after the stream is fully consumed.
     """
+    activate_runtime_bindings(agent)
     await session.append_message({"role": "user", "content": input_text})
     telemetry, bus, model, provider, system_prompt, bridge = await build_run_context(
         agent, input_text
@@ -257,6 +259,7 @@ async def start_tracked_run(
     the assistant turn, compacts, and emits ``agent:post_respond`` (parity with
     the streaming path). REQ-040/041.
     """
+    activate_runtime_bindings(agent)
     session = await agent.session(session_key)
     await session.append_message({"role": "user", "content": input_text})
     _telemetry, _bus, model, provider, system_prompt, bridge = await build_run_context(
