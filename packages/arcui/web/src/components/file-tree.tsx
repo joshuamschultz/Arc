@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { ChevronRight, File, Folder, FolderOpen } from 'lucide-react'
-import { apiGet } from '@/lib/api'
-import type { FileReadResponse, FilesTreeEntry, FilesTreeResponse } from '@/lib/types'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronRight, File, Folder, FolderOpen, Pencil } from 'lucide-react'
+import { apiGet, apiPut, ApiError } from '@/lib/api'
+import type { FileReadResponse, FilesTreeEntry, FilesTreeResponse, FileWriteResponse } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { fmtBytes } from '@/lib/format'
 import { Markdown } from '@/components/markdown'
 import { JsonBlock } from '@/components/json-block'
+import { Button } from '@/components/ui/button'
 import { ErrorState, LoadingRows } from '@/components/states'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 
 function baseName(path: string): string {
   const parts = path.split('/').filter(Boolean)
@@ -130,26 +132,103 @@ function TreeNode({
   )
 }
 
+/** Read + (operator-only) edit for one workspace file. Markdown renders in
+ *  view mode; Edit mode is a raw textarea saved via `PUT .../files/read`
+ *  (COMP-012). Errors (400 path-escape/secret-content, 403 viewer) and a
+ *  stale-signature warning surface verbatim from the server. */
 function FileViewer({ agentId, root, path }: { agentId: string; root: string; path: string }) {
+  const queryKey = ['agent', agentId, 'file', root, path]
   const q = useQuery<FileReadResponse>({
-    queryKey: ['agent', agentId, 'file', root, path],
+    queryKey,
     queryFn: ({ signal }) =>
       apiGet(`/api/agents/${agentId}/files/read?root=${root}&path=${encodeURIComponent(path)}`, signal),
   })
+  const queryClient = useQueryClient()
+  const [operatorMode] = useOperatorMode()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveResult, setSaveResult] = useState<FileWriteResponse | null>(null)
 
   if (q.isLoading) return <LoadingRows rows={8} />
   if (q.isError) return <ErrorState error={q.error} />
   if (!q.data) return null
 
   const isMarkdown = path.endsWith('.md') || path.endsWith('.mdx')
+
+  const startEdit = () => {
+    setDraft(q.data!.content)
+    setSaveError(null)
+    setSaveResult(null)
+    setEditing(true)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const res = await apiPut<FileWriteResponse>(
+        `/api/agents/${agentId}/files/read?root=${root}&path=${encodeURIComponent(path)}`,
+        { content: draft },
+      )
+      setSaveResult(res)
+      setEditing(false)
+      await queryClient.invalidateQueries({ queryKey })
+    } catch (e) {
+      setSaveError(e instanceof ApiError ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
         <span className="truncate font-mono">{path}</span>
-        <span className="shrink-0">{fmtBytes(q.data.size)}</span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span>{fmtBytes(q.data.size)}</span>
+          {operatorMode && !editing && (
+            <Button variant="ghost" size="sm" onClick={startEdit}>
+              <Pencil className="size-3.5" /> Edit
+            </Button>
+          )}
+          {editing && (
+            <>
+              <Button variant="ghost" size="sm" disabled={saving} onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" disabled={saving} onClick={save}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
+      {saveError && (
+        <div className="border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          {saveError}
+        </div>
+      )}
+      {saveResult?.signature_stale && (
+        <div className="border-b border-status-warning/30 bg-status-warning/10 px-4 py-2 text-xs text-status-warning">
+          {saveResult.message}
+        </div>
+      )}
+      {saveResult && !saveResult.signature_stale && (
+        <div className="border-b border-status-online/30 bg-status-online/10 px-4 py-2 text-xs text-status-online">
+          {saveResult.message}
+        </div>
+      )}
       <div className="flex-1 overflow-auto p-4">
-        {isMarkdown ? (
+        {editing ? (
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            spellCheck={false}
+            className="h-full min-h-[240px] w-full resize-none rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+          />
+        ) : isMarkdown ? (
           <Markdown>{q.data.content}</Markdown>
         ) : (
           <JsonBlock value={q.data.content} className="border-0 bg-transparent p-0" />

@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { Hash, MessageSquare, Send, Wrench } from 'lucide-react'
+import { AlertCircle, Hash, MessageSquare, Send, Wrench } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/states'
 import { StatusDot } from '@/components/status-badge'
+import { OperatorModeToggle } from '@/components/operator-mode-toggle'
+import {
+  ChannelMembersSheet,
+  CreateChannelSheet,
+  MembersButton,
+  NewChannelButton,
+} from '@/components/channel-management'
 import { useChatSession, type ChatMessage } from '@/hooks/use-chat'
 import { useTeamStream, type TeamFrame } from '@/hooks/use-team-stream'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useRoster, useTeamChannels, useChannelMessages } from '@/lib/queries'
+import { ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { Dict } from '@/lib/types'
+import type { Channel, Dict } from '@/lib/types'
 
 type Selection =
   | { kind: 'agent'; id: string; label: string }
@@ -113,7 +122,8 @@ function handleOf(ref: string): string {
   return ref.replace(/^@/, '')
 }
 
-function ChannelPanel({ name }: { name: string }) {
+function ChannelPanel({ channel, onOpenMembers }: { channel: Channel; onOpenMembers: () => void }) {
+  const name = channel.name
   const history = useChannelMessages(name)
   const { frames, status, post } = useTeamStream(name)
   const endRef = useRef<HTMLDivElement>(null)
@@ -169,6 +179,7 @@ function ChannelPanel({ name }: { name: string }) {
       <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
         <span className="flex items-center gap-2">
           <Hash className="size-3.5" /> <span className="font-mono">{name}</span>
+          <MembersButton count={channel.members.length} onClick={onOpenMembers} />
         </span>
         <span className="capitalize">{status}</span>
       </div>
@@ -213,15 +224,17 @@ export function MessagesPage() {
   const roster = useRoster()
   const channels = useTeamChannels()
   const [sel, setSel] = useState<Selection>(null)
+  const [operatorMode] = useOperatorMode()
+  const [creating, setCreating] = useState(false)
+  const [managingMembers, setManagingMembers] = useState(false)
 
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
-  const channelList = (channels.data?.channels ?? []).map((c) =>
-    typeof c === 'string' ? c : String((c as Dict).name ?? ''),
-  ).filter(Boolean)
+  const channelList = channels.data?.channels ?? []
+  const selectedChannel = sel?.kind === 'channel' ? channelList.find((c) => c.name === sel.id) ?? null : null
 
   return (
     <div className="flex h-full flex-col">
-      <PageHeader title="Messages" description="Direct agent chat and team channels." />
+      <PageHeader title="Messages" description="Direct agent chat and team channels." actions={<OperatorModeToggle />} />
       <div className="grid flex-1 grid-cols-[260px_1fr] overflow-hidden">
         <aside className="overflow-auto border-r border-border p-2">
           <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agents</div>
@@ -248,22 +261,35 @@ export function MessagesPage() {
             )
           })}
 
-          <div className="mt-3 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Channels</div>
-          {channelList.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No channels</div>}
-          {channelList.map((name) => {
-            const selected = sel?.kind === 'channel' && sel.id === name
+          <div className="mt-3 flex items-center justify-between px-2 py-1">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Channels</span>
+            {operatorMode && <NewChannelButton onClick={() => setCreating(true)} />}
+          </div>
+          {channels.isLoading && <div className="px-2 py-1 text-xs text-muted-foreground">Loading…</div>}
+          {channels.isError && (
+            <div className="mx-2 my-1 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+              <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+              <span>{channels.error instanceof ApiError ? channels.error.message : 'Channel service unavailable'}</span>
+            </div>
+          )}
+          {!channels.isLoading && !channels.isError && channelList.length === 0 && (
+            <div className="px-2 py-1 text-xs text-muted-foreground">No channels yet</div>
+          )}
+          {channelList.map((c) => {
+            const selected = sel?.kind === 'channel' && sel.id === c.name
             return (
               <button
-                key={name}
+                key={c.name}
                 type="button"
-                onClick={() => setSel({ kind: 'channel', id: name, label: name })}
+                onClick={() => setSel({ kind: 'channel', id: c.name, label: c.name })}
                 className={cn(
                   'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted/50',
                   selected && 'bg-primary/10',
                 )}
               >
                 <Hash className="size-4 text-muted-foreground" />
-                <span className="truncate">{name}</span>
+                <span className="truncate">{c.name}</span>
+                <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{c.members.length}</span>
               </button>
             )
           })}
@@ -276,11 +302,23 @@ export function MessagesPage() {
             </div>
           ) : sel.kind === 'agent' ? (
             <ChatPanel key={sel.id} agentId={sel.id} />
+          ) : selectedChannel ? (
+            <ChannelPanel key={sel.id} channel={selectedChannel} onOpenMembers={() => setManagingMembers(true)} />
           ) : (
-            <ChannelPanel key={sel.id} name={sel.id} />
+            <div className="flex h-full items-center justify-center">
+              <EmptyState icon={<Hash className="size-7" />} title="Channel not found" description="It may have been removed." />
+            </div>
           )}
         </main>
       </div>
+
+      <CreateChannelSheet open={creating} onOpenChange={setCreating} />
+      <ChannelMembersSheet
+        channel={selectedChannel}
+        open={managingMembers}
+        onOpenChange={setManagingMembers}
+        operatorMode={operatorMode}
+      />
     </div>
   )
 }

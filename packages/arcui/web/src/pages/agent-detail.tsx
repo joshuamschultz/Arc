@@ -16,19 +16,18 @@ import {
   SystemPolicyRules,
 } from '@/components/policy-views'
 import { RunReplayDrawer } from '@/components/run-replay-drawer'
-import { SkillsBrowser } from '@/components/skills-browser'
+import { CapabilityTable } from '@/components/capability-table'
 import { ToolsTable } from '@/components/tools-table'
-import { type SkillRef } from '@/components/skill-drawer'
 import { AreaSeries } from '@/components/charts'
 import { QueryState, EmptyState } from '@/components/states'
 import {
   useAgent,
+  useAgentCapabilities,
   useAgentConfig,
   useAgentPolicy,
   useAgentPolicyStats,
   useAgentSchedules,
   useAgentSessions,
-  useAgentSkills,
   useAgentStats,
   useAgentTasks,
   useAgentTimeseries,
@@ -441,22 +440,24 @@ function LlmTab({ agentId }: { agentId: string }) {
 }
 
 function SkillsTab({ agentId }: { agentId: string }) {
-  const q = useAgentSkills(agentId)
-  const skills = (q.data?.skills ?? []) as SkillRef[]
+  const q = useAgentCapabilities(agentId)
+  const skills = (q.data?.items ?? []).filter((i) => i.kind === 'skill')
   return (
     <QueryState query={q} isEmpty={() => skills.length === 0}
-      empty={<EmptyState title="No skills" />}>
-      {() => <SkillsBrowser skills={skills} agentId={agentId} />}
+      empty={<EmptyState title="No skills" description="No skill loaded from any of the four scan roots." />}>
+      {() => <CapabilityTable items={skills} searchPlaceholder="Search skills…" emptyTitle="No skills" />}
     </QueryState>
   )
 }
 
 function ToolsTab({ agentId }: { agentId: string }) {
   const q = useAgentTools(agentId)
+  const caps = useAgentCapabilities(agentId)
   const tools = (q.data?.tools ?? []) as Dict[]
   const allow = q.data?.allowlist ?? []
   const deny = q.data?.denylist ?? []
   const policyLabel = deny.length ? `deny ${deny.length}` : allow.length ? `allow ${allow.length}` : 'allow-all'
+  const capTools = (caps.data?.items ?? []).filter((i) => i.kind === 'tool')
   return (
     <QueryState query={q} isEmpty={() => tools.length === 0}
       empty={<EmptyState title="No tools registered" />}>
@@ -467,6 +468,17 @@ function ToolsTab({ agentId }: { agentId: string }) {
             <StatCard label="Policy" value={policyLabel} />
           </div>
           <ToolsTable tools={tools} />
+          <Section title="Capability tools — loader verdicts">
+            <QueryState
+              query={caps}
+              isEmpty={() => capTools.length === 0}
+              empty={<p className="text-xs text-muted-foreground">No capability tools scanned across the four roots.</p>}
+            >
+              {() => (
+                <CapabilityTable items={capTools} searchPlaceholder="Search capability tools…" emptyTitle="No capability tools" />
+              )}
+            </QueryState>
+          </Section>
         </div>
       )}
     </QueryState>

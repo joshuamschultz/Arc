@@ -187,6 +187,135 @@ export interface FileReadResponse {
   content_type: string
 }
 
+export interface FileWriteResponse {
+  path: string
+  size: number
+  mtime: number
+  signature_stale: boolean
+  message: string
+}
+
+// --- Knowledge (arcmemory.operator facade, COMP-001/002/003) ---------------
+
+export interface MemoryRecord {
+  entry_id: string
+  scope: string
+  kind: string
+  text: string
+  classification: string
+  created: string
+  salience: number
+  importance: number // 1..10 projection of salience
+  recency: number // 0..1 decay indicator
+  source: string
+  entities: string[]
+}
+
+export interface MemoryPage {
+  items: MemoryRecord[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface EntityRecord {
+  slug: string
+  name: string
+  entity_type: string
+  classification: string
+  confidence: number
+  importance: number // 1..10 projection of confidence
+  source: string
+  links_to: string[]
+  facts: string[]
+  tags: string[]
+}
+
+export interface LinkRecord {
+  source_id: string
+  target_id: string
+  target_type: string // "entity" | "cue"
+  kind: string // "link" | "assoc" | "tagged"
+  weight: number
+}
+
+export interface LinksResponse {
+  items: LinkRecord[]
+}
+
+export interface EntitiesResponse {
+  items: EntityRecord[]
+}
+
+export interface Recall {
+  source: string
+  content: string
+  score: number
+  kind: string
+  confidence: string
+  classification: string
+  verify_first: boolean
+}
+
+export interface MemorySearchResponse {
+  items: Recall[]
+  query: string
+}
+
+export type MutationStatus = 'applied' | 'error'
+
+export interface MutationResult {
+  status: MutationStatus
+  operation: string
+  actor_did: string
+  entry_id?: string | null
+  error?: string | null
+}
+
+export interface MutationResponse {
+  status: MutationStatus
+  results: MutationResult[]
+}
+
+// --- Capabilities (arcagent.capabilities.inventory, COMP-007/008/009) ------
+
+export interface CapabilityInventoryItem {
+  kind: string // "skill" | "tool"
+  name: string
+  version: string
+  description: string
+  source_root: string // "builtins" | "builtins-skills" | "global" | "global-skills" | "agent" | "agent-skills" | "workspace" | "workspace-skills"
+  status: string // verbatim loader verdict — never re-derived client-side
+  status_detail: string
+}
+
+export interface RuntimeToolItem {
+  name: string
+  description: string
+  classification: string
+  transport: string
+}
+
+export interface AgentCapabilityInventory {
+  items: CapabilityInventoryItem[]
+  runtime: boolean
+  runtime_tools: RuntimeToolItem[]
+}
+
+// --- Channels (arcteam, COMP-005/006) ---------------------------------------
+
+export interface Channel {
+  name: string
+  description: string
+  members: string[]
+  created: string
+  clearance: string
+}
+
+export interface ChannelsResponse {
+  channels: Channel[]
+}
+
 export interface ConfigResponse {
   config: Dict
   raw: string

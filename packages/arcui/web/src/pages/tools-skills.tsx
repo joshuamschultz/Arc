@@ -5,11 +5,14 @@ import { PageHeader } from '@/components/page-header'
 import { DataTable } from '@/components/data-table'
 import { StatCard } from '@/components/stat-card'
 import { QueryState, EmptyState } from '@/components/states'
-import { SkillsBrowser } from '@/components/skills-browser'
+import { CapabilityTable } from '@/components/capability-table'
 import { ClassificationBadge } from '@/components/tools-table'
 import { useTeamToolsSkills } from '@/lib/queries'
-import type { SkillRef } from '@/components/skill-drawer'
-import type { Dict } from '@/lib/types'
+import type { CapabilityInventoryItem, Dict } from '@/lib/types'
+
+interface FleetSkillRow extends CapabilityInventoryItem {
+  agent_id?: string
+}
 
 interface ToolRow extends Dict {
   name?: string
@@ -55,7 +58,7 @@ const toolColumns: ColumnDef<ToolRow, unknown>[] = [
 export function ToolsSkillsPage() {
   const query = useTeamToolsSkills()
   const tools = useMemo(() => (query.data?.tools ?? []) as ToolRow[], [query.data])
-  const skills = useMemo(() => (query.data?.skills ?? []) as SkillRef[], [query.data])
+  const skills = useMemo(() => (query.data?.skills ?? []) as unknown as FleetSkillRow[], [query.data])
 
   return (
     <div className="flex h-full flex-col">
@@ -78,7 +81,14 @@ export function ToolsSkillsPage() {
           <h2 className="text-sm font-semibold text-foreground">Skills</h2>
           <QueryState query={query} isEmpty={() => skills.length === 0}
             empty={<EmptyState icon={<Sparkles className="size-7" />} title="No skills registered" />}>
-            {() => <SkillsBrowser skills={skills} />}
+            {() => (
+              <CapabilityTable
+                items={skills}
+                agentAccessor={(row) => row.agent_id}
+                searchPlaceholder="Search skills…"
+                emptyTitle="No skills registered"
+              />
+            )}
           </QueryState>
         </section>
       </div>
