@@ -61,6 +61,52 @@ class TestPersonalTier:
         target = CapabilitySource(name="t", source=some_source)
         assert layer.evaluate(target) == Decision.DENY
 
+    def test_signed_source_allows_even_with_auto_run_false(self, some_source: str) -> None:
+        """Signed agent-authored code loads at personal tier without the
+        auto_run_agent_code opt-in.
+
+        The signature IS the trust boundary here: CapabilityLoader only ever
+        sets signed=True after re-verifying the artifact against the AGENT'S
+        OWN pinned identity key (agent_lifecycle.py's trusted_pubkey =
+        agent._identity.public_key) — an attacker who can write files into
+        the workspace cannot forge this without the agent's private key, so
+        auto-allowing signed sources is still fail-closed for unattributed
+        code. This is what makes the personal-tier default experience work:
+        a scaffolded capability signed at `arc agent create` time, or a
+        skill an agent signs via its own self-modification tools (SPEC-033),
+        loads out of the box; unsigned code still requires the explicit
+        auto_run_agent_code toggle.
+        """
+        from arcagent.core.tofu_layer import (
+            CapabilitySource,
+            Decision,
+            TofuLayer,
+        )
+
+        layer = TofuLayer(
+            tier=Tier.PERSONAL,
+            validators=ValidatorsConfig(auto_run_agent_code=False),
+        )
+        target = CapabilitySource(name="t", source=some_source, signed=True)
+        assert layer.evaluate(target) == Decision.ALLOW
+
+    def test_unsigned_source_still_denies_by_default(self, some_source: str) -> None:
+        """Unsigned code is unaffected by the signed-source relaxation above —
+        still gated by the explicit auto_run_agent_code toggle (fail-closed
+        default preserved)."""
+        from arcagent.core.tofu_layer import (
+            CapabilitySource,
+            Decision,
+            TofuLayer,
+        )
+
+        layer = TofuLayer(
+            tier=Tier.PERSONAL,
+            validators=ValidatorsConfig(auto_run_agent_code=False),
+        )
+        target = CapabilitySource(name="t", source=some_source, signed=False)
+        assert layer.evaluate(target) == Decision.DENY
+
 
 class TestEnterpriseTier:
     def test_unknown_name_emits_new_sighting(self, some_source: str) -> None:

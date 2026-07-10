@@ -379,3 +379,45 @@ async def test_personal_strict_denies_unsigned(tmp_path: Path) -> None:
     )
     delta = await loader.scan_and_register()
     assert "hack" not in delta.added
+
+
+@pytest.mark.asyncio
+async def test_personal_agent_signed_skill_loads_without_auto_run(tmp_path: Path) -> None:
+    """An agent's own SPEC-033 self-signed skill (e.g. authored via its
+    self-modification tools) loads at personal tier without the operator
+    flipping auto_run_agent_code — the signature, re-verified against the
+    agent's own pinned key, is the trust boundary. Reproduces the reported
+    "tofu: deny" on a valid signed SKILL.md/SKILL.md.arcsig pair."""
+    ident = _identity()
+    root = tmp_path / "capabilities"
+    root.mkdir()
+    _write_skill(root, "browserbase-browse", sign_with=ident)
+    loader, _sink = _loader(
+        root,
+        tier=Tier.PERSONAL,
+        validators=ValidatorsConfig(auto_run_agent_code=False),
+        require_signature=False,
+        trusted_public_key=ident.public_key,
+    )
+    delta = await loader.scan_and_register()
+    assert "browserbase-browse" in delta.added
+
+
+@pytest.mark.asyncio
+async def test_personal_agent_signed_capability_loads_without_auto_run(tmp_path: Path) -> None:
+    """Same trust boundary for a scaffolded/agent-signed ``.py`` capability
+    (e.g. calculator.py signed at `arc agent create` time) — the default
+    out-of-box tool must not require auto_run_agent_code."""
+    ident = _identity()
+    caps = tmp_path / "capabilities"
+    caps.mkdir()
+    _write(caps, "calculator", sign_with=ident)
+    loader, _sink = _loader(
+        caps,
+        tier=Tier.PERSONAL,
+        validators=ValidatorsConfig(auto_run_agent_code=False),
+        require_signature=False,
+        trusted_public_key=ident.public_key,
+    )
+    delta = await loader.scan_and_register()
+    assert "calculator" in delta.added

@@ -4,7 +4,9 @@ Trust-On-First-Use gate for self-executing agent code (validator
 scripts in skill folders, agent-authored ``.py``). Three tiers, three
 profiles:
 
-  * **personal**    — single boolean toggle (``auto_run_agent_code``)
+  * **personal**    — a source signed with the agent's own pinned identity
+    key (verified by the loader before this layer ever sees it) always
+    loads; otherwise gated by the ``auto_run_agent_code`` toggle
   * **enterprise**  — match by name; new name → ``NEW_SIGHTING`` (caller
     prompts the human); known name + matching hash → ``ALLOW``;
     known name + different hash → ``DENY`` (tamper)
@@ -87,7 +89,20 @@ class TofuLayer:
             return self._evaluate_enterprise(target)
         if self._tier == Tier.ENTERPRISE:
             return self._evaluate_enterprise(target)
-        # Personal — single toggle.
+        # Personal — signed OR the auto_run_agent_code toggle. A signature
+        # here has already been re-verified by the loader against the
+        # AGENT'S OWN pinned identity key (agent_lifecycle.py always passes
+        # trusted_public_key = agent._identity.public_key, regardless of
+        # tier) — an attacker who can write into the workspace cannot forge
+        # it without the agent's private key. That makes "signed" a real
+        # attribution boundary, not a bypass: unsigned code still needs the
+        # explicit opt-in. This is what makes the personal-tier default
+        # experience work — the scaffolded calculator.py (signed at `arc
+        # agent create` time) and an agent's own self-signed skills
+        # (SPEC-033 self-modification tools) load without requiring the
+        # operator to flip auto_run_agent_code globally.
+        if target.signed:
+            return Decision.ALLOW
         if self._validators.auto_run_agent_code:
             return Decision.ALLOW
         return Decision.DENY

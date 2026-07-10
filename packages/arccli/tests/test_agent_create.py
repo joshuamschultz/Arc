@@ -169,6 +169,34 @@ class TestCreate:
         caps_dir = tmp_path / "my-agent" / "capabilities"
         assert caps_dir.is_dir()
 
+    def test_create_signs_calculator_capability(self, tmp_path):
+        """The scaffolded calculator.py is signed at create time (SPEC-033).
+
+        Without this, TofuLayer.evaluate() at personal tier denies EVERY
+        agent-writable capability by default (auto_run_agent_code=False in
+        the scaffolded config) — the out-of-box default tool was dead on
+        arrival. Signing here, combined with the personal-tier TofuLayer fix
+        (signed sources load automatically), is what makes it work without
+        the operator flipping a global auto-run toggle.
+        """
+        _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
+        agent_dir = tmp_path / "my-agent"
+        calc = agent_dir / "capabilities" / "calculator.py"
+        sidecar = agent_dir / "capabilities" / "calculator.py.arcsig"
+        assert calc.exists()
+        assert sidecar.exists(), "calculator.py must have a .arcsig sidecar (SPEC-033)"
+
+        from arcagent.capabilities import artifact_signing
+
+        assert artifact_signing.verify_file(calc, calc.read_bytes()) is True
+
+        # The signature must be attributable to the SAME DID arcteam
+        # registered — not an unrelated throwaway key.
+        config = tomllib.loads((agent_dir / "arcagent.toml").read_text())
+        manifest = artifact_signing.load_signature(calc)
+        assert manifest is not None
+        assert manifest.signer_did == config["identity"]["did"]
+
     def test_create_fails_if_exists(self, tmp_path):
         (tmp_path / "my-agent").mkdir()
         result = _arc("agent", "create", "my-agent", "--dir", str(tmp_path))
