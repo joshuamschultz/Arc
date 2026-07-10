@@ -3,19 +3,36 @@
 arcgateway connects ArcAgent to real-time messaging platforms (Telegram, Slack) with per-(user, agent) session routing and tier-aware execution isolation.
 
 **The gateway runs embedded inside `arc ui start`** — one process serves
-the dashboard, web chat, and every enabled remote platform. The standalone
-`arcgateway start` daemon (`GatewayRunner.from_config`) never wires an
-agent factory at **any** tier, including federal — it only ever echoes
-back, regardless of what `gateway.toml` enables (open bug; see task
-tracker). Until that's fixed, use `arc ui start --team-root
-<dir> --gateway-config ~/.arc/gateway.toml` for real agent traffic on
-every tier. `security.md`'s tier matrix (executor selection,
-`SubprocessExecutor` isolation for federal) describes the intended
-architecture once wiring is complete, not the current standalone-path
-behavior. For the full validated single-node setup (systemd unit, secrets,
-config deltas, verification), see
-[../deploy/single-node.md](../deploy/single-node.md); this page covers the
-gateway config surface itself.
+the dashboard, web chat, and every enabled remote platform, and it's the
+**only** working agent-execution path today, at every tier. The
+standalone `arcgateway start` daemon unconditionally refuses to start
+rather than silently serve no real agent (or the wrong one):
+
+- Personal/enterprise tier's `AsyncioExecutor` has no agent_factory when
+  built standalone — echo stub only.
+- Federal tier's `SubprocessExecutor` spawns `arc-agent-worker`, which
+  ignores the requested `agent_did` for config selection entirely — it
+  always reads the same fixed-location `arcagent.toml` regardless of which
+  agent a platform message was addressed to. It cannot correctly serve a
+  multi-agent_did gateway (tracked as a federal-blocking bug — see task
+  tracker). Federal tier is **not** an exception here, despite
+  `SubprocessExecutor` otherwise being the intended isolation model — see
+  [security.md](./security.md) for that model's *design*, which this bug
+  currently prevents standalone from delivering.
+
+`arcgateway start` still resolves `gateway.toml` via `GatewayConfig.load()`
+first (ARC_CONFIG_DIR-aware) purely so its refusal message reflects the
+real discovered config — it never actually builds or runs anything.
+`arcgateway stop`/`status` are unaffected and remain fully functional
+(PID/health management for a daemon started before this change). Use the
+embedded path for every real deployment:
+
+```
+arc ui start --team-root <dir> --gateway-config ~/.arc/gateway.toml
+```
+
+— covered in full by [../deploy/single-node.md](../deploy/single-node.md)'s
+validated runbook.
 
 ## Install
 
@@ -30,12 +47,15 @@ uv pip install -e packages/arcgateway -e packages/arccli -e packages/arcagent -e
 ```
 
 Remote platform adapters (Telegram, Slack, Mattermost) are separate
-packages discovered via the `arcgateway.adapters` entry-point group — not
-pulled in by a bare `uv sync` at the workspace root. Install the one you
-need:
+packages discovered via the `arcgateway.adapters` entry-point group.
+`arcgateway-telegram` is a root `pyproject.toml` dependency (alongside
+`arcmemory`/`arcskill`, pinned for the same reason: the default extension
+must load out of the box) — a bare `uv sync` at the workspace root
+installs it, no extra step needed. Slack and Mattermost aren't pinned yet;
+install those the same way if you need them:
 
 ```bash
-uv pip install -e packages/arcgateway-telegram --no-deps
+uv pip install -e packages/arcgateway-slack --no-deps
 ```
 
 If an enabled platform's adapter package isn't installed, the gateway logs
@@ -68,7 +88,7 @@ app_token_env = "SLACK_APP_TOKEN"
 allowed_user_ids = ["U0ABC123"]
 ```
 
-The `GatewayConfig` Pydantic model (see `arcgateway/config.py`) loads this via `GatewayConfig.from_toml(path)`. Note `token_env` for Telegram — `bot_token_env` is Slack's field name; the two platforms don't share a key name, and `arc init`'s TOML generator currently writes the wrong one (`bot_token_env`) into a fresh `gateway.toml` for the Telegram block. Fix it by hand until that generator bug lands.
+The `GatewayConfig` Pydantic model (see `arcgateway/config.py`) loads this via `GatewayConfig.from_toml(path)`. Note `token_env` for Telegram — `bot_token_env` is Slack's field name; the two platforms don't share a key name. `arc init`'s TOML generator now writes the correct field for each platform (previously wrote `bot_token_env` for Telegram too, silently dropped since both models use `extra="ignore"` — fixed).
 
 ## Telegram
 
@@ -131,16 +151,20 @@ enough (e.g. onboarding flow, temporary access).
 ## CLI reference
 
 ```bash
-arc ui start --team-root team --gateway-config ~/.arc/gateway.toml   # embedded path — every tier (recommended)
-arcgateway start                          # standalone daemon — echo-stub at every tier today (open bug)
-arcgateway stop --runtime-dir ~/.arc      # SIGTERM via PID file
-arcgateway status --runtime-dir ~/.arc    # health check
+arc ui start --team-root team --gateway-config ~/.arc/gateway.toml   # embedded path — every tier, the only one that works
+arcgateway start                          # ALWAYS refuses — prints why + the embedded invocation, exits 1
+arcgateway start --config <path>          # same refusal; --config only shapes which gateway.toml the message reflects
+arcgateway stop                           # SIGTERM via PID file (ARC_CONFIG_DIR-aware default runtime_dir) — still works
+arcgateway status                         # health check (ARC_CONFIG_DIR-aware default runtime_dir) — still works
 arc gateway pair approve <CODE>           # approve pending pairing (via arccli)
 arc gateway pair list                     # list pending
 arc gateway pair revoke <CODE>            # revoke
 ```
 
 `arcgateway start/stop/status/setup` run through the `arcgateway` console script directly.
+`start` no longer takes `--team-root`/`--runtime-dir` (removed — dead once standalone doesn't
+serve); `stop`/`status` still do. All three resolve `gateway.toml`/`runtime_dir` via
+`GatewayConfig.load()` when not given explicit flags, honoring `ARC_CONFIG_DIR`.
 The operator pairing commands (`arc gateway pair *`) dispatch through `arccli.commands.registry`
 (centralized `CommandDef` list — one source of truth for CLI + gateway + platform-menu
 generators) so they're available from `arc` without a separate install.

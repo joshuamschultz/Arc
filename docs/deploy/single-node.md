@@ -13,12 +13,16 @@ from `--team-root` on demand.
 by hand or debugging a failed run.
 
 > **Architecture ruling (2026-07-10): the embedded pattern is canonical**
-> at every tier. `scripts/arc-stack.sh` — the older multi-process pattern
-> (`arc agent serve` per agent + `arc ui start` as a pure `arcstore`
-> reader, registered under `$TEAM_ROOT/shared`) — is non-canonical, dev
-> tooling at most. The standalone `arcgateway start` daemon should
-> eventually fail closed and point operators at the embedded path instead
-> of echo-stubbing (see Troubleshooting). Don't mix `arc-stack.sh`'s
+> at every tier — and, as of the latest fix, the *only* working
+> agent-execution path at every tier. `scripts/arc-stack.sh` — the older
+> multi-process pattern (`arc agent serve` per agent + `arc ui start` as a
+> pure `arcstore` reader, registered under `$TEAM_ROOT/shared`) — is
+> non-canonical, dev tooling at most. The standalone `arcgateway start`
+> daemon now unconditionally refuses to start at **every** tier, including
+> federal (see Troubleshooting) — personal/enterprise has no agent_factory
+> standalone, and federal's `SubprocessExecutor` worker is DID-blind
+> (ignores the requested `agent_did`, always loads a fixed-path config), so
+> neither can correctly serve a real gateway. Don't mix `arc-stack.sh`'s
 > `$TEAM_ROOT/shared` registration root with this doc's `$TEAM_ROOT`
 > convention if you still have a reason to run it.
 
@@ -72,28 +76,23 @@ ssh host 'cd ~/arc && ~/.local/bin/uv sync'
 ```
 
 `uv sync` installs the root project's dependency closure — **not** every
-workspace member. As of this writing that means `arcgateway-telegram`
-(and `-slack`, `-mattermost`) are **not** installed by default: they're
-workspace members but aren't declared in root `pyproject.toml`'s
-`[project.dependencies]`. Until that lands, install whichever platform
-adapter you need directly into the venv:
+workspace member. `arcgateway-telegram` **is** declared in root
+`pyproject.toml`'s `[project.dependencies]` (fixed 2026-07-10, alongside
+`arcmemory`/`arcskill` for the same reason: the default extension must
+load out of the box), so a bare `uv sync` installs it — no extra step
+needed. `-slack`/`-mattermost` aren't pinned yet; install those the same
+way if you need them:
 
 ```bash
-ssh host 'cd ~/arc && .venv/bin/python -m pip install -e packages/arcgateway-telegram --no-deps'
+ssh host 'cd ~/arc && .venv/bin/python -m pip install -e packages/arcgateway-slack --no-deps'
 ```
 
-Verify: `.venv/bin/python -c "import arcgateway_telegram"` should succeed
-with no traceback. `deploy-node.sh` checks whether the root-dependency fix
-has shipped (greps `pyproject.toml` for the package name) and skips this
-step automatically once it has — no flag to flip, it just stops being
-necessary.
-
-**Gotcha**: `uv sync` **uninstalls** a manually-`pip install -e`'d package
-that isn't part of its resolved dependency set, every time it runs. If you
-(or CI, or a future script) run a bare `uv sync` after this workaround is
-in place, Telegram support silently disappears until someone reinstalls
-it. `deploy-node.sh` re-checks after every `uv sync` for exactly this
-reason — don't skip that ordering if you're scripting this by hand.
+Verify Telegram: `.venv/bin/python -c "import arcgateway_telegram"` should
+succeed with no traceback straight after `uv sync`, with no manual install
+step. `deploy-node.sh` still carries a defensive check (greps
+`pyproject.toml`, falls back to a manual install only if the dependency
+somehow isn't there) — a no-op today, kept as a safety net rather than
+deleted.
 
 If an enabled adapter's package is missing at runtime, the gateway doesn't
 crash — it logs a warning and skips that platform (see Troubleshooting).
@@ -144,9 +143,13 @@ skips this step if `gateway.toml` already exists — re-running `arc init`
 against an already-customized host would either hang on an interactive
 overwrite prompt or (with `--quick`) silently clobber those customizations.
 
-Apply these deltas on top of the generated defaults — **verify field names
-against the Pydantic models, not the generated comments**; the generator
-has at least one known bug (see Troubleshooting). `scripts/
+`arc init`'s generator now writes correct defaults out of the box (fixed
+2026-07-10): the `token_env`/`bot_token_env` mixup is gone, and
+`[modules.skills]`/`[modules.skills.config]` (nested exactly as shown
+below) now ships in the baseline `arcagent.toml` — reapplying it is
+harmless but no longer necessary. `[eval].provider`/`.model` are still
+generated empty (`""`) and need setting by hand; that's the one delta
+below that isn't yet part of `arc init`'s output. `scripts/
 deploy_node_overlays.py` applies all of these idempotently via `tomlkit`
 (preserves comments/formatting, safe to re-run, never clobbers a value you
 set by hand unless you re-pass the matching flag):
@@ -186,7 +189,7 @@ enabled = true
 
 [platforms.telegram]
 enabled = true
-token_env = "TELEGRAM_BOT_TOKEN"     # NOT bot_token_env — see Troubleshooting
+token_env = "TELEGRAM_BOT_TOKEN"     # NOT bot_token_env (that's Slack's field name)
 allowed_user_ids = []                 # empty = deny all (fail-closed)
 ```
 
@@ -331,11 +334,34 @@ after the fact without guesswork).
 
 ## Troubleshooting
 
+**`arcgateway start` refuses immediately, prints a message about
+`AsyncioExecutor`/`arc-agent-worker`, exits 1** — expected, not a bug in
+your setup. The standalone daemon has no working agent-execution path at
+*any* tier and unconditionally refuses rather than silently serve no real
+agent (personal/enterprise) or the wrong one (federal — `SubprocessExecutor`'s
+`arc-agent-worker` ignores the requested `agent_did`, always loading a
+fixed-path config). Use the embedded path instead — it's the only one
+that works today, at every tier:
+
+```bash
+arc ui start --team-root team --gateway-config ~/.arc/gateway.toml
+```
+
+`arcgateway stop`/`status` still work normally for managing a daemon
+started before this fix landed. `[gateway].team_root` and
+`arcgateway start --team-root` no longer exist (removed — they briefly
+existed as a personal/enterprise-only fix before the federal case was
+found and standalone was blocked everywhere); don't set them.
+
 **"adapter 'telegram' enabled but its plugin package is not installed"**
-(warning in `journalctl --user -u arc.service`) — the `arcgateway-telegram`
-package isn't in the venv. See Install § above; this is the `uv sync`
-uninstall gotcha, not a one-time fluke. Restart the service after
-installing the package.
+(warning in `journalctl --user -u arc.service`) — historical: before
+2026-07-10, `arcgateway-telegram` wasn't a root dependency and `uv sync`
+would silently skip it (and actively uninstall a manually-added copy on
+every re-run). Fixed — a bare `uv sync` now installs it. If you still see
+this warning, something more unusual is wrong (e.g. a stale venv predating
+the fix, or a workspace lock issue) — `uv sync` again and re-check
+`.venv/bin/python -c "import arcgateway_telegram"` before assuming it's
+this old gotcha resurfacing.
 
 **`HTTP 400: temperature is deprecated for this model`** on any
 `arc agent run` / smoke test — **fixed** as of this writing (`arcllm` no

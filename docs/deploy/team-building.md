@@ -81,77 +81,54 @@ Member-ref format: `agent://<agent_name>` — the same string shown in the
 `ID` column of `arc team entities`. Comma-separated, no spaces. This
 creates the team and its first channel (`work`) in one call.
 
-**Roles gap**: `arc agent create`'s auto-registration always sets
+**Roles**: `arc agent create`'s auto-registration always sets
 `roles=["executor"]` with no way to set a richer role at creation time, and
-`arc team register` is not idempotent — it errors `Entity already
-registered` on a duplicate DID rather than upserting. There IS an
-`EntityRegistry.update()` method (`arcteam/registry.py`) with no CLI
-exposed for it yet. Until a CLI lands, set proper display names/roles with
-a one-off script:
+`arc team register` is a strict create — it errors `Entity already
+registered` on a duplicate DID rather than upserting (existing callers,
+including `arc agent create`'s auto-registration, rely on that guard to
+avoid silently clobbering an entity on accidental re-run). Set
+role-appropriate display names/roles afterward with `arc team
+update-entity` (fixed 2026-07-10 — wraps `EntityRegistry.update()`,
+DID/handle never change, omitted fields are left untouched):
 
-```python
-import asyncio
-from pathlib import Path
-from arccli.commands.team import _build_service, _shutdown
-
-ROLE_UPDATES = {
-    "did:arc:local:executor/<josh_did>":     ("Josh Executive Assistant", ["executive-assistant", "executor"]),
-    "did:arc:local:executor/<coder_did>":    ("Coder Agent",              ["coder", "executor"]),
-    "did:arc:local:executor/<marketer_did>": ("Marketer Agent",           ["marketing", "executor"]),
-    "did:arc:local:executor/<trader_did>":   ("Trader Agent",             ["trader", "executor"]),
-}
-
-async def main() -> None:
-    svc, registry, audit, backend = await _build_service(Path.home() / "arc" / "team")
-    try:
-        for did, (name, roles) in ROLE_UPDATES.items():
-            entity = await registry.get(did)
-            entity.name, entity.roles = name, roles
-            await registry.update(entity)
-    finally:
-        await _shutdown(backend)
-
-asyncio.run(main())
+```bash
+.venv/bin/arc team --root ~/arc/team update-entity josh_agent \
+  --name "Josh Executive Assistant" --roles executive-assistant,executor
+.venv/bin/arc team --root ~/arc/team update-entity coder_agent \
+  --name "Coder Agent" --roles coder,executor
+.venv/bin/arc team --root ~/arc/team update-entity marketer_agent \
+  --name "Marketer Agent" --roles marketing,executor
+.venv/bin/arc team --root ~/arc/team update-entity trader_agent \
+  --name "Trader Agent" --roles trader,executor
 ```
+
+`entity_ref` accepts a DID, `@handle`, URI, or bare handle — the agent
+name (e.g. `coder_agent`) resolves the same as `agent://coder_agent`.
+`--roles` replaces the existing role list wholesale (comma-separated);
+omit `--name` or `--roles` to leave that field untouched.
 
 ## 5. Channels
 
-`arc team create --channel work` gives you exactly one channel. There is
-**no `arc team channel create` CLI yet** — the target UX, once it lands,
-should mirror `arc team create`'s shape:
+`arc team create --channel work` gives you exactly one channel. Create the
+rest with `arc team create-channel` (fixed 2026-07-10 — wraps
+`MessagingService.create_channel`):
 
 ```bash
-# not yet implemented — this is the intended interface
-arc team --root ~/arc/team channel create personal --members agent://josh_agent,agent://coder_agent,...
+.venv/bin/arc team --root ~/arc/team create-channel personal \
+  --members agent://josh_agent,agent://coder_agent,agent://marketer_agent,agent://trader_agent
+.venv/bin/arc team --root ~/arc/team create-channel brand \
+  --team josh-team
 ```
 
-Until then, create additional channels via the same service the CLI itself
-uses (`MessagingService.create_channel`), reusing `_build_service`/
-`_shutdown` rather than reimplementing the NATS backend wiring:
-
-```python
-import asyncio
-from pathlib import Path
-from arccli.commands.team import _build_service, _shutdown
-from arcteam.types import Channel
-
-ALL_DIDS = [
-    "did:arc:local:executor/<josh_did>",
-    "did:arc:local:executor/<coder_did>",
-    "did:arc:local:executor/<marketer_did>",
-    "did:arc:local:executor/<trader_did>",
-]
-
-async def main() -> None:
-    svc, registry, audit, backend = await _build_service(Path.home() / "arc" / "team")
-    try:
-        for name in ("personal", "brand"):
-            await svc.create_channel(Channel(name=name, members=ALL_DIDS))
-    finally:
-        await _shutdown(backend)
-
-asyncio.run(main())
-```
+Two ways to set membership: pass `--members` explicitly (comma-separated
+refs, same `agent://<name>` format as `create`), or pass `--team <id>` and
+omit `--members` — membership then defaults to that team's current
+members (explicit `--members` always wins if both are given). The CLI
+refuses to create a channel whose name already exists (checks
+`list_channels()` first) rather than silently overwriting membership —
+`MessagingService.create_channel()` itself has no such guard at the
+service layer, so don't call it directly for a name you're not certain is
+new.
 
 ## 6. Serve
 
