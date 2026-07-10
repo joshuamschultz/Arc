@@ -147,14 +147,21 @@ def _make_agent_factory(team_root: Path) -> Any:
     return _factory
 
 
-def _build_executor(tier: str, agent_factory: Any) -> Executor:
-    """Pick the executor class for the configured tier."""
+def _build_executor(tier: str, agent_factory: Any, team_root: Path) -> Executor:
+    """Pick the executor class for the configured tier.
+
+    Federal's SubprocessExecutor receives this gateway's own ``team_root`` so
+    the spawned arc-agent-worker resolves ``--did`` against a real DID index
+    (task 26) instead of a fixed, agent-agnostic search path that could load
+    any agent's config regardless of which agent_did a session was for.
+    """
     if tier == "federal":
         from arcgateway.executor_subprocess import SubprocessExecutor
 
         _logger.info("bootstrap: federal tier → SubprocessExecutor")
         return SubprocessExecutor(
             worker_cmd=[sys.executable, "-m", "arccli.agent_worker"],
+            team_root=team_root,
         )
     _logger.info("bootstrap: %s tier → AsyncioExecutor", tier)
     return AsyncioExecutor(agent_factory)
@@ -203,7 +210,7 @@ async def build_for_embedded(
         )
 
     agent_factory = _make_agent_factory(team_root)
-    executor = _build_executor(gateway_config.gateway.tier, agent_factory)
+    executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
 
     # [security].require_pairing activates DM pairing enforcement. This is
     # the PRODUCTION path — arcui hosts the runtime via build_for_embedded,

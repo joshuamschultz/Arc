@@ -79,6 +79,25 @@ tier = "federal"
 
 
 @pytest.mark.asyncio
+async def test_build_for_embedded_federal_tier_threads_team_root_to_worker(
+    empty_team_root: Path,
+) -> None:
+    """Task 26 — the federal SubprocessExecutor must receive this gateway's
+    own team_root so arc-agent-worker resolves --did via a real DID index
+    instead of a fixed, agent-agnostic search path. Without this, a
+    multi-agent embedded federal gateway silently serves the wrong agent's
+    identity to every session (the DID-blindness bug)."""
+    cfg = _config(
+        """
+[gateway]
+tier = "federal"
+"""
+    )
+    bundle = await build_for_embedded(empty_team_root, cfg)
+    assert bundle.executor._team_root == empty_team_root  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
 async def test_build_for_embedded_remote_skipped_without_credentials(
     empty_team_root: Path,
     monkeypatch: pytest.MonkeyPatch,

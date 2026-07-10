@@ -36,6 +36,7 @@ import asyncio
 import json
 import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
@@ -99,9 +100,102 @@ async def _collect_deltas(executor: SubprocessExecutor, event: InboundEvent) -> 
     return deltas
 
 
+_AGENT_CONFIG_TEMPLATE = """\
+[agent]
+name = "{name}"
+org = "local"
+type = "executor"
+workspace = "./workspace"
+
+[llm]
+model = "anthropic/claude-sonnet-4-5-20250929"
+
+[identity]
+did = "{did}"
+key_dir = "~/.arcagent/keys"
+
+[vault]
+backend = ""
+
+[tools.policy]
+allow = []
+deny = []
+timeout_seconds = 30
+
+[telemetry]
+enabled = true
+service_name = "{name}"
+log_level = "INFO"
+export_traces = false
+"""
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+class TestSubprocessExecutorTeamRootDidResolution:
+    """Task 26 — a real spawned worker resolves --did via --team-root's DID
+    index rather than a fixed, agent-agnostic search path, proven through an
+    actual subprocess round-trip (not mocked)."""
+
+    @pytest.mark.asyncio
+    async def test_team_root_resolves_and_attempts_real_agent(self, tmp_path: Path) -> None:
+        """A --did that matches an agent under --team-root reaches real
+        ArcAgent execution (not the echo stub) — proven by the response NOT
+        containing the echo stub's signature content, even though the agent
+        itself errors out (no LLM credentials in this test environment)."""
+        agent_did = "did:arc:agent:real-worker-test"
+        agent_dir = tmp_path / "real-agent"
+        agent_dir.mkdir()
+        (agent_dir / "arcagent.toml").write_text(
+            _AGENT_CONFIG_TEMPLATE.format(name="real-agent", did=agent_did)
+        )
+
+        executor = SubprocessExecutor(
+            worker_cmd=_WORKER_CMD,
+            team_root=tmp_path,
+        )
+        event = _make_event(message="ping", agent_did=agent_did)
+        deltas = await asyncio.wait_for(
+            _collect_deltas(executor, event),
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+        combined_content = " ".join(d.content for d in deltas)
+        assert "[arc-agent-worker echo]" not in combined_content, (
+            "A DID that resolves under --team-root must not fall through to "
+            f"the echo stub. Got: {combined_content!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_team_root_unmatched_did_falls_back_to_echo_not_wrong_agent(
+        self, tmp_path: Path
+    ) -> None:
+        """A --did with NO match under --team-root must degrade to the echo
+        stub — never silently serve the OTHER agent that does exist under
+        team_root. This is the exact regression this task closes: the worker
+        must never execute as an agent it wasn't asked for."""
+        other_agent_dir = tmp_path / "other-agent"
+        other_agent_dir.mkdir()
+        (other_agent_dir / "arcagent.toml").write_text(
+            _AGENT_CONFIG_TEMPLATE.format(name="other-agent", did="did:arc:agent:other")
+        )
+
+        executor = SubprocessExecutor(
+            worker_cmd=_WORKER_CMD,
+            team_root=tmp_path,
+        )
+        event = _make_event(message="ping", agent_did="did:arc:agent:unmatched")
+        deltas = await asyncio.wait_for(
+            _collect_deltas(executor, event),
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+        combined_content = " ".join(d.content for d in deltas)
+        assert "[arc-agent-worker echo]" in combined_content, (
+            "An unmatched --did under --team-root must fall back to the echo "
+            f"stub, not silently run as a different agent. Got: {combined_content!r}"
+        )
 
 
 class TestSubprocessExecutorRoundTrip:
