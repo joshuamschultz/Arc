@@ -264,40 +264,50 @@ Inside the chat REPL: `/help`, `/tools`, `/cost`, `/skills`, `/sessions`, `/swit
 
 ### 6. (Optional) Watch It Run — and Message It — in a Browser
 
-The dashboard is also a chat surface. Point it at a team directory and it serves a web
-chat box per agent (`/ws/chat/{agent_id}`) plus live telemetry, both read on demand from
-the shared `arcstore` record — the agent does **not** push to it.
+The dashboard **is** the gateway (SPEC-023) — one process serves the UI, live
+telemetry, and a per-agent web chat box, and it loads agents from
+`--team-root` **on demand**. There's no separate daemon to start per agent:
 
 ```bash
-# 1. Start the dashboard, pointed at the directory your agents live in.
-#    --team-root turns on the in-process web chat platform.
+# --team-root turns on the in-process web chat platform; agents load lazily
+# the first time you open one, not up front.
 arc ui start --team-root ./team --show-tokens
 #    Prints a viewer token + operator token and the URL (default 127.0.0.1:8420).
 
-# 2. In another terminal, run the agent so it's live to answer.
-arc agent serve ./team/my_agent
-
-# 3. Open the printed http://127.0.0.1:8420/ URL with the viewer token
-#    (on a loopback bind the browser opens pre-authenticated) and message the agent.
+# Open the printed http://127.0.0.1:8420/ URL with the viewer token
+# (on a loopback bind the browser opens pre-authenticated) and message the agent.
 ```
 
 There is no `--agent-token` and no agent-side `--ui` push flag — `arcui` reads everything
-from `arcstore`, so any agent that already wrote to the shared store shows up whether or not
-the dashboard was running when it did. Prefer the terminal?
+from `arcstore` and instantiates each agent itself, so a fresh clone with zero agents
+running still shows a working chat box the moment you open one. Prefer the terminal?
 
 ```bash
 arc ui tail --viewer-token <token> --layer llm
 ```
 
-> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status wrapper for the
-> dashboard plus every `*_agent` under `./team`.
+> For a full node — systemd unit, secrets, Telegram/Slack, verification —
+> see [`docs/deploy/single-node.md`](docs/deploy/single-node.md) and
+> `scripts/deploy-node.sh`. `scripts/arc-stack.sh` is a separate,
+> non-canonical dev-convenience wrapper around the older per-agent
+> `arc agent serve` pattern — see its header comment before reaching for it.
 
 ---
 
 ## 🧑‍🤝‍🧑 Stand Up a Fleet (Multi-Agent Team)
 
 The single-agent flow above scales to a whole team in one self-contained,
-isolated folder — "start up, config identities, add tools, and go."
+isolated folder — "start up, config identities, add tools, and go." Same
+embedded pattern as above, no separate daemon per agent — **one
+`arc ui start --team-root` process serves the whole fleet, on demand.**
+
+> For a full node — systemd, secrets, remote platforms (Telegram/Slack),
+> multiple agents, a real team + channels — skip straight to
+> [`scripts/deploy-node.sh`](scripts/deploy-node.sh) (bootstraps everything
+> below in one idempotent run) and
+> [`docs/deploy/team-building.md`](docs/deploy/team-building.md) (the
+> validated team/channel/persona flow, with example department rosters).
+> The steps here are the manual walkthrough.
 
 **1. Lay out a deployment folder.** Keep everything (config, keys, agents) in one
 directory so it's isolated from `~/.arc` and portable:
@@ -365,14 +375,23 @@ agent, out of the box:
 
 **6. (Optional) Team collaboration — agents in channels:**
 
+Step 5 makes every agent reachable for *human*-initiated chat via the
+dashboard, on demand. Autonomous *agent-to-agent* collaboration — agents
+independently reacting to team-channel messages without a human opening a
+chat — is a different concern and needs each member actively running:
+
 ```bash
 arc team create mfg --channel ops --members "procurement,picking,demand-planning,inventory"
 arc team up mfg          # boot members as supervised daemons on NATS
 # watch them talk in the dashboard's "Messages" tab, or:  arc team read ops
 ```
 
-> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status
-> wrapper for the dashboard plus every agent under `./agents`.
+> `scripts/arc-stack.sh` is a non-canonical, dev-convenience start/stop/status
+> wrapper predating the embedded gateway (SPEC-023) — it runs every agent as
+> its own `arc agent serve` daemon rather than the on-demand pattern above.
+> See its header comment before reaching for it; prefer `arc ui start
+> --team-root` (or `scripts/deploy-node.sh` for a full node) for anything
+> serving real traffic.
 
 ---
 

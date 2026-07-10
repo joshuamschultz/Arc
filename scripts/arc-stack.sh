@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 # arc-stack.sh — clean start/stop/status of ArcUI + agents.
 #
+# NON-CANONICAL — local-dev convenience only (architecture ruling,
+# 2026-07-10). This script predates the embedded gateway (SPEC-023) and
+# runs each agent as its own long-lived `arc agent serve` daemon alongside
+# ArcUI acting as a pure arcstore reader. Real deployments — anything
+# serving actual traffic, single-node or fleet — use the embedded pattern
+# instead: `arc ui start --team-root <dir> [--gateway-config <file>]` loads
+# every agent on demand from one process, no per-agent daemon required. See
+# docs/deploy/single-node.md and scripts/deploy-node.sh for the canonical
+# path. Keep using this script only for quick local iteration where you
+# specifically want each agent as an independently killable/restartable
+# process (e.g. debugging one agent without restarting the whole stack).
+#
 # ArcUI is a pure READER of the shared arcstore record (SPEC-026 FR-5):
 # agents write LLM/tool/audit events to ~/.arc/store and arcui reads them
 # on demand. There is no agent-side push wire and no per-agent "ui_reporter"
