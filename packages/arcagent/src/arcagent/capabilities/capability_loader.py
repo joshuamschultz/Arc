@@ -202,11 +202,19 @@ class CapabilityLoader:
         require_signature: bool = False,
         trusted_public_key: bytes | None = None,
         trust_backend: TrustBackend | None = None,
+        spawn_background_tasks: bool = True,
     ) -> None:
         self._scan_roots: list[ScanRoot] = list(scan_roots)
         self._registry = registry
         self._bus = bus
         self._audit_sink = audit_sink
+        # Task #39: a read-only scan (arc agent tools/skills, arc ext inspect,
+        # arcui's inventory seam) must not actually START a @background_task —
+        # its body may depend on a live agent's module _runtime being
+        # configured, which a throwaway scan never does. Default True keeps a
+        # live agent's real startup/reload path (agent_lifecycle.py) spawning
+        # exactly as before; only read-only callers pass False.
+        self._spawn_background_tasks = spawn_background_tasks
         # SPEC-033 load-path Sign gate. ``tofu`` is the per-tier source-approval
         # policy; ``require_signature`` makes a valid detached signature the
         # floor (enterprise/federal); ``trusted_public_key`` pins self-authored
@@ -404,7 +412,8 @@ class CapabilityLoader:
                     fn=value,
                     source_path=path,
                     scan_root=root_name,
-                )
+                ),
+                spawn=self._spawn_background_tasks,
             )
         elif isinstance(meta, CapabilityClassMetadata):
             await self._registry.register_capability(

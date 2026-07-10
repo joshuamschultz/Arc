@@ -130,6 +130,10 @@ async def collect_capability_inventory(
         trusted_public_key=trusted_public_key,
         allow_all_imports=allow_all_imports,
         allowed_imports=allowed_imports,
+        # Task #39: this is a read-only scan over a throwaway registry — a
+        # discovered @background_task must never actually start (its body
+        # may depend on a live agent's module _runtime being configured).
+        spawn_background_tasks=False,
     )
     delta = await loader.scan_and_register()
     return [

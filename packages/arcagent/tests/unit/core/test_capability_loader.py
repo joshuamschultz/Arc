@@ -40,6 +40,20 @@ def _write_tool(path: Path, name: str, *, version: str = "1.0.0") -> None:
     path.write_text(body)
 
 
+def _write_background_task(path: Path, name: str) -> None:
+    """Materialise a .py file whose @background_task raises if actually run —
+    simulating a module (e.g. memory) that depends on a live agent's
+    module-level `_runtime.configure()` having been called first.
+    """
+    body = (
+        "from arcagent.tools._decorator import background_task\n"
+        f'@background_task(name="{name}", interval=0.1)\n'
+        "async def poll(ctx) -> None:\n"
+        '    raise RuntimeError("module called before runtime is configured")\n'
+    )
+    path.write_text(body)
+
+
 def _write_skill(folder: Path, name: str, *, version: str = "1.0.0") -> None:
     folder.mkdir(parents=True, exist_ok=True)
     body = (
@@ -97,6 +111,76 @@ class TestScanAndRegister:
         skill = await reg.get_skill("create-tool")
         assert skill is not None
         assert skill.version == "1.0.0"
+
+
+@pytest.mark.asyncio
+class TestSpawnBackgroundTasks:
+    """Task #39 — a read-only registry scan must not spawn background tasks.
+
+    Live bug: `arc agent tools` (and `arc ext inspect`, and arcui's inventory
+    seam) built a throwaway CapabilityLoader/CapabilityRegistry over the
+    scan roots and called scan_and_register(). Registering a
+    @background_task ALWAYS spawned it immediately (capability_registry.
+    register_task -> asyncio.create_task) — including the memory module's
+    consolidation loop, whose body depends on modules/memory/_runtime.
+    configure() having been called by a live agent's startup. A read-only
+    scan never calls that, so the task raised "called before runtime is
+    configured" the instant registration happened.
+    """
+
+    async def test_spawn_background_tasks_false_registers_without_running_it(
+        self, four_roots: dict[str, Path]
+    ) -> None:
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        _write_background_task(four_roots["builtins"] / "poller.py", "poll")
+
+        reg = CapabilityRegistry()
+        loader = CapabilityLoader(
+            scan_roots=list(four_roots.items()),
+            registry=reg,
+            spawn_background_tasks=False,
+        )
+        # Must not raise — the task's body (which raises RuntimeError) never runs.
+        delta = await loader.scan_and_register()
+
+        assert not delta.errors
+        entry = await reg.get_task("poll")
+        assert entry is not None
+        assert entry.task is None
+
+    async def test_spawn_background_tasks_true_is_still_the_default(
+        self, four_roots: dict[str, Path]
+    ) -> None:
+        """Regression guard: a live agent's real loader (agent_lifecycle.py)
+        never passes `spawn_background_tasks` — omitting it must still spawn.
+        """
+        import asyncio
+
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        body = (
+            "from arcagent.tools._decorator import background_task\n"
+            "import asyncio\n"
+            '@background_task(name="poll_live", interval=0.1)\n'
+            "async def poll(ctx) -> None:\n"
+            "    await asyncio.sleep(10)\n"
+        )
+        (four_roots["builtins"] / "poller.py").write_text(body)
+
+        reg = CapabilityRegistry()
+        loader = CapabilityLoader(scan_roots=list(four_roots.items()), registry=reg)
+        await loader.scan_and_register()
+
+        entry = await reg.get_task("poll_live")
+        assert entry is not None
+        assert entry.task is not None and not entry.task.done()
+
+        entry.task.cancel()
+        try:
+            await entry.task
+        except asyncio.CancelledError:
+            pass
 
 
 @pytest.mark.asyncio

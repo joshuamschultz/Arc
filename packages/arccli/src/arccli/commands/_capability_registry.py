@@ -57,7 +57,19 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
     roots.extend(_enabled_module_roots(config))
 
     registry = CapabilityRegistry()
-    loader = CapabilityLoader(scan_roots=roots, registry=registry, allow_all_imports=True)
+    loader = CapabilityLoader(
+        scan_roots=roots,
+        registry=registry,
+        allow_all_imports=True,
+        # Task #39: this is a read-only scan over a throwaway registry — a
+        # discovered @background_task (e.g. the memory module's
+        # consolidation loop) must never actually start. Its body depends
+        # on a live agent's module _runtime being configured, which this
+        # CLI listing command never does — the live incident: "arc agent
+        # tools" dumped "memory module called before runtime is
+        # configured" the instant the scan registered the task.
+        spawn_background_tasks=False,
+    )
     try:
         asyncio.run(loader.scan_and_register())
     except Exception:  # reason: read-only listing must degrade, not crash

@@ -119,6 +119,42 @@ def _by_name(
 
 
 @pytest.mark.asyncio
+class TestCollectCapabilityInventoryDoesNotSpawnBackgroundTasks:
+    """Task #39: this is "the arcui inventory seam's throwaway registry" —
+    one of the three read-only CapabilityLoader construction sites that must
+    never actually START a @background_task it discovers while scanning
+    (e.g. the memory module's consolidation loop, whose body depends on a
+    live agent's module _runtime being configured).
+    """
+
+    async def test_loader_constructed_with_spawn_background_tasks_false(
+        self, agent_tree: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arcagent.capabilities.inventory as inventory_mod
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        captured: dict[str, object] = {}
+        real_init = CapabilityLoader.__init__
+
+        def _spy_init(self: object, **kwargs: object) -> None:
+            captured.update(kwargs)
+            real_init(self, **kwargs)  # type: ignore[arg-type]
+
+        class _SpyLoader(CapabilityLoader):
+            __init__ = _spy_init  # type: ignore[assignment]
+
+        monkeypatch.setattr(inventory_mod, "CapabilityLoader", _SpyLoader)
+
+        await collect_capability_inventory(
+            agent_tree["agent_dir"],
+            builtins_root=agent_tree["builtins"],
+            global_root=agent_tree["global"],
+        )
+
+        assert captured.get("spawn_background_tasks") is False
+
+
+@pytest.mark.asyncio
 class TestCapabilityInventory:
     async def _collect(
         self, agent_tree: dict[str, Path], identity: AgentIdentity
