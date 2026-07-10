@@ -565,7 +565,7 @@ export function AgentDetailPage() {
           <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{label}</h1>
           {a.did != null && <div className="truncate font-mono text-xs text-muted-foreground">{String(a.did)}</div>}
         </div>
-        <StatusDot online={Boolean(a.online)} degraded={Boolean(a.degraded)} />
+        <StatusDot online={Boolean(a.online)} />
       </div>
 
       <Tabs value={current} onValueChange={(v) => navigate(`/agents/${id}/${v}`)} className="border-b border-border px-6">

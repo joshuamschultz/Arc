@@ -243,7 +243,7 @@ export function MessagesPage() {
                   {initials(label)}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
-                <StatusDot online={a.online} degraded={a.degraded} className="[&>span:last-child]:hidden" />
+                <StatusDot online={a.online} className="[&>span:last-child]:hidden" />
               </button>
             )
           })}

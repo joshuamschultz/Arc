@@ -86,7 +86,7 @@ function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
             <div className="truncate text-xs text-muted-foreground">{agent.role_label}</div>
           )}
         </div>
-        <StatusDot online={agent.online} degraded={agent.degraded} />
+        <StatusDot online={agent.online} />
       </div>
 
       {agent.did && (
@@ -123,7 +123,7 @@ export function AgentsPage() {
   const agents = (query.data?.agents ?? []).filter((a) => !a.hidden)
 
   const online = agents.filter((a) => a.online).length
-  const degraded = agents.filter((a) => a.degraded).length
+  const idle = agents.length - online
   const models = new Set(agents.map((a) => a.model).filter(Boolean)).size
 
   return (
@@ -133,7 +133,7 @@ export function AgentsPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Agents" value={agents.length} icon={<Boxes className="size-4" />} />
           <StatCard label="Online" value={online} />
-          <StatCard label="Degraded" value={degraded} />
+          <StatCard label="Idle" value={idle} />
           <StatCard label="Models" value={models} />
         </div>
 

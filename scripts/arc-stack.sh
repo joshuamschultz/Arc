@@ -40,13 +40,6 @@ UI_HEALTH="http://127.0.0.1:${UI_PORT}/api/health"
 HEALTH_TIMEOUT_S="${ARC_HEALTH_TIMEOUT_S:-20}"
 AGENT_PROBE_TIMEOUT_S="${ARC_AGENT_PROBE_TIMEOUT_S:-15}"
 
-# Per-agent connect state: written atomically after all agents are probed so
-# arcui's roster endpoint can read it without races.
-# Format: {"<agent_name>": "connected"|"degraded", ...}
-# chmod 600 — tokens are not in this file, but it's in ~/.arcagent/ like the
-# other sensitive files there, so we follow the same permission convention.
-AGENT_STATE_FILE="${HOME}/.arcagent/agent-state.json"
-
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 # Stable token file. arcgateway derives the viewer DID by hashing the
@@ -239,19 +232,18 @@ start_agents() {
 # Confirm each agent process actually stayed up through boot. Since arcui is a
 # pure reader of arcstore (no agent-side handshake to wait for), "healthy" now
 # means: the process is still alive after a short settle and did not crash with
-# a startup error. Two states:
+# a startup error. Two states, reported to this script's own console output
+# only (task #19 — arcui's roster endpoint derives `online` live from its
+# AgentRegistry now, not from a state file this script writes):
 #   connected — process alive after the settle window (writes to arcstore → shows
 #               up in the dashboard)
 #   degraded  — process exited during startup (config / key / vault error)
 #
 # After probing all agents the function:
-#   - Writes per-agent state to AGENT_STATE_FILE (atomic tmp+rename, chmod 600)
-#     so arcui's roster endpoint can surface `degraded` entries.
 #   - Exits 0 if at least one agent is alive (systemd unit stays active).
 #   - Exits 1 only when zero agents survived boot (unit really is dead).
 wait_for_agents() {
   local connected=0 total=0
-  local -A agent_states   # associative array: name → "connected"|"degraded"
 
   local a
   for a in "$@"; do
@@ -273,39 +265,15 @@ wait_for_agents() {
       alive)
         echo "  ✓ $a is live (writing to arcstore → visible on the dashboard)"
         connected=$((connected + 1))
-        agent_states["$a"]="connected"
         ;;
       crashed)
         echo "  ✗ $a crashed during startup:"
         # Last non-blank line is almost always the actionable error
         # ('arc: error in agent: ...').
         grep -v '^[[:space:]]*$' "$log" | tail -n 3 | sed 's/^/      /'
-        agent_states["$a"]="degraded"
         ;;
     esac
   done
-
-  # Persist per-agent state atomically so arcui can read it race-free.
-  # Format:
-  #   {"_meta": {"written_at": "<ISO-8601>"},
-  #    "<name>": "connected"|"degraded", ...}
-  # The _meta.written_at lets arcui reject stale state across an
-  # arc-stack restart (SPEC-025 §TD-5). umask 077 around the write so
-  # the tmp file is born 0600 — closes the L1 race where the parent
-  # umask leaked 0644 perms briefly (SPEC-025 §L1).
-  local tmp_state written_at
-  tmp_state="${AGENT_STATE_FILE}.tmp.$$"
-  written_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  ( umask 077
-    {
-      printf '{"_meta":{"written_at":"%s"}' "${written_at}"
-      for name in "${!agent_states[@]}"; do
-        printf ',"%s":"%s"' "${name}" "${agent_states[$name]}"
-      done
-      printf '}'
-    } >"${tmp_state}"
-  )
-  mv "${tmp_state}" "${AGENT_STATE_FILE}"
 
   local degraded=$((total - connected))
   echo ""

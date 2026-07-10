@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,88 +48,25 @@ _CALLER_DID = "did:arc:ui:viewer"
 # module-supplied tools surface full classification on the agent Tools tab.
 _BUILTIN_CLASS: dict[str, str] = dict(_BUILTIN_CLASSIFICATION)
 
-# Default path for the per-agent connect-state file written by arc-stack.sh.
-_AGENT_STATE_FILE = Path.home() / ".arcagent" / "agent-state.json"
-
-# SPEC-025 §TD-5 — reject state files older than this many seconds.
-# Roughly one demo session window: anything older almost certainly belongs
-# to a previous arc-stack run that was not cleaned up on shutdown.
-_AGENT_STATE_MAX_AGE_SECONDS = 600.0
-
-
-def _load_agent_state(
-    state_file: Path | None = None,
-    *,
-    now: float | None = None,
-    max_age_seconds: float = _AGENT_STATE_MAX_AGE_SECONDS,
-) -> dict[str, str]:
-    """Load the arc-stack per-agent state file (best-effort).
-
-    Returns a dict mapping agent name → "connected" | "degraded".
-    Missing file, parse error, or stale `_meta.written_at` returns an
-    empty dict, which causes all roster entries to fall through to their
-    existing ``online`` logic with ``degraded=False`` — identical to
-    pre-SPEC-025 behaviour.
-    """
-    path = state_file if state_file is not None else _AGENT_STATE_FILE
-    try:
-        raw = path.read_text(encoding="utf-8")
-        parsed = json.loads(raw)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(parsed, dict):
-        return {}
-    if not _state_is_fresh(parsed, now=now, max_age_seconds=max_age_seconds):
-        return {}
-    return {
-        k: v
-        for k, v in parsed.items()
-        if k != "_meta" and isinstance(k, str) and isinstance(v, str)
-    }
-
-
-def _state_is_fresh(
-    parsed: dict[str, Any],
-    *,
-    now: float | None,
-    max_age_seconds: float,
-) -> bool:
-    """Return True iff the state file's ``_meta.written_at`` is recent enough.
-
-    Files written by older arc-stack revisions (no _meta) are accepted —
-    backward-compatible — so an in-place upgrade does not blank the roster.
-    """
-    meta = parsed.get("_meta")
-    if not isinstance(meta, dict):
-        return True  # legacy file with no _meta — accept
-    written_at = meta.get("written_at")
-    if not isinstance(written_at, str):
-        return True
-    try:
-        ts = datetime.fromisoformat(written_at.replace("Z", "+00:00"))
-    except ValueError:
-        return True
-    current = now if now is not None else datetime.now(UTC).timestamp()
-    age = current - ts.timestamp()
-    return age <= max_age_seconds
-
-
 # ---------------------------------------------------------------------------
 # Roster
 # ---------------------------------------------------------------------------
 
 
 async def get_roster(request: Request) -> JSONResponse:
-    """GET /api/team/roster — every agent on disk, with online overlay."""
+    """GET /api/team/roster — every agent on disk, with a live online overlay.
+
+    ``online`` is the only connect-status signal: it comes straight from
+    ``app.state.agent_registry`` (populated by the embedded gateway's
+    ``embedded_agents.py`` when a chat-loaded agent is cached, or by a
+    WebSocket agent connection), which is truthful for every deployment —
+    unlike the arc-stack.sh-only ``agent-state.json`` file this route used
+    to read for a ``degraded`` flag. Nothing writes that file under the
+    embedded-gateway architecture, so ``degraded`` was permanently false in
+    every real deployment; removed rather than kept as a dead placeholder.
+    """
     roster = _roster(request)
-    state_file: Path | None = getattr(request.app.state, "agent_state_file", None)
-    raw_state = _load_agent_state(state_file)
-    # Defense-in-depth (SPEC-025 §M2): only honour state-file entries that
-    # match an agent_id from the live roster. Drops anything injected by an
-    # out-of-band writer that doesn't correspond to a real agent on disk.
-    known_ids = {entry.agent_id for entry in roster}
-    agent_state = {k: v for k, v in raw_state.items() if k in known_ids}
-    data = {"agents": [_roster_to_dict(r, agent_state) for r in roster]}
+    data = {"agents": [_roster_to_dict(r) for r in roster]}
     return JSONResponse(data)
 
 
@@ -139,13 +75,7 @@ def _roster(request: Request) -> list[Any]:
     return list(provider() if provider is not None else [])
 
 
-def _roster_to_dict(entry: Any, agent_state: dict[str, str]) -> dict[str, Any]:
-    # degraded=True when arc-stack.sh recorded this agent as "degraded"
-    # (it was attempted but failed to connect). An agent with no entry in
-    # the state file is not degraded — it simply was never attempted on
-    # this host (or the state file is absent, meaning we have no data).
-    state = agent_state.get(entry.agent_id)
-    degraded = state == "degraded"
+def _roster_to_dict(entry: Any) -> dict[str, Any]:
     return {
         "agent_id": entry.agent_id,
         "name": entry.name,
@@ -156,7 +86,6 @@ def _roster_to_dict(entry: Any, agent_state: dict[str, str]) -> dict[str, Any]:
         "model": entry.model,
         "provider": entry.provider,
         "online": entry.online,
-        "degraded": degraded,
         "display_name": entry.display_name,
         "color": entry.color,
         "role_label": entry.role_label,

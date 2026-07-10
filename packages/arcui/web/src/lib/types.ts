@@ -42,7 +42,6 @@ export interface Agent {
   model?: string
   provider?: string
   online?: boolean
-  degraded?: boolean
   color?: string
   role_label?: string
   hidden?: boolean
