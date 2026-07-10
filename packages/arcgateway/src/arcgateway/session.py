@@ -305,7 +305,7 @@ class SessionRouter:
             )
 
         # --- Pairing interceptor (T1.8) ---
-        if not self._pairing.is_user_approved(event.user_did):
+        if not await self._pairing.is_user_approved(event.user_did, event.platform):
             await self._pairing.handle_unpaired_user(event)
             return
 
@@ -465,7 +465,7 @@ class SessionRouter:
                     }
                 )
 
-        if not self._pairing.is_user_approved(event.user_did):
+        if not await self._pairing.is_user_approved(event.user_did, event.platform):
             raise PermissionError(
                 f"User {event.user_did!r} is not on the pairing allowlist; "
                 "call add_approved_user() first for programmatic dispatch."

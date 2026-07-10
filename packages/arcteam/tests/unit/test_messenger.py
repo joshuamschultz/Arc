@@ -310,6 +310,29 @@ class TestChannelManagement:
         with pytest.raises(ValueError, match="not found"):
             await svc.join_channel("nonexistent", "agent://a1")
 
+    async def test_create_channel_duplicate_name_refused(self, svc: MessagingService) -> None:
+        """A second create_channel() call for an existing name must refuse,
+        not silently overwrite membership.
+
+        Without this guard, every caller (CLI, UI, a re-run of team
+        formation) had to build its own list_channels() pre-check to avoid
+        clobbering an existing channel's members — a footgun pushed onto
+        every caller instead of enforced once at the service boundary.
+        """
+        with pytest.raises(ValueError, match="already exists"):
+            await svc.create_channel(Channel(name="project-alpha", members=["agent://a1"]))
+
+    async def test_create_channel_duplicate_preserves_original_membership(
+        self, svc: MessagingService
+    ) -> None:
+        """The refused duplicate create must leave the original channel untouched."""
+        with pytest.raises(ValueError, match="already exists"):
+            await svc.create_channel(Channel(name="project-alpha", members=[]))
+
+        channels = await svc.list_channels()
+        original = next(c for c in channels if c.name == "project-alpha")
+        assert original.members == ["agent://a1", "agent://a2", "user://josh"]
+
 
 class TestListChannelMessages:
     """``list_channel_messages`` is the read-side helper used by

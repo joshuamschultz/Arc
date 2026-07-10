@@ -17,6 +17,7 @@ import os
 import warnings
 from asyncio.subprocess import PIPE, Process
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import BaseModel
@@ -150,6 +151,10 @@ class SubprocessExecutor:
         _worker_cmd: Command vector for the worker subprocess. Defaults to
             ``["arc-agent-worker"]`` (the installed console script).
         _resource_limits: Resource ceilings applied to each worker subprocess.
+        _team_root: Directory containing one ``<name>/arcagent.toml`` per
+            agent, forwarded to the worker via ``--team-root`` so it can
+            resolve ``--did`` against a real DID index instead of a fixed,
+            agent-agnostic search path (task 26 — DID-blind worker fix).
     """
 
     _DEFAULT_WORKER_CMD: ClassVar[list[str]] = ["arc-agent-worker"]
@@ -158,6 +163,7 @@ class SubprocessExecutor:
         self,
         worker_cmd: list[str] | None = None,
         resource_limits: ResourceLimits | None = None,
+        team_root: Path | None = None,
     ) -> None:
         """Initialise SubprocessExecutor.
 
@@ -168,6 +174,13 @@ class SubprocessExecutor:
                 when running from source without an installed wheel.
             resource_limits: Per-subprocess resource ceilings. Defaults to
                 federal-tier values (512 MB RAM, 60 s CPU, 256 FDs).
+            team_root: Directory containing one ``<name>/arcagent.toml`` per
+                agent. When set, every spawned worker receives
+                ``--team-root <team_root>`` so it resolves its config by
+                matching ``[identity].did`` to the requested ``--did``,
+                instead of the worker's legacy fixed search paths (which
+                cannot distinguish one agent from another). None preserves
+                pre-task-26 behaviour.
         """
         self._worker_cmd: list[str] = (
             worker_cmd if worker_cmd is not None else list(self._DEFAULT_WORKER_CMD)
@@ -175,6 +188,7 @@ class SubprocessExecutor:
         self._resource_limits: ResourceLimits = (
             resource_limits if resource_limits is not None else ResourceLimits()
         )
+        self._team_root: Path | None = team_root
 
     async def run(self, event: InboundEvent) -> AsyncIterator[Delta]:
         """Spawn arc-agent-worker subprocess and stream JSON-lines output.
@@ -232,6 +246,8 @@ class SubprocessExecutor:
             event: Inbound event to process.
         """
         cmd = [*self._worker_cmd, "--did", event.agent_did]
+        if self._team_root is not None:
+            cmd += ["--team-root", str(self._team_root)]
         preexec_fn = _make_preexec_fn(self._resource_limits)
 
         proc: Process = await self._spawn_proc(cmd, preexec_fn)

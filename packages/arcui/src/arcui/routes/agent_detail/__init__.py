@@ -42,7 +42,9 @@ from starlette.routing import Route
 # this dependency in a code comment); other internal callers continue to
 # import from ``arcui.routes.agent_detail`` directly.
 from arcui.routes.agent_detail._common import _agent_root  # noqa: F401
+from arcui.routes.agent_detail.capabilities import get_capabilities
 from arcui.routes.agent_detail.config import get_config, get_file_read, get_files_tree
+from arcui.routes.agent_detail.files_write import put_file_write
 from arcui.routes.agent_detail.policy import (
     get_policy,
     get_policy_bullets,
@@ -62,8 +64,10 @@ routes = [
     Route("/api/agents/{id}/config", get_config, methods=["GET"]),
     Route("/api/agents/{id}/files/tree", get_files_tree, methods=["GET"]),
     Route("/api/agents/{id}/files/read", get_file_read, methods=["GET"]),
+    Route("/api/agents/{id}/files/read", put_file_write, methods=["PUT"]),
     Route("/api/agents/{id}/skills", get_skills, methods=["GET"]),
     Route("/api/agents/{id}/tools", get_tools, methods=["GET"]),
+    Route("/api/agents/{id}/capabilities", get_capabilities, methods=["GET"]),
     Route("/api/agents/{id}/sessions", get_sessions, methods=["GET"]),
     Route("/api/agents/{id}/sessions/{sid}", get_session_replay, methods=["GET"]),
     Route("/api/agents/{id}/stats", get_stats, methods=["GET"]),

@@ -57,8 +57,15 @@ async def update_tool(
     decorator, bumps it per ``version_bump``, and rejects the update
     if ``new_source`` does not contain the bumped version literal.
     """
+    if not name.isidentifier():
+        return f"Error: name {name!r} is not a valid Python identifier"
+    _runtime.check_secret_content(
+        new_source, f"{_CAPABILITIES_SUBDIR}/{name}.py", tool_name="update_tool"
+    )
     workspace = _runtime.workspace()
-    target = workspace / _CAPABILITIES_SUBDIR / f"{name}.py"
+    target = _runtime.resolve_workspace_path(
+        f"{_CAPABILITIES_SUBDIR}/{name}.py", tool_name="update_tool"
+    )
     if not target.exists():
         return f"Error: tool {name!r} not found at {target.relative_to(workspace)}"
     current = target.read_text(encoding="utf-8")
@@ -81,5 +88,7 @@ async def update_tool(
     except ASTValidationError as exc:
         return f"Error: AST validation rejected source — {exc}"
     target.write_text(new_source, encoding="utf-8")
-    _runtime.sign_artifact_file(target, new_source.encode("utf-8"))
-    return f"Updated tool {name!r} {match.group(1)} → {new_version}"
+    message = f"Updated tool {name!r} {match.group(1)} → {new_version}"
+    if not _runtime.sign_artifact_file(target, new_source.encode("utf-8")):
+        message += _runtime.audit_unsigned_artifact(target, tool_name="update_tool")
+    return message

@@ -13,13 +13,14 @@ async def _noop_on_message(event) -> None:  # type: ignore[no-untyped-def]
     return None
 
 
-def _ctx(raw: dict, tier: str = "personal") -> AdapterBuildContext:
+def _ctx(raw: dict, tier: str = "personal", require_pairing: bool = False) -> AdapterBuildContext:
     return AdapterBuildContext(
         name="telegram",
         raw_config=raw,
         on_message=_noop_on_message,
         default_agent_did="did:arc:agent:default",
         tier=tier,
+        require_pairing=require_pairing,
     )
 
 
@@ -65,6 +66,19 @@ def test_build_uses_default_agent_did(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok-abc")
     adapter = build(_ctx({"enabled": True}))
     assert adapter._agent_did == "did:arc:agent:default"
+
+
+def test_build_forwards_require_pairing_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """[security].require_pairing=true reaches the built TelegramAdapter."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok-abc")
+    adapter = build(_ctx({"enabled": True}, require_pairing=True))
+    assert adapter._require_pairing is True
+
+
+def test_build_defaults_require_pairing_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok-abc")
+    adapter = build(_ctx({"enabled": True}))
+    assert adapter._require_pairing is False
 
 
 def test_adapter_satisfies_protocol(monkeypatch: pytest.MonkeyPatch) -> None:

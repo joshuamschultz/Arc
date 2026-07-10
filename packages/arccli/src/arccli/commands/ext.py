@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import logging
 import shutil
 import sys
 from pathlib import Path
@@ -23,8 +22,6 @@ from pathlib import Path
 from arccli.commands._shared import dispatch
 from arccli.commands._shared import print_table as _print_table
 from arccli.commands._shared import write as _write
-
-_logger = logging.getLogger("arccli.commands.ext")
 
 _GLOBAL_CAP_DIR = Path.home() / ".arc" / "capabilities"
 
@@ -271,8 +268,11 @@ def _would_refuse(row: object, tier: str) -> bool:
 
 def _resolve_inspect_context(agent_dir: str | None) -> tuple[object, object | None]:
     """Load the config the agent runtime flat-reads + a populated CapabilityRegistry."""
+    from arccli.commands._capability_registry import build_capability_registry
+
     config = _load_flat_config(agent_dir)
-    registry = _build_registry(Path(agent_dir).expanduser().resolve() if agent_dir else None)
+    agent_root = Path(agent_dir).expanduser().resolve() if agent_dir else None
+    registry = build_capability_registry(config, agent_root)
     return config, registry
 
 
@@ -324,38 +324,6 @@ def _agent_pubkey(config: object) -> bytes | None:
         return AgentIdentity.load_keys(did, Path(key_dir).expanduser()).public_key
     except Exception:  # reason: no/invalid key on disk → nothing to pin (inspection best-effort)
         return None
-
-
-def _build_registry(agent_root: Path | None) -> object | None:
-    """Build a CapabilityRegistry over the standard scan roots (inspection posture)."""
-    import asyncio
-
-    import arcagent.builtins.capabilities as builtins_pkg
-    from arcagent.capabilities.capability_loader import CapabilityLoader
-    from arcagent.capabilities.capability_registry import CapabilityRegistry
-
-    builtins_root = Path(builtins_pkg.__file__).parent
-    roots: list[tuple[str, Path]] = [
-        ("builtins", builtins_root),
-        ("builtins-skills", builtins_root / "skills"),
-    ]
-    global_root = Path("~/.arc/capabilities").expanduser()
-    if global_root.is_dir():
-        roots.append(("global", global_root))
-    if agent_root is not None:
-        for name, sub in (("agent", "capabilities"), ("workspace", "workspace/capabilities")):
-            path = agent_root / sub
-            if path.is_dir():
-                roots.append((name, path))
-
-    registry = CapabilityRegistry()
-    loader = CapabilityLoader(scan_roots=roots, registry=registry, allow_all_imports=True)
-    try:
-        asyncio.run(loader.scan_and_register())
-    except Exception:  # reason: inspection is best-effort — degrade to select-one only
-        _logger.warning("could not build capability registry for inspection", exc_info=True)
-        return None
-    return registry
 
 
 # ---------------------------------------------------------------------------

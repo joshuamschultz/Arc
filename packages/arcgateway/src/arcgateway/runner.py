@@ -128,6 +128,8 @@ class GatewayRunner:
         adapters: list[BasePlatformAdapter] | None = None,
         executor: Executor | None = None,
         runtime_dir: Path | None = None,
+        pairing_store: Any | None = None,
+        user_allowlist: set[str] | None = None,
     ) -> None:
         """Initialise GatewayRunner.
 
@@ -136,18 +138,36 @@ class GatewayRunner:
             executor: Executor for running agent turns. Defaults to AsyncioExecutor.
             runtime_dir: Directory for the clean-shutdown marker file and PID file.
                 Defaults to ~/.arc/gateway/run.
+            pairing_store: Optional PairingStore. When provided, it is wired
+                into the SessionRouter's PairingInterceptor (activating DM
+                pairing enforcement) AND scheduled for background
+                cleanup_expired() sweeps — the single source of truth for
+                both concerns, so `arc gateway pair approve` (a separate CLI
+                process writing to the same db_path) takes effect on the
+                live gateway's very next message.
+            user_allowlist: Optional static set of pre-approved user_did
+                values (task #34), wired into the SessionRouter's
+                PairingInterceptor alongside pairing_store so a statically
+                allowlisted user is approved on their FIRST message —
+                without this, every user fell through to the (empty, for a
+                never-before-paired user) pairing_store lookup regardless
+                of a correctly configured allowed_user_ids.
         """
         self._adapters: list[BasePlatformAdapter] = adapters or []
         self._executor: Executor = executor or AsyncioExecutor()
         self._runtime_dir: Path = runtime_dir or _DEFAULT_RUNTIME_DIR
-        self._session_router = SessionRouter(executor=self._executor)
+        self._session_router = SessionRouter(
+            executor=self._executor,
+            pairing_store=pairing_store,
+            user_allowlist=user_allowlist,
+        )
         self._failed_adapters: dict[str, FailedAdapter] = {}
         self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}
         self._shutdown_event = asyncio.Event()
 
-        # Optional PairingStore for background cleanup scheduling.
-        # Set via set_pairing_store() before run() is called.
-        self._pairing_store: Any | None = None
+        # PairingStore for background cleanup scheduling — set at construction
+        # when require_pairing is on, or later via set_pairing_store().
+        self._pairing_store: Any | None = pairing_store
 
     def set_pairing_store(self, pairing_store: Any) -> None:
         """Register a PairingStore for background cleanup scheduling.
@@ -166,19 +186,12 @@ class GatewayRunner:
     def from_config(cls, config: GatewayConfig) -> GatewayRunner:
         """Build a GatewayRunner from a GatewayConfig.
 
-        Selects the executor based on the configured security tier:
-          personal / enterprise → AsyncioExecutor (in-process, shared event loop)
-          federal              → SubprocessExecutor (OS-level isolation, resource limits)
-
-        Platform adapters are NOT instantiated here because they require
-        credentials that may only be available after vault resolution.
-        Callers should add adapters via add_adapter() before calling run().
-
-        Args:
-            config: Parsed GatewayConfig from gateway.toml.
-
-        Returns:
-            Configured GatewayRunner instance.
+        Selects the executor by tier: federal -> SubprocessExecutor (OS-level
+        isolation), personal/enterprise -> AsyncioExecutor. A plain scaffold
+        factory — it does not verify a working agent-execution path exists
+        (see cli.cmd_start, which fails closed before calling this). Platform
+        adapters are NOT instantiated here (credentials may need vault
+        resolution first) — callers add them via add_adapter() before run().
         """
         # Lazy import keeps config.py optional (doesn't exist until M1 wiring)
         from arcgateway.config import GatewayConfig  # noqa: F401 (type-only use above)
@@ -207,10 +220,24 @@ class GatewayRunner:
                 tier,
             )
 
+        # See pairing_allowlist.build_pairing_wiring for the require_pairing
+        # gating rationale (task #34) — kept out of this LOC-budget-gated
+        # module since it owns no gateway-core-specific logic.
+        from arcgateway.pairing_allowlist import build_pairing_wiring
+
+        pairing_store, user_allowlist = build_pairing_wiring(config, tier)
+        if pairing_store is not None:
+            _logger.info(
+                "GatewayRunner.from_config: require_pairing=true — PairingStore wired (db=%s)",
+                config.pairing.db_path,
+            )
+
         return cls(
             adapters=[],
             executor=executor,
             runtime_dir=config.gateway.runtime_dir,
+            pairing_store=pairing_store,
+            user_allowlist=user_allowlist,
         )
 
     def add_adapter(self, adapter: BasePlatformAdapter) -> None:

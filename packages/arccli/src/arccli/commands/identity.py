@@ -55,6 +55,24 @@ def _resolve_key_dir(args: list[str]) -> Path:
     return _default_key_dir()
 
 
+def _resolve_trust_dir(args: list[str], key_dir: Path) -> Path | None:
+    """Trust dir for operator self-registration.
+
+    Priority: ``--dir`` (sibling ``trust`` under the same config base) >
+    ``--key-dir`` (nested ``trust`` subdir — keeps a custom key location
+    self-contained rather than silently touching the real
+    ``${ARC_CONFIG_DIR:-~/.arc}/trust``) > None, which lets
+    ``arctrust.trust_store`` resolve its own default so identity and
+    trust-store resolution stay in sync without duplicating that logic here.
+    """
+    base = _parse_opt(args, "--dir", "")
+    if base:
+        return Path(base).expanduser() / "trust"
+    if "--key-dir" in args:
+        return key_dir / "trust"
+    return None
+
+
 def _active_did_path(key_dir: Path) -> Path:
     return key_dir / _ACTIVE_FILE
 
@@ -103,9 +121,21 @@ def _init(args: list[str]) -> None:
     identity.save_keys(key_dir)
     _active_did_path(key_dir).write_text(identity.did, encoding="utf-8")
 
+    # Register as a trusted pairing-approval operator (personal-tier trust
+    # anchor: "self-signed key accepted" per arcgateway.pairing_signature).
+    # Without this, `arc gateway pair approve` can never produce a signature
+    # PairingStore.verify_and_consume() will accept — every tier requires a
+    # verifiable Ed25519 signature, and this is the only DID→pubkey record
+    # that makes one.
+    from arctrust import register_operator
+
+    trust_dir = _resolve_trust_dir(args, key_dir)
+    register_operator(identity.did, identity.public_key, trust_dir=trust_dir)
+
     _out(f"Created signing authority: {identity.did}")
     _out(f"  key dir: {key_dir}  (private key is 0600)")
     _out("Direct `arcrun` / `arcllm` terminal runs will sign and attribute to this DID.")
+    _out("Registered as a trusted operator for `arc gateway pair approve`.")
 
 
 def _show(args: list[str]) -> None:

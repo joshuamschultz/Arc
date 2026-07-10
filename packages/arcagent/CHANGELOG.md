@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Public tool-authoring surface (F6/F7).** `tool`/`hook`/`background_task`/`capability` and the
   new `capability_meta(fn)` accessor are re-exported from `arcagent.tools` — authors no longer import
   the private `arcagent.tools._decorator` or read `_arc_capability_meta` directly.
+- **Capability inventory seam** (`arcagent.capabilities.inventory`, T-704/705/711) —
+  `collect_capability_inventory` / `collect_agent_capability_inventory` enumerate skills/tools
+  across all four scan roots and return the loader's own verdict for each, captured verbatim at
+  every terminal decision site via a new `CapabilityOutcome`. Read-only (drives a throwaway
+  registry, never mutates the live agent) and posture-faithful (shares `resolve_trust_posture`
+  with real agent startup, so a UI verdict equals production at every tier). This is the one
+  approved seam arcui's dashboard is allowed to import from arcagent.
+- **`ArcAgent.registered_tools`** — public accessor for the live tool registry, backing the
+  capability inventory seam above.
 
 ### Fixed
 - **`@tool`/`@hook`/`@background_task` reject sync functions at decoration time (F8)** — a clear
@@ -18,6 +27,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Unreachable NATS degrades quietly (F9)** — the messaging bootstrap bounds the connect, quiets
   nats-py's async error callback, and degrades to the in-memory bus with a single warning instead of
   dumping a ConnectionRefused traceback on every solo-agent run.
+- **Agent-authored and operator-added skills never loaded.** `create_skill` writes to
+  `capabilities/skills/<name>`, but only the builtins scan root had a `skills/` subdirectory —
+  global/agent/workspace skills silently never loaded (hit live on the reference deployment). All
+  three writable roots now get a skills subdir via one shared helper, joining `_UNTRUSTED_ROOTS`
+  under the same sign/TOFU gate — nothing newly auto-trusted.
+- **`write`/`edit` silently invalidated a signed artifact's signature.** Hand-editing a signed
+  capability file broke its `.arcsig` sidecar with no warning; the next load then failed closed.
+  New `resign_if_previously_signed` at the runtime choke point refreshes the signature on
+  write/edit — an existing sidecar is the signal a file participates in the Sign pillar; ordinary
+  workspace files are never newly signed.
+- **Personal tier ignored valid self-signatures.** `TofuLayer.evaluate()` denied even artifacts
+  the loader had freshly re-verified against the agent's own pinned key unless
+  `auto_run_agent_code` was globally enabled — the root cause of a freshly-scaffolded
+  `calculator.py` being dead on arrival on every new agent. Signed now allows at personal tier;
+  unsigned still denies. `arc agent create` also now signs the scaffolded `calculator.py` itself.
+- **Mutation tools silently lied when signing failed.** `sign_artifact_file` no-op'd on missing
+  identity and let crypto exceptions crash the tool; all six mutation tools now append an explicit
+  "UNSIGNED — will be denied at next load" warning and emit `tool.artifact_unsigned` when signing
+  fails — the write itself still succeeds, only the message stops overclaiming.
+
+### Security
+- **CRITICAL — cross-agent identity bleed, live-exploited (ASI03).** `builtins.capabilities`
+  held per-agent state (workspace, identity **including the private key**, audit sink, tier) as
+  plain module globals, on a single-agent-per-process assumption the embedded gateway (up to 32
+  concurrent cached `ArcAgent`s in one process) had already broken. Any agent's `startup()`
+  silently rebound the globals for every other agent's in-flight tool calls — on the reference
+  deployment, one agent's `create_skill` signed with a *different* agent's private key while
+  routing and transcripts stayed correct. All nine globals are now `ContextVar`s (zero call-site
+  changes); a deterministic forced-interleaving reproducer (`asyncio.Event`) fails pre-fix, passes
+  post-fix through the real `sign_artifact_file` path. `TraceRecord.agent_did` (an existing,
+  never-populated field) is now threaded end-to-end so traces carry the verified DID.
+- **The same vulnerability class, swept.** All 16 remaining module `_runtime.py` files
+  (memory/web/pulse/planning/scheduler/browser/voice/telegram/memory_acl/proactive/slack/skills/
+  messaging/policy/user_profile/session) now bind their state through a `ContextVar` too. A new
+  AST architecture test fails CI on any `global` statement inside a `_runtime.py` file — a
+  contextvars module never legitimately needs one, so this is a zero-false-positive guard against
+  the pattern recurring. Background tasks are unaffected — `capability_registry` spawns them from
+  the agent's own startup task after `configure()` already ran there, so `asyncio.create_task`'s
+  automatic context snapshot isolates each agent's background loops permanently.
+- **CRITICAL — the ContextVar fix itself broke every second turn.** `SessionRouter` spawns a
+  fresh `asyncio.Task` per inbound turn while agents stay cached; a `ContextVar` bound in turn 1's
+  task is invisible to turn 2's sibling task, so every conversation failed with "runtime not
+  configured" starting on message two — invisible to unit tests, which always run `configure()`
+  and the tool call in the same task. Fixed with a build/bind split: state is built once at
+  startup and collected on the agent (`_runtime_bindings`); every `_runtime.py` gained an
+  idempotent 2-line `bind()`; `activate_runtime_bindings(agent)` replays them at the top of
+  `dispatch_stream`, `start_tracked_run`, and `resume_stream`. Both invariants — second-turn
+  success *and* the original cross-agent isolation — are now pinned together through the real
+  `SessionRouter` + `AsyncioExecutor` + cached real agents.
+- **Self-modification tools bypassed the workspace boundary.** The six read/write/edit/ls/find/
+  grep tools already enforced confinement via `resolve_workspace_path()`, silently — no audit on
+  denial. The four self-mod tools (`create_tool`/`update_tool`/`create_skill`/`update_skill`)
+  built paths by direct join, bypassing the choke point entirely; `update_tool`/`update_skill`
+  also accepted raw traversal names. Live incident: an agent installed a skill and a secrets file
+  into a **sibling agent's** workspace via its own self-mod tools. All ten path-taking tools now
+  route through the one choke point, which emits `tool.workspace_path.denied` (caller DID, tool,
+  offending path) on every denial; self-mod tools are additionally confined to
+  `<workspace>/capabilities` and validate names against traversal.
+- **Pasted secrets were written verbatim to workspace files.** All six content-writing tools now
+  run every payload through a two-layer secret guard (`arcllm` `SECRET_PATTERNS` + a
+  keyword-anchored heuristic for prefixless keys) and deny with an audited
+  `tool.secret_write.denied` event. New `store_secret` builtin takes **no value parameter by
+  construction** — it returns tier-specific operator guidance (env file at personal/enterprise,
+  vault at federal) rather than accepting and mishandling the secret itself.
 
 ## [0.15.0] - 2026-07-08
 

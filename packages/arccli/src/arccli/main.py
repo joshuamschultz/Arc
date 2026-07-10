@@ -27,16 +27,15 @@ if TYPE_CHECKING:
 def _dispatch_oneshot(argv: list[str]) -> None:
     """Dispatch a single command from argv and exit.
 
-    Handles ``arc <command> [args…]`` invocation.
+    Handles ``arc <command> [args…]`` invocation, including multi-word
+    command names (e.g. ``arc gateway pair approve CODE``) via longest-
+    prefix matching — see ``resolve_command_and_args`` (task #35).
     """
-    from arccli.commands.registry import resolve_command
+    from arccli.commands.registry import resolve_command_and_args
 
-    raw_cmd = argv[0]
-    args = argv[1:]
-
-    cmd = resolve_command(raw_cmd)
+    cmd, args = resolve_command_and_args(argv)
     if cmd is None:
-        _err(f"arc: unknown command '{raw_cmd}'. Run 'arc' for help.")
+        _err(f"arc: unknown command '{argv[0]}'. Run 'arc' for help.")
         sys.exit(1)
 
     if cmd.handler is None:
@@ -75,7 +74,7 @@ def _build_completer() -> Completer | None:
 
 def _run_repl() -> None:
     """Start the interactive slash-command REPL."""
-    from arccli.commands.registry import resolve_command
+    from arccli.commands.registry import resolve_command, resolve_command_and_args
 
     # Non-interactive stdin (pipe, CI, `arc < file`): a raw-mode prompt_toolkit
     # session crashes on add_reader ("KeyError: '0 is not registered'"). There's
@@ -128,14 +127,12 @@ def _run_repl() -> None:
         if not raw:
             continue
 
-        # Split into command token and argument list
+        # Split into words; multi-word command names (e.g. "gateway pair
+        # approve") resolve via longest-prefix matching (task #35).
         parts = raw.split()
-        raw_cmd = parts[0]
-        args = parts[1:]
-
-        cmd = resolve_command(raw_cmd)
+        cmd, args = resolve_command_and_args(parts)
         if cmd is None:
-            _out(f"Unknown command '{raw_cmd}'. Type /help for available commands.")
+            _out(f"Unknown command '{parts[0]}'. Type /help for available commands.")
             continue
 
         if cmd.handler is None:

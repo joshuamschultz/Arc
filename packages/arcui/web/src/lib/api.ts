@@ -17,8 +17,16 @@ function authHeaders(): Record<string, string> {
 
 async function parseError(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { error?: string }
+    // Most routes use `ErrorResponse{error}`; the knowledge mutation routes
+    // (COMP-002) return `{status, results: [{error}]}` on a 404/500 instead —
+    // check both so a failed edit/delete surfaces its real reason verbatim.
+    const body = (await res.json()) as {
+      error?: string
+      results?: Array<{ error?: string | null }>
+    }
     if (body?.error) return body.error
+    const resultErrors = body?.results?.map((r) => r.error).filter(Boolean)
+    if (resultErrors?.length) return resultErrors.join('; ')
   } catch {
     /* not JSON */
   }
@@ -33,7 +41,7 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
 }
 
 async function apiSend<T>(
-  method: 'POST' | 'PATCH' | 'PUT',
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -50,3 +58,6 @@ export const apiPost = <T>(path: string, body?: unknown) =>
   apiSend<T>('POST', path, body)
 export const apiPatch = <T>(path: string, body?: unknown) =>
   apiSend<T>('PATCH', path, body)
+export const apiPut = <T>(path: string, body?: unknown) =>
+  apiSend<T>('PUT', path, body)
+export const apiDelete = <T>(path: string, body?: unknown) => apiSend<T>('DELETE', path, body)

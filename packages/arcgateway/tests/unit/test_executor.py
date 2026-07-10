@@ -11,7 +11,11 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -216,6 +220,72 @@ class TestSubprocessExecutor:
         executor = SubprocessExecutor(worker_cmd=cmd, resource_limits=limits)
         assert executor._worker_cmd == cmd
         assert executor._resource_limits.memory_mb == 1024
+
+
+class TestSubprocessExecutorTeamRoot:
+    """Task 26 — SubprocessExecutor threads --team-root into the spawned
+    worker so arc-agent-worker can resolve --did via a DID index instead of
+    a fixed, agent-agnostic search path (the DID-blindness bug)."""
+
+    def _fake_proc(self) -> Any:
+        """Minimal asyncio.subprocess.Process double for _stream()'s happy path."""
+        proc = MagicMock()
+        proc.pid = 4242
+        proc.stdin = MagicMock()
+        proc.stdin.write = MagicMock()
+        proc.stdin.drain = AsyncMock()
+        proc.stdin.close = MagicMock()
+        proc.stdout = asyncio.StreamReader()
+        proc.stdout.feed_eof()
+        proc.wait = AsyncMock(return_value=0)
+        return proc
+
+    @pytest.mark.asyncio
+    async def test_team_root_appended_to_spawned_cmd(self, tmp_path: Path) -> None:
+        executor = SubprocessExecutor(
+            worker_cmd=[sys.executable, "-m", "arccli.agent_worker"],
+            team_root=tmp_path,
+        )
+        event = InboundEvent(
+            platform="telegram",
+            chat_id="1",
+            user_did="did:arc:user:x",
+            agent_did="did:arc:agent:y",
+            session_key="k",
+            message="m",
+        )
+        with patch.object(
+            executor, "_spawn_proc", AsyncMock(return_value=self._fake_proc())
+        ) as spawn_mock:
+            deltas = [d async for d in await executor.run(event)]
+
+        assert deltas  # sanity — the fake proc round-trip completed
+        spawned_cmd = spawn_mock.call_args[0][0]
+        assert "--team-root" in spawned_cmd
+        assert str(tmp_path) in spawned_cmd
+
+    @pytest.mark.asyncio
+    async def test_no_team_root_omits_flag_entirely(self) -> None:
+        """Backward compatibility: an executor built without team_root (the
+        pre-task-26 default, and from_config's scaffold path) must not add
+        the flag — arc-agent-worker's --team-root has a None default and
+        falls back to its legacy fixed search paths."""
+        executor = SubprocessExecutor(worker_cmd=[sys.executable, "-m", "arccli.agent_worker"])
+        event = InboundEvent(
+            platform="telegram",
+            chat_id="1",
+            user_did="did:arc:user:x",
+            agent_did="did:arc:agent:y",
+            session_key="k",
+            message="m",
+        )
+        with patch.object(
+            executor, "_spawn_proc", AsyncMock(return_value=self._fake_proc())
+        ) as spawn_mock:
+            [d async for d in await executor.run(event)]
+
+        spawned_cmd = spawn_mock.call_args[0][0]
+        assert "--team-root" not in spawned_cmd
 
 
 # ---------------------------------------------------------------------------

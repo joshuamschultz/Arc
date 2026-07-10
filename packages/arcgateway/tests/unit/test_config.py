@@ -7,6 +7,10 @@ plumbing introduced by SPEC-023.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from arcgateway.config import GatewayConfig, WebPlatformConfig
 
 
@@ -72,3 +76,32 @@ def test_web_platform_config_default_when_section_absent() -> None:
     cfg = GatewayConfig.from_toml_str("")
     assert isinstance(cfg.platforms.web, WebPlatformConfig)
     assert cfg.platforms.web.enabled is False
+
+
+# ---------------------------------------------------------------------------
+# Defaults honor ARC_CONFIG_DIR (matches arctrust.trust_store's own fix)
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_dir_default_honors_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    cfg = GatewayConfig.from_toml_str("")
+    assert cfg.gateway.runtime_dir == (tmp_path / "gateway" / "run").resolve()
+
+
+def test_pairing_db_path_default_honors_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    cfg = GatewayConfig.from_toml_str("")
+    assert cfg.pairing.db_path == (tmp_path / "gateway" / "pairing.db").resolve()
+
+
+def test_runtime_dir_default_falls_back_to_home_without_arc_config_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ARC_CONFIG_DIR", raising=False)
+    cfg = GatewayConfig.from_toml_str("")
+    assert cfg.gateway.runtime_dir == Path.home() / ".arc" / "gateway" / "run"

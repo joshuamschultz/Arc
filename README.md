@@ -159,7 +159,7 @@ flowchart TB
 | Entry | [**arctui**](packages/arctui/) · [**arcmas**](packages/arcmas/) | Terminal UI · the `pip install arcmas` meta-package that pulls the whole stack |
 | Surface | [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
 | Surface | [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, operator-key-signed audit trail |
-| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth, layer/agent/team filtering |
+| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth (viewer/operator), layer/agent/team filtering, plus a per-agent Knowledge view (memories + entities, operator edit/delete), a workspace file editor with signature-stale honesty, live channel management, and a Capabilities view rendering the loader's own trust verdicts |
 | Agent | [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
 | Agent | [**arcskill**](packages/arcskill/) *(optional)* | Skill supercharger — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list, plus golden-task-gated self-improvement (`arcskill.improver`). arcagent runs skills fine without it. |
 | Runtime | [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
@@ -264,40 +264,50 @@ Inside the chat REPL: `/help`, `/tools`, `/cost`, `/skills`, `/sessions`, `/swit
 
 ### 6. (Optional) Watch It Run — and Message It — in a Browser
 
-The dashboard is also a chat surface. Point it at a team directory and it serves a web
-chat box per agent (`/ws/chat/{agent_id}`) plus live telemetry, both read on demand from
-the shared `arcstore` record — the agent does **not** push to it.
+The dashboard **is** the gateway (SPEC-023) — one process serves the UI, live
+telemetry, and a per-agent web chat box, and it loads agents from
+`--team-root` **on demand**. There's no separate daemon to start per agent:
 
 ```bash
-# 1. Start the dashboard, pointed at the directory your agents live in.
-#    --team-root turns on the in-process web chat platform.
+# --team-root turns on the in-process web chat platform; agents load lazily
+# the first time you open one, not up front.
 arc ui start --team-root ./team --show-tokens
 #    Prints a viewer token + operator token and the URL (default 127.0.0.1:8420).
 
-# 2. In another terminal, run the agent so it's live to answer.
-arc agent serve ./team/my_agent
-
-# 3. Open the printed http://127.0.0.1:8420/ URL with the viewer token
-#    (on a loopback bind the browser opens pre-authenticated) and message the agent.
+# Open the printed http://127.0.0.1:8420/ URL with the viewer token
+# (on a loopback bind the browser opens pre-authenticated) and message the agent.
 ```
 
 There is no `--agent-token` and no agent-side `--ui` push flag — `arcui` reads everything
-from `arcstore`, so any agent that already wrote to the shared store shows up whether or not
-the dashboard was running when it did. Prefer the terminal?
+from `arcstore` and instantiates each agent itself, so a fresh clone with zero agents
+running still shows a working chat box the moment you open one. Prefer the terminal?
 
 ```bash
 arc ui tail --viewer-token <token> --layer llm
 ```
 
-> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status wrapper for the
-> dashboard plus every `*_agent` under `./team`.
+> For a full node — systemd unit, secrets, Telegram/Slack, verification —
+> see [`docs/deploy/single-node.md`](docs/deploy/single-node.md) and
+> `scripts/deploy-node.sh`. `scripts/arc-stack.sh` is a separate,
+> non-canonical dev-convenience wrapper around the older per-agent
+> `arc agent serve` pattern — see its header comment before reaching for it.
 
 ---
 
 ## 🧑‍🤝‍🧑 Stand Up a Fleet (Multi-Agent Team)
 
 The single-agent flow above scales to a whole team in one self-contained,
-isolated folder — "start up, config identities, add tools, and go."
+isolated folder — "start up, config identities, add tools, and go." Same
+embedded pattern as above, no separate daemon per agent — **one
+`arc ui start --team-root` process serves the whole fleet, on demand.**
+
+> For a full node — systemd, secrets, remote platforms (Telegram/Slack),
+> multiple agents, a real team + channels — skip straight to
+> [`scripts/deploy-node.sh`](scripts/deploy-node.sh) (bootstraps everything
+> below in one idempotent run) and
+> [`docs/deploy/team-building.md`](docs/deploy/team-building.md) (the
+> validated team/channel/persona flow, with example department rosters).
+> The steps here are the manual walkthrough.
 
 **1. Lay out a deployment folder.** Keep everything (config, keys, agents) in one
 directory so it's isolated from `~/.arc` and portable:
@@ -323,7 +333,7 @@ export ARC_CONFIG_DIR="$PWD/config"
 arc init --tier personal --provider anthropic
 
 for a in procurement picking demand-planning inventory; do
-  arc agent create "$a" --dir ./agents --model anthropic/claude-sonnet-4-6
+  arc agent create "$a" --dir ./agents --model anthropic/claude-sonnet-5
 done
 ```
 
@@ -361,9 +371,18 @@ agent, out of the box:
   conversation is still there (replayed from `workspace/sessions/<chat_id>.jsonl`).
 - **Live LLM calls** in the **ArcLLM / Observe** tab (scoped to this fleet via
   `ARCSTORE_DATA_DIR`).
-- **Memory** written under each `workspace/memory/`.
+- **Memory** written under each `workspace/memory/`, browsable (and, with the
+  operator token, editable) in the **Knowledge** tab.
+- **Capabilities** — a per-agent view of every skill/tool across all four scan
+  roots, with the loader's own trust verdict (loaded / denied / unsigned) —
+  what actually loaded, not what's configured.
 
 **6. (Optional) Team collaboration — agents in channels:**
+
+Step 5 makes every agent reachable for *human*-initiated chat via the
+dashboard, on demand. Autonomous *agent-to-agent* collaboration — agents
+independently reacting to team-channel messages without a human opening a
+chat — is a different concern and needs each member actively running:
 
 ```bash
 arc team create mfg --channel ops --members "procurement,picking,demand-planning,inventory"
@@ -371,8 +390,17 @@ arc team up mfg          # boot members as supervised daemons on NATS
 # watch them talk in the dashboard's "Messages" tab, or:  arc team read ops
 ```
 
-> The repo ships `scripts/arc-stack.sh` as a one-command start/stop/status
-> wrapper for the dashboard plus every agent under `./agents`.
+Once the team exists, day-to-day channel work — adding a channel, adding or
+removing a member — doesn't need the CLI: the dashboard's **Channels** tab
+does the same thing live, gated to the operator token (viewer sees the
+roster read-only).
+
+> `scripts/arc-stack.sh` is a non-canonical, dev-convenience start/stop/status
+> wrapper predating the embedded gateway (SPEC-023) — it runs every agent as
+> its own `arc agent serve` daemon rather than the on-demand pattern above.
+> See its header comment before reaching for it; prefer `arc ui start
+> --team-root` (or `scripts/deploy-node.sh` for a full node) for anything
+> serving real traffic.
 
 ---
 

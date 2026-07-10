@@ -147,14 +147,21 @@ def _make_agent_factory(team_root: Path) -> Any:
     return _factory
 
 
-def _build_executor(tier: str, agent_factory: Any) -> Executor:
-    """Pick the executor class for the configured tier."""
+def _build_executor(tier: str, agent_factory: Any, team_root: Path) -> Executor:
+    """Pick the executor class for the configured tier.
+
+    Federal's SubprocessExecutor receives this gateway's own ``team_root`` so
+    the spawned arc-agent-worker resolves ``--did`` against a real DID index
+    (task 26) instead of a fixed, agent-agnostic search path that could load
+    any agent's config regardless of which agent_did a session was for.
+    """
     if tier == "federal":
         from arcgateway.executor_subprocess import SubprocessExecutor
 
         _logger.info("bootstrap: federal tier → SubprocessExecutor")
         return SubprocessExecutor(
             worker_cmd=[sys.executable, "-m", "arccli.agent_worker"],
+            team_root=team_root,
         )
     _logger.info("bootstrap: %s tier → AsyncioExecutor", tier)
     return AsyncioExecutor(agent_factory)
@@ -203,8 +210,40 @@ async def build_for_embedded(
         )
 
     agent_factory = _make_agent_factory(team_root)
-    executor = _build_executor(gateway_config.gateway.tier, agent_factory)
-    session_router = SessionRouter(executor=executor)
+    executor = _build_executor(gateway_config.gateway.tier, agent_factory, team_root)
+
+    # [security].require_pairing activates DM pairing enforcement. This is
+    # the PRODUCTION path — arcui hosts the runtime via build_for_embedded,
+    # not GatewayRunner — so wiring pairing only into GatewayRunner.from_config
+    # would leave every real deployment's pairing permanently disabled
+    # regardless of config. Mirrors GatewayRunner.from_config's wiring.
+    #
+    # user_allowlist (task #34) is seeded ONLY inside this block — seeding it
+    # while require_pairing=false would make PairingInterceptor start denying
+    # non-allowlisted users from OTHER platforms (e.g. web) that reach
+    # SessionRouter with no adapter-level allowlist gate of their own, a
+    # regression for deployments this branch is not meant to touch.
+    pairing_store: Any | None = None
+    user_allowlist: set[str] | None = None
+    if gateway_config.security.require_pairing:
+        from arcgateway.pairing import PairingStore
+        from arcgateway.pairing_allowlist import build_user_allowlist
+
+        pairing_store = PairingStore(
+            db_path=gateway_config.pairing.db_path,
+            tier=gateway_config.gateway.tier,
+        )
+        user_allowlist = build_user_allowlist(gateway_config.platforms)
+        _logger.info(
+            "bootstrap: require_pairing=true — PairingStore wired (db=%s)",
+            gateway_config.pairing.db_path,
+        )
+
+    session_router = SessionRouter(
+        executor=executor,
+        pairing_store=pairing_store,
+        user_allowlist=user_allowlist,
+    )
     stream_bridge = StreamBridge()
 
     from arcgateway.adapters.registry import AdapterUnavailableError, build_adapters
@@ -220,6 +259,7 @@ async def build_for_embedded(
             on_message=session_router.handle,
             default_agent_did=gateway_config.gateway.agent_did,
             tier=gateway_config.gateway.tier,
+            require_pairing=gateway_config.security.require_pairing,
         )
     except AdapterUnavailableError:
         _logger.exception("bootstrap: refusing to start — enabled adapter unavailable")

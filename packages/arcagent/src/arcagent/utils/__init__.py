@@ -16,6 +16,7 @@ def load_eval_model(
     model_id: str,
     *,
     agent_label: str | None = None,
+    agent_did: str | None = None,
     trace_store: Any | None = None,
     on_event: Callable[[Any], None] | None = None,
     arcllm_modules: dict[str, dict[str, Any]] | None = None,
@@ -33,6 +34,9 @@ def load_eval_model(
     Args:
         model_id: Provider/model identifier (e.g., "ollama/glm-5:cloud").
         agent_label: Label for trace attribution (e.g., "my_agent/eval").
+        agent_did: Verified agent DID for trace attribution (task 27) — a
+            trace's ``agent_did`` proves which agent's identity a call
+            actually ran under; ``agent_label`` alone is free text.
         trace_store: Optional TraceStore for persistent LLM call recording.
         on_event: Optional callback fired after every invoke() with a
             TraceRecord. Enables arcagent to bridge ArcLLM events
@@ -63,6 +67,7 @@ def load_eval_model(
         model_name or None,
         retry=module_overrides.pop("retry", True),
         agent_label=agent_label,
+        agent_did=agent_did,
         trace_store=trace_store,
         on_event=on_event,
         **module_overrides,

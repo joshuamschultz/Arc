@@ -26,6 +26,7 @@ from arctrust.trust_store import (
     invalidate_cache,
     load_issuer_pubkey,
     load_operator_pubkey,
+    register_operator,
 )
 
 # ---------------------------------------------------------------------------
@@ -276,3 +277,90 @@ class TestCacheSemantics:
 
         assert load_operator_pubkey(op_did, trust_dir=trust_dir) == bytes(sk_op.verify_key)
         assert load_issuer_pubkey(iss_did, trust_dir=trust_dir) == bytes(sk_iss.verify_key)
+
+
+# ---------------------------------------------------------------------------
+# register_operator — self-service operator registration
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterOperator:
+    def test_creates_file_with_0600_perms(self, trust_dir: Path) -> None:
+        """register_operator creates operators.toml at 0600 when absent."""
+        sk = SigningKey.generate()
+        did = "did:arc:org:operator/new0001"
+
+        register_operator(did, bytes(sk.verify_key), trust_dir=trust_dir)
+
+        path = trust_dir / "operators.toml"
+        assert path.exists()
+        mode = os.stat(path).st_mode & 0o777
+        assert mode == 0o600
+
+    def test_registered_operator_loadable(self, trust_dir: Path) -> None:
+        """A registered DID is immediately readable via load_operator_pubkey."""
+        sk = SigningKey.generate()
+        pubkey = bytes(sk.verify_key)
+        did = "did:arc:org:operator/rt000001"
+
+        register_operator(did, pubkey, trust_dir=trust_dir)
+
+        assert load_operator_pubkey(did, trust_dir=trust_dir) == pubkey
+
+    def test_register_preserves_existing_operators(self, trust_dir: Path) -> None:
+        """Registering a new DID does not clobber an already-registered one."""
+        sk1 = SigningKey.generate()
+        sk2 = SigningKey.generate()
+        did1 = "did:arc:org:operator/alice001"
+        did2 = "did:arc:org:operator/bob00002"
+
+        _write_operators(trust_dir, did1, bytes(sk1.verify_key))
+        register_operator(did2, bytes(sk2.verify_key), trust_dir=trust_dir)
+
+        assert load_operator_pubkey(did1, trust_dir=trust_dir) == bytes(sk1.verify_key)
+        assert load_operator_pubkey(did2, trust_dir=trust_dir) == bytes(sk2.verify_key)
+
+    def test_register_is_idempotent_update(self, trust_dir: Path) -> None:
+        """Re-registering the same DID replaces its pubkey (key rotation)."""
+        sk1 = SigningKey.generate()
+        sk2 = SigningKey.generate()
+        did = "did:arc:org:operator/rotate1"
+
+        register_operator(did, bytes(sk1.verify_key), trust_dir=trust_dir)
+        register_operator(did, bytes(sk2.verify_key), trust_dir=trust_dir)
+
+        assert load_operator_pubkey(did, trust_dir=trust_dir) == bytes(sk2.verify_key)
+
+    def test_rejects_wrong_length_key(self, trust_dir: Path) -> None:
+        """A non-32-byte key is rejected before any file is touched."""
+        with pytest.raises(ValueError, match="32 bytes"):
+            register_operator("did:arc:org:operator/bad", b"too-short", trust_dir=trust_dir)
+
+
+# ---------------------------------------------------------------------------
+# Default trust dir honors ARC_CONFIG_DIR (matches identity.py / GatewayConfig)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultTrustDirHonorsArcConfigDir:
+    def test_register_and_load_use_arc_config_dir_when_no_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no explicit trust_dir, both calls land under $ARC_CONFIG_DIR/trust.
+
+        This is what makes `arc identity init`'s self-registration visible to
+        the live gateway's PairingStore under an isolated ARC_CONFIG_DIR
+        deployment (e.g. the DGX setup) — both sides must resolve the same
+        default directory.
+        """
+        monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+        sk = SigningKey.generate()
+        did = "did:arc:org:operator/envdir01"
+
+        register_operator(did, bytes(sk.verify_key))
+
+        expected_file = tmp_path / "trust" / "operators.toml"
+        assert expected_file.exists()
+
+        invalidate_cache()
+        assert load_operator_pubkey(did) == bytes(sk.verify_key)

@@ -61,6 +61,7 @@ _SLACK_BOLT_MODULES = (
 def _make_adapter(
     allowed_user_ids: list[str] | None = None,
     agent_did: str = "did:arc:agent:default",
+    require_pairing: bool = False,
 ) -> tuple[SlackAdapter, list[InboundEvent]]:
     """Build a SlackAdapter with in-memory dedup store and capture on_message calls."""
     received: list[InboundEvent] = []
@@ -75,6 +76,7 @@ def _make_adapter(
         on_message=_on_message,
         agent_did=agent_did,
         dedup_db_path=None,  # in-memory DB for tests
+        require_pairing=require_pairing,
     )
     return adapter, received
 
@@ -237,6 +239,42 @@ class TestAuthorisation:
         await adapter._handle_inbound(_make_event(user="U123", client_msg_id="msg-1"))
         await adapter._handle_inbound(_make_event(user="U456", client_msg_id="msg-2"))
         assert len(received) == 2
+
+    async def test_unauthorized_user_forwarded_when_require_pairing(self) -> None:
+        """With require_pairing=True, a statically-unauthorized user IS forwarded.
+
+        Auth is "static allowed_user_ids OR approved-paired": when the static
+        check fails, the message must still reach on_message (SessionRouter's
+        PairingInterceptor) so it can mint+DM a pairing code or route an
+        already-approved (via `arc gateway pair approve`) user through.
+        Dropping it here — as the require_pairing=False path still correctly
+        does — makes live pairing unreachable for Slack, identical to the
+        bug fixed for Telegram.
+        """
+        adapter, received = _make_adapter(allowed_user_ids=["U123"], require_pairing=True)
+        await adapter._handle_inbound(_make_event(user="U999", client_msg_id="msg-pair"))
+        assert len(received) == 1
+        assert received[0].user_did == "slack:U999"
+
+    async def test_unauthorized_user_still_dropped_when_pairing_disabled(self) -> None:
+        """require_pairing=False (the default) preserves the original drop.
+
+        Zero behaviour change for every existing deployment that hasn't
+        opted into DM pairing.
+        """
+        adapter, received = _make_adapter(allowed_user_ids=["U123"], require_pairing=False)
+        await adapter._handle_inbound(_make_event(user="U999", client_msg_id="msg-nopair"))
+        assert len(received) == 0
+
+    async def test_statically_authorized_user_bypasses_pairing_even_when_enabled(self) -> None:
+        """A user in allowed_user_ids is routed directly — no pairing lookup needed.
+
+        The "OR" fast path: static allowlist membership alone is sufficient,
+        at any require_pairing setting.
+        """
+        adapter, received = _make_adapter(allowed_user_ids=["U123"], require_pairing=True)
+        await adapter._handle_inbound(_make_event(user="U123", client_msg_id="msg-static"))
+        assert len(received) == 1
 
 
 # ---------------------------------------------------------------------------

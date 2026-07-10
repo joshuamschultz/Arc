@@ -7,10 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`arc team create-channel <name>`** — standalone or team-scoped (`--members` explicit, or
+  defaults to the team's members when `--team` is given and `--members` is omitted). Refuses a
+  duplicate channel name via a pre-check rather than silently overwriting membership (the
+  underlying `MessagingService.create_channel` has no such guard itself — fixed at the service
+  layer too, task #22).
+- **`arc team update-entity <ref> [--name] [--roles]`** — fixes a mis-set name/role on an
+  already-registered entity without going through `register`'s strict create-only path (which
+  correctly refuses duplicates — existing callers, including `arc agent create`'s
+  auto-registration, rely on that guard). Omitted fields are left untouched; DID/handle never
+  change.
+- **`--verbose` on `arc ui start`** — raises the root log level, matching `arc agent serve`'s
+  convention.
+
 ### Fixed
 
 - **Bare `arc` no longer crashes on non-TTY stdin (F1)** — piped/CI/`arc < file` invocations print
   help and exit 0 instead of throwing a prompt_toolkit `KeyError` from the raw-mode REPL.
+- **`arc ui start` never configured logging.** Every `ui.mutation`/`ui.session_start` audit event
+  and every adapter connect/auth-reject line was silently dropped — `uvicorn`'s `log_level` only
+  covers `uvicorn`'s own loggers. Logging is now configured first at startup: root stays at
+  `WARNING` (quiet), `arcui.audit` + `arcgateway.adapters` + the three top-level adapter packages
+  are raised to `INFO`.
+- **Multi-word commands were unreachable except shell-quoted as one token.** Both dispatch sites
+  (one-shot and REPL) matched only `argv[0]` against the registry, so `arc gateway pair approve`
+  and every other space-separated `CommandDef` name effectively didn't work as documented. New
+  `resolve_command_and_args` does longest-prefix matching over the static registry (ambiguity
+  impossible by construction).
+- **`arc agent tools` showed 1 of 15 registered tools.** It globbed only the agent's own
+  `capabilities/*.py`, missing builtins/builtins-skills/global/workspace and every enabled
+  module's `capabilities.py`. `arc ext inspect` had the same gap. Both now share one
+  `build_capability_registry` that mirrors real agent-startup precedence and gains a source
+  column. Deliberately does **not** boot a real `ArcAgent` for this (startup connects modules to
+  live services — the wrong side effect for a listing command); `arc agent build --check`/
+  `status` keep their intentionally narrower self-authored view.
+- **The federal-tier subprocess worker resolved the wrong agent's identity.** It accepted `--did`
+  but ignored it, loading config from three fixed paths instead — any multi-agent deployment ran
+  as whatever agent happened to be there. The worker now resolves `--did` through a team-root DID
+  index (new `--team-root` flag) and verifies the loaded config's identity against the requested
+  DID before constructing the agent; a mismatch fails closed with an audited
+  `worker.did_mismatch` event instead of silently serving the wrong identity.
+- **`arcgateway-telegram` wasn't a declared root dependency** — a bare `uv sync` silently skipped
+  it. Pinned in root `pyproject.toml` alongside `arcmemory`/`arcskill`. Also fixed: `arc init`'s
+  Telegram config generator wrote `bot_token_env` (Slack's field name) instead of `token_env`, and
+  both `arc init` and `arc agent create` omitted `[modules.skills]` entirely, so the declared
+  default skills adapter (`arcskill`) shipped off on every freshly scaffolded agent.
 
 ### Changed
 

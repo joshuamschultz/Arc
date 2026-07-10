@@ -1,0 +1,205 @@
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import { EmptyState, QueryState } from '@/components/states'
+import { useEntities, useEntityLinks } from '@/lib/queries'
+import { cn } from '@/lib/utils'
+import type { EntityRecord } from '@/lib/types'
+
+function ImportanceBadge({ n }: { n: number }) {
+  const tone =
+    n >= 8
+      ? 'bg-status-online/15 text-status-online'
+      : n >= 4
+        ? 'bg-status-warning/15 text-status-warning'
+        : 'bg-muted text-muted-foreground'
+  return <span className={cn('rounded px-1.5 py-0.5 font-mono text-[11px]', tone)}>{n}/10</span>
+}
+
+/** Entity detail: facts, tags, and navigable links (entities are read-only —
+ *  the backend exposes no entity mutation surface, only memory edits). */
+function EntityDetail({
+  agentId,
+  entity,
+  open,
+  onOpenChange,
+  onNavigateEntity,
+}: {
+  agentId: string
+  entity: EntityRecord | null
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  onNavigateEntity: (slug: string) => void
+}) {
+  const links = useEntityLinks(agentId, entity?.slug ?? null)
+  if (entity == null) return null
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+        <SheetHeader className="border-b border-border px-5 py-4">
+          <SheetTitle className="text-sm">{entity.name}</SheetTitle>
+          <SheetDescription>
+            {entity.entity_type} · {entity.classification} · confidence {entity.confidence.toFixed(2)}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="flex-1 space-y-5 overflow-auto p-5">
+          <section className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Importance</div>
+              <ImportanceBadge n={entity.importance} />
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Source</div>
+              <div className="truncate font-mono text-xs text-foreground">{entity.source}</div>
+            </div>
+          </section>
+
+          {entity.tags.length > 0 && (
+            <section className="space-y-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {entity.tags.map((t) => (
+                  <span key={t} className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Facts{entity.facts.length ? ` (${entity.facts.length})` : ''}
+            </h3>
+            {entity.facts.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No recorded facts.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {entity.facts.map((f, i) => (
+                  <li key={i} className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm text-foreground">
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Links</h3>
+            <QueryState
+              query={links}
+              isEmpty={(d) => d.items.length === 0}
+              empty={<p className="text-xs text-muted-foreground">No linked nodes.</p>}
+            >
+              {(data) => (
+                <div className="flex flex-wrap gap-1.5">
+                  {data.items.map((l, i) =>
+                    l.target_type === 'entity' ? (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => onNavigateEntity(l.target_id)}
+                        className="cursor-pointer rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
+                      >
+                        {l.target_id} · {l.kind} ({l.weight.toFixed(2)})
+                      </button>
+                    ) : (
+                      <span
+                        key={i}
+                        className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+                      >
+                        {l.target_id} · {l.kind}
+                      </span>
+                    ),
+                  )}
+                </div>
+              )}
+            </QueryState>
+          </section>
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+/** Browse an agent's semantic entities and navigate their link graph (COMP-003).
+ *  Selection is controlled by `selectedSlug`/`onSelectSlug` — both row clicks
+ *  here and cross-tab navigation from a memory's links flow through the same
+ *  parent-owned slug, so no effect is needed to sync an external "focus". */
+export function EntityBrowser({
+  agentId,
+  selectedSlug,
+  onSelectSlug,
+}: {
+  agentId: string
+  selectedSlug: string | null
+  onSelectSlug: (slug: string | null) => void
+}) {
+  const entities = useEntities(agentId)
+  const selected = entities.data?.items.find((e) => e.slug === selectedSlug) ?? null
+
+  return (
+    <div className="space-y-3">
+      <QueryState
+        query={entities}
+        isEmpty={(d) => d.items.length === 0}
+        empty={
+          <EmptyState
+            title="No entities recorded yet"
+            description="This agent hasn't extracted any semantic entities."
+          />
+        }
+      >
+        {(data) => (
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Name</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Type</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Importance</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</th>
+                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.items.map((e) => (
+                  <tr
+                    key={e.slug}
+                    onClick={() => onSelectSlug(e.slug)}
+                    className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/40"
+                  >
+                    <td className="px-3 py-2 align-top text-foreground">{e.name}</td>
+                    <td className="px-3 py-2 align-top text-xs text-muted-foreground">{e.entity_type}</td>
+                    <td className="px-3 py-2 align-top">
+                      <ImportanceBadge n={e.importance} />
+                    </td>
+                    <td className="max-w-xs truncate px-3 py-2 align-top text-xs text-muted-foreground">
+                      {e.tags.join(', ') || '—'}
+                    </td>
+                    <td className="max-w-[16ch] truncate px-3 py-2 align-top font-mono text-xs text-muted-foreground">
+                      {e.source}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </QueryState>
+
+      <EntityDetail
+        agentId={agentId}
+        entity={selected}
+        open={selected != null}
+        onOpenChange={(o) => !o && onSelectSlug(null)}
+        onNavigateEntity={onSelectSlug}
+      />
+    </div>
+  )
+}

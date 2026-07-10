@@ -154,7 +154,18 @@ class SlackAdapter:
         *,
         agent_did: str = "did:arc:agent:default",
         dedup_db_path: Path | None = None,
+        require_pairing: bool = False,
     ) -> None:
+        """Initialise SlackAdapter.
+
+        Args:
+            require_pairing: Mirrors ``[security].require_pairing``. Auth is
+                "static allowed_user_ids OR approved-paired": when True, a
+                user who fails the static check is still forwarded to
+                on_message so SessionRouter's PairingInterceptor can mint/DM
+                a pairing code or route an already-approved user through,
+                instead of being silently dropped.
+        """
         if not bot_token.startswith("xoxb-"):
             msg = (
                 f"bot_token must start with xoxb-; got "
@@ -178,6 +189,7 @@ class SlackAdapter:
         self._allowed_user_ids = list(allowed_user_ids)
         self._on_message = on_message
         self._agent_did = agent_did
+        self._require_pairing = require_pairing
 
         self._dedup = _DedupStore(db_path=dedup_db_path)
         self._dedup_sweep_task: asyncio.Task[None] | None = None
@@ -370,13 +382,34 @@ class SlackAdapter:
                 )
                 return
 
+        # Auth: static allowed_user_ids OR approved-paired. Static check first
+        # (empty allowlist = deny all, fail-closed). On failure:
+        # require_pairing=False preserves the original silent-drop behaviour;
+        # require_pairing=True forwards to on_message instead — SessionRouter's
+        # PairingInterceptor makes the final call (mint+DM a pairing code, or
+        # route through if `arc gateway pair approve` has already approved
+        # this user via the shared PairingStore).
         if not self._is_authorised(user_id):
-            _logger.warning(
-                "SlackAdapter: unauthorised user %r rejected (allowed: %s)",
+            if not self._require_pairing:
+                _logger.warning(
+                    "SlackAdapter: unauthorised user %r rejected (allowed: %s)",
+                    user_id,
+                    self._allowed_user_ids or "[]",
+                )
+                from arcgateway.audit import emit_event as _arc_emit
+
+                _arc_emit(
+                    action="gateway.adapter.auth_rejected",
+                    target=f"slack:{channel}",
+                    outcome="deny",
+                    extra={"platform": "slack", "agent_did": self._agent_did},
+                )
+                return
+            _logger.info(
+                "SlackAdapter: user %r not in static allowlist — forwarding for "
+                "pairing check (require_pairing=true)",
                 user_id,
-                self._allowed_user_ids or "[]",
             )
-            return
 
         inbound = InboundEvent(
             platform="slack",

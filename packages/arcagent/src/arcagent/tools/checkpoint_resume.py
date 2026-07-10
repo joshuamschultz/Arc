@@ -23,6 +23,7 @@ from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent
 from arcrun import run_stream as arcrun_run_stream
 
 from arcagent.core.agent_dispatch import build_run_context, maybe_compact
+from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.tools.approval_policy import build_loop_controls
 from arcagent.tools.checkpoint_signing import verify_record
@@ -39,6 +40,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
     tampered or unsigned checkpoint raises fail-closed before the loop starts —
     an agent cannot reset its budget counters by editing the record (F3, LLM10).
     """
+    activate_runtime_bindings(agent)
     agent._ensure_started()
     session = await agent.session(session_key)
     record = session.latest_checkpoint()

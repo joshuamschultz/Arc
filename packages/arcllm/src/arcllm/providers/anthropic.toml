@@ -3,9 +3,24 @@ api_format = "anthropic-messages"
 base_url = "https://api.anthropic.com"
 api_key_env = "ANTHROPIC_API_KEY"
 api_key_required = true
-default_model = "claude-sonnet-4-6"
+default_model = "claude-sonnet-5"
 default_temperature = 0.7
 vault_path = ""
+
+# --- Claude 5 generation (Jun 2026) ---
+
+[models.claude-sonnet-5]
+context_window = 1000000
+max_output_tokens = 128000
+supports_tools = true
+supports_vision = true
+supports_thinking = true
+supports_temperature = false
+input_modalities = ["text", "image"]
+cost_input_per_1m = 3.00
+cost_output_per_1m = 15.00
+cost_cache_read_per_1m = 0.30
+cost_cache_write_per_1m = 3.75
 
 # --- Claude 4.6 generation (Feb 2026) ---
 

@@ -3,12 +3,17 @@
 The messaging module's hooks, tools, and background polling task share
 state (services, config, unread-count cache, agent run callback, etc.).
 Decorator-stamped functions can't carry that state in a closure, so it
-lives in a module-level :class:`_State` instance configured by the agent
-at startup.
+lives in a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-Mirrors the pattern in :mod:`arcagent.modules.policy._runtime` and
-:mod:`arcagent.modules.memory._runtime`. Single-agent-per-process is the
-assumption; this is shared mutable state for one agent.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
+The poll loop (an ``@background_task``) is spawned via
+``capability_registry.py``'s ``asyncio.create_task()`` AFTER ``configure()``
+already ran in the same agent-startup task, so asyncio's automatic
+context-copy on task creation gives it this agent's state for its whole
+lifetime — no ``contextvars.copy_context()`` special-casing needed.
 
 ``configure`` is synchronous (called from the sync capability wiring), so it
 builds the dependency-free in-memory backend eagerly and defers any live NATS
@@ -18,6 +23,7 @@ connection to :func:`ensure_live_backend`, awaited once at poll-loop start.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -69,7 +75,9 @@ class _State:
     roster_cache_time: float = 0.0
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_messaging_state", default=None
+)
 
 
 def configure(
@@ -82,7 +90,7 @@ def configure(
     identity: AgentIdentity | None = None,
     operator_signer: Any = None,
 ) -> None:
-    """Bind module state and bootstrap arcteam services.
+    """Bind module state for the CURRENT asyncio task and bootstrap arcteam services.
 
     Called once at agent startup. Imports arcteam lazily so the module
     can be imported without arcteam installed (it is an optional dep).
@@ -95,8 +103,6 @@ def configure(
     own audit authority (SPEC-053). Absent it, this fails closed rather than
     audit with a repudiable key.
     """
-    global _state
-
     if operator_signer is None:
         raise ValueError(
             "messaging module requires the operator signer to sign its audit "
@@ -137,16 +143,18 @@ def configure(
         signer=_bootstrap.message_signer(identity),
     )
 
-    _state = _State(
-        config=cfg,
-        workspace=ws,
-        telemetry=telemetry,
-        team_root=resolved_team_root,
-        agent_name=agent_name,
-        identity=identity,
-        operator_signer=operator_signer,
-        svc=svc,
-        registry=registry,
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=ws,
+            telemetry=telemetry,
+            team_root=resolved_team_root,
+            agent_name=agent_name,
+            identity=identity,
+            operator_signer=operator_signer,
+            svc=svc,
+            registry=registry,
+        )
     )
 
 
@@ -191,18 +199,29 @@ async def ensure_live_backend() -> None:
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "messaging module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
+
+
+def bind(state_obj: _State) -> None:
+    """Idempotently bind an already-built ``_State`` into the CURRENT task.
+
+    Cheap — one ``.set()`` call, no construction. Called at the top of
+    every turn-dispatch entry point (task 27 follow-up hotfix) so a turn
+    running in a fresh sibling ``asyncio.Task`` — not a descendant of the
+    task that ran ``configure()`` — still sees this agent's state.
+    """
+    _state_var.set(state_obj)
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
-__all__ = ["configure", "ensure_live_backend", "reset", "state"]
+__all__ = ["bind", "configure", "ensure_live_backend", "reset", "state"]

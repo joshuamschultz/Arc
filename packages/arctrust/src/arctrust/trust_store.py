@@ -52,10 +52,12 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import stat
 import time
 import tomllib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -93,10 +95,23 @@ class TrustStoreError(Exception):
 # ---------------------------------------------------------------------------
 
 
-_DEFAULT_TRUST_DIR: Final[Path] = Path.home() / ".arc" / "trust"
 _OPERATORS_FILE: Final[str] = "operators.toml"
 _ISSUERS_FILE: Final[str] = "issuers.toml"
 _CACHE_TTL_SECONDS: Final[int] = 60
+
+
+def _default_trust_dir() -> Path:
+    """Resolve the trust dir: ``${ARC_CONFIG_DIR:-~/.arc}/trust``.
+
+    Mirrors the base-directory resolution used across Arc for config,
+    identity keys, and team data (see ``arccli.commands.identity``,
+    ``arcgateway.config.GatewayConfig.load``) so an isolated
+    ``ARC_CONFIG_DIR`` deployment keeps the trust store alongside the rest
+    of its config instead of leaking to the real ``~/.arc``.
+    """
+    env = os.environ.get("ARC_CONFIG_DIR")
+    base = Path(env).expanduser() if env else Path.home() / ".arc"
+    return base / "trust"
 
 
 @dataclass(frozen=True)
@@ -123,7 +138,7 @@ def load_operator_pubkey(
 
     Args:
         did:        Operator DID (exact match required).
-        trust_dir:  Optional override directory.  Defaults to ``~/.arc/trust``.
+        trust_dir:  Optional override directory.  Defaults to ``${ARC_CONFIG_DIR:-~/.arc}/trust``.
 
     Returns:
         The 32-byte pubkey ready to pass to ``nacl.signing.VerifyKey``.
@@ -133,7 +148,7 @@ def load_operator_pubkey(
             or DID not registered.
     """
     records = _load_cached(
-        directory=trust_dir or _DEFAULT_TRUST_DIR,
+        directory=trust_dir or _default_trust_dir(),
         filename=_OPERATORS_FILE,
         top_level_key="operators",
         cache=_operator_cache,
@@ -148,6 +163,80 @@ def load_operator_pubkey(
             details={"did": did, "file": _OPERATORS_FILE},
         )
     return records[did]
+
+
+def register_operator(
+    did: str,
+    public_key: bytes,
+    *,
+    trust_dir: Path | None = None,
+    notes: str = "",
+) -> None:
+    """Create or update an operator's Ed25519 pubkey entry in operators.toml.
+
+    This is the self-service counterpart to the manual "hand-edit
+    operators.toml" workflow described in the module docstring — it lets a
+    caller who already holds a keypair (e.g. ``arc identity init``) register
+    itself as a trusted pairing-approval operator without editing TOML by
+    hand. Personal-tier trust is explicitly "self-signed key accepted as
+    tier-1 trust anchor" (see ``arcgateway.pairing_signature``); this is the
+    mechanism that makes that anchor concrete.
+
+    Idempotent: re-registering the same DID replaces its existing entry
+    (supports key rotation). Creates the trust directory and file with 0600
+    permissions if they don't exist yet. Invalidates the operator pubkey
+    cache so the new entry is visible immediately to load_operator_pubkey().
+
+    Args:
+        did:        Operator DID to register.
+        public_key: 32-byte Ed25519 public key.
+        trust_dir:  Optional override directory. Defaults to ${ARC_CONFIG_DIR:-~/.arc}/trust.
+        notes:      Optional free-text note stored alongside the entry.
+
+    Raises:
+        ValueError: public_key is not exactly 32 bytes.
+        TrustStoreError: An existing operators.toml has invalid TOML syntax.
+    """
+    if len(public_key) != 32:
+        raise ValueError(f"public_key must be 32 bytes, got {len(public_key)}")
+
+    directory = (trust_dir or _default_trust_dir()).expanduser().resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / _OPERATORS_FILE
+
+    entries: dict[str, dict[str, str]] = {}
+    if path.exists():
+        _enforce_0600_perms(path)
+        try:
+            data = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as exc:
+            raise TrustStoreError(
+                code="TRUST_STORE_BAD_TOML",
+                message=f"Trust file {path} has invalid TOML syntax: {exc}",
+                details={"path": str(path)},
+            ) from exc
+        section = data.get("operators")
+        if isinstance(section, dict):
+            entries = section
+
+    entries[did] = {
+        "public_key": base64.b64encode(public_key).decode("ascii"),
+        "added_at": datetime.now(tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "notes": notes,
+    }
+
+    lines: list[str] = []
+    for entry_did, fields in entries.items():
+        lines.append(f'[operators."{entry_did}"]')
+        lines.append(f'public_key = "{fields["public_key"]}"')
+        lines.append(f'added_at = "{fields["added_at"]}"')
+        if fields.get("notes"):
+            lines.append(f'notes = "{fields["notes"]}"')
+        lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+    path.chmod(0o600)
+    invalidate_cache()
 
 
 def load_issuer_pubkey(
@@ -172,7 +261,7 @@ def load_issuer_pubkey(
             or DID not registered.
     """
     records = _load_cached(
-        directory=trust_dir or _DEFAULT_TRUST_DIR,
+        directory=trust_dir or _default_trust_dir(),
         filename=_ISSUERS_FILE,
         top_level_key="issuers",
         cache=_issuer_cache,
@@ -367,4 +456,5 @@ __all__ = [
     "invalidate_cache",
     "load_issuer_pubkey",
     "load_operator_pubkey",
+    "register_operator",
 ]

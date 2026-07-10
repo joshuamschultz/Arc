@@ -1,196 +1,332 @@
-"""Knowledge page API — ``GET /api/knowledge/{agent_id}``.
+"""Knowledge routes — ``/api/agents/{agent_id}/knowledge/*`` (COMP-002).
 
-Returns the structured payload consumed by the Knowledge UI page:
-context budget, memory entries (with previews), workspace tree, and
-optional code-graph stats. Falls back to ``graph.available: false``
-when the code-review-graph MCP server is unreachable so the dashboard
-keeps rendering.
+REST surface over an agent's memory database, consuming ONLY
+``arcmemory.operator.MemoryOperator`` (COMP-001) — this module runs no SQL
+and owns no store logic (SDD Overview: "arcui contains zero discovery
+logic"). Reads (list/search/detail/links) accept any authenticated role;
+mutations (PATCH edit/set-metadata, DELETE) require the operator role and
+emit a ``ui.mutation`` audit event through the shared COMP-010 helper.
 
-Per SDD §3.5 the route is a thin assembler — every datum comes from
-``arcgateway.fs_reader`` (file system) or the optional MCP query.
+Empty vs. unreadable (REQ-097): a fresh agent's memory DB is created lazily
+on first read by ``MemoryDB.connect()``, so "no memories recorded" is simply
+an empty, successful result (200). A genuine store failure (permission
+error, corrupted file, blocked path) raises out of the facade call and is
+reported as 503 with arcmemory's exception message surfaced verbatim
+(REQ-089) — the two states are distinguished by status code, not payload
+shape guessing.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from arcgateway import fs_reader
+from arcmemory.operator import MemoryOperator, MutationResult, MutationStatus
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.audit import emit_mutation_audit
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
 
-# Memory previews kept short — the page renders them as a hover tooltip.
-_PREVIEW_BYTES = 200
-# Workspace tree caps from SDD §3.5.
-_TREE_DEPTH = 1
-_TREE_ENTRY_CAP = 200
 
-
-def _resolve_agent(ws_app_state: Any, agent_id: str) -> Any:
-    """Look up a roster entry by id (or name) — the same matching the WS route uses."""
-    roster_provider = getattr(ws_app_state, "roster_provider", None)
-    if roster_provider is None:
+def _resolve_agent(request: Request, agent_id: str) -> Any | None:
+    """Look up a roster entry by id — same lookup agent_detail routes use."""
+    provider = getattr(request.app.state, "roster_provider", None)
+    if provider is None:
         return None
-    for entry in roster_provider():
-        if getattr(entry, "agent_id", None) == agent_id:
-            return entry
-        if getattr(entry, "name", None) == agent_id:
+    for entry in provider():
+        if entry.agent_id == agent_id:
             return entry
     return None
 
 
-def _agent_root(team_root: Path | None, agent_id: str) -> Path | None:
-    """Path to ``team_root/<name>_agent/`` for fs_reader scoping."""
-    if team_root is None:
-        return None
-    candidate = team_root / f"{agent_id}_agent"
-    if candidate.is_dir():
-        return candidate
-    return None
+def _operator_for(agent_root: Path, agent_did: str) -> MemoryOperator:
+    """Build a MemoryOperator over ``<agent_root>/workspace/memory``."""
+    return MemoryOperator(agent_root / "workspace", agent_did)
 
 
-def _file_preview(path: Path, n: int = _PREVIEW_BYTES) -> str:
-    """First n characters of a text file — empty string on read error."""
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            return fh.read(n)
-    except OSError:
-        return ""
-
-
-def _memory_entries(agent_root: Path) -> tuple[list[dict[str, Any]], int]:
-    """Build the ``memory.entries`` array and total byte count."""
-    memory_dir = agent_root / "memory"
-    entries: list[dict[str, Any]] = []
-    total_bytes = 0
-    if not memory_dir.is_dir():
-        return entries, total_bytes
-    for path in sorted(memory_dir.iterdir()):
-        if not path.is_file():
-            continue
-        st = path.stat()
-        total_bytes += st.st_size
-        entries.append(
-            {
-                "filename": path.name,
-                "type": "text",
-                "size_bytes": st.st_size,
-                "modified_at": datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat(),
-                "classification": "UNCLASS",
-                "created_by": agent_root.name.removesuffix("_agent"),
-                "preview": _file_preview(path),
-            }
-        )
-    return entries, total_bytes
-
-
-def _workspace_tree(agent_id: str, agent_root: Path) -> tuple[list[dict[str, Any]], int, bool]:
-    """Top-level workspace tree (caps at 200 entries; deeper children deferred)."""
-    workspace_dir = agent_root / "workspace"
-    if not workspace_dir.is_dir():
-        return [], 0, False
-    entries = fs_reader.list_tree(
-        scope="agent",
-        agent_id=agent_id,
-        agent_root=agent_root,
-        rel_path="workspace",
-        max_depth=_TREE_DEPTH,
-        caller_did="did:arc:ui:knowledge",
+def _agent_not_found(agent_id: str) -> JSONResponse:
+    return JSONResponse(
+        ErrorResponse(error=f"agent {agent_id!r} not found").model_dump(mode="json"),
+        status_code=404,
     )
-    tree: list[dict[str, Any]] = []
-    total_files = 0
-    for entry in entries[:_TREE_ENTRY_CAP]:
-        node: dict[str, Any] = {
-            "path": entry.path,
-            "type": entry.type,
-            "modified_at": datetime.fromtimestamp(entry.mtime, tz=UTC).isoformat(),
-        }
-        if entry.type == "file":
-            node["size_bytes"] = entry.size
-            total_files += 1
-        else:
-            node["children"] = None
-            node["child_count"] = 0  # client requests deeper expansion separately
-        tree.append(node)
-    truncated = len(entries) > _TREE_ENTRY_CAP
-    return tree, total_files, truncated
 
 
-def _graph_stats() -> dict[str, Any]:
-    """Code-graph stats with ``available: false`` fallback.
+def _store_unreadable(exc: Exception) -> JSONResponse:
+    """REQ-089/REQ-097 — surface the store failure verbatim, distinct from empty."""
+    logger.warning("knowledge route: memory store unreadable: %s", exc)
+    return JSONResponse(
+        ErrorResponse(error=str(exc)).model_dump(mode="json"),
+        status_code=503,
+    )
 
-    The actual MCP call lives in the runtime — for v1 we declare unavailable
-    so the dashboard still renders. SDD §3.5 step 5 — wired for production
-    when the project's MCP client is plumbed through ``app.state``.
-    """
-    return {"available": False}
 
-
-async def get_knowledge(request: Request) -> JSONResponse:
-    """GET /api/knowledge/{agent_id}.
-
-    Returns the agent's memory + workspace + graph snapshot per SDD §5.2.
-    Returns 404 when the agent_id is not in the roster, 200 with
-    ``graph.available: false`` when the code-graph MCP server is down.
-    """
-    agent_id = request.path_params["agent_id"]
-    state = request.app.state
-    agent = _resolve_agent(state, agent_id)
-    if agent is None:
+def _require_operator(request: Request) -> JSONResponse | None:
+    """403 unless the authenticated role is operator. None means proceed."""
+    if request.state.role != "operator":
         return JSONResponse(
-            ErrorResponse(error=f"agent {agent_id!r} not found").model_dump(mode="json"),
+            ErrorResponse(error="Operator role required").model_dump(mode="json"),
+            status_code=403,
+        )
+    return None
+
+
+def _mutation_response(entry_id: str, results: list[MutationResult]) -> JSONResponse:
+    """Build the PATCH/DELETE response — 200 if every op applied, else 404/500.
+
+    404 specifically for "entry not found" (the facade's stable, code-owned
+    error string), so a delete/edit of a missing id reads like a normal REST
+    404 rather than a generic failure; any other store error is a 500. The
+    payload always carries every sub-result verbatim (REQ-089 — no partial
+    success is ever reported as applied).
+    """
+    overall_applied = all(r.status is MutationStatus.APPLIED for r in results)
+    body = {
+        "status": "applied" if overall_applied else "error",
+        "results": [r.model_dump(mode="json") for r in results],
+    }
+    if overall_applied:
+        return JSONResponse(body, status_code=200)
+    not_found = any(r.error is not None and "not found" in r.error for r in results)
+    return JSONResponse(body, status_code=404 if not_found else 500)
+
+
+# ---------------------------------------------------------------------------
+# Memories
+# ---------------------------------------------------------------------------
+
+
+async def list_memories(request: Request) -> JSONResponse:
+    """GET .../knowledge/memories — paged list, or ranked search via ``?q=``."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    query = request.query_params.get("q")
+
+    if query:
+        try:
+            hits = await op.search(query)
+        except Exception as exc:
+            return _store_unreadable(exc)
+        return JSONResponse({"items": [h.model_dump(mode="json") for h in hits], "query": query})
+
+    limit = int(request.query_params.get("limit", "50"))
+    offset = int(request.query_params.get("offset", "0"))
+    try:
+        page = op.list_entries(limit=limit, offset=offset)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse(page.model_dump(mode="json"))
+
+
+async def get_memory(request: Request) -> JSONResponse:
+    """GET .../knowledge/memories/{entry_id}."""
+    agent_id = request.path_params["agent_id"]
+    entry_id = request.path_params["entry_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        record = op.get_entry(entry_id)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    if record is None:
+        return JSONResponse(
+            ErrorResponse(error=f"entry {entry_id!r} not found").model_dump(mode="json"),
             status_code=404,
         )
+    return JSONResponse(record.model_dump(mode="json"))
 
-    team_root: Path | None = getattr(state, "team_root", None)
-    agent_root = _agent_root(team_root, getattr(agent, "name", agent_id))
 
-    memory_entries: list[dict[str, Any]] = []
-    memory_total_bytes = 0
-    workspace_tree: list[dict[str, Any]] = []
-    workspace_total = 0
-    workspace_truncated = False
-    if agent_root is not None:
-        memory_entries, memory_total_bytes = _memory_entries(agent_root)
-        workspace_tree, workspace_total, workspace_truncated = _workspace_tree(
-            agent_id, agent_root
+async def get_memory_links(request: Request) -> JSONResponse:
+    """GET .../knowledge/memories/{entry_id}/links (REQ-085)."""
+    agent_id = request.path_params["agent_id"]
+    entry_id = request.path_params["entry_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        links = op.links(entry_id)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [link.model_dump(mode="json") for link in links]})
+
+
+async def patch_memory(request: Request) -> JSONResponse:
+    """PATCH .../knowledge/memories/{entry_id} — edit text and/or metadata (REQ-088/100)."""
+    denied = _require_operator(request)
+    if denied is not None:
+        return denied
+
+    agent_id = request.path_params["agent_id"]
+    entry_id = request.path_params["entry_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    try:
+        body = await request.json()
+    except ValueError:
+        return JSONResponse(
+            ErrorResponse(error="Invalid JSON body").model_dump(mode="json"), status_code=400
+        )
+    text = body.get("text")
+    importance = body.get("importance")
+    salience = body.get("salience")
+    if text is None and importance is None and salience is None:
+        return JSONResponse(
+            ErrorResponse(
+                error="PATCH body must include at least one of: text, importance, salience"
+            ).model_dump(mode="json"),
+            status_code=400,
         )
 
-    payload: dict[str, Any] = {
-        "agent_id": agent_id,
-        "agent_did": getattr(agent, "did", ""),
-        "context": {
-            "model": getattr(agent, "model", "") or "",
-            "input_tokens": 0,
-            "memory_used_tokens": memory_total_bytes // 4,  # ~4 bytes/token coarse heuristic
-            "memory_percent_of_window": 0.0,
-            "truncation_policy": "recency",
-            "last_truncation_at": None,
-        },
-        "memory": {
-            "entries": memory_entries,
-            "total_bytes": memory_total_bytes,
-            # SPEC-026 FR-5: the live memory-change feed (file_change_bridge) is
-            # gone; memory entries are read from disk on demand instead.
-            "recent_events": [],
-        },
-        "workspace": {
-            "tree": workspace_tree,
-            "total_files": workspace_total,
-            "truncated": workspace_truncated,
-        },
-        "graph": _graph_stats(),
-    }
-    return JSONResponse(payload)
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    actor_did = getattr(agent, "did", "") or "did:arc:ui:operator"
+    results: list[MutationResult] = []
+    try:
+        if text is not None:
+            results.append(op.edit_entry(entry_id, text, actor_did=actor_did))
+        if importance is not None or salience is not None:
+            results.append(
+                op.set_metadata(
+                    entry_id, actor_did=actor_did, importance=importance, salience=salience
+                )
+            )
+    except Exception as exc:
+        return _store_unreadable(exc)
+
+    outcome = "applied" if all(r.status is MutationStatus.APPLIED for r in results) else "error"
+    emit_mutation_audit(
+        request,
+        target=f"memory://{agent_id}/{entry_id}",
+        operation="memory.edit",
+        outcome=outcome,
+        detail=", ".join(r.operation for r in results),
+    )
+    return _mutation_response(entry_id, results)
+
+
+async def delete_memory(request: Request) -> JSONResponse:
+    """DELETE .../knowledge/memories/{entry_id} (REQ-088)."""
+    denied = _require_operator(request)
+    if denied is not None:
+        return denied
+
+    agent_id = request.path_params["agent_id"]
+    entry_id = request.path_params["entry_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    actor_did = getattr(agent, "did", "") or "did:arc:ui:operator"
+    try:
+        result = op.delete_entry(entry_id, actor_did=actor_did)
+    except Exception as exc:
+        return _store_unreadable(exc)
+
+    emit_mutation_audit(
+        request,
+        target=f"memory://{agent_id}/{entry_id}",
+        operation="memory.delete",
+        outcome=result.status.value,
+        detail=result.error or "",
+    )
+    return _mutation_response(entry_id, [result])
+
+
+# ---------------------------------------------------------------------------
+# Entities
+# ---------------------------------------------------------------------------
+
+
+async def list_entities(request: Request) -> JSONResponse:
+    """GET .../knowledge/entities (REQ-084)."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        entities = op.list_entities()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [e.model_dump(mode="json") for e in entities]})
+
+
+async def get_entity(request: Request) -> JSONResponse:
+    """GET .../knowledge/entities/{slug}."""
+    agent_id = request.path_params["agent_id"]
+    slug = request.path_params["slug"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        entity = op.get_entity(slug)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    if entity is None:
+        return JSONResponse(
+            ErrorResponse(error=f"entity {slug!r} not found").model_dump(mode="json"),
+            status_code=404,
+        )
+    return JSONResponse(entity.model_dump(mode="json"))
+
+
+async def get_entity_links(request: Request) -> JSONResponse:
+    """GET .../knowledge/entities/{slug}/links (REQ-085)."""
+    agent_id = request.path_params["agent_id"]
+    slug = request.path_params["slug"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        links = op.links(slug)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [link.model_dump(mode="json") for link in links]})
 
 
 routes = [
-    Route("/api/knowledge/{agent_id}", get_knowledge),
+    Route("/api/agents/{agent_id}/knowledge/memories", list_memories, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/memories/{entry_id}", get_memory, methods=["GET"]),
+    Route(
+        "/api/agents/{agent_id}/knowledge/memories/{entry_id}",
+        patch_memory,
+        methods=["PATCH"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/memories/{entry_id}",
+        delete_memory,
+        methods=["DELETE"],
+    ),
+    Route(
+        "/api/agents/{agent_id}/knowledge/memories/{entry_id}/links",
+        get_memory_links,
+        methods=["GET"],
+    ),
+    Route("/api/agents/{agent_id}/knowledge/entities", list_entities, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/entities/{slug}", get_entity, methods=["GET"]),
+    Route(
+        "/api/agents/{agent_id}/knowledge/entities/{slug}/links",
+        get_entity_links,
+        methods=["GET"],
+    ),
 ]

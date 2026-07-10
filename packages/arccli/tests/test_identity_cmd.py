@@ -86,3 +86,46 @@ def test_key_dir_flag_overrides_arc_config_dir(
     identity_handler(["init", "--key-dir", str(explicit)])
     assert load_signing_authority(explicit) is not None
     assert not (tmp_path / "env" / "identity" / "active.did").exists()
+
+
+# ---------------------------------------------------------------------------
+# Trust-store self-registration — makes `arc gateway pair approve` signable
+# ---------------------------------------------------------------------------
+
+
+def test_init_registers_operator_in_trust_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`arc identity init` registers its own pubkey as a trusted pairing operator.
+
+    Without this, `arc gateway pair approve` can never succeed at any tier:
+    PairingStore.verify_and_consume() requires a valid Ed25519 signature at
+    every tier (personal included — self-signed key IS the tier-1 trust
+    anchor), and there is no other command that registers a DID into
+    operators.toml.
+    """
+    from arctrust.trust_store import load_operator_pubkey
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    identity_handler(["init"])
+
+    identity = load_signing_authority(tmp_path / "identity")
+    assert identity is not None
+
+    pubkey = load_operator_pubkey(identity.did, trust_dir=tmp_path / "trust")
+    assert pubkey == identity.public_key
+
+
+def test_force_reregisters_rotated_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--force rotation updates the trust-store entry to the new pubkey too."""
+    from arctrust.trust_store import load_operator_pubkey
+
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    identity_handler(["init"])
+    identity_handler(["init", "--force"])
+
+    identity = load_signing_authority(tmp_path / "identity")
+    assert identity is not None
+
+    pubkey = load_operator_pubkey(identity.did, trust_dir=tmp_path / "trust")
+    assert pubkey == identity.public_key

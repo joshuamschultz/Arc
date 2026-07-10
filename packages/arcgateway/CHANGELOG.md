@@ -7,9 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Simplification-sweep cleanup (no version bump — internal only, no public API change).
+### Fixed
+
+DM pairing and standalone-daemon fixes from a live single-node + four-agent-fleet deployment:
+
+- **DM pairing was completely inert end-to-end.** `SessionRouter` never received a
+  `PairingStore` (the `PairingInterceptor` was a permanent no-op) and `[security].require_pairing`
+  had zero readers. `GatewayRunner.from_config` now builds the store from `[pairing].db_path` and
+  wires it through; approvals persist to a `pairing_approvals` SQLite table so `arc gateway pair
+  approve` in another process takes effect on the live gateway without IPC. `verify_and_consume`
+  requires an Ed25519 operator signature at every tier, but nothing ever registered or signed as
+  one — `arc identity init` now self-registers via `arctrust.trust_store.register_operator()`, and
+  the approve handler signs with that authority. Also fixed: `PairingInterceptor` sent a raw
+  `chat_id` where the adapter Protocol expects a `DeliveryTarget` (an `AttributeError` a broad
+  `except` was swallowing, caught only by a new real-adapter E2E test).
+- **Static `allowed_user_ids` were ignored even when configured correctly.** With
+  `require_pairing=true`, an allowlisted user was still forced through the DM-pairing flow —
+  neither `SessionRouter` construction site passed a `user_allowlist`. New
+  `build_user_allowlist` maps each enabled platform's `allowed_user_ids` into that platform's own
+  `user_did` scheme (Telegram `did:arc:telegram:{id}`; Slack `slack:{id}`; Mattermost is
+  channel-based, N/A) and threads it through at both sites — only under `require_pairing`, and
+  returning `None` (never an empty set) so unconfigured deployments keep default-open behavior.
+- **Slack silently dropped unauthorized users** instead of forwarding them into the pairing flow
+  (the same bug already fixed for Telegram) — `require_pairing` now forwards; `require_pairing`
+  disabled preserves the drop, now with an audited `gateway.adapter.auth_rejected` event (Slack
+  had none before). `arc gateway pair` CLI commands now correctly gate on
+  `security.require_pairing` — `gateway.pairing.enabled` never existed in the schema.
+- **Standalone `arcgateway start` now refuses at every tier**, not just personal/enterprise.
+  Federal's `SubprocessExecutor` worker (`arc-agent-worker`) accepted `--did` but never used it to
+  select a config — it always loaded from three fixed paths, so a federal standalone gateway would
+  have silently served the *wrong* agent identity on any multi-agent deployment. `cmd_start` now
+  unconditionally refuses, naming both failure modes and the correct embedded invocation
+  (`arc ui start --team-root --gateway-config`); `[gateway].team_root` and `--team-root` are
+  removed from the standalone path (dead once it doesn't serve). Superseded an earlier, narrower
+  fix (95b7456) that had standalone fail closed only at personal/enterprise by building a real
+  `agent_factory` from `team_root` — since the federal path is also unfixable without changing
+  `arc-agent-worker` itself, standalone is blocked everywhere instead.
+- **A shared `[gateway].agent_did` silently re-routed every platform on restart.** A fleet
+  deployment rewriting the default `agent_did` and restarting changed routing for *every* platform
+  sharing that default with no signal it had happened. `build_adapters` now emits a
+  `gateway.adapter.shared_default_agent_did` warning per platform lacking an explicit
+  per-block override.
+- **Runtime/pairing paths ignored `ARC_CONFIG_DIR`.** `GatewaySection.runtime_dir` and
+  `PairingSection.db_path` now resolve relative to `ARC_CONFIG_DIR` like every other subsystem
+  instead of hardcoding `~/.arc`.
 
 ### Changed
+
+- **Pairing/allowlist construction relocated out of the LOC-budget-gated core.** `from_config`'s
+  `require_pairing` branch, `PairingStore` construction, and allowlist build moved to the
+  non-gated `pairing_allowlist.build_pairing_wiring(config, tier)` — one call from the gated
+  `runner.py`, behavior pinned by the existing test suite. No behavior change.
 - **`agent_did` now threads through the Slack and Mattermost adapters**, mirroring what
   Telegram already did — `test_dual_adapter_chat` asserts the wired DID instead of the old
   hardcoded `""`.

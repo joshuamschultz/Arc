@@ -89,6 +89,12 @@ class SemanticStore:
         """Absolute path to an entity's markdown file."""
         return self._dir / f"{slug}.md"
 
+    def slugs(self) -> list[str]:
+        """Every entity slug currently on disk (sorted)."""
+        if not self._dir.exists():
+            return []
+        return sorted(p.stem for p in self._dir.glob("*.md"))
+
     def read(self, slug: str) -> Entity | None:
         """Load an entity from disk (None if it does not exist)."""
         path = self.path_for(slug)

@@ -3,15 +3,24 @@
 The telegram module's tool, hooks, and background task share state
 (the :class:`TelegramBot` instance, config, telemetry, workspace).
 Decorator-stamped functions can't carry that state in a closure, so
-it lives in a module-level :class:`_State` instance configured by the
-agent at startup.
+it lives in a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-Mirrors :mod:`arcagent.modules.policy._runtime` and is consistent
-with the single-agent-per-process model.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full
+rationale. Safe for the ``telegram_poll`` background task too: it's
+spawned via ``asyncio.create_task()`` after ``configure()`` in the same
+agent-startup task, so asyncio's automatic context-copy on task creation
+gives it this agent's bot/credentials for its whole lifetime — this is
+exactly the credential-bleed vector the live DGX incident demonstrated
+for signing keys; the fix here closes the identical hole for Telegram
+bot tokens.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,7 +42,9 @@ class _State:
     bot: TelegramBot
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_telegram_state", default=None
+)
 
 
 def configure(
@@ -43,7 +54,7 @@ def configure(
     workspace: Path = Path("."),
     egress_proxy: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup.
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     Constructs the :class:`TelegramBot` but does not start polling —
     the ``telegram_poll`` background task drives bot lifecycle so the
@@ -52,32 +63,44 @@ def configure(
     ``egress_proxy`` is the agent's shared EgressProxy; outbound notifications
     are mediated through it (SPEC-038 REQ-031).
     """
-    global _state
     cfg = TelegramConfig(**(config or {}))
     ws = workspace.resolve()
     bot = TelegramBot(config=cfg, telemetry=telemetry, workspace=ws, egress=egress_proxy)
-    _state = _State(
-        config=cfg,
-        workspace=ws,
-        telemetry=telemetry,
-        bot=bot,
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=ws,
+            telemetry=telemetry,
+            bot=bot,
+        )
     )
 
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "telegram module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
+
+
+def bind(state_obj: _State) -> None:
+    """Idempotently bind an already-built ``_State`` into the CURRENT task.
+
+    Cheap — one ``.set()`` call, no construction. Called at the top of
+    every turn-dispatch entry point (task 27 follow-up hotfix) so a turn
+    running in a fresh sibling ``asyncio.Task`` — not a descendant of the
+    task that ran ``configure()`` — still sees this agent's state.
+    """
+    _state_var.set(state_obj)
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
-__all__ = ["configure", "reset", "state"]
+__all__ = ["bind", "configure", "reset", "state"]

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ArcUI Reality Mirror** — the dashboard gained a per-agent **Knowledge**
+  view (paged/ranked-search memories + entities with created/recency/
+  importance/source metadata, link navigation, operator edit/delete via
+  a new `arcmemory.operator.MemoryOperator` facade — REQ-087: no SQL
+  outside arcmemory), a **workspace file editor** (rendered markdown +
+  operator edit, verbatim server errors, a signature-stale warning after
+  saving a signed artifact — the UI never signs on an agent's behalf), a
+  **Channels** view (live `arcteam` channel list + create/add/remove
+  member, wired through a new `arcui/messaging.py` service construction
+  that previously left `/api/team/channels` returning `[]` on every
+  deployment), and a **Capabilities** view that renders each skill/tool's
+  real loader verdict (loaded/denied/unsigned/invalid) instead of a UI
+  guess, via a new `arcagent.capabilities.inventory` seam shared with
+  agent startup itself so verdicts are posture-faithful at every tier.
+  Every UI-originated mutation now audits through one emission point
+  (`emit_mutation_audit`), never a partial success. See
+  [`docs/deploy/single-node.md`](docs/deploy/single-node.md#dashboard-capabilities-reality-mirror).
+- **`claude-sonnet-5`** added to the Anthropic catalog and made the
+  default model (1M context, 128K max output, tools/vision/thinking,
+  $3/$15 per MTok).
+
 ### Fixed
 
 Rough edges surfaced by a live manufacturing customer test (4 agents on real
@@ -24,6 +47,109 @@ part/vendor/BOM data), fixed at the repo level so all future builds inherit them
 - **F9 — an unreachable NATS server dumped a ~30-line traceback** on every solo-agent run before
   degrading. The messaging bootstrap now bounds the connect, quiets nats-py's async error callback,
   and degrades to the in-memory bus with a single clean warning.
+
+Rough edges surfaced by a live single-node + four-agent-fleet deployment (DGX Spark), fixed the
+same way — at the repo level, verified live, not patched around:
+
+- **DM pairing was completely inert.** `SessionRouter` never received a `PairingStore` (the
+  interceptor was a permanent no-op) and `verify_and_consume` demanded an operator signature no
+  command ever produced. Now: the store is built and wired from `[pairing].db_path`, approvals
+  persist to SQLite so `arc gateway pair approve` in another process takes effect without IPC,
+  `arc identity init` self-registers an operator via `arctrust.trust_store.register_operator()`,
+  and a `PairingInterceptor`/adapter type mismatch (silently swallowed by a broad `except`) is
+  fixed. `arcgateway-slack` gets the same fix Telegram already had — unauthorized users were
+  silently dropped instead of forwarded into the pairing flow.
+- **Standalone `arcgateway start` now refuses at every tier**, not just some. Personal/enterprise
+  had no working `agent_factory`; federal's `SubprocessExecutor` worker ignored the requested
+  `--did` and always loaded a fixed-path config, so it would have served the *wrong* agent
+  identity on any multi-agent gateway. The embedded gateway (`arc ui start --team-root`) is the
+  only agent-execution path today, at every tier, and standalone fails closed with a message
+  naming both failure modes and the correct invocation, instead of echo-stubbing silently.
+- **A federal-tier subprocess worker resolved its own config from three fixed paths**, ignoring
+  the `--did` it was given — any multi-agent deployment ran as whatever agent happened to sit
+  there. The worker now resolves `--did` through a team-root DID index and verifies the loaded
+  config's identity before constructing the agent; a mismatch fails closed with an audited
+  `worker.did_mismatch` event instead of silently serving the wrong identity.
+- **`arcgateway-telegram` wasn't a declared root dependency** — a bare `uv sync` (not
+  `--all-packages`) silently skipped the default remote adapter. Pinned alongside `arcmemory`/
+  `arcskill` for the same reason. Also fixed: `arc init`'s Telegram config generator wrote
+  `bot_token_env` (Slack's field name) instead of `token_env`, and both agent scaffolders omitted
+  `[modules.skills]` entirely, so `arcskill`/the improver shipped off by default despite being the
+  declared default adapter.
+- **Multi-word CLI commands were unreachable** unless shell-quoted as one token — `arc gateway pair
+  approve` (and every other space-separated `CommandDef` name) matched only `argv[0]` against the
+  registry. New longest-prefix dispatch fixes both the one-shot and REPL paths.
+- **`arc agent tools` showed 1 of 15 registered tools** — it globbed only the agent's own
+  `capabilities/*.py`, missing builtins, global, workspace, and every enabled module's
+  capabilities. `arc ext inspect` had the same gap. Both now share one registry builder that
+  mirrors real agent-startup precedence.
+- **`arc team create-channel`/`update-entity` didn't exist** — the only way to add a second
+  channel or fix a mis-set entity name/role was a hand-written service-API script. Both are now
+  first-class CLI commands; `create-channel` refuses a duplicate name instead of silently
+  overwriting membership (the underlying service method had no such guard either — fixed at the
+  service layer too, so no caller can trigger the clobber, CLI or not).
+- **`HTTP 400: temperature is deprecated for this model`** on `claude-sonnet-5` — the model
+  rejects any non-default `temperature`. A new per-model `supports_temperature` catalog flag lets
+  the Anthropic adapter drop the parameter from the wire body, including explicitly-passed values.
+- **UI audit events never reached the log** — `arc ui start` never configured logging, so every
+  `ui.mutation`/`ui.session_start` audit event and adapter connect/auth-reject line was silently
+  dropped (`uvicorn`'s `log_level` only covers `uvicorn`'s own loggers). Logging is now configured
+  first at startup; a new `--verbose` flag raises the root level, matching `arc agent serve`.
+
+### Security
+
+Findings from the same live deployment, closed at the root cause:
+
+- **CRITICAL — cross-agent identity bleed (live-exploited).** `arcagent.builtins.capabilities`
+  held per-agent state (workspace, identity **including the private key**, audit sink, tier) as
+  plain module globals under a single-agent-per-process assumption the embedded gateway (up to 32
+  concurrent cached `ArcAgent`s in one process) had already broken — one agent's `startup()`
+  silently rebound the globals for every other agent's in-flight tool calls. On the reference
+  deployment, one agent's `create_skill` signed with a *different* agent's private key while
+  routing and transcripts stayed correct, making the bleed invisible without a trace-attribution
+  audit. Fixed with per-task `ContextVar`s (zero call-site changes) and a deterministic forced-
+  interleaving reproducer that fails pre-fix, passes post-fix. The same pattern was then swept
+  across all 16 remaining module `_runtime.py` files, with a new AST architecture test that fails
+  CI on any `global` statement inside one — the vulnerability *class*, not just the exploited
+  instance, is now closed and guarded against recurrence.
+- **CRITICAL — the ContextVar fix itself broke every second turn.** `SessionRouter` spawns a
+  fresh `asyncio.Task` per inbound turn while agents stay cached; `ContextVar` bindings set in
+  turn 1's task were invisible to turn 2's sibling task, so every conversation failed with "runtime
+  not configured" starting on message two — a regression unit tests couldn't see (they always run
+  `configure()` and the tool call in the same task). Closed with a build/bind split: state is
+  built once at startup and re-bound at the top of every real dispatch entry point. Both
+  invariants — second-turn success *and* the original cross-agent isolation — are now pinned
+  together through the real `SessionRouter` + cached agents, not simulated.
+- **Path-taking self-modification tools bypassed the workspace boundary.** The six read/write/
+  edit/ls/find/grep tools already enforced workspace confinement via `resolve_workspace_path()`
+  (silently — no audit on denial); the four self-mod tools (`create_tool`/`update_tool`/
+  `create_skill`/`update_skill`) built paths by direct join, bypassing the choke point entirely.
+  Live incident: an agent installed a skill and a secrets file into a **sibling agent's**
+  workspace. All ten tools now route through the same audited choke point (denial now emits
+  `tool.workspace_path.denied` with the offending path); self-mod tools are additionally confined
+  to `<workspace>/capabilities` and validate names against traversal.
+- **A pasted API token was written verbatim to a workspace file.** All six content-writing tools
+  now run every payload through a secret-shaped-content guard (pattern match + a keyword-anchored
+  heuristic for prefixless keys) and deny with an audited `tool.secret_write.denied` event; a new
+  `store_secret` tool takes no value parameter by construction and returns tier-appropriate
+  operator guidance instead.
+- **Personal tier ignored valid self-signatures.** `TofuLayer` denied even artifacts the loader
+  had freshly re-verified against the agent's own pinned key unless `auto_run_agent_code` was
+  globally enabled — the root cause behind every freshly-scaffolded agent's `calculator.py` being
+  dead on arrival. Signed now allows at personal tier; unsigned still denies.
+- **`write`/`edit` silently invalidated a signed artifact's signature.** Hand-editing a signed
+  capability file broke its `.arcsig` sidecar with no warning, and the next load failed closed.
+  A new refresh-only-if-previously-signed hook at the runtime choke point re-signs on write/edit
+  without ever initiating signing on an ordinary file. Related: mutation tools previously silently
+  no-op'd or crashed when signing failed after a successful write — they now report an explicit
+  "UNSIGNED — will be denied at next load" warning and audit `tool.artifact_unsigned` instead of
+  letting the caller believe the write fully succeeded.
+- **arcmemory's episodic table gained columns with no migration path.** `salience`/`entities`
+  were added to a `CREATE TABLE IF NOT EXISTS` — a no-op against every already-existing database,
+  so every pre-existing agent's memory pipeline threw `OperationalError` on every capture/recall,
+  fleet-wide. A generalized `_ensure_columns` self-migration (`PRAGMA table_info` → `ALTER TABLE
+  ADD COLUMN`) runs idempotently at connect, verified with a fixture hand-written from the exact
+  pre-migration schema.
 
 ### Changed
 

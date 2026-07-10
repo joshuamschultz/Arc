@@ -122,6 +122,7 @@ from arctrust.trust_store import (
     invalidate_cache,
     load_issuer_pubkey,
     load_operator_pubkey,
+    register_operator,
 )
 from arctrust.witness import (
     AppendOnlyMediumWitness,
@@ -184,6 +185,7 @@ __all__ = [
     "parse_classification",
     "parse_did",
     "read_verified_anchor",
+    "register_operator",
     "sign",
     "sign_artifact",
     "validate_did",

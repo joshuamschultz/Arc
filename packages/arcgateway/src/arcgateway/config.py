@@ -46,12 +46,29 @@ Design:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 _logger = logging.getLogger("arcgateway.config")
+
+
+def _config_base_dir() -> Path:
+    """Resolve the Arc config base: ``${ARC_CONFIG_DIR:-~/.arc}``.
+
+    Shared by every default that lives under the Arc config tree
+    (runtime_dir, pairing db_path) so an isolated ``ARC_CONFIG_DIR``
+    deployment — the pattern already used by ``GatewayConfig.load()``,
+    ``arccli.commands.identity``, and ``arctrust.trust_store`` — keeps ALL
+    of the gateway's on-disk state together instead of leaking to the
+    real ``~/.arc``. Evaluated fresh on every default-factory call (not a
+    module-level constant) so it reflects the env var at model-construction
+    time, not import time.
+    """
+    env = os.environ.get("ARC_CONFIG_DIR")
+    return Path(env).expanduser() if env else Path.home() / ".arc"
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +81,7 @@ class GatewaySection(BaseModel):
 
     tier: Literal["personal", "enterprise", "federal"] = "personal"
     agent_did: str = "did:arc:agent:default"
-    runtime_dir: Path = Path("~/.arc/gateway/run")
+    runtime_dir: Path = Field(default_factory=lambda: _config_base_dir() / "gateway" / "run")
 
     @model_validator(mode="after")
     def _expand_paths(self) -> GatewaySection:
@@ -130,7 +147,7 @@ class PlatformsSection(BaseModel):
 class PairingSection(BaseModel):
     """[pairing] section."""
 
-    db_path: Path = Path("~/.arc/gateway/pairing.db")
+    db_path: Path = Field(default_factory=lambda: _config_base_dir() / "gateway" / "pairing.db")
 
     @model_validator(mode="after")
     def _expand_paths(self) -> PairingSection:
@@ -171,11 +188,7 @@ class GatewayConfig(BaseModel):
         Returns:
             Validated GatewayConfig instance.
         """
-        import os
-
-        base = os.environ.get("ARC_CONFIG_DIR")
-        root = Path(base).expanduser() if base else Path.home() / ".arc"
-        return cls.from_toml(root / "gateway.toml")
+        return cls.from_toml(_config_base_dir() / "gateway.toml")
 
     @classmethod
     def from_toml(cls, path: Path) -> GatewayConfig:

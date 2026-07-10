@@ -10,7 +10,6 @@ import stat as stat_module
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._validation import resolve_workspace_path
 
 _DEFAULT_MAX_RESULTS = 200
 
@@ -32,8 +31,7 @@ async def find(
 ) -> str:
     """Glob-match files; return relative paths sorted by mtime descending."""
     ws = _runtime.workspace()
-    allowed = _runtime.allowed_paths()
-    search_root = resolve_workspace_path(path, ws, allowed_paths=allowed) if path else ws
+    search_root = _runtime.resolve_workspace_path(path, tool_name="find") if path else ws
     if not search_root.is_dir():
         return f"Error: Not a directory: {path}"
     if ".." in pattern:

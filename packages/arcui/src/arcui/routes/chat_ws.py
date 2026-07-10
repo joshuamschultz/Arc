@@ -147,8 +147,9 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
     # history on reconnect.
     chat_id = build_session_key(agent_did, user_did)
 
-    # Lazy import keeps the route module's import surface minimal and
-    # ensures the test for "arcui does not import arcagent" remains true.
+    # Deferred to match the TYPE_CHECKING-only import of the same module
+    # above (WebPlatformAdapter) — WebAdapterFull is the one symbol from
+    # arcgateway.adapters.web actually needed at runtime here (to catch it).
     from arcgateway.adapters.web import WebAdapterFull
 
     # SPEC-025 Track A — reconnecting clients pass ?since_seq=N so the

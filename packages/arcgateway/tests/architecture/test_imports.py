@@ -52,16 +52,33 @@ def _violations(root: Path, forbidden_prefixes: tuple[str, ...]) -> list[tuple[P
     return out
 
 
-# ── arcui MUST NOT import arcagent ────────────────────────────────────────────
+# ── arcui imports arcagent ONLY via the approved capability-inventory seam ────
+
+# The single arcagent module arcui may import (arcui-reality-mirror, Option A).
+_APPROVED_ARCAGENT_SEAM = "arcagent.capabilities.inventory"
 
 
-def test_arcui_does_not_import_arcagent() -> None:
-    """ArcUI is a thin frontend over arcgateway — never reaches into arcagent."""
+def test_arcui_imports_arcagent_only_via_inventory_seam() -> None:
+    """arcui reaches arcagent ONLY through the approved capability-inventory seam.
+
+    Ruling (arcui-reality-mirror, Option A — team-lead approved): the capability
+    views must mirror what an agent actually loads, so arcui consumes arcagent's
+    real discovery + trust verdicts via ``arcagent.capabilities.inventory`` — and
+    nothing else from arcagent. A hard package dependency would close a cycle
+    (arcagent already depends on arcui for the UIBridgeSink), so the seam is
+    imported lazily at call time. This narrows, rather than deletes, the
+    SPEC-023 §2.2 boundary: every OTHER arcagent import from arcui is still a
+    forbidden layering violation.
+    """
     if not _ARCUI_SRC.exists():
         pytest.skip("arcui package not found in this checkout")
-    bad = _violations(_ARCUI_SRC, ("arcagent",))
-    assert not bad, "arcui imports arcagent (forbidden by SDD §2.2):\n" + "\n".join(
-        f"  {p}: {m}" for p, m in bad
+    bad = [
+        (p, m) for p, m in _violations(_ARCUI_SRC, ("arcagent",)) if m != _APPROVED_ARCAGENT_SEAM
+    ]
+    assert not bad, (
+        f"arcui imports arcagent outside the approved '{_APPROVED_ARCAGENT_SEAM}' "
+        "seam (SPEC-023 §2.2, narrowed by arcui-reality-mirror):\n"
+        + "\n".join(f"  {p}: {m}" for p, m in bad)
     )
 
 

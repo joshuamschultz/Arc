@@ -260,12 +260,24 @@ class CapabilityRegistry:
 
     # --- Background tasks -------------------------------------------------
 
-    async def register_task(self, entry: BackgroundTaskEntry) -> RegisterResult:
+    async def register_task(
+        self, entry: BackgroundTaskEntry, *, spawn: bool = True
+    ) -> RegisterResult:
         """Drain-then-replace per R-062.
 
         If a task with the same name already runs, cancel it, await
         completion (swallowing :class:`asyncio.CancelledError`), then
         spawn the new task. No overlap.
+
+        ``spawn=False`` (task #39) registers the entry WITHOUT starting it —
+        ``entry.task`` stays ``None``. A read-only registry scan (arc agent
+        tools/skills, arc ext inspect, arcui's inventory seam) must never
+        actually run a task's body: the task may depend on a live agent's
+        module ``_runtime`` being configured, which a throwaway scan never
+        does (the reported bug: a memory-module background task raised
+        "called before runtime is configured" the moment a read-only scan
+        registered it). A live agent's real startup/reload path never
+        passes this — default ``True`` keeps it spawning exactly as before.
         """
         old: BackgroundTaskEntry | None = None
         async with self._lock.writer:
@@ -275,7 +287,10 @@ class CapabilityRegistry:
         if old is not None:
             await _drain_task(old.task)
 
-        entry.task = asyncio.create_task(entry.fn(None), name=f"capability_task:{entry.meta.name}")
+        if spawn:
+            entry.task = asyncio.create_task(
+                entry.fn(None), name=f"capability_task:{entry.meta.name}"
+            )
         result = self._diff_result(
             old.meta.name if old else None  # version not on task meta
         )

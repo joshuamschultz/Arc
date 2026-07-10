@@ -74,6 +74,7 @@ class Event(BaseModel):
     text: str
     hash: str = ""
     classification: str = "unclassified"
+    salience: float = 0.0
     refs: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
 

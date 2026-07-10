@@ -1,26 +1,22 @@
 import { cn } from '@/lib/utils'
 
-/** Online/offline/degraded dot + label for agents. */
-export function StatusDot({
-  online,
-  degraded,
-  className,
-}: {
-  online?: boolean
-  degraded?: boolean
-  className?: string
-}) {
-  const color = !online
-    ? 'bg-status-idle'
-    : degraded
-      ? 'bg-status-warning'
-      : 'bg-status-online'
+/**
+ * Online/idle dot + label for agents.
+ *
+ * `online` is the only live signal (arcui's AgentRegistry — populated by the
+ * embedded gateway when a chat-loaded agent is cached, or a WebSocket agent
+ * connection). "Idle" replaces the old "Offline"/"Degraded" pair: an agent
+ * discovered on disk but not yet chat-loaded is normal and expected under
+ * the on-demand embedded-gateway model, not a failure state — there is no
+ * live signal today that distinguishes "never loaded" from "attempted and
+ * failed" (see docs/deploy/single-node.md's embedded-gateway architecture).
+ */
+export function StatusDot({ online, className }: { online?: boolean; className?: string }) {
+  const color = online ? 'bg-status-online' : 'bg-status-idle'
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
-      <span className={cn('size-2 rounded-full', color, online && !degraded && 'animate-pulse')} />
-      <span className="text-xs text-muted-foreground">
-        {!online ? 'Offline' : degraded ? 'Degraded' : 'Online'}
-      </span>
+      <span className={cn('size-2 rounded-full', color, online && 'animate-pulse')} />
+      <span className="text-xs text-muted-foreground">{online ? 'Online' : 'Idle'}</span>
     </span>
   )
 }

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import InboundEvent
 from arcgateway.session import build_session_key
 from arcgateway.session_pairing import PairingInterceptor
@@ -32,43 +33,99 @@ def _make_event(
 
 
 class TestPairingInterceptorAllowlist:
-    def test_no_allowlist_approves_everyone(self) -> None:
-        """When user_allowlist is None, all users are approved."""
+    @pytest.mark.asyncio
+    async def test_no_allowlist_no_store_approves_everyone(self) -> None:
+        """When user_allowlist and pairing_store are both None, all users are approved.
+
+        This is the enforcement-disabled default (require_pairing=false).
+        """
         interceptor = PairingInterceptor(user_allowlist=None)
-        assert interceptor.is_user_approved("did:arc:user:anyone") is True
+        assert await interceptor.is_user_approved("did:arc:user:anyone", "telegram") is True
 
-    def test_empty_allowlist_rejects_unknown(self) -> None:
-        """Empty set allowlist rejects all users."""
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_no_store_rejects_unknown(self) -> None:
+        """Empty set allowlist, no store, rejects all users."""
         interceptor = PairingInterceptor(user_allowlist=set())
-        assert interceptor.is_user_approved("did:arc:user:alice") is False
+        assert await interceptor.is_user_approved("did:arc:user:alice", "telegram") is False
 
-    def test_add_approved_user_enables_approval(self) -> None:
+    @pytest.mark.asyncio
+    async def test_add_approved_user_enables_approval(self) -> None:
         """After add_approved_user, the DID passes is_user_approved."""
         interceptor = PairingInterceptor(user_allowlist=set())
         interceptor.add_approved_user("did:arc:user:alice")
-        assert interceptor.is_user_approved("did:arc:user:alice") is True
+        assert await interceptor.is_user_approved("did:arc:user:alice", "telegram") is True
 
-    def test_add_approved_user_auto_creates_set(self) -> None:
+    @pytest.mark.asyncio
+    async def test_add_approved_user_auto_creates_set(self) -> None:
         """add_approved_user with None allowlist creates a new set."""
         interceptor = PairingInterceptor(user_allowlist=None)
         interceptor.add_approved_user("did:arc:user:bob")
         # Now enforcement is active — only bob is approved.
-        assert interceptor.is_user_approved("did:arc:user:bob") is True
-        assert interceptor.is_user_approved("did:arc:user:alice") is False
+        assert await interceptor.is_user_approved("did:arc:user:bob", "telegram") is True
+        assert await interceptor.is_user_approved("did:arc:user:alice", "telegram") is False
 
-    def test_remove_approved_user(self) -> None:
+    @pytest.mark.asyncio
+    async def test_remove_approved_user(self) -> None:
         """remove_approved_user removes the DID from the allowlist."""
         interceptor = PairingInterceptor(user_allowlist={"did:arc:user:alice", "did:arc:user:bob"})
         interceptor.remove_approved_user("did:arc:user:alice")
-        assert interceptor.is_user_approved("did:arc:user:alice") is False
-        assert interceptor.is_user_approved("did:arc:user:bob") is True
+        assert await interceptor.is_user_approved("did:arc:user:alice", "telegram") is False
+        assert await interceptor.is_user_approved("did:arc:user:bob", "telegram") is True
 
-    def test_remove_approved_user_noop_on_none_allowlist(self) -> None:
+    @pytest.mark.asyncio
+    async def test_remove_approved_user_noop_on_none_allowlist(self) -> None:
         """remove_approved_user is a no-op when allowlist is None."""
         interceptor = PairingInterceptor(user_allowlist=None)
         # Should not raise
         interceptor.remove_approved_user("did:arc:user:ghost")
-        assert interceptor.is_user_approved("did:arc:user:ghost") is True
+        assert await interceptor.is_user_approved("did:arc:user:ghost", "telegram") is True
+
+
+class TestPairingInterceptorStoreBackedApproval:
+    """is_user_approved must consult the PairingStore live, not a frozen list."""
+
+    @pytest.mark.asyncio
+    async def test_store_present_no_allowlist_denies_unapproved(self) -> None:
+        """Wiring a pairing_store (no static allowlist) activates enforcement."""
+        mock_store = MagicMock()
+        mock_store.is_approved = AsyncMock(return_value=False)
+
+        interceptor = PairingInterceptor(pairing_store=mock_store)
+        result = await interceptor.is_user_approved("did:arc:telegram:99", "telegram")
+
+        assert result is False
+        mock_store.is_approved.assert_awaited_once_with("telegram", "did:arc:telegram:99")
+
+    @pytest.mark.asyncio
+    async def test_store_present_no_allowlist_allows_approved(self) -> None:
+        """A user the store reports as approved passes even with no static allowlist.
+
+        This is the cross-process contract: an `arc gateway pair approve` from a
+        separate CLI process writes to the store's SQLite db; the live gateway's
+        interceptor must see it on the very next check.
+        """
+        mock_store = MagicMock()
+        mock_store.is_approved = AsyncMock(return_value=True)
+
+        interceptor = PairingInterceptor(pairing_store=mock_store)
+        result = await interceptor.is_user_approved("did:arc:telegram:99", "telegram")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_static_allowlist_short_circuits_store_check(self) -> None:
+        """A user already in the static allowlist is approved without a store lookup."""
+        mock_store = MagicMock()
+        mock_store.is_approved = AsyncMock(return_value=False)
+
+        interceptor = PairingInterceptor(
+            user_allowlist={"did:arc:user:alice"},
+            pairing_store=mock_store,
+        )
+        result = await interceptor.is_user_approved("did:arc:user:alice", "telegram")
+
+        assert result is True
+        mock_store.is_approved.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +178,16 @@ class TestHandleUnpairedUserWithStore:
         mock_store.mint_code.assert_called_once()
         mock_adapter.send.assert_called_once()
         call_args = mock_adapter.send.call_args
+        sent_target = call_args[0][0]
         sent_message = call_args[0][1]
+        # adapter.send()'s real Protocol (BasePlatformAdapter.send) takes a
+        # DeliveryTarget, not a raw chat_id string — a real adapter (e.g.
+        # TelegramAdapter) does `target.chat_id` internally and raises
+        # AttributeError on a plain str. Every mock-based test before this
+        # one missed that shape mismatch entirely.
+        assert isinstance(sent_target, DeliveryTarget)
+        assert sent_target.platform == "telegram"
+        assert sent_target.chat_id == "chat_123"
         assert "ABCD1234" in sent_message
         assert "arc gateway pair approve ABCD1234" in sent_message
 

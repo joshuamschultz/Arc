@@ -171,7 +171,13 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
         # bullets + the episodic index + entity graph each turn. Consolidation
         # (facts/insights) is opt-in via distill_provider. brain = "none" for
         # a memory-less deployment.
-        "modules": {"memory": {"enabled": True, "config": {"brain": "arcmemory"}}},
+        "modules": {
+            "memory": {"enabled": True, "config": {"brain": "arcmemory"}},
+            # arcskill is the workspace-declared default skills adapter (root
+            # pyproject.toml) — without this block SkillsConfig defaults to
+            # adapter = "none" and scaffolded skills/improver never run.
+            "skills": {"enabled": True, "config": {"adapter": "arcskill", "tier": tier}},
+        },
     }
 
 
@@ -217,7 +223,7 @@ def _generate_gateway_toml(tier: str) -> str:
         "",
         "[platforms.telegram]",
         "enabled = false",
-        'bot_token_env = "TELEGRAM_BOT_TOKEN"',
+        'token_env = "TELEGRAM_BOT_TOKEN"',
         "",
         "[platforms.slack]",
         "enabled = false",

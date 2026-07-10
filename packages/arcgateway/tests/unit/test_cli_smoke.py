@@ -111,6 +111,22 @@ def test_cmd_stop_corrupted_pid_file(tmp_path: Path) -> None:
     assert "could not read" in output or "pid" in output
 
 
+def test_cmd_stop_no_runtime_dir_honors_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting --runtime-dir resolves it via GatewayConfig.load() (ARC_CONFIG_DIR)."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    pid_file = tmp_path / "gateway" / "run" / "gateway.pid"
+    pid_file.parent.mkdir(parents=True)
+    pid_file.write_text("54321\n", encoding="utf-8")
+
+    with patch("os.kill") as mock_kill:
+        output = _capture_echo(cmd_stop)
+
+    mock_kill.assert_called_once_with(54321, signal.SIGTERM)
+    assert "54321" in output
+
+
 # ---------------------------------------------------------------------------
 # cmd_status
 # ---------------------------------------------------------------------------
@@ -135,6 +151,20 @@ def test_cmd_status_with_pid_file(tmp_path: Path) -> None:
 
     output = _capture_echo(cmd_status, runtime_dir=tmp_path)
     assert "99999" in output
+
+
+def test_cmd_status_no_runtime_dir_honors_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting --runtime-dir resolves it via GatewayConfig.load() (ARC_CONFIG_DIR)."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    pid_file = tmp_path / "gateway" / "run" / "gateway.pid"
+    pid_file.parent.mkdir(parents=True)
+    pid_file.write_text("13579\n", encoding="utf-8")
+
+    output = _capture_echo(cmd_status)
+
+    assert "13579" in output
 
 
 def test_cmd_status_with_clean_marker(tmp_path: Path) -> None:
@@ -176,12 +206,12 @@ def test_cmd_status_unreadable_marker(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_setup_creates_config(tmp_path: Path) -> None:
+def test_cmd_setup_creates_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """cmd_setup creates gateway.toml when it doesn't exist."""
-    config_path = tmp_path / ".arc" / "gateway.toml"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    config_path = tmp_path / "gateway.toml"
 
-    with patch("arcgateway.cli._DEFAULT_CONFIG", config_path):
-        cmd_setup()
+    cmd_setup()
 
     assert config_path.exists(), "gateway.toml must be created"
     content = config_path.read_text(encoding="utf-8")
@@ -189,26 +219,27 @@ def test_cmd_setup_creates_config(tmp_path: Path) -> None:
     assert "tier" in content
 
 
-def test_cmd_setup_sets_0600_permissions(tmp_path: Path) -> None:
+def test_cmd_setup_sets_0600_permissions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """cmd_setup creates gateway.toml with 0600 permissions."""
-    config_path = tmp_path / ".arc" / "gateway.toml"
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    config_path = tmp_path / "gateway.toml"
 
-    with patch("arcgateway.cli._DEFAULT_CONFIG", config_path):
-        cmd_setup()
+    cmd_setup()
 
     mode = stat.S_IMODE(config_path.stat().st_mode)
     assert mode == 0o600, f"Expected 0600 permissions, got {oct(mode)}"
 
 
-def test_cmd_setup_does_not_overwrite_existing(tmp_path: Path) -> None:
+def test_cmd_setup_does_not_overwrite_existing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """cmd_setup does NOT overwrite an existing gateway.toml."""
-    config_path = tmp_path / ".arc" / "gateway.toml"
-    config_path.parent.mkdir(parents=True)
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    config_path = tmp_path / "gateway.toml"
     original_content = "existing config"
     config_path.write_text(original_content, encoding="utf-8")
 
-    with patch("arcgateway.cli._DEFAULT_CONFIG", config_path):
-        output = _capture_echo(cmd_setup).lower()
+    output = _capture_echo(cmd_setup).lower()
 
     assert config_path.read_text(encoding="utf-8") == original_content
     assert "already exists" in output or "config" in output
@@ -219,8 +250,15 @@ def test_cmd_setup_does_not_overwrite_existing(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cmd_start_calls_asyncio_run(tmp_path: Path) -> None:
-    """cmd_start calls asyncio.run() to start the daemon event loop."""
+def test_cmd_start_fails_closed_personal_tier(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """cmd_start refuses to start at personal tier — no real agent execution path exists.
+
+    AsyncioExecutor has no agent_factory in the standalone path (echo stub
+    only). The embedded path (arc ui start --team-root --gateway-config) is
+    canonical; the standalone daemon must never silently serve no real agent.
+    """
     toml_text = """
 [gateway]
 tier = "personal"
@@ -229,66 +267,110 @@ agent_did = "did:arc:agent:test"
     config_file = tmp_path / "gateway.toml"
     config_file.write_text(toml_text, encoding="utf-8")
 
-    # Patch asyncio.run to capture the coroutine without actually running it.
-    with patch("asyncio.run") as mock_run:
-        cmd_start(config_path=config_file, runtime_dir=tmp_path)
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit) as excinfo:
+        cmd_start(config_path=config_file)
 
-    assert mock_run.called, "asyncio.run() must be called to start the daemon"
+    assert excinfo.value.code == 1
+    assert not mock_run.called, "asyncio.run() must NOT be called — startup failed closed"
+    err = capsys.readouterr().err
+    assert "arc ui start" in err
 
 
-def test_cmd_start_missing_config_uses_defaults(tmp_path: Path) -> None:
-    """cmd_start with a missing config file falls back to GatewayConfig defaults.
+def test_cmd_start_fails_closed_enterprise_tier(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """cmd_start refuses to start at enterprise tier for the same reason as personal."""
+    toml_text = """
+[gateway]
+tier = "enterprise"
+agent_did = "did:arc:agent:test"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
 
-    GatewayConfig.from_toml() returns all-defaults when the file is missing
-    (personal tier, no adapters enabled). This is intentional for fresh installs.
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit):
+        cmd_start(config_path=config_file)
+
+    assert not mock_run.called
+
+
+def test_cmd_start_fails_closed_federal_tier(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """cmd_start ALSO refuses to start at federal tier.
+
+    Evidence: arc-agent-worker (the SubprocessExecutor's per-session
+    subprocess) ignores --did for config selection — it always looks in the
+    same fixed cwd-relative arcagent.toml / ~/.arc/agent.toml regardless of
+    which agent_did the request targets (arccli/agent_worker.py
+    _CONFIG_SEARCH_PATHS + _run_with_arcagent). It cannot correctly serve a
+    multi-platform gateway's per-agent_did routing, so federal gets no
+    exemption from the fail-closed rule either.
     """
+    toml_text = """
+[gateway]
+tier = "federal"
+agent_did = "did:arc:agent:test"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit):
+        cmd_start(config_path=config_file)
+
+    assert not mock_run.called
+    err = capsys.readouterr().err
+    assert "arc ui start" in err
+
+
+def test_cmd_start_missing_config_fails_closed(tmp_path: Path) -> None:
+    """A missing config file (defaults to personal tier) also fails closed."""
     nonexistent = tmp_path / "missing.toml"
     assert not nonexistent.exists()
 
-    # Patch asyncio.run to prevent the daemon from starting.
-    with patch("asyncio.run") as mock_run:
+    with patch("asyncio.run") as mock_run, pytest.raises(SystemExit) as excinfo:
         cmd_start(config_path=nonexistent)
 
-    # asyncio.run must be called even with a missing config file.
-    assert mock_run.called
+    assert excinfo.value.code == 1
+    assert not mock_run.called
 
 
-def test_cmd_start_applies_runtime_dir_override(tmp_path: Path) -> None:
-    """cmd_start uses the provided runtime_dir override (no daemon started)."""
-    toml_text = """
+def test_cmd_start_no_config_path_uses_arc_config_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Omitting config_path still resolves via GatewayConfig.load() before failing closed.
+
+    Proves the ARC_CONFIG_DIR-aware discovery genuinely runs (not skipped by
+    the fail-closed check) — patches GatewayConfig.load to observe it was
+    called, since cmd_start exits before reaching asyncio.run either way.
+    """
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "gateway.toml").write_text(
+        """
 [gateway]
 tier = "personal"
-agent_did = "did:arc:agent:test"
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-    custom_runtime = tmp_path / "custom_run"
+agent_did = "did:arc:agent:isolated"
+""",
+        encoding="utf-8",
+    )
 
-    with patch("asyncio.run"):
-        # Must not raise with a custom runtime_dir.
-        cmd_start(config_path=config_file, runtime_dir=custom_runtime)
+    from arcgateway.config import GatewayConfig
 
+    real_load = GatewayConfig.load
+    calls: list[bool] = []
 
-def test_cmd_start_personal_tier_no_adapters(tmp_path: Path) -> None:
-    """cmd_start on personal tier with no platforms enabled completes cleanly."""
-    toml_text = """
-[gateway]
-tier = "personal"
-agent_did = "did:arc:agent:test"
+    def _spy() -> GatewayConfig:
+        calls.append(True)
+        return real_load()
 
-[platforms.telegram]
-enabled = false
+    with (
+        patch("asyncio.run"),
+        patch("arcgateway.config.GatewayConfig.load", side_effect=_spy),
+        pytest.raises(SystemExit),
+    ):
+        cmd_start()
 
-[platforms.slack]
-enabled = false
-"""
-    config_file = tmp_path / "gateway.toml"
-    config_file.write_text(toml_text, encoding="utf-8")
-
-    with patch("asyncio.run") as mock_run:
-        cmd_start(config_path=config_file, runtime_dir=tmp_path)
-
-    assert mock_run.called
+    assert calls, "GatewayConfig.load() must be used for ARC_CONFIG_DIR-aware discovery"
 
 
 # ---------------------------------------------------------------------------

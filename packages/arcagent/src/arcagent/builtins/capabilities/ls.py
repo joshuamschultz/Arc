@@ -11,7 +11,6 @@ import stat as stat_module
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._validation import resolve_workspace_path
 
 
 def _format_size(size: int) -> str:
@@ -36,8 +35,7 @@ def _format_size(size: int) -> str:
 async def ls(path: str = "") -> str:
     """List entries under ``path`` (or workspace root)."""
     ws = _runtime.workspace()
-    allowed = _runtime.allowed_paths()
-    target = resolve_workspace_path(path, ws, allowed_paths=allowed) if path else ws
+    target = _runtime.resolve_workspace_path(path, tool_name="ls") if path else ws
     if not target.exists():
         return f"Error: Path not found: {path or '.'}"
     if not target.is_dir():

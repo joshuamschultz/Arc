@@ -54,8 +54,14 @@ async def update_skill(
     Frontmatter is preserved (with bumped ``version``); body content
     is replaced wholesale.
     """
-    workspace = _runtime.workspace()
-    skill_md = workspace / _SKILLS_SUBDIR / name / "SKILL.md"
+    if not name.replace("-", "_").isidentifier():
+        return f"Error: name {name!r} must be alphanumeric (dashes allowed)"
+    _runtime.check_secret_content(
+        new_body, f"{_SKILLS_SUBDIR}/{name}/SKILL.md", tool_name="update_skill"
+    )
+    skill_md = _runtime.resolve_workspace_path(
+        f"{_SKILLS_SUBDIR}/{name}/SKILL.md", tool_name="update_skill"
+    )
     if not skill_md.exists():
         return f"Error: skill {name!r} not found"
     text = skill_md.read_text(encoding="utf-8")
@@ -72,5 +78,7 @@ async def update_skill(
     new_frontmatter = yaml.safe_dump(fm, sort_keys=False).strip()
     rendered = f"---\n{new_frontmatter}\n---\n\n{new_body}\n"
     skill_md.write_text(rendered, encoding="utf-8")
-    _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8"))
-    return f"Updated skill {name!r} {current_version} → {new_version}"
+    message = f"Updated skill {name!r} {current_version} → {new_version}"
+    if not _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8")):
+        message += _runtime.audit_unsigned_artifact(skill_md, tool_name="update_skill")
+    return message

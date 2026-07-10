@@ -607,6 +607,92 @@ def _mutate_member(args: argparse.Namespace, *, add: bool) -> None:
     _write(f"{verb} {member} {prep} team {team_id}")
 
 
+def _create_channel(args: argparse.Namespace) -> None:
+    """Create a channel, standalone or team-scoped (wires MessagingService.create_channel).
+
+    Previously only reachable via `_create_team`'s default-channel
+    materialization step — multi-channel teams (work/personal/brand) were
+    impossible from the CLI. ``--team`` validates the team exists and, when
+    ``--members`` is omitted, defaults membership to that team's members;
+    explicit ``--members`` always wins. ``create_channel()`` itself now
+    refuses duplicate names (service-level guard) — the ``list_channels()``
+    pre-check below is kept only for a friendlier error message; the
+    ``ValueError`` catch is the backstop against the race between the two.
+    """
+    from arcteam.registry import resolve
+    from arcteam.team import TeamStore
+    from arcteam.types import Channel
+
+    root = _get_root(args)
+    channel_name: str = args.channel_name
+    members_raw: str = getattr(args, "members", "") or ""
+    team_id: str | None = getattr(args, "team", None)
+
+    async def _run() -> None:
+        svc, registry, audit, backend = await _build_service(root)
+        try:
+            if members_raw:
+                member_dids = [await resolve(registry, ref) for ref in _split_csv(members_raw)]
+            elif team_id:
+                team = await TeamStore(backend, audit).get(team_id)
+                if team is None:
+                    sys.stderr.write(f"arc team create-channel: team not found: {team_id}\n")
+                    sys.exit(1)
+                member_dids = list(team.members)
+            else:
+                member_dids = []
+
+            if any(c.name == channel_name for c in await svc.list_channels()):
+                sys.stderr.write(
+                    f"arc team create-channel: channel already exists: {channel_name}\n"
+                )
+                sys.exit(1)
+
+            try:
+                await svc.create_channel(Channel(name=channel_name, members=member_dids))
+            except ValueError as exc:
+                sys.stderr.write(f"arc team create-channel: {exc}\n")
+                sys.exit(1)
+        finally:
+            await _shutdown(backend)
+
+    asyncio.run(_run())
+    _write(f"Created channel: {channel_name}")
+
+
+def _update_entity(args: argparse.Namespace) -> None:
+    """Update an existing entity's name/roles (wires EntityRegistry.update).
+
+    `arc team register` is a strict create — it raises on a duplicate DID
+    or handle, so there was no way to fix a mis-set name/role on an
+    already-registered entity without a hand-written service-API script.
+    Fields left unset (None) are not touched — only ``--name``/``--roles``
+    that are explicitly passed get applied.
+    """
+    root = _get_root(args)
+    entity_ref: str = args.entity_ref
+    new_name: str | None = getattr(args, "name", None)
+    roles_raw: str | None = getattr(args, "roles", None)
+
+    async def _run() -> None:
+        _, registry, _, backend = await _build_service(root)
+        try:
+            entity = await registry.get(entity_ref)
+            if entity is None:
+                sys.stderr.write(f"arc team update-entity: entity not found: {entity_ref}\n")
+                sys.exit(1)
+            if new_name is not None:
+                entity.name = new_name
+            if roles_raw is not None:
+                entity.roles = _split_csv(roles_raw)
+            await registry.update(entity)
+        finally:
+            await _shutdown(backend)
+
+    asyncio.run(_run())
+    _write(f"Updated entity: {entity_ref}")
+
+
 # ---------------------------------------------------------------------------
 # Messaging verbs (C4) — send / inbox / read / thread
 # ---------------------------------------------------------------------------
@@ -1050,6 +1136,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("team_id", help="Team id.")
     p.add_argument("member", help="Member ref (handle or DID).")
 
+    # create-channel
+    p = subs.add_parser("create-channel", help="Create a channel.")
+    p.add_argument("channel_name", help="Channel name.")
+    p.add_argument("--members", default="", help="Comma-separated member refs (handles/DIDs).")
+    p.add_argument(
+        "--team",
+        default=None,
+        help="Team id — validates existence; when --members is omitted, "
+        "defaults channel membership to the team's members.",
+    )
+
+    # update-entity
+    p = subs.add_parser("update-entity", help="Update an existing entity's name/roles.")
+    p.add_argument("entity_ref", help="Entity ref (DID, @handle, URI, or bare handle).")
+    p.add_argument("--name", default=None, help="New display name.")
+    p.add_argument("--roles", default=None, help="Comma-separated roles (replaces existing).")
+
     # send
     p = subs.add_parser("send", help="Send a signed message.")
     p.add_argument("--sender", required=True, help="Sender ref (agent://handle).")
@@ -1120,6 +1223,8 @@ _SUBCOMMAND_MAP = {
     "create": _create_team,
     "add-member": _add_member,
     "remove-member": _remove_member,
+    "create-channel": _create_channel,
+    "update-entity": _update_entity,
     "send": _send,
     "inbox": _inbox,
     "read": _read,

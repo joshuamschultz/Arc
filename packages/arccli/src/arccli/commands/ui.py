@@ -34,6 +34,49 @@ _VALID_LAYERS = ("llm", "run", "agent", "team")
 # ---------------------------------------------------------------------------
 
 
+def _configure_logging(*, verbose: bool) -> None:
+    """Configure process logging so audit events are actually observable (task #38).
+
+    Live bug: nothing in `arc ui start` ever configured logging. Python's
+    interpreter default — root logger effectively WARNING, no handler —
+    silently dropped every INFO record: UIAuditLogger's ``ui.mutation`` /
+    ``ui.session_start`` events (arcui.audit), and every platform-adapter
+    connect/auth-reject line. Verified live: zero audit lines in journald
+    despite mutations genuinely happening. ``uvicorn.Config(log_level="info")``
+    only configures uvicorn's OWN loggers ("uvicorn"/"uvicorn.access") — it
+    has no effect on these.
+
+    Root stays at WARNING (third-party library chatter stays quiet); the
+    audit logger and platform-adapter loggers are explicitly raised to INFO
+    — the two categories confirmed silent in production. Adapter packages
+    install as top-level modules with underscores (``arcgateway_telegram``,
+    not ``arcgateway.telegram``), so each needs its own entry — setting
+    "arcgateway" alone would not cover them.
+
+    ``force=True`` guarantees this config wins even if something already
+    called ``basicConfig`` first (a dependency, or — in tests — a prior
+    call in the same process) — `arc ui start` is a process entrypoint and
+    owns logging config for the whole process.
+
+    ``verbose`` raises the root logger itself to INFO, matching the
+    existing ``--verbose``/``-v`` convention ``arc agent serve`` uses.
+    """
+    import logging
+
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    logging.getLogger("arcui.audit").setLevel(logging.INFO)
+    logging.getLogger("arcgateway.adapters").setLevel(logging.INFO)
+    logging.getLogger("arcgateway_telegram").setLevel(logging.INFO)
+    logging.getLogger("arcgateway_slack").setLevel(logging.INFO)
+    logging.getLogger("arcgateway_mattermost").setLevel(logging.INFO)
+    if verbose:
+        logging.getLogger().setLevel(logging.INFO)
+
+
 def _mask_token(token: str) -> str:
     """Mask a token for display: show first 8 and last 8 chars."""
     if len(token) <= 16:
@@ -164,6 +207,10 @@ def _start(args: argparse.Namespace) -> None:
     from arcui.auth import AuthConfig
 
     from arccli.commands.agent import _load_env
+
+    # Configure logging FIRST — before anything else can emit a log record —
+    # so audit events and adapter connect lines are observable (task #38).
+    _configure_logging(verbose=getattr(args, "verbose", False))
 
     # Load the deployment's .env (cwd + ${ARC_CONFIG_DIR:-~/.arc} + ~) BEFORE
     # building agents, so their provider keys resolve without a manual export.
@@ -488,6 +535,15 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Disable the in-process web chat platform even when team_root is set.",
+    )
+    p_start.add_argument(
+        "--verbose",
+        "-v",
+        dest="verbose",
+        action="store_true",
+        default=False,
+        help="Raise the root logger to INFO (default: only arcui.audit + "
+        "platform-adapter loggers are INFO; everything else stays WARNING).",
     )
 
     # ── tail ───────────────────────────────────────────────────────────

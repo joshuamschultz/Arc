@@ -175,14 +175,35 @@ def _quit_handler(args: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _load_pairing_store() -> object:
+    """Build a PairingStore from the live gateway's own GatewayConfig.
+
+    Using GatewayConfig.load() (not PairingStore()'s own hardcoded default)
+    is what makes these CLI commands operate on the SAME SQLite db_path the
+    running gateway daemon uses — the whole point of "approve must take
+    effect on the live gateway". GatewayConfig.load() itself resolves
+    ${ARC_CONFIG_DIR:-~/.arc}/gateway.toml, so an isolated ARC_CONFIG_DIR
+    deployment stays consistent between the daemon and this CLI too.
+    """
+    from arcgateway.config import GatewayConfig
+    from arcgateway.pairing import PairingStore
+
+    config = GatewayConfig.load()
+    return PairingStore(db_path=config.pairing.db_path, tier=config.gateway.tier)
+
+
 def _gateway_pair_approve_handler(args: list[str]) -> None:
     """Approve a DM pairing code.
 
     Usage: arc gateway pair approve <code>
 
-    Marks the given 8-char pairing code as approved, which the gateway then
-    uses to add the user to the session allowlist. The code is consumed on
-    approval and cannot be reused.
+    Signs the pairing challenge with the operator's own standalone signing
+    authority (``arc identity init``) and consumes the code. PairingStore
+    requires a valid Ed25519 signature at EVERY tier — including personal,
+    where the operator's self-signed key IS the trust anchor
+    (arcgateway.pairing_signature) — so this command cannot succeed without
+    an identity that has been registered as a trusted operator, which
+    ``arc identity init`` now does automatically.
 
     The handler delegates to arcgateway.pairing for the actual store lookup
     and approval so this module has no hard dependency on arcgateway at import.
@@ -203,13 +224,42 @@ def _gateway_pair_approve_handler(args: list[str]) -> None:
         sys.stderr.write(f"Error: pairing codes are exactly 8 characters (got {len(code)})\n")
         sys.exit(1)
 
+    from arccli.commands.identity import load_signing_authority
+
+    identity = load_signing_authority()
+    if identity is None:
+        sys.stderr.write(
+            "Error: no signing authority found. An operator must sign every pairing "
+            "approval (all tiers — see arcgateway.pairing_signature).\n"
+            "Run: arc identity init\n"
+        )
+        sys.exit(1)
+
     import asyncio
 
-    from arcgateway.pairing import PairingStore
+    from arcgateway.pairing import PairingSignatureInvalid, build_pairing_challenge
 
     async def _approve() -> None:
-        store = PairingStore()
-        result = await store.verify_and_consume(code)
+        store = _load_pairing_store()
+        pending = await store.list_pending()  # type: ignore[attr-defined]
+        matched = next((pc for pc in pending if pc.code == code), None)
+        if matched is None:
+            sys.stderr.write(f"Error: code {code!r} is invalid, expired, or already consumed.\n")
+            sys.exit(1)
+
+        challenge = build_pairing_challenge(matched.code, matched.minted_at)
+        signature = identity.sign(challenge)
+
+        try:
+            result = await store.verify_and_consume(  # type: ignore[attr-defined]
+                code,
+                approver_did=identity.did,
+                signature=signature,
+            )
+        except PairingSignatureInvalid as exc:
+            sys.stderr.write(f"Error: signature rejected — {exc}\n")
+            sys.exit(1)
+
         if result is None:
             sys.stderr.write(f"Error: code {code!r} is invalid, expired, or already consumed.\n")
             sys.exit(1)
@@ -234,11 +284,9 @@ def _gateway_pair_list_handler(args: list[str]) -> None:
     """
     import asyncio
 
-    from arcgateway.pairing import PairingStore
-
     async def _list() -> None:
-        store = PairingStore()
-        pending = await store.list_pending()
+        store = _load_pairing_store()
+        pending = await store.list_pending()  # type: ignore[attr-defined]
         if not pending:
             sys.stdout.write("No pending pairing codes.\n")
             return
@@ -276,11 +324,9 @@ def _gateway_pair_revoke_handler(args: list[str]) -> None:
 
     import asyncio
 
-    from arcgateway.pairing import PairingStore
-
     async def _revoke() -> None:
-        store = PairingStore()
-        revoked = await store.revoke(code)
+        store = _load_pairing_store()
+        revoked = await store.revoke(code)  # type: ignore[attr-defined]
         if revoked:
             sys.stdout.write(f"Revoked: {code!r}\n")
         else:
@@ -461,7 +507,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<code>",
         cli_only=True,
         gateway_only=True,
-        gateway_config_gate="gateway.pairing.enabled",
+        gateway_config_gate="security.require_pairing",
         handler=_gateway_pair_approve_handler,
     ),
     CommandDef(
@@ -470,7 +516,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         category="Configuration",
         cli_only=True,
         gateway_only=True,
-        gateway_config_gate="gateway.pairing.enabled",
+        gateway_config_gate="security.require_pairing",
         handler=_gateway_pair_list_handler,
     ),
     CommandDef(
@@ -480,7 +526,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<code>",
         cli_only=True,
         gateway_only=True,
-        gateway_config_gate="gateway.pairing.enabled",
+        gateway_config_gate="security.require_pairing",
         handler=_gateway_pair_revoke_handler,
     ),
     CommandDef(
@@ -561,3 +607,40 @@ def resolve_command(name: str) -> CommandDef | None:
                 return cmd
 
     return None
+
+
+def resolve_command_and_args(argv: list[str]) -> tuple[CommandDef | None, list[str]]:
+    """Resolve a command from ``argv`` via longest-prefix matching.
+
+    Registered command names may be multi-word (e.g. ``"gateway pair
+    approve"``). A naive ``argv[0]``-only lookup can never match these
+    unless the caller quotes the whole phrase as one shell token — which no
+    real invocation, and no example in docs/cli.md, actually does (task
+    #35: ``arc gateway pair approve CODE`` errored "unknown command
+    'gateway'").
+
+    Tries the longest possible word-count prefix of ``argv`` first, walking
+    down to a single word, so ``arc gateway pair approve CODE`` resolves
+    the same way the previously-required ``arc "gateway pair approve"
+    CODE`` always did. Single-word commands are unaffected — the first
+    (and only) prefix tried for a 1-word registered name is 1 word.
+
+    Ambiguity is impossible by construction: ``COMMAND_REGISTRY`` is a
+    static, known list, so for any given ``argv`` there is at most one
+    exact-match name/alias at each prefix length, and the longest length is
+    tried first — a shorter registered name can never shadow a longer,
+    more specific match that also fits.
+
+    Returns:
+        ``(CommandDef, remaining_args)`` on match, or ``(None, [])`` when no
+        prefix of ``argv`` matches any registered name or alias.
+    """
+    if not argv:
+        return None, []
+    max_words = max((len(cmd.name.split()) for cmd in COMMAND_REGISTRY), default=1)
+    for word_count in range(min(max_words, len(argv)), 0, -1):
+        candidate = " ".join(argv[:word_count])
+        cmd = resolve_command(candidate)
+        if cmd is not None:
+            return cmd, argv[word_count:]
+    return None, []

@@ -238,6 +238,66 @@ class TestRegisterBackgroundTask:
         # Cleanup
         await reg.unregister("background_task", "poll")
 
+    async def test_spawn_false_registers_without_creating_a_task(self) -> None:
+        """Task #39: a read-only registry scan (arc agent tools/skills, arc ext
+        inspect, arcui's inventory seam) must not spawn a real background task —
+        the task's own body may depend on a live agent's module _runtime being
+        configured, which a throwaway scan never does. registry-level `spawn`
+        keeps `register_task` storing the entry either way; the loader-level
+        `spawn_background_tasks` flag (capability_loader.py) is what a read-only
+        caller sets to False.
+        """
+        from arcagent.capabilities.capability_registry import (
+            BackgroundTaskEntry,
+            CapabilityRegistry,
+        )
+
+        reg = CapabilityRegistry()
+
+        async def would_crash_if_run(ctx: object) -> None:
+            raise RuntimeError("module called before runtime is configured")
+
+        entry = BackgroundTaskEntry(
+            meta=BackgroundTaskMetadata(name="poll", interval=0.1),
+            fn=would_crash_if_run,
+            source_path=Path("/a.py"),
+            scan_root="builtins",
+        )
+
+        result = await reg.register_task(entry, spawn=False)
+
+        assert result.outcome == "added"
+        assert entry.task is None
+        stored = await reg.get_task("poll")
+        assert stored is not None and stored.task is None
+
+    async def test_spawn_true_is_still_the_default(self) -> None:
+        """Regression guard: omitting `spawn` must keep spawning — a live
+        agent's real startup/reload path (agent_lifecycle.py) never passes
+        `spawn`, so its behavior must be unchanged by this task.
+        """
+        from arcagent.capabilities.capability_registry import (
+            BackgroundTaskEntry,
+            CapabilityRegistry,
+        )
+
+        reg = CapabilityRegistry()
+
+        async def loop_fn(ctx: object) -> None:
+            await asyncio.sleep(10)
+
+        entry = BackgroundTaskEntry(
+            meta=BackgroundTaskMetadata(name="poll2", interval=0.1),
+            fn=loop_fn,
+            source_path=Path("/a.py"),
+            scan_root="builtins",
+        )
+
+        await reg.register_task(entry)
+
+        assert entry.task is not None and not entry.task.done()
+        await reg.unregister("background_task", "poll2")
+
 
 @pytest.mark.asyncio
 class TestRegisterCapabilityClass:

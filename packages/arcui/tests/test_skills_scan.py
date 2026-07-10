@@ -1,92 +1,93 @@
-"""Regression: the agent-skills scanner must read the path create_skill writes to.
+"""Regression: the Skills tab lists what the agent actually loads.
 
-``create_skill``/``update_skill`` write agent-authored skills to
-``<agent_root>/workspace/capabilities/skills/<name>/SKILL.md`` (a ``skills/``
-subdir of the capabilities root, mirroring the loader's ``builtins-skills``
-root). The UI's discovery previously scanned ``<root>/capabilities`` directly,
-so authored skills one level deeper at ``capabilities/skills/<name>/`` never
-appeared and the Skills tab under-reported to only the four builtin self-mod
-skills. These tests lock discovery onto the real loader paths across every
-capabilities root.
+Agent-authored skills live at ``<agent>/workspace/capabilities/skills/<name>/``
+(where ``create_skill``/``update_skill`` write). arcui no longer globs for them
+— ``GET /api/agents/{id}/skills`` runs the arcagent inventory seam, which scans
+that path via the ``workspace-skills`` loader root and reports each skill's
+source root and verbatim load status. These tests lock the route onto that
+faithful path across authored + builtin skills.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from arcui.routes.agent_detail.skills import _scan_skills_dir, discover_skills
+import pytest
+from arcagent.capabilities import artifact_signing
+from arcgateway import team_roster
+from arctrust.identity import AgentIdentity
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
-_SKILL_MD = """\
----
-name: {name}
-version: 1.0.0
-description: {desc}
----
+from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.registry import AgentRegistry
+from arcui.routes.agent_detail import routes as agent_routes
 
-## Resources
-
-## Contract
-"""
-
-
-def _write_skill(skills_root: Path, name: str, desc: str = "does stuff") -> None:
-    folder = skills_root / name
-    folder.mkdir(parents=True)
-    (folder / "SKILL.md").write_text(_SKILL_MD.format(name=name, desc=desc), encoding="utf-8")
+_SKILL = (
+    "---\nname: {name}\nversion: 1.0.0\ndescription: does {name}\n"
+    "triggers: [{name}]\ntools: [reload]\n---\n"
+    "\n## Resources\n\n## Contract\n\n## Knowledge\n\n## Steps\n\n"
+    "## Anti Patterns\n\n## Examples\n\n## Validation\n"
+)
 
 
-def test_scans_workspace_capabilities_skills(tmp_path: Path) -> None:
-    """A skill at workspace/capabilities/skills/<name>/SKILL.md is found."""
-    skills_root = tmp_path / "workspace" / "capabilities" / "skills"
-    _write_skill(skills_root, "researcher")
-
-    names = {s["name"] for s in discover_skills("olivia_agent", tmp_path)}
-    assert "researcher" in names
+@pytest.fixture(autouse=True)
+def _hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path / "empty-arc"))
 
 
-def test_authored_skills_join_builtins(tmp_path: Path) -> None:
-    """Authored workspace skills appear alongside the builtin self-mod skills."""
-    skills_root = tmp_path / "workspace" / "capabilities" / "skills"
-    for n in ("alpha", "beta", "gamma"):
-        _write_skill(skills_root, n)
+def _agent(tmp_path: Path) -> tuple[TestClient, str]:
+    identity = AgentIdentity.generate(org="arc", agent_type="exec")
+    key_dir = tmp_path / "keys"
+    identity.save_keys(key_dir)
+    team_root = tmp_path / "team"
+    agent_dir = team_root / "olivia_agent"
+    skills = agent_dir / "workspace" / "capabilities" / "skills"
+    skills.mkdir(parents=True)
+    for name in ("alpha", "beta"):
+        folder = skills / name
+        folder.mkdir()
+        skill_md = folder / "SKILL.md"
+        content = _SKILL.format(name=name).encode("utf-8")
+        skill_md.write_bytes(content)
+        artifact_signing.write_signature(
+            skill_md, content, signer_did=identity.did, private_key=identity.signing_seed
+        )
+    (agent_dir / "arcagent.toml").write_text(
+        f'[agent]\nname = "olivia"\norg = "arc"\ntype = "exec"\n'
+        f'workspace = "{agent_dir / "workspace"}"\n'
+        '[llm]\nmodel = "test/model"\n[security]\ntier = "personal"\n'
+        f'[identity]\ndid = "{identity.did}"\nkey_dir = "{key_dir}"\nvault_path = ""\n',
+        encoding="utf-8",
+    )
 
-    names = {s["name"] for s in discover_skills("olivia_agent", tmp_path)}
-    assert {"alpha", "beta", "gamma"} <= names
-    # Builtins are still surfaced (create-skill / update-tool / ...).
-    assert {"create-skill", "create-tool", "update-skill", "update-tool"} <= names
-
-
-def test_agent_dir_capabilities_skills(tmp_path: Path) -> None:
-    """Per-agent skills live at <agent_root>/capabilities/skills/<name>/."""
-    skills_root = tmp_path / "capabilities" / "skills"
-    _write_skill(skills_root, "operator_skill")
-
-    names = {s["name"] for s in discover_skills("olivia_agent", tmp_path)}
-    assert "operator_skill" in names
-
-
-def test_multi_root_dedup(tmp_path: Path) -> None:
-    """A name present in two roots surfaces once (first root wins)."""
-    agent_skills = tmp_path / "capabilities" / "skills"
-    ws_skills = tmp_path / "workspace" / "capabilities" / "skills"
-    _write_skill(agent_skills, "shared", desc="agent copy")
-    _write_skill(ws_skills, "shared", desc="workspace copy")
-
-    rows = [s for s in discover_skills("olivia_agent", tmp_path) if s["name"] == "shared"]
-    assert len(rows) == 1
-
-
-def test_scan_skill_path_shape(tmp_path: Path) -> None:
-    """Discovered rows carry a skills/<name>/SKILL.md path the UI can render."""
-    skills_root = tmp_path / "workspace" / "capabilities" / "skills"
-    _write_skill(skills_root, "shaped")
-
-    rows = _scan_skills_dir("olivia_agent", skills_root, "", "workspace")
-    paths = {r["path"] for r in rows}
-    assert "skills/shaped/SKILL.md" in paths
+    auth = AuthConfig({"viewer_token": "viewer"})
+    app = Starlette(routes=agent_routes)
+    app.add_middleware(AuthMiddleware, auth_config=auth)
+    app.state.auth_config = auth
+    app.state.agent_registry = AgentRegistry()
+    app.state.embedded_agent_cache = None
+    app.state.roster_provider = lambda: team_roster.list_team(
+        team_root=team_root, online_ids=set()
+    )
+    return TestClient(app), "olivia"
 
 
-def test_missing_dirs_yield_only_builtins(tmp_path: Path) -> None:
-    """With no on-disk capabilities, only the arcagent builtins surface."""
-    names = {s["name"] for s in discover_skills("olivia_agent", tmp_path)}
-    assert names == {"create-skill", "create-tool", "update-skill", "update-tool"}
+def _skills(tmp_path: Path) -> list[dict]:
+    client, agent_id = _agent(tmp_path)
+    resp = client.get(f"/api/agents/{agent_id}/skills", headers={"Authorization": "Bearer viewer"})
+    assert resp.status_code == 200
+    return resp.json()["skills"]
+
+
+def test_authored_skills_surface_with_source_root(tmp_path: Path) -> None:
+    rows = {s["name"]: s for s in _skills(tmp_path)}
+    assert {"alpha", "beta"} <= set(rows)
+    assert rows["alpha"]["source_root"] == "workspace-skills"
+    assert rows["alpha"]["status"] == "loaded"
+
+
+def test_builtin_skills_still_surface(tmp_path: Path) -> None:
+    names = {s["name"] for s in _skills(tmp_path)}
+    # The four builtin self-mod skills load from the trusted builtins-skills root.
+    assert {"create-skill", "update-skill", "create-tool", "update-tool"} <= names

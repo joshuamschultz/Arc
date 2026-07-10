@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -65,7 +65,7 @@ from arcagent.core.session_internal.capability_ledger import (
 )
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
-from arcagent.core.tool_registry import ToolRegistry
+from arcagent.core.tool_registry import RegisteredTool, ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import HumanGate, HumanGateConfig
@@ -159,6 +159,14 @@ class ArcAgent:
         # from the capability loader. Tracked so reload() can drop them
         # cleanly and re-register the latest set.
         self._capability_tool_names: set[str] = set()
+        # Task 27 follow-up (hotfix) — every ``_runtime.bind`` built during
+        # startup, paired with the already-built state to rebind. A turn
+        # dispatched in a fresh sibling asyncio.Task (SessionRouter spawns
+        # one per turn; a cached agent's SECOND+ turn never re-runs
+        # startup()) would otherwise see none of this agent's ContextVar
+        # state. ``agent_lifecycle.activate_runtime_bindings`` replays this
+        # list at the top of every turn-dispatch entry point.
+        self._runtime_bindings: list[tuple[Callable[[Any], None], Any]] = []
 
     def _policy_audit_log_path(self) -> Path:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).
@@ -740,6 +748,19 @@ class ArcAgent:
         if self._capability_registry is None:
             return []
         return list(self._capability_registry._skills.values())
+
+    @property
+    def registered_tools(self) -> list[RegisteredTool]:
+        """Every tool in the runtime ToolRegistry — the full wrapped surface.
+
+        Builtins, capability-file tools, module tools, and self-authored tools,
+        not a preset subset (REQ-095). Empty before startup. Read-only accessor
+        for out-of-process observers (arcui capability views) that must not
+        reach into the registry internals.
+        """
+        if self._tool_registry is None:
+            return []
+        return list(self._tool_registry.tools.values())
 
     async def shutdown(self) -> None:
         """Reverse-order teardown of all components.

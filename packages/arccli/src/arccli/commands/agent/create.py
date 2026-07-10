@@ -50,6 +50,16 @@ def _create(args: argparse.Namespace) -> None:
     # guarantee holds from the very first run.
     _ensure_arcstore_dirs(agent_dir)
 
+    # Mint the agent's real identity now (regardless of --no-register) so the
+    # scaffolded calculator.py can be signed under it. TofuLayer at personal
+    # tier denies every agent-writable capability by default
+    # (auto_run_agent_code=False) unless it's signed by the agent's own
+    # pinned key — without this, the out-of-box default tool is dead on
+    # arrival on every fresh agent. mint_agent_identity() persists the DID
+    # into arcagent.toml, so this is the SAME identity the agent signs with
+    # at startup and registers with arcteam below.
+    identity = _sign_scaffolded_capabilities(agent_dir)
+
     sys.stdout.write(f"Created agent: {agent_dir}\n")
     _print_scaffold_summary(name, agent_dir)
 
@@ -59,7 +69,7 @@ def _create(args: argparse.Namespace) -> None:
     # JSONLTraceStore expects to find traces/). Best-effort: a registration
     # failure logs a warning but does not fail the create.
     if not no_register:
-        _try_auto_register(name, agent_dir)
+        _try_auto_register(name, agent_dir, identity=identity)
 
 
 def _ensure_arcstore_dirs(agent_dir: Path) -> None:
@@ -95,15 +105,56 @@ def _mint_agent_identity(agent_dir: Path) -> Any:
     )
 
 
-def _try_auto_register(name: str, agent_dir: Path) -> None:
-    """Best-effort arcteam registration after scaffold. Idempotent."""
+def _sign_scaffolded_capabilities(agent_dir: Path) -> Any | None:
+    """Sign every scaffolded capability under this DID (SPEC-033).
+
+    TofuLayer at personal tier denies any agent-writable capability that
+    isn't signed by the agent's own pinned identity key, unless the operator
+    globally opts in via auto_run_agent_code — without a signature, the
+    scaffolded calculator.py is dead on arrival. Returns the minted identity
+    (or None on failure — fail-open: an unsigned scaffold still creates
+    successfully, it just needs a manual `arc trust` step or
+    auto_run_agent_code=true to load).
+    """
+    try:
+        identity = _mint_agent_identity(agent_dir)
+    except Exception as exc:  # reason: fail-open — scaffold still succeeds unsigned
+        sys.stdout.write(f"Warning: could not mint agent identity to sign capabilities: {exc}\n")
+        return None
+
+    if not identity.can_sign:
+        return identity
+
+    from arcagent.capabilities import artifact_signing
+
+    calc_path = agent_dir / "capabilities" / "calculator.py"
+    try:
+        artifact_signing.write_signature(
+            calc_path,
+            calc_path.read_bytes(),
+            signer_did=identity.did,
+            private_key=identity.signing_seed,
+        )
+    except Exception as exc:  # reason: fail-open — scaffold still succeeds unsigned
+        sys.stdout.write(f"Warning: could not sign {calc_path.name}: {exc}\n")
+    return identity
+
+
+def _try_auto_register(name: str, agent_dir: Path, *, identity: Any | None = None) -> None:
+    """Best-effort arcteam registration after scaffold. Idempotent.
+
+    Args:
+        identity: Pre-minted identity to reuse (avoids re-minting the same
+            keypair). Minted fresh if not supplied.
+    """
     try:
         from arcteam.config import TeamConfig
         from arcteam.types import Entity, EntityType
 
         from arccli.commands.team import _build_service
 
-        identity = _mint_agent_identity(agent_dir)
+        if identity is None:
+            identity = _mint_agent_identity(agent_dir)
         did = identity.did
 
         async def _do() -> None:

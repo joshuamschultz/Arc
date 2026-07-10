@@ -164,12 +164,50 @@ def _is_within(path: Path, boundary: Path) -> bool:
         return False
 
 
+def _deny_workspace_path(
+    *,
+    code: str,
+    message: str,
+    details: dict[str, Any],
+    tool_name: str,
+    file_path: str,
+    caller_did: str,
+    audit_sink: ProtectedAuditSink | None,
+) -> ToolError:
+    """Audit a workspace-confinement denial, then return the error to raise.
+
+    Single emission point for every ``resolve_workspace_path`` denial (null
+    byte, symlink, boundary escape) — the live incident this closes (task
+    #20: an agent's ``write`` tool installed files in a SIBLING agent's
+    workspace) went unaudited because no denial here ever reached the audit
+    trail. Mirrors :func:`enforce_protected_path`'s audit-then-raise shape.
+    """
+    if audit_sink is not None:
+        try:
+            audit_sink(
+                "tool.workspace_path.denied",
+                {
+                    "tool": tool_name,
+                    "actor_did": caller_did,
+                    "path": file_path,
+                    "code": code,
+                    "reason": message,
+                },
+            )
+        except Exception:  # reason: fail-open — audit must not mask the denial
+            _logger.exception("Workspace-path audit sink raised; continuing")
+    return ToolError(code=code, message=message, details=details)
+
+
 def resolve_workspace_path(
     file_path: str,
     workspace: Path,
     *,
     allow_symlinks: bool = False,
     allowed_paths: list[Path] | None = None,
+    tool_name: str = "unknown",
+    caller_did: str = "did:arc:unknown",
+    audit_sink: ProtectedAuditSink | None = None,
 ) -> Path:
     """Resolve a file path within the workspace boundary.
 
@@ -177,12 +215,21 @@ def resolve_workspace_path(
     against the workspace root. Absolute paths must fall within the
     workspace directory or one of the allowed_paths.
 
+    This is THE choke point every built-in tool that takes a caller-supplied
+    path (file tools and self-modification tools alike) must route through —
+    directly or via :func:`arcagent.builtins.capabilities._runtime.resolve_workspace_path`
+    — so escape attempts are confined and audited in exactly one place.
+
     Args:
         file_path: The path string to resolve.
         workspace: The workspace root directory.
         allow_symlinks: If False (default), reject symlinks.
         allowed_paths: Additional directories that are permitted
             beyond the workspace boundary. Used by tools.policy config.
+        tool_name: Name of the calling tool, recorded on denial audit events.
+        caller_did: DID of the invoking agent, recorded on denial audit events.
+        audit_sink: Sink to notify on denial. No-op when None (e.g. unit
+            tests that call this directly without runtime configured).
 
     Raises:
         ToolError: If the path contains null bytes, is a symlink (when
@@ -190,10 +237,14 @@ def resolve_workspace_path(
     """
     # Null byte injection guard
     if "\x00" in file_path:
-        raise ToolError(
+        raise _deny_workspace_path(
             code="TOOL_INVALID_PATH",
             message="Path contains null bytes",
             details={"path": repr(file_path)},
+            tool_name=tool_name,
+            file_path=file_path,
+            caller_did=caller_did,
+            audit_sink=audit_sink,
         )
 
     workspace = workspace.resolve()
@@ -208,10 +259,14 @@ def resolve_workspace_path(
         for part in unresolved.relative_to(workspace).parts:
             check = check / part
             if check.is_symlink():
-                raise ToolError(
+                raise _deny_workspace_path(
                     code="TOOL_SYMLINK_DENIED",
                     message=f"Symlinks are not allowed: {file_path}",
                     details={"path": file_path, "symlink_at": str(check)},
+                    tool_name=tool_name,
+                    file_path=file_path,
+                    caller_did=caller_did,
+                    audit_sink=audit_sink,
                 )
 
     resolved = unresolved.resolve()
@@ -225,8 +280,12 @@ def resolve_workspace_path(
             if _is_within(resolved, allowed.resolve()):
                 return resolved
 
-    raise ToolError(
+    raise _deny_workspace_path(
         code="TOOL_PATH_OUTSIDE_WORKSPACE",
         message=f"Path '{file_path}' resolves outside workspace",
         details={"path": file_path, "workspace": str(workspace)},
+        tool_name=tool_name,
+        file_path=file_path,
+        caller_did=caller_did,
+        audit_sink=audit_sink,
     )

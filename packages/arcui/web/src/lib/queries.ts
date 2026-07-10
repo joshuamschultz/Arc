@@ -1,13 +1,19 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { apiGet } from './api'
 import type {
+  AgentCapabilityInventory,
   AgentsListResponse,
   AuditEventsResponse,
+  ChannelsResponse,
   ConfigResponse,
   Dict,
+  EntitiesResponse,
   FileReadResponse,
   FilesTreeResponse,
   IdentityCostResponse,
+  LinksResponse,
+  MemoryPage,
+  MemorySearchResponse,
   PolicyBulletsResponse,
   PolicyResponse,
   PolicyStatsResponse,
@@ -16,7 +22,6 @@ import type {
   SchedulesResponse,
   SessionReplayResponse,
   SessionsListResponse,
-  SkillsResponse,
   SpawnTreeResponse,
   StatsResponse,
   TasksResponse,
@@ -65,7 +70,7 @@ export const useTeamAudit = (filter?: string, limit = 100) =>
 // --- Messages / team chat --------------------------------------------------
 
 export const useTeamChannels = () =>
-  useApiQuery<{ channels: Array<string | Dict> }>(['team', 'channels'], '/api/team/channels')
+  useApiQuery<ChannelsResponse>(['team', 'channels'], '/api/team/channels')
 
 export interface ChannelMessagesResponse {
   channel: string
@@ -107,6 +112,47 @@ export const useKnowledge = (agentId: string | null) =>
     queryKey: ['knowledge', agentId],
     queryFn: ({ signal }) => apiGet(`/api/knowledge/${agentId}`, signal),
     enabled: !!agentId,
+  })
+
+// --- Knowledge browser (COMP-002/003 — memories, entities, links) ----------
+
+export const useAgentMemories = (agentId: string | null, limit = 50, offset = 0) =>
+  useQuery<MemoryPage>({
+    queryKey: ['agent', agentId, 'knowledge', 'memories', limit, offset],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/memories?limit=${limit}&offset=${offset}`, signal),
+    enabled: !!agentId,
+  })
+
+export const useMemorySearch = (agentId: string | null, q: string) =>
+  useQuery<MemorySearchResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'memories', 'search', q],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/memories?q=${encodeURIComponent(q)}`, signal),
+    enabled: !!agentId && q.trim().length > 0,
+  })
+
+export const useMemoryLinks = (agentId: string | null, entryId: string | null) =>
+  useQuery<LinksResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'memories', entryId, 'links'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/memories/${entryId}/links`, signal),
+    enabled: !!agentId && !!entryId,
+  })
+
+export const useEntities = (agentId: string | null) =>
+  useQuery<EntitiesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'entities'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/entities`, signal),
+    enabled: !!agentId,
+  })
+
+export const useEntityLinks = (agentId: string | null, slug: string | null) =>
+  useQuery<LinksResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'entities', slug, 'links'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/entities/${slug}/links`, signal),
+    enabled: !!agentId && !!slug,
   })
 
 // --- ArcLLM (LLM layer) ----------------------------------------------------
@@ -215,11 +261,17 @@ export const useAgentSessionReplay = (agentId: string, sid: string, page = 1) =>
     `/api/agents/${agentId}/sessions/${sid}?page=${page}`,
   )
 
-export const useAgentSkills = (agentId: string) =>
-  useApiQuery<SkillsResponse>(['agent', agentId, 'skills'], `/api/agents/${agentId}/skills`)
-
 export const useAgentTools = (agentId: string) =>
   useApiQuery<ToolsResponse>(['agent', agentId, 'tools'], `/api/agents/${agentId}/tools`)
+
+// COMP-008 — the loader's own verdict mirror (skills + capability tools across
+// all four scan roots, plus the live runtime tool list when the agent is
+// loaded). Replaces the old per-kind `/skills` glob-scan hook (REQ-093/096).
+export const useAgentCapabilities = (agentId: string) =>
+  useApiQuery<AgentCapabilityInventory>(
+    ['agent', agentId, 'capabilities'],
+    `/api/agents/${agentId}/capabilities`,
+  )
 
 export const useAgentPolicy = (agentId: string) =>
   useApiQuery<PolicyResponse>(['agent', agentId, 'policy'], `/api/agents/${agentId}/policy`)

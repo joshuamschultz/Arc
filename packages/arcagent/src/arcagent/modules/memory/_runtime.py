@@ -4,7 +4,19 @@ The memory hooks/tool/background-task share the config-selected
 :class:`~arcagent.brain.Brain`, the bus (for ACL gating), and small per-turn
 bookkeeping (a once-per-turn recall cache; a capture counter + last-activity
 clock that trigger consolidation). Decorator-stamped functions read this lazily
-via :func:`state` after :func:`configure` runs once at agent startup.
+via :func:`state` after :func:`configure` runs once at agent startup, bound to
+a :class:`contextvars.ContextVar`.
+
+Task 27/32: a plain module global here is silently overwritten by whichever
+agent's ``asyncio.Task`` most recently called ``configure()`` — see
+``arcagent/builtins/capabilities/_runtime.py`` for the full rationale. Safe
+for ``memory_consolidate_loop`` (the ``@background_task``) too:
+``capability_registry.py`` spawns every ``@background_task`` via a plain
+``asyncio.create_task()`` call that always fires AFTER ``configure()`` has
+already run, in the SAME agent-startup task — asyncio's automatic
+context-copy on task creation captures this agent's state into the
+consolidation loop's own isolated context for its whole lifetime, with no
+``contextvars.copy_context()`` special-casing needed.
 
 Mirrors :mod:`arcagent.modules.memory_acl._runtime`. When the selected brain is a
 :class:`~arcagent.brain.NullBrain`, ``active`` is ``False`` and every hook
@@ -13,6 +25,7 @@ short-circuits — memory is a truly silent no-op (no events, no files).
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
 from dataclasses import dataclass, field
@@ -46,7 +59,9 @@ class _State:
     last_activity: float = field(default_factory=time.monotonic)
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_memory_state", default=None
+)
 
 
 def configure(
@@ -58,8 +73,10 @@ def configure(
     agent_did: str = "",
     agent_name: str = "",
 ) -> None:
-    """Bind module state; select the Brain. Called once at agent startup."""
-    global _state
+    """Bind module state for the CURRENT asyncio task; select the Brain.
+
+    Called once at agent startup.
+    """
     del agent_name  # accepted for signature-dispatch parity; unused here
     cfg = MemoryConfig(**(config or {}))
     ws = Path(workspace).resolve()
@@ -74,7 +91,7 @@ def configure(
         distill_model=cfg.distill_model,
         brain_allowlist=tuple(cfg.brain_allowlist),
     )
-    _state = _State(
+    new_state = _State(
         config=cfg,
         brain=brain,
         workspace=ws,
@@ -83,23 +100,35 @@ def configure(
         agent_did=agent_did,
         active=not isinstance(brain, NullBrain),
     )
-    _logger.info("memory module configured (brain=%s, active=%s)", cfg.brain, _state.active)
+    _state_var.set(new_state)
+    _logger.info("memory module configured (brain=%s, active=%s)", cfg.brain, new_state.active)
 
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "memory module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
+
+
+def bind(state_obj: _State) -> None:
+    """Idempotently bind an already-built ``_State`` into the CURRENT task.
+
+    Cheap — one ``.set()`` call, no construction. Called at the top of
+    every turn-dispatch entry point (task 27 follow-up hotfix) so a turn
+    running in a fresh sibling ``asyncio.Task`` — not a descendant of the
+    task that ran ``configure()`` — still sees this agent's state.
+    """
+    _state_var.set(state_obj)
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
-__all__ = ["configure", "reset", "state"]
+__all__ = ["bind", "configure", "reset", "state"]

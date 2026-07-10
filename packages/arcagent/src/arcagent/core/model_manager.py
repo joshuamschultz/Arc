@@ -252,6 +252,7 @@ def ensure_model(
         config.llm.model,
         trace_store=trace_store,
         agent_label=config.agent.name,
+        agent_did=actor_did or None,
         on_event=on_event,
         arcllm_modules=config.llm.modules or None,
     )

@@ -80,6 +80,7 @@ class FastCapture:
             text=clean,
             hash=content_hash(clean),
             classification=classification,
+            salience=salience,
         )
         event.entities = tag_entities(clean, self._vocabulary())
 

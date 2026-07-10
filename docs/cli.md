@@ -209,8 +209,21 @@ Manage arcteam entity registries, channels, and messaging.
 | `arc team register <id> --roles <r>` | Register with comma-separated roles | `arc team register agent-1 --name "Lead" --type agent --roles lead,reviewer` |
 | `arc team entities` | List all registered entities | `arc team entities` |
 | `arc team entities --role <r>` | Filter by role | `arc team entities --role lead` |
+| `arc team update-entity <ref>` | Update an existing entity's name/roles (`register` is create-only and errors on a duplicate DID/handle) | `arc team update-entity agent-1 --name "Lead Analyst" --roles lead,reviewer` |
 | `arc team channels` | List available channels | `arc team channels` |
+| `arc team create-channel <name>` | Create a channel; standalone or `--team <id>`-scoped (defaults membership to the team's members unless `--members` is given) | `arc team create-channel brand-room --members agent-1,agent-2` |
 | `arc team memory-status` | Show team memory index status | `arc team memory-status` |
+| `arc team backfill-workspaces` | Backfill `workspace_path` on registered agents from `team/*/arcagent.toml`. Dry-run unless `--apply` is passed. | `arc team backfill-workspaces --team-dir team --apply` |
+| `arc team create <id> --channel <c>` | Create a team with a required default channel and optional members | `arc team create mfg --channel ops --members agent-1,agent-2` |
+| `arc team add-member <id> <member>` | Add a member to an existing team | `arc team add-member mfg agent-3` |
+| `arc team remove-member <id> <member>` | Remove a member from a team | `arc team remove-member mfg agent-3` |
+| `arc team send` | Send a signed message (`--sender`, `--to`, `--body` required; `--type`, `--priority`, `--action`, `--refs`, `--thread-id` optional) | `arc team send --sender agent://agent-1 --to agent://agent-2 --body "status?"` |
+| `arc team inbox --sender <ref>` | Check inbox across subscribed streams | `arc team inbox --sender agent://agent-1 --limit 20` |
+| `arc team read --sender <ref>` | Read channel or DM history | `arc team read --sender agent://agent-1 --channel ops --limit 50` |
+| `arc team thread <id> --stream <s>` | View a message thread | `arc team thread abc123 --stream ops` |
+| `arc team up <id>` | Boot each team member as a supervised `arc agent serve` daemon | `arc team up mfg` |
+| `arc team down <id>` | Stop a running team's member daemons | `arc team down mfg` |
+| `arc team serve <team_root>` | Start NATS + register + serve the dashboard for a folder of agents | `arc team serve ./agents --port 8420` |
 
 **Global options (apply to all `arc team` subcommands):**
 - `--root <path>` — override team data root directory
@@ -278,7 +291,12 @@ never relaxable. See `arc blueprint` and `arc ext` below.
 
 ### `arc gateway` — Gateway control plane
 
-Operator commands for managing DM pairing codes (gateway_only — these commands require arcgateway running).
+Operator commands for managing DM pairing codes. Require a running gateway
+— in practice that means `arc ui start --team-root <dir> --gateway-config
+<path>` (the embedded gateway); the standalone `arcgateway start` daemon
+unconditionally refuses to start at every tier (see
+[docs/arcgateway/getting-started.md](./arcgateway/getting-started.md)),
+so it is never the "running arcgateway" these commands need.
 
 | Command | Purpose | Example |
 |---|---|---|
@@ -289,7 +307,12 @@ Operator commands for managing DM pairing codes (gateway_only — these commands
 **Notes:**
 - Pairing codes are exactly 8 characters, uppercase
 - Codes expire automatically; `pair list` shows remaining TTL in minutes
-- These commands only work when arcgateway is configured with `gateway.pairing.enabled = true`
+- These commands only take effect when the gateway config has `[security]
+  require_pairing = true` (`gateway.toml` — NOT `gateway.pairing.enabled`,
+  which isn't a real field on `GatewayConfig`)
+- Approving a code requires a registered trust-anchor operator key first —
+  run `arc identity init` once if you haven't (see DM pairing in
+  [docs/arcgateway/getting-started.md](./arcgateway/getting-started.md))
 
 ---
 

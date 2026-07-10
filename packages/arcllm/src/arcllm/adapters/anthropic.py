@@ -155,9 +155,14 @@ class AnthropicAdapter(BaseAdapter):
         body: dict[str, Any] = {
             "model": self._model_name,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "messages": formatted,
         }
+        # Models declaring supports_temperature = false (Claude 5 family)
+        # reject non-default sampling params with HTTP 400 — omit the knob
+        # entirely, even when a caller passes it (eval configs set it
+        # generically across models).
+        if self._model_meta is None or self._model_meta.supports_temperature:
+            body["temperature"] = temperature
         if system_text is not None:
             # A cache breakpoint can only attach to a content-block list, so
             # promote the system string when caching is on; keep the plain

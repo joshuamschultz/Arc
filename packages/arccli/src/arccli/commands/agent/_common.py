@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +190,16 @@ enabled = true
 # backend (with a warning) if no server is reachable, so a solo agent still runs.
 nats_url = "nats://127.0.0.1:4222"
 
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+# arcskill is the workspace-declared default skills adapter (see root
+# pyproject.toml) — without this block SkillsConfig defaults to
+# adapter = "none" and the agent's scaffolded skills/improver never run.
+adapter = "arcskill"
+tier = "personal"
+
 [arcstore]
 enabled = true
 store_raw_bodies = false
@@ -331,6 +342,70 @@ def _discover_tools(agent_dir: Path) -> list[Any]:
             if meta is not None and getattr(meta, "kind", None) == "tool":
                 all_tools.append(meta)
     return all_tools
+
+
+@dataclass(frozen=True)
+class _DiscoveredTool:
+    """One tool as the agent's real runtime registry would report it.
+
+    ``source`` is the scan root the tool was found under ("builtins",
+    "global", "agent", "workspace", or "module:<name>") — free provenance
+    from :class:`~arcagent.capabilities.capability_registry.ToolEntry`,
+    which already tracks it.
+    """
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    source: str
+    timeout_seconds: int | None = None
+
+
+def _discover_runtime_tools(agent_dir: Path) -> list[_DiscoveredTool]:
+    """Answer "what tools would this agent actually have at startup?" (task #29).
+
+    Unlike :func:`_discover_tools` (which only looks at the agent's OWN
+    ``capabilities/`` directory — the right question for ``arc agent build``/
+    ``arc agent status``), this builds the same standalone CapabilityRegistry
+    ``arc ext inspect`` uses: builtins + global + agent + workspace + every
+    ENABLED module's ``capabilities.py``. That registry is what closes the
+    live bug — an agent with one scaffolded capability reported exactly one
+    tool via ``arc agent tools`` while ``arc ext inspect`` correctly showed
+    ~15 (the builtins were never scanned).
+    """
+    from arcagent.core.config import load_config
+
+    from arccli.commands._capability_registry import build_capability_registry
+
+    config_path = agent_dir / "arcagent.toml"
+    if not config_path.is_file():
+        return []
+    try:
+        config = load_config(config_path)
+    except Exception:  # reason: fail-open — a listing command must degrade, not crash
+        return []
+
+    registry = build_capability_registry(config, agent_dir)
+    if registry is None:
+        return []
+
+    # Snapshot read of the registry's private tool dict — the same read-only
+    # pattern arcagent.extension.inspect._iter_registry already uses for this
+    # exact purpose (inspection never mutates, so a private-dict read is the
+    # accepted convention rather than growing CapabilityRegistry's public API
+    # for a CLI-only need).
+    entries = getattr(registry, "_tools", {}).values()
+    tools = [
+        _DiscoveredTool(
+            name=entry.meta.name,
+            description=entry.meta.description,
+            input_schema=entry.meta.input_schema,
+            source=entry.scan_root,
+            timeout_seconds=getattr(entry.meta, "timeout_seconds", None),
+        )
+        for entry in entries
+    ]
+    return sorted(tools, key=lambda t: t.name)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +551,7 @@ __all__ = [
     "_GLOBAL_CAP_DIR",
     "_capability_scan_roots",
     "_default_policy",
+    "_discover_runtime_tools",
     "_discover_tools",
     "_iter_capability_files",
     "_iter_skill_folders",

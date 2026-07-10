@@ -267,12 +267,38 @@ def create_app(
             for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                 if adapter is not None:
                     await adapter.connect()
+        # COMP-004 / REQ-090: when the deployment has a team but no service was
+        # injected, construct the arcteam MessagingService over the same managed
+        # NATS the bootstrap started. Without this the handle team_chat reads is
+        # never set on a live deployment and channels silently read empty. Build
+        # failures (broker down / no operator key) leave it None so the routes
+        # surface an explicit service-unavailable error, never a fabricated [].
+        resolved_service = messaging_service
+        resolved_registry: Any | None = None
+        built_backend: Any | None = None
+        if resolved_service is None and team_root is not None:
+            from arcui.messaging import build_messaging_service
+
+            try:
+                (
+                    resolved_service,
+                    resolved_registry,
+                    built_backend,
+                ) = await build_messaging_service()
+            except Exception:  # reason: fail-open — dashboard must still serve
+                logger.exception("lifespan: embedded messaging construction failed")
+                resolved_service, resolved_registry, built_backend = None, None, None
+        starlette_app.state.messaging_service = resolved_service
+        # COMP-005: channel-management routes resolve agent refs to DIDs
+        # through this registry. None when no service is wired — the mutation
+        # routes then report the same explicit unavailable error as the reads.
+        starlette_app.state.messaging_registry = resolved_registry
         # SPEC-031 F1: subscribe read-only to the arcteam bus and feed the
         # team-flow stream. Fail-open — a bus problem must never block the
         # dashboard; the stream just stays empty.
         observer_task: asyncio.Task[None] | None = None
-        if messaging_service is not None:
-            observer = TeamBusObserver(messaging_service, starlette_app.state.team_stream)
+        if resolved_service is not None:
+            observer = TeamBusObserver(resolved_service, starlette_app.state.team_stream)
             observer_task = asyncio.create_task(
                 observer.run(interval=team_stream_interval),
                 name="arcui:team-bus-observer",
@@ -289,6 +315,21 @@ def create_app(
                 observer_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await observer_task
+            # Close only a backend this lifespan opened — an injected service
+            # (tests) owns its own backend lifecycle.
+            if built_backend is not None:
+                close = getattr(built_backend, "close", None)
+                if close is not None:
+                    try:
+                        await close()
+                    except Exception as exc:  # reason: fail-open — continue shutdown
+                        # A NATS connection already tearing down raises
+                        # ConnectionClosedError from drain() on every normal
+                        # restart — expected, not traceback-worthy.
+                        if type(exc).__name__ == "ConnectionClosedError":
+                            logger.debug("lifespan: messaging backend already closed")
+                        else:
+                            logger.exception("lifespan: error closing embedded messaging backend")
             try:
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
@@ -329,6 +370,10 @@ def create_app(
     # a supported state — the routes degrade to empty payloads so the
     # Team Chat tab never throws when the deployment lacks a team_root.
     app.state.messaging_service = messaging_service
+    # COMP-005: registry for channel-membership ref→DID resolution. Set by the
+    # lifespan when it builds the embedded service; None until then (and for
+    # read-only test apps that inject only a service).
+    app.state.messaging_registry = None
     # SPEC-031 C10: the read-only team-flow stream. The hub is always present
     # so ``/ws/team`` can accept viewers even before a bus is wired; it simply
     # stays quiet until the TeamBusObserver (started in lifespan) feeds it.

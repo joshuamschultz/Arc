@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._validation import resolve_workspace_path
 
 _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
@@ -29,11 +28,7 @@ async def read(file_path: str, offset: int = 1, limit: int = 0) -> str:
     not a file, too large, non-UTF-8) so the caller can surface the
     failure to the LLM without bubbling exceptions.
     """
-    resolved = resolve_workspace_path(
-        file_path,
-        _runtime.workspace(),
-        allowed_paths=_runtime.allowed_paths(),
-    )
+    resolved = _runtime.resolve_workspace_path(file_path, tool_name="read")
     if not resolved.exists():
         return f"Error: File not found: {file_path}"
     if not resolved.is_file():

@@ -94,8 +94,10 @@ async def create_skill(
     """Scaffold ``workspace/capabilities/skills/<name>/`` and return path."""
     if not name.replace("-", "_").isidentifier():
         return f"Error: name {name!r} must be alphanumeric (dashes allowed)"
+    if body:
+        _runtime.check_secret_content(body, f"{_SKILLS_SUBDIR}/{name}", tool_name="create_skill")
     workspace = _runtime.workspace()
-    folder = workspace / _SKILLS_SUBDIR / name
+    folder = _runtime.resolve_workspace_path(f"{_SKILLS_SUBDIR}/{name}", tool_name="create_skill")
     if folder.exists():
         return f"Error: skill {name!r} already exists at {folder.relative_to(workspace)}"
     folder.mkdir(parents=True)
@@ -112,5 +114,7 @@ async def create_skill(
         body=body,
     )
     skill_md.write_text(rendered, encoding="utf-8")
-    _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8"))
-    return f"Created skill {name!r} at {folder.relative_to(workspace)}"
+    message = f"Created skill {name!r} at {folder.relative_to(workspace)}"
+    if not _runtime.sign_artifact_file(skill_md, rendered.encode("utf-8")):
+        message += _runtime.audit_unsigned_artifact(skill_md, tool_name="create_skill")
+    return message

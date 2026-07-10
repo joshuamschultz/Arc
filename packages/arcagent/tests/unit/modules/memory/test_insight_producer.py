@@ -36,14 +36,16 @@ class _Brain:
 
 
 def _install(brain: Any) -> None:
-    _runtime._state = _runtime._State(
-        config=MemoryConfig(),
-        brain=brain,
-        workspace=Path("."),
-        telemetry=None,
-        bus=None,
-        agent_did=_DID,
-        active=not isinstance(brain, NullBrain),
+    _runtime._state_var.set(
+        _runtime._State(
+            config=MemoryConfig(),
+            brain=brain,
+            workspace=Path("."),
+            telemetry=None,
+            bus=None,
+            agent_did=_DID,
+            active=not isinstance(brain, NullBrain),
+        )
     )
 
 

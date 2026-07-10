@@ -3,14 +3,22 @@
 The slack module's WebSocket lifecycle and three hooks all share the
 same :class:`SlackBot` instance plus its config / workspace /
 telemetry. Decorator-stamped functions can't carry that state in a
-closure, so it lives in a module-level :class:`_State` instance
-configured by the agent at startup.
+closure, so it lives in a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-Mirrors :mod:`arcagent.modules.policy._runtime`.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
+Safe for the WebSocket read loop too: ``SlackCapability.setup()`` calls
+``configure()`` (or it has already run via ``configure_module_runtimes``)
+before spawning the bot's background task in the SAME coroutine chain, so
+``asyncio.create_task()``'s automatic context-copy captures this agent's
+state into the read loop's own isolated context for its whole lifetime.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +44,9 @@ class _State:
     bot: SlackBot | None = None
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_slack_state", default=None
+)
 
 
 def configure(
@@ -46,35 +56,47 @@ def configure(
     telemetry: Any = None,
     egress_proxy: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup.
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     ``egress_proxy`` is the agent's shared EgressProxy; outbound notifications
     are mediated through it (SPEC-038 REQ-031).
     """
-    global _state
     cfg = SlackConfig(**(config or {}))
-    _state = _State(
-        config=cfg,
-        workspace=workspace.resolve(),
-        telemetry=telemetry,
-        egress=egress_proxy,
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=workspace.resolve(),
+            telemetry=telemetry,
+            egress=egress_proxy,
+        )
     )
 
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "slack module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
+
+
+def bind(state_obj: _State) -> None:
+    """Idempotently bind an already-built ``_State`` into the CURRENT task.
+
+    Cheap — one ``.set()`` call, no construction. Called at the top of
+    every turn-dispatch entry point (task 27 follow-up hotfix) so a turn
+    running in a fresh sibling ``asyncio.Task`` — not a descendant of the
+    task that ran ``configure()`` — still sees this agent's state.
+    """
+    _state_var.set(state_obj)
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
-__all__ = ["configure", "reset", "state"]
+__all__ = ["bind", "configure", "reset", "state"]

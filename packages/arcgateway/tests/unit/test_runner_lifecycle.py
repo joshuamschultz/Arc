@@ -327,7 +327,12 @@ async def test_run_raises_already_running_before_starting(tmp_path: Path) -> Non
 
 
 def test_from_config_personal_tier_uses_asyncio_executor(tmp_path: Path) -> None:
-    """from_config() with personal tier creates an AsyncioExecutor."""
+    """from_config() with personal tier creates an AsyncioExecutor.
+
+    from_config is a plain scaffold factory — it does not itself require or
+    verify a real agent-execution path (see cli.cmd_start, which fails
+    closed before ever calling this, for that concern).
+    """
     from arcgateway.config import GatewayConfig
 
     toml_text = f"""
@@ -379,6 +384,172 @@ runtime_dir = "{tmp_path}"
 
     runner = GatewayRunner.from_config(config)
     assert isinstance(runner._executor, SubprocessExecutor)
+
+
+# ---------------------------------------------------------------------------
+# from_config — require_pairing wiring (SDD §3.1 DM Pairing)
+# ---------------------------------------------------------------------------
+
+
+def test_from_config_require_pairing_false_leaves_pairing_store_unset(tmp_path: Path) -> None:
+    """Default (require_pairing=false) does not construct a PairingStore.
+
+    This preserves the current no-enforcement default for every existing
+    deployment: SessionRouter's PairingInterceptor is a no-op when both
+    user_allowlist and pairing_store are None.
+    """
+    from arcgateway.config import GatewayConfig
+
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = false
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner._pairing_store is None
+    assert runner.session_router._pairing._pairing_store is None
+
+
+def test_from_config_require_pairing_true_wires_pairing_store(tmp_path: Path) -> None:
+    """require_pairing=true builds a PairingStore and wires it into SessionRouter.
+
+    This is the fix for the "built but dead" pairing system: without this,
+    GatewayRunner.__init__ built SessionRouter with no pairing_store at all,
+    so PairingInterceptor.is_user_approved was always a no-op regardless of
+    config — DM pairing enforcement never actually engaged.
+    """
+    from arcgateway.config import GatewayConfig
+    from arcgateway.pairing import PairingStore
+
+    db_path = tmp_path / "pairing.db"
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{db_path}"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert isinstance(runner._pairing_store, PairingStore)
+    # SessionRouter's own PairingInterceptor must hold the SAME store instance
+    # so `arc gateway pair approve` (writing to db_path from a separate
+    # process) is visible on the very next message the router handles.
+    assert runner.session_router._pairing._pairing_store is runner._pairing_store
+
+
+def test_from_config_require_pairing_true_uses_configured_db_path(tmp_path: Path) -> None:
+    """The wired PairingStore honors [pairing].db_path, not PairingStore's own default."""
+    from arcgateway.config import GatewayConfig
+
+    db_path = tmp_path / "custom" / "pairing.db"
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{db_path}"
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner._pairing_store._db_path == db_path.expanduser().resolve()
+
+
+def test_from_config_require_pairing_true_seeds_user_allowlist_from_platforms(
+    tmp_path: Path,
+) -> None:
+    """Task #34: [platforms.telegram].allowed_user_ids must reach the
+    SessionRouter's PairingInterceptor, not just live in unused config.
+
+    Without this, an allowlisted user still fell through to the (empty, for a
+    never-before-paired user) pairing_store lookup on their first message —
+    the static allowlist was pure config-file decoration.
+    """
+    from arcgateway.config import GatewayConfig
+
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = true
+
+[pairing]
+db_path = "{tmp_path / "pairing.db"}"
+
+[platforms.telegram]
+enabled = true
+allowed_user_ids = [555]
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner.session_router._pairing._user_allowlist == {"did:arc:telegram:555"}
+
+
+def test_from_config_require_pairing_false_does_not_seed_user_allowlist(
+    tmp_path: Path,
+) -> None:
+    """require_pairing=false must leave _user_allowlist None even if a platform
+    has allowed_user_ids configured — otherwise PairingInterceptor's "no
+    allowlist AND no store => enforcement disabled" fast path breaks for
+    OTHER platforms (e.g. web) that reach SessionRouter with no allowlist
+    concept of their own — a regression this fix must not introduce.
+    """
+    from arcgateway.config import GatewayConfig
+
+    toml_text = f"""
+[gateway]
+tier = "personal"
+agent_did = "did:arc:agent:test"
+runtime_dir = "{tmp_path}"
+
+[security]
+require_pairing = false
+
+[platforms.telegram]
+enabled = true
+allowed_user_ids = [555]
+"""
+    config_file = tmp_path / "gateway.toml"
+    config_file.write_text(toml_text, encoding="utf-8")
+    config = GatewayConfig.from_toml(config_file)
+
+    runner = GatewayRunner.from_config(config)
+
+    assert runner.session_router._pairing._user_allowlist is None
 
 
 # ---------------------------------------------------------------------------
