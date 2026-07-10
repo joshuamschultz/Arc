@@ -3,15 +3,18 @@
 The browser module's @capability class and @tool functions share state
 (CDP client, accessibility manager, config, bus, telemetry).
 Decorator-stamped functions can't carry that state in a closure, so it
-lives in a module-level :class:`_State` instance configured by the agent
-at startup.
+lives in a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-This mirrors the pattern in :mod:`arcagent.modules.policy._runtime` and
-is consistent with the single-agent-per-process model.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale
+and the reference pattern this module mirrors.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +44,9 @@ class _State:
     ax_manager: Any = None
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_browser_state", default=None
+)
 
 
 def configure(
@@ -51,40 +56,41 @@ def configure(
     bus: Any = None,
     telemetry: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup.
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     Accepts either a raw dict (from arcagent.toml) or an already-built
     :class:`BrowserConfig`. The CDP client and AX manager are created
     lazily by :class:`BrowserCapability.setup` so configure() stays cheap
     and side-effect-free.
     """
-    global _state
     if isinstance(config, BrowserConfig):
         cfg = config
     else:
         cfg = BrowserConfig(**(config or {}))
-    _state = _State(
-        config=cfg,
-        workspace=workspace.resolve(),
-        bus=bus,
-        telemetry=telemetry,
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=workspace.resolve(),
+            bus=bus,
+            telemetry=telemetry,
+        )
     )
 
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "browser module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 __all__ = ["configure", "reset", "state"]

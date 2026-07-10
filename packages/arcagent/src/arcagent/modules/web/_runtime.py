@@ -3,12 +3,12 @@
 The web module's tools share state — the resolved ``WebConfig``,
 lazily-built provider clients, URL policy, and the telemetry sink for
 audit events. Decorator-stamped functions can't carry that state in a
-closure, so it lives in a module-level :class:`_State` instance
-configured by the agent at startup.
+closure, so it lives in a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-Mirrors the pattern in :mod:`arcagent.modules.voice._runtime` and
-:mod:`arcagent.builtins.capabilities._runtime` (single-agent-per-process
-model).
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
 
 Federal tier validation runs at :func:`configure` time so misconfiguration
 is caught before any network request is attempted — fail fast, fail loud.
@@ -16,6 +16,7 @@ is caught before any network request is attempted — fail fast, fail loud.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,7 +40,9 @@ class _State:
     extract_provider: WebExtractProvider | None = field(default=None)
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_web_state", default=None
+)
 
 
 def configure(
@@ -49,18 +52,19 @@ def configure(
     workspace: Path = Path("."),
     agent_name: str = "",
 ) -> None:
-    """Bind module state. Called once at agent startup.
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     Validates federal-tier URL allowlist policy and logs provider selection.
     """
-    global _state
     cfg = WebConfig(**(config or {}))
     _enforce_tier_policy(cfg)
-    _state = _State(
-        config=cfg,
-        telemetry=telemetry,
-        workspace=workspace.resolve(),
-        agent_name=agent_name,
+    _state_var.set(
+        _State(
+            config=cfg,
+            telemetry=telemetry,
+            workspace=workspace.resolve(),
+            agent_name=agent_name,
+        )
     )
     _logger.info(
         "web: runtime configured tier=%s search=%s extract=%s allowlist_size=%d pii=%s",
@@ -74,18 +78,18 @@ def configure(
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "web module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 async def get_search_provider() -> WebSearchProvider:

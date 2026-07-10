@@ -4,15 +4,21 @@ The decorator-form scheduler (``capabilities.py``) cannot carry state
 in a closure — ``@tool`` and ``@hook`` stamps wrap plain functions, and
 the ``@capability`` class is instantiated by the loader with no
 arguments. Runtime state (engine, store, config, telemetry, optional
-agent_run_fn) therefore lives on a module-level :class:`_State`
-instance configured by the agent at startup.
+agent_run_fn) therefore lives on a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-This mirrors :mod:`arcagent.modules.policy._runtime` and is consistent
-with the single-agent-per-process model.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
+Safe for the scheduler's own tick loop too: it's spawned via
+``asyncio.create_task()`` after ``configure()`` in the same agent-startup
+task, so asyncio's automatic context-copy on task creation gives it this
+agent's state for its whole lifetime.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -44,7 +50,9 @@ class _State:
     engine: SchedulerEngine | None = None
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_scheduler_state", default=None
+)
 
 
 def configure(
@@ -55,37 +63,38 @@ def configure(
     bus: Any = None,
     agent_run_fn: AgentRunFn | None = None,
 ) -> None:
-    """Bind module state. Called once at agent startup."""
-    global _state
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     if isinstance(config, SchedulerConfig):
         cfg = config
     else:
         cfg = SchedulerConfig(**(config or {}))
     ws = workspace.resolve()
-    _state = _State(
-        config=cfg,
-        workspace=ws,
-        telemetry=telemetry,
-        store=ScheduleStore(ws / cfg.store_path),
-        bus=bus,
-        agent_run_fn=agent_run_fn,
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=ws,
+            telemetry=telemetry,
+            store=ScheduleStore(ws / cfg.store_path),
+            bus=bus,
+            agent_run_fn=agent_run_fn,
+        )
     )
 
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "scheduler module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 __all__ = ["AgentRunFn", "configure", "reset", "state"]

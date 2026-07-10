@@ -3,8 +3,12 @@
 The planner's tools and hooks share one piece of state: where plans live, the
 arcllm handle used to decompose/replan, the audit sink, and the arcrun run seam
 bound at ``agent:ready``. Decorator-stamped functions can't carry that in a
-closure, so it lives in a module-level :class:`_State` configured once at agent
-startup — mirroring :mod:`arcagent.modules.policy._runtime`.
+closure, so it lives in a :class:`_State` bound to a
+:class:`contextvars.ContextVar`, configured once at agent startup —
+mirroring :mod:`arcagent.builtins.capabilities._runtime` (task 27/32: a
+plain module global here is silently overwritten by whichever agent's
+``asyncio.Task`` most recently called ``configure()``, since the embedded
+gateway runs many agents concurrently in one process).
 
 The ToolRegistry/PolicyPipeline are NOT injected here (the decorator dispatcher
 does not carry them); step execution instead drives the agent's own run seam
@@ -14,6 +18,7 @@ without the planner ever touching them.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -79,7 +84,9 @@ class _State:
         return self.config.max_replans
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_planning_state", default=None
+)
 
 
 def configure(
@@ -93,7 +100,7 @@ def configure(
     agent_did: str = "",
     operator_signer: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup.
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     ``operator_signer`` (arctrust ``Signer``) signs the planner's tamper-evident
     WORM audit chain — every ``plan.created`` / ``plan.step.*`` / ``plan.replanned``
@@ -102,7 +109,6 @@ def configure(
     is a WORM-sink module; absent it (a tier with no operator authority), the
     chain is simply not written and transitions still emit to ``telemetry``.
     """
-    global _state
     cfg = PlanningConfig(**(config or {}))
     ws = workspace.resolve()
     plans_dir = ws / "plans"
@@ -113,17 +119,19 @@ def configure(
         telemetry=telemetry,
         actor_did=agent_did or (f"did:arc:{agent_name}" if agent_name else "did:arc:planner"),
     )
-    _state = _State(
-        plans_dir=plans_dir,
-        workspace=ws,
-        agent_name=agent_name,
-        agent_did=agent_did,
-        config=cfg,
-        store=store,
-        telemetry=telemetry,
-        llm_config=llm_config,
-        eval_config=eval_config,
-        eval_label=f"{agent_name}/eval" if agent_name else "eval",
+    _state_var.set(
+        _State(
+            plans_dir=plans_dir,
+            workspace=ws,
+            agent_name=agent_name,
+            agent_did=agent_did,
+            config=cfg,
+            store=store,
+            telemetry=telemetry,
+            llm_config=llm_config,
+            eval_config=eval_config,
+            eval_label=f"{agent_name}/eval" if agent_name else "eval",
+        )
     )
 
 
@@ -191,18 +199,18 @@ def identity_goal_hash() -> str:
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "planning module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 __all__ = [

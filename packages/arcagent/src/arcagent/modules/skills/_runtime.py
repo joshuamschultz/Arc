@@ -6,13 +6,24 @@ LLM, and the operator-approval provider bound to the shared :class:`HumanGate`) 
 the :class:`~arcagent.skilladapt.SkillAdapter`. With a :class:`NullSkillAdapter`, ``active``
 is ``False`` and every hook short-circuits — a silent no-op that writes nothing (AC-1).
 
-The ``skill_path`` seam and the retire/revive suppression reconcile read the module-global
-state lazily so the real :class:`~arcagent.capabilities.capability_registry.CapabilityRegistry`
+The ``skill_path`` seam and the retire/revive suppression reconcile read the
+per-task state lazily so the real
+:class:`~arcagent.capabilities.capability_registry.CapabilityRegistry`
 delivered at ``agent:ready`` is visible without rebinding the adapter.
+
+Task 27/32: state is bound to a :class:`contextvars.ContextVar`, not a
+plain module global — a plain global is silently overwritten by whichever
+agent's ``asyncio.Task`` most recently called ``configure()``; see
+``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
+The Curator's ``@background_task`` lifecycle-sweep loop is safe under
+this: it's spawned via ``asyncio.create_task()`` after ``configure()`` in
+the same agent-startup task, so asyncio's automatic context-copy on task
+creation gives it this agent's state for its whole lifetime.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,7 +77,9 @@ class _State:
         }
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_skills_state", default=None
+)
 
 
 def configure(
@@ -82,8 +95,7 @@ def configure(
     operator_signer: Any = None,
     human_gate: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup."""
-    global _state
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     from arcagent.modules.skills.approval import build_skill_approval_provider
     from arcagent.modules.skills.config import SkillsConfig
 
@@ -118,14 +130,15 @@ def configure(
         skill_path=_skill_path,
         adapter_allowlist=tuple(cfg.adapter_allowlist),
     )
-    _state = _State(
+    new_state = _State(
         adapter=adapter,
         active=not isinstance(adapter, NullSkillAdapter),
         workspace=ws,
         telemetry=telemetry,
         sweep_poll_seconds=cfg.sweep_poll_seconds,
     )
-    _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, _state.active)
+    _state_var.set(new_state)
+    _logger.info("skills module configured (adapter=%s, active=%s)", cfg.adapter, new_state.active)
 
 
 def _build_signer(identity: Any) -> _SidecarSigner | None:
@@ -167,7 +180,7 @@ def _skill_path(skill_name: str) -> Path | None:
     Reads the real registry shape (``_skills`` dict of ``SkillEntry`` with ``.location``),
     so the improver can locate a skill's bundle to mutate it (SPEC-044 finding 3b).
     """
-    st = _state
+    st = _state_var.get()
     if st is None or st.skill_registry is None:
         return None
     entry = st.skill_registry._skills.get(skill_name)
@@ -184,7 +197,7 @@ async def run_lifecycle_sweep() -> None:
     Driven by the ``@background_task`` loop — the sole producer of ``review_lifecycle``,
     never a direct facade call.
     """
-    st = _state
+    st = _state_var.get()
     if st is None or not st.active:
         return
     st.sweep_turn += 1
@@ -199,7 +212,7 @@ async def reconcile_suppression() -> None:
     Called after each sweep and once at ``agent:ready`` so retirement survives restart
     (the retired set is read from the on-disk candidate-store manifest).
     """
-    st = _state
+    st = _state_var.get()
     if st is None or not st.active or st.skill_registry is None:
         return
     retired = st.adapter.retired_skills()
@@ -213,23 +226,24 @@ async def reconcile_suppression() -> None:
 
 def record_turn(turn: int) -> None:
     """Stash the latest turn number (from agent:post_plan) for the off-loop sweep label."""
-    if _state is not None:
-        _state.last_turn = turn
+    current = _state_var.get()
+    if current is not None:
+        current.last_turn = turn
 
 
 def state() -> _State:
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "skills module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 __all__ = [

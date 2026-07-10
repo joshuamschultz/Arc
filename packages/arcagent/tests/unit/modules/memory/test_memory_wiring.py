@@ -68,14 +68,16 @@ def _configure_with(brain: Any, cfg: dict[str, Any] | None = None) -> None:
     """Install a spy/real brain directly into runtime state (bypass select)."""
     from arcagent.modules.memory.config import MemoryConfig
 
-    _runtime._state = _runtime._State(
-        config=MemoryConfig(**(cfg or {})),
-        brain=brain,
-        workspace=Path("."),
-        telemetry=None,
-        bus=None,
-        agent_did=_DID,
-        active=not isinstance(brain, NullBrain),
+    _runtime._state_var.set(
+        _runtime._State(
+            config=MemoryConfig(**(cfg or {})),
+            brain=brain,
+            workspace=Path("."),
+            telemetry=None,
+            bus=None,
+            agent_did=_DID,
+            active=not isinstance(brain, NullBrain),
+        )
     )
 
 

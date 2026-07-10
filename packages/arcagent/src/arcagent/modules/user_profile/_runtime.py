@@ -2,16 +2,17 @@
 
 The two hooks and the three tools share state (config, workspace, store,
 telemetry). Decorator-stamped functions can't carry that state in a closure,
-so it lives in a module-level :class:`_State` instance configured by the
-agent at startup.
+so it lives in a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-Mirrors the pattern in :mod:`arcagent.modules.policy._runtime` and
-:mod:`arcagent.modules.memory._runtime`. Single-agent-per-process is the
-assumption; this is shared mutable state for one agent.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +35,9 @@ class _State:
     agent_name: str
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_user_profile_state", default=None
+)
 
 
 def configure(
@@ -44,16 +47,17 @@ def configure(
     workspace: Path = Path("."),
     agent_name: str = "",
 ) -> None:
-    """Bind module state. Called once at agent startup."""
-    global _state
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup."""
     cfg = UserProfileConfig(**(config or {}))
     ws = workspace.resolve()
-    _state = _State(
-        config=cfg,
-        workspace=ws,
-        telemetry=telemetry,
-        store=ProfileStore(ws, cfg, telemetry=telemetry),
-        agent_name=agent_name,
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=ws,
+            telemetry=telemetry,
+            store=ProfileStore(ws, cfg, telemetry=telemetry),
+            agent_name=agent_name,
+        )
     )
     _logger.info(
         "user_profile module runtime configured workspace=%s profile_dir=%s",
@@ -64,18 +68,18 @@ def configure(
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "user_profile module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 __all__ = ["configure", "reset", "state"]

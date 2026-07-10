@@ -4,15 +4,23 @@ The decorator-form proactive module (``capabilities.py``) cannot carry
 state in a closure — ``@hook`` and ``@capability`` stamps wrap plain
 functions/classes and the capability class is instantiated by the
 loader with no arguments. Runtime state (engine, leader, config,
-telemetry) therefore lives on a module-level :class:`_State` instance
-configured by the agent at startup.
+telemetry) therefore lives on a :class:`_State` instance bound to a
+:class:`contextvars.ContextVar`, configured by the agent at startup.
 
-This mirrors :mod:`arcagent.modules.scheduler._runtime` and is
-consistent with the single-agent-per-process model.
+Task 27/32: a plain module global here is silently overwritten by
+whichever agent's ``asyncio.Task`` most recently called ``configure()`` —
+see ``arcagent/builtins/capabilities/_runtime.py`` for the full rationale.
+Safe for the tick loop too: it's spawned via ``asyncio.create_task()``
+from ``ProactiveCapability.setup()``, which runs AFTER ``configure()`` in
+the same agent-startup task — asyncio's automatic context-copy on task
+creation gives the tick loop this agent's state (including ``_tick_task``
+itself, mutated in place on the SAME ``_State`` instance) for its whole
+lifetime.
 """
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import socket
 from dataclasses import dataclass
@@ -43,7 +51,9 @@ class _State:
     _tick_task: Any = None
 
 
-_state: _State | None = None
+_state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
+    "arcagent_proactive_state", default=None
+)
 
 
 def configure(
@@ -54,7 +64,7 @@ def configure(
     agent_name: str = "",
     llm_config: Any = None,
 ) -> None:
-    """Bind module state. Called once at agent startup.
+    """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     The leader-election backend is selected from ``config['leader']`` — see
     :func:`_build_leader`. It defaults to NoOp (single-instance / personal
@@ -62,15 +72,16 @@ def configure(
     ``leader='redis'`` or ``leader='k8s'`` so exactly one replica ticks the
     engine (R-048).
     """
-    global _state
     cfg = config or {}
-    _state = _State(
-        config=cfg,
-        workspace=workspace.resolve(),
-        telemetry=telemetry,
-        agent_name=agent_name,
-        llm_config=llm_config,
-        leader=_build_leader(cfg, agent_name),
+    _state_var.set(
+        _State(
+            config=cfg,
+            workspace=workspace.resolve(),
+            telemetry=telemetry,
+            agent_name=agent_name,
+            llm_config=llm_config,
+            leader=_build_leader(cfg, agent_name),
+        )
     )
 
 
@@ -130,18 +141,18 @@ def _build_leader(config: dict[str, Any], agent_name: str) -> LeaderElection:
 
 def state() -> _State:
     """Return the configured state. Raises if unconfigured."""
-    if _state is None:
+    current = _state_var.get()
+    if current is None:
         raise RuntimeError(
             "proactive module called before runtime is configured; "
             "agent must call _runtime.configure(...) at startup"
         )
-    return _state
+    return current
 
 
 def reset() -> None:
     """Test-only: clear runtime state."""
-    global _state
-    _state = None
+    _state_var.set(None)
 
 
 __all__ = ["configure", "reset", "state"]
