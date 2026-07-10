@@ -274,6 +274,29 @@ def build_adapters(
             "allow",
             reason="official" if name in OFFICIAL_ADAPTERS else "unofficial",
         )
+        if not isinstance(block.get("agent_did"), str) or not block.get("agent_did"):
+            # No per-platform override: this adapter serves whatever
+            # [gateway].agent_did happens to be at process startup — a live
+            # rewrite of that shared default (e.g. an operator/deploy script
+            # re-pointing a multi-agent fleet's config) followed by a
+            # restart silently repoints this adapter at a different agent
+            # with no in-band signal. Audited (not blocked — single-agent
+            # deployments legitimately rely on the shared default) so the
+            # risk is visible rather than silent (task 27).
+            _audit(
+                "gateway.adapter.shared_default_agent_did",
+                name,
+                "warn",
+                reason="no_platform_agent_did_override",
+            )
+            _logger.warning(
+                "registry: adapter %r has no [platforms.%s].agent_did override — "
+                "serves [gateway].agent_did=%r, which changes on any config edit + "
+                "restart with no in-band warning",
+                name,
+                name,
+                default_agent_did,
+            )
         _logger.info("registry: loaded adapter %r (agent_did=%s)", name, ctx.agent_did())
         adapters.append(adapter)
 

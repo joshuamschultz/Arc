@@ -142,6 +142,62 @@ def test_build_adapters_defaults_require_pairing_false() -> None:
     assert seen_ctx[0].require_pairing is False
 
 
+# ── build_adapters: shared-default agent_did visibility (task 27) ───────────
+
+
+def test_build_adapters_warns_when_platform_has_no_agent_did_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform with no per-block agent_did silently inherits
+    [gateway].agent_did — the exact mechanism that let a live gateway.toml
+    rewrite (e.g. a deploy-node.sh re-run against a shared config while the
+    service later restarts) silently repoint an already-live Telegram bot
+    at a different agent with zero operator visibility. Emitting an audit
+    event here doesn't prevent the rewrite, but makes the risk observable
+    instead of silent."""
+    events: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def _fake_emit(*, action, target, outcome, extra):  # type: ignore[no-untyped-def]
+        events.append((action, target, outcome, extra))
+
+    monkeypatch.setattr("arcgateway.adapters.registry.emit_event", _fake_emit)
+
+    build_adapters(
+        platforms={"telegram": {"enabled": True}},
+        on_message=_noop_on_message,
+        default_agent_did="did:arc:agent:default",
+        tier="personal",
+        plugins={"telegram": _plugin("telegram")},
+    )
+
+    warn_events = [e for e in events if e[0] == "gateway.adapter.shared_default_agent_did"]
+    assert warn_events, "must audit when a platform inherits the shared gateway agent_did"
+    assert warn_events[0][2] == "warn"
+
+
+def test_build_adapters_no_warning_when_platform_has_own_agent_did(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform with its own explicit agent_did override is not warned about."""
+    events: list[tuple[str, str, str, dict[str, object]]] = []
+
+    def _fake_emit(*, action, target, outcome, extra):  # type: ignore[no-untyped-def]
+        events.append((action, target, outcome, extra))
+
+    monkeypatch.setattr("arcgateway.adapters.registry.emit_event", _fake_emit)
+
+    build_adapters(
+        platforms={"telegram": {"enabled": True, "agent_did": "did:arc:agent:telegram-only"}},
+        on_message=_noop_on_message,
+        default_agent_did="did:arc:agent:default",
+        tier="personal",
+        plugins={"telegram": _plugin("telegram")},
+    )
+
+    warn_events = [e for e in events if e[0] == "gateway.adapter.shared_default_agent_did"]
+    assert not warn_events
+
+
 # ── build_adapters: enable filtering ─────────────────────────────────────────
 
 
