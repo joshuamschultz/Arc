@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._validation import resolve_workspace_path
 
 
 @tool(
@@ -34,11 +33,7 @@ async def edit(
     if not old_string:
         return "Error: old_string must not be empty"
 
-    resolved = resolve_workspace_path(
-        file_path,
-        _runtime.workspace(),
-        allowed_paths=_runtime.allowed_paths(),
-    )
+    resolved = _runtime.resolve_workspace_path(file_path, tool_name="edit")
     _runtime.check_protected(resolved, file_path, tool_name="edit")
     if not resolved.exists():
         return f"Error: File not found: {file_path}"

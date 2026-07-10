@@ -57,8 +57,12 @@ async def update_tool(
     decorator, bumps it per ``version_bump``, and rejects the update
     if ``new_source`` does not contain the bumped version literal.
     """
+    if not name.isidentifier():
+        return f"Error: name {name!r} is not a valid Python identifier"
     workspace = _runtime.workspace()
-    target = workspace / _CAPABILITIES_SUBDIR / f"{name}.py"
+    target = _runtime.resolve_workspace_path(
+        f"{_CAPABILITIES_SUBDIR}/{name}.py", tool_name="update_tool"
+    )
     if not target.exists():
         return f"Error: tool {name!r} not found at {target.relative_to(workspace)}"
     current = target.read_text(encoding="utf-8")

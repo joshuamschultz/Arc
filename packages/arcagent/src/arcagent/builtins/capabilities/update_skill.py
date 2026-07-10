@@ -54,8 +54,11 @@ async def update_skill(
     Frontmatter is preserved (with bumped ``version``); body content
     is replaced wholesale.
     """
-    workspace = _runtime.workspace()
-    skill_md = workspace / _SKILLS_SUBDIR / name / "SKILL.md"
+    if not name.replace("-", "_").isidentifier():
+        return f"Error: name {name!r} must be alphanumeric (dashes allowed)"
+    skill_md = _runtime.resolve_workspace_path(
+        f"{_SKILLS_SUBDIR}/{name}/SKILL.md", tool_name="update_skill"
+    )
     if not skill_md.exists():
         return f"Error: skill {name!r} not found"
     text = skill_md.read_text(encoding="utf-8")

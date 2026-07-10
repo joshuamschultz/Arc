@@ -12,7 +12,6 @@ import stat as stat_module
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._validation import resolve_workspace_path
 
 _MAX_FILE_SIZE = 5 * 1024 * 1024
 _BINARY_CHECK_SIZE = 8192
@@ -42,8 +41,7 @@ async def grep(
 ) -> str:
     """Search workspace files for ``pattern``; return ``rel:line: text`` lines."""
     ws = _runtime.workspace()
-    allowed = _runtime.allowed_paths()
-    search_root = resolve_workspace_path(path, ws, allowed_paths=allowed) if path else ws
+    search_root = _runtime.resolve_workspace_path(path, tool_name="grep") if path else ws
     if len(pattern) > _MAX_PATTERN_LENGTH:
         return f"Error: Pattern too long ({len(pattern)} chars, max {_MAX_PATTERN_LENGTH})"
     try:

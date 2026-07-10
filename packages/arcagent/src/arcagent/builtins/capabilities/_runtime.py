@@ -217,6 +217,38 @@ async def run_sandboxed_bash(command: str, *, timeout: int = 120) -> str:
     return output if output else "(no output)"
 
 
+def resolve_workspace_path(
+    file_path: str, *, tool_name: str, allow_symlinks: bool = False
+) -> Path:
+    """Resolve ``file_path`` within the agent's own workspace boundary.
+
+    Single choke point for every built-in tool that accepts a caller-supplied
+    path — file tools (read/write/edit/ls/find/grep) and self-modification
+    tools (create_tool/update_tool/create_skill/update_skill) alike route
+    through here, never through :mod:`arcagent.tools._validation` directly.
+    That's what makes cross-agent escapes (SPEC-035-adjacent incident: an
+    agent's own ``write`` tool installed files in a SIBLING agent's
+    workspace) both impossible by construction and audited in one place.
+
+    Thin binding of :func:`arcagent.tools._validation.resolve_workspace_path`
+    to the per-agent runtime state (workspace, allowed paths, identity,
+    audit sink). Raises ``ToolError`` on denial; the denial is audited
+    before it is raised.
+    """
+    from arcagent.tools._validation import resolve_workspace_path as _resolve
+
+    caller = _identity.did if _identity is not None else "did:arc:unknown"
+    return _resolve(
+        file_path,
+        workspace(),
+        allow_symlinks=allow_symlinks,
+        allowed_paths=_allowed_paths,
+        tool_name=tool_name,
+        caller_did=caller,
+        audit_sink=_audit_sink,
+    )
+
+
 def check_protected(resolved: Path, file_path: str, *, tool_name: str) -> None:
     """Deny + audit a mutation of a protected path (REQ-001/004).
 
@@ -305,6 +337,7 @@ __all__ = [
     "loader",
     "protected_paths",
     "reset",
+    "resolve_workspace_path",
     "run_sandboxed_bash",
     "sign_artifact_file",
     "tier",

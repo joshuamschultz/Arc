@@ -95,7 +95,7 @@ async def create_skill(
     if not name.replace("-", "_").isidentifier():
         return f"Error: name {name!r} must be alphanumeric (dashes allowed)"
     workspace = _runtime.workspace()
-    folder = workspace / _SKILLS_SUBDIR / name
+    folder = _runtime.resolve_workspace_path(f"{_SKILLS_SUBDIR}/{name}", tool_name="create_skill")
     if folder.exists():
         return f"Error: skill {name!r} already exists at {folder.relative_to(workspace)}"
     folder.mkdir(parents=True)

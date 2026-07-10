@@ -37,9 +37,9 @@ async def create_tool(name: str, source: str) -> str:
     if not name.isidentifier():
         return f"Error: name {name!r} is not a valid Python identifier"
     workspace = _runtime.workspace()
-    target_dir = workspace / _CAPABILITIES_SUBDIR
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{name}.py"
+    target = _runtime.resolve_workspace_path(
+        f"{_CAPABILITIES_SUBDIR}/{name}.py", tool_name="create_tool"
+    )
     if target.exists():
         return (
             f"Error: tool {name!r} already exists at {target.relative_to(workspace)}; "
@@ -49,6 +49,7 @@ async def create_tool(name: str, source: str) -> str:
         AstValidator().validate(source)
     except ASTValidationError as exc:
         return f"Error: AST validation rejected source — {exc}"
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding="utf-8")
     _runtime.sign_artifact_file(target, source.encode("utf-8"))
     return f"Created tool {name!r} at {target.relative_to(workspace)}"
