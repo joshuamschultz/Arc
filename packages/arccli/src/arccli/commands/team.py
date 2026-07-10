@@ -614,9 +614,10 @@ def _create_channel(args: argparse.Namespace) -> None:
     materialization step — multi-channel teams (work/personal/brand) were
     impossible from the CLI. ``--team`` validates the team exists and, when
     ``--members`` is omitted, defaults membership to that team's members;
-    explicit ``--members`` always wins. create_channel() itself has no
-    duplicate guard (a second call silently overwrites membership), so this
-    checks list_channels() first and refuses rather than clobbering.
+    explicit ``--members`` always wins. ``create_channel()`` itself now
+    refuses duplicate names (service-level guard) — the ``list_channels()``
+    pre-check below is kept only for a friendlier error message; the
+    ``ValueError`` catch is the backstop against the race between the two.
     """
     from arcteam.registry import resolve
     from arcteam.team import TeamStore
@@ -647,7 +648,11 @@ def _create_channel(args: argparse.Namespace) -> None:
                 )
                 sys.exit(1)
 
-            await svc.create_channel(Channel(name=channel_name, members=member_dids))
+            try:
+                await svc.create_channel(Channel(name=channel_name, members=member_dids))
+            except ValueError as exc:
+                sys.stderr.write(f"arc team create-channel: {exc}\n")
+                sys.exit(1)
         finally:
             await _shutdown(backend)
 

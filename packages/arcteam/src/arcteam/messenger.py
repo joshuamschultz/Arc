@@ -696,7 +696,17 @@ class MessagingService:
     # --- Channels ---
 
     async def create_channel(self, channel: Channel) -> None:
-        """Create a channel and its stream directory."""
+        """Create a channel and its stream directory.
+
+        Raises:
+            ValueError: If a channel with this name already exists — a
+                blind write here would silently overwrite the existing
+                channel's membership (every caller previously had to build
+                its own list_channels() pre-check to avoid this).
+        """
+        existing = await self._backend.read(CHANNELS_COLLECTION, channel.name)
+        if existing is not None:
+            raise ValueError(f"Channel already exists: {channel.name}")
         if not channel.created:
             channel.created = datetime.now(UTC).isoformat()
         await self._backend.write(CHANNELS_COLLECTION, channel.name, channel.model_dump())
