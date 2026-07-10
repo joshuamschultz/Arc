@@ -69,7 +69,22 @@ from arcagent.tools._dynamic_loader import AstValidationCache, build_restricted_
 # — the harness's own shipped package code — are trusted. Operator-placed
 # capabilities in global/agent must be signed or TOFU-approved to load above
 # personal, which is correct for federal (nothing unsigned loads).
-_UNTRUSTED_ROOTS: frozenset[str] = frozenset({"workspace", "global", "agent"})
+#
+# The ``*-skills`` variants are the ``skills/`` subdir of each agent-writable
+# capabilities root (where ``create_skill``/``update_skill`` write); a
+# ``SKILL.md`` there is injected into the prompt (LLM01/ASI06), so it passes the
+# same gate. ``builtins-skills`` is the ONLY skills root left trusted — shipped
+# package code.
+_UNTRUSTED_ROOTS: frozenset[str] = frozenset(
+    {
+        "workspace",
+        "global",
+        "agent",
+        "workspace-skills",
+        "global-skills",
+        "agent-skills",
+    }
+)
 
 _logger = logging.getLogger("arcagent.capabilities.capability_loader")
 

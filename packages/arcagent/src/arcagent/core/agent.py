@@ -65,7 +65,7 @@ from arcagent.core.session_internal.capability_ledger import (
 )
 from arcagent.core.telemetry import AgentTelemetry
 from arcagent.core.tool_policy import build_pipeline
-from arcagent.core.tool_registry import ToolRegistry
+from arcagent.core.tool_registry import RegisteredTool, ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 from arcagent.tools._policy_fill import resolve_provider_limits
 from arcagent.tools.human_gate import HumanGate, HumanGateConfig
@@ -740,6 +740,19 @@ class ArcAgent:
         if self._capability_registry is None:
             return []
         return list(self._capability_registry._skills.values())
+
+    @property
+    def registered_tools(self) -> list[RegisteredTool]:
+        """Every tool in the runtime ToolRegistry — the full wrapped surface.
+
+        Builtins, capability-file tools, module tools, and self-authored tools,
+        not a preset subset (REQ-095). Empty before startup. Read-only accessor
+        for out-of-process observers (arcui capability views) that must not
+        reach into the registry internals.
+        """
+        if self._tool_registry is None:
+            return []
+        return list(self._tool_registry.tools.values())
 
     async def shutdown(self) -> None:
         """Reverse-order teardown of all components.

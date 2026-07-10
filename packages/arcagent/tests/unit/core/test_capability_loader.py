@@ -100,6 +100,30 @@ class TestScanAndRegister:
 
 
 @pytest.mark.asyncio
+class TestSkillsSubdirRoot:
+    async def test_capabilities_skills_subdir_loads(self, four_roots: dict[str, Path]) -> None:
+        """A skill at ``<root>/skills/<name>/SKILL.md`` (create_skill's target)
+        loads when a ``<name>-skills`` root is registered — the loader scans the
+        skills subdir the same way it scans ``builtins/skills``."""
+        from arcagent.capabilities.capability_loader import CapabilityLoader
+
+        skills_dir = four_roots["workspace"] / "skills"
+        _write_skill(skills_dir / "authored", "authored")
+
+        reg = CapabilityRegistry()
+        scan_roots = [
+            ("workspace", four_roots["workspace"]),
+            ("workspace-skills", skills_dir),
+        ]
+        loader = CapabilityLoader(scan_roots=scan_roots, registry=reg)
+        await loader.scan_and_register()
+
+        skill = await reg.get_skill("authored")
+        assert skill is not None
+        assert skill.scan_root == "workspace-skills"
+
+
+@pytest.mark.asyncio
 class TestScanPrecedence:
     async def test_workspace_overrides_builtins(self, four_roots: dict[str, Path]) -> None:
         """When the same name appears in two roots, later-scanned wins."""

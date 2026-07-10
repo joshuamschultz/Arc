@@ -29,7 +29,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.query_validators import safe_int
-from arcui.routes.agent_detail.skills import discover_skills
+from arcui.routes.agent_detail.capabilities import agent_skill_rows
 from arcui.routes.agent_detail.tools import _BUILTIN_CLASSIFICATION
 from arcui.schemas import (
     AuditEventsResponse,
@@ -224,8 +224,8 @@ async def get_tools_skills(request: Request) -> JSONResponse:
     registry = request.app.state.agent_registry
 
     for entry in _roster(request):
-        # Skills via fs_reader (workspace/skills/*.md)
-        for s in _read_agent_skills(entry):
+        # Skills via the arcagent inventory seam — same set the agent loads.
+        for s in await _read_agent_skills(entry):
             s["agent_id"] = entry.agent_id
             skills.append(s)
         # Tools from live registration (agents not connected contribute none).
@@ -248,14 +248,10 @@ async def get_tools_skills(request: Request) -> JSONResponse:
     )
 
 
-def _read_agent_skills(entry: Any) -> list[dict[str, Any]]:
-    # Reuse the agent-detail discovery so the fleet list and the per-agent tab
-    # surface the same skills (workspace + capabilities + builtins). The full
-    # body is dropped here — the detail drawer fetches it per-agent on click.
-    rows = discover_skills(entry.agent_id, Path(entry.workspace_path))
-    for row in rows:
-        row.pop("body", None)
-    return rows
+async def _read_agent_skills(entry: Any) -> list[dict[str, Any]]:
+    # Reuse the agent-detail seam so the fleet list and the per-agent tab
+    # surface the identical set the agent loads, each with source_root + status.
+    return await agent_skill_rows(Path(entry.workspace_path))
 
 
 # ---------------------------------------------------------------------------

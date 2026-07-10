@@ -114,18 +114,16 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         ("builtins-skills", builtins_root / "skills"),
     ]
 
-    global_root = Path("~/.arc/capabilities").expanduser()
-    if global_root.is_dir():
-        scan_roots.append(("global", global_root))
+    # Each agent-writable root contributes both ``<name>`` (tools live directly
+    # under it) and ``<name>-skills`` (its ``skills/`` subdir, where create_skill
+    # writes), mirroring the builtins / builtins-skills pair above. Shared with
+    # the arcui inventory seam so a UI read and a real load scan the same roots.
+    from arcagent.capabilities.inventory import append_capability_scan_roots
 
+    append_capability_scan_roots(scan_roots, "global", Path("~/.arc/capabilities").expanduser())
     agent_root = agent._config_path.parent.resolve()
-    agent_caps = agent_root / "capabilities"
-    if agent_caps.is_dir():
-        scan_roots.append(("agent", agent_caps))
-
-    workspace_caps = workspace / "capabilities"
-    if workspace_caps.is_dir():
-        scan_roots.append(("workspace", workspace_caps))
+    append_capability_scan_roots(scan_roots, "agent", agent_root / "capabilities")
+    append_capability_scan_roots(scan_roots, "workspace", workspace / "capabilities")
 
     modules_dir = Path(__file__).parent.parent / "modules"
     for mod_name, mod_entry in agent._config.modules.items():
@@ -135,38 +133,28 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         if (mod_dir / "capabilities.py").is_file():
             scan_roots.append((f"module:{mod_name}", mod_dir))
 
-    # Tier-resolved import policy for untrusted workspace-authored tools:
-    # personal allows all; federal honors only the explicit allowlist;
-    # enterprise honors allow_all or the allowlist. The AST gate still blocks
-    # the path entirely; this only relaxes which module imports are permitted.
-    from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
-
-    caps_cfg = agent._config.capabilities
-    allow_all_imports, allowed_imports = resolve_workspace_import_policy(
-        agent._config.security.tier,
-        allow_all_imports=caps_cfg.allow_all_imports,
-        allow_imports=caps_cfg.allow_imports,
-    )
     # SPEC-033 Sign gate: re-verify signatures at load and adjudicate via TOFU.
-    # Signature is the floor above personal; personal may relax (auto_run).
-    from arcagent.core.tier import Tier
-    from arcagent.core.tofu_layer import TofuLayer
+    # Signature is the floor above personal; personal may relax (auto_run). The
+    # posture (tier -> require_signature, import policy, pinned key) is resolved
+    # by the SAME helper the arcui capability inventory uses, so a UI read and a
+    # real load agree on every verdict (single source of truth).
+    from arcagent.capabilities.inventory import resolve_trust_posture
 
-    tier = agent._config.security.tier
-    tofu = TofuLayer(
-        Tier(tier if tier in ("personal", "enterprise", "federal") else "personal"),
-        agent._config.security.validators,
-    )
     trusted_pubkey = agent._identity.public_key if agent._identity is not None else None
+    posture = resolve_trust_posture(
+        agent._config.security,
+        agent._config.capabilities,
+        trusted_public_key=trusted_pubkey,
+    )
     agent._capability_loader = CapabilityLoader(
         scan_roots=scan_roots,
         registry=agent._capability_registry,
         bus=bus,
-        allow_all_imports=allow_all_imports,
-        allowed_imports=allowed_imports,
-        tofu=tofu,
-        require_signature=tier in ("enterprise", "federal"),
-        trusted_public_key=trusted_pubkey,
+        allow_all_imports=posture.allow_all_imports,
+        allowed_imports=posture.allowed_imports,
+        tofu=posture.tofu,
+        require_signature=posture.require_signature,
+        trusted_public_key=posture.trusted_public_key,
     )
     builtin_runtime.configure(
         workspace=workspace,

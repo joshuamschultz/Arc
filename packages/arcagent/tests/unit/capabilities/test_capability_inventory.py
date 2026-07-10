@@ -146,6 +146,33 @@ class TestCapabilityInventory:
         roots = {it.source_root for it in items}
         assert {"builtins-skills", "builtins", "global", "agent", "workspace"} <= roots
 
+    async def test_workspace_skills_subdir_is_scanned(self, agent_tree: dict[str, Path]) -> None:
+        # create_skill / update_skill write to <root>/capabilities/skills/<name>/,
+        # the same shape as the builtins-skills root — the loader must scan it.
+        identity = _identity()
+        subdir = agent_tree["workspace_caps"] / "skills"
+        _write_skill(subdir, "authored", sign_with=identity)
+
+        items = await self._collect(agent_tree, identity)
+        item = _by_name(items)["authored"]
+        assert item.kind == "skill"
+        assert item.source_root == "workspace-skills"
+        assert item.status == "loaded"
+
+    async def test_workspace_skills_subdir_is_trust_gated(
+        self, agent_tree: dict[str, Path]
+    ) -> None:
+        # The skills subdir is agent-writable, so it must pass the same TOFU
+        # gate as the capabilities root — an unsigned authored skill is denied.
+        identity = _identity()
+        subdir = agent_tree["workspace_caps"] / "skills"
+        _write_skill(subdir, "authored-unsigned", sign_with=None)
+
+        items = await self._collect(agent_tree, identity)
+        item = _by_name(items)["authored-unsigned"]
+        assert item.source_root == "workspace-skills"
+        assert item.status == Decision.DENY.value
+
     async def test_signed_workspace_skill_loads_with_metadata(
         self, agent_tree: dict[str, Path]
     ) -> None:
