@@ -93,6 +93,15 @@ class GatewayAlreadyRunning(RuntimeError):  # noqa: N818 — name predates ruff 
         )
 
 
+class GatewayMisconfiguredError(RuntimeError):
+    """from_config refuses to silently degrade to the echo-stub executor.
+
+    Personal/enterprise tier needs [gateway].team_root to resolve agent_did
+    to real agents (same resolution as bootstrap.build_for_embedded). Fail
+    closed instead of serving no real agent with no indication to the operator.
+    """
+
+
 def _pid_is_alive(pid: int) -> bool:
     """Return True if a process with the given PID is currently running.
 
@@ -178,6 +187,11 @@ class GatewayRunner:
           personal / enterprise → AsyncioExecutor (in-process, shared event loop)
           federal              → SubprocessExecutor (OS-level isolation, resource limits)
 
+        Personal/enterprise tier REQUIRES [gateway].team_root — the
+        agent_factory is built the same way bootstrap.build_for_embedded
+        builds it for the arcui-embedded path. Raises GatewayMisconfiguredError
+        instead of silently falling back to AsyncioExecutor's echo stub.
+
         Platform adapters are NOT instantiated here because they require
         credentials that may only be available after vault resolution.
         Callers should add adapters via add_adapter() before calling run().
@@ -187,6 +201,10 @@ class GatewayRunner:
 
         Returns:
             Configured GatewayRunner instance.
+
+        Raises:
+            GatewayMisconfiguredError: personal/enterprise tier with no
+                [gateway].team_root configured.
         """
         # Lazy import keeps config.py optional (doesn't exist until M1 wiring)
         from arcgateway.config import GatewayConfig  # noqa: F401 (type-only use above)
@@ -209,10 +227,22 @@ class GatewayRunner:
             )
             _logger.info("GatewayRunner.from_config: federal tier → SubprocessExecutor")
         else:
-            executor = AsyncioExecutor()
+            if config.gateway.team_root is None:
+                raise GatewayMisconfiguredError(
+                    f"{tier} tier requires [gateway].team_root (or `arcgateway start "
+                    "--team-root <dir>`) so the standalone daemon can resolve agent_did "
+                    "values to real agents — without one this would silently serve the "
+                    "echo-stub executor. Either set team_root, or run the embedded path "
+                    "instead: `arc ui start --team-root <dir> --gateway-config <path>`."
+                )
+            from arcgateway.bootstrap import _make_agent_factory
+
+            agent_factory = _make_agent_factory(config.gateway.team_root)
+            executor = AsyncioExecutor(agent_factory)
             _logger.info(
-                "GatewayRunner.from_config: %s tier → AsyncioExecutor",
+                "GatewayRunner.from_config: %s tier → AsyncioExecutor (team_root=%s)",
                 tier,
+                config.gateway.team_root,
             )
 
         # [security].require_pairing activates DM pairing enforcement: a

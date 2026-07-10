@@ -31,10 +31,21 @@ from typing import IO
 
 _logger = logging.getLogger("arcgateway.cli")
 
-# Default config and runtime paths (personal tier)
-_DEFAULT_CONFIG = Path("~/.arc/gateway.toml")
-_DEFAULT_RUNTIME_DIR = Path("~/.arc/gateway/run")
 _PID_FILE_NAME = "gateway.pid"
+
+
+def _default_runtime_dir() -> Path:
+    """Resolve the default runtime_dir the same way GatewayConfig.load() would.
+
+    Honors ``ARC_CONFIG_DIR`` (via ``GatewaySection.runtime_dir``'s own
+    default) and any ``[gateway].runtime_dir`` set in the discovered
+    gateway.toml — used by cmd_stop/cmd_status when ``--runtime-dir`` is
+    not given, so they target the same directory a same-config `start`
+    would use instead of a CLI-hardcoded ``~/.arc``.
+    """
+    from arcgateway.config import GatewayConfig
+
+    return GatewayConfig.load().gateway.runtime_dir
 
 
 def _echo(msg: str, *, stream: IO[str] | None = None) -> None:
@@ -52,12 +63,26 @@ def cmd_start(
     *,
     config_path: Path | None = None,
     runtime_dir: Path | None = None,
+    team_root: Path | None = None,
 ) -> None:
     """Start the gateway daemon.
 
-    Loads GatewayConfig from the specified (or default) TOML path.
-    Selects executor based on tier: personal/enterprise → AsyncioExecutor,
-    federal → SubprocessExecutor.
+    Loads GatewayConfig from the specified TOML path, or — when
+    ``config_path`` is omitted — via ``GatewayConfig.load()``'s
+    ``${ARC_CONFIG_DIR:-~/.arc}/gateway.toml`` discovery (an isolated
+    ``ARC_CONFIG_DIR`` deployment now resolves the same config file the rest
+    of Arc's tooling would find, instead of always reading the real
+    ``~/.arc``). Selects executor based on tier: personal/enterprise →
+    AsyncioExecutor, federal → SubprocessExecutor.
+
+    Personal/enterprise tier REQUIRES an agent team_root (``--team-root`` or
+    ``[gateway].team_root`` in config; the flag overrides the config value)
+    so the daemon can resolve agent_did values to real agents the same way
+    the arcui-embedded path does. Without one, startup fails closed with a
+    clear error rather than silently running the echo-stub executor —
+    the embedded path (``arc ui start --team-root --gateway-config``) is
+    the canonical single-node pattern; standalone start exists for
+    federal-tier subprocess isolation and explicit team_root use.
 
     Remote platform adapters are built from the config via the generic
     adapter-plugin registry: each ``[platforms.<name>]`` block with
@@ -72,21 +97,37 @@ def cmd_start(
     silently proceeding with no adapters (VaultUnreachable).
 
     Args:
-        config_path: Path to gateway.toml. Defaults to ~/.arc/gateway.toml.
+        config_path: Path to gateway.toml. Defaults to ARC_CONFIG_DIR-aware
+            discovery via GatewayConfig.load().
         runtime_dir: Path for PID file and .clean_shutdown marker.
+        team_root: Overrides [gateway].team_root — directory containing one
+            ``<name>/arcagent.toml`` per agent.
     """
     from arcgateway.config import GatewayConfig
-    from arcgateway.runner import GatewayRunner
+    from arcgateway.runner import GatewayMisconfiguredError, GatewayRunner
 
-    resolved_config_path = (config_path or _DEFAULT_CONFIG).expanduser().resolve()
-    _logger.info("arcgateway start: loading config from %s", resolved_config_path)
-
-    config = GatewayConfig.from_toml(resolved_config_path)
+    if config_path is not None:
+        resolved_config_path = config_path.expanduser().resolve()
+        _logger.info("arcgateway start: loading config from %s", resolved_config_path)
+        config = GatewayConfig.from_toml(resolved_config_path)
+    else:
+        config = GatewayConfig.load()
+        _logger.info(
+            "arcgateway start: no --config given — loaded via GatewayConfig.load() "
+            "(honors ARC_CONFIG_DIR)"
+        )
 
     if runtime_dir:
         config.gateway.runtime_dir = runtime_dir.expanduser().resolve()
 
-    runner = GatewayRunner.from_config(config)
+    if team_root:
+        config.gateway.team_root = team_root.expanduser().resolve()
+
+    try:
+        runner = GatewayRunner.from_config(config)
+    except GatewayMisconfiguredError as exc:
+        _echo(f"arcgateway start: {exc}")
+        sys.exit(1)
 
     # Wire platform adapters from config
     _wire_adapters(runner, config)
@@ -168,11 +209,12 @@ def cmd_stop(*, runtime_dir: Path | None = None) -> None:
     have already exited cleanly).
 
     Args:
-        runtime_dir: Path containing gateway.pid. Defaults to ~/.arc/gateway/run.
+        runtime_dir: Path containing gateway.pid. Defaults to the
+            ARC_CONFIG_DIR-aware runtime_dir GatewayConfig.load() resolves.
     """
     import signal as _signal
 
-    rt = (runtime_dir or _DEFAULT_RUNTIME_DIR).expanduser().resolve()
+    rt = (runtime_dir or _default_runtime_dir()).expanduser().resolve()
     pid_file = rt / _PID_FILE_NAME
 
     if not pid_file.exists():
@@ -209,9 +251,10 @@ def cmd_status(*, runtime_dir: Path | None = None) -> None:
     enhancement (T1.5 socket IPC).
 
     Args:
-        runtime_dir: Path to gateway runtime directory.
+        runtime_dir: Path to gateway runtime directory. Defaults to the
+            ARC_CONFIG_DIR-aware runtime_dir GatewayConfig.load() resolves.
     """
-    rt = (runtime_dir or _DEFAULT_RUNTIME_DIR).expanduser().resolve()
+    rt = (runtime_dir or _default_runtime_dir()).expanduser().resolve()
     clean_marker = rt / ".clean_shutdown"
     pid_file = rt / _PID_FILE_NAME
 
@@ -239,10 +282,13 @@ def cmd_status(*, runtime_dir: Path | None = None) -> None:
 def cmd_setup() -> None:
     """Write a starter gateway.toml for personal-tier configuration.
 
-    Creates ~/.arc/gateway.toml with commented-out defaults so operators
-    can fill in their platform tokens.  Does NOT overwrite an existing file.
+    Creates ``${ARC_CONFIG_DIR:-~/.arc}/gateway.toml`` with commented-out
+    defaults so operators can fill in their platform tokens. Does NOT
+    overwrite an existing file.
     """
-    config_path = _DEFAULT_CONFIG.expanduser().resolve()
+    from arcgateway.config import _config_base_dir
+
+    config_path = (_config_base_dir() / "gateway.toml").expanduser().resolve()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     if config_path.exists():
@@ -255,6 +301,11 @@ def cmd_setup() -> None:
 tier = "personal"
 agent_did = "did:arc:agent:default"
 # runtime_dir = "~/.arc/gateway/run"
+# team_root = "~/.arc/team"
+# team_root is REQUIRED to start standalone at this tier (see `arcgateway
+# start --help`). The embedded path (`arc ui start --team-root ...`) is
+# the recommended single-node pattern; this standalone daemon is for
+# federal-tier isolation or explicit standalone use.
 
 [security]
 require_pairing = false
@@ -351,6 +402,13 @@ def main() -> None:
     start_parser = subparsers.add_parser("start", help="Start the gateway daemon")
     start_parser.add_argument("--config", type=Path, default=None, help="Path to gateway.toml")
     start_parser.add_argument("--runtime-dir", type=Path, default=None)
+    start_parser.add_argument(
+        "--team-root",
+        type=Path,
+        default=None,
+        help="Directory of <name>/arcagent.toml agents. Overrides [gateway].team_root. "
+        "Required at personal/enterprise tier.",
+    )
 
     # stop
     stop_parser = subparsers.add_parser("stop", help="Stop a running gateway daemon")
@@ -376,7 +434,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "start":
-        cmd_start(config_path=args.config, runtime_dir=args.runtime_dir)
+        cmd_start(config_path=args.config, runtime_dir=args.runtime_dir, team_root=args.team_root)
     elif args.command == "stop":
         cmd_stop(runtime_dir=args.runtime_dir)
     elif args.command == "status":
