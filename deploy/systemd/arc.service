@@ -1,0 +1,14 @@
+[Unit]
+Description=Arc — UI + embedded gateway (web chat, Telegram)
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/arc
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=%h/.arc/arc.env
+ExecStart=%h/arc/.venv/bin/arc ui start --host 0.0.0.0 --port 8420 --team-root %h/arc/team --gateway-config %h/.arc/gateway.toml --no-browser --viewer-token ${VIEWER_TOKEN} --operator-token ${OPERATOR_TOKEN}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
