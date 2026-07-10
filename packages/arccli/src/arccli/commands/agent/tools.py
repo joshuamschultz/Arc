@@ -7,7 +7,8 @@ import json
 import sys
 
 from arccli.commands.agent._common import (
-    _discover_tools,
+    _discover_runtime_tools,
+    _DiscoveredTool,
     _load_agent_config,
     _resolve_agent_dir,
 )
@@ -30,9 +31,15 @@ def _agent_isolation(agent_dir: object) -> tuple[str, str | None]:
 
 
 def _tools(args: argparse.Namespace) -> None:
-    """List all tools available to an agent."""
+    """List all tools available to an agent.
+
+    Mirrors the real runtime tool registry the agent boots with — builtins,
+    global/agent/workspace capability tools, and every enabled module's
+    tools (task #29) — not just the agent's own scaffolded `capabilities/`
+    directory.
+    """
     agent_dir = _resolve_agent_dir(args.path)
-    tools = _discover_tools(agent_dir)
+    tools: list[_DiscoveredTool] = _discover_runtime_tools(agent_dir)
 
     if getattr(args, "with_code_exec", False):
         from pathlib import Path
@@ -45,7 +52,16 @@ def _tools(args: argparse.Namespace) -> None:
         # persisted audit record belongs to an execution, not a `tools` listing.
         cfg = _load_agent_config(Path(str(agent_dir)))
         caller_did = cfg.get("identity", {}).get("did") or None
-        tools.append(make_execute_tool(tier=tier, relax=relax, caller_did=caller_did))
+        execute_tool = make_execute_tool(tier=tier, relax=relax, caller_did=caller_did)
+        tools.append(
+            _DiscoveredTool(
+                name=execute_tool.name,
+                description=execute_tool.description,
+                input_schema=execute_tool.input_schema,
+                source="runtime",
+                timeout_seconds=getattr(execute_tool, "timeout_seconds", None),
+            )
+        )
 
     if getattr(args, "json", False):
         data = [
@@ -53,7 +69,8 @@ def _tools(args: argparse.Namespace) -> None:
                 "name": t.name,
                 "description": t.description,
                 "input_schema": t.input_schema,
-                "timeout_seconds": getattr(t, "timeout_seconds", None),
+                "source": t.source,
+                "timeout_seconds": t.timeout_seconds,
             }
             for t in tools
         ]
@@ -64,7 +81,7 @@ def _tools(args: argparse.Namespace) -> None:
         sys.stdout.write("No tools found.\n")
         return
     for t in tools:
-        sys.stdout.write(f"  {t.name}\n")
+        sys.stdout.write(f"  {t.name}  [{t.source}]\n")
         sys.stdout.write(f"    {t.description}\n")
         params = t.input_schema.get("properties", {})
         required = t.input_schema.get("required", [])
@@ -74,7 +91,6 @@ def _tools(args: argparse.Namespace) -> None:
                 ptype = pdef.get("type", "?")
                 pdesc = pdef.get("description", "")
                 sys.stdout.write(f"    - {pname}: {ptype}{req} — {pdesc}\n")
-        timeout = getattr(t, "timeout_seconds", None)
-        if timeout:
-            sys.stdout.write(f"    timeout: {timeout}s\n")
+        if t.timeout_seconds:
+            sys.stdout.write(f"    timeout: {t.timeout_seconds}s\n")
         sys.stdout.write("\n")
