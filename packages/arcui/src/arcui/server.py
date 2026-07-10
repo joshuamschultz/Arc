@@ -322,8 +322,14 @@ def create_app(
                 if close is not None:
                     try:
                         await close()
-                    except Exception:  # reason: fail-open — continue shutdown
-                        logger.exception("lifespan: error closing embedded messaging backend")
+                    except Exception as exc:  # reason: fail-open — continue shutdown
+                        # A NATS connection already tearing down raises
+                        # ConnectionClosedError from drain() on every normal
+                        # restart — expected, not traceback-worthy.
+                        if type(exc).__name__ == "ConnectionClosedError":
+                            logger.debug("lifespan: messaging backend already closed")
+                        else:
+                            logger.exception("lifespan: error closing embedded messaging backend")
             try:
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
