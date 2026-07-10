@@ -98,6 +98,17 @@ class _ScriptedLLM:
         return self._response
 
 
+_POISON = b"negative-control mutant"
+
+
+def _is_poisoned(view: BundleView) -> bool:
+    """True when the mutant probe's poison marker is present (scripts or prose)."""
+    scripts = {p: d for p, d in view.scripts.items() if not p.startswith("evals/")}
+    if any(_POISON in data for data in scripts.values()):
+        return True
+    return _POISON.decode("utf-8") in view.text
+
+
 class _RecordingRunner:
     """Deterministic EvalRunner: scripts per-case outcomes and records every call.
 
@@ -105,8 +116,11 @@ class _RecordingRunner:
     successive current-bundle runs (last value repeats; default all-pass).
     ``mutant_pass`` scripts the negative-control probe; the default ``False`` means
     the case FAILS on the mutant — it discriminates, so probe-agnostic tests adopt
-    cleanly. A call's bundle is classified by equality with the view under
-    generation: equal → "current", anything else → "mutant".
+    cleanly. A call's bundle is classified by the poison marker (the mutant probe
+    appends ``_MUTANT_POISON`` to the original bundle): poisoned → "mutant", else
+    "current". Every run must also carry the candidate's MATERIALIZED source in the
+    scripts overlay — an in-memory-only case can never pass a real sandbox (the
+    SPEC-054 E2E producers-unwired gap this fake previously hid).
     """
 
     def __init__(
@@ -122,8 +136,15 @@ class _RecordingRunner:
         self.calls: list[tuple[str, list[str]]] = []
 
     async def run(self, view: BundleView, cases: list[EvalCase]) -> list[EvalOutcome]:
-        kind = "current" if view == self._current_view else "mutant"
+        kind = "mutant" if _is_poisoned(view) else "current"
         names = [c.id.split("::")[-1] for c in cases]
+        # Materialization invariant: the candidate under test must exist as a real
+        # file in the bundle the runner is asked to execute.
+        generated = view.scripts.get("evals/test_golden_generated.py", b"").decode("utf-8")
+        for name in names:
+            assert f"def {name}(" in generated, (
+                f"candidate {name} not materialized into the run bundle"
+            )
         self.calls.append((kind, names))
         return [
             EvalOutcome(case_id=case.id, passed=self._passed(kind, name))

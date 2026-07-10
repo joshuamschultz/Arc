@@ -83,7 +83,7 @@ class SuiteGenerator:
                 continue
             nodeid = f"evals/{_GENERATED_NAME}::{func.name}"
             case = EvalCase(id=nodeid, node=nodeid, machine_authored=True)
-            reason = await self._cascade_verdict(view, case)
+            reason = await self._cascade_verdict(view, case, candidate)
             if reason is None:
                 adopted.append(case)
                 adopted_sources.append(candidate)
@@ -104,14 +104,23 @@ class SuiteGenerator:
             "top-level `def test_*` functions and nothing else."
         )
 
-    async def _cascade_verdict(self, view: BundleView, case: EvalCase) -> str | None:
-        """Run the sandbox stages; ``None`` means adopt, otherwise the quarantine reason."""
-        results = [await self._run_once(view, case) for _ in range(self._config.flake_runs)]
+    async def _cascade_verdict(self, view: BundleView, case: EvalCase, source: str) -> str | None:
+        """Run the sandbox stages; ``None`` means adopt, otherwise the quarantine reason.
+
+        The candidate exists only as in-memory source until adoption, so every run
+        materializes it into the bundle via the scripts overlay — the runner builds
+        the sandbox from the view, and a case with no file can never pass (the
+        SPEC-054 E2E producers-unwired gap). The mutant probe poisons the ORIGINAL
+        bundle first, then overlays the candidate, so the probe never poisons the
+        case it is probing.
+        """
+        run_view = _with_candidate(view, source)
+        results = [await self._run_once(run_view, case) for _ in range(self._config.flake_runs)]
         if not any(results):
             return "improvement target: fails the current bundle on every run"
         if not all(results):
             return "flaky: mixed pass/fail across flake runs"
-        if await self._run_once(_mutated(view), case):
+        if await self._run_once(_with_candidate(_mutated(view), source), case):
             return "mutation probe survived: also passes a deliberately mutated bundle"
         return None
 
@@ -146,6 +155,12 @@ def _is_tautology(func: ast.FunctionDef) -> bool:
     constant compares, and input-literal echoes all pass vacuously (REQ-102)."""
     asserts = [node for node in ast.walk(func) if isinstance(node, ast.Assert)]
     return not any(isinstance(node, ast.Call) for stmt in asserts for node in ast.walk(stmt.test))
+
+
+def _with_candidate(view: BundleView, source: str) -> BundleView:
+    """Overlay the candidate file into the sandbox bundle at its future adopted path."""
+    scripts = {**view.scripts, f"evals/{_GENERATED_NAME}": source.encode("utf-8")}
+    return replace(view, scripts=scripts)
 
 
 def _mutated(view: BundleView) -> BundleView:
