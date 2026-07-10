@@ -186,28 +186,12 @@ class GatewayRunner:
     def from_config(cls, config: GatewayConfig) -> GatewayRunner:
         """Build a GatewayRunner from a GatewayConfig.
 
-        Selects the executor based on the configured security tier:
-          personal / enterprise → AsyncioExecutor (in-process, shared event loop)
-          federal              → SubprocessExecutor (OS-level isolation, resource limits)
-
-        This is a plain scaffold factory — it does NOT verify that a real
-        agent-execution path exists for the built executor (neither
-        AsyncioExecutor with no agent_factory, nor SubprocessExecutor's
-        arc-agent-worker, can correctly serve a multi-agent_did gateway
-        standalone; see cli.cmd_start, which fails closed before ever
-        calling this). Kept simple and tier-agnostic so it stays usable as
-        a general-purpose runner builder for tests and any future caller
-        that supplies its own working executor.
-
-        Platform adapters are NOT instantiated here because they require
-        credentials that may only be available after vault resolution.
-        Callers should add adapters via add_adapter() before calling run().
-
-        Args:
-            config: Parsed GatewayConfig from gateway.toml.
-
-        Returns:
-            Configured GatewayRunner instance.
+        Selects the executor by tier: federal -> SubprocessExecutor (OS-level
+        isolation), personal/enterprise -> AsyncioExecutor. A plain scaffold
+        factory — it does not verify a working agent-execution path exists
+        (see cli.cmd_start, which fails closed before calling this). Platform
+        adapters are NOT instantiated here (credentials may need vault
+        resolution first) — callers add them via add_adapter() before run().
         """
         # Lazy import keeps config.py optional (doesn't exist until M1 wiring)
         from arcgateway.config import GatewayConfig  # noqa: F401 (type-only use above)
@@ -236,26 +220,13 @@ class GatewayRunner:
                 tier,
             )
 
-        # [security].require_pairing activates DM pairing enforcement: a
-        # PairingStore is built from [pairing].db_path and wired into the
-        # SessionRouter's PairingInterceptor. Left unset (the default), the
-        # interceptor is a no-op — matching every deployment's current
-        # behaviour until pairing is explicitly opted into.
-        #
-        # The static user_allowlist is seeded ONLY inside this block, not
-        # unconditionally: seeding it while require_pairing=false would make
-        # PairingInterceptor start denying non-allowlisted users from OTHER
-        # platforms (e.g. web) that reach SessionRouter with no adapter-level
-        # allowlist gate of their own — a regression for the very deployments
-        # this branch is not supposed to touch (task #34).
-        pairing_store: Any | None = None
-        user_allowlist: set[str] | None = None
-        if config.security.require_pairing:
-            from arcgateway.pairing import PairingStore
-            from arcgateway.pairing_allowlist import build_user_allowlist
+        # See pairing_allowlist.build_pairing_wiring for the require_pairing
+        # gating rationale (task #34) — kept out of this LOC-budget-gated
+        # module since it owns no gateway-core-specific logic.
+        from arcgateway.pairing_allowlist import build_pairing_wiring
 
-            pairing_store = PairingStore(db_path=config.pairing.db_path, tier=tier)
-            user_allowlist = build_user_allowlist(config.platforms)
+        pairing_store, user_allowlist = build_pairing_wiring(config, tier)
+        if pairing_store is not None:
             _logger.info(
                 "GatewayRunner.from_config: require_pairing=true — PairingStore wired (db=%s)",
                 config.pairing.db_path,

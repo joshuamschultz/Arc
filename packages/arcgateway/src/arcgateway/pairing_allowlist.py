@@ -25,10 +25,11 @@ Mattermost is channel-based (``allowed_channel_ids``, not ``allowed_user_ids``
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from arcgateway.config import PlatformsSection
+    from arcgateway.config import GatewayConfig, PlatformsSection
+    from arcgateway.pairing import Tier
 
 # platform name -> user_did formatter, matching that platform's OWN adapter
 # scheme exactly (see module docstring). Deliberately NOT unified.
@@ -60,4 +61,30 @@ def build_user_allowlist(platforms: PlatformsSection) -> set[str] | None:
     return allowlist or None
 
 
-__all__ = ["build_user_allowlist"]
+def build_pairing_wiring(config: GatewayConfig, tier: Tier) -> tuple[Any | None, set[str] | None]:
+    """Build the PairingStore + static allowlist for ``GatewayRunner.from_config``.
+
+    ``[security].require_pairing`` activates DM pairing enforcement: a
+    PairingStore is built from ``[pairing].db_path`` and wired into the
+    SessionRouter's PairingInterceptor. Left unset (the default), both
+    return values are ``None`` — the interceptor is a no-op, matching every
+    deployment's current behaviour until pairing is explicitly opted into.
+
+    The static ``user_allowlist`` is seeded ONLY when ``require_pairing`` is
+    on, not unconditionally: seeding it while ``require_pairing=false``
+    would make PairingInterceptor start denying non-allowlisted users from
+    OTHER platforms (e.g. web) that reach SessionRouter with no
+    adapter-level allowlist gate of their own — a regression for the very
+    deployments this branch is not supposed to touch (task #34).
+    """
+    if not config.security.require_pairing:
+        return None, None
+
+    from arcgateway.pairing import PairingStore
+
+    pairing_store: Any = PairingStore(db_path=config.pairing.db_path, tier=tier)
+    user_allowlist = build_user_allowlist(config.platforms)
+    return pairing_store, user_allowlist
+
+
+__all__ = ["build_pairing_wiring", "build_user_allowlist"]
