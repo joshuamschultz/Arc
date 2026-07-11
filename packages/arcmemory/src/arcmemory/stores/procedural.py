@@ -135,6 +135,12 @@ class ProceduralStore:
         self.write(procedure)
         return procedure.use_count
 
+    def slugs(self) -> list[str]:
+        """Every procedure slug currently on disk (sorted)."""
+        if not self._dir.exists():
+            return []
+        return sorted(p.stem for p in self._dir.glob("*.md"))
+
 
 def _steps_slug(steps: tuple[str, ...]) -> str:
     """Stable slug for a step-sequence (deterministic across runs)."""

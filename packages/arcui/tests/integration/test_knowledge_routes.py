@@ -22,7 +22,11 @@ from arcgateway.team_roster import RosterEntry
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
+from arcmemory.stores.daily import DailyNotesStore
+from arcmemory.stores.insight import InsightStore
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
+from arcmemory.types import DaySummary, Insight, Procedure
 from starlette.testclient import TestClient
 
 from arcui.auth import AuthConfig
@@ -56,6 +60,33 @@ def _seed_entities(workspace: Path) -> None:
     store.write_fact("alice", "role", "lead engineer", confidence=0.9)
     store.write_fact("alice", "works-with", "[[bob]]", confidence=0.7)
     store.write_fact("bob", "role", "designer", confidence=0.6)
+
+
+def _seed_curated(workspace: Path) -> None:
+    """Write insight/procedure/daily-note cards through their own store paths."""
+    InsightStore(workspace).write(
+        Insight(
+            id="producers-unwired",
+            statement="a claimed property whose producer is never traced is a silent no-op",
+            trigger="predicate exists but producer never traced",
+            cues=["claims-property"],
+            confidence=0.8,
+        )
+    )
+    ProceduralStore(workspace).write(
+        Procedure(slug="deploy", title="Deploy", when_to_use="shipping a release", steps=["build", "ship"], use_count=3)
+    )
+    DailyNotesStore(workspace).write(
+        DaySummary(
+            day="2026-07-07",
+            timeline=["shipped the release"],
+            discussions=["reviewed the plan"],
+            decisions=["ship Friday"],
+            people=["alice"],
+            goals=["hit the deadline"],
+            tasks=["email bob"],
+        )
+    )
 
 
 def _make_agent_dir(team_root: Path, name: str) -> Path:
@@ -98,6 +129,7 @@ def app_with_memories(tmp_path: Path) -> Iterator[Any]:
 
     asyncio.run(_seed_episodic(workspace))
     _seed_entities(workspace)
+    _seed_curated(workspace)
 
     auth = AuthConfig({"viewer_token": VIEWER_TOKEN, "operator_token": OPERATOR_TOKEN})
     app = create_app(team_root=team_root, auth_config=auth)
@@ -435,6 +467,88 @@ class TestMutations:
         assert details["operation"] == "memory.edit"
         assert details["outcome"] == "applied"
         assert entry_id in details["target"]
+
+
+# ---------------------------------------------------------------------------
+# GET .../insights, .../procedures, .../daily-notes[/{day}] (U3/U4)
+# ---------------------------------------------------------------------------
+
+
+class TestInsights:
+    def test_list_insights(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/insights", headers=_viewer())
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["id"] == "producers-unwired"
+        assert items[0]["statement"].startswith("a claimed property")
+        assert items[0]["cues"] == ["claims-property"]
+
+    def test_list_insights_empty_is_200(self, app_no_memories: Any) -> None:
+        with TestClient(app_no_memories) as client:
+            resp = client.get("/api/agents/fresh/knowledge/insights", headers=_viewer())
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+
+class TestProcedures:
+    def test_list_procedures(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/procedures", headers=_viewer())
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["slug"] == "deploy"
+        assert items[0]["steps"] == ["build", "ship"]
+        assert items[0]["use_count"] == 3
+
+    def test_list_procedures_empty_is_200(self, app_no_memories: Any) -> None:
+        with TestClient(app_no_memories) as client:
+            resp = client.get("/api/agents/fresh/knowledge/procedures", headers=_viewer())
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+
+class TestDailyNotes:
+    def test_list_daily_notes(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get("/api/agents/concierge/knowledge/daily-notes", headers=_viewer())
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert items == [{"day": "2026-07-07", "classification": "unclassified"}]
+
+    def test_list_daily_notes_empty_is_200(self, app_no_memories: Any) -> None:
+        with TestClient(app_no_memories) as client:
+            resp = client.get("/api/agents/fresh/knowledge/daily-notes", headers=_viewer())
+        assert resp.status_code == 200
+        assert resp.json()["items"] == []
+
+    def test_get_daily_note_detail(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/daily-notes/2026-07-07", headers=_viewer()
+            )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["day"] == "2026-07-07"
+        assert body["timeline"] == ["shipped the release"]
+        assert body["decisions"] == ["ship Friday"]
+        assert body["tasks"] == ["email bob"]
+
+    def test_get_daily_note_missing_day_is_404(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/daily-notes/2020-01-01", headers=_viewer()
+            )
+        assert resp.status_code == 404
+
+    def test_get_daily_note_bad_day_format_is_400(self, app_with_memories: Any) -> None:
+        with TestClient(app_with_memories) as client:
+            resp = client.get(
+                "/api/agents/concierge/knowledge/daily-notes/not-a-day", headers=_viewer()
+            )
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------

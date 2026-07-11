@@ -23,7 +23,11 @@ from arcmemory.operator import (
     MutationResult,
     MutationStatus,
 )
+from arcmemory.stores.daily import DailyNotesStore
+from arcmemory.stores.insight import InsightStore
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
+from arcmemory.types import DaySummary, Insight, Procedure
 
 _DID = "did:arc:op-agent"
 _ACTOR = "did:arc:operator"
@@ -250,3 +254,62 @@ async def test_delete_on_missing_entry_is_error(workspace: Path) -> None:
     result = op.delete_entry("ghost-id", actor_did=_ACTOR)
     assert result.status is MutationStatus.ERROR
     assert op.list_entries(limit=50).total == 3
+
+
+# -- U3/U4: curated glass-box reads — insights, procedures, daily notes -------
+
+
+async def test_list_insights_returns_cards_sorted_by_id(workspace: Path) -> None:
+    store = InsightStore(workspace)
+    store.write(Insight(id="zulu-pattern", statement="z", trigger="t", confidence=0.6))
+    store.write(Insight(id="alpha-pattern", statement="a", trigger="t", confidence=0.9))
+
+    insights = _operator(workspace).list_insights()
+    assert [i.id for i in insights] == ["alpha-pattern", "zulu-pattern"]
+    assert isinstance(insights[0], Insight)
+
+
+async def test_list_insights_empty_when_none_minted(workspace: Path) -> None:
+    assert _operator(workspace).list_insights() == []
+
+
+async def test_list_procedures_returns_cards_sorted_by_slug(workspace: Path) -> None:
+    store = ProceduralStore(workspace)
+    store.write(Procedure(slug="zulu", title="Zulu", steps=["a"], use_count=3))
+    store.write(Procedure(slug="alpha", title="Alpha", steps=["b"], use_count=1))
+
+    procedures = _operator(workspace).list_procedures()
+    assert [p.slug for p in procedures] == ["alpha", "zulu"]
+    assert isinstance(procedures[0], Procedure)
+
+
+async def test_list_procedures_empty_when_none_promoted(workspace: Path) -> None:
+    assert _operator(workspace).list_procedures() == []
+
+
+async def test_list_daily_notes_newest_day_first(workspace: Path) -> None:
+    store = DailyNotesStore(workspace)
+    store.write(DaySummary(day="2026-07-05", timeline=["a"]))
+    store.write(DaySummary(day="2026-07-07", timeline=["b"]))
+    store.write(DaySummary(day="2026-07-06", timeline=["c"]))
+
+    notes = _operator(workspace).list_daily_notes()
+    assert [d.day for d in notes] == ["2026-07-07", "2026-07-06", "2026-07-05"]
+    assert isinstance(notes[0], DaySummary)
+
+
+async def test_list_daily_notes_empty_when_none_written(workspace: Path) -> None:
+    assert _operator(workspace).list_daily_notes() == []
+
+
+async def test_read_daily_note_roundtrips(workspace: Path) -> None:
+    store = DailyNotesStore(workspace)
+    store.write(DaySummary(day="2026-07-07", timeline=["shipped the release"]))
+
+    note = _operator(workspace).read_daily_note("2026-07-07")
+    assert note is not None
+    assert note.timeline == ["shipped the release"]
+
+
+async def test_read_daily_note_missing_returns_none(workspace: Path) -> None:
+    assert _operator(workspace).read_daily_note("2026-01-01") is None

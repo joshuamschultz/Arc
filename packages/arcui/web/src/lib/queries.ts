@@ -6,14 +6,20 @@ import type {
   AuditEventsResponse,
   ChannelsResponse,
   ConfigResponse,
+  DailyNoteDetail,
+  DailyNotesResponse,
   Dict,
   EntitiesResponse,
   FileReadResponse,
   FilesTreeResponse,
   IdentityCostResponse,
+  InsightsResponse,
   LinksResponse,
   MemoryPage,
   MemorySearchResponse,
+  ProceduresResponse,
+  SkillDetail,
+  ToolDetail,
   PolicyBulletsResponse,
   PolicyResponse,
   PolicyStatsResponse,
@@ -155,6 +161,37 @@ export const useEntityLinks = (agentId: string | null, slug: string | null) =>
     enabled: !!agentId && !!slug,
   })
 
+// --- Curated memory layer (U3/U4 — insights, procedures, daily notes) -------
+
+export const useAgentInsights = (agentId: string | null) =>
+  useQuery<InsightsResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'insights'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/insights`, signal),
+    enabled: !!agentId,
+  })
+
+export const useAgentProcedures = (agentId: string | null) =>
+  useQuery<ProceduresResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'procedures'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/procedures`, signal),
+    enabled: !!agentId,
+  })
+
+export const useAgentDailyNotes = (agentId: string | null) =>
+  useQuery<DailyNotesResponse>({
+    queryKey: ['agent', agentId, 'knowledge', 'daily-notes'],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/knowledge/daily-notes`, signal),
+    enabled: !!agentId,
+  })
+
+export const useAgentDailyNote = (agentId: string | null, day: string | null) =>
+  useQuery<DailyNoteDetail>({
+    queryKey: ['agent', agentId, 'knowledge', 'daily-notes', day],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/knowledge/daily-notes/${day}`, signal),
+    enabled: !!agentId && !!day,
+  })
+
 // --- ArcLLM (LLM layer) ----------------------------------------------------
 
 export interface LlmStats extends Dict {
@@ -272,6 +309,24 @@ export const useAgentCapabilities = (agentId: string) =>
     ['agent', agentId, 'capabilities'],
     `/api/agents/${agentId}/capabilities`,
   )
+
+// U5/U6 — SKILL.md body / tool source for the detail drawers. Lazy: only
+// fetched when a row is selected (skillName/toolName non-null).
+export const useAgentSkillDetail = (agentId: string, skillName: string | null) =>
+  useQuery<SkillDetail>({
+    queryKey: ['agent', agentId, 'skill', skillName],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/detail`, signal),
+    enabled: !!skillName,
+  })
+
+export const useAgentToolDetail = (agentId: string, toolName: string | null) =>
+  useQuery<ToolDetail>({
+    queryKey: ['agent', agentId, 'tool', toolName],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/agents/${agentId}/tools/${encodeURIComponent(toolName!)}/detail`, signal),
+    enabled: !!toolName,
+  })
 
 export const useAgentPolicy = (agentId: string) =>
   useApiQuery<PolicyResponse>(['agent', agentId, 'policy'], `/api/agents/${agentId}/policy`)

@@ -82,6 +82,12 @@ class DailyNotesStore:
         atomic_write_text(path, render_document(frontmatter, _render_body(summary)))
         return path
 
+    def days(self) -> list[str]:
+        """Every day with curated notes on disk, newest first (sorted DESC)."""
+        if not self._dir.exists():
+            return []
+        return sorted((p.stem for p in self._dir.glob("*.md")), reverse=True)
+
 
 def _union(existing: list[str], new: list[str]) -> list[str]:
     """Union two bullet lists preserving first-seen order (stable, dedup'd)."""

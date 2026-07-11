@@ -22,6 +22,11 @@ export interface Trace {
   input_tokens?: number
   output_tokens?: number
   total_tokens?: number
+  // O2: prompt-cache accounting per call. None when the provider reported none.
+  cache_read_tokens?: number | null
+  cache_write_tokens?: number | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
   duration_ms?: number
   cost_usd?: number
   status?: string
@@ -426,4 +431,85 @@ export interface RunSummary {
 
 export interface RunsResponse {
   runs: RunSummary[]
+}
+
+// --- Curated memory layer (U3/U4 — insights, procedures, daily notes) -------
+// These mirror arcmemory's glass-box cards (Insight/Procedure/DaySummary),
+// surfaced read-only by the knowledge routes so the curated layer — not the
+// raw episodic stream — is the headline of the Knowledge view.
+
+export interface InsightCard {
+  id: string
+  statement: string
+  trigger: string
+  cues: string[]
+  instances: string[]
+  confidence: number
+  classification: string
+}
+
+export interface ProcedureCard {
+  slug: string
+  title: string
+  when_to_use: string
+  steps: string[]
+  use_count: number
+  classification: string
+}
+
+export interface DailyNoteMeta {
+  day: string // YYYY-MM-DD
+  classification: string
+}
+
+export interface DailyNoteDetail {
+  day: string
+  timeline: string[]
+  discussions: string[]
+  decisions: string[]
+  people: string[]
+  goals: string[]
+  tasks: string[]
+  classification: string
+}
+
+export interface InsightsResponse {
+  items: InsightCard[]
+}
+
+export interface ProceduresResponse {
+  items: ProcedureCard[]
+}
+
+export interface DailyNotesResponse {
+  items: DailyNoteMeta[]
+}
+
+// --- Capability detail drawers (U5/U6 — skill SKILL.md + tool source) -------
+
+export interface SkillDetail {
+  name: string
+  version: string
+  description: string
+  source_root: string
+  source_path: string
+  status: string
+  status_detail: string
+  content: string // SKILL.md body
+  editable: boolean // true when the file lives in an editable workspace root
+  // Save target for the existing `PUT /files/read` route (null when read-only).
+  write_root: 'workspace' | 'agent' | null
+  write_path: string | null // relative to write_root
+}
+
+export interface ToolDetail {
+  name: string
+  transport: string
+  classification: string
+  description: string
+  source_path: string
+  content: string // the @tool Python source (empty for unresolvable builtins)
+  editable: boolean // true for agent/workspace-authored tools; false for builtins
+  write_root: 'workspace' | 'agent' | null
+  write_path: string | null // relative to write_root
 }

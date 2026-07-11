@@ -19,6 +19,7 @@ shape guessing.
 from __future__ import annotations
 
 import logging
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -305,6 +306,89 @@ async def get_entity_links(request: Request) -> JSONResponse:
     return JSONResponse({"items": [link.model_dump(mode="json") for link in links]})
 
 
+_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+# ---------------------------------------------------------------------------
+# Curated glass-box layer — insights, procedures, daily notes (U3/U4)
+# ---------------------------------------------------------------------------
+
+
+async def list_insights(request: Request) -> JSONResponse:
+    """GET .../knowledge/insights — every minted insight card."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        insights = op.list_insights()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [i.model_dump(mode="json") for i in insights]})
+
+
+async def list_procedures(request: Request) -> JSONResponse:
+    """GET .../knowledge/procedures — every how-to procedure card."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        procedures = op.list_procedures()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse({"items": [p.model_dump(mode="json") for p in procedures]})
+
+
+async def list_daily_notes(request: Request) -> JSONResponse:
+    """GET .../knowledge/daily-notes — every day's curated notes, newest first."""
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        notes = op.list_daily_notes()
+    except Exception as exc:
+        return _store_unreadable(exc)
+    return JSONResponse(
+        {"items": [{"day": d.day, "classification": d.classification} for d in notes]}
+    )
+
+
+async def get_daily_note(request: Request) -> JSONResponse:
+    """GET .../knowledge/daily-notes/{day} — one day's curated notes detail."""
+    agent_id = request.path_params["agent_id"]
+    day = request.path_params["day"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+    if not _DAY_RE.match(day):
+        return JSONResponse(
+            ErrorResponse(error=f"invalid day {day!r}, expected YYYY-MM-DD").model_dump(
+                mode="json"
+            ),
+            status_code=400,
+        )
+
+    op = _operator_for(Path(agent.workspace_path), agent.did)
+    try:
+        note = op.read_daily_note(day)
+    except Exception as exc:
+        return _store_unreadable(exc)
+    if note is None:
+        return JSONResponse(
+            ErrorResponse(error=f"daily note {day!r} not found").model_dump(mode="json"),
+            status_code=404,
+        )
+    return JSONResponse(note.model_dump(mode="json"))
+
+
 def _context_budget(agent_root: Path) -> dict[str, Any]:
     """The agent's configured context window (``[context]`` in arcagent.toml).
 
@@ -372,6 +456,14 @@ routes = [
     Route(
         "/api/agents/{agent_id}/knowledge/entities/{slug}/links",
         get_entity_links,
+        methods=["GET"],
+    ),
+    Route("/api/agents/{agent_id}/knowledge/insights", list_insights, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/procedures", list_procedures, methods=["GET"]),
+    Route("/api/agents/{agent_id}/knowledge/daily-notes", list_daily_notes, methods=["GET"]),
+    Route(
+        "/api/agents/{agent_id}/knowledge/daily-notes/{day}",
+        get_daily_note,
         methods=["GET"],
     ),
 ]

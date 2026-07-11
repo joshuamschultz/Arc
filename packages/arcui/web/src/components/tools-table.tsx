@@ -36,8 +36,16 @@ function StatusBadge({ value }: { value?: string }) {
 }
 
 /** Tool surface table: transport, effect classification, allow/deny status, and
- *  a click-to-expand description row. */
-export function ToolsTable({ tools }: { tools: Dict[] }) {
+ *  a click-to-expand description row. Row click also opens the detail drawer
+ *  (U6) when `onRowClick` is supplied — the inline expand stays for a quick
+ *  glance without leaving the table. */
+export function ToolsTable({
+  tools,
+  onRowClick,
+}: {
+  tools: Dict[]
+  onRowClick?: (tool: Dict) => void
+}) {
   const [open, setOpen] = useState<number | null>(null)
   const [filter, setFilter] = useState('')
   const rows = useMemo(() => {
@@ -75,7 +83,10 @@ export function ToolsTable({ tools }: { tools: Dict[] }) {
                 <Fragment key={`${t.name}-${i}`}>
                   <tr
                     className={cn('cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/40', inactive && 'opacity-50')}
-                    onClick={() => setOpen(isOpen ? null : i)}
+                    onClick={() => {
+                      setOpen(isOpen ? null : i)
+                      onRowClick?.(t)
+                    }}
                   >
                     <td className="px-3 py-2 text-muted-foreground">
                       {desc && <ChevronRight className={cn('size-3.5 transition-transform', isOpen && 'rotate-90')} />}

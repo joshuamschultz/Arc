@@ -8,6 +8,9 @@ import { QueryState, EmptyState } from '@/components/states'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { MemoryBrowser } from '@/components/knowledge-memories'
 import { EntityBrowser } from '@/components/knowledge-entities'
+import { InsightBrowser } from '@/components/knowledge-insights'
+import { ProcedureBrowser } from '@/components/knowledge-procedures'
+import { DailyNotesBrowser } from '@/components/knowledge-daily-notes'
 import {
   Select,
   SelectContent,
@@ -86,8 +89,11 @@ export function KnowledgePage() {
           <div className="border-b border-border px-6">
             <TabsList className="my-2">
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="memories">Memories</TabsTrigger>
+              <TabsTrigger value="insights">Insights</TabsTrigger>
+              <TabsTrigger value="procedures">Procedures</TabsTrigger>
               <TabsTrigger value="entities">Entities</TabsTrigger>
+              <TabsTrigger value="daily-notes">Daily Notes</TabsTrigger>
+              <TabsTrigger value="memories">Raw stream</TabsTrigger>
             </TabsList>
           </div>
 
@@ -116,8 +122,12 @@ export function KnowledgePage() {
             </QueryState>
           </TabsContent>
 
-          <TabsContent value="memories" className="flex-1 overflow-auto p-6">
-            <MemoryBrowser agentId={agentId} onNavigateEntity={focusEntity} />
+          <TabsContent value="insights" className="flex-1 overflow-auto p-6">
+            <InsightBrowser agentId={agentId} />
+          </TabsContent>
+
+          <TabsContent value="procedures" className="flex-1 overflow-auto p-6">
+            <ProcedureBrowser agentId={agentId} />
           </TabsContent>
 
           <TabsContent value="entities" className="flex-1 overflow-auto p-6">
@@ -126,6 +136,14 @@ export function KnowledgePage() {
               selectedSlug={selectedEntitySlug}
               onSelectSlug={setSelectedEntitySlug}
             />
+          </TabsContent>
+
+          <TabsContent value="daily-notes" className="flex-1 overflow-auto p-6">
+            <DailyNotesBrowser agentId={agentId} />
+          </TabsContent>
+
+          <TabsContent value="memories" className="flex-1 overflow-auto p-6">
+            <MemoryBrowser agentId={agentId} onNavigateEntity={focusEntity} />
           </TabsContent>
         </Tabs>
       )}

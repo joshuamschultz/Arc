@@ -20,6 +20,17 @@ def test_procedure_round_trip_with_use_count(workspace: Path) -> None:
     assert loaded.use_count == 2
 
 
+def test_procedure_slugs_lists_sorted_ids(workspace: Path) -> None:
+    store = ProceduralStore(workspace)
+    store.write(Procedure(slug="zulu", title="Zulu", steps=["a"]))
+    store.write(Procedure(slug="alpha", title="Alpha", steps=["b"]))
+    assert store.slugs() == ["alpha", "zulu"]
+
+
+def test_procedure_slugs_empty_when_dir_absent(workspace: Path) -> None:
+    assert ProceduralStore(workspace).slugs() == []
+
+
 def test_insight_round_trip_carries_trigger_cues_instances(workspace: Path) -> None:
     store = InsightStore(workspace)
     ins = Insight(

@@ -10,6 +10,73 @@ import { useEntities, useEntityLinks } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { EntityRecord } from '@/lib/types'
 
+// Mirrors arcmemory.stores.semantic._FACT_RE — a fact line renders as
+// "- {predicate}: {value} {confidence} {date}" optionally suffixed with
+// " | was: {was_value} {was_confidence}" (confidence compact, e.g. ".41" or
+// "1"; date is YYYY-MM-DD). Parsing here is display-only — the backend fact
+// format is never changed from this file.
+const FACT_RE =
+  /^-\s+(.+?):\s+(.+?)\s+(\.\d+|1)\s+(\d{4}-\d{2}-\d{2})(?:\s+\|\s+was:\s+(.+?)\s+(\.\d+|1))?$/
+
+interface ParsedFact {
+  predicate: string
+  value: string
+  confidence: string
+  date: string
+  was?: { value: string; confidence: string }
+}
+
+/** Parse one `format_fact` line; falls back to `null` (render raw) if it
+ *  doesn't match the expected shape. */
+function parseFact(line: string): ParsedFact | null {
+  const m = FACT_RE.exec(line)
+  if (!m) return null
+  const [, predicate, value, confidence, date, wasValue, wasConfidence] = m
+  return {
+    predicate,
+    value,
+    confidence,
+    date,
+    was: wasValue ? { value: wasValue, confidence: wasConfidence } : undefined,
+  }
+}
+
+/** One fact rendered as predicate label + readable value, with
+ *  confidence/date as subtle right-aligned metadata and an optional prior
+ *  value below. */
+function FactRow({ fact }: { fact: string }) {
+  const parsed = parseFact(fact)
+  if (!parsed) {
+    return (
+      <li className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm text-foreground">
+        {fact}
+      </li>
+    )
+  }
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/20 px-3 py-2">
+      <div className="min-w-0 space-y-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+            {parsed.predicate.replace(/_/g, ' ')}
+          </span>
+          <span className="text-sm text-foreground">{parsed.value}</span>
+        </div>
+        {parsed.was && (
+          <div className="text-xs text-muted-foreground">
+            was: {parsed.was.value}{' '}
+            <span className="font-mono text-[11px]">{parsed.was.confidence}</span>
+          </div>
+        )}
+      </div>
+      <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+        <div className="font-mono">{parsed.confidence}</div>
+        <div>{parsed.date}</div>
+      </div>
+    </li>
+  )
+}
+
 function ImportanceBadge({ n }: { n: number }) {
   const tone =
     n >= 8
@@ -81,9 +148,7 @@ function EntityDetail({
             ) : (
               <ul className="space-y-1.5">
                 {entity.facts.map((f, i) => (
-                  <li key={i} className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-sm text-foreground">
-                    {f}
-                  </li>
+                  <FactRow key={i} fact={f} />
                 ))}
               </ul>
             )}

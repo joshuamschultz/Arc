@@ -18,6 +18,9 @@ import {
 import { RunReplayDrawer } from '@/components/run-replay-drawer'
 import { CapabilityTable } from '@/components/capability-table'
 import { ToolsTable } from '@/components/tools-table'
+import { SkillDrawer } from '@/components/skill-drawer'
+import { ToolDrawer } from '@/components/tool-drawer'
+import { ScheduleDrawer, scheduleTiming } from '@/components/schedule-drawer'
 import { AreaSeries } from '@/components/charts'
 import { QueryState, EmptyState } from '@/components/states'
 import {
@@ -45,10 +48,10 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { ColumnDef } from '@tanstack/react-table'
-import type { Dict } from '@/lib/types'
+import type { CapabilityInventoryItem, Dict } from '@/lib/types'
 
 const TABS = [
-  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'policy', 'workspace', 'files',
+  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'schedules', 'policy', 'workspace', 'files',
 ] as const
 type TabId = (typeof TABS)[number]
 
@@ -168,6 +171,14 @@ function OverviewTab({ agentId }: { agentId: string }) {
   const ctxPct = totalCtx > 0 ? Math.min(100, Math.round((used / totalCtx) * 100)) : 0
   const ctxTone = ctxPct >= emergencyThr * 100 ? 'error' : ctxPct >= compactThr * 100 ? 'warning' : 'online'
 
+  // O2: prompt-cache accounting for the latest trace — None/None means the
+  // provider reported no cache fields at all (never touched, not zero-hit).
+  const cacheRead = latest?.cache_read_tokens != null ? Number(latest.cache_read_tokens) : null
+  const cacheWrite = latest?.cache_write_tokens != null ? Number(latest.cache_write_tokens) : null
+  const cacheOutput = latest?.output_tokens != null ? Number(latest.output_tokens) : null
+  const cacheHitRate =
+    cacheRead != null && used + cacheRead > 0 ? Math.round((cacheRead / (used + cacheRead)) * 100) : null
+
   const calls = Number(s.request_count ?? 0)
   const errorCount = Number(s.error_count ?? 0)
   const latencyAvg = Math.round(Number(s.latency_avg ?? 0))
@@ -248,6 +259,20 @@ function OverviewTab({ agentId }: { agentId: string }) {
                 <span><span className="text-status-online">●</span> Prune {Math.round(pruneThr * 100)}%</span>
                 <span><span className="text-status-warning">●</span> Compact {Math.round(compactThr * 100)}%</span>
                 <span><span className="text-status-error">●</span> Emergency {Math.round(emergencyThr * 100)}%</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-3 rounded-lg bg-muted/40 p-2 text-xs">
+                <span className="text-muted-foreground">Cache</span>
+                {cacheRead == null && cacheWrite == null ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  <>
+                    <span>Input <span className="font-mono text-foreground">{fmtNumber(used)}</span></span>
+                    <span>Read <span className="font-mono text-foreground">{cacheRead != null ? fmtNumber(cacheRead) : '—'}</span></span>
+                    <span>Write <span className="font-mono text-foreground">{cacheWrite != null ? fmtNumber(cacheWrite) : '—'}</span></span>
+                    <span>Output <span className="font-mono text-foreground">{cacheOutput != null ? fmtNumber(cacheOutput) : '—'}</span></span>
+                    <span>Hit rate <span className="font-mono text-foreground">{cacheHitRate != null ? `${cacheHitRate}%` : '—'}</span></span>
+                  </>
+                )}
               </div>
             </InfoCard>
           </div>
@@ -442,11 +467,27 @@ function LlmTab({ agentId }: { agentId: string }) {
 function SkillsTab({ agentId }: { agentId: string }) {
   const q = useAgentCapabilities(agentId)
   const skills = (q.data?.items ?? []).filter((i) => i.kind === 'skill')
+  const [selected, setSelected] = useState<string | null>(null)
   return (
-    <QueryState query={q} isEmpty={() => skills.length === 0}
-      empty={<EmptyState title="No skills" description="No skill loaded from any of the four scan roots." />}>
-      {() => <CapabilityTable items={skills} searchPlaceholder="Search skills…" emptyTitle="No skills" />}
-    </QueryState>
+    <>
+      <QueryState query={q} isEmpty={() => skills.length === 0}
+        empty={<EmptyState title="No skills" description="No skill loaded from any of the four scan roots." />}>
+        {() => (
+          <CapabilityTable
+            items={skills}
+            searchPlaceholder="Search skills…"
+            emptyTitle="No skills"
+            onRowClick={(item: CapabilityInventoryItem) => setSelected(item.name)}
+          />
+        )}
+      </QueryState>
+      <SkillDrawer
+        agentId={agentId}
+        skillName={selected}
+        open={selected != null}
+        onOpenChange={(o) => !o && setSelected(null)}
+      />
+    </>
   )
 }
 
@@ -458,30 +499,69 @@ function ToolsTab({ agentId }: { agentId: string }) {
   const deny = q.data?.denylist ?? []
   const policyLabel = deny.length ? `deny ${deny.length}` : allow.length ? `allow ${allow.length}` : 'allow-all'
   const capTools = (caps.data?.items ?? []).filter((i) => i.kind === 'tool')
+  const [selected, setSelected] = useState<string | null>(null)
   return (
-    <QueryState query={q} isEmpty={() => tools.length === 0}
-      empty={<EmptyState title="No tools registered" />}>
-      {() => (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Registered" value={tools.length} />
-            <StatCard label="Policy" value={policyLabel} />
+    <>
+      <QueryState query={q} isEmpty={() => tools.length === 0}
+        empty={<EmptyState title="No tools registered" />}>
+        {() => (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <StatCard label="Registered" value={tools.length} />
+              <StatCard label="Policy" value={policyLabel} />
+            </div>
+            <ToolsTable tools={tools} onRowClick={(t) => setSelected(String(t.name))} />
+            <Section title="Capability tools — loader verdicts">
+              <QueryState
+                query={caps}
+                isEmpty={() => capTools.length === 0}
+                empty={<p className="text-xs text-muted-foreground">No capability tools scanned across the four roots.</p>}
+              >
+                {() => (
+                  <CapabilityTable
+                    items={capTools}
+                    searchPlaceholder="Search capability tools…"
+                    emptyTitle="No capability tools"
+                    onRowClick={(item: CapabilityInventoryItem) => setSelected(item.name)}
+                  />
+                )}
+              </QueryState>
+            </Section>
           </div>
-          <ToolsTable tools={tools} />
-          <Section title="Capability tools — loader verdicts">
-            <QueryState
-              query={caps}
-              isEmpty={() => capTools.length === 0}
-              empty={<p className="text-xs text-muted-foreground">No capability tools scanned across the four roots.</p>}
-            >
-              {() => (
-                <CapabilityTable items={capTools} searchPlaceholder="Search capability tools…" emptyTitle="No capability tools" />
-              )}
-            </QueryState>
-          </Section>
-        </div>
-      )}
-    </QueryState>
+        )}
+      </QueryState>
+      <ToolDrawer
+        agentId={agentId}
+        toolName={selected}
+        open={selected != null}
+        onOpenChange={(o) => !o && setSelected(null)}
+      />
+    </>
+  )
+}
+
+const scheduleColumns: ColumnDef<Dict, unknown>[] = [
+  { accessorKey: 'id', header: 'Schedule', cell: (c) => <span className="font-mono text-xs text-primary">{String(c.getValue())}</span> },
+  { accessorKey: 'type', header: 'Type', cell: (c) => <span className="text-xs text-muted-foreground">{String(c.getValue())}</span> },
+  { id: 'timing', header: 'Timing', accessorFn: (r) => scheduleTiming(r), cell: (c) => <span className="font-mono text-xs text-muted-foreground">{c.getValue() as string}</span> },
+  { accessorKey: 'enabled', header: 'Enabled', cell: (c) => <span className="text-xs text-foreground">{c.getValue() === false ? 'no' : 'yes'}</span> },
+]
+
+function SchedulesTab({ agentId }: { agentId: string }) {
+  const q = useAgentSchedules(agentId)
+  const rows = (q.data?.schedules ?? []) as Dict[]
+  const [selected, setSelected] = useState<Dict | null>(null)
+  return (
+    <>
+      <QueryState query={q} isEmpty={() => rows.length === 0}
+        empty={<EmptyState title="No schedules" description="This agent has no scheduled tasks." />}>
+        {() => (
+          <DataTable columns={scheduleColumns} data={rows} searchable searchPlaceholder="Search schedules…"
+            onRowClick={(r) => setSelected(r)} emptyTitle="No schedules" />
+        )}
+      </QueryState>
+      <ScheduleDrawer schedule={selected} open={selected != null} onOpenChange={(o) => !o && setSelected(null)} />
+    </>
   )
 }
 
@@ -537,6 +617,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   llm: (id) => <LlmTab agentId={id} />,
   skills: (id) => <SkillsTab agentId={id} />,
   tools: (id) => <ToolsTab agentId={id} />,
+  schedules: (id) => <SchedulesTab agentId={id} />,
   policy: (id) => <PolicyTab agentId={id} />,
   workspace: (id) => <FileTree agentId={id} root="workspace" rootLabel="workspace" />,
   files: (id) => <FileTree agentId={id} root="agent" rootLabel="agent root" />,
@@ -544,7 +625,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
 
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview', identity: 'Identity', sessions: 'Sessions', llm: 'LLM', skills: 'Skills',
-  tools: 'Tools', policy: 'Policy', workspace: 'Workspace', files: 'Files',
+  tools: 'Tools', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files',
 }
 
 export function AgentDetailPage() {

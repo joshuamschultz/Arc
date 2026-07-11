@@ -90,3 +90,36 @@ def _resolve_root_path(agent_root: Path, root_arg: str) -> Path:
     if root_arg == "workspace":
         return agent_root / "workspace"
     return agent_root
+
+
+def _read_text_or_empty(path: Path) -> str:
+    """Best-effort UTF-8 read for a detail-drawer source file — "" if unreadable.
+
+    Shared by the skill (U5) and tool (U6) detail routes: a bundle/tool that
+    the loader discovered but whose body can no longer be read (permissions,
+    concurrent delete) still returns 200 with empty content rather than 500.
+    """
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _compute_write_target(agent_root: Path, file_path: Path) -> tuple[str | None, str | None]:
+    """Map an on-disk file to its ``PUT /files/read`` save target.
+
+    ``workspace`` wins when the file lives under ``<agent_root>/workspace``
+    (the common case for agent-authored content); otherwise ``agent`` when it's
+    anywhere else under the agent root. Returns ``(None, None)`` for a file
+    outside the agent root entirely (e.g. the global ``~/.arc/capabilities``
+    root) — callers treat that as not editable via this route.
+    """
+    workspace_root = agent_root / "workspace"
+    try:
+        return "workspace", file_path.relative_to(workspace_root).as_posix()
+    except ValueError:
+        pass
+    try:
+        return "agent", file_path.relative_to(agent_root).as_posix()
+    except ValueError:
+        return None, None

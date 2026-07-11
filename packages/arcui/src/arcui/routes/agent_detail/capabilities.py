@@ -24,6 +24,31 @@ from arcui.routes.agent_detail._common import _agent_did, _agent_root, logger
 from arcui.schemas import ErrorResponse
 
 
+async def _agent_capability_rows(
+    agent_root: Path, live_agent: Any, kind: str
+) -> list[dict[str, Any]]:
+    """Capability-kind (``"skill"`` or ``"tool"``) inventory rows for one agent.
+
+    Shared by :func:`agent_skill_rows` and :func:`agent_tool_rows` — same
+    fleet-resilience contract: one unloadable agent config contributes no rows,
+    never crashes the aggregation. The strict per-agent route (``get_capabilities``)
+    surfaces errors instead.
+    """
+    config_path = agent_root / "arcagent.toml"
+    if not config_path.is_file():
+        return []
+    from arcagent.capabilities.inventory import collect_agent_capability_inventory
+
+    try:
+        inventory = await collect_agent_capability_inventory(config_path, live_agent=live_agent)
+    except Exception:  # reason: fleet resilience — see docstring
+        logger.warning(
+            "%s inventory failed for %s; contributing none", kind, agent_root, exc_info=True
+        )
+        return []
+    return [item.model_dump(mode="json") for item in inventory.items if item.kind == kind]
+
+
 async def agent_skill_rows(agent_root: Path, live_agent: Any = None) -> list[dict[str, Any]]:
     """Skill-kind inventory rows for one agent, via the arcagent seam.
 
@@ -32,21 +57,20 @@ async def agent_skill_rows(agent_root: Path, live_agent: Any = None) -> list[dic
     the loader's ``source_root`` + verbatim ``status``. Returns ``[]`` when the
     agent has no config on disk.
     """
-    config_path = agent_root / "arcagent.toml"
-    if not config_path.is_file():
-        return []
-    from arcagent.capabilities.inventory import collect_agent_capability_inventory
+    return await _agent_capability_rows(agent_root, live_agent, "skill")
 
-    # Fleet-safe: one unloadable agent config contributes no rows, never crashes
-    # the aggregation. The strict per-agent route below surfaces errors instead.
-    try:
-        inventory = await collect_agent_capability_inventory(config_path, live_agent=live_agent)
-    except Exception:  # reason: fleet resilience — see comment above
-        logger.warning(
-            "skill inventory failed for %s; contributing none", agent_root, exc_info=True
-        )
-        return []
-    return [item.model_dump(mode="json") for item in inventory.items if item.kind == "skill"]
+
+async def agent_tool_rows(agent_root: Path, live_agent: Any = None) -> list[dict[str, Any]]:
+    """Tool-kind inventory rows for one agent, via the arcagent seam.
+
+    Used by the tool detail drawer (U6) to resolve a capability-authored tool's
+    source file (``<agent>/capabilities/*.py`` or
+    ``<agent>/workspace/capabilities/*.py``) when the plain tool-directory scan
+    (``tools/``, ``extensions/``) doesn't find it — the loader's own
+    ``source_path`` is authoritative there. Returns ``[]`` when the agent has no
+    config on disk.
+    """
+    return await _agent_capability_rows(agent_root, live_agent, "tool")
 
 
 def _live_agent(request: Request, agent_id: str) -> Any:

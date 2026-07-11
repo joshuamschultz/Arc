@@ -38,9 +38,12 @@ from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
 from arcmemory.retrieve import Retriever
+from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
+from arcmemory.stores.insight import InsightStore
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore, format_fact
-from arcmemory.types import Event, Recall, Scope, Situation
+from arcmemory.types import DaySummary, Event, Insight, Procedure, Recall, Scope, Situation
 
 
 class MutationStatus(StrEnum):
@@ -159,6 +162,9 @@ class MemoryOperator:
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._episodic = EpisodicStore(self._db, self._workspace)
+        self._insights = InsightStore(self._workspace)
+        self._procedures = ProceduralStore(self._workspace)
+        self._daily = DailyNotesStore(self._workspace)
 
     # -- reads -------------------------------------------------------------
 
@@ -231,6 +237,25 @@ class MemoryOperator:
     def get_entity(self, slug: str, *, session_id: str | None = None) -> EntityRecord | None:
         """Fetch a single entity record (None if absent)."""
         return next((e for e in self.list_entities(session_id=session_id) if e.slug == slug), None)
+
+    def list_insights(self) -> list[Insight]:
+        """Every minted insight card, sorted by id (the curated glass-box centerpiece)."""
+        insights = [self._insights.read(iid) for iid in self._insights.all_ids()]
+        return sorted((i for i in insights if i is not None), key=lambda i: i.id)
+
+    def list_procedures(self) -> list[Procedure]:
+        """Every how-to procedure card, sorted by slug."""
+        procedures = [self._procedures.read(slug) for slug in self._procedures.slugs()]
+        return sorted((p for p in procedures if p is not None), key=lambda p: p.slug)
+
+    def list_daily_notes(self) -> list[DaySummary]:
+        """Every day's curated notes, newest day first."""
+        summaries = [self._daily.read(day) for day in self._daily.days()]
+        return [s for s in summaries if s is not None]
+
+    def read_daily_note(self, day: str) -> DaySummary | None:
+        """Fetch one day's curated notes (None if absent)."""
+        return self._daily.read(day)
 
     def links(self, node_id: str, *, session_id: str | None = None) -> list[LinkRecord]:
         """Linked entities/memories for a memory or entity, navigable (REQ-085).

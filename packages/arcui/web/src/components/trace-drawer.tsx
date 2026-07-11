@@ -8,6 +8,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
 import { StatusText } from '@/components/status-badge'
+import { LlmContent } from '@/components/llm-content-renderer'
 import { useTraceDetail } from '@/lib/queries'
 import { fmtCost, fmtLatency, fmtNumber, fmtTime, shortId } from '@/lib/format'
 import type { Trace } from '@/lib/types'
@@ -34,19 +35,63 @@ function extractMessages(trace: Trace): Message[] {
   return arr
 }
 
+/** Pull renderable content out of a provider response envelope so U8 can render
+ *  it structured (Anthropic `content[]`, OpenAI `choices[].message.content`).
+ *  Returns undefined when the shape is unknown — the caller then shows raw JSON. */
+function responseContent(response: unknown): unknown {
+  if (response == null || typeof response !== 'object') return undefined
+  const obj = response as Record<string, unknown>
+  if (Array.isArray(obj.content) || typeof obj.content === 'string') return obj.content
+  const choices = obj.choices
+  if (Array.isArray(choices) && choices.length > 0) {
+    const msg = (choices[0] as Record<string, unknown>)?.message as
+      | Record<string, unknown>
+      | undefined
+    if (msg && (typeof msg.content === 'string' || Array.isArray(msg.content))) return msg.content
+  }
+  return undefined
+}
+
 function MessageBubble({ message }: { message: Message }) {
-  const content =
-    typeof message.content === 'string'
-      ? message.content
-      : JSON.stringify(message.content, null, 2)
   return (
     <div className="rounded-lg border border-border bg-muted/20 p-3">
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
         {message.role || 'message'}
       </div>
-      <pre className="whitespace-pre-wrap break-words font-mono text-xs text-foreground">
-        {content}
-      </pre>
+      <LlmContent content={message.content} />
+    </div>
+  )
+}
+
+/** O2 — prompt-cache accounting tiles + hit-rate. Renders only when the call
+ *  carried cache figures (older rows predate cache capture). */
+function CacheBreakdown({ trace }: { trace: Trace }) {
+  const input = trace.input_tokens ?? trace.prompt_tokens ?? trace.total_tokens ?? null
+  const output = trace.output_tokens ?? trace.completion_tokens ?? null
+  const cacheRead = trace.cache_read_tokens ?? null
+  const cacheWrite = trace.cache_write_tokens ?? null
+  if (cacheRead == null && cacheWrite == null) return null
+
+  const denom = (input ?? 0) + (cacheRead ?? 0)
+  const hitRate = cacheRead != null && denom > 0 ? cacheRead / denom : null
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Cache breakdown
+      </div>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Field label="Input" value={fmtNumber(input ?? undefined)} />
+        <Field label="Cache read" value={fmtNumber(cacheRead ?? undefined)} />
+        <Field label="Cache write" value={fmtNumber(cacheWrite ?? undefined)} />
+        <Field label="Output" value={fmtNumber(output ?? undefined)} />
+      </div>
+      <div className="text-xs text-muted-foreground">
+        Cache hit rate{' '}
+        <span className="font-mono text-foreground">
+          {hitRate != null ? `${Math.round(hitRate * 100)}%` : '—'}
+        </span>
+      </div>
     </div>
   )
 }
@@ -97,6 +142,8 @@ export function TraceDrawer({
               <Field label="Cost" value={fmtCost(full.cost_usd)} />
             </div>
 
+            <CacheBreakdown trace={full} />
+
             {messages.length > 0 && (
               <div className="space-y-2">
                 <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -113,7 +160,11 @@ export function TraceDrawer({
                 <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Response
                 </div>
-                <JsonBlock value={response} />
+                {responseContent(response) !== undefined ? (
+                  <LlmContent content={responseContent(response)} />
+                ) : (
+                  <JsonBlock value={response} />
+                )}
               </div>
             )}
 

@@ -73,6 +73,18 @@ def test_merge_empty_writes_nothing(workspace: Path) -> None:
     assert not store.path_for(_DAY).exists()
 
 
+def test_days_lists_sorted_descending(workspace: Path) -> None:
+    store = DailyNotesStore(workspace)
+    store.write(DaySummary(day="2026-07-05", timeline=["a"]))
+    store.write(DaySummary(day="2026-07-07", timeline=["b"]))
+    store.write(DaySummary(day="2026-07-06", timeline=["c"]))
+    assert store.days() == ["2026-07-07", "2026-07-06", "2026-07-05"]
+
+
+def test_days_empty_when_dir_absent(workspace: Path) -> None:
+    assert DailyNotesStore(workspace).days() == []
+
+
 def test_merge_raises_classification_to_dominating(workspace: Path) -> None:
     """A SECRET event in the day raises the file's label so the channel is gated (SDD §8)."""
     store = DailyNotesStore(workspace)

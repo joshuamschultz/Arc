@@ -12,8 +12,19 @@ from arcgateway.fs_reader import FileTooLargeError, PathTraversalError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from arcui.routes.agent_detail._common import _CALLER_DID, _agent_root
-from arcui.schemas import ErrorResponse, ToolsResponse
+from arcui.routes.agent_detail._common import (
+    _CALLER_DID,
+    _agent_root,
+    _compute_write_target,
+    _read_text_or_empty,
+)
+from arcui.schemas import ErrorResponse, ToolDetailResponse, ToolsResponse
+
+# Transports whose files live under the agent root and are safe to edit via
+# the shared `PUT /files/read` route — mirrors U5's editable-source-root
+# check. Builtins, arcagent-module tools, and the operator-curated global
+# capabilities root (outside the agent root) are always read-only.
+_EDITABLE_TOOL_TRANSPORTS = frozenset({"workspace", "agent_dir", "capability"})
 
 # Classification fallbacks for builtin tools whose source omits the kwarg.
 # The loader reads these from the @tool decorator; the few that don't set
@@ -185,16 +196,13 @@ def _stem_row(child: Path, transport: str) -> dict[str, str]:
     return {"name": child.stem, "transport": transport, "classification": "", "description": ""}
 
 
-def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
-    """Scan agent-local + workspace tool directories for .py modules and
-    parse `@tool(...)` blocks for name/classification/description metadata.
+def _disk_tool_roots(agent_root: Path) -> list[tuple[Path, str]]:
+    """Directories scanned for on-disk tool `.py` files, mirroring the loader's
+    tool roots. Shared by `_collect_disk_tools` (list view) and
+    `_locate_disk_tool_file` (U6 detail lookup) so both walk the same roots in
+    the same precedence order.
 
-    Falls back to the file stem when there's no `@tool(...)` decorator —
-    the file is still a tool surface, just one without rich metadata.
-    Agent-created tools that DO use the decorator inherit the same
-    classification surface as built-in/module tools.
-
-    Locations checked (each optional), mirroring the loader's tool roots:
+    Locations checked (each optional):
       - ~/.arc/capabilities/*.py                 (global, operator-curated)
       - team/<agent>/tools/*.py                  (agent-shipped Python tools)
       - team/<agent>/workspace/tools/*.py        (agent-authored runtime tools)
@@ -202,8 +210,7 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
       - team/<agent>/capabilities/*.py           (per-agent capabilities)
       - team/<agent>/workspace/capabilities/*.py (agent-authored at runtime)
     """
-    out: list[dict[str, str]] = []
-    candidates: list[tuple[Path, str]] = [
+    return [
         # Global capabilities root — the loader scans ~/.arc/capabilities/.
         (Path.home() / ".arc" / "capabilities", "global"),
         (agent_root / "tools", "agent_dir"),
@@ -214,7 +221,19 @@ def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
         # path the UI must scan so newly created tools appear on refresh.
         (agent_root / "workspace" / "capabilities", "workspace"),
     ]
-    for path, transport in candidates:
+
+
+def _collect_disk_tools(agent_root: Path) -> list[dict[str, str]]:
+    """Scan agent-local + workspace tool directories for .py modules and
+    parse `@tool(...)` blocks for name/classification/description metadata.
+
+    Falls back to the file stem when there's no `@tool(...)` decorator —
+    the file is still a tool surface, just one without rich metadata.
+    Agent-created tools that DO use the decorator inherit the same
+    classification surface as built-in/module tools.
+    """
+    out: list[dict[str, str]] = []
+    for path, transport in _disk_tool_roots(agent_root):
         if not path.is_dir():
             continue
         for child in sorted(path.iterdir()):
@@ -349,3 +368,168 @@ async def get_tools(request: Request) -> JSONResponse:
             denylist=denylist,
         ).model_dump(mode="json")
     )
+
+
+def _error(message: str, status: int) -> JSONResponse:
+    return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
+
+
+def _locate_disk_tool_file(agent_root: Path, tool_name: str) -> tuple[Path, str] | None:
+    """Find the on-disk `.py` file whose `@tool(...)` block defines `tool_name`.
+
+    Walks `_disk_tool_roots` in the same precedence order `_collect_disk_tools`
+    uses for its first-match-wins dedup, so the file returned here is the same
+    one that wins the Tools tab's list row.
+    """
+    for path, transport in _disk_tool_roots(agent_root):
+        if not path.is_dir():
+            continue
+        for child in sorted(path.iterdir()):
+            if child.name.startswith("_") or child.name.startswith("."):
+                continue
+            if not (child.is_file() and child.suffix == ".py"):
+                continue
+            text = _read_text_or_empty(child)
+            if any(row["name"] == tool_name for row in _parse_tool_blocks(text)):
+                return child, transport
+    return None
+
+
+def _locate_builtin_tool_file(tool_name: str) -> Path | None:
+    """Find the builtin capabilities file whose `@tool(...)` block defines
+    `tool_name`, mirroring `_collect_builtin_tools`'s scan but returning the
+    source file instead of a metadata row."""
+    pkg = _arcagent_pkg_dir()
+    if pkg is None:
+        return None
+    builtins_dir = pkg / "builtins" / "capabilities"
+    if not builtins_dir.is_dir():
+        return None
+    for child in sorted(builtins_dir.glob("*.py")):
+        if child.name.startswith("_"):
+            continue
+        text = _read_text_or_empty(child)
+        if any(row["name"] == tool_name for row in _parse_tool_blocks(text)):
+            return child
+    return None
+
+
+def _tool_detail_payload(
+    *,
+    name: str,
+    transport: str,
+    classification: str,
+    description: str,
+    source_path: Path,
+    editable: bool,
+    agent_root: Path,
+) -> ToolDetailResponse:
+    """Assemble the response, computing the write target only when editable."""
+    write_root: str | None = None
+    write_path: str | None = None
+    if editable:
+        write_root, write_path = _compute_write_target(agent_root, source_path)
+        editable = write_root is not None
+    return ToolDetailResponse(
+        name=name,
+        transport=transport,
+        classification=classification,
+        description=description,
+        source_path=str(source_path),
+        content=_read_text_or_empty(source_path),
+        editable=editable,
+        write_root=write_root,
+        write_path=write_path,
+    )
+
+
+async def get_tool_detail(request: Request) -> JSONResponse:
+    """GET .../tools/{tool_name}/detail — tool source + edit target (U6).
+
+    Resolution order: 1) on-disk tool directories (agent/workspace-authored —
+    the same roots `_collect_disk_tools` scans), 2) the capability inventory's
+    ``kind == "tool"`` rows (the loader's own verdict, covering agent/workspace
+    ``capabilities/`` bundles the same way U5 resolves skills), 3) the arcagent
+    builtins capabilities dir (always read-only). 404 when none locate it —
+    module-derived tools (``arcagent/modules/*/capabilities.py``) and
+    live-registry-only entries carry no editable file surface today.
+    """
+    agent_id = request.path_params["id"]
+    tool_name = request.path_params["tool_name"]
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return _error("Agent not found", 404)
+
+    disk_hit = _locate_disk_tool_file(agent_root, tool_name)
+    if disk_hit is not None:
+        file_path, transport = disk_hit
+        meta = next(
+            (
+                row
+                for row in _parse_tool_blocks(_read_text_or_empty(file_path))
+                if row["name"] == tool_name
+            ),
+            {"classification": "", "description": ""},
+        )
+        payload = _tool_detail_payload(
+            name=tool_name,
+            transport=transport,
+            classification=meta.get("classification", ""),
+            description=meta.get("description", ""),
+            source_path=file_path,
+            editable=transport in _EDITABLE_TOOL_TRANSPORTS,
+            agent_root=agent_root,
+        )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    from arcui.routes.agent_detail.capabilities import _live_agent, agent_tool_rows
+
+    # Only consult agent/workspace-sourced rows here — builtins/global route
+    # through the dedicated steps below so the transport label stays the
+    # canonical "builtin" the Tools tab list already uses, not the loader's
+    # raw "builtins"/"builtins-skills" scan-root name.
+    cap_rows = await agent_tool_rows(agent_root, _live_agent(request, agent_id))
+    cap_matches = [
+        r
+        for r in cap_rows
+        if r.get("name") == tool_name
+        and r.get("source_path")
+        and str(r.get("source_root") or "").startswith(("agent", "workspace"))
+    ]
+    if cap_matches:
+        row = cap_matches[-1]  # last root wins, mirroring skills._skill_dir
+        source_path = Path(str(row["source_path"]))
+        payload = _tool_detail_payload(
+            name=tool_name,
+            transport=str(row.get("source_root") or ""),
+            classification="",
+            description=str(row.get("description") or ""),
+            source_path=source_path,
+            editable=True,
+            agent_root=agent_root,
+        )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    builtin_path = _locate_builtin_tool_file(tool_name)
+    if builtin_path is not None:
+        meta = next(
+            (
+                row
+                for row in _parse_tool_blocks(_read_text_or_empty(builtin_path))
+                if row["name"] == tool_name
+            ),
+            {"classification": "", "description": ""},
+        )
+        classification = meta.get("classification") or _BUILTIN_CLASSIFICATION.get(tool_name, "")
+        payload = _tool_detail_payload(
+            name=tool_name,
+            transport="builtin",
+            classification=classification,
+            description=meta.get("description", ""),
+            source_path=builtin_path,
+            editable=False,
+            agent_root=agent_root,
+        )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    return _error(f"tool {tool_name!r} not found", 404)

@@ -270,6 +270,50 @@ class SkillVersionDiffResponse(BaseModel):
     diff: str
 
 
+class SkillDetailResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/skills/{skill_name}/detail`` (U5).
+
+    ``content`` is the SKILL.md body. ``write_root``/``write_path`` are the
+    save target for the existing ``PUT /files/read`` route — both None when
+    ``editable`` is False (builtins/global sources never expose a write target).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    version: str
+    description: str
+    source_root: str
+    source_path: str
+    status: str
+    status_detail: str
+    content: str
+    editable: bool
+    write_root: str | None
+    write_path: str | None
+
+
+class ToolDetailResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/tools/{tool_name}/detail`` (U6).
+
+    ``content`` is the tool's ``.py`` source. ``write_root``/``write_path``
+    mirror :class:`SkillDetailResponse` — set only for agent/workspace-authored
+    tool files; builtins and module tools are always read-only.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    transport: str
+    classification: str
+    description: str
+    source_path: str
+    content: str
+    editable: bool
+    write_root: str | None
+    write_path: str | None
+
+
 class SkillRollbackResponse(BaseModel):
     """Body of ``POST .../skills/{skill_name}/rollback``.
 

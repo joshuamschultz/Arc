@@ -93,11 +93,15 @@ export function CapabilityTable<T extends CapabilityInventoryItem>({
   agentAccessor,
   searchPlaceholder = 'Search…',
   emptyTitle = 'Nothing here',
+  onRowClick,
 }: {
   items: T[]
   agentAccessor?: (row: T) => string | undefined
   searchPlaceholder?: string
   emptyTitle?: string
+  /** Optional row-click handler — e.g. opening a detail drawer (U5). Omit for
+   *  a plain read-only table (the fleet Tools & Skills page's usage). */
+  onRowClick?: (row: T) => void
 }) {
   return (
     <DataTable
@@ -106,6 +110,7 @@ export function CapabilityTable<T extends CapabilityInventoryItem>({
       searchable
       searchPlaceholder={searchPlaceholder}
       emptyTitle={emptyTitle}
+      onRowClick={onRowClick}
     />
   )
 }
