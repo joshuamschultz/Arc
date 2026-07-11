@@ -743,6 +743,16 @@ class ArcAgent:
             return text
 
     @property
+    def did(self) -> str:
+        """This agent's DID — its cryptographic identity (empty before startup).
+
+        Read-only accessor for out-of-process wiring (e.g. the always-on fleet
+        registry keying an ArcAgent by identity) that must not reach into the
+        private identity object.
+        """
+        return self._identity.did if self._identity is not None else ""
+
+    @property
     def skills(self) -> list[SkillEntry]:
         """All registered skill entries."""
         if self._capability_registry is None:

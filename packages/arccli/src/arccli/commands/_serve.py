@@ -15,11 +15,15 @@ regardless of registry state.
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from arccli.commands._shared import write as _write
+
+_logger = logging.getLogger("arccli.serve")
 
 _DEFAULT_NATS_URL = "nats://127.0.0.1:4222"
 
@@ -137,9 +141,57 @@ async def bootstrap_infra(team_root: Path) -> Any:
     return handle
 
 
+async def serve_fleet_agents(
+    team_root: Path,
+    fleet: Any,
+    *,
+    warm: Callable[[str], Awaitable[Any]] | None = None,
+) -> int:
+    """Start every discovered team agent so its messaging inbox loop runs (MSG4).
+
+    For each agent under ``team_root`` this loads the agent, calls
+    ``startup()`` — which spawns the ``messaging_inbox_loop`` durable PUSH
+    consumer when ``[modules.messaging]`` is enabled, so the agent WAKES on a
+    DM / @mention / channel post and can reply — and registers the started
+    instance in ``fleet`` (an :class:`arcgateway.fleet.FleetRegistry`). The
+    embedded gateway's agent factory then reuses that SAME instance for web
+    chat, guaranteeing one durable consumer per agent (no double subscription).
+
+    ``warm(did)`` is an optional callback that touches the gateway factory for a
+    started agent so it also shows LIVE in the fleet roster; a warm failure is
+    logged and never blocks consuming. Best-effort per agent: one bad config is
+    warned and skipped so a single failure never leaves the rest of the fleet
+    dark. Returns the number of agents started.
+
+    Must be awaited inside the serving process's event loop (the started agents'
+    inbox-loop tasks live there for the process lifetime); ``arc ui start`` runs
+    it from a lifespan startup hook, after the broker and gateway are up.
+    """
+    from arccli.commands.agent._common import _load_arcagent
+
+    agent_dirs = discover_agent_dirs(team_root)
+    started = 0
+    for agent_dir in agent_dirs:
+        try:
+            agent, _config, _config_path = _load_arcagent(agent_dir)
+            await agent.startup()
+            fleet.add(agent.did, agent)
+            started += 1
+        except Exception as exc:  # reason: best-effort — one bad agent never blocks the fleet
+            _write(f"  warn: could not start agent {agent_dir.name}: {exc}")
+            continue
+        if warm is not None:
+            try:
+                await warm(agent.did)
+            except Exception:  # reason: LIVE-status is cosmetic; consuming already works
+                _logger.warning("fleet: could not warm %s for LIVE", agent.did, exc_info=True)
+    return started
+
+
 __all__ = [
     "bootstrap_infra",
     "discover_agent_dirs",
     "nats_url",
     "register_folder_agents",
+    "serve_fleet_agents",
 ]

@@ -317,6 +317,7 @@ def _start(args: argparse.Namespace) -> None:
     # the (blocking) server returns — loop-independent, so uvicorn's own signal
     # handling can never orphan it.
     infra = None
+    fleet = None
     if team_root is not None:
         from arccli.commands._serve import bootstrap_infra
 
@@ -324,12 +325,72 @@ def _start(args: argparse.Namespace) -> None:
         if infra is not None:
             _install_infra_reaper(infra)
 
+        # MSG4: start every team agent up front so its messaging inbox loop runs
+        # and the fleet RESPONDS to DMs/@mentions/channel posts — not just the
+        # agents someone happens to web-chat. The gateway factory shares these
+        # same instances, so there is one durable consumer per agent.
+        if _fleet_enabled(gateway_config):
+            fleet = _register_fleet_startup(app, team_root)
+
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     try:
         uvicorn.Server(config).run()
     finally:
+        if fleet is not None:
+            from arcgateway.fleet import set_current_fleet
+
+            set_current_fleet(None)
         if infra is not None:
             infra.terminate_sync()
+
+
+def _fleet_enabled(gateway_config: Any | None) -> bool:
+    """Whether to run the in-process always-on fleet for this deployment.
+
+    Runs for personal/enterprise (the in-process AsyncioExecutor path). Skipped
+    only at federal tier, where the gateway isolates each session in its own
+    SubprocessExecutor — an in-process shared fleet would violate that isolation
+    and does not share the factory the subprocess model uses. Federal always-on
+    is a separate (per-agent daemon) design, out of scope here.
+    """
+    if gateway_config is None:
+        return True  # --no-chat: agents still consume; no gateway to conflict with
+    return str(getattr(getattr(gateway_config, "gateway", None), "tier", "personal")) != "federal"
+
+
+def _register_fleet_startup(app: Any, team_root: Path) -> Any:
+    """Wire the always-on fleet: start every team agent so its inbox loop runs.
+
+    Builds a process :class:`~arcgateway.fleet.FleetRegistry`, installs it so the
+    embedded gateway factory reuses its instances (one durable consumer per
+    agent), and appends a lifespan startup hook that starts the fleet AFTER the
+    broker + gateway are up. Returns the fleet so the caller can clear it on
+    shutdown. arcui owns none of this — it uses the public ``_extra_startup_hooks``
+    seam and ``app.state.executor``.
+    """
+    from arcgateway.fleet import FleetRegistry, set_current_fleet
+
+    fleet = FleetRegistry()
+    set_current_fleet(fleet)
+    # Expose the fleet handle so a future dashboard start/stop control (owned by
+    # arcui) can drive per-agent lifecycle — see the MSG4 report's contract.
+    app.state.fleet = fleet
+
+    async def _serve_fleet() -> None:
+        from arccli.commands._serve import serve_fleet_agents
+
+        executor = getattr(app.state, "executor", None)
+
+        async def _warm(agent_did: str) -> None:
+            factory = getattr(executor, "agent_factory", None) if executor is not None else None
+            if factory is not None:
+                await factory(agent_did)
+
+        count = await serve_fleet_agents(team_root, fleet, warm=_warm)
+        _write(f"  Fleet: {count} always-on agent(s) started (messaging inbox active).")
+
+    app.state._extra_startup_hooks.append(_serve_fleet)
+    return fleet
 
 
 def _install_infra_reaper(infra: Any) -> None:

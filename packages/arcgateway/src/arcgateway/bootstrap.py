@@ -121,6 +121,17 @@ def _make_agent_factory(team_root: Path) -> Any:
     cached_index: dict[str, dict[str, Path]] = {"map": {}}
 
     async def _factory(agent_did: str) -> Any:
+        # MSG4: reuse the always-on fleet's already-started instance when one is
+        # running, so web chat and the messaging inbox loop share ONE ArcAgent
+        # (one durable NATS consumer) per agent instead of racing two.
+        from arcgateway.fleet import current_fleet
+
+        fleet = current_fleet()
+        if fleet is not None:
+            existing = fleet.get(agent_did)
+            if existing is not None:
+                return existing
+
         # Lazy import — arcagent is optional at install time for this package.
         from arcagent.core.agent import ArcAgent
         from arcagent.core.config import load_config
