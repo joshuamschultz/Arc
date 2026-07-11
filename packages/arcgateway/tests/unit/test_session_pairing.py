@@ -32,6 +32,36 @@ def _make_event(
 # ---------------------------------------------------------------------------
 
 
+class TestTrustedPlatformExemption:
+    """The token-authenticated web console must never face gateway DM-pairing."""
+
+    @pytest.mark.asyncio
+    async def test_web_is_exempt_even_with_pairing_enforced(self) -> None:
+        # A store + empty allowlist would normally reject everyone (enforcement on).
+        interceptor = PairingInterceptor(user_allowlist=set(), pairing_store=AsyncMock())
+        # Web is the operator console — already gated by the viewer/operator token.
+        assert await interceptor.is_user_approved("did:arc:viewer:abcd1234", "web") is True
+
+    @pytest.mark.asyncio
+    async def test_external_platform_still_enforced(self) -> None:
+        store = MagicMock()
+        store.is_approved = AsyncMock(return_value=False)
+        interceptor = PairingInterceptor(user_allowlist=set(), pairing_store=store)
+        # Telegram (no upstream token) is NOT exempt — pairing still gates it.
+        assert await interceptor.is_user_approved("did:arc:telegram:99", "telegram") is False
+        store.is_approved.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_trusted_platforms_is_configurable(self) -> None:
+        store = MagicMock()
+        store.is_approved = AsyncMock(return_value=False)
+        interceptor = PairingInterceptor(
+            user_allowlist=set(), pairing_store=store, trusted_platforms=frozenset()
+        )
+        # With web removed from the trusted set, it falls back to the normal gate.
+        assert await interceptor.is_user_approved("did:arc:viewer:abcd1234", "web") is False
+
+
 class TestPairingInterceptorAllowlist:
     @pytest.mark.asyncio
     async def test_no_allowlist_no_store_approves_everyone(self) -> None:

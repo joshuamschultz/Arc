@@ -107,10 +107,19 @@ class NatsConsumer:
         self._sub = sub
 
     async def fetch(self, batch: int) -> list[Delivery]:
-        """Pull up to ``batch`` un-acked messages; empty list when idle."""
+        """Pull up to ``batch`` un-acked messages; empty list when idle.
+
+        An idle stream is normal, not an error. The nats.py pull path signals
+        "no messages before the deadline" with EITHER ``nats.errors.TimeoutError``
+        OR a bare ``asyncio.TimeoutError`` (its ``_fetch_n`` wraps an
+        ``asyncio.wait_for``) — the two are distinct classes. Catching only the
+        former let every empty poll surface up the consume loop as an ERROR
+        ("consume fetch failed; retrying"), spamming the journal ~20x/min on a
+        quiet fleet. Both mean the same thing here: return an empty batch.
+        """
         try:
             msgs = await self._sub.fetch(batch, timeout=_FETCH_TIMEOUT)
-        except NatsTimeout:
+        except (NatsTimeout, TimeoutError):  # asyncio.TimeoutError IS builtin TimeoutError (3.11+)
             return []
         deliveries: list[Delivery] = [ConsumedMessage(_decode(m.data), m) for m in msgs]
         return deliveries

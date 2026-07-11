@@ -51,6 +51,15 @@ class PairingInterceptor:
         _adapter_map:    Maps platform name → adapter for DM delivery.
     """
 
+    #: Platforms whose users are already authenticated upstream, so gateway
+    #: DM-pairing must not gate them. ``web`` is the operator console: every
+    #: ``/ws/chat`` connection is gated by arcui's viewer/operator token
+    #: (AuthMiddleware) before it ever reaches SessionRouter, so a second
+    #: pairing dance on top of the token is redundant and locks the trusted
+    #: operator out of their own dashboard. DM-pairing exists for platforms with
+    #: NO such gate (Telegram/Slack strangers), which stay fully enforced.
+    _DEFAULT_TRUSTED_PLATFORMS = frozenset({"web"})
+
     def __init__(
         self,
         *,
@@ -58,6 +67,7 @@ class PairingInterceptor:
         pairing_store: object | None = None,
         pairing_db_path: Path | None = None,
         adapter_map: dict[str, Any] | None = None,
+        trusted_platforms: frozenset[str] | None = None,
     ) -> None:
         """Initialise PairingInterceptor.
 
@@ -68,8 +78,14 @@ class PairingInterceptor:
                              created at that path.
             pairing_db_path: Convenience path for auto-creating a PairingStore.
             adapter_map:     Platform → adapter mapping used to deliver DMs.
+            trusted_platforms: Platforms exempt from pairing because their users
+                             are authenticated upstream (default ``{"web"}`` —
+                             the token-gated operator console).
         """
         self._user_allowlist: set[str] | None = user_allowlist
+        self._trusted_platforms: frozenset[str] = (
+            trusted_platforms if trusted_platforms is not None else self._DEFAULT_TRUSTED_PLATFORMS
+        )
         self._adapter_map: dict[str, Any] = dict(adapter_map or {})
 
         if pairing_store is not None:
@@ -110,6 +126,11 @@ class PairingInterceptor:
         Returns:
             True when approved by either path.
         """
+        # A token-authenticated platform (web operator console) is never DM-paired
+        # — the viewer/operator token already authorized it upstream. Untrusted
+        # platforms (Telegram/Slack) fall through to the normal gate below.
+        if platform in self._trusted_platforms:
+            return True
         if self._user_allowlist is None and self._pairing_store is None:
             return True
         if self._user_allowlist is not None and user_did in self._user_allowlist:

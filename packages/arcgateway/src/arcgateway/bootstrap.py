@@ -238,23 +238,16 @@ async def build_for_embedded(
     user_allowlist: set[str] | None = None
     if gateway_config.security.require_pairing:
         from arcgateway.pairing import PairingStore
-        from arcgateway.pairing_allowlist import build_team_agent_allowlist, build_user_allowlist
+        from arcgateway.pairing_allowlist import build_user_allowlist
 
         pairing_store = PairingStore(
             db_path=gateway_config.pairing.db_path,
             tier=gateway_config.gateway.tier,
         )
         user_allowlist = build_user_allowlist(gateway_config.platforms)
-        # Same-team agents are always-ready peers under one trusted operator —
-        # pre-approve every teammate DID so an agent-to-agent DM never triggers
-        # the pairing dance. External/cross-system callers still face pairing.
-        team_agent_dids = build_team_agent_allowlist(team_root)
-        if team_agent_dids:
-            user_allowlist = (user_allowlist or set()) | team_agent_dids
         _logger.info(
-            "bootstrap: require_pairing=true — PairingStore wired (db=%s, team_agents=%d)",
+            "bootstrap: require_pairing=true — PairingStore wired (db=%s)",
             gateway_config.pairing.db_path,
-            len(team_agent_dids),
         )
 
     session_router = SessionRouter(

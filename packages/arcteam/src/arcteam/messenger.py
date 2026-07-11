@@ -326,6 +326,7 @@ class MessagingService:
 
         # Route to each target
         streams_written: list[str] = []
+        channel_targeted = False
         last_seq = 0
         for target in message.to:
             # `@handle` is sugar for addressing an entity's inbox. Resolve it
@@ -345,6 +346,7 @@ class MessagingService:
 
             # FR-7: Enforce channel membership
             if scheme == "channel":
+                channel_targeted = True
                 is_member = await self._check_channel_membership(message.sender, name, entities)
                 if not is_member:
                     await self._to_dlq(message, "not_channel_member")
@@ -375,9 +377,65 @@ class MessagingService:
                 msg_seq=seq,
             )
 
+        # A channel @mention must reliably WAKE the mentioned entity even if it is
+        # not a channel member (or subscribed to the channel stream yet), so fan
+        # the same envelope into each mentioned entity's inbox.
+        if channel_targeted and message.mentions:
+            await self._fanout_mentions_to_inboxes(
+                message, entities, base_dict, streams_written, sender_did
+            )
+
         message.seq = last_seq
         message.status = "sent"
         return message
+
+    async def _fanout_mentions_to_inboxes(
+        self,
+        message: Message,
+        entities: list[Entity],
+        base_dict: dict[str, Any],
+        streams_written: list[str],
+        sender_did: str,
+    ) -> None:
+        """Deliver a channel @mention to each mentioned entity's inbox (REQ-004).
+
+        Guarantees the mentioned entity is woken regardless of channel membership
+        or subscribe timing — its inbox (``arc.agent.{handle}``) is always
+        subscribed. A member who is ALSO mentioned already received the message on
+        the channel stream; the inbox copy is a benign duplicate the receiver's
+        ``subscribe`` dedups by message id (shared ``seen_ids``), so it is never
+        run twice. The sender is never self-notified, and an under-cleared mention
+        is skipped (no-write-down, AC-4) rather than refusing the whole send.
+        """
+        msg_level = parse_classification(
+            message.classification, strict=self._strict_classification
+        )
+        for did in message.mentions:
+            if did == sender_did:
+                continue
+            entity = next((e for e in entities if e.did == did), None)
+            if entity is None:
+                continue
+            stream = f"arc.agent.{entity.handle}"
+            if stream in streams_written:
+                continue  # already delivered (member or direct target) — dedup
+            recipient_level = parse_classification(
+                entity.clearance, strict=self._strict_classification
+            )
+            if not dominates(recipient_level, msg_level):
+                continue  # under-cleared: the mention does not fan out (no-write-down)
+            seq, _offset = await self._backend.append_auto_seq(
+                STREAMS_COLLECTION, stream, {**base_dict}
+            )
+            self._known_streams.add(stream)
+            await self._audit.log(
+                event_type="message.mention_fanout",
+                subject=stream,
+                actor_id=message.sender,
+                detail=f"@mention fanned to {entity.handle} inbox (msg {message.id})",
+                stream=stream,
+                msg_seq=seq,
+            )
 
     # --- Poll ---
 

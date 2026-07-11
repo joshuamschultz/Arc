@@ -78,53 +78,6 @@ tier = "federal"
     assert type(bundle.executor).__name__ == "SubprocessExecutor"
 
 
-def _write_agent(team_root: Path, name: str, did: str) -> None:
-    agent_dir = team_root / name
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "arcagent.toml").write_text(
-        f'[agent]\nname = "{name}"\n\n[identity]\ndid = "{did}"\n', encoding="utf-8"
-    )
-
-
-@pytest.mark.asyncio
-async def test_build_for_embedded_pre_approves_same_team_agents(tmp_path: Path) -> None:
-    """With require_pairing on, same-team agent DIDs are pre-approved so an
-    agent-to-agent DM never triggers the `arc gateway pair approve` dance, while
-    an unknown external DID still faces pairing."""
-    team_root = tmp_path / "team"
-    _write_agent(team_root, "josh_agent", "did:arc:local:agent/josh1234")
-    _write_agent(team_root, "marketer_agent", "did:arc:local:agent/mark5678")
-    cfg = _config(
-        f"""
-[security]
-require_pairing = true
-
-[pairing]
-db_path = "{tmp_path / "pairing.db"}"
-"""
-    )
-    bundle = await build_for_embedded(team_root, cfg)
-    pairing = bundle.session_router._pairing  # type: ignore[attr-defined]
-
-    assert await pairing.is_user_approved("did:arc:local:agent/josh1234", "web")
-    assert await pairing.is_user_approved("did:arc:local:agent/mark5678", "web")
-    # An external / cross-system DID is NOT pre-approved — pairing still gates it.
-    assert not await pairing.is_user_approved("did:arc:external:stranger", "web")
-
-
-@pytest.mark.asyncio
-async def test_build_for_embedded_no_pairing_does_not_seed_team_agents(tmp_path: Path) -> None:
-    """require_pairing=false keeps the interceptor a no-op (all approved) — team
-    DIDs are not seeded, preserving the enforcement-disabled default."""
-    team_root = tmp_path / "team"
-    _write_agent(team_root, "josh_agent", "did:arc:local:agent/josh1234")
-    bundle = await build_for_embedded(team_root, _config(""))
-    pairing = bundle.session_router._pairing  # type: ignore[attr-defined]
-    # No allowlist AND no store => enforcement disabled: everyone is approved.
-    assert pairing._user_allowlist is None
-    assert await pairing.is_user_approved("did:arc:external:stranger", "web")
-
-
 @pytest.mark.asyncio
 async def test_build_for_embedded_federal_tier_threads_team_root_to_worker(
     empty_team_root: Path,

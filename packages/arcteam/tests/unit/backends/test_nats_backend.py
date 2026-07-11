@@ -124,3 +124,28 @@ class TestDurableConsumer:
         for m in drained:
             await m.ack()
         assert await consumer.fetch(10) == []
+
+
+class TestConsumerTimeoutSwallowed:
+    """An idle pull raises EITHER nats.errors.TimeoutError OR asyncio.TimeoutError;
+    both mean 'no messages', not an error the consume loop should log + retry-storm."""
+
+    async def test_asyncio_timeout_is_empty_not_raised(self) -> None:
+        from arcteam.backends.nats import NatsConsumer
+
+        class _Sub:
+            async def fetch(self, batch: int, timeout: float) -> list[object]:
+                raise TimeoutError  # asyncio.TimeoutError IS builtin TimeoutError (3.11+)
+
+        assert await NatsConsumer(_Sub()).fetch(10) == []
+
+    async def test_nats_timeout_is_empty_not_raised(self) -> None:
+        from nats.errors import TimeoutError as NatsTimeout
+
+        from arcteam.backends.nats import NatsConsumer
+
+        class _Sub:
+            async def fetch(self, batch: int, timeout: float) -> list[object]:
+                raise NatsTimeout
+
+        assert await NatsConsumer(_Sub()).fetch(10) == []
