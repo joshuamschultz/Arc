@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import arcllm
@@ -36,10 +35,12 @@ from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightMint
 from arcmemory.index.rebuild import EmbeddingUnavailableError
 from arcmemory.types import Event, Fact
 
-# A factory that yields a *fresh*, self-closing arcllm provider for one call.
-# Consolidation is off the hot path and infrequent (threshold/idle-triggered), so
-# a per-run connection pool that closes cleanly beats a long-lived one to manage.
-ProviderFactory = Callable[[], AbstractAsyncContextManager[Any]]
+# A factory that yields a *fresh* arcllm provider for one call. An arcllm model
+# (``load_model``) is invoked directly — ``await provider.invoke(...)`` — exactly as
+# arcrun/arcagent use it; it is NOT an async context manager (that was the SPEC-041
+# distiller bug: ``async with`` threw ``'QueueModule' object does not support the
+# asynchronous context manager protocol`` on every real consolidation).
+ProviderFactory = Callable[[], Any]
 
 
 class ArcLLMEmbedder:
@@ -109,9 +110,10 @@ _DAY_SYSTEM = (
 class ArcLLMDistiller:
     """arcmemory ``Distiller`` seam backed by an arcllm structured completion.
 
-    Two bounded, single-shot calls (no agentic loop — OQ-3). A fresh provider is
-    opened per call via ``provider_factory`` and closed on exit, so there is no
-    long-lived pool to own and consolidation errors cannot leak a connection.
+    Three bounded, single-shot calls (no agentic loop — OQ-3): fact extraction,
+    insight minting, day summary. A fresh provider is loaded per call via
+    ``provider_factory`` and invoked directly (``await provider.invoke(...)``) —
+    the arcllm model is not an async context manager.
     """
 
     def __init__(self, provider_factory: ProviderFactory, *, model: str | None = None) -> None:
@@ -140,8 +142,8 @@ class ArcLLMDistiller:
             arcllm.Message(role="system", content=system),
             arcllm.Message(role="user", content=user),
         ]
-        async with self._provider_factory() as provider:
-            response = await self._invoke(provider, messages)
+        provider = self._provider_factory()
+        response = await self._invoke(provider, messages)
         parsed = response.parsed_content
         if isinstance(parsed, dict):
             return parsed

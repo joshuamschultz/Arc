@@ -8,7 +8,6 @@ deterministic — the point is the *adapter* logic, not a live model.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -73,9 +72,15 @@ class _FakeProvider:
 
 
 def _factory(provider: _FakeProvider) -> Any:
-    @asynccontextmanager
-    async def make() -> Any:
-        yield provider
+    """A factory shaped like ``arcllm.load_model``: returns the provider DIRECTLY.
+
+    The provider is invoked via ``await provider.invoke(...)`` — it is NOT an async
+    context manager. (Wrapping it in ``@asynccontextmanager`` here is what let the
+    ``async with`` distiller bug pass tests while throwing on every real run.)
+    """
+
+    def make() -> Any:
+        return provider
 
     return make
 
@@ -118,6 +123,28 @@ async def test_distiller_parses_raw_content_when_no_parsed_object() -> None:
     result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
 
     assert result.facts[0].slug == "bob"
+
+
+async def test_distiller_summarizes_day_from_parsed_content() -> None:
+    provider = _FakeProvider(
+        parsed={"summary": ["shipped the fix"], "people": ["Alice"], "decisions": [], "tasks": []}
+    )
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.summarize_day([Event(event_id="e0", scope="s", kind="obs", text="t")])
+
+    assert result.summary == ["shipped the fix"] and result.people == ["Alice"]
+
+
+async def test_distiller_invokes_provider_directly_not_as_context_manager() -> None:
+    """Regression: load_model returns a provider, not an async CM. A provider whose
+    only protocol is ``await invoke(...)`` — no ``__aenter__`` — must work."""
+    provider = _FakeProvider(parsed={"facts": []})
+    assert not hasattr(provider, "__aenter__")  # exactly what load_model returns
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
+    assert len(provider.invocations) == 1  # the provider was invoked directly
 
 
 async def test_distiller_falls_back_to_plain_when_json_mode_unsupported() -> None:
