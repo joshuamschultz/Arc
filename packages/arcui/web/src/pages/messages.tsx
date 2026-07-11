@@ -3,6 +3,7 @@ import { AlertCircle, Hash, MessageSquare, Send, Wrench } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { MentionComposer, type MentionHandle } from '@/components/mention-composer'
 import { EmptyState } from '@/components/states'
 import { StatusDot } from '@/components/status-badge'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
@@ -122,7 +123,15 @@ function handleOf(ref: string): string {
   return ref.replace(/^@/, '')
 }
 
-function ChannelPanel({ channel, onOpenMembers }: { channel: Channel; onOpenMembers: () => void }) {
+function ChannelPanel({
+  channel,
+  onOpenMembers,
+  mentionHandles,
+}: {
+  channel: Channel
+  onOpenMembers: () => void
+  mentionHandles: MentionHandle[]
+}) {
   const name = channel.name
   const history = useChannelMessages(name)
   const { frames, status, post } = useTeamStream(name)
@@ -167,12 +176,6 @@ function ChannelPanel({ channel, onOpenMembers }: { channel: Channel; onOpenMemb
     post(text)
     setText('')
   }
-  const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      send()
-    }
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -205,16 +208,14 @@ function ChannelPanel({ channel, onOpenMembers }: { channel: Channel; onOpenMemb
         <div ref={endRef} />
       </div>
       <div className="flex items-center gap-2 border-t border-border p-3">
-        <Input
+        <MentionComposer
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKey}
-          placeholder={status === 'ready' ? `Message #${name}…` : 'Connecting…'}
+          onChange={setText}
+          onSubmit={send}
+          handles={mentionHandles}
+          placeholder={status === 'ready' ? `Message #${name}… (@ to mention)` : 'Connecting…'}
           disabled={status !== 'ready'}
         />
-        <Button onClick={send} disabled={status !== 'ready' || !text.trim()} size="icon">
-          <Send className="size-4" />
-        </Button>
       </div>
     </div>
   )
@@ -231,6 +232,20 @@ export function MessagesPage() {
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
   const channelList = channels.data?.channels ?? []
   const selectedChannel = sel?.kind === 'channel' ? channelList.find((c) => c.name === sel.id) ?? null : null
+
+  // Mention candidates are the arcteam handles (== agent name/id), so an
+  // inserted @handle resolves in apply_mentions on the backend.
+  const mentionHandles = useMemo<MentionHandle[]>(
+    () =>
+      agents
+        .map((a) => ({
+          handle: String(a.name || a.agent_id || ''),
+          label: String(a.display_name || a.name || a.agent_id || ''),
+          color: typeof a.color === 'string' ? a.color : undefined,
+        }))
+        .filter((h) => h.handle),
+    [agents],
+  )
 
   return (
     <div className="flex h-full flex-col">
@@ -303,7 +318,12 @@ export function MessagesPage() {
           ) : sel.kind === 'agent' ? (
             <ChatPanel key={sel.id} agentId={sel.id} />
           ) : selectedChannel ? (
-            <ChannelPanel key={sel.id} channel={selectedChannel} onOpenMembers={() => setManagingMembers(true)} />
+            <ChannelPanel
+              key={sel.id}
+              channel={selectedChannel}
+              onOpenMembers={() => setManagingMembers(true)}
+              mentionHandles={mentionHandles}
+            />
           ) : (
             <div className="flex h-full items-center justify-center">
               <EmptyState icon={<Hash className="size-7" />} title="Channel not found" description="It may have been removed." />

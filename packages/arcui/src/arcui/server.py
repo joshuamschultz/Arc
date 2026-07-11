@@ -297,6 +297,19 @@ def create_app(
         # through this registry. None when no service is wired — the mutation
         # routes then report the same explicit unavailable error as the reads.
         starlette_app.state.messaging_registry = resolved_registry
+        # REQ-061: the ``/ws/team`` forwarder must be built HERE — the embedded
+        # MessagingService only exists inside the lifespan. An operator group
+        # post routes through it; the operator self-registers and auto-joins the
+        # channel, then the message is signed and sent. Only build when the
+        # deployment did not inject its own forwarder (tests) and a service is
+        # live; otherwise the route degrades to a ``forward_unavailable`` frame.
+        if team_post_forwarder is None and resolved_service is not None:
+            from arcui.messaging import build_team_post_forwarder
+
+            starlette_app.state.team_post_forwarder = build_team_post_forwarder(
+                service=resolved_service,
+                registry=resolved_registry,
+            )
         # SPEC-031 F1: subscribe read-only to the arcteam bus and feed the
         # team-flow stream. Fail-open — a bus problem must never block the
         # dashboard; the stream just stays empty.

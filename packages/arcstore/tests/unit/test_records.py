@@ -34,6 +34,27 @@ def test_spool_record_llm_call_fields_and_auto_ts() -> None:
     assert rec.ts.endswith("+00:00") or rec.ts.endswith("Z")
 
 
+def test_spool_record_carries_cache_token_breakdown() -> None:
+    """Cache read/write tokens ride the llm_call record beside prompt_tokens so
+    hit-rate = cache_read / (input + cache_read) is reconstructable downstream."""
+    rec = SpoolRecord(
+        kind="llm_call",
+        actor_did="did:arc:acme:agent:abc123",
+        prompt_tokens=1802,
+        completion_tokens=45,
+        cache_read_tokens=1500,
+        cache_write_tokens=300,
+    )
+    assert rec.cache_read_tokens == 1500
+    assert rec.cache_write_tokens == 300
+
+
+def test_spool_record_cache_tokens_default_none() -> None:
+    rec = SpoolRecord(kind="llm_call", actor_did="did:a", prompt_tokens=10)
+    assert rec.cache_read_tokens is None
+    assert rec.cache_write_tokens is None
+
+
 def test_spool_record_is_frozen() -> None:
     rec = SpoolRecord(kind="run_event", actor_did="did:arc:x:agent:y", name="step")
     with pytest.raises(ValidationError):

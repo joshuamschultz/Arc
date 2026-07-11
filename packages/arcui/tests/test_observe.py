@@ -436,3 +436,31 @@ def test_row_to_trace_metadata_only_has_no_bodies() -> None:
     assert trace["request"] is None
     assert trace["response"] is None
     assert trace["messages"] is None
+
+
+def test_row_to_trace_exposes_cache_token_breakdown() -> None:
+    """The trace API surfaces cache read/write tokens so a consumer can compute
+    hit-rate = cache_read / (input + cache_read)."""
+    from arcui.observe import _row_to_trace
+
+    row = {
+        "record_id": "r4",
+        "outcome": "ok",
+        "prompt_tokens": 1802,
+        "completion_tokens": 50,
+        "cache_read_tokens": 1500,
+        "cache_write_tokens": 300,
+    }
+    trace = _row_to_trace(row)
+    assert trace["cache_read_tokens"] == 1500
+    assert trace["cache_write_tokens"] == 300
+    # input_tokens still carries the summed input total for existing consumers.
+    assert trace["input_tokens"] == 1802
+
+
+def test_row_to_trace_cache_tokens_absent_is_none() -> None:
+    from arcui.observe import _row_to_trace
+
+    trace = _row_to_trace({"record_id": "r5", "outcome": "ok"})
+    assert trace["cache_read_tokens"] is None
+    assert trace["cache_write_tokens"] is None

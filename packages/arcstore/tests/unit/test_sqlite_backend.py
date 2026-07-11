@@ -18,6 +18,8 @@ def _row(rid: str) -> dict:
         "model": "claude",
         "prompt_tokens": 1,
         "completion_tokens": 1,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
         "cost_usd": 0.0,
         "latency_ms": 1.0,
         "outcome": "ok",
@@ -104,5 +106,39 @@ class TestSqliteBackend:
             assert "parent_did" in cols
             # The full-column SELECT that used to raise now succeeds.
             assert await be.query("llm_calls") == []
+        finally:
+            await be.stop()
+
+    async def test_cache_token_columns_round_trip(self, tmp_path: Path) -> None:
+        """cache_read/write_tokens persist as INTEGER columns and read back intact."""
+        be = SqliteBackend(tmp_path / "store.db")
+        await be.start()
+        try:
+            row = _row("r1")
+            row["cache_read_tokens"] = 1500
+            row["cache_write_tokens"] = 300
+            await be.upsert("llm_calls", "r1", row)
+            got = await be.query("llm_calls")
+            assert got[0]["cache_read_tokens"] == 1500
+            assert got[0]["cache_write_tokens"] == 300
+        finally:
+            await be.stop()
+
+    async def test_reconciles_cache_columns_on_legacy_schema(self, tmp_path: Path) -> None:
+        """A pre-cache-accounting DB gains the two cache columns via ALTER on start()."""
+        db = tmp_path / "legacy.db"
+        conn = sqlite3.connect(str(db))
+        conn.executescript(
+            "CREATE TABLE llm_calls(record_id TEXT PRIMARY KEY, kind TEXT, "
+            "prompt_tokens INTEGER, completion_tokens INTEGER, extra TEXT);"
+        )
+        conn.commit()
+        conn.close()
+        be = SqliteBackend(db)
+        await be.start()
+        try:
+            cols = {r[1] for r in sqlite3.connect(str(db)).execute("PRAGMA table_info(llm_calls)")}
+            assert "cache_read_tokens" in cols
+            assert "cache_write_tokens" in cols
         finally:
             await be.stop()

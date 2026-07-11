@@ -79,6 +79,10 @@ def _row_to_trace(row: dict[str, Any]) -> dict[str, Any]:
         "input_tokens": row.get("prompt_tokens"),
         "output_tokens": row.get("completion_tokens"),
         "total_tokens": prompt + completion,
+        # Cache breakdown (SPEC-029) — lets a consumer compute hit-rate =
+        # cache_read / (input + cache_read). None when the provider reported none.
+        "cache_read_tokens": row.get("cache_read_tokens"),
+        "cache_write_tokens": row.get("cache_write_tokens"),
         "request_id": row.get("request_id"),
         "request": request_body,
         "response": response_body,

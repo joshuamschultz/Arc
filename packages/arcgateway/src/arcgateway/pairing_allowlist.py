@@ -24,12 +24,16 @@ Mattermost is channel-based (``allowed_channel_ids``, not ``allowed_user_ids``
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from arcgateway.config import GatewayConfig, PlatformsSection
     from arcgateway.pairing import Tier
+
+_logger = logging.getLogger("arcgateway.pairing_allowlist")
 
 # platform name -> user_did formatter, matching that platform's OWN adapter
 # scheme exactly (see module docstring). Deliberately NOT unified.
@@ -61,6 +65,44 @@ def build_user_allowlist(platforms: PlatformsSection) -> set[str] | None:
     return allowlist or None
 
 
+def build_team_agent_allowlist(team_root: Path) -> set[str]:
+    """Seed a pairing allowlist from every same-team agent's DID.
+
+    Task: an agent DM-ing a teammate on the SAME ``team_root`` was forced
+    through the ``arc gateway pair approve`` dance — its DID reached
+    ``PairingInterceptor`` with no allowlist entry, so a code was minted.
+    Same-team agents share one trusted operator; they are always-ready peers,
+    not unknown external users. Reading each agent's ``[identity].did`` from its
+    ``arcagent.toml`` (the same signal ``team_roster``/``bootstrap`` discover
+    agents by) pre-approves every teammate for agent-to-agent routing.
+
+    Only same-team agents are seeded — an EXTERNAL or cross-system entity still
+    faces pairing, so this never weakens the gate for untrusted callers. Returns
+    an empty set (never ``None``) when no agent declares a DID; the caller merges
+    it into the allowlist only while ``require_pairing`` is on, so the "no
+    allowlist AND no store => enforcement disabled" fast path is never affected.
+    """
+    if not team_root.exists():
+        return set()
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover — Python <3.11 fallback
+        import tomli as tomllib  # type: ignore[no-redef]  # reason: Python <3.11 fallback — tomli mirrors stdlib tomllib
+
+    dids: set[str] = set()
+    for toml_path in sorted(team_root.glob("*/arcagent.toml")):
+        try:
+            cfg = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError):
+            _logger.warning("pairing allowlist: unreadable agent config %s", toml_path)
+            continue
+        identity = cfg.get("identity") if isinstance(cfg.get("identity"), dict) else {}
+        did = identity.get("did") if isinstance(identity, dict) else None
+        if isinstance(did, str) and did:
+            dids.add(did)
+    return dids
+
+
 def build_pairing_wiring(config: GatewayConfig, tier: Tier) -> tuple[Any | None, set[str] | None]:
     """Build the PairingStore + static allowlist for ``GatewayRunner.from_config``.
 
@@ -87,4 +129,4 @@ def build_pairing_wiring(config: GatewayConfig, tier: Tier) -> tuple[Any | None,
     return pairing_store, user_allowlist
 
 
-__all__ = ["build_pairing_wiring", "build_user_allowlist"]
+__all__ = ["build_pairing_wiring", "build_team_agent_allowlist", "build_user_allowlist"]

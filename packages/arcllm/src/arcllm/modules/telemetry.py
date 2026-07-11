@@ -821,6 +821,10 @@ class TelemetryModule(BaseModule):
                     + (response.usage.cache_write_tokens or 0)
                 ),
                 completion_tokens=response.usage.output_tokens,
+                # Persist the split too — hit-rate + in/out/cache surfacing needs
+                # the breakdown, not just the summed prompt_tokens above.
+                cache_read_tokens=response.usage.cache_read_tokens,
+                cache_write_tokens=response.usage.cache_write_tokens,
                 request_body=prepared.request_body,
                 response_body=prepared.response_body,
             )
@@ -921,6 +925,8 @@ class TelemetryModule(BaseModule):
         latency_ms: float,
         prompt_tokens: int | None = None,
         completion_tokens: int | None = None,
+        cache_read_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
         request_body: dict[str, Any] | None = None,
         response_body: dict[str, Any] | None = None,
     ) -> None:
@@ -949,6 +955,8 @@ class TelemetryModule(BaseModule):
                 agent_label=self._resolve_agent_label(),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
                 cost_usd=cost,
                 latency_ms=latency_ms,
                 outcome=outcome,

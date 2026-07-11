@@ -49,6 +49,11 @@ class SpoolRecord(BaseModel):
     """Human-readable agent label for UI display — llm_call / run_event."""
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Prompt-caching breakdown (SPEC-029). ``prompt_tokens`` is the SUMMED input
+    # context (input + cache_read + cache_write); these two persist the split so
+    # a consumer can compute hit-rate = cache_read / (input + cache_read).
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
     cost_usd: float | None = None
     latency_ms: float | None = None
     outcome: str | None = None

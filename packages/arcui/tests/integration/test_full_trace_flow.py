@@ -33,6 +33,8 @@ def _seed(
     out_tokens: int = 340,
     latency_ms: float = 2400.0,
     seq: int = 0,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
 ) -> str:
     """Append one llm_call to the durable spool (SPEC-026 Observe plane).
 
@@ -49,6 +51,8 @@ def _seed(
         provider=provider,
         prompt_tokens=in_tokens,
         completion_tokens=out_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
         cost_usd=cost,
         latency_ms=latency_ms,
         outcome="ok",
@@ -85,6 +89,27 @@ class TestSingleCallFlow:
         assert t["output_tokens"] == 340
         assert t["total_tokens"] == 1234 + 340
         assert t["status"] == "success"
+
+    def test_cache_breakdown_flows_through_to_api(self, _isolated_arc_data_dir: Path) -> None:
+        """Cache read/write tokens spooled by telemetry survive ingest and are
+        exposed through /api/traces — the consumer can compute hit-rate."""
+        _seed(
+            _isolated_arc_data_dir,
+            in_tokens=1802,  # summed input total (input + cache_read + cache_write)
+            cache_read_tokens=1500,
+            cache_write_tokens=300,
+        )
+
+        auth = AuthConfig({"viewer_token": "v", "operator_token": "o"})
+        app = create_app(auth_config=auth)
+        with TestClient(app) as client:
+            resp = client.get("/api/traces?limit=10", headers={"Authorization": "Bearer v"})
+        assert resp.status_code == 200
+        t = resp.json()["traces"][0]
+        assert t["cache_read_tokens"] == 1500
+        assert t["cache_write_tokens"] == 300
+        # hit-rate = cache_read / (input + cache_read); input = total - cache split.
+        assert t["input_tokens"] == 1802
 
     def test_trace_id_is_unique(self, _isolated_arc_data_dir: Path) -> None:
         """Each call gets a unique 32-hex-char content-derived trace_id."""

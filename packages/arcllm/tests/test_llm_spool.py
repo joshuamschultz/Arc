@@ -64,6 +64,47 @@ async def test_completion_records_llm_call(messages: list[Message]) -> None:
     assert rec.latency_ms is not None
 
 
+async def test_completion_records_cache_breakdown(messages: list[Message]) -> None:
+    """Cache read/write tokens are persisted SEPARATELY on the spool record so a
+    consumer can compute hit-rate — prompt_tokens stays the summed input total."""
+    inner = _inner()
+    inner.invoke = AsyncMock(
+        return_value=LLMResponse(
+            content="ok",
+            usage=Usage(
+                input_tokens=2,
+                output_tokens=50,
+                total_tokens=52,
+                cache_read_tokens=1500,
+                cache_write_tokens=300,
+            ),
+            model="test-model",
+            stop_reason="end_turn",
+        )
+    )
+    module = TelemetryModule(_config(), inner)
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        await module.invoke(messages)
+    rec = recorded[0]
+    # prompt_tokens = total input context (input + cache_read + cache_write)
+    assert rec.prompt_tokens == 2 + 1500 + 300
+    # breakdown persisted separately
+    assert rec.cache_read_tokens == 1500
+    assert rec.cache_write_tokens == 300
+
+
+async def test_completion_records_none_cache_when_absent(messages: list[Message]) -> None:
+    """A provider that reports no cache usage leaves the breakdown fields None."""
+    module = TelemetryModule(_config(), _inner())
+    recorded: list = []
+    with patch.object(telemetry_mod, "_spool_record", recorded.append):
+        await module.invoke(messages)
+    rec = recorded[0]
+    assert rec.cache_read_tokens is None
+    assert rec.cache_write_tokens is None
+
+
 async def test_error_call_records_outcome_error(messages: list[Message]) -> None:
     inner = _inner()
     inner.invoke = AsyncMock(side_effect=RuntimeError("boom"))

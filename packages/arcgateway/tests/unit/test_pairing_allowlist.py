@@ -17,12 +17,23 @@ a deliberate, pre-existing inconsistency this fix does not unify.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from arcgateway.config import GatewayConfig
-from arcgateway.pairing_allowlist import build_user_allowlist
+from arcgateway.pairing_allowlist import build_team_agent_allowlist, build_user_allowlist
 
 
 def _platforms(toml: str) -> object:
     return GatewayConfig.from_toml_str(toml).platforms
+
+
+def _agent(team_root: Path, name: str, did: str | None) -> None:
+    agent_dir = team_root / name
+    agent_dir.mkdir(parents=True)
+    identity = f'\n[identity]\ndid = "{did}"\n' if did is not None else ""
+    (agent_dir / "arcagent.toml").write_text(
+        f'[agent]\nname = "{name}"\n{identity}', encoding="utf-8"
+    )
 
 
 class TestBuildUserAllowlist:
@@ -112,3 +123,36 @@ enabled = true
 """
         )
         assert build_user_allowlist(platforms) is None
+
+
+class TestBuildTeamAgentAllowlist:
+    """Same-team agents are pre-approved so agent-to-agent DMs skip pairing."""
+
+    def test_collects_every_agent_did(self, tmp_path: Path) -> None:
+        team_root = tmp_path / "team"
+        _agent(team_root, "josh_agent", "did:arc:local:agent/josh1234")
+        _agent(team_root, "marketer_agent", "did:arc:local:agent/mark5678")
+        assert build_team_agent_allowlist(team_root) == {
+            "did:arc:local:agent/josh1234",
+            "did:arc:local:agent/mark5678",
+        }
+
+    def test_bare_dir_layout_is_discovered(self, tmp_path: Path) -> None:
+        """`arc agent create <name>` uses a bare `<name>/` dir, not `<name>_agent/`."""
+        team_root = tmp_path / "team"
+        _agent(team_root, "marketer", "did:arc:local:agent/mark5678")
+        assert build_team_agent_allowlist(team_root) == {"did:arc:local:agent/mark5678"}
+
+    def test_agent_without_did_is_skipped(self, tmp_path: Path) -> None:
+        team_root = tmp_path / "team"
+        _agent(team_root, "no_did_agent", None)
+        _agent(team_root, "josh_agent", "did:arc:local:agent/josh1234")
+        assert build_team_agent_allowlist(team_root) == {"did:arc:local:agent/josh1234"}
+
+    def test_missing_team_root_returns_empty_set(self, tmp_path: Path) -> None:
+        assert build_team_agent_allowlist(tmp_path / "nope") == set()
+
+    def test_empty_team_root_returns_empty_set(self, tmp_path: Path) -> None:
+        team_root = tmp_path / "team"
+        team_root.mkdir()
+        assert build_team_agent_allowlist(team_root) == set()

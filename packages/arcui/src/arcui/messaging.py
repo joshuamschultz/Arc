@@ -30,7 +30,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from arcteam.crypto import MessageSigner
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +108,51 @@ def _operator_signer() -> Any | None:
         return None
 
 
+@dataclass(frozen=True)
+class _OperatorMessaging:
+    """The operator's message-signing identity for embedded posting.
+
+    ``did`` and ``public_key_hex`` register the operator as a real EntityRegistry
+    entity so agents can verify its posts; ``signer`` binds every posted envelope
+    to that DID inside ``MessagingService.send`` (REQ-030). All three derive from
+    the one deployment operator key — the operator posts under its own key, never
+    a per-viewer-token identity that has no signing material.
+    """
+
+    did: str
+    public_key_hex: str
+    signer: MessageSigner
+
+
+def _operator_messaging() -> _OperatorMessaging | None:
+    """Load the operator key into an Ed25519 message-signing identity, or None.
+
+    Same key file as :func:`_operator_signer` (the deployment authority), but
+    adapted for *message* signing rather than audit-chain signing: arcteam
+    verifies message envelopes with Ed25519, so the operator's DID is derived
+    from the key's Ed25519 verify key and the raw seed drives the signer. Never
+    generated here — a missing key degrades the forwarder to ``None`` exactly as
+    the channel routes degrade when no audit authority exists.
+    """
+    from arcteam.config import default_config_dir
+    from arcteam.crypto import MessageSigner
+    from arctrust import OperatorKey
+    from arctrust.identity import did_from_public_key
+
+    key_path = default_config_dir() / "operator" / "operator.key"
+    try:
+        op = OperatorKey.load(key_path, generate_if_absent=False)
+    except (OSError, ValueError, RuntimeError):
+        logger.warning("embedded messaging: operator key unavailable at %s", key_path)
+        return None
+    did = did_from_public_key(op.public_key, org="local", agent_type="operator")
+    return _OperatorMessaging(
+        did=did,
+        public_key_hex=op.public_key.hex(),
+        signer=MessageSigner(did=did, private_key=op.seed),
+    )
+
+
 async def build_messaging_service(
     *, backend: Any | None = None
 ) -> tuple[Any | None, Any | None, Any | None]:
@@ -132,8 +181,67 @@ async def build_messaging_service(
     audit = AuditLogger(backend, signer)
     await audit.initialize()
     registry = EntityRegistry(backend, audit)
-    service = MessagingService(backend, registry, audit)
+    # The operator message signer lets the human operator's channel posts be
+    # Ed25519-signed under its own DID, so subscribing agents verify and accept
+    # them (REQ-030) instead of quarantining an unsigned envelope to the DLQ.
+    op_msg = _operator_messaging()
+    service = MessagingService(
+        backend, registry, audit, signer=op_msg.signer if op_msg is not None else None
+    )
     return service, registry, backend
 
 
-__all__ = ["build_messaging_service"]
+def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
+    """Build the ``/ws/team`` forwarder that posts an operator message to a channel.
+
+    Returns an async callable ``(*, sender, channel, text) -> None`` that a
+    trusted operator's group post flows through (REQ-061), or ``None`` when the
+    deployment has no operator key (the route then reports ``forward_unavailable``).
+
+    The operator is a first-class signing entity: on first post it self-registers
+    in the EntityRegistry under its key-derived DID and auto-joins the target
+    channel (both audited), then sends a signed :class:`~arcteam.types.Message`.
+    Auto-join is correct for a trusted operator and is what makes a fresh channel
+    reachable from the dashboard without a separate ``arc team`` round trip.
+    arcui never mints identities or signs here — ``service.send`` signs with the
+    operator message signer wired in :func:`build_messaging_service`.
+    """
+    op = _operator_messaging()
+    if op is None:
+        return None
+
+    async def forward(*, sender: str, channel: str, text: str) -> None:
+        from arcteam.types import Channel, Entity, EntityType, Message
+
+        if await registry.get(op.did) is None:
+            await registry.register(
+                Entity(
+                    did=op.did,
+                    handle="operator",
+                    id="user://operator",
+                    name="Operator",
+                    type=EntityType.USER,
+                    public_key=op.public_key_hex,
+                )
+            )
+        channels = await service.list_channels()
+        existing = next((c for c in channels if c.name == channel), None)
+        if existing is None:
+            await service.create_channel(Channel(name=channel, members=[op.did]))
+        elif op.did not in existing.members:
+            await service.join_channel(channel, op.did)
+        # The viewer-token DID (``sender``) is opaque, unsigned attribution kept
+        # in meta; the signed sender is always the operator's key-bound DID.
+        await service.send(
+            Message(
+                sender=op.did,
+                to=[f"channel://{channel}"],
+                body=text,
+                meta={"operator_token_did": sender},
+            )
+        )
+
+    return forward
+
+
+__all__ = ["build_messaging_service", "build_team_post_forwarder"]
