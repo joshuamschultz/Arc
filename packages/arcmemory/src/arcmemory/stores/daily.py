@@ -22,9 +22,11 @@ from arcmemory.types import DaySummary, Event
 # Section heading <-> DaySummary field, in render order. The heading is the on-disk
 # contract the parser reads back, so keep the two directions in lockstep.
 _SECTIONS: tuple[tuple[str, str], ...] = (
-    ("Summary", "summary"),
-    ("People & Places", "people"),
+    ("Timeline", "timeline"),
+    ("Discussions", "discussions"),
     ("Decisions", "decisions"),
+    ("People & Places", "people"),
+    ("Goals", "goals"),
     ("Tasks", "tasks"),
 )
 _HEADING_TO_FIELD = {heading: field for heading, field in _SECTIONS}
@@ -60,13 +62,10 @@ class DailyNotesStore:
         this window's events, so appending a classified day can only raise the label.
         """
         existing = self.read(additions.day)
-        merged = DaySummary(
-            day=additions.day,
-            summary=_union(existing.summary if existing else [], additions.summary),
-            people=_union(existing.people if existing else [], additions.people),
-            decisions=_union(existing.decisions if existing else [], additions.decisions),
-            tasks=_union(existing.tasks if existing else [], additions.tasks),
-        )
+        merged = DaySummary(day=additions.day)
+        for _, field in _SECTIONS:
+            prior = getattr(existing, field) if existing else []
+            setattr(merged, field, _union(prior, getattr(additions, field)))
         if merged.is_empty():
             return None
         labels = [e.classification for e in events]

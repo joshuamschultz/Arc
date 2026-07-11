@@ -32,14 +32,38 @@ class ProceduralStore:
         frontmatter = {
             "slug": procedure.slug,
             "title": procedure.title,
+            "when_to_use": procedure.when_to_use,
             "use_count": procedure.use_count,
             "classification": procedure.classification,
         }
         steps = "\n".join(f"{i}. {s}" for i, s in enumerate(procedure.steps, start=1))
-        body = f"# {procedure.title}\n\n## Steps\n{steps}"
+        when = f"## When to use\n{procedure.when_to_use}\n\n" if procedure.when_to_use else ""
+        body = f"# {procedure.title}\n\n{when}## Steps\n{steps}"
         path = self.path_for(procedure.slug)
         atomic_write_text(path, render_document(frontmatter, body))
         return path
+
+    def upsert(
+        self,
+        slug: str,
+        title: str,
+        *,
+        when_to_use: str = "",
+        steps: list[str],
+        classification: str = "unclassified",
+    ) -> Procedure:
+        """Create or refresh an LLM-extracted procedure; bump use_count on re-extract."""
+        existing = self.read(slug)
+        procedure = Procedure(
+            slug=slug,
+            title=title,
+            when_to_use=when_to_use,
+            steps=steps,
+            use_count=(existing.use_count + 1) if existing else 1,
+            classification=classification,
+        )
+        self.write(procedure)
+        return procedure
 
     def read(self, slug: str) -> Procedure | None:
         """Load a procedure card (None if absent)."""
@@ -55,6 +79,7 @@ class ProceduralStore:
         return Procedure(
             slug=str(fm.get("slug", slug)),
             title=str(fm.get("title", slug.replace("-", " ").title())),
+            when_to_use=str(fm.get("when_to_use", "")),
             steps=steps,
             use_count=int(fm.get("use_count", 0)),
             classification=str(fm.get("classification", "unclassified")),

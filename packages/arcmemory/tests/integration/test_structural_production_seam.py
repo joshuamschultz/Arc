@@ -27,7 +27,13 @@ from arctrust.classification import Classification
 
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.db import DEFAULT_DIMS, MemoryDB
-from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightCandidate, InsightMint
+from arcmemory.distill import (
+    DaySummaryDraft,
+    FactExtraction,
+    InsightCandidate,
+    InsightMint,
+    ProcedureExtraction,
+)
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.structural import StructuralIndex
 from arcmemory.retrieve import Retriever
@@ -98,6 +104,9 @@ class PlantingDistiller:
                 )
             ]
         )
+
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()

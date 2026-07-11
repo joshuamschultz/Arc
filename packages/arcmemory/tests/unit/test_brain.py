@@ -14,6 +14,7 @@ from arcmemory.distill import (
     FactExtraction,
     InsightCandidate,
     InsightMint,
+    ProcedureExtraction,
 )
 from arcmemory.types import Event
 
@@ -41,8 +42,11 @@ class _FakeDistiller:
             ]
         )
 
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
-        return DaySummaryDraft(summary=["Ada worked on retries"], people=["Ada"])
+        return DaySummaryDraft(timeline=["09:00 Ada worked on retries"], people=["Ada"])
 
 
 async def test_capture_is_zero_llm_and_writes_only_the_raw_stream(workspace: Path) -> None:

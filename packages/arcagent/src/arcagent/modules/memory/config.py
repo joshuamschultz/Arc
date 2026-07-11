@@ -40,9 +40,12 @@ class MemoryConfig(ModuleConfig):
     top_k: int = 5
     budget: int = 1024
 
-    # Consolidation scheduling (event-count / idle trigger, DC-5)
+    # Consolidation scheduling: fires on ANY of event-count / idle / interval (DC-5).
     consolidate_event_threshold: int = 20
     consolidate_idle_seconds: float = 900.0
+    # Time-based cadence: consolidate at least this often while events are pending
+    # (default hourly), so curated memory stays fresh even on a steady low volume.
+    consolidate_interval_seconds: float = 3600.0
 
 
 __all__ = ["MemoryConfig"]

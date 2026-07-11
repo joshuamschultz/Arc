@@ -58,6 +58,24 @@ _MANIFEST_NAME = ".consolidate-manifest.json"
 _CUE_MERGE_THRESHOLD = 0.92
 
 
+def _wikilink_bullets(bullets: list[str], name_to_slug: dict[str, str]) -> list[str]:
+    """Wrap the first (longest) known entity NAME in each bullet as ``[[slug]]``.
+
+    Conservative — one link per bullet, longest name first — so a day's people bullets
+    become hoppable to their entity cards without fragile global text rewrites.
+    """
+    names = sorted(name_to_slug, key=len, reverse=True)
+    linked: list[str] = []
+    for bullet in bullets:
+        for name in names:
+            slug = name_to_slug[name]
+            if name and name in bullet and f"[[{slug}]]" not in bullet:
+                bullet = bullet.replace(name, f"[[{slug}]]", 1)
+                break
+        linked.append(bullet)
+    return linked
+
+
 class Consolidator:
     """Orchestrates one bounded consolidation run for a single agent scope."""
 
@@ -119,7 +137,7 @@ class Consolidator:
         self._begin_manifest(len(events))
         facts = await self._extract_facts(events)
         insights = await self._mint_insights(events, [f for _, f in facts])
-        procedures = self._promote_procedures(events)
+        procedures = self._promote_procedures(events) + await self._extract_procedures(events)
         days = await self._summarize_days(events)
         decayed = self._decay(now)
         await self._merge_cues_audited()
@@ -172,13 +190,25 @@ class Consolidator:
             self._emit("memory.file_rewritten", str(self._procedures.path_for(procedure.slug)))
         return promoted
 
+    async def _extract_procedures(self, events: list[Event]) -> list[Procedure]:
+        """Distill reusable how-to procedures (LLM); audit each upsert + its file."""
+        extracted = await distill.extract_procedures(
+            events, distiller=self._distiller, store=self._procedures
+        )
+        for procedure in extracted:
+            self._emit("memory.procedure_extracted", procedure.slug)
+            self._emit("memory.file_rewritten", str(self._procedures.path_for(procedure.slug)))
+        return extracted
+
     async def _summarize_days(self, events: list[Event]) -> list[DaySummary]:
-        """Condense each day in the window into its curated daily-notes; audit each write.
+        """Condense each day into meeting-minutes notes; link people to entities; audit.
 
         One bounded completion per day (over that day's slice of the window), merged
         additively into the existing file so a later run grows the notes rather than
-        clobbering them. The raw transcript stays in the episodic stream — never here.
+        clobbering them. People bullets are wiki-linked to their entity cards so an
+        agent can hop. The raw transcript stays in the episodic stream — never here.
         """
+        name_to_slug = self._entity_name_map()
         by_day: dict[str, list[Event]] = defaultdict(list)
         for event in events:
             by_day[event.ts[:10]].append(event)
@@ -188,9 +218,11 @@ class Consolidator:
             draft = await self._distiller.summarize_day(day_events)
             additions = DaySummary(
                 day=day,
-                summary=draft.summary,
-                people=draft.people,
+                timeline=draft.timeline,
+                discussions=draft.discussions,
                 decisions=draft.decisions,
+                people=_wikilink_bullets(draft.people, name_to_slug),
+                goals=draft.goals,
                 tasks=draft.tasks,
             )
             summary = self._daily.merge(additions, day_events)
@@ -200,6 +232,15 @@ class Consolidator:
             self._emit("memory.file_rewritten", str(self._daily.path_for(day)))
             written.append(summary)
         return written
+
+    def _entity_name_map(self) -> dict[str, str]:
+        """Map each known entity NAME -> its slug (for wiki-linking day notes)."""
+        pairs: dict[str, str] = {}
+        for slug in self._semantic.slugs():
+            entity = self._semantic.read(slug)
+            if entity is not None and entity.name:
+                pairs[entity.name] = slug
+        return pairs
 
     def _decay(self, now: datetime) -> int:
         """Decay unreinforced edges; audit the sweep (one event, the count)."""

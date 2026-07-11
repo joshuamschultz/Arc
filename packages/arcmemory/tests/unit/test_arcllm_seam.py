@@ -127,13 +127,32 @@ async def test_distiller_parses_raw_content_when_no_parsed_object() -> None:
 
 async def test_distiller_summarizes_day_from_parsed_content() -> None:
     provider = _FakeProvider(
-        parsed={"summary": ["shipped the fix"], "people": ["Alice"], "decisions": [], "tasks": []}
+        parsed={"timeline": ["09:00 shipped the fix"], "people": ["Alice"], "decisions": []}
     )
     distiller = ArcLLMDistiller(_factory(provider), model="m")
 
     result = await distiller.summarize_day([Event(event_id="e0", scope="s", kind="obs", text="t")])
 
-    assert result.summary == ["shipped the fix"] and result.people == ["Alice"]
+    assert result.timeline == ["09:00 shipped the fix"] and result.people == ["Alice"]
+
+
+async def test_distiller_extracts_procedures_from_parsed_content() -> None:
+    provider = _FakeProvider(
+        parsed={
+            "procedures": [
+                {"slug": "deploy", "title": "Deploy", "when_to_use": "shipping", "steps": ["a", "b"]}
+            ]
+        }
+    )
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    result = await distiller.extract_procedures(
+        [Event(event_id="e0", scope="s", kind="obs", text="t")]
+    )
+
+    assert result.procedures[0].slug == "deploy"
+    assert result.procedures[0].when_to_use == "shipping"
+    assert result.procedures[0].steps == ["a", "b"]
 
 
 async def test_distiller_invokes_provider_directly_not_as_context_manager() -> None:

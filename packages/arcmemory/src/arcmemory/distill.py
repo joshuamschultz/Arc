@@ -31,8 +31,9 @@ from arcmemory.config import MemoryConfig
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.security import dominating_classification
 from arcmemory.stores.insight import InsightStore
+from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
-from arcmemory.types import Confidence, Event, Fact, Insight, Scope
+from arcmemory.types import Confidence, Event, Fact, Insight, Procedure, Scope
 
 
 class FactCandidate(BaseModel):
@@ -71,31 +72,49 @@ class InsightMint(BaseModel):
 
 
 class DaySummaryDraft(BaseModel):
-    """The distiller's proposed daily rollup (the structured-output shape).
+    """The distiller's proposed daily notes — meeting-minutes shape.
 
-    Bulleted lists only — the curated, high-signal condensation of a day's raw
-    events. ``day`` and ``classification`` are derived by the caller (not the LLM),
-    so they are absent here.
+    Bulleted lists only. ``timeline`` is time-stamped + chronological; the rest give
+    the topic/decision/goal/task detail. ``day`` and ``classification`` are derived by
+    the caller (not the LLM), so they are absent here.
     """
 
-    summary: list[str] = Field(default_factory=list)
-    people: list[str] = Field(default_factory=list)
+    timeline: list[str] = Field(default_factory=list)
+    discussions: list[str] = Field(default_factory=list)
     decisions: list[str] = Field(default_factory=list)
+    people: list[str] = Field(default_factory=list)
+    goals: list[str] = Field(default_factory=list)
     tasks: list[str] = Field(default_factory=list)
+
+
+class ProcedureCandidate(BaseModel):
+    """One reusable how-to the distiller proposes (the structured-output shape)."""
+
+    slug: str
+    title: str
+    when_to_use: str = ""
+    steps: list[str] = Field(default_factory=list)
+
+
+class ProcedureExtraction(BaseModel):
+    """The structured result of the procedure-extraction completion."""
+
+    procedures: list[ProcedureCandidate] = Field(default_factory=list)
 
 
 class Distiller(Protocol):
     """The bounded structured-completion seam. Injected, never imported.
 
-    Three single-shot calls, no agentic loop: ``extract_facts`` reads the window and
-    proposes fact triplets; ``mint_insights`` reads the window + the freshly extracted
-    facts and proposes abstractions; ``summarize_day`` condenses a day's events into
-    the curated daily-notes bullets.
+    Single-shot calls, no agentic loop: ``extract_facts`` proposes fact triplets;
+    ``mint_insights`` proposes abstractions; ``extract_procedures`` proposes reusable
+    how-tos; ``summarize_day`` condenses a day's events into meeting-minutes notes.
     """
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction: ...
 
     async def mint_insights(self, events: list[Event], facts: list[Fact]) -> InsightMint: ...
+
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction: ...
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft: ...
 
@@ -155,6 +174,29 @@ def _accumulated_confidence(store: SemanticStore, cand: FactCandidate, gamma: fl
         else 0.0
     )
     return confidence_from_hits(prior_hits + cand.hits, gamma)
+
+
+async def extract_procedures(
+    events: list[Event],
+    *,
+    distiller: Distiller,
+    store: ProceduralStore,
+) -> list[Procedure]:
+    """Extract reusable how-tos from the window; upsert each as a procedure card.
+
+    A re-extracted procedure bumps its ``use_count`` (reinforcement), so a process
+    that recurs across windows becomes more prominent. Candidates without a slug or
+    steps are skipped (nothing findable to store).
+    """
+    result = await distiller.extract_procedures(events)
+    upserted: list[Procedure] = []
+    for cand in result.procedures:
+        if not cand.slug or not cand.steps:
+            continue
+        upserted.append(
+            store.upsert(cand.slug, cand.title, when_to_use=cand.when_to_use, steps=cand.steps)
+        )
+    return upserted
 
 
 async def mint_insights(
@@ -228,13 +270,17 @@ def _merge_unique(existing: list[str], new: list[str]) -> list[str]:
 
 
 __all__ = [
+    "DaySummaryDraft",
     "Distiller",
     "FactCandidate",
     "FactExtraction",
     "InsightCandidate",
     "InsightMint",
+    "ProcedureCandidate",
+    "ProcedureExtraction",
     "confidence_from_hits",
     "extract_facts",
+    "extract_procedures",
     "hits_from_confidence",
     "mint_insights",
 ]

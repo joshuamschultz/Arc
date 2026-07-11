@@ -32,6 +32,7 @@ from arcmemory.distill import (
     FactExtraction,
     InsightCandidate,
     InsightMint,
+    ProcedureExtraction,
 )
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
@@ -95,6 +96,9 @@ class SpyDistiller:
         self.mint_calls += 1
         return InsightMint()
 
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         self.day_calls = getattr(self, "day_calls", 0) + 1
         return DaySummaryDraft()
@@ -121,8 +125,11 @@ class ConsolidatingDistiller:
             ]
         )
 
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
-        return DaySummaryDraft(summary=["engaged then verified"], people=["Alice"])
+        return DaySummaryDraft(timeline=["engaged then verified"], people=["Alice"])
 
 
 class PlantingDistiller:
@@ -130,6 +137,9 @@ class PlantingDistiller:
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction:
         return FactExtraction()
+
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()

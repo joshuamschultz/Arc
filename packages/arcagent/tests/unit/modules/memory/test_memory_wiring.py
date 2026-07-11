@@ -203,10 +203,20 @@ async def test_recall_is_once_per_turn_across_spawn_double_assembly() -> None:
 async def test_capture_hooks_call_brain_and_count_events() -> None:
     spy = _SpyBrain()
     _configure_with(spy)
-    await capture_tool(_ctx({"tool": "read", "result": "file contents"}))
+    await capture_tool(_ctx({"tool": "read", "result": "the quarterly revenue report shows growth"}))
     await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "done"}]}))
     assert len(spy.captures) == 2
     assert _runtime.state().events_since_consolidate == 2
+
+
+async def test_capture_tool_skips_noise() -> None:
+    spy = _SpyBrain()
+    _configure_with(spy)
+    # memory_search recall fed back into memory (recursive), and trivial results.
+    await capture_tool(_ctx({"tool": "memory_search", "result": "a long recalled memory block"}))
+    await capture_tool(_ctx({"tool": "bash", "result": "No matches found."}))
+    await capture_tool(_ctx({"tool": "bash", "result": "removed"}))
+    assert len(spy.captures) == 0
 
 
 async def test_memory_search_tool_returns_boundary_marked() -> None:

@@ -16,6 +16,38 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+/** Split leading YAML frontmatter (`--- … ---`) from the markdown body. */
+function splitFrontmatter(content: string): { fm: [string, string][]; body: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(content)
+  if (!m) return { fm: [], body: content }
+  const fm: [string, string][] = []
+  for (const line of m[1].split(/\r?\n/)) {
+    const i = line.indexOf(':')
+    if (i > 0) fm.push([line.slice(0, i).trim(), line.slice(i + 1).trim()])
+  }
+  return { fm, body: content.slice(m[0].length) }
+}
+
+/** A markdown file: frontmatter as a clean metadata table, body as markdown. */
+function MarkdownFile({ content }: { content: string }) {
+  const { fm, body } = splitFrontmatter(content)
+  return (
+    <div className="space-y-4">
+      {fm.length > 0 && (
+        <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 rounded-lg border border-border bg-muted/30 p-3 text-xs">
+          {fm.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="font-mono text-muted-foreground">{k}</dt>
+              <dd className="break-all font-mono text-foreground">{v || '—'}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <Markdown>{body}</Markdown>
+    </div>
+  )
+}
+
 function TreeLevel({
   agentId,
   root,
@@ -229,7 +261,7 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
             className="h-full min-h-[240px] w-full resize-none rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
         ) : isMarkdown ? (
-          <Markdown>{q.data.content}</Markdown>
+          <MarkdownFile content={q.data.content} />
         ) : (
           <JsonBlock value={q.data.content} className="border-0 bg-transparent p-0" />
         )}

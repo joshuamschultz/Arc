@@ -165,14 +165,34 @@ async def inject_insight(ctx: Any) -> None:
 # -- Capture hooks -------------------------------------------------------
 
 
+# Tool events that are pure transcript noise for durable memory. Recalling memory
+# and re-capturing the recall is a feedback loop (the "untrusted reference DATA
+# retrieved from memory" garbage), and trivial results ("No matches found.",
+# "removed", "ok") carry no signal worth distilling.
+_NO_CAPTURE_TOOLS = frozenset({"memory_search"})
+_MIN_TOOL_RESULT_CHARS = 24
+
+
+def _worth_capturing_tool(tool_name: str, result: str) -> bool:
+    """Whether a tool event carries durable signal (vs. transcript noise)."""
+    if tool_name in _NO_CAPTURE_TOOLS:
+        return False
+    stripped = result.strip()
+    if len(stripped) < _MIN_TOOL_RESULT_CHARS:
+        return False
+    return "untrusted reference data retrieved from memory" not in stripped.lower()
+
+
 @hook(event="agent:post_tool", priority=_CAPTURE_PRIORITY)
 async def capture_tool(ctx: Any) -> None:
-    """Capture a tool invocation + result (fast, zero-LLM)."""
+    """Capture a tool invocation + result (fast, zero-LLM) — skipping pure noise."""
     st = _runtime.state()
     if not st.active:
         return
-    tool_name = ctx.data.get("tool", "")
-    result = ctx.data.get("result", "")
+    tool_name = str(ctx.data.get("tool", ""))
+    result = str(ctx.data.get("result", ""))
+    if not _worth_capturing_tool(tool_name, result):
+        return
     text = f"tool:{tool_name} -> {result}".strip()
     await _capture(st, text, kind="tool")
 
@@ -248,13 +268,16 @@ async def consolidate_poll_once(*, now: float | None = None) -> bool:
         return False
     clock = time.monotonic() if now is None else now
     idle = clock - st.last_activity
+    elapsed = clock - st.last_consolidate_at
     threshold_hit = st.events_since_consolidate >= st.config.consolidate_event_threshold
     idle_hit = idle >= st.config.consolidate_idle_seconds
-    if not (threshold_hit or idle_hit):
+    interval_hit = elapsed >= st.config.consolidate_interval_seconds
+    if not (threshold_hit or idle_hit or interval_hit):
         return False
 
     result = await st.brain.consolidate()
     st.events_since_consolidate = 0
+    st.last_consolidate_at = clock
     await _audit("memory.consolidated", {"summary": str(result.get("episode_summary", ""))})
     if st.bus is not None:
         await st.bus.emit(

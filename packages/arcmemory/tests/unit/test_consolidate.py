@@ -21,6 +21,7 @@ from arcmemory.distill import (
     FactExtraction,
     InsightCandidate,
     InsightMint,
+    ProcedureExtraction,
 )
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.stores.episodic import EpisodicStore
@@ -45,8 +46,11 @@ class FakeDistiller:
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         return self._mint
 
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
-        return DaySummaryDraft(summary=["the day happened"], people=["Alice"])
+        return DaySummaryDraft(timeline=["09:00 the day happened"], people=["Alice"])
 
 
 class RaisingDistiller:
@@ -60,6 +64,9 @@ class RaisingDistiller:
 
     async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
         raise RuntimeError("boom mid-consolidation")
+
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        return ProcedureExtraction()
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()

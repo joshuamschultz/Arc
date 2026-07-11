@@ -57,6 +57,7 @@ class _State:
     # Consolidation trigger bookkeeping.
     events_since_consolidate: int = 0
     last_activity: float = field(default_factory=time.monotonic)
+    last_consolidate_at: float = field(default_factory=time.monotonic)
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

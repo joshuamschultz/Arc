@@ -113,32 +113,51 @@ class Entity(BaseModel):
 
 
 class DaySummary(BaseModel):
-    """A curated daily rollup — the human-readable daily notes.
+    """A day's curated notes — meeting-minutes for the raw transcript.
 
-    The distiller condenses a day's raw events into these bulleted lists; the raw
-    transcript stays in the episodic stream + audit log, never here (glass-box,
-    high-signal — the searchable curated truth, not a transcript). ``classification``
-    is the dominating label of the day's events, so the file channel is gated exactly
-    like the raw stream (no unclassified-plaintext leak of a classified day).
+    Rich enough to reconstruct WHAT happened, WHY, and WHEN: a chronological
+    ``timeline`` (each bullet time-stamped), topic ``discussions`` (what + method +
+    why), ``decisions`` (with rationale), ``people`` (who/where + what about them),
+    ``goals`` (targets), and ``tasks`` (action items). Bullets may carry ``[[slug]]``
+    wiki-links to entity/procedure/insight cards so an agent can hop between memories.
+
+    The raw transcript stays in the episodic stream + audit log, never here (glass-box,
+    high-signal). ``classification`` is the dominating label of the day's events, so the
+    file channel is gated exactly like the raw stream.
     """
 
     day: str  # YYYY-MM-DD
-    summary: list[str] = Field(default_factory=list)
-    people: list[str] = Field(default_factory=list)
+    timeline: list[str] = Field(default_factory=list)
+    discussions: list[str] = Field(default_factory=list)
     decisions: list[str] = Field(default_factory=list)
+    people: list[str] = Field(default_factory=list)
+    goals: list[str] = Field(default_factory=list)
     tasks: list[str] = Field(default_factory=list)
     classification: str = "unclassified"
 
     def is_empty(self) -> bool:
-        """True when no category carries a bullet (nothing worth a file)."""
-        return not (self.summary or self.people or self.decisions or self.tasks)
+        """True when no section carries a bullet (nothing worth a file)."""
+        return not (
+            self.timeline
+            or self.discussions
+            or self.decisions
+            or self.people
+            or self.goals
+            or self.tasks
+        )
 
 
 class Procedure(BaseModel):
-    """A how-to card promoted from a repeated action-sequence."""
+    """A how-to card — a repeatable process, findable by its trigger.
+
+    ``when_to_use`` is the situation to match against later (kept searchable so the
+    right procedure surfaces when a similar task recurs). ``steps`` may carry
+    ``[[slug]]`` links to the entities/tools they involve.
+    """
 
     slug: str
     title: str
+    when_to_use: str = ""
     steps: list[str] = Field(default_factory=list)
     use_count: int = 0
     classification: str = "unclassified"

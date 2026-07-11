@@ -31,7 +31,7 @@ from typing import Any
 
 import arcllm
 
-from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightMint
+from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightMint, ProcedureExtraction
 from arcmemory.index.rebuild import EmbeddingUnavailableError
 from arcmemory.types import Event, Fact
 
@@ -77,12 +77,31 @@ class ArcLLMEmbedder:
 
 
 _FACT_SYSTEM = (
-    "You distill a window of raw agent events into durable semantic facts. "
-    "Return ONLY a JSON object of the form "
+    "You are the memory of an executive assistant. Distill a window of raw agent "
+    "events into durable, reference-grade semantic facts about the PEOPLE, PLACES, "
+    "PROJECTS, COMPANIES, and DEALS that came up. Return ONLY a JSON object of the form "
     '{"facts": [{"slug": str, "predicate": str, "value": str, "hits": int, '
     '"name": str|null, "entity_type": str, "classification": str}]}. '
-    "slug is a stable lowercase entity id; predicate/value capture one durable "
-    "relation. Emit nothing you cannot ground in the events. No prose."
+    "slug is a stable lowercase entity id (e.g. 'brad-baker', 'ctgfederal'); name is "
+    "the human-readable name; entity_type is one of person/place/project/company/deal/thing. "
+    "Capture EVERY durable attribute worth referencing later as its own fact — for a "
+    "person: role, employer, location, contact info, relationships, preferences, "
+    "commitments; for a company/deal: what it is, stage, value, key contacts, dates. "
+    "Each fact is ONE predicate:value pair, specific and succinct (no vague 'is nice'). "
+    "Prefer many precise facts over one bundled sentence. Emit nothing you cannot ground "
+    "in the events; do not invent. No prose."
+)
+
+_PROCEDURE_SYSTEM = (
+    "You are the memory of an executive assistant. From a window of raw agent events, "
+    "extract reusable PROCEDURES — how a recurring task or process gets done — so the "
+    "next time a similar situation arises the correct steps can be found and followed. "
+    "Return ONLY a JSON object of the form "
+    '{"procedures": [{"slug": str, "title": str, "when_to_use": str, "steps": [str]}]}. '
+    "slug is a stable lowercase id; title names the process; when_to_use is the trigger "
+    "situation to match against later (make it searchable); steps are the ordered actions. "
+    "Only emit a procedure for a real, repeatable how-to demonstrated in the events — not "
+    "one-off facts or chatter. Emit nothing you cannot ground. No prose."
 )
 
 _INSIGHT_SYSTEM = (
@@ -96,14 +115,18 @@ _INSIGHT_SYSTEM = (
 )
 
 _DAY_SYSTEM = (
-    "You condense one day of raw agent events into CURATED daily notes — a "
-    "high-signal summary a human can skim, NOT a transcript. Return ONLY a JSON "
-    'object of the form {"summary": [str], "people": [str], "decisions": [str], '
-    '"tasks": [str]}. '
-    "'summary' is a few bullets of what happened / was discussed; 'people' names "
-    "the people, places, and organizations that came up; 'decisions' are choices "
-    "made; 'tasks' are action items or todos. Each bullet is one short line. Emit "
-    "nothing you cannot ground in the events; leave a list empty if it has none. No prose."
+    "You are taking detailed MEETING MINUTES from one day of raw agent events (a "
+    "conversation + tool transcript). Produce rich, reference-grade notes — enough to "
+    "reconstruct WHAT happened, WHY, and WHEN. Return ONLY a JSON object of the form "
+    '{"timeline": [str], "discussions": [str], "decisions": [str], "people": [str], '
+    '"goals": [str], "tasks": [str]}. '
+    "'timeline' is chronological bullets, EACH prefixed with the time as HH:MM — what "
+    "happened or was discussed at that moment, in order. 'discussions' summarize each "
+    "topic: what was talked about, the method/approach taken, and why. 'decisions' are "
+    "choices made, each WITH its rationale. 'people' names each person/place/organization "
+    "AND what about them (role, what they said or need). 'goals' are targets/objectives "
+    "surfaced. 'tasks' are action items. Be specific and succinct; leave a list empty if "
+    "it has none. Ground everything in the events — do not invent. No prose."
 )
 
 
@@ -131,8 +154,13 @@ class ArcLLMDistiller:
         data = await self._complete(_INSIGHT_SYSTEM, user)
         return InsightMint.model_validate(data)
 
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        """One structured completion → reusable how-to procedures (findable processes)."""
+        data = await self._complete(_PROCEDURE_SYSTEM, self._render_events(events))
+        return ProcedureExtraction.model_validate(data)
+
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
-        """One structured completion → curated daily-notes bullets (the searchable rollup)."""
+        """One structured completion → meeting-minutes daily notes (chronological)."""
         data = await self._complete(_DAY_SYSTEM, self._render_events(events))
         return DaySummaryDraft.model_validate(data)
 
@@ -169,8 +197,8 @@ class ArcLLMDistiller:
 
     @staticmethod
     def _render_events(events: list[Event]) -> str:
-        """Compact, id-anchored rendering of the window (instance-citation grounding)."""
-        return "\n".join(f"- [{e.event_id}] ({e.kind}) {e.text}" for e in events)
+        """Compact, id + time-anchored rendering (instance-citation + chronology)."""
+        return "\n".join(f"- [{e.event_id}] {e.ts[11:16]} ({e.kind}) {e.text}" for e in events)
 
     @staticmethod
     def _render_facts(facts: list[Fact]) -> str:

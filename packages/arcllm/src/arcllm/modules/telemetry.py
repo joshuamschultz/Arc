@@ -810,7 +810,16 @@ class TelemetryModule(BaseModule):
                 model=response.model,
                 cost=cost,
                 latency_ms=total_ms,
-                prompt_tokens=response.usage.input_tokens,
+                # Total input context, not just the billed-uncached suffix. With
+                # prompt caching, anthropic reports usage.input_tokens as ONLY the
+                # new tokens (a fully-cached prompt shows ~2) while the real context
+                # sits in cache_read/write — sum them so context-occupancy + token
+                # accounting reflect the actual prompt size. Cost stays separate.
+                prompt_tokens=(
+                    response.usage.input_tokens
+                    + (response.usage.cache_read_tokens or 0)
+                    + (response.usage.cache_write_tokens or 0)
+                ),
                 completion_tokens=response.usage.output_tokens,
                 request_body=prepared.request_body,
                 response_body=prepared.response_body,
