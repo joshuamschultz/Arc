@@ -110,9 +110,26 @@ class MutationResult(BaseModel):
     error: str | None = None
 
 
+class MemorySummary(BaseModel):
+    """Counts for the knowledge overview — the DB stream, curated files, and graph."""
+
+    episodic: int = 0
+    entities: int = 0
+    insights: int = 0
+    procedures: int = 0
+    daily_notes: int = 0
+    graph_nodes: int = 0
+    graph_edges: int = 0
+
+
 def _importance(scalar: float) -> int:
     """Project a 0..1 salience/confidence onto a 1..10 curator score."""
     return max(1, min(10, round(scalar * 10)))
+
+
+def _md_count(directory: Path) -> int:
+    """Number of ``.md`` cards in a curated store dir (0 if absent)."""
+    return len(list(directory.glob("*.md"))) if directory.is_dir() else 0
 
 
 class MemoryOperator:
@@ -163,6 +180,29 @@ class MemoryOperator:
         scope = self._scope(session_id)
         event = self._episodic.get(scope.key, entry_id)
         return self._to_record(scope.key, event) if event is not None else None
+
+    def summary(self, *, session_id: str | None = None) -> MemorySummary:
+        """Aggregate counts for the knowledge overview (REQ-084): stream + files + graph."""
+        scope = self._scope(session_id)
+        mem = self._workspace / "memory"
+        conn = self._db.connect()
+        (edges,) = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE scope = ?", (scope.key,)
+        ).fetchone()
+        (nodes,) = conn.execute(
+            "SELECT COUNT(*) FROM (SELECT src FROM edges WHERE scope = ? "
+            "UNION SELECT dst FROM edges WHERE scope = ?)",
+            (scope.key, scope.key),
+        ).fetchone()
+        return MemorySummary(
+            episodic=self._episodic.count(scope.key),
+            entities=_md_count(mem / "entities"),
+            insights=_md_count(mem / "insights"),
+            procedures=_md_count(mem / "procedures"),
+            daily_notes=_md_count(mem / "daily-log"),
+            graph_nodes=int(nodes),
+            graph_edges=int(edges),
+        )
 
     def list_entities(self, *, session_id: str | None = None) -> list[EntityRecord]:
         """Return every semantic entity with its metadata (REQ-084)."""
@@ -393,6 +433,7 @@ __all__ = [
     "MemoryOperator",
     "MemoryPage",
     "MemoryRecord",
+    "MemorySummary",
     "MutationResult",
     "MutationStatus",
 ]

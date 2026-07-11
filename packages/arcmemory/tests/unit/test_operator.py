@@ -114,6 +114,23 @@ async def test_list_entities_returns_typed_records(workspace: Path) -> None:
 # -- REQ-084 / get single entry ----------------------------------------------
 
 
+async def test_summary_counts_stream_entities_and_graph(workspace: Path) -> None:
+    await _seed_episodic(workspace)
+    _seed_entities(workspace)
+
+    summary = _operator(workspace).summary()
+
+    assert summary.episodic == 3  # three captured events
+    assert summary.entities == 2  # alice.md, bob.md
+    assert summary.graph_nodes >= 2  # alice, bob
+    assert summary.graph_edges >= 1  # alice —[works-with]→ bob
+
+
+async def test_summary_on_empty_workspace_is_all_zero(workspace: Path) -> None:
+    summary = _operator(workspace).summary()
+    assert summary.episodic == 0 and summary.entities == 0 and summary.graph_edges == 0
+
+
 async def test_get_entry_roundtrips_a_single_memory(workspace: Path) -> None:
     await _seed_episodic(workspace)
     op = _operator(workspace)

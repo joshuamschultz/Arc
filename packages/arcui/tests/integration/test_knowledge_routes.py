@@ -456,3 +456,29 @@ class TestEmptyVsUnreadable:
             resp = client.get("/api/agents/broken/knowledge/memories", headers=_viewer())
         assert resp.status_code == 503
         assert resp.json()["error"]  # arcmemory's exception message, surfaced verbatim
+
+
+def test_knowledge_summary_returns_context_graph_memory(app_with_memories: Any) -> None:
+    """GET /api/knowledge/{id} — the page-level overview that used to 404."""
+    with TestClient(app_with_memories) as client:
+        resp = client.get("/api/knowledge/concierge", headers=_viewer())
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) >= {"context", "graph", "memory"}
+    assert body["memory"]["episodic"] == 3  # three seeded episodic events
+    assert body["memory"]["entities"] == 2  # alice.md, bob.md
+    assert body["graph"]["nodes"] >= 2  # alice, bob
+    assert isinstance(body["context"], dict)
+
+
+def test_knowledge_summary_empty_agent_is_200_zeros(app_no_memories: Any) -> None:
+    with TestClient(app_no_memories) as client:
+        resp = client.get("/api/knowledge/fresh", headers=_viewer())
+    assert resp.status_code == 200
+    assert resp.json()["memory"]["episodic"] == 0
+
+
+def test_knowledge_summary_unknown_agent_is_404(app_with_memories: Any) -> None:
+    with TestClient(app_with_memories) as client:
+        resp = client.get("/api/knowledge/nope", headers=_viewer())
+    assert resp.status_code == 404

@@ -19,6 +19,7 @@ shape guessing.
 from __future__ import annotations
 
 import logging
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -304,7 +305,51 @@ async def get_entity_links(request: Request) -> JSONResponse:
     return JSONResponse({"items": [link.model_dump(mode="json") for link in links]})
 
 
+def _context_budget(agent_root: Path) -> dict[str, Any]:
+    """The agent's configured context window (``[context]`` in arcagent.toml).
+
+    Scalars only, so the frontend can render them as stat tiles. Absent/unreadable
+    config yields an empty dict rather than an error — the overview still loads.
+    """
+    try:
+        data = tomllib.loads((agent_root / "arcagent.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    ctx = data.get("context", {})
+    return {k: v for k, v in ctx.items() if isinstance(v, int | float | str | bool)}
+
+
+async def knowledge_summary(request: Request) -> JSONResponse:
+    """GET /api/knowledge/{agent_id} — overview: context budget, graph, memory counts.
+
+    The page-level Knowledge query. Composes the agent's configured context budget
+    with a single ``MemoryOperator.summary()`` (stream + curated-file + graph tallies).
+    """
+    agent_id = request.path_params["agent_id"]
+    agent = _resolve_agent(request, agent_id)
+    if agent is None:
+        return _agent_not_found(agent_id)
+    try:
+        summary = _operator_for(Path(agent.workspace_path), agent.did).summary()
+    except Exception as exc:  # reason: surface a genuine store failure as 503 (REQ-089)
+        return _store_unreadable(exc)
+    return JSONResponse(
+        {
+            "context": _context_budget(Path(agent.workspace_path)),
+            "graph": {"nodes": summary.graph_nodes, "edges": summary.graph_edges},
+            "memory": {
+                "episodic": summary.episodic,
+                "entities": summary.entities,
+                "insights": summary.insights,
+                "procedures": summary.procedures,
+                "daily_notes": summary.daily_notes,
+            },
+        }
+    )
+
+
 routes = [
+    Route("/api/knowledge/{agent_id}", knowledge_summary, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/memories", list_memories, methods=["GET"]),
     Route("/api/agents/{agent_id}/knowledge/memories/{entry_id}", get_memory, methods=["GET"]),
     Route(
