@@ -47,6 +47,20 @@ from pathlib import Path
 _ARCAGENT_CORE_BUDGET = 3_500
 _ARCGATEWAY_CORE_BUDGET = 1_200
 
+# Foundation tier (Josh 2026-07-12): arctrust, arcllm, arcrun — and the arcagent
+# core above — must stay light and controlled. A hard NCLOC ceiling over each
+# whole package src, set just above the current size so the leaf packages can't
+# quietly bloat; growth belongs in extension modules, not the foundation.
+_FOUNDATION_BUDGETS: dict[str, int] = {
+    "arctrust": 3_600,
+    "arcllm": 7_900,
+    "arcrun": 5_400,
+}
+# arccli is an advisory-only check (warned, never fails the gate) — "optional,
+# not as important". The remaining packages (memory, skill, store, team, ui, …)
+# are extension modules, budgeted as needed, so they carry no ceiling here.
+_ARCCLI_ADVISORY_BUDGET = 8_400
+
 # arcgateway core files for Budget B (G1.6)
 _ARCGATEWAY_CORE_FILES = [
     "runner.py",
@@ -187,6 +201,31 @@ def check_arcgateway_core(root: Path) -> tuple[int, list[tuple[str, int]], bool]
 
 
 # ---------------------------------------------------------------------------
+# Foundation tier — whole-package src ceilings
+# ---------------------------------------------------------------------------
+
+
+def check_package_src(root: Path, package: str, budget: int) -> tuple[int, bool]:
+    """Count NCLOC across a package's whole ``src/`` and check against ``budget``.
+
+    Args:
+        root: Repository root directory.
+        package: Package name under ``packages/``.
+        budget: NCLOC ceiling.
+
+    Returns:
+        Tuple of ``(total_ncloc, passed)``; passes (True) if the package src is
+        missing (cannot check — never false-fail).
+    """
+    src = root / "packages" / package / "src"
+    if not src.exists():
+        print(f"WARNING: {package} source not found: {src}", file=sys.stderr)
+        return 0, True
+    total = sum(count_ncloc(f) for f in sorted(src.rglob("*.py")))
+    return total, total <= budget
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -287,12 +326,47 @@ def main() -> int:
         print()
 
     # ------------------------------------------------------------------
+    # Foundation tier — arctrust / arcllm / arcrun whole-src (hard)  [G1.7]
+    # ------------------------------------------------------------------
+    print()
+    print("Foundation tier — light/controlled package src  [G1.7]")
+    print(_separator())
+
+    for package, budget in _FOUNDATION_BUDGETS.items():
+        total, passed = check_package_src(root, package, budget)
+        print(_row(f"{package}/src", total, budget))
+        if not passed:
+            all_passed = False
+            print(
+                f"  FAIL: {package} src budget EXCEEDED by {total - budget} lines "
+                f"({total} / {budget}).\n"
+                f"  The foundation (arctrust/arcllm/arcrun) must stay light — move "
+                f"growth into extension modules, not the leaf packages.\n",
+                file=sys.stderr,
+            )
+    print()
+
+    # ------------------------------------------------------------------
+    # Advisory — arccli whole-src (soft; warned, never fails the gate)
+    # ------------------------------------------------------------------
+    cli_total, cli_ok = check_package_src(root, "arccli", _ARCCLI_ADVISORY_BUDGET)
+    print(_row("arccli/src (advisory)", cli_total, _ARCCLI_ADVISORY_BUDGET))
+    if not cli_ok:
+        print(
+            f"  NOTE: arccli src is over its advisory budget "
+            f"({cli_total} / {_ARCCLI_ADVISORY_BUDGET}) — not enforced, but keep an "
+            f"eye on it.",
+            file=sys.stderr,
+        )
+    print()
+
+    # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
     print()
     print("=" * 60)
     if all_passed:
-        print("ALL LOC BUDGETS PASSED (G1.5 + G1.6)")
+        print("ALL LOC BUDGETS PASSED (G1.5 + G1.6 + G1.7)")
     else:
         print("LOC BUDGET FAILURE — see FAIL lines above.")
     print("=" * 60)

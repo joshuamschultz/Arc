@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-12
+
+SPEC-056 Mission Control: arcteam gets a dedicated, signed message type so cross-agent task
+hand-off is a first-class envelope, not an overload of `TASK`/`INFO`.
+
+### Added
+
+- **`MsgType.TASK_ASSIGNED`** — a new signed message type for cross-agent task hand-off
+  (SPEC-056 Phase C), distinct from the pre-existing `TASK` member (no `.` in the value per the
+  plan). `msg_type` is one of `Message`'s signed fields, so retyping an envelope after signing
+  invalidates the signature — a tampered message can't impersonate a task hand-off. arcagent's
+  `assign_task` tool sends one `TASK_ASSIGNED` DM to the new owner after the durable arcstore
+  write completes (best-effort — a notify failure never rolls back or masks the write); the
+  recipient's inbox handler extracts the task id and adopts it via `start_task`, idempotent on
+  redelivery.
+
 ### Fixed
 
 - **`MessagingService.create_channel` overwrote an existing channel's membership on a name

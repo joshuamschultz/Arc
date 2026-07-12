@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-12
+
+SPEC-056 Mission Control: arcagent gets a `tasks` module — the per-agent + team-backlog task
+list that turns arc from "agents that message" into "agents that coordinate work," sitting on
+top of the SPEC-056/SPEC-032 arcstore mutable plane.
+
 ### Added
+- **`arcagent.modules.tasks`** — a new module (mirrors the scheduler module's shape:
+  `config`/`store`/`_runtime`/`capabilities`) exposing ten tools over the shared arcstore
+  `TaskStore`: `create_task`, `update_task`, `start_task`, `complete_task`, `fail_task`,
+  `assign_task`, `claim_task`, `list_tasks`, `decompose_task`, `set_task_output`. `list_tasks` is
+  `read_only`; the rest are `state_modifying` and audited centrally through the classification
+  system. Mutations are owner-only-guarded; free-text fields go through NFKC + injection
+  sanitize; `assign_task`/`decompose_task` resolve `@handle` → DID via `arcteam.registry`. The
+  store opens the shared arcstore DB (`resolve_data_dir()/store/arcui.db`) so tasks are visible
+  cross-agent and aggregate into the team kanban (arcui).
+- **Cross-agent assignment notify** — `assign_task` sends one signed `arcteam.MsgType.TASK_ASSIGNED`
+  DM to the new owner after the durable arcstore write (best-effort — a notify failure never
+  rolls back or masks the write); the messaging inbox handler adopts the task via `start_task`,
+  idempotent on redelivery.
+- **Mention-scoped inbox activation (SPEC-055, Phase 0B)** — the messaging inbox's
+  `_should_activate` gate wakes only the mentioned agent on a channel `@mention` (DMs and
+  critical messages still always wake; an un-mentioned broadcast wakes everyone), closing the
+  fleet-wide token-cost gap and giving `assign_task`'s notify a real addressed-wake path.
 - **Public tool-authoring surface (F6/F7).** `tool`/`hook`/`background_task`/`capability` and the
   new `capability_meta(fn)` accessor are re-exported from `arcagent.tools` — authors no longer import
   the private `arcagent.tools._decorator` or read `_arc_capability_meta` directly.

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "arcstore"
-version = "0.1.0"
+version = "0.2.0"
 description = "Operational/observability data plane for Arc — always-on spool + pluggable store"
 readme = "README.md"
 requires-python = ">=3.11"

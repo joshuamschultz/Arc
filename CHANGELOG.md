@@ -7,8 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026-07-12] — SPEC-056 Mission Control multi-agent task system
+
+A shared task system that turns arc from "agents that message" into "agents that coordinate
+work": every agent owns a task list in its own harness, tasks can be created for self or
+**assigned** to a teammate (single owner, atomic claim — no double-grab), and the human watches
+and steers a team-wide kanban in arcui or from the CLI.
+
+Ships as:
+
+- `arcstore` 0.1.0 → 0.2.0
+- `arcteam` 0.5.0 → 0.6.0
+- `arc-agent` 0.15.0 → 0.16.0
+- `arcui` 0.2.0 → 0.3.0
+- `arccmd` (arccli) 0.6.0 → 0.7.0
+
+See each package `CHANGELOG.md` for full detail. Highlights:
+
 ### Added
 
+- **arcstore** — a new mutable directory plane (`mutable_records`, completing the SPEC-032
+  risk) with an atomic `update_if` conditional write — the single-owner claim primitive
+  everything else is built on — plus the `Task` model and `TaskStore`.
+- **arcagent** — a `tasks` module (`arcagent.modules.tasks`) exposing ten tools
+  (`create_task`/`update_task`/`start_task`/`complete_task`/`fail_task`/`assign_task`/
+  `claim_task`/`list_tasks`/`decompose_task`/`set_task_output`) over the shared `TaskStore`,
+  plus the SPEC-055 mention-scoped inbox activation gate an assignment notify needs to wake
+  only the addressed teammate.
+- **arcteam** — a dedicated, signed `MsgType.TASK_ASSIGNED` message type for cross-agent task
+  hand-off, sent after the durable arcstore write and adopted idempotently by the recipient.
+- **arcui** — a team-wide task kanban (six-column board, priority/owner/blocked/run-link
+  cards), a task drawer (activity timeline, structured output, operator at-rest edit, "steer
+  owner" instead of an edit form for in-progress cards), and operator-gated mutation routes —
+  all reading live off the same shared arcstore `tasks` collection the agents write to.
+- **arccli** — `arc task create/list/edit/assign/complete/talk`, the same operations as the
+  tools and arcui from the command line, over the same shared store, operator-gated and
+  audited.
 - **ArcUI Reality Mirror** — the dashboard gained a per-agent **Knowledge**
   view (paged/ranked-search memories + entities with created/recency/
   importance/source metadata, link navigation, operator edit/delete via

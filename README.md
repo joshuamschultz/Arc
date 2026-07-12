@@ -159,7 +159,7 @@ flowchart TB
 | Entry | [**arctui**](packages/arctui/) · [**arcmas**](packages/arcmas/) | Terminal UI · the `pip install arcmas` meta-package that pulls the whole stack |
 | Surface | [**arcgateway**](packages/arcgateway/) | Long-running daemon — chat-platform adapters, session routing, operator-approved pairing |
 | Surface | [**arcteam**](packages/arcteam/) | Multi-agent messaging — entity registry, channels, DMs, operator-key-signed audit trail |
-| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth (viewer/operator), layer/agent/team filtering, plus a per-agent Knowledge view (memories + entities, operator edit/delete), a workspace file editor with signature-stale honesty, live channel management, and a Capabilities view rendering the loader's own trust verdicts |
+| Surface | [**arcui**](packages/arcui/) | Multi-agent dashboard — reads on demand from the shared `arcstore` record, two-token auth (viewer/operator), layer/agent/team filtering, plus a per-agent Knowledge view (memories + entities, operator edit/delete), a workspace file editor with signature-stale honesty, live channel management, a Capabilities view rendering the loader's own trust verdicts, and a team-wide task kanban (Mission Control, SPEC-056) |
 | Agent | [**arcagent**](packages/arcagent/) | The agent itself — requires a DID at construction, runs the unified capability loader (tools · skills · hooks · background tasks), sessions, module bus |
 | Agent | [**arcskill**](packages/arcskill/) *(optional)* | Skill supercharger — verified install (Sigstore + Rekor), static scan, sandboxed dry-run, atomic activation, revocation list, plus golden-task-gated self-improvement (`arcskill.improver`). arcagent runs skills fine without it. |
 | Runtime | [**arcrun**](packages/arcrun/) | The async loop that runs the agent — tool sandbox, streaming, parallel tool calls, hash-chained event log |
@@ -376,6 +376,12 @@ agent, out of the box:
 - **Capabilities** — a per-agent view of every skill/tool across all four scan
   roots, with the loader's own trust verdict (loaded / denied / unsigned) —
   what actually loaded, not what's configured.
+- **Tasks** — every agent's task list, plus a team-wide kanban. Agents create
+  tasks for themselves, assign them to a teammate (single owner, atomic claim —
+  no double-grab), claim from the shared backlog, and decompose into sub-tasks.
+  The human edits an at-rest task or reprioritizes it from the board; steering
+  an in-progress task is "message the owner," not an edit. Same operations are
+  available from the terminal via `arc task` (see the cheat sheet below).
 
 **6. (Optional) Team collaboration — agents in channels:**
 
@@ -640,6 +646,12 @@ arc ext list --agent my-agent
 arc team init                                             # create team data dir + operator audit key
 arc team register agent-1 --name "Analyst" --type agent
 arc team entities
+
+# Tasks (Mission Control, multi-agent)
+arc task create "Draft the Q3 report" --actor @lead --priority high  # unowned -> team backlog
+arc task list --scope mine --actor @analyst-1               # omit --scope for the team-wide view
+arc task assign <task_id> @analyst-1 --actor @lead           # notifies + wakes the assignee
+arc task talk <task_id> "any update?" --actor @lead          # steer an in-progress owner, not an edit
 
 # Chat-platform gateway
 arc gateway pair list                                     # show pending DM pairings

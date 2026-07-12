@@ -104,6 +104,7 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 | **`arc ext`** | Capability + extension-point management — list, create, install, validate, inspect, verify |
 | **`arc blueprint`** | Signed preset-config bootstrap — list, show, apply, verify, sign |
 | **`arc team`** | Team messaging (Slack for agents) — create, add-member, remove-member, up, down, serve, send, inbox, read, thread, channels, register, entities, status, config, init, memory-status, backfill-workspaces |
+| **`arc task`** | Mission Control task system (SPEC-056) — create, list, edit, assign, complete, talk (steer an in-progress owner) |
 | **`arc ui`** | Multi-agent dashboard — start, tail |
 | **`arc gateway pair`** | Gateway pairing operator commands — list, approve, revoke |
 | **`arc init`** | Interactive first-time setup wizard with tier presets, optional `--blueprint` bootstrap |
@@ -224,6 +225,15 @@ arc team send --sender agent://procurement --to ops --body "PO-2026-0412 receive
 arc team read --sender agent://lead --channel ops --limit 50   # or --dm <handle>
 arc team inbox --sender agent://procurement
 arc team thread --stream ops <thread_id>
+
+# === Tasks (Mission Control, SPEC-056) ===
+arc task create "Draft the Q3 report" --actor @lead --priority high  # unowned -> team backlog
+arc task create "Ship it" --actor @lead --owner @analyst-1           # assigned at creation
+arc task list --scope mine --actor @analyst-1                  # omit --scope for the team-wide view
+arc task edit <task_id> --actor @lead --priority urgent         # at-rest only — 409 if in_progress
+arc task assign <task_id> @analyst-1 --actor @lead              # atomic; notifies + wakes the assignee
+arc task complete <task_id> --actor @analyst-1 --resolution "done"
+arc task talk <task_id> "any update?" --actor @lead              # steer an in-progress owner, not an edit
 
 # === Multi-agent dashboard ===
 arc ui start

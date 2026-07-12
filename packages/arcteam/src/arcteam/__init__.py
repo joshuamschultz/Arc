@@ -1,6 +1,6 @@
 """ArcTeam: Multi-agent team coordination and lifecycle management."""
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 from arcteam.audit import AuditLogger
 from arcteam.backends.nats import NatsBackend
