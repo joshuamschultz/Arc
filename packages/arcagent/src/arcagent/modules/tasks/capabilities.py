@@ -29,6 +29,7 @@ import uuid
 from typing import Any
 
 from arcteam.registry import resolve
+from arcteam.types import Message, MsgType
 
 from arcagent.modules.tasks import _runtime
 from arcagent.modules.tasks.models import Task, validate_task_text
@@ -248,9 +249,34 @@ async def assign_task(
         updated = await st.store.assign(id, to_did, st.identity.did)
         if updated is None:
             return json.dumps({"error": f"unable to assign task '{id}'"})
+        await _notify_assignee(st, to_handle, updated)
         return str(updated.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
+
+
+async def _notify_assignee(st: _runtime._State, to_handle: str, task: Task) -> None:
+    """Send a ``TASK_ASSIGNED`` hand-off to the assignee's inbox (SDD §5).
+
+    Best-effort: the arcstore owner write above is already durable truth, so
+    a delivery failure here (unreachable bus, unregistered sender, etc.) is
+    logged and swallowed rather than surfaced to the caller — assign_task
+    must not roll back or mask a successful write just because notification
+    could not go out.
+    """
+    if st.messenger is None:
+        return
+    handle = to_handle.removeprefix("@")
+    message = Message(
+        sender=st.identity.did,
+        to=[f"agent://{handle}"],
+        msg_type=MsgType.TASK_ASSIGNED,
+        body=f"@{handle} task_id={task.id} — {task.title}",
+    )
+    try:
+        await st.messenger.send(message)
+    except Exception:
+        _logger.warning("failed to notify @%s of assignment for task '%s'", handle, task.id)
 
 
 @tool(

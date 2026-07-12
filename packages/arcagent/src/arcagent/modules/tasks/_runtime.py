@@ -56,6 +56,12 @@ class _State:
     # crash or silently build a useless, disconnected in-memory registry).
     registry: Any = None
     store: Any = None
+    # arcteam ``MessagingService`` used by ``assign_task`` to notify the
+    # assignee (SDD §5, Phase C) — injectable for tests, otherwise built
+    # lazily by ensure_store() over the same shared backend as ``registry``.
+    # None means "not built yet"; a served agent with no ``nats_url`` never
+    # gets one (assign_task then skips notify — no live inbox to deliver to).
+    messenger: Any = None
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -70,6 +76,7 @@ def configure(
     workspace: Path = Path("."),
     identity: AgentIdentity,
     registry: Any = None,
+    messenger: Any = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
@@ -84,6 +91,7 @@ def configure(
             telemetry=telemetry,
             identity=identity,
             registry=registry,
+            messenger=messenger,
         )
     )
 
@@ -101,30 +109,40 @@ async def ensure_store() -> None:
         return
     st.store = await open_store(st.config.data_dir)
     if st.registry is None and st.config.nats_url:
-        st.registry = await _build_live_registry(st.config.nats_url)
+        st.registry, st.messenger = await _build_live_services(st.config.nats_url, st.identity)
 
 
-async def _build_live_registry(nats_url: str) -> EntityRegistry:
-    """Build a read-only ``EntityRegistry`` over the shared NATS backend.
+async def _build_live_services(
+    nats_url: str, identity: AgentIdentity
+) -> tuple[EntityRegistry, Any]:
+    """Build a read-only ``EntityRegistry`` and a sending ``MessagingService``.
 
-    Only ``resolve()``/``list_entities()`` (read paths) are ever called
-    through this registry — ``assign_task``'s ``@handle`` -> DID lookup —
-    which never touch the audit log (only ``register``/``update`` do, per
-    ``arcteam.registry.EntityRegistry``). An ephemeral, never-signing
-    operator key therefore satisfies ``AuditLogger``'s constructor without
-    holding real audit authority; nothing is ever written through this
-    registry, so there is no audited-subject-is-its-own-authority concern
-    (SPEC-053) to inherit ``agent._operator_signer`` for.
+    Both share the one NATS backend connection (assign_task's ``@handle``
+    -> DID resolve on the registry, and its ``TASK_ASSIGNED`` notify on the
+    messenger, must see the same entity/stream state). Only
+    ``resolve()``/``list_entities()`` (read paths) are ever called through
+    the registry — which never touch the audit log (only
+    ``register``/``update`` do, per ``arcteam.registry.EntityRegistry``). An
+    ephemeral, never-signing operator key therefore satisfies
+    ``AuditLogger``'s constructor without holding real audit authority;
+    nothing is ever written through the registry, so there is no
+    audited-subject-is-its-own-authority concern (SPEC-053) to inherit
+    ``agent._operator_signer`` for. The messenger signs outbound
+    notifications with the agent's own identity (REQ-030), mirroring the
+    messaging module's ``_bootstrap.message_signer``.
     """
     from arcteam.audit import AuditLogger
+    from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
     from arctrust import OperatorKey
 
-    from arcagent.modules.messaging._bootstrap import make_backend
+    from arcagent.modules.messaging._bootstrap import make_backend, message_signer
 
     backend = await make_backend(nats_url)
     audit = AuditLogger(backend, OperatorKey.generate().into_signer())
-    return EntityRegistry(backend, audit)
+    registry = EntityRegistry(backend, audit)
+    messenger = MessagingService(backend, registry, audit, signer=message_signer(identity))
+    return registry, messenger
 
 
 def state() -> _State:
