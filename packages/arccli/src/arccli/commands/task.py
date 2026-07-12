@@ -61,18 +61,6 @@ def _resolve_dir(args: argparse.Namespace) -> Path:
     return resolve_data_dir(getattr(args, "data_dir", None))
 
 
-def _db_path(data_dir: Path) -> Path:
-    """The SAME tasks db the agents' ``tasks`` module and arcui read/write.
-
-    NOT ``arccli.commands.store._db_path`` (``store/arcstore.db``) — that is
-    a different file used by the unrelated ``arc store`` command. Mirrors
-    ``arcagent.modules.tasks.store.open_store`` / ``arcui.observe.Observe``
-    so a task created here is immediately visible to agents and the arcui
-    kanban.
-    """
-    return data_dir / "store" / "arcui.db"
-
-
 def _new_task_id() -> str:
     return f"task_{uuid.uuid4().hex[:12]}"
 
@@ -95,11 +83,19 @@ def _audit_sink(data_dir: Path) -> Any:
 
 
 async def _open_store(data_dir: Path, *, mutable: bool) -> tuple[TaskStore, SqliteBackend]:
-    """Open the shared arcstore TaskStore seam. ``mutable`` wires the audit sink."""
+    """Open the shared arcstore TaskStore seam. ``mutable`` wires the audit sink.
+
+    ``store_db_path`` is the single locator (ARCH-2) for the SAME tasks db the
+    agents' ``tasks`` module and arcui read/write — NOT
+    ``arccli.commands.store._db_path`` (``store/arcstore.db``), the unrelated
+    ``arc store`` command's file — so a task created here is immediately
+    visible to agents and the arcui kanban.
+    """
+    from arcstore import store_db_path
     from arcstore.backends.sqlite import SqliteBackend
     from arcstore.tasks import TaskStore
 
-    backend = SqliteBackend(_db_path(data_dir))
+    backend = SqliteBackend(store_db_path(data_dir))
     await backend.start()
     sink = _audit_sink(data_dir) if mutable else None
     return TaskStore(backend, sink=sink), backend
@@ -230,6 +226,9 @@ def _edit(args: argparse.Namespace) -> None:
         sys.exit(2)
 
     async def _run() -> Task:
+        from arcstore.tasks import Task
+        from pydantic import ValidationError
+
         from arccli.commands.team import _build_service, _shutdown
 
         _, registry, _, team_backend = await _build_service(root)
@@ -244,13 +243,23 @@ def _edit(args: argparse.Namespace) -> None:
             if current is None:
                 _err(f"arc task edit: task not found: {task_id}")
                 sys.exit(1)
-            if current.status == "in_progress":
+            # SEC-F2: a partial patch never constructs a full Task, so validate
+            # the patched free-text through the model before the store write.
+            try:
+                Task(**{**current.model_dump(), **patch})
+            except ValidationError:
+                _err(f"arc task edit: rejected — invalid field value for {task_id}")
+                sys.exit(1)
+            # store.edit is the status-conditional at-rest write: it refuses an
+            # in_progress task and rejects one that raced into in_progress
+            # between the read and the write (REL-F1), rather than clobbering it.
+            updated, outcome = await store.edit(task_id, patch, actor_did=str(entity.did))
+            if outcome in ("in_progress", "conflict"):
                 _err(
                     f"arc task edit: task {task_id} is in_progress — "
                     "steer it with `arc task talk`, not edit"
                 )
                 sys.exit(1)
-            updated = await store.update(task_id, patch, actor_did=str(entity.did))
             if updated is None:
                 _err(f"arc task edit: task vanished mid-update: {task_id}")
                 sys.exit(1)

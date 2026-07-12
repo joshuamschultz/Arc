@@ -208,16 +208,6 @@ class TaskStore:
         return [Task(**row) for row in rows]
 
     async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
-        # Sanitize free text on the WRITE path too (SEC-F2/ARCH-4): the model's
-        # field validator only fires on construction (create) and read-back —
-        # a patch merges raw, so an injection title/description/resolution would
-        # otherwise persist unsanitized (and a poisoned title would then brick
-        # every subsequent ``Task(**raw)`` read). Validating here keeps the
-        # arcstore boundary the single sanitization point for every caller.
-        for key in ("title", "description", "resolution"):
-            value = patch.get(key)
-            if isinstance(value, str):
-                _validate_free_text(value)
         # Atomic server-side merge (REL-F2): a read-merge-write here lets two
         # concurrent updates of disjoint fields clobber each other (last-writer
         # drops the loser's field). mutable_merge applies the patch inside one
@@ -244,6 +234,13 @@ class TaskStore:
         ``reason`` is ``"not_found"``, ``"in_progress"``, or ``"conflict"`` (the
         row raced out from under the read).
         """
+        # Same write-path sanitization as ``update`` (SEC-F2/ARCH-4): a patch
+        # merges raw, so keep the arcstore boundary the single sanitization
+        # point rather than trusting every caller to pre-validate.
+        for key in ("title", "description", "resolution"):
+            value = patch.get(key)
+            if isinstance(value, str):
+                _validate_free_text(value)
         current = await self.get(task_id)
         if current is None:
             return None, "not_found"

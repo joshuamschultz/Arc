@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from arcstore.tasks import Task
+from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -26,6 +27,27 @@ from arcui.schemas import ErrorResponse
 _CREATOR = "did:arc:ui:operator"
 
 _CREATE_FIELDS = ("description", "priority", "owner_did", "tags")
+# Fields a PATCH may write. A raw patch is never trusted wholesale (SEC-F4):
+# status/id/created_at/run_id/blocked_by are managed by the store's own
+# transitions, never by a client-supplied key.
+_PATCH_FIELDS = ("title", *_CREATE_FIELDS)
+
+
+def _valid_edits(task_id: str, edits: dict[str, Any]) -> bool:
+    """Validate patched fields through the ``Task`` model (SEC-F2).
+
+    A partial patch never constructs a full ``Task``, so it would otherwise
+    bypass the model's injection/oversized/zero-width sanitizer. Build a probe
+    task carrying the edited values and let the model's field validators run;
+    a ``ValidationError`` means the patch is unsafe.
+    """
+    probe: dict[str, Any] = {"id": task_id, "creator_did": _CREATOR, "title": "probe"}
+    probe.update(edits)
+    try:
+        Task(**probe)
+    except ValidationError:
+        return False
+    return True
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -89,11 +111,22 @@ async def patch_task(request: Request) -> JSONResponse:
         )
         return _error("operator_role_required", 403)
 
+    body = await _json_body(request)
+    if body is None:
+        return _error("expected a JSON object body", 400)
+    # Allowlist (SEC-F4): only editable fields survive; a client-supplied
+    # `status`/`id`/... key is dropped, never written.
+    edits = {key: body[key] for key in _PATCH_FIELDS if key in body}
+    if not edits:
+        return _error("no editable fields", 400)
+    if not _valid_edits(task_id, edits):
+        return _error("invalid field value", 400)
+
     store = request.app.state.task_store
-    current = await store.get(task_id)
-    if current is None:
+    updated, outcome = await store.edit(task_id, edits, actor_did=_CREATOR)
+    if outcome == "not_found":
         return _error("not found", 404)
-    if current.status == "in_progress":
+    if outcome in ("in_progress", "conflict"):
         emit_mutation_audit(
             request,
             target=target,
@@ -102,13 +135,7 @@ async def patch_task(request: Request) -> JSONResponse:
             detail="task_in_progress",
         )
         return _error("task_in_progress", 409)
-
-    patch = await _json_body(request)
-    if patch is None:
-        return _error("expected a JSON object body", 400)
-
-    updated = await store.update(task_id, patch, actor_did=_CREATOR)
-    if updated is None:  # pragma: no cover — race between the get and the write above
+    if updated is None:  # pragma: no cover — row vanished between write and re-read
         return _error("not found", 404)
 
     emit_mutation_audit(request, target=target, operation="task.update", outcome="applied")
