@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,6 +19,45 @@ from arccli.commands.agent._common import (
     _scaffold_workspace,
 )
 from arccli.commands.agent.run import _agent_run_once, _default_session_id
+
+
+def _make_chat_reader() -> Callable[[], str]:
+    """Build the REPL input reader.
+
+    In a TTY, use a prompt_toolkit multiline session where Enter submits and
+    Shift+Enter / Alt+Enter insert a newline. For non-interactive stdin (pipes,
+    `arc agent chat < file`, CI) or a missing prompt_toolkit, fall back to plain
+    input().
+    """
+    if not sys.stdin.isatty():
+        return lambda: input("you> ")
+
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.key_binding import KeyBindings
+    except ImportError:
+        return lambda: input("you> ")
+
+    kb = KeyBindings()
+
+    @kb.add("enter")
+    def _submit(event: object) -> None:
+        event.current_buffer.validate_and_handle()  # type: ignore[attr-defined]  # reason: prompt_toolkit passes a KeyPressEvent, typed as object in our pinned build
+
+    @kb.add("s-enter")
+    @kb.add("escape", "enter")
+    def _newline(event: object) -> None:
+        event.current_buffer.insert_text("\n")  # type: ignore[attr-defined]  # reason: prompt_toolkit passes a KeyPressEvent, typed as object in our pinned build
+
+    session: PromptSession = PromptSession(  # type: ignore[type-arg]  # reason: prompt_toolkit's PromptSession is generic but its parameter doesn't matter to us — we use it as-is
+        multiline=True,
+        key_bindings=kb,
+    )
+
+    def _read() -> str:
+        return session.prompt("you> ")  # type: ignore[no-any-return]  # reason: PromptSession.prompt is typed Any in our pinned prompt_toolkit; runtime always returns str
+
+    return _read
 
 
 async def _chat_interactive(
@@ -42,6 +82,7 @@ async def _chat_interactive(
     sys.stdout.write(f"Agent: {agent_name}  |  Model: {model_id}\n")
     sys.stdout.write(f"Skills: {len(arc_agent.skills)}\n")
     sys.stdout.write("\n")
+    sys.stdout.write("Enter to send, Shift+Enter or Alt+Enter for a newline.\n")
     sys.stdout.write("Commands:\n")
     sys.stdout.write("  /quit              Exit\n")
     sys.stdout.write("  /tools             List tools\n")
@@ -63,12 +104,14 @@ async def _chat_interactive(
     # A deterministic default key so the REPL has a stable session to resume.
     current_session_id = session_id or "cli:chat"
 
+    read = _make_chat_reader()
+
     try:
         while True:
             try:
-                sys.stdout.write("\nyou> ")
+                sys.stdout.write("\n")
                 sys.stdout.flush()
-                user_input = input().strip()
+                user_input = read().strip()
             except (EOFError, KeyboardInterrupt):
                 sys.stdout.write("\n")
                 break
