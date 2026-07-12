@@ -522,6 +522,30 @@ class TestAssign:
         finally:
             await be.stop()
 
+    async def test_assignee_can_start_its_assigned_task(self, tmp_path: Path) -> None:
+        # assign() gives ownership and moves the task to todo; the assignee then
+        # ADOPTS it via start_task even though owner_did is no longer NULL — the
+        # cross-phase flow that lets an assigned agent actually begin the work.
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(id="adopt1", title="Assigned work", creator_did=_CREATOR, status="backlog")
+            )
+            assigned = await store.assign("adopt1", _AGENT_A, _OPERATOR)
+            assert assigned is not None
+            assert assigned.owner_did == _AGENT_A
+            assert assigned.status == "todo"
+            task, reason = await store.start_task("adopt1", _AGENT_A)
+            assert reason == "assigned"
+            assert task is not None
+            assert task.status == "in_progress"
+            assert task.owner_did == _AGENT_A
+        finally:
+            await be.stop()
+
     async def test_assign_allowed_when_task_unowned_and_not_in_progress(
         self, tmp_path: Path
     ) -> None:

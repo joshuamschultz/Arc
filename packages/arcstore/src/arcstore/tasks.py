@@ -200,11 +200,22 @@ class TaskStore:
             if target is None or not _is_chain_relative(active, target):
                 return active, "continue_current"
 
+        # Claim: the task is either unowned OR already assigned to this agent
+        # (assign() set the owner but left it at rest) — both adopt to
+        # in_progress. Snapshotting owner+status into the WHERE keeps it atomic
+        # and refuses adopting a terminal or already-active task.
+        target = await self.get(task_id)
+        if (
+            target is None
+            or target.owner_did not in (None, agent_did)
+            or target.status not in ("backlog", "todo")
+        ):
+            return None, "no_tasks_available"
         won = await self._backend.update_if(
             self._COLLECTION,
             task_id,
             {"owner_did": agent_did, "status": "in_progress"},
-            where={"owner_did": None},
+            where={"owner_did": target.owner_did, "status": target.status},
             actor_did=agent_did,
             sink=self._sink,
         )
@@ -220,10 +231,13 @@ class TaskStore:
         # task raced into in_progress between the read above and this write,
         # the WHERE no longer matches and the reassignment is rejected
         # rather than yanking active work out from under its owner (NFR-4).
+        # Assigning moves an at-rest task into the owner's ready lane: owner set
+        # AND status -> todo (an owned task is `todo`, per §4 create(owned)->todo),
+        # so the assignee can then adopt it via start_task.
         won = await self._backend.update_if(
             self._COLLECTION,
             task_id,
-            {"owner_did": to_did},
+            {"owner_did": to_did, "status": "todo"},
             where={"status": current.status},
             actor_did=by_did,
             sink=self._sink,
