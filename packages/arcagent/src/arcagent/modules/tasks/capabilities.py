@@ -42,7 +42,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arcteam.registry import resolve
-from arcteam.types import Message, MsgType
+from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
 
 from arcagent.modules.tasks import _runtime
 from arcagent.modules.tasks.models import Priority, Task
@@ -216,9 +216,19 @@ async def complete_task(
             return json.dumps(
                 {"error": f"Task '{id}' is blocked by unfinished dependencies"}
             )
-        updated = await st.store.finish(
-            id, status="done", resolution=resolution, output=output, actor_did=st.identity.did
-        )
+        if current.requires_review:
+            # Opt-in human gate (P3): land in ``review``, not ``done`` — an
+            # operator approves/rejects before it is terminal (LLM06/ASI09).
+            updates: dict[str, Any] = {"status": "review", "resolution": resolution}
+            if output is not None:
+                updates["output"] = output
+            updated = await st.store.update(id, updates, actor_did=st.identity.did)
+            await _notify_operator(st, f"needs review: {current.title}", current.classification)
+        else:
+            updated = await st.store.finish(
+                id, status="done", resolution=resolution, output=output, actor_did=st.identity.did
+            )
+            await _notify_operator(st, f"done: {current.title}", current.classification)
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
@@ -246,6 +256,7 @@ async def fail_task(
         )
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
+        await _notify_operator(st, f"failed: {current.title}", current.classification, alert=True)
         return str(updated.model_dump_json())
     except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
@@ -300,6 +311,32 @@ async def _notify_assignee(st: _runtime._State, to_handle: str, task: Task) -> N
         await st.messenger.send(message)
     except Exception:
         _logger.warning("failed to notify @%s of assignment for task '%s'", handle, task.id)
+
+
+async def _notify_operator(
+    st: _runtime._State, body: str, classification: str, *, alert: bool = False
+) -> None:
+    """Best-effort operator notification on a key task transition (P4).
+
+    Sends to ``user://operator`` (trifecta-allowed). Gated by ``config.notify``
+    and the presence of a live messenger; a delivery failure is logged and
+    swallowed so it can NEVER block or roll back the transition that triggered
+    it (the store write is already durable truth, and AU has recorded it).
+    ``alert`` picks ``ALERT`` (failures/escalations) over ``INFO``.
+    """
+    if not st.config.notify or st.messenger is None:
+        return
+    message = Message(
+        sender=st.identity.did,
+        to=["user://operator"],
+        msg_type=MsgType.ALERT if alert else MsgType.INFO,
+        body=body,
+        classification=classification,
+    )
+    try:
+        await st.messenger.send(message)
+    except Exception:
+        _logger.warning("failed to notify operator: %s", body[:80])
 
 
 @tool(
@@ -581,6 +618,9 @@ async def _handle_attempt_failure(
             resolution=f"failed after {current.attempts} attempt(s) — retries exhausted",
             last_error=error,
         )
+        await _notify_operator(
+            st, f"dead-lettered: {current.title} ({error})", current.classification, alert=True
+        )
         return
     backoff = st.config.retry_backoff_seconds * (2 ** (current.attempts - 1))
     next_at = (datetime.now(UTC) + timedelta(seconds=backoff)).isoformat()
@@ -625,11 +665,18 @@ async def _reliability_tick() -> None:
         if task.cancel_requested:
             await _cancel_running(st, task, self_did)
         elif _should_reclaim(st, task, now, first_pass):
+            await _notify_operator(
+                st,
+                f"escalation — stuck task reclaimed: {task.title}",
+                task.classification,
+                alert=True,
+            )
             await _handle_attempt_failure(
                 st, task.id, self_did, "stuck: no active run — reclaimed"
             )
     st.reclaim_done = True
     await _reconcile_parents(st, self_did)
+    await _route_unassigned(st, self_did)
 
 
 async def _reconcile_parents(st: _runtime._State, self_did: str) -> None:
@@ -670,13 +717,79 @@ async def _reconcile_one_parent(
             resolution="a subtask failed — parent cannot complete",
             actor_did=self_did,
         )
-    elif all(c.status == "done" for c in children):
+    elif all(c.status == "done" for c in children) and await st.store.deps_met(parent):
+        # Require the parent's FULL dependency set, not just its children — a
+        # parent that also carries non-child blocked_by deps waits for those too.
         await st.store.finish(
             parent.id,
             status="done",
             resolution="all subtasks complete",
             actor_did=self_did,
         )
+
+
+# ---------------------------------------------------------------------------
+# Auto-routing (SPEC-056 Phase 3) — ownerless tasks find the best agent
+# ---------------------------------------------------------------------------
+
+
+async def _route_unassigned(st: _runtime._State, self_did: str) -> None:
+    """Route every ownerless task to the best eligible agent (P3).
+
+    No-op without routing enabled or a live registry (the roster source).
+    Selection is deterministic (see :func:`_pick_agent`) so concurrent routers
+    on different agents converge; the store's ``route`` is owner-null-conditional
+    so exactly one write lands. Load is tracked incrementally across the pass so
+    a burst of tasks spreads rather than piling on the momentary least-loaded.
+    """
+    if not st.config.routing or st.registry is None:
+        return
+    unassigned = await st.store.unassigned()
+    if not unassigned:
+        return
+    agents = await _eligible_agents(st)
+    if not agents:
+        return
+    load = await _load_by_owner(st)
+    for task in unassigned:
+        chosen = _pick_agent(task, agents, load)
+        routed = await st.store.route(task.id, chosen.did, self_did)
+        if routed is not None:
+            load[chosen.did] = load.get(chosen.did, 0) + 1
+            await _notify_assignee(st, chosen.handle, routed)
+
+
+async def _eligible_agents(st: _runtime._State) -> list[Entity]:
+    """Active agent entities from the registry — the routing candidate set."""
+    entities = await st.registry.list_entities()
+    return [
+        e for e in entities if e.type == EntityType.AGENT and e.status == EntityStatus.active
+    ]
+
+
+async def _load_by_owner(st: _runtime._State) -> dict[str, int]:
+    """Current in-flight load per agent: count of todo + in_progress tasks."""
+    load: dict[str, int] = {}
+    for status in ("todo", "in_progress"):
+        for task in await st.store.list(status=status):
+            if task.owner_did:
+                load[task.owner_did] = load.get(task.owner_did, 0) + 1
+    return load
+
+
+def _pick_agent(task: Task, agents: list[Entity], load: dict[str, int]) -> Entity:
+    """Least-loaded eligible agent, preferring a capability match, tie-break name.
+
+    A capability match (task tag ∈ agent capabilities) dominates load, so a
+    matching agent is chosen even if busier; among equals, least-loaded then
+    name. Goal-relevance routing would slot in here as a richer score — the seam.
+    """
+
+    def rank(agent: Entity) -> tuple[int, int, str]:
+        matches = bool(set(task.tags) & set(agent.capabilities))
+        return (0 if matches else 1, load.get(agent.did, 0), agent.name)
+
+    return min(agents, key=rank)
 
 
 def _should_reclaim(st: _runtime._State, task: Task, now: datetime, first_pass: bool) -> bool:

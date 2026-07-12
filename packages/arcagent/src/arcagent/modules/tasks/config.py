@@ -53,3 +53,13 @@ class TasksConfig(ModuleConfig):
     # re-dispatches instead of being orphaned forever. Startup reclaim ignores
     # this threshold (any orphan from before the restart is reclaimed at once).
     stuck_reclaim_seconds: float = 300.0
+
+    # --- Routing + notifications (SPEC-056 Phase 3/4) ----------------------
+    # Auto-route ownerless tasks to the least-loaded eligible agent (capability
+    # match preferred). No-op without a live registry, so safe on by default.
+    # The heuristic is deliberately simple; goal-relevance routing is a seam.
+    routing: bool = True
+    # Notify the operator on key transitions (done/failed/needs-review/
+    # escalation) and the assignee on assignment. Best-effort — a delivery
+    # failure never blocks a state transition (AU still records it).
+    notify: bool = True

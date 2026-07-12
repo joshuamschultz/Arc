@@ -428,6 +428,75 @@ class TestCancelTaskOperatorGate:
         assert resp.json() == {"error": "task_not_running"}
 
 
+class TestReviewGateRoutes:
+    def test_operator_approves_review_task_to_done(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        asyncio.run(_seed(tmp_path, [_task("t1", owner_did="did:arc:x/a", status="review")]))
+        app, auth = _make_app(tmp_path)
+        app.state.audit = UIAuditLogger()
+        client = TestClient(app)
+
+        with caplog.at_level("INFO", logger="arcui.audit"):
+            resp = client.post("/api/tasks/t1/approve", headers=_operator(auth))
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "done"
+        assert _mutations(caplog)[-1]["operation"] == "task.approve"
+
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get("t1")).status == "done"
+
+    def test_operator_rejects_review_task_to_todo(self, tmp_path: Path) -> None:
+        asyncio.run(_seed(tmp_path, [_task("t1", owner_did="did:arc:x/a", status="review")]))
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post("/api/tasks/t1/reject", headers=_operator(auth))
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "todo"
+
+    def test_viewer_cannot_approve(self, tmp_path: Path) -> None:
+        asyncio.run(_seed(tmp_path, [_task("t1", owner_did="did:arc:x/a", status="review")]))
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        resp = client.post("/api/tasks/t1/approve", headers=_viewer(auth))
+        assert resp.status_code == 403
+
+    def test_non_review_task_is_409(self, tmp_path: Path) -> None:
+        asyncio.run(_seed(tmp_path, [_task("t1", status="todo")]))
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        resp = client.post("/api/tasks/t1/approve", headers=_operator(auth))
+        assert resp.status_code == 409
+        assert resp.json() == {"error": "task_not_in_review"}
+
+    def test_unknown_task_is_404(self, tmp_path: Path) -> None:
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+        resp = client.post("/api/tasks/nope/approve", headers=_operator(auth))
+        assert resp.status_code == 404
+
+
+class TestHandoffReassign:
+    def test_operator_reassigns_owner_via_patch(self, tmp_path: Path) -> None:
+        """Handoff: PATCH owner_did moves an at-rest task to a new owner, who
+        then becomes eligible to dispatch it (status stays todo)."""
+        asyncio.run(_seed(tmp_path, [_task("t1", owner_did="did:arc:x/a", status="todo")]))
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.patch(
+            "/api/tasks/t1", headers=_operator(auth), json={"owner_did": "did:arc:x/b"}
+        )
+
+        assert resp.status_code == 200
+        store = asyncio.run(_seed_store(tmp_path))
+        row = asyncio.run(store.get("t1"))
+        assert row is not None and row.owner_did == "did:arc:x/b" and row.status == "todo"
+
+
 class TestPatchRaceGuard:
     def test_patch_does_not_clobber_a_task_that_raced_into_in_progress(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

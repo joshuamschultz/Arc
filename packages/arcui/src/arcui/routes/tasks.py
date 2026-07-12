@@ -29,7 +29,7 @@ from arcui.schemas import ErrorResponse
 # this fixed DID (mirrors `_CALLER_DID` in agent_detail/_common.py).
 _CREATOR = "did:arc:ui:operator"
 
-_CREATE_FIELDS = ("description", "priority", "owner_did", "tags")
+_CREATE_FIELDS = ("description", "priority", "owner_did", "tags", "requires_review")
 # Fields a PATCH may write. A raw patch is never trusted wholesale (SEC-F4):
 # status/id/created_at/run_id/blocked_by are managed by the store's own
 # transitions, never by a client-supplied key.
@@ -204,11 +204,65 @@ async def cancel_task(request: Request) -> Response:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
+async def _review_decision(request: Request, *, approve: bool) -> Response:
+    """Shared body for the review gate's approve/reject routes (P3).
+
+    Operator-gated; a task must be in ``review`` (409 otherwise) — approve moves
+    it to ``done``, reject back to ``todo`` for re-dispatch. 404 if missing.
+    """
+    task_id = request.path_params["id"]
+    operation = "task.approve" if approve else "task.reject"
+    target = f"task:{task_id}"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail="viewer role"
+        )
+        return _error("operator_role_required", 403)
+
+    store = request.app.state.task_store
+    if await store.get(task_id) is None:
+        return _error("not found", 404)
+    updated = (
+        await store.approve_review(task_id, actor_did=_CREATOR)
+        if approve
+        else await store.reject_review(task_id, actor_did=_CREATOR)
+    )
+    if updated is None:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail="not_in_review"
+        )
+        return _error("task_not_in_review", 409)
+
+    emit_mutation_audit(request, target=target, operation=operation, outcome="applied")
+    return JSONResponse(updated.model_dump(mode="json"))
+
+
+async def approve_task(request: Request) -> Response:
+    """POST /api/tasks/{id}/approve — approve a review-gated task (review -> done)."""
+    return await _review_decision(request, approve=True)
+
+
+async def reject_task(request: Request) -> Response:
+    """POST /api/tasks/{id}/reject — reject a review-gated task (review -> todo)."""
+    return await _review_decision(request, approve=False)
+
+
 routes = [
     Route("/api/team/tasks", create_task, methods=["POST"]),
     Route("/api/tasks/{id}", patch_task, methods=["PATCH"]),
     Route("/api/tasks/{id}", delete_task, methods=["DELETE"]),
     Route("/api/tasks/{id}/cancel", cancel_task, methods=["POST"]),
+    Route("/api/tasks/{id}/approve", approve_task, methods=["POST"]),
+    Route("/api/tasks/{id}/reject", reject_task, methods=["POST"]),
 ]
 
-__all__ = ["cancel_task", "create_task", "delete_task", "patch_task", "routes"]
+__all__ = [
+    "approve_task",
+    "cancel_task",
+    "create_task",
+    "delete_task",
+    "patch_task",
+    "reject_task",
+    "routes",
+]

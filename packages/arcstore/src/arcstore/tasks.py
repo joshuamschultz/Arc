@@ -125,6 +125,10 @@ class Task(BaseModel):
     # Operator stop signal: the dispatch loop watches this on its own in_progress
     # tasks and cancels the live run (SEC/ASI09 human-in-the-loop kill switch).
     cancel_requested: bool = False
+    # Opt-in human-in-the-loop gate (SPEC-056 Phase 3, LLM06/ASI09): when set, a
+    # completed task lands in ``review`` (not ``done``) until an operator
+    # approves or rejects it.
+    requires_review: bool = False
     # No-write-down (SEC-F3): downstream notify propagates this so a task's
     # classification bounds where it can surface. Defaults to the lowest tier.
     classification: str = "UNCLASSIFIED"
@@ -519,6 +523,78 @@ class TaskStore:
             task_id,
             {"cancel_requested": True},
             where={"status": "in_progress"},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
+
+    async def unassigned(self) -> Sequence[Task]:
+        """Every ownerless, non-terminal task — the routing pool (P3).
+
+        (``Sequence`` not ``list`` — see ``children``'s note on the ``list``
+        method shadowing the builtin in class-scope annotations.)
+        """
+        out: list[Task] = []
+        for status in ("backlog", "todo"):
+            rows = await self._backend.mutable_query(
+                self._COLLECTION, where={"status": status, "owner_did": None}
+            )
+            out.extend(Task(**row) for row in rows)
+        return out
+
+    async def route(self, task_id: str, to_did: str, by_did: str) -> Task | None:
+        """Assign an UNOWNED task to ``to_did`` (auto-routing, P3).
+
+        Conditional on ``owner_did IS NULL`` so concurrent routers on different
+        agents resolve to exactly one winner — the loser no-ops. Owned -> todo
+        so the routed-to agent's dispatch loop then adopts it (§4). Distinct from
+        ``assign`` (operator/agent handoff of an already-owned task).
+        """
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {"owner_did": to_did, "status": "todo"},
+            where={"owner_did": None},
+            actor_did=by_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
+
+    async def approve_review(self, task_id: str, *, actor_did: str) -> Task | None:
+        """Operator approves a task in ``review`` -> ``done`` (P3).
+
+        Status-conditional on ``review`` (race-safe); stamps the terminal
+        completed_at/duration the review gate deferred at complete time.
+        """
+        current = await self.get(task_id)
+        if current is None:
+            return None
+        now = _now()
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {
+                "status": "done",
+                "completed_at": now,
+                "duration_seconds": _duration_seconds(current.started_at, now),
+            },
+            where={"status": "review"},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
+
+    async def reject_review(self, task_id: str, *, actor_did: str) -> Task | None:
+        """Operator rejects a task in ``review`` -> ``todo`` for re-dispatch (P3).
+
+        Status-conditional on ``review``; clears any backoff gate so the owner's
+        dispatch loop re-runs it promptly.
+        """
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {"status": "todo", "next_attempt_at": None},
+            where={"status": "review"},
             actor_did=actor_did,
             sink=self._sink,
         )

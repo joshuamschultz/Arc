@@ -1234,3 +1234,66 @@ class TestDecompositionDag:
             assert await store.deps_would_cycle("W", ["X"]) is False
         finally:
             await be.stop()
+
+
+class TestRoutingAndReview:
+    """SPEC-056 Phase 3 — route/unassigned + review approve/reject."""
+
+    async def test_route_assigns_unowned_and_is_conditional(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="u", title="Unowned", creator_did=_CREATOR, status="backlog"))
+            routed = await store.route("u", _AGENT_A, _OPERATOR)
+            assert routed is not None
+            assert routed.owner_did == _AGENT_A
+            assert routed.status == "todo"
+            # Already owned now -> a second router no-ops.
+            assert await store.route("u", _AGENT_B, _OPERATOR) is None
+        finally:
+            await be.stop()
+
+    async def test_unassigned_lists_only_ownerless_open_tasks(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="a", title="A", creator_did=_CREATOR, status="backlog"))
+            await store.create(Task(id="b", title="B", creator_did=_CREATOR, status="todo"))
+            await store.create(
+                Task(id="c", title="C", creator_did=_CREATOR, owner_did=_AGENT_A, status="todo")
+            )
+            ids = {t.id for t in await store.unassigned()}
+            assert ids == {"a", "b"}  # c is owned
+        finally:
+            await be.stop()
+
+    async def test_approve_review_completes_only_from_review(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="r", title="R", creator_did=_CREATOR, status="review"))
+            done = await store.approve_review("r", actor_did=_OPERATOR)
+            assert done is not None and done.status == "done" and done.completed_at is not None
+            # A todo task can't be approved.
+            await store.create(Task(id="t", title="T", creator_did=_CREATOR, status="todo"))
+            assert await store.approve_review("t", actor_did=_OPERATOR) is None
+        finally:
+            await be.stop()
+
+    async def test_reject_review_returns_to_todo(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="r", title="R", creator_did=_CREATOR, status="review"))
+            back = await store.reject_review("r", actor_did=_OPERATOR)
+            assert back is not None and back.status == "todo"
+        finally:
+            await be.stop()
