@@ -8,10 +8,13 @@ snapshot tests in Phase 8.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 from arcgateway import team_roster
+from arcstore.backends.sqlite import SqliteBackend
+from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -21,6 +24,21 @@ from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.routes.team_pages import routes as team_routes
 from arcui.types import AgentRegistration
+
+
+async def _seed_tasks(data_dir: Path, tasks: list[Task]) -> None:
+    """Seed tasks into the arcstore mutable plane `Observe.tasks()` reads.
+
+    SPEC-056 Phase D re-pointed `/api/team/tasks` off `tasks.json` (which
+    `_build_team` still writes for the fixture's other endpoints, but the
+    tasks route no longer reads) onto arcstore — this seeds the real source
+    of truth.
+    """
+    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    await backend.start()
+    store = TaskStore(backend)
+    for task in tasks:
+        await store.create(task)
 
 
 def _write_worm_audit(data_dir: Path, *, seq: int, actor_did: str) -> None:
@@ -232,8 +250,17 @@ class TestFleetPolicy:
 
 
 class TestFleetTasks:
-    def test_aggregates_tasks_with_agent_id(self, tmp_path):
+    def test_aggregates_tasks_with_agent_id(self, tmp_path, _isolated_arc_data_dir: Path):
         team = _build_team(tmp_path, [("alpha", ""), ("beta", "")])
+        asyncio.run(
+            _seed_tasks(
+                _isolated_arc_data_dir,
+                [
+                    Task(id="alpha-t1", title="alpha task", creator_did="did:arc:alpha", owner_did="did:arc:alpha"),
+                    Task(id="beta-t1", title="beta task", creator_did="did:arc:beta", owner_did="did:arc:beta"),
+                ],
+            )
+        )
         app, auth, _ = _make_app(team_root=team)
         client = TestClient(app)
         resp = client.get("/api/team/tasks", headers=_viewer(auth))

@@ -66,13 +66,31 @@ export interface PolicyBullet {
   agent_id?: string
 }
 
+export type TaskStatus = 'backlog' | 'todo' | 'in_progress' | 'review' | 'done' | 'failed'
+export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
+
+// Mirrors arcstore.tasks.Task (SPEC-056). `agent_id` is stamped onto the
+// fleet `/api/team/tasks` rows only (resolved owner_did -> roster agent_id);
+// absent on the per-agent `/api/agents/{id}/tasks` rows.
 export interface Task {
   [key: string]: unknown
-  id?: string
-  subject?: string
-  status?: string
-  owner?: string
-  agent_id?: string
+  id: string
+  title: string
+  description?: string
+  status?: TaskStatus
+  priority?: TaskPriority
+  owner_did?: string | null
+  creator_did?: string
+  parent_id?: string | null
+  run_id?: string | null
+  blocked_by?: string[]
+  tags?: string[]
+  metadata?: Dict
+  output?: Dict | null
+  resolution?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  agent_id?: string | null
 }
 
 export interface AuditEvent {

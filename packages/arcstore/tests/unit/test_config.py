@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 
 from arcstore import ArcStoreConfig, resolve_data_dir
-from arcstore.config import ENV_DATA_DIR
+from arcstore.config import ENV_DATA_DIR, store_db_path
 
 
 def test_arcstore_config_block_defaults() -> None:
@@ -87,3 +87,31 @@ def test_disabled_short_circuits() -> None:
 def test_env_var_name_is_stable() -> None:
     """Guard the documented env var so the shared contract can't drift."""
     assert ENV_DATA_DIR == "ARCSTORE_DATA_DIR"
+
+
+class TestStoreDbPath:
+    """``store_db_path`` — the single canonical ``store/arcui.db`` locator (ARCH-2).
+
+    The literal was hardcoded in arcagent / arcui / arccli; one resolver keeps
+    the operational-store path from drifting across packages.
+    """
+
+    def test_appends_store_arcui_db_to_configured_data_dir(self, tmp_path: Path) -> None:
+        assert store_db_path(str(tmp_path)) == tmp_path / "store" / "arcui.db"
+
+    def test_accepts_path_argument(self, tmp_path: Path) -> None:
+        assert store_db_path(tmp_path) == tmp_path / "store" / "arcui.db"
+
+    def test_defaults_through_the_shared_resolver(self) -> None:
+        assert store_db_path() == resolve_data_dir(None) / "store" / "arcui.db"
+
+    def test_env_override_flows_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ARCSTORE_DATA_DIR", str(tmp_path / "env-store"))
+        assert store_db_path() == tmp_path / "env-store" / "store" / "arcui.db"
+
+    def test_exported_from_package_root(self) -> None:
+        import arcstore
+
+        assert arcstore.store_db_path is store_db_path

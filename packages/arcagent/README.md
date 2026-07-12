@@ -417,6 +417,26 @@ vocabulary is `personal` / `enterprise` / `federal` everywhere — there is no `
 
 ---
 
+## ✅ Tasks (Mission Control, SPEC-056)
+
+`arcagent.modules.tasks` gives an agent a task list — its own, plus the team backlog — durable
+in the shared `arcstore` mutable plane, so it aggregates into arcui's kanban and is reachable
+from `arc task`. Ten tools: `create_task`, `update_task`, `start_task`, `complete_task`,
+`fail_task`, `assign_task`, `claim_task`, `list_tasks`, `decompose_task`, `set_task_output`.
+`list_tasks` is `read_only`; the rest are `state_modifying` and audited. Mutations are
+owner-only; `assign_task` resolves an `@handle` to a DID via `arcteam.registry` and sends one
+signed `TASK_ASSIGNED` notification that wakes the assignee (mention-scoped, SPEC-055) — never a
+silent hand-off. Claiming is atomic (no two agents can grab the same task); an agent holds one
+`in_progress` task at a time, except for its own dependency chain (`blocked_by` / decomposed
+sub-tasks), which it works one-at-a-time in order.
+
+```toml
+[modules.tasks]
+enabled = true
+```
+
+---
+
 ## 💾 Sessions
 
 Every conversation persists as a JSONL transcript:

@@ -21,6 +21,8 @@ import { ToolsTable } from '@/components/tools-table'
 import { SkillDrawer } from '@/components/skill-drawer'
 import { ToolDrawer } from '@/components/tool-drawer'
 import { ScheduleDrawer, scheduleTiming } from '@/components/schedule-drawer'
+import { TaskBoard } from '@/components/task-board'
+import { TaskDrawer } from '@/components/task-drawer'
 import { AreaSeries } from '@/components/charts'
 import { QueryState, EmptyState } from '@/components/states'
 import {
@@ -36,7 +38,10 @@ import {
   useAgentTimeseries,
   useAgentTools,
   useAgentTraces,
+  useRoster,
 } from '@/lib/queries'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
+import type { MentionHandle } from '@/components/mention-composer'
 import {
   fmtBytes,
   fmtCost,
@@ -48,10 +53,10 @@ import {
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { ColumnDef } from '@tanstack/react-table'
-import type { CapabilityInventoryItem, Dict } from '@/lib/types'
+import type { CapabilityInventoryItem, Dict, Task } from '@/lib/types'
 
 const TABS = [
-  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'schedules', 'policy', 'workspace', 'files',
+  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'tasks', 'schedules', 'policy', 'workspace', 'files',
 ] as const
 type TabId = (typeof TABS)[number]
 
@@ -330,7 +335,7 @@ function OverviewTab({ agentId }: { agentId: string }) {
                 <div className="space-y-1.5">
                   {taskList.slice(0, 8).map((t, i) => (
                     <div key={i} className="flex items-center justify-between gap-3 text-sm">
-                      <span className="min-w-0 truncate text-foreground">{String(t.subject ?? t.id ?? 'task')}</span>
+                      <span className="min-w-0 truncate text-foreground">{String(t.title ?? t.id ?? 'task')}</span>
                       {t.status != null && (
                         <span className="shrink-0 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">{String(t.status)}</span>
                       )}
@@ -540,6 +545,52 @@ function ToolsTab({ agentId }: { agentId: string }) {
   )
 }
 
+function TasksTab({ agentId }: { agentId: string }) {
+  const q = useAgentTasks(agentId)
+  const roster = useRoster()
+  const [operatorMode] = useOperatorMode()
+  const [selected, setSelected] = useState<Task | null>(null)
+  const rows = q.data?.tasks ?? []
+  const agents = roster.data?.agents ?? []
+  const byDid = new Map(agents.filter((a) => a.did).map((a) => [a.did as string, a]))
+  const resolveOwner = (ownerDid: string | null | undefined): string | null => {
+    if (!ownerDid) return null
+    const a = byDid.get(ownerDid)
+    return a ? String(a.display_name || a.name || ownerDid) : ownerDid
+  }
+
+  const mentionHandles: MentionHandle[] = agents
+    .map((a) => ({
+      handle: String(a.name || a.agent_id || ''),
+      label: String(a.display_name || a.name || a.agent_id || ''),
+      color: typeof a.color === 'string' ? a.color : undefined,
+    }))
+    .filter((h) => h.handle)
+
+  return (
+    <>
+      <QueryState query={q} isEmpty={() => rows.length === 0}
+        empty={<EmptyState title="No tasks" description="This agent has no owned tasks." />}>
+        {() => (
+          <TaskBoard
+            tasks={rows}
+            resolveOwner={resolveOwner}
+            onSelectTask={setSelected}
+          />
+        )}
+      </QueryState>
+      <TaskDrawer
+        task={selected}
+        open={selected != null}
+        onOpenChange={(o) => !o && setSelected(null)}
+        operatorMode={operatorMode}
+        roster={agents}
+        mentionHandles={mentionHandles}
+      />
+    </>
+  )
+}
+
 const scheduleColumns: ColumnDef<Dict, unknown>[] = [
   { accessorKey: 'id', header: 'Schedule', cell: (c) => <span className="font-mono text-xs text-primary">{String(c.getValue())}</span> },
   { accessorKey: 'type', header: 'Type', cell: (c) => <span className="text-xs text-muted-foreground">{String(c.getValue())}</span> },
@@ -617,6 +668,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   llm: (id) => <LlmTab agentId={id} />,
   skills: (id) => <SkillsTab agentId={id} />,
   tools: (id) => <ToolsTab agentId={id} />,
+  tasks: (id) => <TasksTab agentId={id} />,
   schedules: (id) => <SchedulesTab agentId={id} />,
   policy: (id) => <PolicyTab agentId={id} />,
   workspace: (id) => <FileTree agentId={id} root="workspace" rootLabel="workspace" />,
@@ -625,7 +677,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
 
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview', identity: 'Identity', sessions: 'Sessions', llm: 'LLM', skills: 'Skills',
-  tools: 'Tools', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files',
+  tools: 'Tools', tasks: 'Tasks', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files',
 }
 
 export function AgentDetailPage() {

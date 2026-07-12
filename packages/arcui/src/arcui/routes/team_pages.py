@@ -17,7 +17,6 @@ Endpoint surface (SDD §6):
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -181,35 +180,15 @@ def _bullet_to_dict(b: policy_parser.PolicyBullet) -> dict[str, Any]:
 
 
 async def get_tasks(request: Request) -> JSONResponse:
-    """GET /api/team/tasks — every agent's tasks.json, stamped with agent_id."""
+    """GET /api/team/tasks — arcstore task rows, stamped with owning agent_id."""
+    did_to_agent = {entry.did: entry.agent_id for entry in _roster(request)}
+    rows = await request.app.state.observe.tasks()
     out: list[dict[str, Any]] = []
-    for entry in _roster(request):
-        for task in _read_agent_json_array(entry, "tasks.json"):
-            task = dict(task)
-            task["agent_id"] = entry.agent_id
-            out.append(task)
+    for row in rows:
+        row = dict(row)
+        row["agent_id"] = did_to_agent.get(row.get("owner_did"))
+        out.append(row)
     return JSONResponse(TasksResponse(tasks=out).model_dump(mode="json"))
-
-
-def _read_agent_json_array(entry: Any, rel_path: str) -> list[dict[str, Any]]:
-    workspace = Path(entry.workspace_path) / "workspace"
-    try:
-        content = fs_reader.read_file(
-            scope="agent",
-            agent_id=entry.agent_id,
-            agent_root=workspace,
-            rel_path=rel_path,
-            caller_did=_CALLER_DID,
-        )
-    except (FileNotFoundError, PathTraversalError, FileTooLargeError):
-        return []
-    try:
-        parsed = json.loads(content.content)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [item for item in parsed if isinstance(item, dict)]
 
 
 # ---------------------------------------------------------------------------
@@ -260,7 +239,11 @@ async def _read_agent_skills(entry: Any) -> list[dict[str, Any]]:
 
 
 async def get_audit(request: Request) -> JSONResponse:
-    """GET /api/team/audit — fleet audit chain (last N), newest first."""
+    """GET /api/team/audit — fleet audit chain (last N), newest first.
+
+    ``target`` (optional) narrows to one audited resource — e.g.
+    ``task:<id>`` for a task's activity timeline (SDD §6 FR-12).
+    """
     limit, err = safe_int(
         request.query_params.get("limit"),
         default=100,
@@ -270,7 +253,8 @@ async def get_audit(request: Request) -> JSONResponse:
     )
     if err is not None:
         return err
-    events = await request.app.state.observe.audit(limit=limit)
+    target = request.query_params.get("target")
+    events = await request.app.state.observe.audit(limit=limit, target=target)
     return JSONResponse(AuditEventsResponse(events=events).model_dump(mode="json"))
 
 

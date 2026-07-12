@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-12
+
+SPEC-056 Mission Control, Phase F: `arc task` — the same operations the tools and arcui expose,
+from the command line.
+
 ### Added
 
+- **`arc task create/list/edit/assign/complete/talk`** — CLI surface over the same shared
+  arcstore `TaskStore` seam agents and arcui use (`resolve_data_dir()/store/arcui.db`, not
+  arccli's separate `arcstore.db`), so a CLI-created task is immediately visible to an agent's
+  own `open_store` and to the arcui kanban. Human writes are operator-gated (the invoking
+  `--actor` entity must carry the `operator` role) and audited through a WORM sink. `edit`
+  refuses an `in_progress` task (409-parity with the arcui route — "steer it with `arc task
+  talk`, not edit"). `assign` goes through `TaskStore`'s atomic single-owner guard. `talk`
+  resolves the task's owner and steers it via a signed team message — never a task edit, matching
+  the same edit-at-rest / steer-in-flight rule as the tools and arcui.
 - **`arc team create-channel <name>`** — standalone or team-scoped (`--members` explicit, or
   defaults to the team's members when `--team` is given and `--members` is omitted). Refuses a
   duplicate channel name via a pre-check rather than silently overwriting membership (the

@@ -113,6 +113,23 @@ async def _build_roster() -> str:
 _INBOX_SESSION = "messaging:inbox"
 
 
+def _should_activate(msg: Any, identity: Any) -> bool:
+    """Whether *this* agent's run should wake for ``msg`` at all (SPEC-055).
+
+    Every channel member currently spins a full LLM run on every pushed
+    message, even one that @mentions someone else -- Anthropic's ~15x
+    multi-agent token fan-out anti-pattern. Critical traffic and messages
+    with no mentions (DM/broadcast, where this agent is the only or an
+    unaddressed recipient) always wake the run; a channel message that
+    names other agents wakes only the ones it names.
+    """
+    if str(msg.priority) == "critical":
+        return True
+    if not msg.mentions:
+        return True
+    return identity is not None and identity.did in list(msg.mentions)
+
+
 def _interrupt_for(msg: Any, identity: Any) -> bool:
     """Whether ``msg`` is interrupt-eligible for mid-turn steering (REQ-041).
 
@@ -152,6 +169,12 @@ async def _handle_incoming(message: Any) -> None:
     ``agent_run_fn`` so nothing is dropped in the startup window.
     """
     st = _runtime.state()
+    if not _should_activate(message, st.identity):
+        # Ack-and-ignore (SPEC-055): a channel message that doesn't name this
+        # agent skips the run entirely -- avoids the ~15x-token fan-out of
+        # waking every member for every message. The channel stream itself
+        # remains the record; nothing to retry or steer, so no follow_up.
+        return
     async with st.processing_lock:
         if st.deliver_fn is not None:
             caller_did = message.signer_did or message.sender

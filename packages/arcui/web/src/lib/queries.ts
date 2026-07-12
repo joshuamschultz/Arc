@@ -73,6 +73,16 @@ export const useTeamAudit = (filter?: string, limit = 100) =>
     `/api/team/audit?limit=${limit}${filter ? `&filter=${filter}` : ''}`,
   )
 
+// A task's activity timeline (FR-12) — the audit chain filtered to
+// `target == "task:<id>"`, newest first.
+export const useTaskActivity = (taskId: string | null, limit = 100) =>
+  useQuery<AuditEventsResponse>({
+    queryKey: ['task', taskId, 'activity'],
+    queryFn: ({ signal }) =>
+      apiGet(`/api/team/audit?limit=${limit}&target=${encodeURIComponent(`task:${taskId}`)}`, signal),
+    enabled: !!taskId,
+  })
+
 // --- Messages / team chat --------------------------------------------------
 
 export const useTeamChannels = () =>

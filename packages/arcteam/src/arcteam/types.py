@@ -30,6 +30,7 @@ class MsgType(StrEnum):
     INFO = "info"
     REQUEST = "request"
     TASK = "task"
+    TASK_ASSIGNED = "task_assigned"
     RESULT = "result"
     ALERT = "alert"
     ACK = "ack"

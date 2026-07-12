@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-12
+
+SPEC-056 Mission Control, Phase D: the dashboard gets a team-wide task kanban and a per-agent
+task list, both reading live off the shared arcstore `tasks` collection.
+
 ### Added
+
+- **Task kanban + per-agent task list** — `Observe.tasks(owner_did, status)` reads the arcstore
+  mutable `tasks` collection; `/api/team/tasks` and `/api/agents/{id}/tasks` are re-pointed off
+  the old `tasks.json` reader onto arcstore (the dead reader is deleted). New operator-gated
+  `routes/tasks.py` (`POST`/`PATCH`, mirroring `files_write.py`) refuses a viewer (`403`) and an
+  edit on an `in_progress` task (`409`, "steer the owner" instead of editing), and audits every
+  mutation through `emit_mutation_audit`. `Observe.audit` gains a `?target=` filter so a task's
+  activity timeline (created/assigned/started/completed/failed) reads straight off the existing
+  audit stream. The server wires `app.state.task_store` onto the same `store/arcui.db` `Observe`
+  already reads — one store, no second source of truth.
+- **Frontend: kanban board, task drawer, agent Tasks tab** — a six-column task board
+  (`task-board.tsx`) with priority/owner/blocked/run-link cards (`task-card.tsx`); a task drawer
+  (`task-drawer.tsx`) with the activity timeline, structured output, operator at-rest edit, and a
+  "Steer owner" action (via the SPEC-055 `MentionComposer`) in place of an edit form for
+  in-progress cards; a create-task sheet; a tasks page with status/priority/owner/tag filters, a
+  metrics row, and a counts strip; and a new Tasks tab on the agent-detail view.
 
 Reality Mirror — the dashboard becomes a live window into each agent's own on-disk state,
 not a synced copy, with operator-gated mutations where it makes sense (T-702–717):
