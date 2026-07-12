@@ -33,6 +33,7 @@ from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.observe import Observe
 from arcui.registry import AgentRegistry
 from arcui.routes import agent_detail as agent_detail_routes
+from arcui.routes import agent_sessions as agent_sessions_routes
 from arcui.routes import agents as agents_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import chat_ws as chat_ws_routes
@@ -183,6 +184,7 @@ def create_app(
         *chat_ws_routes.routes,
         *knowledge_routes.routes,
         *agents_routes.routes,
+        *agent_sessions_routes.routes,
         *agent_detail_routes.routes,
         *team_pages_routes.routes,
         *team_chat_routes.routes,

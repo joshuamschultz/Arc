@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Send } from 'lucide-react'
-import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -33,7 +33,8 @@ function activeMention(value: string, caret: number): ActiveMention | null {
 }
 
 /**
- * Single-line composer with ``@name`` autocomplete against the team roster.
+ * Autosizing composer with ``@name`` autocomplete against the team roster.
+ * Enter sends; Shift+Enter inserts a newline.
  *
  * The mention text is inserted verbatim into the value, so a posted message
  * carries ``@handle`` through arcteam's existing mention machinery
@@ -56,7 +57,7 @@ export function MentionComposer({
   placeholder?: string
   disabled?: boolean
 }) {
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   const [mention, setMention] = useState<ActiveMention | null>(null)
   const [active, setActive] = useState(0)
 
@@ -76,7 +77,7 @@ export function MentionComposer({
     setActive(0)
   }
 
-  const change = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const change = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value)
     refresh(e.target.value, e.target.selectionStart ?? e.target.value.length)
   }
@@ -103,7 +104,7 @@ export function MentionComposer({
     onSubmit()
   }
 
-  const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (open) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -133,7 +134,7 @@ export function MentionComposer({
   }
 
   return (
-    <div className="relative flex flex-1 items-center gap-2">
+    <div className="relative flex flex-1 items-end gap-2">
       {open && (
         <ul
           role="listbox"
@@ -168,7 +169,7 @@ export function MentionComposer({
           ))}
         </ul>
       )}
-      <Input
+      <Textarea
         ref={inputRef}
         value={value}
         onChange={change}

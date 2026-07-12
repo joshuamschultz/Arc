@@ -144,8 +144,14 @@ async def chat_ws_endpoint(ws: WebSocket) -> None:
     # whether reached via web/slack/telegram. Same identifier the
     # arcagent SessionManager writes under (workspace/sessions/<sid>.jsonl)
     # so /api/agents/{id}/sessions/{chat_id} returns this conversation's
-    # history on reconnect.
-    chat_id = build_session_key(agent_did, user_did)
+    # history on reconnect. Resolved through the SessionRouter so it tracks
+    # the *current* rotation generation — after a /new (or the New-session
+    # button) this connect lands on the fresh, empty session.
+    session_router = getattr(ws.app.state, "session_router", None)
+    if session_router is not None:
+        chat_id = session_router.current_session_key(agent_did, user_did)
+    else:
+        chat_id = build_session_key(agent_did, user_did)
 
     # Deferred to match the TYPE_CHECKING-only import of the same module
     # above (WebPlatformAdapter) — WebAdapterFull is the one symbol from

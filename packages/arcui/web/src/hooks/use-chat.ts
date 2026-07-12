@@ -178,6 +178,23 @@ export function useChatSession(agentId: string | null) {
     }
   }, [agentId, append, loadHistory])
 
+  const resetForNewSession = useCallback(() => {
+    // The backend has already rotated the session key; drop the current thread
+    // and force a reconnect through the existing close→reconnect path. The new
+    // socket's `ready` frame carries the rotated chat_id, and with lastSeq reset
+    // the URL omits `since_seq` so the seq-gap detector restarts clean. Marking
+    // history as loaded short-circuits the preload — the new session is empty.
+    setMessages([])
+    lastSeq.current = -1
+    chatId.current = null
+    historyLoaded.current = true
+    try {
+      wsRef.current?.close()
+    } catch {
+      /* close handler reconnects */
+    }
+  }, [])
+
   const sendMessage = useCallback(
     (text: string) => {
       if (!text.trim()) return
@@ -202,5 +219,5 @@ export function useChatSession(agentId: string | null) {
     [append],
   )
 
-  return { messages, status, sendMessage }
+  return { messages, status, sendMessage, resetForNewSession }
 }

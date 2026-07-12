@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertCircle, Hash, MessageSquare, Send, Wrench } from 'lucide-react'
+import { AlertCircle, Hash, MessageSquare, RotateCcw, Send, Wrench } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
-import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
+import { Markdown } from '@/components/markdown'
 import { MentionComposer, type MentionHandle } from '@/components/mention-composer'
 import { EmptyState } from '@/components/states'
 import { StatusDot } from '@/components/status-badge'
@@ -17,7 +18,7 @@ import { useChatSession, type ChatMessage } from '@/hooks/use-chat'
 import { useTeamStream, type TeamFrame } from '@/hooks/use-team-stream'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { useRoster, useTeamChannels, useChannelMessages } from '@/lib/queries'
-import { ApiError } from '@/lib/api'
+import { apiPost, ApiError } from '@/lib/api'
 import { initials } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Channel, Dict } from '@/lib/types'
@@ -49,14 +50,20 @@ function Bubble({ m }: { m: ChatMessage }) {
           : 'self-start border border-border bg-card text-foreground',
       )}
     >
-      <p className="whitespace-pre-wrap break-words">{m.text}</p>
+      {mine ? (
+        <p className="whitespace-pre-wrap break-words">{m.text}</p>
+      ) : (
+        <Markdown>{m.text}</Markdown>
+      )}
     </div>
   )
 }
 
 function ChatPanel({ agentId }: { agentId: string }) {
-  const { messages, status, sendMessage } = useChatSession(agentId)
+  const { messages, status, sendMessage, resetForNewSession } = useChatSession(agentId)
   const [text, setText] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -75,11 +82,37 @@ function ChatPanel({ agentId }: { agentId: string }) {
     }
   }
 
+  const newSession = async () => {
+    setResetting(true)
+    setResetError(null)
+    try {
+      await apiPost(`/api/agents/${agentId}/sessions/new`, {})
+      resetForNewSession()
+    } catch (e) {
+      setResetError(e instanceof ApiError ? e.message : 'Could not start a new session')
+    } finally {
+      setResetting(false)
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
         <span className="font-mono">{agentId}</span>
-        <span className="capitalize">{status}</span>
+        <div className="flex items-center gap-2">
+          {resetError && <span className="text-destructive">{resetError}</span>}
+          <span className="capitalize">{status}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-xs"
+            onClick={newSession}
+            disabled={status !== 'ready' || resetting}
+            title="Start a fresh conversation"
+          >
+            <RotateCcw className="size-3" /> New session
+          </Button>
+        </div>
       </div>
       <div className="flex flex-1 flex-col gap-2 overflow-auto p-4">
         {messages.length === 0 ? (
@@ -89,8 +122,9 @@ function ChatPanel({ agentId }: { agentId: string }) {
         )}
         <div ref={endRef} />
       </div>
-      <div className="flex items-center gap-2 border-t border-border p-3">
-        <Input
+      <div className="flex items-end gap-2 border-t border-border p-3">
+        <Textarea
+          rows={1}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKey}
@@ -201,7 +235,7 @@ function ChannelPanel({
                 ))}
                 <span className="ml-auto">{m.ts}</span>
               </div>
-              <p className="whitespace-pre-wrap break-words text-foreground">{m.body}</p>
+              <Markdown>{m.body}</Markdown>
             </div>
           ))
         )}
