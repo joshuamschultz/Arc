@@ -31,6 +31,11 @@ AUDIT_TABLE = "audit_chain"
 SKILL_CANDIDATES_TABLE = "skill_candidates"
 SKILL_BODIES_TABLE = "skill_candidate_bodies"
 
+# The mutable directory plane (SPEC-056 Phase 0A / SPEC-032 slice): unlike
+# OPERATIONAL_TABLES (insert-once spool), rows here are overwritten in place —
+# one collection per directory entity (tasks, entities, teams, channels, ...).
+MUTABLE_RECORDS_TABLE = "mutable_records"
+
 _KIND_TABLE = {
     "llm_call": "llm_calls",
     "run_event": "run_events",

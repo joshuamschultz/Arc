@@ -55,6 +55,9 @@ warn_unused_configs = true
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--strict-markers -v"
+markers = [
+    "slow: stress/soak test not run on every push (opt in via -m slow)",
+]
 
 [tool.coverage.run]
 source = ["arcstore"]

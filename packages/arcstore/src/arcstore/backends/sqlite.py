@@ -15,16 +15,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arctrust.audit import AuditEvent, emit
+
 from arcstore.backends.base import (
     AUDIT_TABLE,
+    MUTABLE_RECORDS_TABLE,
     OPERATIONAL_TABLES,
     SKILL_BODIES_TABLE,
     SKILL_CANDIDATES_TABLE,
 )
+
+_logger = logging.getLogger("arcstore.backends.sqlite")
 
 _BUSY_TIMEOUT_MS = 5000
 _BATCH_SIZE = 500
@@ -192,6 +199,13 @@ _SCHEMA_SQL = (
         record_id TEXT PRIMARY KEY,
         body TEXT
     );
+    CREATE TABLE IF NOT EXISTS {MUTABLE_RECORDS_TABLE}(
+        collection TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT,
+        updated_at TEXT,
+        PRIMARY KEY (collection, key)
+    );
     CREATE TABLE IF NOT EXISTS sync_state(
         source TEXT PRIMARY KEY,
         offset INTEGER NOT NULL DEFAULT 0
@@ -246,6 +260,87 @@ class SqliteBackend:
 
     async def set_cursor(self, name: str, value: int) -> None:
         await asyncio.to_thread(self._set_cursor, name, value)
+
+    # -- mutable directory plane (SPEC-056 Phase 0A) ------------------------
+
+    async def mutable_write(
+        self,
+        collection: str,
+        key: str,
+        value: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> None:
+        """Upsert ``value`` under ``(collection, key)``, bumping ``updated_at``."""
+        await asyncio.to_thread(self._mutable_write, collection, key, value)
+        self._emit_mutable_audit(
+            action="mutable.write", target=f"{collection}/{key}", actor_did=actor_did, sink=sink
+        )
+
+    async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None:
+        """Return the value at ``(collection, key)`` merged with ``updated_at``, or None."""
+        return await asyncio.to_thread(self._mutable_read, collection, key)
+
+    async def mutable_delete(
+        self, collection: str, key: str, *, actor_did: str, sink: Any | None = None
+    ) -> bool:
+        """Delete the row at ``(collection, key)``. Returns True if a row was removed."""
+        deleted = await asyncio.to_thread(self._mutable_delete, collection, key)
+        self._emit_mutable_audit(
+            action="mutable.delete", target=f"{collection}/{key}", actor_did=actor_did, sink=sink
+        )
+        return deleted
+
+    async def mutable_query(
+        self, collection: str, *, where: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Return every value in ``collection`` (optionally filtered by ``where``)."""
+        return await asyncio.to_thread(self._mutable_query, collection, where)
+
+    async def update_if(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        """Atomically merge ``patch`` into the row iff it currently matches ``where``.
+
+        Single-statement ``UPDATE ... WHERE`` under ``BEGIN IMMEDIATE`` (the
+        pairing.py:788-794 claim pattern) — the match check and the write happen
+        inside SQLite's own atomic step, so two concurrent callers racing the
+        same key can never both observe a match and both win (unlike a
+        read-then-write claim, which is not atomic across the read/write gap).
+        """
+        won = await asyncio.to_thread(self._update_if, collection, key, patch, where)
+        self._emit_mutable_audit(
+            action="mutable.update_if",
+            target=f"{collection}/{key}",
+            actor_did=actor_did,
+            sink=sink,
+        )
+        return won
+
+    def _emit_mutable_audit(self, *, action: str, target: str, actor_did: str, sink: Any) -> None:
+        """Emit an AU-2/AU-3 AuditEvent for a mutable-plane write. Fail-open (AU-5)."""
+        if sink is None:
+            return
+        try:
+            event = AuditEvent(
+                actor_did=actor_did, action=action, target=target, outcome="applied"
+            )
+            emit(event, sink)
+        except Exception:  # reason: fail-open — audit must never break the write path
+            _logger.warning(
+                "Failed to emit AuditEvent action=%s target=%s — swallowing (AU-5)",
+                action,
+                target,
+                exc_info=True,
+            )
 
     # -- blocking implementations (run via asyncio.to_thread) --------------
 
@@ -359,6 +454,102 @@ class SqliteBackend:
         finally:
             conn.close()
 
+    def _mutable_write(self, collection: str, key: str, value: dict[str, Any]) -> None:
+        now = datetime.now(UTC).isoformat()
+        payload = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+        conn = self._connect()
+        try:
+            # BEGIN IMMEDIATE up front (see _write_batch) so this upsert never
+            # hits the lock-upgrade SQLITE_BUSY that ignores busy_timeout.
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "INSERT INTO mutable_records(collection, key, value, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(collection, key) DO UPDATE SET "
+                "value=excluded.value, updated_at=excluded.updated_at",
+                (collection, key, payload, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _mutable_read(self, collection: str, key: str) -> dict[str, Any] | None:
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT value, updated_at FROM mutable_records WHERE collection=? AND key=?",
+                (collection, key),
+            ).fetchone()
+            return _decode_mutable_row(row) if row is not None else None
+        finally:
+            conn.close()
+
+    def _mutable_delete(self, collection: str, key: str) -> bool:
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "DELETE FROM mutable_records WHERE collection=? AND key=?", (collection, key)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def _mutable_query(
+        self, collection: str, where: dict[str, Any] | None
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT value, updated_at FROM mutable_records WHERE collection=?"
+        params: list[Any] = [collection]
+        if where:
+            clause, where_params = _json_where(where)
+            sql += " AND " + clause
+            params.extend(where_params)
+        conn = self._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, params).fetchall()
+            return [_decode_mutable_row(r) for r in rows]
+        finally:
+            conn.close()
+
+    def _update_if(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        where: dict[str, Any],
+    ) -> bool:
+        clause, where_params = _json_where(where)
+        # clause is built from _json_where, which only ever splices bound-param
+        # placeholders (json_extract(value, ?)) — no caller value reaches SQL text.
+        sql = (
+            "UPDATE mutable_records SET value=json_patch(value, ?), updated_at=? "  # noqa: S608
+            f"WHERE collection=? AND key=? AND {clause}"
+        )
+        conn = self._connect()
+        try:
+            # BEGIN IMMEDIATE + a single UPDATE...WHERE means the match check
+            # and the merge happen inside one atomic SQLite step (the
+            # pairing.py:788-794 claim pattern) — no read-then-write gap for a
+            # second concurrent caller to slip through.
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                sql,
+                (
+                    json.dumps(patch, ensure_ascii=True, separators=(",", ":")),
+                    datetime.now(UTC).isoformat(),
+                    collection,
+                    key,
+                    *where_params,
+                ),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
 
 # ---------------------------------------------------------------------------
 # Row encode/decode helpers
@@ -400,6 +591,31 @@ def _decode_row(columns: tuple[str, ...], row: sqlite3.Row) -> dict[str, Any]:
             value = bool(value)
         out[col] = value
     return out
+
+
+def _decode_mutable_row(row: sqlite3.Row) -> dict[str, Any]:
+    """Merge a ``mutable_records`` row's JSON ``value`` with its ``updated_at``."""
+    value: dict[str, Any] = json.loads(row["value"]) if row["value"] else {}
+    value["updated_at"] = row["updated_at"]
+    return value
+
+
+def _json_where(where: dict[str, Any]) -> tuple[str, list[Any]]:
+    """Build a ``json_extract(value, ?) <op> ?`` clause per key (bound params only).
+
+    ``IS`` (not ``=``) for a None value — SQL ``= NULL`` is never true, but a
+    JSON ``null`` decodes to SQL ``NULL`` and callers filter on it (e.g. an
+    unclaimed owner). The JSON path travels as a bound parameter, so an
+    arbitrary key name is never spliced into SQL text.
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    for field, val in where.items():
+        op = "IS" if val is None else "="
+        clauses.append(f"json_extract(value, ?) {op} ?")
+        params.append(f"$.{field}")
+        params.append(val)
+    return " AND ".join(clauses), params
 
 
 def _require_column(table: str, columns: tuple[str, ...], col: str) -> None:
