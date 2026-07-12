@@ -85,8 +85,11 @@ def app_with_chat(
         on_message=session_router.handle,
         agent_did="did:arc:agent:default",
     )
-    # Bind the adapter for outbound delivery (StreamBridge needs it).
-    session_router._adapter = web_adapter  # type: ignore[assignment]
+    # Register the adapter for outbound delivery. _run_turn resolves the reply
+    # channel via _resolve_outbound (the _adapters registry); without this the
+    # echo deltas are only logged (dev mode) and never reach the browser, so
+    # the happy-path test blocks forever waiting for a frame.
+    session_router.register_adapter(web_adapter)
     app.state.web_adapter = web_adapter
     app.state.session_router = session_router
     app.state.executor = executor
