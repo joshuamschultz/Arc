@@ -133,6 +133,27 @@ class TestParentRollup:
         assert parent.status == "done"
         assert parent.resolution == "all subtasks complete"
 
+    async def test_parent_waits_for_non_child_deps_too(self, state: Any) -> None:
+        from arcstore.tasks import Task
+
+        from arcagent.modules.tasks.capabilities import _reliability_tick
+
+        st, identity = state
+        parent_id, child_ids = await self._decompose(st)  # inits the store
+        # An extra non-child dependency that is NOT done: even with all children
+        # done the parent must stay open until the full dep set is met.
+        await st.store.create(Task(id="ext", title="Ext dep", creator_did=identity.did, status="todo"))
+        await st.store.update(parent_id, {"blocked_by": [*child_ids, "ext"]}, actor_did=identity.did)
+        for cid in child_ids:
+            await st.store.finish(cid, status="done", resolution="done", actor_did=identity.did)
+
+        await _reliability_tick()
+        assert (await st.store.get(parent_id)).status != "done"  # ext dep unmet
+
+        await st.store.finish("ext", status="done", resolution="ok", actor_did=identity.did)
+        await _reliability_tick()
+        assert (await st.store.get(parent_id)).status == "done"  # now fully met
+
     async def test_parent_auto_fails_when_a_child_fails(self, state: Any) -> None:
         from arcagent.modules.tasks.capabilities import _reliability_tick
 
