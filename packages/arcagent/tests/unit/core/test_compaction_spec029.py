@@ -97,7 +97,7 @@ class TestBoundaryMasking:
         for i in range(6):
             await sm.append_message({"role": "user", "content": f"m{i}"})
 
-        await sm.compact(_model(), tmp_path)
+        await sm.compact(_model())
 
         cm.prune_observations.assert_called_once()  # masking applied at boundary
         msgs = sm.get_messages()
@@ -120,7 +120,7 @@ class TestStructuredSummary:
             await sm.append_message({"role": "user", "content": "x" * 200})
 
         model = _model()
-        await sm.compact(model, tmp_path)
+        await sm.compact(model)
 
         prompts = [c.args[0][0].content for c in model.invoke.call_args_list]
         summary_prompt = next(p for p in prompts if "next_step" in p)
@@ -147,7 +147,7 @@ class TestCompactionReassembly:
         for i in range(8):
             await sm.append_message({"role": "user", "content": "x" * 200})
 
-        await sm.compact(_model("goal: X\nnext_step: Y"), tmp_path)
+        await sm.compact(_model("goal: X\nnext_step: Y"))
 
         # This is exactly what agent_dispatch does to build the LLM history.
         history = [Message(**m) for m in sm.get_messages()]
@@ -199,7 +199,7 @@ class TestCompactionAudit:
         for i in range(8):
             await sm.append_message({"role": "user", "content": "x" * 200})
 
-        await sm.compact(_model(), tmp_path)
+        await sm.compact(_model())
 
         sm._telemetry.audit_event.assert_called_once()
         name, details = sm._telemetry.audit_event.call_args.args

@@ -194,7 +194,7 @@ class TestCompaction:
 
         mock_model = _mock_model(return_value="Summary of older messages.")
 
-        await sm.compact(mock_model, tmp_path)
+        await sm.compact(mock_model)
 
         # Should have fewer messages after compaction
         msgs = sm.get_messages()
@@ -212,7 +212,7 @@ class TestCompaction:
         original_count = sm.message_count
         mock_model = _mock_model(return_value="Summary.")
 
-        await sm.compact(mock_model, tmp_path)
+        await sm.compact(mock_model)
 
         msgs = sm.get_messages()
         # Recent 70% preserved + 1 summary = less than original
@@ -229,7 +229,7 @@ class TestCompaction:
 
         mock_model = _mock_model(return_value="Summary of conversation.")
 
-        await sm.compact(mock_model, tmp_path)
+        await sm.compact(mock_model)
 
         jsonl_path = tmp_path / "sessions" / f"{session_id}.jsonl"
         lines = jsonl_path.read_text().strip().split("\n")
@@ -319,7 +319,7 @@ class TestEdgeCases:
 
         mock_model = _mock_model(return_value="Summary.")
 
-        await sm.compact(mock_model, tmp_path)
+        await sm.compact(mock_model)
 
         # Should still have 2 messages
         assert sm.message_count == 2
@@ -338,58 +338,6 @@ class TestEdgeCases:
         # Don't create sessions dir
         await sm.cleanup_old_sessions()
         # Should not raise
-
-    async def test_pre_compact_flush_empty_messages(self, tmp_path: Path) -> None:
-        """Pre-compaction flush with no message content."""
-        sm = _make_session_manager(tmp_path)
-        await sm.create_session()
-
-        mock_model = _mock_model(return_value="Facts")
-
-        # Messages with no content
-        messages = [
-            {"type": "compaction_summary", "summary": "old summary"},
-        ]
-
-        await sm._pre_compact_flush(messages, tmp_path, mock_model)
-        # Model should not be called
-        mock_model.invoke.assert_not_called()
-
-    async def test_pre_compact_flush_model_failure(self, tmp_path: Path) -> None:
-        """Pre-compaction flush continues when model fails."""
-        sm = _make_session_manager(tmp_path)
-        await sm.create_session()
-
-        mock_model = _mock_model(side_effect=Exception("Model failed"))
-
-        messages = [
-            {"type": "message", "role": "user", "content": "hello"},
-        ]
-
-        # Should not raise
-        await sm._pre_compact_flush(messages, tmp_path, mock_model)
-
-    async def test_pre_compact_flush_appends_to_context(self, tmp_path: Path) -> None:
-        """Pre-compaction flush appends to existing context.md."""
-        context_path = tmp_path / "context.md"
-        context_path.write_text("# Existing context\n\nOld content")
-
-        sm = _make_session_manager(tmp_path)
-        await sm.create_session()
-
-        mock_model = _mock_model(return_value="New facts")
-
-        messages = [
-            {"type": "message", "role": "user", "content": "hello"},
-        ]
-
-        await sm._pre_compact_flush(messages, tmp_path, mock_model)
-
-        content = context_path.read_text()
-        assert "Existing context" in content
-        assert "Old content" in content
-        assert "Compaction Flush" in content
-        assert "New facts" in content
 
 
 class TestContextSanitizationUnicode:
@@ -420,25 +368,20 @@ class TestContextSanitizationUnicode:
         result = sm._sanitize_context_output("line1\nline2\ttab")
         assert result == "line1\nline2\ttab"
 
-    async def test_pre_compact_flush_sanitizes_output(self, tmp_path: Path) -> None:
-        """End-to-end: context.md writes are sanitized against poisoning."""
+    async def test_compaction_never_writes_context_md(self, tmp_path: Path) -> None:
+        """Compaction manages message history only; context.md is the workpad's.
+
+        The pre-compaction flush was removed (separation of concerns): a real
+        compaction must leave context.md untouched.
+        """
         sm = _make_session_manager(tmp_path)
         await sm.create_session()
+        for i in range(20):
+            await sm.append_message({"role": "user", "content": f"message {i} " * 50})
 
-        # Model returns text with zero-width chars (injection attempt)
-        mock_model = _mock_model(return_value="Facts\u200b with \ufeffinvisible chars")
+        await sm.compact(_mock_model(return_value="Summary."))
 
-        messages = [
-            {"type": "message", "role": "user", "content": "hello"},
-        ]
-
-        await sm._pre_compact_flush(messages, tmp_path, mock_model)
-
-        context_path = tmp_path / "context.md"
-        content = context_path.read_text()
-        assert "\u200b" not in content
-        assert "\ufeff" not in content
-        assert "Facts with invisible chars" in content
+        assert not (tmp_path / "context.md").exists()
 
 
 class TestSummarizationFailure:

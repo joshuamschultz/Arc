@@ -360,4 +360,4 @@ async def maybe_compact(agent: ArcAgent, session: SessionManager) -> None:
     ratio = session.context_ratio()
     if ratio >= agent._config.context.compact_threshold:
         eval_model = agent._ensure_model()
-        await session.compact(eval_model, agent._workspace)
+        await session.compact(eval_model)

@@ -6,8 +6,11 @@ Manages multi-turn conversation sessions with:
 - Append-only JSONL transcripts
 - Discrete, persisted compaction: deep token-based split + structured summary
   + boundary observation-masking, written back as a new baseline
-- Pre-compaction flush to context.md (durable memory, sanitized)
 - Configurable session retention
+
+Compaction manages message history ONLY. Durable curation of ``context.md`` is
+owned solely by the workpad module (:mod:`arcagent.modules.workpad`); compaction
+does not write that file.
 """
 
 from __future__ import annotations
@@ -247,14 +250,12 @@ class SessionManager:
         """Return the most recent persisted checkpoint record, or None (REQ-003)."""
         return self._last_checkpoint
 
-    async def compact(self, model: Any, workspace: Path) -> None:
+    async def compact(self, model: Any) -> None:
         """Discrete, persisted compaction (SPEC-029 D-396/398/399/400).
 
         Append-only between boundaries; when this fires it performs ONE deep,
         debounced compaction and writes the result back as the new baseline:
 
-        0. PRE-FLUSH: structured extraction of the old segment to context.md
-           (durable memory — never lose info; sanitized against ASI-06).
         1. DEEP SPLIT: keep a recent tail (~<=45% of max_tokens), summarize
            the rest, so the post-compaction ratio lands near half the window
            and many append-only turns follow before the next boundary.
@@ -263,6 +264,10 @@ class SessionManager:
         3. OBSERVATION MASKING of stale tool outputs in the kept window,
            persisted into the rebuilt list (keep tool-call metadata).
         4. Rebuild ``[summary_entry, *masked_kept]``; emit an audit event.
+
+        Durable state is preserved in the structured summary that re-enters the
+        message baseline; ``context.md`` is NOT touched here (the workpad module
+        owns it — separation of concerns).
 
         Lock covers the whole operation to prevent concurrent compaction from
         corrupting message state (M-06).
@@ -274,7 +279,6 @@ class SessionManager:
             messages_before = len(self._messages)
             to_summarize, to_keep = self._split_for_compaction()
 
-            await self._pre_compact_flush(to_summarize, workspace, model)
             summary_text = await self._summarize_messages(to_summarize, model)
 
             # Observation masking on the kept window: keep tool-call metadata,
@@ -335,56 +339,9 @@ class SessionManager:
         split_idx = max(1, len(self._messages) * 30 // 100)
         return self._messages[:split_idx], self._messages[split_idx:]
 
-    async def _pre_compact_flush(
-        self,
-        messages: list[dict[str, Any]],
-        workspace: Path,
-        model: Any,
-    ) -> None:
-        """Flush key facts from messages-about-to-be-compacted to context.md.
-
-        Uses eval model to extract important facts, decisions, and state.
-        Sanitizes LLM output before writing to prevent context poisoning
-        (ASI-06, LLM-05). Appends to context.md so no info is lost.
-        """
-        context_path = workspace / "context.md"
-
-        msg_text = format_messages(messages, limit=0, type_filter="message")
-        if not msg_text.strip():
-            return
-
-        try:
-            response = await model.invoke(
-                [
-                    Message(
-                        role="user",
-                        content=(
-                            "Extract durable state from this conversation segment as "
-                            "concise bullets under these headers (skip a header if "
-                            "empty): Decisions, Key facts, Files modified, Rejected "
-                            "approaches, Open questions. Preserve any security "
-                            f"constraints verbatim.\n\n{msg_text}"
-                        ),
-                    )
-                ]
-            )
-            facts = response.content
-            if not facts or not facts.strip():
-                return
-            sanitized = self._sanitize_context_output(facts)
-            existing = context_path.read_text(encoding="utf-8") if context_path.exists() else ""
-            with open(context_path, "w", encoding="utf-8") as f:
-                if existing:
-                    f.write(existing.rstrip() + "\n\n")
-                f.write(f"## Compaction Flush\n\n{sanitized}\n")
-        except Exception:  # reason: fail-open — durable flush must not block compaction
-            # Log with traceback so a silent loss of durable memory is detectable
-            # (observability-first posture); compaction still proceeds.
-            _logger.warning("Pre-compaction flush failed, continuing without flush", exc_info=True)
-
     @staticmethod
     def _sanitize_context_output(text: str) -> str:
-        """Sanitize LLM output before writing to context.md (ASI-06).
+        """Sanitize LLM output before it re-enters the message baseline (ASI-06).
 
         Shared defense-in-depth sanitizer: NFKC + strip zero-width/invisible
         (incl. tag block + variation selectors) + strip control chars + cap.

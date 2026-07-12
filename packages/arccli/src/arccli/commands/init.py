@@ -185,6 +185,10 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
             # pyproject.toml) — without this block SkillsConfig defaults to
             # adapter = "none" and scaffolded skills/improver never run.
             "skills": {"enabled": True, "config": {"adapter": "arcskill", "tier": tier}},
+            # Workpad self-manages context.md: every N runs a background eval
+            # call rewrites it as a curated cockpit of open loops. Sole writer of
+            # context.md (compaction no longer flushes to it).
+            "workpad": {"enabled": True, "config": {"every_n_runs": 20}},
         },
     }
 
