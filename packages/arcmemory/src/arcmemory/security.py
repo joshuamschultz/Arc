@@ -271,7 +271,7 @@ def enforce_budget(recalls: list[Recall], *, top_k: int, budget: int) -> tuple[l
     kept: list[Recall] = []
     used = 0
     for recall in capped:
-        cost = _token_estimate(boundary_mark(recall))
+        cost = token_estimate(boundary_mark(recall))
         if used + cost > budget:
             truncated = True
             break
@@ -290,7 +290,7 @@ def _defang(text: str) -> str:
     return text.replace(_MEMORY_CLOSE, "</memory_result>").replace(_MEMORY_OPEN, "<memory_result")
 
 
-def _token_estimate(text: str) -> int:
+def token_estimate(text: str) -> int:
     """Cheap, deterministic token estimate (~4 chars/token); at least 1."""
     return max(1, len(text) // 4)
 
@@ -306,4 +306,5 @@ __all__ = [
     "readable_within",
     "render_recalls",
     "sanitize",
+    "token_estimate",
 ]

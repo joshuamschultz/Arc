@@ -18,6 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.slug import canonical_slug
 from arcmemory.types import Confidence, Insight
 
 
@@ -28,8 +29,8 @@ class InsightStore:
         self._dir = Path(workspace) / "memory" / "insights"
 
     def path_for(self, insight_id: str) -> Path:
-        """Absolute path to an insight card."""
-        return self._dir / f"{insight_id}.md"
+        """Absolute path to an insight card (id canonicalized)."""
+        return self._dir / f"{canonical_slug(insight_id)}.md"
 
     def write(self, insight: Insight) -> Path:
         """Render an insight to markdown and atomically write it."""

@@ -22,6 +22,7 @@ deployment wires arcllm-backed seams to light up semantic recall and distillatio
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 
 from arctrust.audit import AuditSink, NullSink
@@ -141,13 +142,20 @@ class ArcMemoryBrain:
         Returns the mutation counts plus a human-readable ``episode_summary`` used
         to ground reflection (SPEC-041 Phase 9). A brain with no distiller cannot
         distill facts/insights, so it returns an empty result rather than erroring.
+
+        Cadence-gated: the slow LLM sleep-path runs at most once per
+        ``consolidate_interval_minutes`` (default 60), so a per-turn call within
+        that window is a no-op rather than a fresh distillation.
         """
         consolidator = self._bundle(session_id).consolidator
         if consolidator is None:
             return self._summarize(ConsolidationResult())
         if consolidator.pending_recovery:
             await consolidator.recover()
-        result = await consolidator.run()
+        now = datetime.now(UTC)
+        if not consolidator.due(now=now, interval_minutes=self._cfg.consolidate_interval_minutes):
+            return self._summarize(ConsolidationResult())
+        result = await consolidator.run(now=now)
         return self._summarize(result)
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:

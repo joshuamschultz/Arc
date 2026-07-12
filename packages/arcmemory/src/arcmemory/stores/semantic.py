@@ -22,6 +22,7 @@ from pathlib import Path
 
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.slug import canonical_slug
 from arcmemory.types import Entity, Fact
 
 _FACT_RE = re.compile(
@@ -86,8 +87,8 @@ class SemanticStore:
         self._scope = scope
 
     def path_for(self, slug: str) -> Path:
-        """Absolute path to an entity's markdown file."""
-        return self._dir / f"{slug}.md"
+        """Absolute path to an entity's markdown file (slug canonicalized)."""
+        return self._dir / f"{canonical_slug(slug)}.md"
 
     def slugs(self) -> list[str]:
         """Every entity slug currently on disk (sorted)."""
@@ -97,6 +98,7 @@ class SemanticStore:
 
     def read(self, slug: str) -> Entity | None:
         """Load an entity from disk (None if it does not exist)."""
+        slug = canonical_slug(slug)
         path = self.path_for(slug)
         if not path.exists():
             return None
@@ -125,14 +127,24 @@ class SemanticStore:
         classification: str = "unclassified",
     ) -> Entity:
         """Add/update a fact for an entity, folding a contradiction into a ``was:`` trail."""
+        slug = canonical_slug(slug)
         predicate = predicate[:_MAX_FACT_TEXT]
         value = value[:_MAX_FACT_TEXT]
-        entity = self.read(slug) or Entity(
-            slug=slug,
-            name=name or slug.replace("-", " ").title(),
-            entity_type=entity_type,
-            classification=classification,
-        )
+        entity = self.read(slug)
+        if entity is None:
+            entity = Entity(
+                slug=slug,
+                name=name or slug.replace("-", " ").title(),
+                entity_type=entity_type,
+                classification=classification,
+            )
+        else:
+            # Enrich the existing card in place — a later run may name or classify
+            # it more precisely, but a bare "unknown" never overwrites a known type.
+            if name:
+                entity.name = name
+            if entity_type != "unknown":
+                entity.entity_type = entity_type
 
         by_predicate = {f.predicate: f for f in entity.facts}
         prior = by_predicate.get(predicate)

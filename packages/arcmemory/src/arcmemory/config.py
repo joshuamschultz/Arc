@@ -61,6 +61,22 @@ class MemoryConfig(BaseModel):
     dedup_window: int = Field(default=128, description="windowed dedup — recent hashes kept")
     max_event_chars: int = Field(default=2000, description="sanitize size cap per event")
 
+    # Consolidation cadence — the slow "sleep" path runs at most this often (an
+    # interval gate reads a persisted last-run stamp), never once per turn.
+    consolidate_interval_minutes: float = Field(
+        default=60.0, description="minimum minutes between consolidation runs"
+    )
+
+    # Distillation input budget — the max estimated tokens of raw events fed to a
+    # single eval/distill call. A window over budget is split into sequential
+    # chunks (assembled before writing), so a large window never overflows the
+    # model context. ``None`` disables chunking (single call, model context is the
+    # only limit). Default is a concrete cap so overflow is prevented by default;
+    # raise it for larger-context models.
+    distill_max_input_tokens: int | None = Field(
+        default=100_000, description="max estimated tokens per distill call before chunking"
+    )
+
     @classmethod
     def for_tier(cls, tier: Tier) -> MemoryConfig:
         """Return the R-9 constant set for ``tier`` (federal is strictest)."""

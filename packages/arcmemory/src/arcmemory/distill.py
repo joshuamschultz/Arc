@@ -29,7 +29,8 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.index.graph import WeightedGraph
-from arcmemory.security import dominating_classification
+from arcmemory.security import dominating_classification, token_estimate
+from arcmemory.slug import canonical_slug
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
@@ -130,6 +131,33 @@ def hits_from_confidence(confidence: float, gamma: float) -> float:
     return -math.log(1.0 - clamped) / gamma
 
 
+def chunk_events(events: list[Event], max_tokens: int | None) -> list[list[Event]]:
+    """Split a window into consecutive chunks each within the token budget.
+
+    The distiller (arcllm-backed in production) has a finite context, so a large
+    window is fed as several *sequential* calls instead of one 165k-token call
+    that overflows. ``max_tokens=None`` disables chunking (one chunk). A single
+    event larger than the budget cannot be split without corrupting the record, so
+    it ships alone — if that still overflows, the provider seam surfaces it (see
+    the module TODO / follow-up note).
+    """
+    if max_tokens is None or len(events) <= 1:
+        return [events] if events else []
+    chunks: list[list[Event]] = []
+    current: list[Event] = []
+    running = 0
+    for event in events:
+        cost = token_estimate(event.text)
+        if current and running + cost > max_tokens:
+            chunks.append(current)
+            current, running = [], 0
+        current.append(event)
+        running += cost
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 async def extract_facts(
     events: list[Event],
     *,
@@ -139,26 +167,28 @@ async def extract_facts(
 ) -> list[tuple[str, Fact]]:
     """Apply the distiller's facts additively; return the (slug, fact) mutations.
 
-    Corroboration accumulates: when the value is unchanged the prior confidence is
-    inverted back to hits and the window's hits are added, so a repeated fact grows
-    more confident. A changed value is a contradiction — ``write_fact`` folds the
-    prior into a ``was:`` trail rather than erasing it.
+    Over-budget windows are distilled in sequential chunks and their facts
+    assembled here. Corroboration accumulates: when the value is unchanged the
+    prior confidence is inverted back to hits and the window's hits are added, so a
+    repeated fact grows more confident. A changed value is a contradiction —
+    ``write_fact`` folds the prior into a ``was:`` trail rather than erasing it.
     """
-    extraction = await distiller.extract_facts(events)
     applied: list[tuple[str, Fact]] = []
-    for cand in extraction.facts:
-        confidence = _accumulated_confidence(store, cand, config.gamma)
-        entity = store.write_fact(
-            cand.slug,
-            cand.predicate,
-            cand.value,
-            confidence=confidence,
-            name=cand.name,
-            entity_type=cand.entity_type,
-            classification=cand.classification,
-        )
-        fact = next(f for f in entity.facts if f.predicate == cand.predicate)
-        applied.append((cand.slug, fact))
+    for chunk in chunk_events(events, config.distill_max_input_tokens):
+        extraction = await distiller.extract_facts(chunk)
+        for cand in extraction.facts:
+            confidence = _accumulated_confidence(store, cand, config.gamma)
+            entity = store.write_fact(
+                cand.slug,
+                cand.predicate,
+                cand.value,
+                confidence=confidence,
+                name=cand.name,
+                entity_type=cand.entity_type,
+                classification=cand.classification,
+            )
+            fact = next(f for f in entity.facts if f.predicate == cand.predicate)
+            applied.append((cand.slug, fact))
     return applied
 
 
@@ -181,21 +211,24 @@ async def extract_procedures(
     *,
     distiller: Distiller,
     store: ProceduralStore,
+    config: MemoryConfig,
 ) -> list[Procedure]:
     """Extract reusable how-tos from the window; upsert each as a procedure card.
 
-    A re-extracted procedure bumps its ``use_count`` (reinforcement), so a process
-    that recurs across windows becomes more prominent. Candidates without a slug or
+    Over-budget windows are distilled in sequential chunks. A re-extracted
+    procedure bumps its ``use_count`` (reinforcement), so a process that recurs
+    across windows (or chunks) becomes more prominent. Candidates without a slug or
     steps are skipped (nothing findable to store).
     """
-    result = await distiller.extract_procedures(events)
     upserted: list[Procedure] = []
-    for cand in result.procedures:
-        if not cand.slug or not cand.steps:
-            continue
-        upserted.append(
-            store.upsert(cand.slug, cand.title, when_to_use=cand.when_to_use, steps=cand.steps)
-        )
+    for chunk in chunk_events(events, config.distill_max_input_tokens):
+        result = await distiller.extract_procedures(chunk)
+        for cand in result.procedures:
+            if not cand.slug or not cand.steps:
+                continue
+            upserted.append(
+                store.upsert(cand.slug, cand.title, when_to_use=cand.when_to_use, steps=cand.steps)
+            )
     return upserted
 
 
@@ -214,15 +247,17 @@ async def mint_insights(
     A first mint starts ``guessed``; a re-mint accumulates hits (and merges cues +
     instances), promoting to ``known`` once confidence crosses the threshold.
     """
-    result = await distiller.mint_insights(events, facts)
     by_id = {e.event_id: e for e in events}
     minted: list[Insight] = []
-    for cand in result.insights:
-        insight = _apply_insight(store.read(cand.id), cand, config, by_id)
-        store.write(insight)
-        for cue in insight.cues:
-            graph.link(scope.key, insight.id, cue, kind="cue")
-        minted.append(insight)
+    for chunk in chunk_events(events, config.distill_max_input_tokens):
+        result = await distiller.mint_insights(chunk, facts)
+        for cand in result.insights:
+            cand.id = canonical_slug(cand.id)
+            insight = _apply_insight(store.read(cand.id), cand, config, by_id)
+            store.write(insight)
+            for cue in insight.cues:
+                graph.link(scope.key, insight.id, cue, kind="cue")
+            minted.append(insight)
     return minted
 
 
@@ -278,6 +313,7 @@ __all__ = [
     "InsightMint",
     "ProcedureCandidate",
     "ProcedureExtraction",
+    "chunk_events",
     "confidence_from_hits",
     "extract_facts",
     "extract_procedures",

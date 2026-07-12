@@ -12,6 +12,7 @@ from collections import Counter
 from pathlib import Path
 
 from arcmemory.mdfile import atomic_write_text, parse_document, render_document
+from arcmemory.slug import canonical_slug
 from arcmemory.types import Event, Procedure
 
 _ACTION_KIND = "action"
@@ -24,8 +25,8 @@ class ProceduralStore:
         self._dir = Path(workspace) / "memory" / "procedures"
 
     def path_for(self, slug: str) -> Path:
-        """Absolute path to a procedure card."""
-        return self._dir / f"{slug}.md"
+        """Absolute path to a procedure card (slug canonicalized)."""
+        return self._dir / f"{canonical_slug(slug)}.md"
 
     def write(self, procedure: Procedure) -> Path:
         """Render a procedure to markdown and atomically write it."""
@@ -53,6 +54,7 @@ class ProceduralStore:
         classification: str = "unclassified",
     ) -> Procedure:
         """Create or refresh an LLM-extracted procedure; bump use_count on re-extract."""
+        slug = canonical_slug(slug)
         existing = self.read(slug)
         procedure = Procedure(
             slug=slug,
@@ -67,6 +69,7 @@ class ProceduralStore:
 
     def read(self, slug: str) -> Procedure | None:
         """Load a procedure card (None if absent)."""
+        slug = canonical_slug(slug)
         path = self.path_for(slug)
         if not path.exists():
             return None

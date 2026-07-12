@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
@@ -209,6 +209,31 @@ async def test_crash_mid_write_leaves_consistent_manifest(workspace, db, scope) 
     assert recovered.pending_recovery
     await recovered.recover()
     assert not manifest_path.exists()
+
+
+# -- cadence: consolidation runs on an interval, not every turn -------------
+
+
+async def test_run_stamps_last_run_and_gates_by_interval(workspace, db, scope) -> None:
+    _seed_day(workspace, db, scope)
+    consolidator = _consolidator(workspace, db, scope, _distiller())
+
+    # Never consolidated -> due immediately.
+    assert consolidator.due(now=_NOW, interval_minutes=60)
+    await consolidator.run(now=_NOW)
+
+    # Just ran -> not due again until the full interval has elapsed.
+    assert not consolidator.due(now=_NOW + timedelta(minutes=59), interval_minutes=60)
+    assert consolidator.due(now=_NOW + timedelta(minutes=60), interval_minutes=60)
+
+
+async def test_last_run_stamp_survives_a_fresh_consolidator(workspace, db, scope) -> None:
+    """The cadence gate persists to disk, so an agent restart still respects it."""
+    _seed_day(workspace, db, scope)
+    await _consolidator(workspace, db, scope, _distiller()).run(now=_NOW)
+
+    fresh = _consolidator(workspace, db, scope, _distiller())  # simulates a restart
+    assert not fresh.due(now=_NOW + timedelta(minutes=1), interval_minutes=60)
 
 
 # -- T-053: every mutation audited; the chain verifies ----------------------

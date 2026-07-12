@@ -96,6 +96,43 @@ async def test_consolidate_with_distiller_mints_and_summarizes(workspace: Path) 
     assert "Ada worked on retries" in daily[0].read_text(encoding="utf-8")
 
 
+class _CountingDistiller(_FakeDistiller):
+    """A distiller that records how many times its fact extraction is invoked."""
+
+    def __init__(self) -> None:
+        self.fact_calls = 0
+
+    async def extract_facts(self, events: list[Event]) -> FactExtraction:
+        self.fact_calls += 1
+        return await super().extract_facts(events)
+
+
+async def test_consolidate_is_gated_by_interval(workspace: Path) -> None:
+    """Consolidation runs on its cadence — a second call within the interval no-ops.
+
+    Without the gate the slow LLM sleep-path re-ran every turn, hammering the
+    distiller (and re-extracting the same entities). It must run once, then stay
+    quiet until the configured interval elapses.
+    """
+    distiller = _CountingDistiller()
+    brain = ArcMemoryBrain(
+        workspace,
+        _DID,
+        config=MemoryConfig(consolidate_interval_minutes=60),
+        distiller=distiller,
+    )
+    await brain.capture("Ada retried the transient failure and it worked", kind="observation")
+
+    first = await brain.consolidate()
+    assert first["facts_updated"] == 1
+    assert distiller.fact_calls == 1
+
+    # A second consolidate moments later is within the interval -> gated, no LLM.
+    second = await brain.consolidate()
+    assert distiller.fact_calls == 1  # distiller NOT called again
+    assert second["facts_updated"] == 0
+
+
 async def test_requires_identity() -> None:
     with pytest.raises(ValueError, match="agent_did"):
         ArcMemoryBrain(Path("."), "")

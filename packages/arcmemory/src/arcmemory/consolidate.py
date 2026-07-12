@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +54,7 @@ from arcmemory.types import (
 )
 
 _MANIFEST_NAME = ".consolidate-manifest.json"
+_LAST_RUN_NAME = ".consolidate-last-run"
 # Cosine at/above which two cue embeddings are treated as the same concept (T-054).
 _CUE_MERGE_THRESHOLD = 0.92
 
@@ -118,11 +119,31 @@ class Consolidator:
             seed_vocabulary=self._seed_vocab,
         )
         self._manifest_path = self._workspace / "memory" / _MANIFEST_NAME
+        self._last_run_path = self._workspace / "memory" / _LAST_RUN_NAME
 
     @property
     def pending_recovery(self) -> bool:
         """Whether a prior run was interrupted (a stale manifest is present)."""
         return self._manifest_path.exists()
+
+    def last_run(self) -> datetime | None:
+        """When consolidation last completed (None if it has never run here)."""
+        if not self._last_run_path.exists():
+            return None
+        try:
+            return datetime.fromisoformat(self._last_run_path.read_text(encoding="utf-8").strip())
+        except ValueError:
+            return None
+
+    def due(self, *, now: datetime, interval_minutes: float) -> bool:
+        """Whether the cadence interval has elapsed since the last run.
+
+        The persisted stamp is what keeps the slow LLM sleep-path off the hot path:
+        an agent may ask to consolidate every turn, but it only actually runs once
+        the interval passes (or if it has never run in this workspace).
+        """
+        last = self.last_run()
+        return last is None or (now - last) >= timedelta(minutes=interval_minutes)
 
     async def run(
         self, window: TimeWindow | None = None, *, now: datetime | None = None
@@ -132,6 +153,7 @@ class Consolidator:
         now = now or datetime.now(UTC)
         events = [e for e in self._episodic.events(self._scope.key) if window.contains(e.ts)]
         if not events:
+            self._stamp_last_run(now)
             return ConsolidationResult()
 
         self._begin_manifest(len(events))
@@ -143,6 +165,7 @@ class Consolidator:
         await self._merge_cues_audited()
         await self._surface.index_if_needed()
         self._commit_manifest()
+        self._stamp_last_run(now)
 
         return ConsolidationResult(
             facts_updated=len(facts),
@@ -193,7 +216,7 @@ class Consolidator:
     async def _extract_procedures(self, events: list[Event]) -> list[Procedure]:
         """Distill reusable how-to procedures (LLM); audit each upsert + its file."""
         extracted = await distill.extract_procedures(
-            events, distiller=self._distiller, store=self._procedures
+            events, distiller=self._distiller, store=self._procedures, config=self._cfg
         )
         for procedure in extracted:
             self._emit("memory.procedure_extracted", procedure.slug)
@@ -215,7 +238,7 @@ class Consolidator:
         written: list[DaySummary] = []
         for day in sorted(by_day):
             day_events = by_day[day]
-            draft = await self._distiller.summarize_day(day_events)
+            draft = await self._summarize_day_chunked(day_events)
             additions = DaySummary(
                 day=day,
                 timeline=draft.timeline,
@@ -232,6 +255,24 @@ class Consolidator:
             self._emit("memory.file_rewritten", str(self._daily.path_for(day)))
             written.append(summary)
         return written
+
+    async def _summarize_day_chunked(self, day_events: list[Event]) -> distill.DaySummaryDraft:
+        """Summarize a day, splitting an over-budget day into sequential calls.
+
+        Each chunk yields a partial meeting-minutes draft; the bullet lists are
+        concatenated so a busy day never overflows the distiller context.
+        """
+        chunks = distill.chunk_events(day_events, self._cfg.distill_max_input_tokens)
+        merged = distill.DaySummaryDraft()
+        for chunk in chunks:
+            part = await self._distiller.summarize_day(chunk)
+            merged.timeline += part.timeline
+            merged.discussions += part.discussions
+            merged.decisions += part.decisions
+            merged.people += part.people
+            merged.goals += part.goals
+            merged.tasks += part.tasks
+        return merged
 
     def _entity_name_map(self) -> dict[str, str]:
         """Map each known entity NAME -> its slug (for wiki-linking day notes)."""
@@ -340,6 +381,11 @@ class Consolidator:
     def _commit_manifest(self) -> None:
         """Clear the marker on a clean run."""
         self._manifest_path.unlink(missing_ok=True)
+
+    def _stamp_last_run(self, now: datetime) -> None:
+        """Persist the consolidation time so the cadence gate survives a restart."""
+        self._last_run_path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_run_path.write_text(now.isoformat(), encoding="utf-8")
 
     async def recover(self) -> bool:
         """Recover from an interrupted run: rebuild the index from truth, clear marker.
