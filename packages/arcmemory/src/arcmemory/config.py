@@ -18,6 +18,28 @@ from pydantic import BaseModel, ConfigDict, Field
 
 Tier = Literal["personal", "enterprise", "federal"]
 
+# Tools whose OUTPUT is durable knowledge regardless of length — the agent
+# gathering (web/search/research/retrieval) or producing (writes/creation) real
+# information. Kept even when short. Extend this via ``MemoryConfig`` when a new
+# knowledge tool is added; ``read``/``grep``/``bash`` are deliberately absent —
+# their worth is judged by result length, so a bare ``read -> ok`` still drops.
+_DEFAULT_KEEP_TOOLS: frozenset[str] = frozenset(
+    {
+        "web_search",
+        "research",
+        "browser_read_page",
+        "browser_navigate",
+        "session_search",
+        "write",
+        "edit",
+        "create_skill",
+        "create_tool",
+        "store_team_file",
+        "synthesize",
+        "transcribe",
+    }
+)
+
 
 class MemoryConfig(BaseModel):
     """Immutable dynamics constants + budgets for one deployment tier."""
@@ -75,6 +97,30 @@ class MemoryConfig(BaseModel):
     # raise it for larger-context models.
     distill_max_input_tokens: int | None = Field(
         default=100_000, description="max estimated tokens per distill call before chunking"
+    )
+
+    # Input curation — drop mechanical tool plumbing before distillation, KEEP
+    # substantive content (user turns, agent conclusions, agent-gathered/created
+    # knowledge). Pure/deterministic (reuses capture-time entity tags), zero extra
+    # LLM/embedding. A tool event survives if it references an entity, is a
+    # knowledge tool, carries a substantive-length result, or clears the salience
+    # floor; only short mechanical frames (``tool:read -> ok``) are stripped.
+    curate_input: bool = Field(
+        default=True, description="drop mechanical tool plumbing before distillation"
+    )
+    curate_keep_tools: frozenset[str] = Field(
+        default=_DEFAULT_KEEP_TOOLS,
+        description="tool names whose output is always kept (knowledge-producing); extensible",
+    )
+    curate_min_substantive_chars: int = Field(
+        default=200, description="a tool result at/above this length is kept as real content"
+    )
+    curate_tool_requires_entity: bool = Field(
+        default=True, description="drop a tool event that clears none of the keep gates"
+    )
+    curate_tool_keep_salience: float = Field(
+        default=0.0,
+        description="keep a tool event at/above this salience; 0 disables the salience escape",
     )
 
     @classmethod

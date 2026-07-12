@@ -236,6 +236,73 @@ async def test_last_run_stamp_survives_a_fresh_consolidator(workspace, db, scope
     assert not fresh.due(now=_NOW + timedelta(minutes=1), interval_minutes=60)
 
 
+# -- #23: input curation keeps tool plumbing out of distillation ------------
+
+
+class _RecordingDistiller:
+    """Records the event ids handed to each of the four distiller entry points."""
+
+    def __init__(self) -> None:
+        self.seen: dict[str, list[str]] = {
+            "facts": [],
+            "insights": [],
+            "procedures": [],
+            "day": [],
+        }
+        self.calls = 0
+
+    async def extract_facts(self, events: list[Event]) -> FactExtraction:
+        self.calls += 1
+        self.seen["facts"] += [e.event_id for e in events]
+        return FactExtraction()
+
+    async def mint_insights(self, events: list[Event], facts: list) -> InsightMint:
+        self.calls += 1
+        self.seen["insights"] += [e.event_id for e in events]
+        return InsightMint()
+
+    async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
+        self.calls += 1
+        self.seen["procedures"] += [e.event_id for e in events]
+        return ProcedureExtraction()
+
+    async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
+        self.calls += 1
+        self.seen["day"] += [e.event_id for e in events]
+        return DaySummaryDraft()
+
+
+async def test_curation_keeps_tool_plumbing_out_of_every_distiller_input(workspace, db, scope) -> None:
+    episodic = EpisodicStore(db, workspace)
+    episodic.append(
+        Event(
+            event_id="plumb",
+            scope=scope.key,
+            kind="tool",  # mechanical plumbing, no entity tag
+            text="tool call args echo",
+            ts="2026-07-07T00:00:00+00:00",
+        )
+    )
+    episodic.append(
+        Event(
+            event_id="said",
+            scope=scope.key,
+            kind="obs",  # what was actually observed
+            text="alice shipped payments",
+            ts="2026-07-07T00:00:01+00:00",
+        )
+    )
+    distiller = _RecordingDistiller()
+
+    await Consolidator(db, workspace, scope, distiller=distiller, config=MemoryConfig()).run(now=_NOW)
+
+    for channel, ids in distiller.seen.items():
+        assert "plumb" not in ids, f"tool plumbing leaked into {channel}"
+        assert "said" in ids, f"real content missing from {channel}"
+    # Curation is pure — it adds no LLM call (one per distiller entry point).
+    assert distiller.calls == 4
+
+
 # -- T-053: every mutation audited; the chain verifies ----------------------
 
 

@@ -33,6 +33,7 @@ from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
 from arcmemory import distill
 from arcmemory.config import MemoryConfig
+from arcmemory.curate import curate_for_distillation
 from arcmemory.db import MemoryDB
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
@@ -152,6 +153,7 @@ class Consolidator:
         window = window or TimeWindow()
         now = now or datetime.now(UTC)
         events = [e for e in self._episodic.events(self._scope.key) if window.contains(e.ts)]
+        events = curate_for_distillation(events, self._cfg)
         if not events:
             self._stamp_last_run(now)
             return ConsolidationResult()
