@@ -21,3 +21,8 @@ class TasksConfig(ModuleConfig):
     # this module and arcui always agree on which SQLite file is the durable
     # Task directory.
     data_dir: str = ""
+    # NATS JetStream url for the shared arcteam registry (mirrors
+    # MessagingConfig.nats_url). Empty means no live registry is built —
+    # assign_task/create_task's @handle resolution degrades with a clear
+    # error instead of silently building a useless, disconnected registry.
+    nats_url: str = ""

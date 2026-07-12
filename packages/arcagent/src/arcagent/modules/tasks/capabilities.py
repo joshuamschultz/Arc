@@ -11,9 +11,14 @@ classification, they never call ``arctrust.audit.emit`` themselves. Free
 text (title/description/resolution) is sanitized via
 :func:`arcagent.modules.tasks.models.validate_task_text` before it ever
 reaches the store (LLM01/ASI06). Owner-only mutation is gated by
-:func:`_require_owner`, checked against ``_runtime.state().identity`` before
-every state transition (create is exempt — there is no prior owner to
-protect; assign is exempt — reassignment is not the owner's call, SDD §3).
+:func:`_require_owner`, checked against the runtime state's ``identity``
+before every state transition (create is exempt — there is no prior owner
+to protect; assign is exempt — reassignment is not the owner's call, SDD
+§3). Runtime state is fetched via :func:`_state`, not
+``_runtime.state()`` directly — the module's async wiring (opening the
+arcstore backend, and the live registry) is deferred and finished there on
+first use, since ``_runtime.configure()`` itself is sync (see
+``_runtime``'s module docstring for why).
 """
 
 from __future__ import annotations
@@ -32,26 +37,42 @@ from arcagent.tools._decorator import tool
 _logger = logging.getLogger("arcagent.modules.tasks.capabilities")
 
 
+async def _state() -> _runtime._State:
+    """Fetch runtime state, finishing the module's lazy async wiring first.
+
+    ``_runtime.configure()`` is sync (mirrors every other module — the
+    dispatcher calls it without ``await``), so the SQLite backend and, when
+    live, the registry are opened lazily by ``ensure_store()`` on first tool
+    use rather than at configure time.
+    """
+    await _runtime.ensure_store()
+    return _runtime.state()
+
+
 def _new_task_id() -> str:
     return f"task_{uuid.uuid4().hex[:12]}"
 
 
-async def _resolve_owner(owner: str | None, st: Any) -> str | None:
+async def _resolve_owner(owner: str | None, st: _runtime._State) -> str | None:
     """Resolve the ``owner`` tool argument to a DID.
 
     ``None`` (argument omitted) defaults to self; ``""`` leaves the task
     unowned (backlog); anything else is an address ref (``@handle``,
-    ``did:...``) resolved via arcteam.
+    ``did:...``) resolved via arcteam — unavailable if no registry could be
+    injected or built live (SDD §3).
     """
     if owner is None:
         self_did: str = st.identity.did
         return self_did
     if owner == "":
         return None
+    if st.registry is None:
+        msg = "registry unavailable"
+        raise ValueError(msg)
     return await resolve(st.registry, owner)
 
 
-def _require_owner(task: Task, st: Any) -> None:
+def _require_owner(task: Task, st: _runtime._State) -> None:
     """Raise ``ValueError`` unless ``task`` is unowned or owned by this agent.
 
     Applied before every mutation except create (no prior owner to protect)
@@ -78,7 +99,7 @@ async def create_task(
     owner: str | None = None,
     blocked_by: list[str] | None = None,
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         validate_task_text(title)
         if description:
@@ -94,7 +115,7 @@ async def create_task(
             blocked_by=blocked_by or [],
         )
         created = await st.store.create(task)
-        return created.model_dump_json()
+        return str(created.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
 
@@ -110,7 +131,7 @@ async def update_task(
     description: str | None = None,
     priority: str | None = None,
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         current = await st.store.get(id)
         if current is None:
@@ -129,7 +150,7 @@ async def update_task(
         updated = await st.store.update(id, updates, actor_did=st.identity.did)
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
-        return updated.model_dump_json()
+        return str(updated.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
 
@@ -140,7 +161,7 @@ async def update_task(
     classification="state_modifying",
 )
 async def start_task(id: str = "") -> str:  # noqa: A002 - matches JSON schema field name
-    st = _runtime.state()
+    st = await _state()
     try:
         current = await st.store.get(id)
         if current is None:
@@ -164,7 +185,7 @@ async def complete_task(
     resolution: str = "",
     output: dict[str, Any] | None = None,
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         current = await st.store.get(id)
         if current is None:
@@ -178,7 +199,7 @@ async def complete_task(
         updated = await st.store.update(id, patch, actor_did=st.identity.did)
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
-        return updated.model_dump_json()
+        return str(updated.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
 
@@ -192,7 +213,7 @@ async def fail_task(
     id: str = "",  # noqa: A002 - matches JSON schema field name
     resolution: str = "",
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         current = await st.store.get(id)
         if current is None:
@@ -205,7 +226,7 @@ async def fail_task(
         )
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
-        return updated.model_dump_json()
+        return str(updated.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
 
@@ -219,13 +240,15 @@ async def assign_task(
     id: str = "",  # noqa: A002 - matches JSON schema field name
     to_handle: str = "",
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
+    if st.registry is None:
+        return json.dumps({"error": "registry unavailable"})
     try:
         to_did = await resolve(st.registry, to_handle)
         updated = await st.store.assign(id, to_did, st.identity.did)
         if updated is None:
             return json.dumps({"error": f"unable to assign task '{id}'"})
-        return updated.model_dump_json()
+        return str(updated.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
 
@@ -236,7 +259,7 @@ async def assign_task(
     classification="state_modifying",
 )
 async def claim_task() -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         task, reason = await st.store.claim_next(st.identity.did)
         return json.dumps(
@@ -252,7 +275,7 @@ async def claim_task() -> str:
     classification="read_only",
 )
 async def list_tasks(scope: str = "team", status: str | None = None) -> str:
-    st = _runtime.state()
+    st = await _state()
     owner_did = st.identity.did if scope == "self" else None
     tasks = await st.store.list(status=status, owner_did=owner_did)
     return json.dumps([t.model_dump(mode="json") for t in tasks])
@@ -267,7 +290,7 @@ async def decompose_task(
     id: str = "",  # noqa: A002 - matches JSON schema field name
     subtasks: list[dict[str, Any]] | None = None,
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         parent = await st.store.get(id)
         if parent is None:
@@ -315,7 +338,7 @@ async def set_task_output(
     id: str = "",  # noqa: A002 - matches JSON schema field name
     output: dict[str, Any] | None = None,
 ) -> str:
-    st = _runtime.state()
+    st = await _state()
     try:
         current = await st.store.get(id)
         if current is None:
@@ -324,7 +347,7 @@ async def set_task_output(
         updated = await st.store.update(id, {"output": output or {}}, actor_did=st.identity.did)
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
-        return updated.model_dump_json()
+        return str(updated.model_dump_json())
     except (ValueError, TypeError) as exc:
         return json.dumps({"error": str(exc)})
 
