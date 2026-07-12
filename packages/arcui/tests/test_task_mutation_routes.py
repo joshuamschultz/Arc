@@ -370,6 +370,64 @@ class TestDeleteTaskOperatorGate:
         assert asyncio.run(store.get("t1")) is None
 
 
+class TestCancelTaskOperatorGate:
+    def test_operator_cancels_running_task_and_it_is_audited(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        asyncio.run(
+            _seed(tmp_path, [_task("t1", owner_did="did:arc:x/aaaa", status="in_progress")])
+        )
+        app, auth = _make_app(tmp_path)
+        app.state.audit = UIAuditLogger()
+        client = TestClient(app)
+
+        with caplog.at_level("INFO", logger="arcui.audit"):
+            resp = client.post("/api/tasks/t1/cancel", headers=_operator(auth))
+
+        assert resp.status_code == 200
+        assert resp.json()["cancel_requested"] is True
+
+        mutations = _mutations(caplog)
+        assert len(mutations) == 1
+        assert mutations[0]["operation"] == "task.cancel"
+        assert mutations[0]["outcome"] == "applied"
+
+        store = asyncio.run(_seed_store(tmp_path))
+        row = asyncio.run(store.get("t1"))
+        assert row is not None and row.cancel_requested is True
+
+    def test_viewer_is_forbidden(self, tmp_path: Path) -> None:
+        asyncio.run(
+            _seed(tmp_path, [_task("t1", owner_did="did:arc:x/aaaa", status="in_progress")])
+        )
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post("/api/tasks/t1/cancel", headers=_viewer(auth))
+
+        assert resp.status_code == 403
+        assert resp.json() == {"error": "operator_role_required"}
+
+    def test_unknown_task_is_404(self, tmp_path: Path) -> None:
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post("/api/tasks/nope/cancel", headers=_operator(auth))
+
+        assert resp.status_code == 404
+
+    def test_at_rest_task_is_409(self, tmp_path: Path) -> None:
+        """Only a running task can be cancelled — a backlog/todo task has no run."""
+        asyncio.run(_seed(tmp_path, [_task("t1", status="backlog")]))
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post("/api/tasks/t1/cancel", headers=_operator(auth))
+
+        assert resp.status_code == 409
+        assert resp.json() == {"error": "task_not_running"}
+
+
 class TestPatchRaceGuard:
     def test_patch_does_not_clobber_a_task_that_raced_into_in_progress(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

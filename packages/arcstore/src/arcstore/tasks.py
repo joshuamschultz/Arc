@@ -52,6 +52,22 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _duration_seconds(started_at: str | None, completed_at: str) -> float | None:
+    """Wall-clock seconds between two ISO timestamps, or None if unstarted/bad."""
+    if not started_at:
+        return None
+    try:
+        return (
+            datetime.fromisoformat(completed_at) - datetime.fromisoformat(started_at)
+        ).total_seconds()
+    except ValueError:
+        return None
+
+
 def _validate_free_text(text: str) -> None:
     """Reject over-length or injection-bearing free text. Raises ``ValueError``.
 
@@ -92,6 +108,22 @@ class Task(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] | None = None
     resolution: str | None = None
+    # Lifecycle reliability (SPEC-056 Phase 1). All additive with defaults so
+    # rows written before this field existed still load.
+    started_at: str | None = None
+    completed_at: str | None = None
+    duration_seconds: float | None = None
+    attempts: int = 0
+    max_attempts: int = 3
+    last_error: str | None = None
+    # Per-task wall-clock cap for a dispatched run; None defers to the dispatch
+    # config's default. A retried task is not re-dispatched before this time
+    # (exponential backoff), gating the ready pool without a blocking sleep.
+    timeout_seconds: float | None = None
+    next_attempt_at: str | None = None
+    # Operator stop signal: the dispatch loop watches this on its own in_progress
+    # tasks and cancels the live run (SEC/ASI09 human-in-the-loop kill switch).
+    cancel_requested: bool = False
     # No-write-down (SEC-F3): downstream notify propagates this so a task's
     # classification bounds where it can surface. Defaults to the lowest tier.
     classification: str = "UNCLASSIFIED"
@@ -354,8 +386,17 @@ class TaskStore:
         # task, so an in_progress task deterministically links its run from the
         # moment it starts (the arcui timeline joins task.run_id to the run's
         # spooled events). complete/fail patch only status+resolution, so the
-        # merge preserves it through to done/failed.
-        claim: dict[str, Any] = {"owner_did": agent_did, "status": "in_progress"}
+        # merge preserves it through to done/failed. Each start is an attempt
+        # (the retry engine counts starts); started_at anchors the duration and
+        # the stuck-reclaim staleness clock, and the backoff gate is cleared now
+        # that the task is actually running.
+        claim: dict[str, Any] = {
+            "owner_did": agent_did,
+            "status": "in_progress",
+            "started_at": _now(),
+            "attempts": target.attempts + 1,
+            "next_attempt_at": None,
+        }
         if run_id is not None:
             claim["run_id"] = run_id
         won = await self._backend.update_if(
@@ -372,6 +413,115 @@ class TaskStore:
         if not won:
             return None, "no_tasks_available"
         return await self.get(task_id), "assigned"
+
+    async def finish(
+        self,
+        task_id: str,
+        *,
+        status: Literal["done", "failed"],
+        resolution: str,
+        actor_did: str,
+        output: dict[str, Any] | None = None,
+        last_error: str | None = None,
+    ) -> Task | None:
+        """Terminal transition for an agent-driven complete/fail (SPEC-056 P1).
+
+        Stamps ``completed_at`` and the run's ``duration_seconds`` (from
+        ``started_at``) alongside status+resolution, so the board's DONE-TODAY /
+        AVG-TIME metrics read off durable fields, not inferred timestamps. A
+        plain merge (not status-conditional) — this is the owner completing its
+        own in-flight task, not a race-prone reclaim.
+        """
+        current = await self.get(task_id)
+        if current is None:
+            return None
+        now = _now()
+        patch: dict[str, Any] = {
+            "status": status,
+            "resolution": resolution,
+            "completed_at": now,
+            "duration_seconds": _duration_seconds(current.started_at, now),
+        }
+        if output is not None:
+            patch["output"] = output
+        if last_error is not None:
+            patch["last_error"] = last_error
+        return await self.update(task_id, patch, actor_did=actor_did)
+
+    async def requeue(
+        self, task_id: str, *, actor_did: str, last_error: str, next_attempt_at: str
+    ) -> Task | None:
+        """Return a failed in_progress attempt to the ready pool for retry (P1).
+
+        Status-conditional on ``in_progress`` so two reclaimers (the run's own
+        finalizer and the stuck-reclaim watcher) can race and exactly one wins —
+        the loser no-ops. Preserves ``attempts`` (the next ``start_task``
+        increments it) and ``run_id`` (the last run stays linked until re-
+        dispatch mints a new one); ``next_attempt_at`` gates re-dispatch until
+        the backoff elapses. Returns the task on success, None if it raced out.
+        """
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {
+                "status": "todo",
+                "last_error": last_error,
+                "next_attempt_at": next_attempt_at,
+                "started_at": None,
+            },
+            where={"status": "in_progress"},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
+
+    async def dead_letter(
+        self, task_id: str, *, actor_did: str, resolution: str, last_error: str
+    ) -> Task | None:
+        """Terminally fail an in_progress task (retries exhausted or cancelled).
+
+        Status-conditional on ``in_progress`` (same race-safety as ``requeue``);
+        stamps the terminal ``completed_at``/``duration_seconds`` and clears the
+        cancel flag. Returns the task on success, None if it raced out.
+        """
+        current = await self.get(task_id)
+        if current is None:
+            return None
+        now = _now()
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {
+                "status": "failed",
+                "resolution": resolution,
+                "last_error": last_error,
+                "completed_at": now,
+                "duration_seconds": _duration_seconds(current.started_at, now),
+                "cancel_requested": False,
+            },
+            where={"status": "in_progress"},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
+
+    async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:
+        """Flag an in_progress task for operator cancellation (P1, ASI09).
+
+        Only an ``in_progress`` task can be cancelled (there is no live run to
+        stop otherwise), enforced by the status-conditional write. The dispatch
+        loop observes the flag and stops the run. Returns the task on success,
+        None if it is not running (so the route can 409) or is gone.
+        """
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            {"cancel_requested": True},
+            where={"status": "in_progress"},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        return await self.get(task_id) if won else None
 
     async def assign(self, task_id: str, to_did: str, by_did: str) -> Task | None:
         current = await self.get(task_id)

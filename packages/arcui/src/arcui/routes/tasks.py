@@ -1,4 +1,7 @@
-"""``POST /api/team/tasks`` + ``PATCH``/``DELETE /api/tasks/{id}`` — operator-gated task mutation.
+"""Operator-gated task mutation — create / edit / delete / cancel.
+
+``POST /api/team/tasks``, ``PATCH``/``DELETE /api/tasks/{id}``,
+``POST /api/tasks/{id}/cancel``.
 
 SPEC-056 Phase D (D4, FR-7). Mirrors ``agent_detail/files_write.py``'s
 operator-gate -> guard -> write -> audit shape and ``team_chat.
@@ -169,10 +172,43 @@ async def delete_task(request: Request) -> Response:
     return Response(status_code=204)
 
 
+async def cancel_task(request: Request) -> Response:
+    """POST /api/tasks/{id}/cancel — request an operator stop of a running task.
+
+    Sets the store's cancel flag; the owning agent's reliability watcher observes
+    it and stops the live run (ASI09 human-in-the-loop kill switch). Only an
+    ``in_progress`` task can be cancelled (nothing is running otherwise) -> 409;
+    a missing task -> 404. arcui never touches the run directly (it runs in a
+    separate process) — the durable flag is the whole mechanism.
+    """
+    task_id = request.path_params["id"]
+    target = f"task:{task_id}"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request, target=target, operation="task.cancel", outcome="denied", detail="viewer role"
+        )
+        return _error("operator_role_required", 403)
+
+    store = request.app.state.task_store
+    if await store.get(task_id) is None:
+        return _error("not found", 404)
+    updated = await store.request_cancel(task_id, actor_did=_CREATOR)
+    if updated is None:
+        emit_mutation_audit(
+            request, target=target, operation="task.cancel", outcome="denied", detail="not_running"
+        )
+        return _error("task_not_running", 409)
+
+    emit_mutation_audit(request, target=target, operation="task.cancel", outcome="applied")
+    return JSONResponse(updated.model_dump(mode="json"))
+
+
 routes = [
     Route("/api/team/tasks", create_task, methods=["POST"]),
     Route("/api/tasks/{id}", patch_task, methods=["PATCH"]),
     Route("/api/tasks/{id}", delete_task, methods=["DELETE"]),
+    Route("/api/tasks/{id}/cancel", cancel_task, methods=["POST"]),
 ]
 
-__all__ = ["create_task", "delete_task", "patch_task", "routes"]
+__all__ = ["cancel_task", "create_task", "delete_task", "patch_task", "routes"]

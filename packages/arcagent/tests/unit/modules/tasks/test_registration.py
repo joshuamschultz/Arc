@@ -85,6 +85,12 @@ class TestLoaderRegistration:
         task_entry = await reg.get_task("tasks_dispatch_loop")
         assert task_entry is not None, "dispatch loop not registered by loader"
 
+        # Phase 1: the reliability watcher (cancel + stuck-reclaim) is a second
+        # background producer — it must be discovered too, or operator cancels
+        # and restart-orphan recovery silently never fire.
+        watcher_entry = await reg.get_task("tasks_reliability_watcher")
+        assert watcher_entry is not None, "reliability watcher not registered by loader"
+
         ready_hooks = await reg.get_hooks("agent:ready")
         assert any(
             h.meta.name == "tasks_bind_run_fn" for h in ready_hooks

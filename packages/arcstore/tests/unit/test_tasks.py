@@ -1045,3 +1045,133 @@ class TestStartTaskRunId:
             assert started is not None and started.run_id is None
         finally:
             await be.stop()
+
+
+class TestReliabilityTransitions:
+    """SPEC-056 Phase 1 — started_at/attempts, finish, requeue, dead_letter, cancel."""
+
+    async def test_start_stamps_started_at_and_increments_attempts(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            started, _ = await store.start_task("t1", _AGENT_A, run_id="r1")
+            assert started is not None
+            assert started.started_at is not None
+            assert started.attempts == 1
+            assert started.next_attempt_at is None
+        finally:
+            await be.stop()
+
+    async def test_finish_stamps_completed_at_and_duration(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            await store.start_task("t1", _AGENT_A, run_id="r1")
+            done = await store.finish(
+                "t1", status="done", resolution="ok", actor_did=_AGENT_A
+            )
+            assert done is not None
+            assert done.status == "done"
+            assert done.completed_at is not None
+            assert done.duration_seconds is not None and done.duration_seconds >= 0
+            assert done.run_id == "r1"  # preserved through terminal
+        finally:
+            await be.stop()
+
+    async def test_requeue_returns_to_todo_with_backoff_and_error(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            await store.start_task("t1", _AGENT_A, run_id="r1")
+            requeued = await store.requeue(
+                "t1", actor_did=_AGENT_A, last_error="boom", next_attempt_at="2999-01-01T00:00:00+00:00"
+            )
+            assert requeued is not None
+            assert requeued.status == "todo"
+            assert requeued.last_error == "boom"
+            assert requeued.next_attempt_at == "2999-01-01T00:00:00+00:00"
+            assert requeued.started_at is None
+            assert requeued.attempts == 1  # preserved; next start increments
+        finally:
+            await be.stop()
+
+    async def test_requeue_is_conditional_on_in_progress(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            # Never started (still todo) -> requeue must no-op.
+            assert await store.requeue(
+                "t1", actor_did=_AGENT_A, last_error="x", next_attempt_at="2999-01-01T00:00:00+00:00"
+            ) is None
+        finally:
+            await be.stop()
+
+    async def test_dead_letter_marks_failed_terminal(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            await store.start_task("t1", _AGENT_A, run_id="r1")
+            dead = await store.dead_letter(
+                "t1", actor_did=_AGENT_A, resolution="exhausted", last_error="boom"
+            )
+            assert dead is not None
+            assert dead.status == "failed"
+            assert dead.resolution == "exhausted"
+            assert dead.last_error == "boom"
+            assert dead.completed_at is not None
+            assert dead.cancel_requested is False
+        finally:
+            await be.stop()
+
+    async def test_dead_letter_is_conditional_on_in_progress(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            assert await store.dead_letter(
+                "t1", actor_did=_AGENT_A, resolution="x", last_error="y"
+            ) is None
+        finally:
+            await be.stop()
+
+    async def test_request_cancel_flags_running_task(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            await store.start_task("t1", _AGENT_A, run_id="r1")
+            cancelled = await store.request_cancel("t1", actor_did=_OPERATOR)
+            assert cancelled is not None and cancelled.cancel_requested is True
+        finally:
+            await be.stop()
+
+    async def test_request_cancel_rejects_non_running_task(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="t1", title="Go", creator_did=_CREATOR, status="todo"))
+            # todo, not in_progress -> nothing to cancel.
+            assert await store.request_cancel("t1", actor_did=_OPERATOR) is None
+        finally:
+            await be.stop()

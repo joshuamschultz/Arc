@@ -77,6 +77,21 @@ class _State:
     # first tool calls can't both open the backend + a live NATS connection
     # (REL-F4 check-then-act race -> one orphaned connection).
     init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # --- Lifecycle reliability engine (SPEC-056 Phase 1) -------------------
+    # Live dispatched runs, keyed by task id — the handle the reliability
+    # watcher cancels for an operator stop, and the presence check that tells a
+    # genuinely-running task apart from one orphaned by a restart. In-memory and
+    # per-process (a restart empties it, which is exactly what drives startup
+    # reclaim).
+    running: dict[str, asyncio.Task[Any]] = field(default_factory=dict)
+    # Task ids the watcher is deliberately cancelling — lets the run's own
+    # ``except CancelledError`` tell an operator stop (finalize as cancelled)
+    # apart from process shutdown (re-raise), which look identical otherwise.
+    cancelling: set[str] = field(default_factory=set)
+    # False until the first reliability tick has reclaimed pre-restart orphans;
+    # the first pass ignores the staleness threshold so a restart recovers
+    # promptly, steady-state passes use it.
+    reclaim_done: bool = False
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(

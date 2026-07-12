@@ -33,10 +33,12 @@ first use, since ``_runtime.configure()`` itself is sync (see
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arcteam.registry import resolve
@@ -124,6 +126,10 @@ async def create_task(
             owner_did=owner_did,
             creator_did=st.identity.did,
             blocked_by=blocked_by or [],
+            # Seed the retry ceiling from config so this agent's created tasks
+            # honor the deployment default; the per-task field is authoritative
+            # thereafter (the reliability engine reads task.max_attempts).
+            max_attempts=st.config.default_max_attempts,
         )
         created = await st.store.create(task)
         return str(created.model_dump_json())
@@ -202,10 +208,9 @@ async def complete_task(
             return json.dumps(
                 {"error": f"Task '{id}' is blocked by unfinished dependencies"}
             )
-        patch: dict[str, Any] = {"status": "done", "resolution": resolution}
-        if output is not None:
-            patch["output"] = output
-        updated = await st.store.update(id, patch, actor_did=st.identity.did)
+        updated = await st.store.finish(
+            id, status="done", resolution=resolution, output=output, actor_did=st.identity.did
+        )
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
@@ -228,8 +233,8 @@ async def fail_task(
         if current is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(current, st)
-        updated = await st.store.update(
-            id, {"status": "failed", "resolution": resolution}, actor_did=st.identity.did
+        updated = await st.store.finish(
+            id, status="failed", resolution=resolution, actor_did=st.identity.did
         )
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
@@ -401,6 +406,11 @@ async def set_task_output(
 # an operator assigning work from the board without hammering the shared DB.
 _DISPATCH_TICK = 15.0
 
+# Faster cadence for the reliability watcher (cancel + stuck-reclaim). It only
+# reads the agent's own in_progress tasks and cancels in-memory handles, so it
+# is cheap; a short interval makes operator "stop" feel responsive.
+_RELIABILITY_TICK = 5.0
+
 # Session key prefix for a dispatched task's run — one transcript per task so
 # the board and the session log line up (``<workspace>/sessions/task:<id>.jsonl``).
 _TASK_SESSION = "task"
@@ -432,13 +442,33 @@ def _format_task_prompt(task: Task) -> str:
     return "\n".join(lines)
 
 
+def _resolve_timeout(task: Task, config: Any) -> float | None:
+    """The wall-clock cap for this run: per-task override, else config default.
+
+    ``None`` means unbounded (both knobs 0/None). Kept a pure function so the
+    timeout policy is testable without a running loop.
+    """
+    timeout = task.timeout_seconds if task.timeout_seconds else config.task_timeout_seconds
+    return timeout if timeout and timeout > 0 else None
+
+
+def _backoff_elapsed(task: Task, now: str) -> bool:
+    """True if a task's retry backoff has elapsed (or it has none).
+
+    ``next_attempt_at`` and ``now`` are both ``_now()``-formatted UTC ISO
+    strings, so a lexicographic compare is chronological.
+    """
+    return task.next_attempt_at is None or task.next_attempt_at <= now
+
+
 async def _dispatch_tick() -> None:
     """Run one poll-and-dispatch tick. Factored out so it is directly testable.
 
     No-op unless dispatch is enabled AND a run callback is bound. Respects the
-    one-``in_progress``-task cap (never stacks a second run) and skips tasks
-    whose dependencies are unmet. Picks the highest-priority ready task, starts
-    it (todo -> in_progress), and invokes the agent's run callback for it.
+    one-``in_progress``-task cap (never stacks a second run), skips tasks whose
+    dependencies are unmet or whose retry backoff has not elapsed, picks the
+    highest-priority ready task, starts it (todo -> in_progress), and runs it
+    under the reliability wrapper (timeout + retry/dead-letter).
     """
     st = await _state()
     if not st.config.dispatch or st.agent_run_fn is None:
@@ -448,7 +478,10 @@ async def _dispatch_tick() -> None:
     if await st.store.list(status="in_progress", owner_did=self_did):
         return
     todos = await st.store.list(status="todo", owner_did=self_did)
-    ready = [t for t in todos if await st.store.deps_met(t)]
+    now = datetime.now(UTC).isoformat()
+    ready = [
+        t for t in todos if _backoff_elapsed(t, now) and await st.store.deps_met(t)
+    ]
     if not ready:
         return
     ready.sort(key=lambda t: (_PRIORITY_RANK.get(t.priority, 99), t.created_at or ""))
@@ -461,10 +494,145 @@ async def _dispatch_tick() -> None:
     if started is None or started.status != "in_progress":
         # Lost the atomic claim (a concurrent starter won) — try again next tick.
         return
-    await st.agent_run_fn(
-        _format_task_prompt(started),
-        session_key=f"{_TASK_SESSION}:{started.id}",
-        run_id=run_id,
+    await _run_task(st, started, run_id, self_did)
+
+
+async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str) -> None:
+    """Drive one dispatched run under the reliability wrapper (P1).
+
+    The run is a tracked ``asyncio.Task`` (so the watcher can cancel it) wrapped
+    in an optional wall-clock timeout. A normal return leaves the task's status
+    as the agent set it (done/failed via its own tools, or in_progress if it
+    never completed — the stuck-reclaim path handles that later). A timeout or
+    unhandled error is a failed attempt fed to the retry engine; an operator
+    cancel (the watcher cancelled the run, recorded in ``st.cancelling``) is a
+    terminal dead-letter — process shutdown re-raises instead.
+    """
+    timeout = _resolve_timeout(task, st.config)
+    run = asyncio.ensure_future(
+        st.agent_run_fn(
+            _format_task_prompt(task),
+            session_key=f"{_TASK_SESSION}:{task.id}",
+            run_id=run_id,
+        )
+    )
+    st.running[task.id] = run
+    try:
+        await asyncio.wait_for(run, timeout)
+    except TimeoutError:
+        await _handle_attempt_failure(st, task.id, self_did, f"timeout after {timeout:g}s")
+    except asyncio.CancelledError:
+        if task.id in st.cancelling:
+            st.cancelling.discard(task.id)
+            await st.store.dead_letter(
+                task.id, actor_did=self_did, resolution="cancelled", last_error="cancelled"
+            )
+        else:
+            raise  # genuine shutdown — never swallow the loop's own cancellation
+    except Exception as exc:  # reason: any run failure feeds the retry engine (LLM10/ASI08)
+        await _handle_attempt_failure(st, task.id, self_did, f"{type(exc).__name__}: {exc}")
+    finally:
+        st.running.pop(task.id, None)
+
+
+async def _handle_attempt_failure(
+    st: _runtime._State, task_id: str, self_did: str, error: str
+) -> None:
+    """Retry (with exponential backoff) or dead-letter a failed attempt (P1).
+
+    ``attempts`` was incremented at start, so it is the count of tries so far.
+    Below the ceiling -> requeue to ``todo`` gated by an exponential backoff;
+    at/above it -> terminal ``failed`` (dead letter). Both writes are status-
+    conditional in the store, so a concurrent stuck-reclaim can't double-apply.
+    """
+    current = await st.store.get(task_id)
+    if current is None:
+        return
+    error = sanitize_text(error, max_length=500)
+    if current.attempts >= current.max_attempts:
+        await st.store.dead_letter(
+            task_id,
+            actor_did=self_did,
+            resolution=f"failed after {current.attempts} attempt(s) — retries exhausted",
+            last_error=error,
+        )
+        return
+    backoff = st.config.retry_backoff_seconds * (2 ** (current.attempts - 1))
+    next_at = (datetime.now(UTC) + timedelta(seconds=backoff)).isoformat()
+    await st.store.requeue(
+        task_id, actor_did=self_did, last_error=error, next_attempt_at=next_at
+    )
+
+
+def _is_stale(task: Task, now: datetime, threshold: float) -> bool:
+    """True if an in_progress task's run looks dead (no progress past threshold).
+
+    A missing/unparseable ``started_at`` on an in_progress task is itself
+    anomalous, so treat it as stale (reclaim it).
+    """
+    if not task.started_at:
+        return True
+    try:
+        started = datetime.fromisoformat(task.started_at)
+    except ValueError:
+        return True
+    return (now - started).total_seconds() >= threshold
+
+
+async def _reliability_tick() -> None:
+    """One cancel + stuck-reclaim pass over the agent's in_progress tasks (P1).
+
+    For each in_progress task this agent owns: an operator cancel request stops
+    the live run (or dead-letters it directly if no run is live); otherwise, a
+    task with no live run is reclaimed as a failed attempt — immediately on the
+    first pass (pre-restart orphans) or once past ``stuck_reclaim_seconds``
+    thereafter (a run that ended without completing). A live, healthy run is
+    left untouched.
+    """
+    st = await _state()
+    if not st.config.dispatch:
+        return
+    self_did = st.identity.did
+    in_progress = await st.store.list(status="in_progress", owner_did=self_did)
+    now = datetime.now(UTC)
+    first_pass = not st.reclaim_done
+    for task in in_progress:
+        if task.cancel_requested:
+            await _cancel_running(st, task, self_did)
+        elif _should_reclaim(st, task, now, first_pass):
+            await _handle_attempt_failure(
+                st, task.id, self_did, "stuck: no active run — reclaimed"
+            )
+    st.reclaim_done = True
+
+
+def _should_reclaim(st: _runtime._State, task: Task, now: datetime, first_pass: bool) -> bool:
+    """Whether an in_progress task with no live run should be reclaimed now.
+
+    Never reclaim a task with a live run. On the first pass reclaim any orphan
+    (a pre-restart in_progress task); thereafter only once it is past the
+    staleness threshold (a run that ended without ever completing).
+    """
+    if task.id in st.running:
+        return False
+    return first_pass or _is_stale(task, now, st.config.stuck_reclaim_seconds)
+
+
+async def _cancel_running(st: _runtime._State, task: Task, self_did: str) -> None:
+    """Honor a cancel request: stop the live run, or dead-letter if none.
+
+    A live run is cancelled via its tracked handle; ``st.cancelling`` marks the
+    stop as deliberate so :func:`_run_task` finalizes it as cancelled (not a
+    shutdown re-raise). With no live run (e.g. the process restarted after the
+    request), finalize the task directly.
+    """
+    run = st.running.get(task.id)
+    if run is not None:
+        st.cancelling.add(task.id)
+        run.cancel()
+        return
+    await st.store.dead_letter(
+        task.id, actor_did=self_did, resolution="cancelled", last_error="cancelled"
     )
 
 
@@ -493,6 +661,18 @@ async def tasks_dispatch_loop(_ctx: Any) -> None:
     await _dispatch_tick()
 
 
+@background_task(name="tasks_reliability_watcher", interval=_RELIABILITY_TICK)
+async def tasks_reliability_watcher(_ctx: Any) -> None:
+    """Background loop: honor operator cancels and reclaim stuck runs.
+
+    Runs concurrently with (and faster than) the dispatch loop so an operator
+    "stop" reaches a run while the dispatch tick is still awaiting it, and so a
+    task orphaned in_progress by a crash/restart is recovered rather than
+    stranded. Gated by ``config.dispatch`` inside :func:`_reliability_tick`.
+    """
+    await _reliability_tick()
+
+
 __all__ = [
     "assign_task",
     "claim_task",
@@ -505,5 +685,6 @@ __all__ = [
     "start_task",
     "tasks_bind_run_fn",
     "tasks_dispatch_loop",
+    "tasks_reliability_watcher",
     "update_task",
 ]

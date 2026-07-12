@@ -33,3 +33,23 @@ class TasksConfig(ModuleConfig):
     # assign_task/create_task's @handle resolution degrades with a clear
     # error instead of silently building a useless, disconnected registry.
     nats_url: str = ""
+
+    # --- Lifecycle reliability engine (SPEC-056 Phase 1) --------------------
+    # Retry ceiling stamped onto tasks this agent creates; the per-task
+    # ``max_attempts`` field is authoritative once set. A run that fails/errors/
+    # times out is retried until this many attempts, then dead-lettered
+    # (terminal ``failed``). 1 disables retry (single attempt).
+    default_max_attempts: int = 3
+    # Base backoff (seconds) before a retried task is re-dispatched; grows
+    # exponentially per attempt (base * 2**(attempts-1)) so a flapping task
+    # doesn't hot-loop (ASI08 cascade containment).
+    retry_backoff_seconds: float = 30.0
+    # Wall-clock cap (seconds) on a single dispatched run; 0 = unbounded. The
+    # per-task ``timeout_seconds`` field overrides this. A timeout is treated as
+    # a failed attempt (LLM10 unbounded-consumption guard).
+    task_timeout_seconds: float = 0.0
+    # An ``in_progress`` task with no live run (e.g. the agent crashed or was
+    # restarted mid-run) older than this is reclaimed as a failed attempt so it
+    # re-dispatches instead of being orphaned forever. Startup reclaim ignores
+    # this threshold (any orphan from before the restart is reclaimed at once).
+    stuck_reclaim_seconds: float = 300.0
