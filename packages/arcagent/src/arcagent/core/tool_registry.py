@@ -36,8 +36,10 @@ from arcagent.core.config import ToolsConfig
 from arcagent.core.errors import ToolError, ToolVetoedError
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal.capability_ledger import (
+    EXTERNAL_COMMS,
     SessionCapabilityLedger,
     current_session_id,
+    legs_for_call,
     legs_for_tags,
 )
 from arcagent.core.telemetry import AgentTelemetry
@@ -389,8 +391,11 @@ class ToolRegistry:
         provider_label = self._provider_label
         resource_label = self._resource_classifications.get(tool.name)
         classification_strict = self._classification_strict
-        # Session-scoped trifecta legs this tool contributes (deployment map).
-        tool_legs = legs_for_tags(tool.capability_tags)
+        # Session-scoped trifecta legs this tool DECLARES (deployment map). The
+        # legs actually charged to a call are resolved per-dispatch below, so a
+        # destination-scoped egress tool (e.g. an owner-directed messaging_send)
+        # can drop a leg the raw tags would otherwise contribute.
+        declared_legs = legs_for_tags(tool.capability_tags)
 
         async def wrapped_execute(
             args: dict[str, Any] | None = None,
@@ -425,6 +430,23 @@ class ToolRegistry:
             # caught by the pipeline and returned as DENY (fail-closed).
             if pipeline is not None:
                 session_id = current_session_id()
+                # Destination-aware trifecta legs: an owner-directed send (to the
+                # operator's own paired channel) is a trusted sink, not exfil, so
+                # it drops the external_comms leg — the forbidden-composition gate
+                # must not fire on the agent delivering a result to its own owner
+                # (ASI09). Any non-owner recipient keeps the leg and still trips.
+                call_legs = legs_for_call(tool.name, tool.capability_tags, args)
+                if EXTERNAL_COMMS in declared_legs and EXTERNAL_COMMS not in call_legs:
+                    telemetry.audit_event(
+                        "policy.owner_channel_exempt",
+                        {
+                            "tool": tool.name,
+                            "actor_did": agent_did,
+                            "tier": tier,
+                            "reason": "owner-directed egress is a trusted sink",
+                            "destination": args.get("to"),
+                        },
+                    )
                 # SPEC-038 REQ-004/010 — bridge the live arcrun usage onto the
                 # ProviderLayer seam with a TRUSTED config-sourced provider label
                 # (never response.model). Lights up SPEC-034's inert layer.
@@ -441,7 +463,7 @@ class ToolRegistry:
                     agent_did=agent_did,
                     session_id=session_id,
                     classification=resource_label or "unclassified",
-                    capability_tags=tool_legs,
+                    capability_tags=call_legs,
                 )
                 # Sign the call so the pipeline's IdentityLayer can authenticate
                 # it (proves this dispatch came from the key-holding agent, not
@@ -473,15 +495,15 @@ class ToolRegistry:
                     decision = await pipeline.evaluate(call, ctx_pol)
                     denied = decision.is_deny()
                     if not denied:
-                        self._record_admission(ledger, session_id, tool_legs, clearance_ctx)
+                        self._record_admission(ledger, session_id, call_legs, clearance_ctx)
                 if denied:
                     # Human approval awaits OUTSIDE the lock (REQ-032): a granted
                     # one-shot re-evaluates and, on ALLOW, records the legs.
                     call = await self._resolve_forbidden_composition(
-                        call, ctx_pol, decision, human_gate, tool_legs, accumulated
+                        call, ctx_pol, decision, human_gate, call_legs, accumulated
                     )
                     async with lock:
-                        self._record_admission(ledger, session_id, tool_legs, clearance_ctx)
+                        self._record_admission(ledger, session_id, call_legs, clearance_ctx)
 
             # 2. Pre-tool event (may veto)
             ctx = await bus.emit(

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from arctrust.classification import Classification
 
@@ -65,6 +65,68 @@ def legs_for_tags(capability_tags: Iterable[str]) -> frozenset[str]:
     for tag in capability_tags:
         legs |= TAG_TO_LEGS.get(tag, frozenset())
     return frozenset(legs)
+
+
+# The owner's own paired channel — a TRUSTED delivery sink. The lethal trifecta
+# guards against exfiltration to an ATTACKER (ASI09); delivering a result to the
+# operator themselves is not exfiltration, so an owner-directed send does NOT
+# produce the external_comms leg. Any channel connected to the owner may deliver
+# back to the owner. Narrow by design: only this explicit alias is trusted —
+# never a broader "any user://" match — so a third-party recipient can never be
+# smuggled past the gate.
+OWNER_CHANNEL = "user://operator"
+
+# Egress tools that ALWAYS deliver to the owner's own connected channel: the
+# whole tool is an owner sink — it takes only a message body and routes to the
+# operator's paired DM, with no reachable third-party destination. Their
+# external_comms leg is dropped unconditionally (Telegram + Slack notify).
+_OWNER_DIRECTED_EGRESS: frozenset[str] = frozenset({"notify_user", "slack_notify_user"})
+
+# Egress tools whose external_comms leg is destination-scoped, mapped to the
+# argument that names the recipient(s). The leg drops only when EVERY recipient
+# is the owner channel; any non-owner (or mixed) recipient keeps it so the
+# forbidden-composition rule still fires on third-party destinations.
+_OWNER_SCOPED_EGRESS: dict[str, str] = {"messaging_send": "to"}
+
+
+def _targets_only_owner(recipients: object) -> bool:
+    """True iff ``recipients`` names at least one target and ALL are the owner."""
+    if not isinstance(recipients, str):
+        return False
+    targets = [t.strip() for t in recipients.split(",") if t.strip()]
+    return bool(targets) and all(t == OWNER_CHANNEL for t in targets)
+
+
+def _is_owner_directed(tool_name: str, arguments: Mapping[str, object]) -> bool:
+    """True iff THIS call delivers only to the owner's own connected channel.
+
+    Two forms: an unconditionally owner-directed tool (the whole channel is the
+    owner's), or a destination-scoped tool whose every recipient is the owner.
+    """
+    if tool_name in _OWNER_DIRECTED_EGRESS:
+        return True
+    dest_arg = _OWNER_SCOPED_EGRESS.get(tool_name)
+    return dest_arg is not None and _targets_only_owner(arguments.get(dest_arg))
+
+
+def legs_for_call(
+    tool_name: str,
+    capability_tags: Iterable[str],
+    arguments: Mapping[str, object],
+) -> frozenset[str]:
+    """Resolve THIS call's trifecta legs, honoring the owner-channel exemption.
+
+    Identical to :func:`legs_for_tags` except that an egress delivering ONLY to
+    the owner's own connected channel does not contribute the ``external_comms``
+    leg — the operator's own sink is trusted, not an exfiltration path (ASI09).
+    Any non-owner recipient keeps the leg, so the forbidden-composition rule
+    still fires on third-party destinations. Destination-blind tools resolve
+    exactly as before.
+    """
+    legs = legs_for_tags(capability_tags)
+    if EXTERNAL_COMMS in legs and _is_owner_directed(tool_name, arguments):
+        return legs - {EXTERNAL_COMMS}
+    return legs
 
 
 # The session id of the running dispatch. A ContextVar (not a plain global) so
@@ -149,12 +211,14 @@ class SessionCapabilityLedger:
 __all__ = [
     "EXTERNAL_COMMS",
     "LETHAL_TRIFECTA",
+    "OWNER_CHANNEL",
     "PRIVATE_DATA",
     "TAG_TO_LEGS",
     "UNTRUSTED_INPUT",
     "SessionCapabilityLedger",
     "bind_session_id",
     "current_session_id",
+    "legs_for_call",
     "legs_for_tags",
     "reset_session_id",
 ]
