@@ -8,9 +8,10 @@ lifecycle engine here (unlike the scheduler template's ``SchedulerEngine``)
 Audit is emitted CENTRALLY by the tool registry, keyed on each tool's
 declared ``classification`` (SDD §3, deepen correction) — tools declare
 classification, they never call ``arctrust.audit.emit`` themselves. Free
-text (title/description/resolution) is sanitized via
-:func:`arcagent.modules.tasks.models.validate_task_text` before it ever
-reaches the store (LLM01/ASI06). Owner-only mutation is gated by
+text (title/description) is sanitized by the arcstore ``Task`` model's own
+field validator at construction (LLM01/ASI06), so an injection payload
+raises ``ValidationError`` (a ``ValueError`` subclass) the tool catches and
+returns as a clean ``{"error"}``. Owner-only mutation is gated by
 :func:`_require_owner`, checked against the runtime state's ``identity``
 before every state transition (create is exempt — there is no prior owner
 to protect; assign is exempt — reassignment is not the owner's call, SDD
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import uuid
 from typing import Any
 
@@ -32,8 +34,13 @@ from arcteam.registry import resolve
 from arcteam.types import Message, MsgType
 
 from arcagent.modules.tasks import _runtime
-from arcagent.modules.tasks.models import Task, validate_task_text
+from arcagent.modules.tasks.models import Task
 from arcagent.tools._decorator import tool
+
+# A SQLite lock-timeout under shared-db contention surfaces as
+# ``sqlite3.OperationalError`` from deep in the store; catch it alongside the
+# validation errors so a tool degrades to a clean ``{"error"}`` (REL-F3b).
+_TOOL_ERRORS = (ValueError, TypeError, sqlite3.OperationalError)
 
 _logger = logging.getLogger("arcagent.modules.tasks.capabilities")
 
@@ -98,9 +105,6 @@ async def create_task(
 ) -> str:
     st = await _state()
     try:
-        validate_task_text(title)
-        if description:
-            validate_task_text(description)
         owner_did = await _resolve_owner(owner, st)
         task = Task(
             id=_new_task_id(),
@@ -113,7 +117,7 @@ async def create_task(
         )
         created = await st.store.create(task)
         return str(created.model_dump_json())
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -140,15 +144,11 @@ async def update_task(
             "priority": priority,
         }
         updates = {k: v for k, v in candidates.items() if v is not None}
-        if "title" in updates:
-            validate_task_text(updates["title"])
-        if "description" in updates:
-            validate_task_text(updates["description"])
         updated = await st.store.update(id, updates, actor_did=st.identity.did)
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -168,7 +168,7 @@ async def start_task(id: str = "") -> str:  # noqa: A002 - matches JSON schema f
         if task is None:
             return json.dumps({"error": f"unable to start task '{id}' ({reason})"})
         return json.dumps({"reason": reason, "task": task.model_dump(mode="json")})
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -192,8 +192,6 @@ async def complete_task(
             return json.dumps(
                 {"error": f"Task '{id}' is blocked by unfinished dependencies"}
             )
-        if resolution:
-            validate_task_text(resolution)
         patch: dict[str, Any] = {"status": "done", "resolution": resolution}
         if output is not None:
             patch["output"] = output
@@ -201,7 +199,7 @@ async def complete_task(
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -220,15 +218,13 @@ async def fail_task(
         if current is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(current, st)
-        if resolution:
-            validate_task_text(resolution)
         updated = await st.store.update(
             id, {"status": "failed", "resolution": resolution}, actor_did=st.identity.did
         )
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -251,7 +247,7 @@ async def assign_task(
             return json.dumps({"error": f"unable to assign task '{id}'"})
         await _notify_assignee(st, to_handle, updated)
         return str(updated.model_dump_json())
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -267,11 +263,15 @@ async def _notify_assignee(st: _runtime._State, to_handle: str, task: Task) -> N
     if st.messenger is None:
         return
     handle = to_handle.removeprefix("@")
+    # Carry the task's classification onto the envelope (SEC-F3) so the
+    # messenger's no-write-down check engages — an UNCLASSIFIED default would
+    # leave it inert regardless of how sensitive the task is (ASI07).
     message = Message(
         sender=st.identity.did,
         to=[f"agent://{handle}"],
         msg_type=MsgType.TASK_ASSIGNED,
         body=f"@{handle} task_id={task.id} — {task.title}",
+        classification=task.classification,
     )
     try:
         await st.messenger.send(message)
@@ -291,7 +291,7 @@ async def claim_task() -> str:
         return json.dumps(
             {"reason": reason, "task": task.model_dump(mode="json") if task else None}
         )
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -303,8 +303,11 @@ async def claim_task() -> str:
 async def list_tasks(scope: str = "team", status: str | None = None) -> str:
     st = await _state()
     owner_did = st.identity.did if scope == "self" else None
-    tasks = await st.store.list(status=status, owner_did=owner_did)
-    return json.dumps([t.model_dump(mode="json") for t in tasks])
+    try:
+        tasks = await st.store.list(status=status, owner_did=owner_did)
+        return json.dumps([t.model_dump(mode="json") for t in tasks])
+    except _TOOL_ERRORS as exc:
+        return json.dumps({"error": str(exc)})
 
 
 @tool(
@@ -322,20 +325,16 @@ async def decompose_task(
         if parent is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(parent, st)
-        # Validate + build ALL subtasks before persisting any, so a bad title in
-        # a later subtask can't leave earlier ones orphaned (no partial write).
+        # Build ALL subtasks before persisting any, so a bad title in a later
+        # subtask (rejected by the Task model's field validator on construction)
+        # can't leave earlier ones orphaned (no partial write).
         subs: list[Task] = []
         for spec in subtasks or []:
-            sub_title = spec.get("title", "")
-            validate_task_text(sub_title)
-            sub_description = spec.get("description", "")
-            if sub_description:
-                validate_task_text(sub_description)
             subs.append(
                 Task(
                     id=_new_task_id(),
-                    title=sub_title,
-                    description=sub_description,
+                    title=spec.get("title", ""),
+                    description=spec.get("description", ""),
                     priority=spec.get("priority", "medium"),
                     owner_did=st.identity.did,
                     creator_did=st.identity.did,
@@ -355,7 +354,7 @@ async def decompose_task(
                 "subtasks": [s.model_dump(mode="json") for s in created_subs],
             }
         )
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 
@@ -378,7 +377,7 @@ async def set_task_output(
         if updated is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         return str(updated.model_dump_json())
-    except (ValueError, TypeError) as exc:
+    except _TOOL_ERRORS as exc:
         return json.dumps({"error": str(exc)})
 
 

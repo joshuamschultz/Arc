@@ -208,6 +208,16 @@ class TaskStore:
         return [Task(**row) for row in rows]
 
     async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
+        # Sanitize free text on the WRITE path too (SEC-F2/ARCH-4): the model's
+        # field validator only fires on construction (create) and read-back —
+        # a patch merges raw, so an injection title/description/resolution would
+        # otherwise persist unsanitized (and a poisoned title would then brick
+        # every subsequent ``Task(**raw)`` read). Validating here keeps the
+        # arcstore boundary the single sanitization point for every caller.
+        for key in ("title", "description", "resolution"):
+            value = patch.get(key)
+            if isinstance(value, str):
+                _validate_free_text(value)
         # Atomic server-side merge (REL-F2): a read-merge-write here lets two
         # concurrent updates of disjoint fields clobber each other (last-writer
         # drops the loser's field). mutable_merge applies the patch inside one
@@ -218,6 +228,38 @@ class TaskStore:
         if not merged:
             return None
         return await self.get(task_id)
+
+    async def edit(
+        self, task_id: str, patch: dict[str, Any], *, actor_did: str
+    ) -> tuple[Task | None, str]:
+        """Edit an at-rest task with a status-conditional write (REL-F1/SEC-F4).
+
+        Refuses an ``in_progress`` task (edit is at-rest only, NFR-4) and makes
+        the write conditional on the status not having changed since the read —
+        so a task an owner races into ``in_progress`` between the check and the
+        write is rejected, never silently clobbered by ``update``'s
+        unconditional merge. Mirrors ``assign``'s snapshot-in-WHERE guard.
+
+        Returns ``(task, "applied")`` on success, else ``(None, reason)`` where
+        ``reason`` is ``"not_found"``, ``"in_progress"``, or ``"conflict"`` (the
+        row raced out from under the read).
+        """
+        current = await self.get(task_id)
+        if current is None:
+            return None, "not_found"
+        if current.status == "in_progress":
+            return None, "in_progress"
+        won = await self._backend.update_if(
+            self._COLLECTION,
+            task_id,
+            patch,
+            where={"status": current.status},
+            actor_did=actor_did,
+            sink=self._sink,
+        )
+        if not won:
+            return None, "conflict"
+        return await self.get(task_id), "applied"
 
     async def claim_next(self, agent_did: str) -> tuple[Task | None, str]:
         active = await self._backend.mutable_query(

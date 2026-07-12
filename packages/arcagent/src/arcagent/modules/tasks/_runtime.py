@@ -25,8 +25,9 @@ injected).
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +47,11 @@ class _State:
     workspace: Path
     telemetry: Any
     identity: AgentIdentity
+    # The config-resolved OPERATOR signer (audit authority) — signs the live
+    # messenger's ``message.sent`` WORM audit chain (SEC-F1), never the agent
+    # DID seed, never an ephemeral key. None only in test paths that inject a
+    # ready-made registry/messenger and never take the live-build path.
+    operator_signer: Any = None
     # arcteam/arcstore service objects — injectable for tests via configure(),
     # otherwise built lazily by ensure_store() (SDD §3). Typed Any, mirroring
     # messaging's _runtime: no hard import-time dependency on the optional
@@ -62,6 +68,10 @@ class _State:
     # None means "not built yet"; a served agent with no ``nats_url`` never
     # gets one (assign_task then skips notify — no live inbox to deliver to).
     messenger: Any = None
+    # Serialises the lazy first-use build in ``ensure_store`` so two concurrent
+    # first tool calls can't both open the backend + a live NATS connection
+    # (REL-F4 check-then-act race -> one orphaned connection).
+    init_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -75,12 +85,19 @@ def configure(
     telemetry: Any = None,
     workspace: Path = Path("."),
     identity: AgentIdentity,
+    operator_signer: Any = None,
     registry: Any = None,
     messenger: Any = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task. Called once at agent startup.
 
     Synchronous by contract (see module docstring) — no I/O happens here.
+
+    ``operator_signer`` (arctrust ``Signer``) is the deployment operator
+    authority the live messenger's WORM audit chain is signed with (SEC-F1).
+    It is threaded only because ``tasks`` is on
+    ``core.agent_lifecycle._WORM_SINK_MODULE_NAMES``; it is stored, not used,
+    until :func:`ensure_store` takes the live-build path.
     """
     cfg = config if isinstance(config, TasksConfig) else TasksConfig(**(config or {}))
     ws = workspace.resolve()
@@ -90,6 +107,7 @@ def configure(
             workspace=ws,
             telemetry=telemetry,
             identity=identity,
+            operator_signer=operator_signer,
             registry=registry,
             messenger=messenger,
         )
@@ -102,44 +120,57 @@ async def ensure_store() -> None:
     Mirrors messaging's ``ensure_live_backend``. Runs at most once per agent
     — every tool awaits this before touching ``st.store``/``st.registry`` so
     the first tool call after a real (sync, un-awaited) ``configure()`` still
-    ends up with a working store.
+    ends up with a working store. The build is serialised under ``init_lock``
+    so two concurrent first calls can't both open the backend and a live NATS
+    connection (REL-F4); the re-check inside the lock is the build-once guard.
     """
     st = state()
     if st.store is not None:
         return
-    st.store = await open_store(st.config.data_dir)
-    if st.registry is None and st.config.nats_url:
-        st.registry, st.messenger = await _build_live_services(st.config.nats_url, st.identity)
+    async with st.init_lock:
+        if st.store is not None:
+            return
+        store = await open_store(st.config.data_dir)
+        if st.registry is None and st.config.nats_url:
+            if st.operator_signer is None:
+                raise RuntimeError(
+                    "tasks module cannot build its live messenger without the "
+                    "operator signer to sign the message.sent WORM audit chain "
+                    "(SEC-F1) — refusing to fall back to an ephemeral key "
+                    "(fail-closed)"
+                )
+            st.registry, st.messenger = await _build_live_services(
+                st.config.nats_url, st.identity, st.operator_signer
+            )
+        # Publish the store last: no tool observes a set ``store`` until the
+        # live services (when built) are also in place.
+        st.store = store
 
 
 async def _build_live_services(
-    nats_url: str, identity: AgentIdentity
+    nats_url: str, identity: AgentIdentity, operator_signer: Any
 ) -> tuple[EntityRegistry, Any]:
     """Build a read-only ``EntityRegistry`` and a sending ``MessagingService``.
 
     Both share the one NATS backend connection (assign_task's ``@handle``
     -> DID resolve on the registry, and its ``TASK_ASSIGNED`` notify on the
-    messenger, must see the same entity/stream state). Only
-    ``resolve()``/``list_entities()`` (read paths) are ever called through
-    the registry — which never touch the audit log (only
-    ``register``/``update`` do, per ``arcteam.registry.EntityRegistry``). An
-    ephemeral, never-signing operator key therefore satisfies
-    ``AuditLogger``'s constructor without holding real audit authority;
-    nothing is ever written through the registry, so there is no
-    audited-subject-is-its-own-authority concern (SPEC-053) to inherit
-    ``agent._operator_signer`` for. The messenger signs outbound
-    notifications with the agent's own identity (REQ-030), mirroring the
-    messaging module's ``_bootstrap.message_signer``.
+    messenger, must see the same entity/stream state). The messenger writes a
+    ``message.sent`` WORM audit record on every send, so its ``AuditLogger``
+    MUST be signed by the deployment ``operator_signer`` — the real operator
+    authority, never an ephemeral key — or the record is repudiable and no
+    verifier can validate the chain (SEC-F1, AU-9/10). The messenger signs
+    outbound notifications with the agent's own identity (REQ-030), mirroring
+    the messaging module's ``_bootstrap.message_signer``.
     """
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
-    from arctrust import OperatorKey
 
     from arcagent.modules.messaging._bootstrap import make_backend, message_signer
 
     backend = await make_backend(nats_url)
-    audit = AuditLogger(backend, OperatorKey.generate().into_signer())
+    audit = AuditLogger(backend, operator_signer)
+    await audit.initialize()
     registry = EntityRegistry(backend, audit)
     messenger = MessagingService(backend, registry, audit, signer=message_signer(identity))
     return registry, messenger
