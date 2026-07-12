@@ -129,6 +129,13 @@ def _task_handler(args: list[str]) -> None:
     task_handler(args)
 
 
+def _memory_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.memory import memory_handler
+
+    memory_handler(args)
+
+
 def _blueprint_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.blueprint import blueprint_handler
@@ -510,6 +517,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_task_handler,
+    ),
+    CommandDef(
+        name="memory",
+        description="Agent memory maintenance — dedup pre-canonicalization card duplicates",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_memory_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.
