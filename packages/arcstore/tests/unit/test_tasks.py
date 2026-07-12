@@ -252,6 +252,27 @@ class TestClaimNext:
         finally:
             await be.stop()
 
+    async def test_claims_unowned_backlog_task(self, tmp_path: Path) -> None:
+        # An unowned create() lands in backlog; a self-claim must grab it
+        # directly (the team-backlog "grab" flow), not only triaged todo tasks.
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            created = await store.create(
+                Task(id=_new_id(), title="Unowned backlog", creator_did=_CREATOR)
+            )
+            assert created.status == "backlog"
+            task, reason = await store.claim_next(_AGENT_A)
+            assert reason == "assigned"
+            assert task is not None
+            assert task.id == created.id
+            assert task.owner_did == _AGENT_A
+            assert task.status == "in_progress"
+        finally:
+            await be.stop()
+
     async def test_claims_unowned_todo_task_and_sets_owner_in_progress(
         self, tmp_path: Path
     ) -> None:

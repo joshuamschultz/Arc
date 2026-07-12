@@ -157,12 +157,15 @@ class TaskStore:
         if active:
             return Task(**active[0]), "continue_current"
 
-        candidates = [
-            Task(**row)
-            for row in await self._backend.mutable_query(
-                self._COLLECTION, where={"status": "todo", "owner_did": None}
+        # The unowned pool is both `backlog` (freshly created, unassigned) and
+        # `todo` (triaged) — a self-claim grabs from either, so the team backlog
+        # is directly grabbable (no separate promotion step).
+        candidates: list[Task] = []
+        for status in ("backlog", "todo"):
+            rows = await self._backend.mutable_query(
+                self._COLLECTION, where={"status": status, "owner_did": None}
             )
-        ]
+            candidates.extend(Task(**row) for row in rows)
         claimable = [t for t in candidates if await self._deps_met(t)]
         claimable.sort(key=lambda t: _PRIORITY_ORDER[t.priority])
 
@@ -170,12 +173,14 @@ class TaskStore:
             # update_if re-checks owner/status inside SQLite's own atomic
             # step, so it — not a read here followed by a write — is the gate
             # that makes two concurrent claimers resolve to exactly one
-            # winner; losing just means try the next candidate.
+            # winner; losing just means try the next candidate. The where uses
+            # the candidate's own status so a backlog and a todo task are both
+            # claimable atomically.
             won = await self._backend.update_if(
                 self._COLLECTION,
                 candidate.id,
                 {"owner_did": agent_did, "status": "in_progress"},
-                where={"owner_did": None, "status": "todo"},
+                where={"owner_did": None, "status": candidate.status},
                 actor_did=agent_did,
                 sink=self._sink,
             )
