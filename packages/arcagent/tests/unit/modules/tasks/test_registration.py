@@ -70,3 +70,22 @@ class TestLoaderRegistration:
             entry = await reg.get_tool(tool_name)
             assert entry is not None
             assert entry.meta.classification == "state_modifying"
+
+    async def test_dispatch_loop_and_bind_hook_register(self) -> None:
+        # Phase D producers must be discovered by the real loader — the
+        # dispatch background task and the agent:ready run-fn bind hook — or
+        # assigned tasks silently never run (the producers-unwired failure mode).
+        from arcagent.modules.tasks import capabilities as tasks_caps
+
+        module_dir = Path(tasks_caps.__file__).parent
+        reg = CapabilityRegistry()
+        loader = CapabilityLoader(scan_roots=[("tasks", module_dir)], registry=reg)
+        await loader.scan_and_register()
+
+        task_entry = await reg.get_task("tasks_dispatch_loop")
+        assert task_entry is not None, "dispatch loop not registered by loader"
+
+        ready_hooks = await reg.get_hooks("agent:ready")
+        assert any(
+            h.meta.name == "tasks_bind_run_fn" for h in ready_hooks
+        ), "agent:ready run-fn bind hook not registered by loader"

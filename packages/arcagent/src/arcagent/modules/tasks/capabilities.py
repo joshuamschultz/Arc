@@ -2,8 +2,17 @@
 
 Ten module-level ``@tool`` functions expose the mission-control task
 surface over the arcstore-backed ``TaskStore`` (Phase A). There is no
-lifecycle engine here (unlike the scheduler template's ``SchedulerEngine``)
-— tasks have no background loop, so there is no ``@capability`` class.
+``@capability`` class (unlike the scheduler template's ``SchedulerEngine``).
+
+Phase D adds an opt-in dispatch loop (``@background_task``): when
+``config.dispatch`` is on, each tick pulls the agent's highest-priority
+ready ``todo`` task — whether a teammate's ``assign_task`` or an arcui board
+assignment put it there — starts it, and wakes a real agent run via the
+``agent_run_fn`` bound at ``agent:ready`` (the same seam the messaging
+module uses). Reacting to the durable arcstore owner write is what makes the
+two assignment surfaces uniform: arcui runs in a separate process and cannot
+sign an inter-agent envelope, so a poll of the shared store — not a pushed
+message — is the only mechanism that covers a board assignment.
 
 Audit is emitted CENTRALLY by the tool registry, keyed on each tool's
 declared ``classification`` (SDD §3, deepen correction) — tools declare
@@ -34,8 +43,9 @@ from arcteam.registry import resolve
 from arcteam.types import Message, MsgType
 
 from arcagent.modules.tasks import _runtime
-from arcagent.modules.tasks.models import Task
-from arcagent.tools._decorator import tool
+from arcagent.modules.tasks.models import Priority, Task
+from arcagent.tools._decorator import background_task, hook, tool
+from arcagent.utils.sanitizer import sanitize_text
 
 # A SQLite lock-timeout under shared-db contention surfaces as
 # ``sqlite3.OperationalError`` from deep in the store; catch it alongside the
@@ -381,6 +391,102 @@ async def set_task_output(
         return json.dumps({"error": str(exc)})
 
 
+# ---------------------------------------------------------------------------
+# Dispatch loop (SPEC-056 Phase D) — assigned tasks actually run
+# ---------------------------------------------------------------------------
+
+# Poll cadence for the dispatch loop. A fixed decorator arg (interval cannot
+# read per-agent config at decoration time); the real on/off switch is
+# ``config.dispatch``, checked inside each tick. 15s is responsive enough for
+# an operator assigning work from the board without hammering the shared DB.
+_DISPATCH_TICK = 15.0
+
+# Session key prefix for a dispatched task's run — one transcript per task so
+# the board and the session log line up (``<workspace>/sessions/task:<id>.jsonl``).
+_TASK_SESSION = "task"
+
+# Highest-priority-first ordering (mirrors arcstore's claim order, SDD §2).
+_PRIORITY_RANK: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+def _format_task_prompt(task: Task) -> str:
+    """Render the run prompt handed to the agent for an assigned task.
+
+    Title/description are re-sanitized before prompt interpolation (LLM01/
+    ASI06 defence-in-depth) even though the arcstore ``Task`` validator already
+    scrubbed them at write time — the prompt is an instruction surface.
+    """
+    title = sanitize_text(task.title, max_length=500)
+    lines = [
+        f"You have been assigned task {task.id}.",
+        f"Title: {title}",
+    ]
+    if task.description:
+        lines.append(f"Details: {sanitize_text(task.description, max_length=4000)}")
+    lines.append(f"Priority: {task.priority}")
+    lines.append(
+        "Do the work now. When finished, call complete_task with a short "
+        "resolution — or fail_task if you cannot complete it. Work silently; "
+        "only notify the user for a meaningful result, a question, or a blocker."
+    )
+    return "\n".join(lines)
+
+
+async def _dispatch_tick() -> None:
+    """Run one poll-and-dispatch tick. Factored out so it is directly testable.
+
+    No-op unless dispatch is enabled AND a run callback is bound. Respects the
+    one-``in_progress``-task cap (never stacks a second run) and skips tasks
+    whose dependencies are unmet. Picks the highest-priority ready task, starts
+    it (todo -> in_progress), and invokes the agent's run callback for it.
+    """
+    st = await _state()
+    if not st.config.dispatch or st.agent_run_fn is None:
+        return
+    self_did = st.identity.did
+    # Cap guard: if a task is already running for this agent, leave it be.
+    if await st.store.list(status="in_progress", owner_did=self_did):
+        return
+    todos = await st.store.list(status="todo", owner_did=self_did)
+    ready = [t for t in todos if await st.store.deps_met(t)]
+    if not ready:
+        return
+    ready.sort(key=lambda t: (_PRIORITY_RANK.get(t.priority, 99), t.created_at or ""))
+    picked = ready[0]
+    started, _reason = await st.store.start_task(picked.id, self_did)
+    if started is None or started.status != "in_progress":
+        # Lost the atomic claim (a concurrent starter won) — try again next tick.
+        return
+    await st.agent_run_fn(
+        _format_task_prompt(started), session_key=f"{_TASK_SESSION}:{started.id}"
+    )
+
+
+@hook(event="agent:ready", priority=100)
+async def tasks_bind_run_fn(ctx: Any) -> None:
+    """Bind the agent's run callback for the dispatch loop (mirrors messaging).
+
+    ``run_fn`` (``ArcAgent.run_collected``) is delivered on the ``agent:ready``
+    payload; the dispatch loop needs it to actually run an assigned task.
+    """
+    data = ctx.data if hasattr(ctx, "data") else {}
+    run_fn = data.get("run_fn")
+    if run_fn is not None:
+        _runtime.state().agent_run_fn = run_fn
+
+
+@background_task(name="tasks_dispatch_loop", interval=_DISPATCH_TICK)
+async def tasks_dispatch_loop(_ctx: Any) -> None:
+    """Background loop: pull and run the agent's ready assigned tasks.
+
+    Gated by ``config.dispatch`` inside :func:`_dispatch_tick`. The awaited run
+    inside each tick keeps dispatch serial — the loop does not tick again until
+    the current task's run returns — so the in-progress cap holds without extra
+    locking.
+    """
+    await _dispatch_tick()
+
+
 __all__ = [
     "assign_task",
     "claim_task",
@@ -391,5 +497,7 @@ __all__ = [
     "list_tasks",
     "set_task_output",
     "start_task",
+    "tasks_bind_run_fn",
+    "tasks_dispatch_loop",
     "update_task",
 ]

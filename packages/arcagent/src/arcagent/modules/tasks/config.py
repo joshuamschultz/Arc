@@ -18,6 +18,11 @@ class TasksConfig(ModuleConfig):
     # Config-level enable mirrors the module-config convention (messaging et al.);
     # the load gate is ModuleEntry.enabled in the [modules.tasks] table.
     enabled: bool = False
+    # Autonomous execution toggle (SPEC-056 Phase D). Off by default —
+    # auto-running assigned work is agency the operator must opt into
+    # explicitly (ASI01/LLM06), never on by mere module presence. When true,
+    # the dispatch loop starts the agent's ready, owned tasks and runs them.
+    dispatch: bool = False
     # Forwarded to ``arcstore.config.resolve_data_dir`` — empty string defers
     # to that function's own env > default precedence (SPEC-026 §13.2) so
     # this module and arcui always agree on which SQLite file is the durable

@@ -68,6 +68,11 @@ class _State:
     # None means "not built yet"; a served agent with no ``nats_url`` never
     # gets one (assign_task then skips notify — no live inbox to deliver to).
     messenger: Any = None
+    # The agent's own run callback (``ArcAgent.run_collected``), bound at the
+    # ``agent:ready`` event — the SAME seam the messaging module uses to wake an
+    # idle agent. The dispatch loop calls it to actually run an assigned task.
+    # None until agent:ready fires (or in test paths that never dispatch).
+    agent_run_fn: Any = None
     # Serialises the lazy first-use build in ``ensure_store`` so two concurrent
     # first tool calls can't both open the backend + a live NATS connection
     # (REL-F4 check-then-act race -> one orphaned connection).
