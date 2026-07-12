@@ -205,6 +205,17 @@ enabled = true
 adapter = "arcskill"
 tier = "personal"
 
+[modules.tasks]
+enabled = true
+
+[modules.tasks.config]
+# Mission Control (SPEC-056): a per-agent task list plus a shared team board.
+# nats_url mirrors messaging so assign_task can resolve @handles over the team
+# bus; empty defers @handle resolution (a solo agent still runs its own list).
+# data_dir empty defers to arcstore.resolve_data_dir so this module and arcui
+# read the SAME durable task directory.
+nats_url = "nats://127.0.0.1:4222"
+
 [arcstore]
 enabled = true
 store_raw_bodies = false

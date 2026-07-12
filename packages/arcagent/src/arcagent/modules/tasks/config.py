@@ -15,6 +15,8 @@ class TasksConfig(ModuleConfig):
     Inherits ``extra="forbid"`` from ModuleConfig for typo detection.
     """
 
+    # Config-level enable mirrors the module-config convention (messaging et al.);
+    # the load gate is ModuleEntry.enabled in the [modules.tasks] table.
     enabled: bool = False
     # Forwarded to ``arcstore.config.resolve_data_dir`` — empty string defers
     # to that function's own env > default precedence (SPEC-026 §13.2) so
