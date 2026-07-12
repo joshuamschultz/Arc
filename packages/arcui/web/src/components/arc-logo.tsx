@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-/** The Arc mark — a sage arc over a dot. */
+/** The Arc mark — an emerald arc over a dot (inherits --primary). */
 export function ArcLogo({ className }: { className?: string }) {
   return (
     <svg

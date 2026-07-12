@@ -85,21 +85,21 @@ export function CreateTaskSheet({
             </div>
           )}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Title</label>
+            <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Title</label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Investigate the outage" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Description (optional)</label>
+            <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Description (optional)</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] hover:border-muted-foreground/40 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Priority</label>
+              <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Priority</label>
               <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -110,7 +110,7 @@ export function CreateTaskSheet({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground">Owner (optional)</label>
+              <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Owner (optional)</label>
               <Select value={ownerDid || '__none__'} onValueChange={(v) => setOwnerDid(v === '__none__' ? '' : v)}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>

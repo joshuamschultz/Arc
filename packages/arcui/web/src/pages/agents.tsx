@@ -19,15 +19,18 @@ import type { Agent } from '@/lib/types'
 function Sparkline({ values }: { values: number[] }) {
   const max = Math.max(1, ...values)
   return (
-    <div className="flex h-7 items-end gap-0.5">
+    <div className="flex h-7 items-end gap-px">
       {values.length === 0 ? (
         <span className="text-[11px] text-muted-foreground">No 24h activity</span>
       ) : (
         values.map((v, i) => (
           <div
             key={i}
-            className="w-full min-w-0.5 flex-1 rounded-sm bg-primary/60"
-            style={{ height: `${Math.max(6, Math.round((v / max) * 100))}%` }}
+            className="w-full min-w-0.5 flex-1 rounded-[1px] bg-gradient-to-t from-primary/25 to-primary"
+            style={{
+              height: `${Math.max(6, Math.round((v / max) * 100))}%`,
+              opacity: 0.45 + 0.55 * (values.length > 1 ? i / (values.length - 1) : 1),
+            }}
           />
         ))
       )}
@@ -39,7 +42,7 @@ function Metric({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="text-center">
       <div className="text-sm font-semibold tabular-nums text-foreground">{value}</div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
     </div>
   )
 }
@@ -69,8 +72,9 @@ function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex cursor-pointer flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left',
-        'shadow-xs transition-colors hover:border-primary/40 hover:bg-muted/30',
+        'group flex cursor-pointer flex-col gap-3 rounded-lg border border-border bg-card p-4 text-left',
+        'shadow-xs transition-all duration-150 hover:-translate-y-px hover:border-primary/40 hover:bg-muted/20',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
       )}
     >
       <div className="flex items-center gap-3">
@@ -81,7 +85,7 @@ function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
           {initials(label)}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold text-foreground">{label}</div>
+          <div className="truncate font-semibold tracking-tight text-foreground">{label}</div>
           {agent.role_label && (
             <div className="truncate text-xs text-muted-foreground">{agent.role_label}</div>
           )}
@@ -90,7 +94,9 @@ function AgentCard({ agent, onOpen }: { agent: Agent; onOpen: () => void }) {
       </div>
 
       {agent.did && (
-        <div className="truncate font-mono text-xs text-muted-foreground">{agent.did}</div>
+        <div className="truncate rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+          {agent.did}
+        </div>
       )}
 
       <div className="flex flex-wrap gap-1.5">

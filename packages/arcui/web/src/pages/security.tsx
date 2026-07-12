@@ -6,7 +6,7 @@ import { DataTable } from '@/components/data-table'
 import { FilterPills } from '@/components/filter-pills'
 import { SeverityBadge } from '@/components/status-badge'
 import { EventDrawer } from '@/components/event-drawer'
-import { QueryState } from '@/components/states'
+import { QueryState, EmptyState } from '@/components/states'
 import { useTeamAudit } from '@/lib/queries'
 import { relativeTime } from '@/lib/format'
 import type { AuditEvent } from '@/lib/types'
@@ -27,7 +27,11 @@ const columns: ColumnDef<AuditEvent, unknown>[] = [
     accessorFn: (r) => r.event_type || r.action,
     id: 'event',
     header: 'Event',
-    cell: (c) => <span className="font-mono text-xs text-foreground">{String(c.getValue() ?? '—')}</span>,
+    cell: (c) => (
+      <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+        {String(c.getValue() ?? '—')}
+      </span>
+    ),
   },
   {
     accessorKey: 'agent_id',
@@ -58,7 +62,7 @@ export function SecurityPage() {
     <div className="flex h-full flex-col">
       <PageHeader title="Security" description="Audit trail, control actions, and policy denials." />
       <div className="flex-1 space-y-5 overflow-auto p-6">
-        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-border bg-card p-4 shadow-xs">
+        <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card p-4 shadow-xs">
           <Shield className="size-5 text-primary" />
           <div className="text-sm text-muted-foreground">
             Audit events are fetched on demand from the REST API.
@@ -68,9 +72,7 @@ export function SecurityPage() {
         <FilterPills value={filter} onChange={setFilter} options={FILTERS} />
 
         <QueryState query={query} isEmpty={() => events.length === 0} empty={
-          <div className="rounded-xl border border-dashed border-border bg-card/30 p-10 text-center text-sm text-muted-foreground">
-            No audit events recorded.
-          </div>
+          <EmptyState icon={<Shield className="size-5" />} title="No audit events recorded" description="Control actions and policy denials will appear here as they occur." />
         }>
           {() => (
             <DataTable

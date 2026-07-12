@@ -19,7 +19,7 @@ import type { Dict } from '@/lib/types'
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
       <div className="truncate font-mono text-sm text-foreground">{value || '—'}</div>
     </div>
   )
@@ -92,12 +92,16 @@ function ScheduleDetail({
       <SheetHeader className="border-b border-border px-5 py-4">
         <SheetTitle className="truncate text-sm">{scheduleTitle(schedule)}</SheetTitle>
         <SheetDescription className="flex flex-wrap items-center gap-2">
-          <span>{type || '—'}</span>
+          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+            {type || '—'}
+          </span>
           <span>{scheduleTiming(schedule)}</span>
           <span
             className={cn(
-              'rounded-full px-2 py-0.5 text-[11px] font-medium',
-              enabled ? 'bg-status-online/15 text-status-online' : 'bg-muted text-muted-foreground',
+              'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+              enabled
+                ? 'bg-status-online/15 text-status-online'
+                : 'bg-muted text-muted-foreground',
             )}
           >
             {enabled ? 'enabled' : 'disabled'}
@@ -192,7 +196,7 @@ function ScheduleDetail({
 
         {!editing && (
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Prompt
             </h3>
             <p className="whitespace-pre-wrap rounded-lg border border-border bg-muted/20 p-3 text-sm text-foreground">

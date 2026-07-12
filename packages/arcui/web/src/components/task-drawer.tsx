@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Sheet,
@@ -15,7 +15,7 @@ import { StatusText, SeverityBadge } from '@/components/status-badge'
 import { MentionComposer, type MentionHandle } from '@/components/mention-composer'
 import { useTeamStream } from '@/hooks/use-team-stream'
 import { useTaskActivity } from '@/lib/queries'
-import { apiDelete, apiPatch, ApiError } from '@/lib/api'
+import { apiDelete, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
 import type { Agent, Task, TaskPriority } from '@/lib/types'
 
@@ -30,8 +30,8 @@ const STEER_CHANNEL = 'tasks'
 function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="truncate font-mono text-sm text-foreground">{value ?? '—'}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
+      <div className="truncate font-mono text-[13px] text-foreground">{value ?? '—'}</div>
     </div>
   )
 }
@@ -72,22 +72,29 @@ export function TaskDrawer({
   const [steerText, setSteerText] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [stopping, setStopping] = useState(false)
 
   const ownerAgent = roster.find((a) => a.did === task?.owner_did)
 
-  useEffect(() => {
-    if (task == null) return
-    setTitle(task.title)
-    setDescription(task.description ?? '')
-    setPriority((task.priority as TaskPriority) ?? 'medium')
-    setOwnerDid(task.owner_did ?? '')
-    setEditing(false)
-    setError(null)
-    setConfirmDelete(false)
-    setDeleting(false)
-    setSteerText(ownerAgent?.name ? `@${ownerAgent.name} ` : '')
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- ownerAgent derives from task+roster; task.id is the real key
-  }, [task?.id])
+  // Reset edit/action state whenever a different task (or none) is shown —
+  // state adjusted during render, keyed on the task id.
+  const taskKey = task?.id ?? null
+  const [prevTaskKey, setPrevTaskKey] = useState<string | null>(null)
+  if (taskKey !== prevTaskKey) {
+    setPrevTaskKey(taskKey)
+    if (task != null) {
+      setTitle(task.title)
+      setDescription(task.description ?? '')
+      setPriority((task.priority as TaskPriority) ?? 'medium')
+      setOwnerDid(task.owner_did ?? '')
+      setEditing(false)
+      setError(null)
+      setConfirmDelete(false)
+      setDeleting(false)
+      setStopping(false)
+      setSteerText(ownerAgent?.name ? `@${ownerAgent.name} ` : '')
+    }
+  }
 
   if (task == null) return null
 
@@ -131,6 +138,21 @@ export function TaskDrawer({
     }
   }
 
+  const stop = async () => {
+    setStopping(true)
+    setError(null)
+    try {
+      await apiPost(`/api/tasks/${encodeURIComponent(task.id)}/cancel`)
+      await queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey.some((k) => k === 'tasks'),
+      })
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to stop task')
+    } finally {
+      setStopping(false)
+    }
+  }
+
   const sendSteer = () => {
     if (!steerText.trim()) return
     steerPost(steerText)
@@ -143,7 +165,9 @@ export function TaskDrawer({
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="truncate text-sm">{task.title}</SheetTitle>
           <SheetDescription className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[11px]">{task.id}</span>
+            <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+              {task.id}
+            </span>
             <StatusText value={task.status} />
             <SeverityBadge value={task.priority} />
             {!atRest && <span className="text-muted-foreground">edit-at-rest only — steer below</span>}
@@ -154,21 +178,21 @@ export function TaskDrawer({
           {editing ? (
             <section className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Title</label>
+                <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Title</label>
                 <Input value={title} onChange={(e) => setTitle(e.target.value)} />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground">Description</label>
+                <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Description</label>
                 <textarea
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
-                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] hover:border-muted-foreground/40 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Priority</label>
+                  <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Priority</label>
                   <Select value={priority} onValueChange={(v) => setPriority(v as TaskPriority)}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -179,7 +203,7 @@ export function TaskDrawer({
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-muted-foreground">Owner</label>
+                  <label className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Owner</label>
                   <Select
                     value={ownerDid || '__none__'}
                     onValueChange={(v) => setOwnerDid(v === '__none__' ? '' : v)}
@@ -207,7 +231,7 @@ export function TaskDrawer({
               </div>
             </section>
           ) : (
-            <section className="grid grid-cols-2 gap-3">
+            <section className="grid grid-cols-2 gap-x-4 gap-y-3">
               <Field label="Owner" value={ownerLabel} />
               <Field label="Creator" value={task.creator_did} />
               <Field label="Parent" value={task.parent_id} />
@@ -221,7 +245,7 @@ export function TaskDrawer({
 
           {task.description && !editing && (
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Description</h3>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Description</h3>
               <p className="whitespace-pre-wrap rounded-lg border border-border bg-muted/20 p-3 text-sm text-foreground">
                 {task.description}
               </p>
@@ -230,20 +254,20 @@ export function TaskDrawer({
 
           {task.status === 'done' && task.output != null && (
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Output</h3>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Output</h3>
               <JsonBlock value={task.output} />
             </section>
           )}
 
           {task.resolution && (
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resolution</h3>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Resolution</h3>
               <p className="text-sm text-foreground">{task.resolution}</p>
             </section>
           )}
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Activity</h3>
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Activity</h3>
             {activity.isLoading ? (
               <p className="text-xs text-muted-foreground">Loading…</p>
             ) : (activity.data?.events ?? []).length === 0 ? (
@@ -253,7 +277,7 @@ export function TaskDrawer({
                 {(activity.data?.events ?? []).map((e, i) => (
                   <li
                     key={i}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-xs transition-colors duration-150 hover:bg-muted/40"
                   >
                     <span className="font-medium text-foreground">{String(e.action ?? '—')}</span>
                     <span className="truncate font-mono text-muted-foreground">{String(e.actor_did ?? '—')}</span>
@@ -265,7 +289,7 @@ export function TaskDrawer({
           </section>
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Raw</h3>
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Raw</h3>
             <JsonBlock value={task} />
           </section>
         </div>
@@ -303,8 +327,14 @@ export function TaskDrawer({
               )
             ) : (
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground">
-                  Steer owner{ownerAgent ? ` — @${ownerAgent.name}` : ''} ({steerStatus})
+                {error && <p className="text-xs text-destructive">{error}</p>}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground">
+                    Steer owner{ownerAgent ? ` — @${ownerAgent.name}` : ''} ({steerStatus})
+                  </div>
+                  <Button size="sm" variant="destructive" disabled={stopping} onClick={stop}>
+                    {stopping ? 'Stopping…' : 'Stop task'}
+                  </Button>
                 </div>
                 <MentionComposer
                   value={steerText}

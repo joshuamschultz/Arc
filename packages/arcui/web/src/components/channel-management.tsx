@@ -65,16 +65,18 @@ export function CreateChannelSheet({ open, onOpenChange }: { open: boolean; onOp
         </SheetHeader>
         <div className="flex-1 space-y-4 overflow-auto p-5">
           {error && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {error}
             </div>
           )}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Name</label>
+            <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">Name</label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="incident-response" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Members (comma-separated agent refs, optional)</label>
+            <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              Members (comma-separated agent refs, optional)
+            </label>
             <Input value={members} onChange={(e) => setMembers(e.target.value)} placeholder="coder, marketer" />
           </div>
           <Button className="w-full" disabled={busy || !name.trim()} onClick={submit}>
@@ -148,7 +150,7 @@ export function ChannelMembersSheet({
         </SheetHeader>
         <div className="flex-1 space-y-4 overflow-auto p-5">
           {error && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               {error}
             </div>
           )}
@@ -157,8 +159,13 @@ export function ChannelMembersSheet({
           ) : (
             <ul className="space-y-1.5">
               {channel.members.map((m) => (
-                <li key={m} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm">
-                  <span className="truncate font-mono text-xs text-foreground">{m}</span>
+                <li
+                  key={m}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted/30"
+                >
+                  <span className="truncate rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                    {m}
+                  </span>
                   {operatorMode && (
                     <Button variant="ghost" size="icon-xs" disabled={busy === m} onClick={() => remove(m)} title="Remove member">
                       <UserMinus className="size-3.5" />
@@ -194,7 +201,7 @@ export function MembersButton({ count, onClick }: { count: number; onClick: () =
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted/60"
+      className="flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <UserPlus className="size-3" /> {count}
     </button>
@@ -207,7 +214,7 @@ export function NewChannelButton({ onClick }: { onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+      className="flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       title="New channel"
     >
       <Plus className="size-3.5" />

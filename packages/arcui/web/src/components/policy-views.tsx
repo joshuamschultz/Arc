@@ -5,13 +5,31 @@ import type { Dict, PolicyBullet } from '@/lib/types'
 
 function Card({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
+    <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
       <div className="mb-3">
         <h3 className="text-sm font-semibold text-foreground">{title}</h3>
         {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       </div>
       {children}
     </div>
+  )
+}
+
+/** Uppercase micro-label table header row, shared by this file's tables. */
+function THead({ children }: { children: ReactNode }) {
+  return (
+    <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+      {children}
+    </tr>
+  )
+}
+
+/** Mono chip for an ID/hash — matches the governance-surface convention. */
+function IdChip({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-primary">
+      {children}
+    </span>
   )
 }
 
@@ -56,19 +74,19 @@ export function TopPerformers({ bullets, limit = 6 }: { bullets: PolicyBullet[];
       ) : (
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="py-1">ID</th>
-              <th className="py-1">Uses</th>
-              <th className="py-1">Score</th>
-              <th className="py-1">Bullet</th>
-            </tr>
+            <THead>
+              <th className="py-1.5">ID</th>
+              <th className="py-1.5">Uses</th>
+              <th className="py-1.5">Score</th>
+              <th className="py-1.5">Bullet</th>
+            </THead>
           </thead>
           <tbody>
             {top.map((b, i) => (
               <tr key={i} className="border-t border-border/60">
-                <td className="py-1.5 pr-2 font-mono text-xs text-primary">{b.id ?? '—'}</td>
-                <td className="py-1.5 pr-2 font-mono text-xs tabular-nums">{b.uses ?? 0}</td>
-                <td className="py-1.5 pr-2 font-mono text-xs tabular-nums">{b.score ?? '—'}</td>
+                <td className="py-1.5 pr-2">{b.id ? <IdChip>{b.id}</IdChip> : <span className="text-xs text-muted-foreground">—</span>}</td>
+                <td className="py-1.5 pr-2 font-mono text-xs tabular-nums text-foreground">{b.uses ?? 0}</td>
+                <td className="py-1.5 pr-2 font-mono text-xs tabular-nums text-foreground">{b.score ?? '—'}</td>
                 <td className="max-w-0 truncate py-1.5 text-xs text-muted-foreground" title={b.text}>{b.text}</td>
               </tr>
             ))}
@@ -170,25 +188,25 @@ export function SystemPolicyRules({ config }: { config: Dict }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="py-1 pr-3">Rule</th>
-              <th className="py-1 pr-3">Description</th>
-              <th className="py-1 pr-3">Scope</th>
-              <th className="py-1 pr-3">Action</th>
-              <th className="py-1 pr-3">Score</th>
-              <th className="py-1">Status</th>
-            </tr>
+            <THead>
+              <th className="py-1.5 pr-3">Rule</th>
+              <th className="py-1.5 pr-3">Description</th>
+              <th className="py-1.5 pr-3">Scope</th>
+              <th className="py-1.5 pr-3">Action</th>
+              <th className="py-1.5 pr-3">Score</th>
+              <th className="py-1.5">Status</th>
+            </THead>
           </thead>
           <tbody>
             {rules.map((r) => (
               <tr key={r.id} className={cn('border-t border-border/60', r.status === 'inactive' && 'opacity-60')}>
-                <td className="py-1.5 pr-3 font-mono text-xs text-primary">{r.id}</td>
+                <td className="py-1.5 pr-3"><IdChip>{r.id}</IdChip></td>
                 <td className="py-1.5 pr-3 text-xs text-muted-foreground">{r.desc}</td>
                 <td className="py-1.5 pr-3 text-xs text-muted-foreground">{r.scope}</td>
                 <td className="py-1.5 pr-3">
                   <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', ACTION_TONE[r.action])}>{r.action}</span>
                 </td>
-                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums">{r.score}</td>
+                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums text-foreground">{r.score}</td>
                 <td className="py-1.5 text-xs text-muted-foreground">{r.status}</td>
               </tr>
             ))}
@@ -207,22 +225,22 @@ export function PerAgentBreakdown({ rows }: { rows: Dict[] }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="py-1 pr-3">Agent</th>
-              <th className="py-1 pr-3">Total</th>
-              <th className="py-1 pr-3">Active</th>
-              <th className="py-1 pr-3">Retired</th>
-              <th className="py-1">Avg score</th>
-            </tr>
+            <THead>
+              <th className="py-1.5 pr-3">Agent</th>
+              <th className="py-1.5 pr-3">Total</th>
+              <th className="py-1.5 pr-3">Active</th>
+              <th className="py-1.5 pr-3">Retired</th>
+              <th className="py-1.5">Avg score</th>
+            </THead>
           </thead>
           <tbody>
             {rows.map((r, i) => (
               <tr key={i} className="border-t border-border/60">
-                <td className="py-1.5 pr-3 font-mono text-xs text-foreground">{String(r.agent_id ?? '—')}</td>
-                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums">{Number(r.total ?? 0)}</td>
-                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums">{Number(r.active ?? 0)}</td>
-                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums">{Number(r.retired ?? 0)}</td>
-                <td className="py-1.5 font-mono text-xs tabular-nums">{Number(r.avg_score ?? 0).toFixed(2)}</td>
+                <td className="py-1.5 pr-3"><IdChip>{String(r.agent_id ?? '—')}</IdChip></td>
+                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums text-foreground">{Number(r.total ?? 0)}</td>
+                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums text-foreground">{Number(r.active ?? 0)}</td>
+                <td className="py-1.5 pr-3 font-mono text-xs tabular-nums text-foreground">{Number(r.retired ?? 0)}</td>
+                <td className="py-1.5 font-mono text-xs tabular-nums text-foreground">{Number(r.avg_score ?? 0).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>

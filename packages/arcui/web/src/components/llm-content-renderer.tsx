@@ -8,44 +8,8 @@
 // wall of nested <skill>…</skill> elements — which must render as an indented tree.
 import { Markdown } from '@/components/markdown'
 import { JsonBlock } from '@/components/json-block'
+import { formatXml } from '@/lib/format'
 import { cn } from '@/lib/utils'
-
-// --- XML pretty-printer ------------------------------------------------------
-
-// Tokenize into tags (<…>) and text runs, then re-emit one node per line with
-// depth-based indentation and a blank line between sibling elements. Tolerant of
-// XML-ish (not strictly well-formed) content — unbalanced tags degrade to a flat
-// list rather than throwing.
-function formatXml(src: string): string {
-  const tokens = src.match(/<[^>]+>|[^<]+/g) ?? []
-  const lines: string[] = []
-  let depth = 0
-  const pad = (): string => '  '.repeat(Math.max(0, depth))
-  for (const token of tokens) {
-    if (token.startsWith('<')) {
-      const isClose = token.startsWith('</')
-      const isSelfContained =
-        token.endsWith('/>') || token.startsWith('<?') || token.startsWith('<!')
-      if (isClose) {
-        depth = Math.max(0, depth - 1)
-        lines.push(pad() + token.trim())
-      } else if (isSelfContained) {
-        lines.push(pad() + token.trim())
-      } else {
-        // A new element opening right after a sibling closed gets a blank line
-        // so consecutive <skill>…</skill><skill>… reads as separated blocks.
-        const prev = lines[lines.length - 1]?.trim() ?? ''
-        if (/<\/[^>]+>$/.test(prev)) lines.push('')
-        lines.push(pad() + token.trim())
-        depth += 1
-      }
-    } else {
-      const text = token.trim()
-      if (text) lines.push(pad() + text)
-    }
-  }
-  return lines.join('\n')
-}
 
 /** True when a string contains at least one XML-ish element tag. */
 function hasXml(text: string): boolean {
@@ -110,7 +74,7 @@ function CodeSegment({ lang, text }: { lang: string; text: string }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-muted/30">
       {lang && (
-        <div className="border-b border-border px-3 py-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        <div className="border-b border-border px-3 py-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
           {lang}
         </div>
       )}
@@ -185,7 +149,7 @@ interface Block {
 
 function ToolUseBlock({ block }: { block: Block }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-primary/30 bg-primary/5">
+    <div className="overflow-hidden rounded-lg border border-l-2 border-primary/30 border-l-primary/50 bg-primary/5">
       <div className="border-b border-primary/20 px-3 py-1 font-mono text-[11px] text-primary">
         → tool call · <span className="font-semibold">{block.name || 'unknown'}</span>
       </div>
@@ -196,7 +160,7 @@ function ToolUseBlock({ block }: { block: Block }) {
 
 function ToolResultBlock({ block }: { block: Block }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-muted/20">
+    <div className="overflow-hidden rounded-lg border border-l-2 border-border border-l-muted-foreground/30 bg-muted/20">
       <div className="border-b border-border px-3 py-1 font-mono text-[11px] text-muted-foreground">
         ← tool result
       </div>
@@ -241,6 +205,3 @@ export function LlmContent({ content, className }: { content: unknown; className
   // Object / other — fall back to a JSON view rather than "[object Object]".
   return <JsonBlock value={content} className={className} />
 }
-
-// Exported for unit-style verification of the XML pretty-printer (U11).
-export { formatXml }

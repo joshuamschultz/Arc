@@ -19,7 +19,11 @@ const columns: ColumnDef<Trace, unknown>[] = [
   {
     accessorKey: 'trace_id',
     header: 'Trace',
-    cell: (c) => <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string)}</span>,
+    cell: (c) => (
+      <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-primary">
+        {shortId(c.getValue() as string)}
+      </span>
+    ),
   },
   {
     accessorFn: (r) => r.agent_label || r.agent,

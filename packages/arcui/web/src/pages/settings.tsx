@@ -82,9 +82,11 @@ function ConfigSection({
   }
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="font-mono text-sm font-semibold text-foreground">{sectionKey}</h3>
+    <div className="rounded-lg border border-border bg-card p-4 shadow-xs transition-colors duration-150 hover:border-border/80">
+      <div className="mb-2 flex items-center justify-between border-b border-border pb-2">
+        <h3 className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs font-semibold text-foreground">
+          {sectionKey}
+        </h3>
         {editable && !editing && (
           <Button variant="ghost" size="sm" onClick={startEdit}>
             <Pencil className="size-3.5" /> Edit
@@ -102,17 +104,19 @@ function ConfigSection({
         )}
       </div>
       {editing ? (
-        <div className="space-y-1">
+        <div className="space-y-1 pt-3">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
-            className="h-48 w-full rounded-lg border border-border bg-muted/30 p-2 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+            className="h-48 w-full rounded-md border border-border bg-muted/30 p-2 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           />
           {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       ) : (
-        <ReadValue value={value} />
+        <div className="pt-3">
+          <ReadValue value={value} />
+        </div>
       )}
     </div>
   )

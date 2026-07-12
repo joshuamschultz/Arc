@@ -138,7 +138,7 @@ export function MentionComposer({
       {open && (
         <ul
           role="listbox"
-          className="absolute bottom-full left-0 z-20 mb-1 max-h-56 w-64 overflow-auto rounded-md border border-border bg-popover p-1 shadow-md"
+          className="absolute bottom-full left-0 z-20 mb-1.5 max-h-56 w-64 overflow-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
         >
           {matches.map((m, i) => (
             <li key={m.handle}>
@@ -154,8 +154,8 @@ export function MentionComposer({
                 }}
                 onMouseEnter={() => setActive(i)}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm',
-                  i === active ? 'bg-primary/15 text-foreground' : 'text-muted-foreground',
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+                  i === active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/40',
                 )}
               >
                 <span
@@ -163,7 +163,7 @@ export function MentionComposer({
                   style={{ background: m.color || 'var(--primary)' }}
                 />
                 <span className="font-medium text-foreground">@{m.handle}</span>
-                {m.label !== m.handle && <span className="truncate text-xs">{m.label}</span>}
+                {m.label !== m.handle && <span className="truncate text-xs text-muted-foreground">{m.label}</span>}
               </button>
             </li>
           ))}

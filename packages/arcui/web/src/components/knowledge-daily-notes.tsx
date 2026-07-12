@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { EmptyState, ErrorState, LoadingRows, QueryState } from '@/components/states'
 import { useAgentDailyNote, useAgentDailyNotes } from '@/lib/queries'
 import { cn } from '@/lib/utils'
@@ -17,7 +17,7 @@ function Bullet({ text }: { text: string }) {
         i % 2 === 1 ? (
           <span
             key={i}
-            className="rounded bg-primary/10 px-1 py-0.5 font-mono text-xs text-primary"
+            className="rounded-sm border border-primary/20 bg-primary/10 px-1 py-0.5 font-mono text-[11px] text-primary"
           >
             {part}
           </span>
@@ -50,8 +50,12 @@ function DayDetail({ agentId, day }: { agentId: string; day: string }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
-        <span className="font-mono text-foreground">{detail.day}</span>
-        <span className="rounded bg-muted/40 px-1.5 py-0.5">{detail.classification}</span>
+        <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+          {detail.day}
+        </span>
+        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {detail.classification}
+        </span>
       </div>
       <div className="flex-1 space-y-5 overflow-auto p-4">
         {sections.length === 0 ? (
@@ -59,7 +63,7 @@ function DayDetail({ agentId, day }: { agentId: string; day: string }) {
         ) : (
           sections.map(([field, heading]) => (
             <section key={field} className="space-y-1.5">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 {heading}
               </h3>
               <ul className="list-disc space-y-1 pl-4">
@@ -82,13 +86,6 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
   const notes = useAgentDailyNotes(agentId)
   const [selected, setSelected] = useState<string | null>(null)
 
-  // Default to the newest day once the list loads.
-  useEffect(() => {
-    if (selected == null && notes.data && notes.data.items.length > 0) {
-      setSelected(notes.data.items[0].day)
-    }
-  }, [notes.data, selected])
-
   return (
     <QueryState
       query={notes}
@@ -100,10 +97,13 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
         />
       }
     >
-      {(data) => (
-        <div className="grid h-[560px] grid-cols-[minmax(180px,240px)_1fr] overflow-hidden rounded-xl border border-border bg-card">
-          <div className="overflow-auto border-r border-border p-2">
-            <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {(data) => {
+        // Newest day is the default selection until the user picks one.
+        const active = selected ?? data.items[0]?.day ?? null
+        return (
+        <div className="grid h-[560px] grid-cols-[minmax(180px,240px)_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+          <div className="overflow-auto border-r border-border bg-card/60 p-2">
+            <div className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Days
             </div>
             <ul>
@@ -113,12 +113,14 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
                     type="button"
                     onClick={() => setSelected(meta.day)}
                     className={cn(
-                      'flex w-full cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted/50',
-                      selected === meta.day ? 'bg-primary/10 text-foreground' : 'text-muted-foreground',
+                      'relative flex w-full cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors duration-150 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                      active === meta.day
+                        ? 'bg-primary/8 text-foreground before:absolute before:inset-y-1 before:left-0 before:w-[2px] before:rounded-full before:bg-primary'
+                        : 'text-muted-foreground',
                     )}
                   >
-                    <span className="font-mono">{meta.day}</span>
-                    <span className="shrink-0 rounded bg-muted/40 px-1.5 py-0.5 text-[10px]">
+                    <span className="font-mono text-xs">{meta.day}</span>
+                    <span className="shrink-0 rounded-full border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                       {meta.classification}
                     </span>
                   </button>
@@ -127,8 +129,8 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
             </ul>
           </div>
           <div className="overflow-hidden">
-            {selected ? (
-              <DayDetail agentId={agentId} day={selected} />
+            {active ? (
+              <DayDetail agentId={agentId} day={active} />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                 Select a day to view
@@ -136,7 +138,8 @@ export function DailyNotesBrowser({ agentId }: { agentId: string }) {
             )}
           </div>
         </div>
-      )}
+        )
+      }}
     </QueryState>
   )
 }

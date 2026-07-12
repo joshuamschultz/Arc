@@ -24,9 +24,9 @@ export function FilterPills({
           type="button"
           onClick={() => onChange(opt.value)}
           className={cn(
-            'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+            'rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
             value === opt.value
-              ? 'bg-primary/15 text-foreground'
+              ? 'bg-primary/12 text-foreground shadow-xs ring-1 ring-primary/20'
               : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
           )}
         >

@@ -123,7 +123,7 @@ function PayloadView({ value }: { value: unknown }) {
   if (value == null) return <p className="text-xs text-muted-foreground">—</p>
   if (typeof value === 'string') {
     return (
-      <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/30 p-2 font-mono text-xs text-foreground">
+      <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/40 p-2.5 font-mono text-xs text-foreground">
         {value}
       </pre>
     )
@@ -137,11 +137,11 @@ function ToolRow({ item }: { item: ToolItem }) {
   const Icon = item.isCode ? Code : Wrench
   const hasBodies = item.input != null || item.output != null
   return (
-    <div className="rounded-lg border border-border/60 bg-muted/10">
+    <div className="rounded-lg border border-border/60 bg-muted/10 transition-colors hover:border-border">
       <button
         type="button"
         onClick={() => hasBodies && setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs"
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         <span className="w-12 shrink-0 tabular-nums text-muted-foreground">{fmtTime(item.ts)}</span>
         <Icon className="size-3.5 shrink-0 text-primary" />
@@ -179,8 +179,8 @@ function ToolRow({ item }: { item: ToolItem }) {
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
-                className={`rounded px-2 py-0.5 capitalize ${
-                  view === v ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+                className={`rounded-md px-2 py-0.5 capitalize transition-colors ${
+                  view === v ? 'bg-primary/12 text-foreground ring-1 ring-primary/20' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 {v}
@@ -190,11 +190,11 @@ function ToolRow({ item }: { item: ToolItem }) {
           {view === 'structured' ? (
             <>
               <div>
-                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Input (sent to tool)</p>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Input (sent to tool)</p>
                 <PayloadView value={item.input} />
               </div>
               <div>
-                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Output (returned)</p>
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Output (returned)</p>
                 <PayloadView value={item.output} />
               </div>
             </>
@@ -268,7 +268,13 @@ export function RunDetailDrawer({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
           <SheetHeader className="border-b border-border px-5 py-4">
-            <SheetTitle className="font-mono text-sm">Run {shortId(run?.run_id ?? '', 18)}</SheetTitle>
+            <div className="flex items-center gap-2 pr-8">
+              <SheetTitle className="text-sm font-semibold text-foreground">Run</SheetTitle>
+              <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
+                {shortId(run?.run_id ?? '', 18)}
+              </span>
+              {run && <StatusText value={run.status} />}
+            </div>
             <SheetDescription>
               {run ? `${run.agent} · ${run.turns} turns · ${run.tool_calls} tools · ${run.status}` : ''}
             </SheetDescription>

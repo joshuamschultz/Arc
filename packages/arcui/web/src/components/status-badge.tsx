@@ -12,10 +12,16 @@ import { cn } from '@/lib/utils'
  * failed" (see docs/deploy/single-node.md's embedded-gateway architecture).
  */
 export function StatusDot({ online, className }: { online?: boolean; className?: string }) {
-  const color = online ? 'bg-status-online' : 'bg-status-idle'
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
-      <span className={cn('size-2 rounded-full', color, online && 'animate-pulse')} />
+      <span
+        className={cn(
+          'size-2 rounded-full',
+          online
+            ? 'bg-status-online text-status-online shadow-[0_0_7px_currentColor] animate-pulse'
+            : 'bg-status-idle',
+        )}
+      />
       <span className="text-xs text-muted-foreground">{online ? 'Online' : 'Idle'}</span>
     </span>
   )

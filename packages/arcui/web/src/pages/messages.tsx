@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/markdown'
 import { MentionComposer, type MentionHandle } from '@/components/mention-composer'
 import { EmptyState } from '@/components/states'
-import { StatusDot } from '@/components/status-badge'
+import { StatusDot, StatusText } from '@/components/status-badge'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import {
   ChannelMembersSheet,
@@ -31,30 +31,33 @@ type Selection =
 function Bubble({ m }: { m: ChatMessage }) {
   if (m.role === 'tool_call') {
     return (
-      <div className="flex items-center gap-2 self-center rounded-md border border-border bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-        <Wrench className="size-3" /> {m.tool}
-        {m.text && <span className="font-mono opacity-70">{m.text}</span>}
+      <div className="inline-flex max-w-full items-center gap-1.5 self-center rounded-md border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+        <Wrench className="size-3 shrink-0" /> {m.tool}
+        {m.text && <span className="truncate font-mono text-muted-foreground/80">{m.text}</span>}
       </div>
     )
   }
   if (m.role === 'system') {
-    return <div className="self-center text-xs italic text-muted-foreground">{m.text}</div>
+    return <div className="self-center text-[11px] italic text-muted-foreground">{m.text}</div>
   }
   const mine = m.role === 'user'
   return (
-    <div
-      className={cn(
-        'max-w-[75%] rounded-xl px-3 py-2 text-sm',
-        mine
-          ? 'self-end bg-primary/15 text-foreground'
-          : 'self-start border border-border bg-card text-foreground',
-      )}
-    >
-      {mine ? (
-        <p className="whitespace-pre-wrap break-words">{m.text}</p>
-      ) : (
-        <Markdown>{m.text}</Markdown>
-      )}
+    <div className={cn('flex max-w-[75%] flex-col gap-1', mine ? 'items-end self-end' : 'items-start self-start')}>
+      <div
+        className={cn(
+          'rounded-lg px-3 py-2 text-sm',
+          mine
+            ? 'bg-primary/15 text-foreground'
+            : 'border border-border bg-card text-foreground',
+        )}
+      >
+        {mine ? (
+          <p className="whitespace-pre-wrap break-words">{m.text}</p>
+        ) : (
+          <Markdown>{m.text}</Markdown>
+        )}
+      </div>
+      {m.time && <span className="px-0.5 text-[10px] tabular-nums text-muted-foreground/70">{m.time}</span>}
     </div>
   )
 }
@@ -97,15 +100,16 @@ function ChatPanel({ agentId }: { agentId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
-        <span className="font-mono">{agentId}</span>
-        <div className="flex items-center gap-2">
-          {resetError && <span className="text-destructive">{resetError}</span>}
-          <span className="capitalize">{status}</span>
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+        <span className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+          {agentId}
+        </span>
+        <div className="flex items-center gap-3">
+          {resetError && <span className="text-xs text-destructive">{resetError}</span>}
+          <StatusText value={status} />
           <Button
             variant="ghost"
-            size="sm"
-            className="h-6 gap-1 px-2 text-xs"
+            size="xs"
             onClick={newSession}
             disabled={status !== 'ready' || resetting}
             title="Start a fresh conversation"
@@ -114,7 +118,7 @@ function ChatPanel({ agentId }: { agentId: string }) {
           </Button>
         </div>
       </div>
-      <div className="flex flex-1 flex-col gap-2 overflow-auto p-4">
+      <div className="flex flex-1 flex-col gap-3 overflow-auto p-4">
         {messages.length === 0 ? (
           <EmptyState icon={<MessageSquare className="size-7" />} title="No messages yet" description="Say hello to start the conversation." />
         ) : (
@@ -122,7 +126,7 @@ function ChatPanel({ agentId }: { agentId: string }) {
         )}
         <div ref={endRef} />
       </div>
-      <div className="flex items-end gap-2 border-t border-border p-3">
+      <div className="flex items-end gap-2 border-t border-border bg-card/30 p-3">
         <Textarea
           rows={1}
           value={text}
@@ -172,6 +176,15 @@ function ChannelPanel({
   const endRef = useRef<HTMLDivElement>(null)
   const [text, setText] = useState('')
 
+  // Sender colors reuse the same roster colors shown in the agent rail, so a
+  // channel message row's avatar matches the sender's identity elsewhere in
+  // the UI.
+  const handleColor = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const h of mentionHandles) if (h.color) map.set(h.handle, h.color)
+    return map
+  }, [mentionHandles])
+
   // History (one-shot backfill) + live frames, deduped by seq. The live stream
   // is authoritative for anything it has seen; history fills older gaps.
   const rows = useMemo<ChannelRow[]>(() => {
@@ -213,35 +226,52 @@ function ChannelPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
         <span className="flex items-center gap-2">
-          <Hash className="size-3.5" /> <span className="font-mono">{name}</span>
+          <Hash className="size-3.5 text-muted-foreground" />
+          <span className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+            {name}
+          </span>
           <MembersButton count={channel.members.length} onClick={onOpenMembers} />
         </span>
-        <span className="capitalize">{status}</span>
+        <StatusText value={status} />
       </div>
-      <div className="flex flex-1 flex-col gap-2 overflow-auto p-4">
+      <div className="flex flex-1 flex-col gap-0.5 overflow-auto p-3">
         {rows.length === 0 ? (
           <EmptyState icon={<Hash className="size-7" />} title="No messages in this channel" />
         ) : (
           rows.map((m) => (
-            <div key={m.key} className="rounded-lg border border-border bg-card p-2.5 text-sm">
-              <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">@{m.from}</span>
-                {m.mentions.map((h) => (
-                  <span key={h} className="rounded bg-primary/15 px-1.5 py-0.5 font-medium text-primary">
-                    @{h}
-                  </span>
-                ))}
-                <span className="ml-auto">{m.ts}</span>
+            <div
+              key={m.key}
+              className="-mx-1.5 flex items-start gap-3 rounded-lg px-1.5 py-2 transition-colors hover:bg-muted/40"
+            >
+              <span
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold text-primary-foreground"
+                style={{ background: handleColor.get(m.from) || 'var(--primary)' }}
+              >
+                {initials(m.from)}
+              </span>
+              <div className="min-w-0 flex-1 text-sm">
+                <div className="mb-0.5 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-semibold text-foreground">@{m.from}</span>
+                  {m.mentions.map((h) => (
+                    <span
+                      key={h}
+                      className="rounded-sm border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                    >
+                      @{h}
+                    </span>
+                  ))}
+                  <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{m.ts}</span>
+                </div>
+                <Markdown>{m.body}</Markdown>
               </div>
-              <Markdown>{m.body}</Markdown>
             </div>
           ))
         )}
         <div ref={endRef} />
       </div>
-      <div className="flex items-center gap-2 border-t border-border p-3">
+      <div className="flex items-center gap-2 border-t border-border bg-card/30 p-3">
         <MentionComposer
           value={text}
           onChange={setText}
@@ -286,7 +316,9 @@ export function MessagesPage() {
       <PageHeader title="Messages" description="Direct agent chat and team channels." actions={<OperatorModeToggle />} />
       <div className="grid flex-1 grid-cols-[260px_1fr] overflow-hidden">
         <aside className="overflow-auto border-r border-border p-2">
-          <div className="px-2 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Agents</div>
+          <div className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            Agents
+          </div>
           {agents.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No agents</div>}
           {agents.map((a) => {
             const label = String(a.display_name || a.name || a.agent_id)
@@ -297,11 +329,16 @@ export function MessagesPage() {
                 type="button"
                 onClick={() => setSel({ kind: 'agent', id: a.agent_id ?? '', label })}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-muted/50',
-                  selected && 'bg-primary/10',
+                  'group relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/50 hover:text-foreground',
+                  'before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[2px] before:-translate-y-1/2 before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity before:duration-150',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  selected && 'bg-primary/8 text-foreground before:opacity-100',
                 )}
               >
-                <span className="flex size-7 items-center justify-center rounded-md text-xs font-semibold text-primary-foreground" style={{ background: (a.color as string) || 'var(--primary)' }}>
+                <span
+                  className="flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold text-primary-foreground"
+                  style={{ background: (a.color as string) || 'var(--primary)' }}
+                >
                   {initials(label)}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-foreground">{label}</span>
@@ -310,13 +347,15 @@ export function MessagesPage() {
             )
           })}
 
-          <div className="mt-3 flex items-center justify-between px-2 py-1">
-            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Channels</span>
+          <div className="mt-4 flex items-center justify-between px-2 py-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Channels
+            </span>
             {operatorMode && <NewChannelButton onClick={() => setCreating(true)} />}
           </div>
           {channels.isLoading && <div className="px-2 py-1 text-xs text-muted-foreground">Loading…</div>}
           {channels.isError && (
-            <div className="mx-2 my-1 flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
+            <div className="mx-2 my-1 flex items-start gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
               <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
               <span>{channels.error instanceof ApiError ? channels.error.message : 'Channel service unavailable'}</span>
             </div>
@@ -332,13 +371,15 @@ export function MessagesPage() {
                 type="button"
                 onClick={() => setSel({ kind: 'channel', id: c.name, label: c.name })}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted/50',
-                  selected && 'bg-primary/10',
+                  'group relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors duration-150 hover:bg-muted/50',
+                  'before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[2px] before:-translate-y-1/2 before:rounded-full before:bg-primary before:opacity-0 before:transition-opacity before:duration-150',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  selected && 'bg-primary/8 before:opacity-100',
                 )}
               >
-                <Hash className="size-4 text-muted-foreground" />
+                <Hash className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{c.name}</span>
-                <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{c.members.length}</span>
+                <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{c.members.length}</span>
               </button>
             )
           })}

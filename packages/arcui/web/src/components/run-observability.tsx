@@ -6,14 +6,21 @@ import { useSpawnTree } from '@/lib/queries'
 import { shortId } from '@/lib/format'
 
 function SpawnTreeNode({ node }: { node: SpawnNode }) {
-  const label = `${node.role ?? 'child'} · ${shortId(node.did, 16)}`
+  const label = (
+    <span className="inline-flex items-center gap-1.5 text-xs">
+      <span className="text-muted-foreground">{node.role ?? 'child'}</span>
+      <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+        {shortId(node.did, 16)}
+      </span>
+    </span>
+  )
   if (!node.children.length) {
-    return <div className="py-0.5 font-mono text-xs text-foreground">{label}</div>
+    return <div className="py-0.5">{label}</div>
   }
   return (
     <details open className="py-0.5">
-      <summary className="cursor-pointer font-mono text-xs text-foreground">{label}</summary>
-      <div className="ml-4 border-l border-border/50 pl-3">
+      <summary className="cursor-pointer py-0.5">{label}</summary>
+      <div className="ml-3 border-l border-border/50 pl-3">
         {node.children.map((c) => (
           <SpawnTreeNode key={c.did} node={c} />
         ))}

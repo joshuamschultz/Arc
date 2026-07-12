@@ -41,7 +41,7 @@ export function EventDrawer({
           {children}
           {payload !== undefined && (
             <div>
-              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Raw
               </div>
               <JsonBlock value={payload} />

@@ -75,10 +75,10 @@ export function DataTable<T>({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-muted/40 backdrop-blur">
+            <thead className="sticky top-0 z-10 bg-card/80 backdrop-blur-md">
               {table.getHeaderGroups().map((hg) => (
                 <tr key={hg.id} className="border-b border-border">
                   {hg.headers.map((h) => {
@@ -88,8 +88,8 @@ export function DataTable<T>({
                       <th
                         key={h.id}
                         className={cn(
-                          'px-3 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground',
-                          sortable && 'cursor-pointer select-none hover:text-foreground',
+                          'px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground',
+                          sortable && 'cursor-pointer select-none transition-colors hover:text-foreground',
                         )}
                         onClick={sortable ? h.column.getToggleSortingHandler() : undefined}
                       >
@@ -118,11 +118,12 @@ export function DataTable<T>({
                   className={cn(
                     'border-b border-border/60 last:border-0 transition-colors',
                     onRowClick && 'cursor-pointer hover:bg-muted/40',
-                    isRowActive?.(row.original) && 'bg-primary/10',
+                    isRowActive?.(row.original) &&
+                      'bg-primary/8 hover:bg-primary/10',
                   )}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-3 py-2 align-middle">
+                    <td key={cell.id} className="px-4 py-2 align-middle">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}

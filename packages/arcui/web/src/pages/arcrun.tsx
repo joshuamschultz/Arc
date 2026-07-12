@@ -42,7 +42,11 @@ export function ArcRunPage() {
       {
         accessorKey: 'run_id',
         header: 'Run',
-        cell: (c) => <span className="font-mono text-xs text-primary">{shortId(c.getValue() as string, 14)}</span>,
+        cell: (c) => (
+          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-primary">
+            {shortId(c.getValue() as string, 14)}
+          </span>
+        ),
       },
       {
         accessorKey: 'status',
@@ -106,7 +110,9 @@ export function ArcRunPage() {
 
         <section className="space-y-2">
           <h3 className="text-sm font-semibold text-foreground">Spawn lineage</h3>
-          <SpawnLineage root={null} />
+          <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
+            <SpawnLineage root={null} />
+          </div>
         </section>
       </div>
 

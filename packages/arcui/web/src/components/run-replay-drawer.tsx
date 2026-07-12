@@ -55,10 +55,10 @@ function toTranscript(records: Dict[]): Dict[] {
 }
 
 const ROLE_STYLE: Record<string, string> = {
-  user: 'border-primary/30 bg-primary/5',
-  assistant: 'border-border bg-muted/20',
-  system: 'border-border bg-muted/40',
-  tool: 'border-border bg-muted/10',
+  user: 'border-l-2 border-border border-l-primary/50 bg-primary/5',
+  assistant: 'border-l-2 border-border border-l-muted-foreground/30 bg-muted/20',
+  system: 'border-l-2 border-border border-l-muted-foreground/40 bg-muted/40',
+  tool: 'border-l-2 border-border border-l-muted-foreground/20 bg-muted/10',
 }
 
 /** One conversation turn as a chat bubble with structured content. */
@@ -66,9 +66,9 @@ function ChatTurn({ turn }: { turn: Dict }) {
   const role = String(turn.role ?? 'message')
   const ts = turn.timestamp ?? turn.ts
   return (
-    <div className={cn('rounded-lg border p-3', ROLE_STYLE[role] ?? 'border-border bg-muted/20')}>
+    <div className={cn('rounded-lg border p-3', ROLE_STYLE[role] ?? 'border-l-2 border-border border-l-muted-foreground/30 bg-muted/20')}>
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-primary">
           {role}
         </span>
         {ts != null && (
@@ -108,7 +108,12 @@ export function RunReplayDrawer({
     <Sheet open={open} onOpenChange={(o) => { if (!o) setPage(1); onOpenChange(o) }}>
       <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <SheetHeader className="border-b border-border px-5 py-4">
-          <SheetTitle className="font-mono text-sm">Session {shortId(sid ?? '', 16)}</SheetTitle>
+          <div className="flex items-center gap-2 pr-8">
+            <SheetTitle className="text-sm font-semibold text-foreground">Session</SheetTitle>
+            <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
+              {shortId(sid ?? '', 16)}
+            </span>
+          </div>
           <SheetDescription>
             {agentId}
             {data ? ` · ${transcript.length} turns` : ''}

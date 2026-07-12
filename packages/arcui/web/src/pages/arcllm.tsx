@@ -94,7 +94,9 @@ function Overview() {
             <span className="text-muted-foreground">({Math.round(eff.data.potential_savings_pct)}%)</span>
           ) : null}
           <span>by switching to</span>
-          <span className="font-mono text-xs">{eff.data?.cheapest_model ?? 'the cheapest model'}</span>
+          <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs">
+            {eff.data?.cheapest_model ?? 'the cheapest model'}
+          </span>
         </div>
       )}
 
@@ -133,23 +135,27 @@ function Overview() {
         {modelRows.length === 0 ? (
           <EmptyState title="No model activity yet" />
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
             <table className="w-full text-sm">
-              <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">Model</th>
-                  <th className="px-3 py-2 text-right">Calls</th>
-                  <th className="px-3 py-2 text-right">Tokens</th>
-                  <th className="px-3 py-2 text-right">Cost</th>
+              <thead className="bg-muted/40 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                <tr className="border-b border-border">
+                  <th className="px-4 py-2.5 text-left">Model</th>
+                  <th className="px-4 py-2.5 text-right">Calls</th>
+                  <th className="px-4 py-2.5 text-right">Tokens</th>
+                  <th className="px-4 py-2.5 text-right">Cost</th>
                 </tr>
               </thead>
               <tbody>
                 {modelRows.map((m) => (
-                  <tr key={m.model} className="border-t border-border/60">
-                    <td className="px-3 py-2 font-mono text-xs">{m.model}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{fmtNumber((m.count ?? m.request_count) as number)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{fmtTokens((m.tokens ?? m.total_tokens) as number)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{fmtCost((m.cost ?? m.total_cost) as number)}</td>
+                  <tr key={m.model} className="border-b border-border/60 transition-colors last:border-0 hover:bg-muted/40">
+                    <td className="px-4 py-2">
+                      <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
+                        {m.model}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums">{fmtNumber((m.count ?? m.request_count) as number)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums">{fmtTokens((m.tokens ?? m.total_tokens) as number)}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-foreground">{fmtCost((m.cost ?? m.total_cost) as number)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -159,50 +165,50 @@ function Overview() {
       </section>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
-          <h3 className="mb-2 text-sm font-semibold text-foreground">Circuit breakers</h3>
+        <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Circuit breakers</h3>
           {(breakers.data?.circuit_breakers ?? []).length === 0 ? (
             <p className="text-xs text-muted-foreground">All circuits closed.</p>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="divide-y divide-border/60">
               {(breakers.data?.circuit_breakers ?? []).map((cb, i) => (
-                <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="font-mono text-xs">{String((cb as Dict).name ?? '—')}</span>
+                <li key={i} className="flex items-center justify-between py-1.5 text-sm first:pt-0 last:pb-0">
+                  <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{String((cb as Dict).name ?? '—')}</span>
                   <span className="capitalize text-muted-foreground">{String((cb as Dict).state ?? '—')}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
-        <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
-          <h3 className="mb-2 text-sm font-semibold text-foreground">Budgets</h3>
+        <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Budgets</h3>
           {(budgets.data?.budgets ?? []).length === 0 ? (
             <p className="text-xs text-muted-foreground">No budgets configured.</p>
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="divide-y divide-border/60">
               {(budgets.data?.budgets ?? []).map((b, i) => (
-                <li key={i} className="flex items-center justify-between text-sm">
-                  <span className="font-mono text-xs">{String((b as Dict).name ?? `budget ${i + 1}`)}</span>
-                  <span className="text-muted-foreground">{fmtCost(((b as Dict).used ?? (b as Dict).spent) as number)}</span>
+                <li key={i} className="flex items-center justify-between py-1.5 text-sm first:pt-0 last:pb-0">
+                  <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{String((b as Dict).name ?? `budget ${i + 1}`)}</span>
+                  <span className="tabular-nums text-muted-foreground">{fmtCost(((b as Dict).used ?? (b as Dict).spent) as number)}</span>
                 </li>
               ))}
             </ul>
           )}
         </div>
-        <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
-          <h3 className="mb-2 text-sm font-semibold text-foreground">Cost efficiency</h3>
-          <div className="space-y-1 text-sm">
-            <div className="flex justify-between">
+        <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
+          <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Cost efficiency</h3>
+          <div className="divide-y divide-border/60 text-sm">
+            <div className="flex items-center justify-between py-1.5 first:pt-0">
               <span className="text-muted-foreground">Potential savings</span>
-              <span className="tabular-nums">{fmtCost(eff.data?.potential_savings_usd ?? 0)}</span>
+              <span className="tabular-nums text-foreground">{fmtCost(eff.data?.potential_savings_usd ?? 0)}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between py-1.5">
               <span className="text-muted-foreground">Cheapest model</span>
-              <span className="font-mono text-xs">{eff.data?.cheapest_model ?? '—'}</span>
+              <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{eff.data?.cheapest_model ?? '—'}</span>
             </div>
-            <div className="flex justify-between">
+            <div className="flex items-center justify-between py-1.5 last:pb-0">
               <span className="text-muted-foreground">Most used</span>
-              <span className="font-mono text-xs">{eff.data?.most_used_model ?? '—'}</span>
+              <span className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">{eff.data?.most_used_model ?? '—'}</span>
             </div>
           </div>
         </div>

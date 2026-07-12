@@ -66,7 +66,7 @@ type TabId = (typeof TABS)[number]
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="space-y-2">
-      <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{title}</h3>
       {children}
     </section>
   )
@@ -75,9 +75,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /** Titled card used across the detail tabs. */
 function InfoCard({ title, extra, children }: { title: string; extra?: ReactNode; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-xs">
+    <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
         {extra}
       </div>
       {children}
@@ -91,8 +91,8 @@ function KVList({ rows }: { rows: Array<[string, ReactNode]> }) {
     <dl className="divide-y divide-border/60">
       {rows.map(([k, v], i) => (
         <div key={i} className="flex items-center justify-between gap-3 py-1.5 text-sm first:pt-0 last:pb-0">
-          <dt className="shrink-0 text-xs text-muted-foreground">{k}</dt>
-          <dd className="min-w-0 truncate text-right font-mono text-foreground">{v ?? '—'}</dd>
+          <dt className="shrink-0 text-[11px] uppercase tracking-[0.06em] text-muted-foreground">{k}</dt>
+          <dd className="min-w-0 truncate text-right font-mono tabular-nums text-foreground">{v ?? '—'}</dd>
         </div>
       ))}
     </dl>
@@ -129,7 +129,7 @@ function MetricTile({ label, value, pct, tone }: { label: string; value: string;
     <div className="space-y-1.5 text-center">
       <div className="text-lg font-semibold tabular-nums text-foreground">{value}</div>
       <MiniBar pct={pct} tone={tone} />
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</div>
     </div>
   )
 }
@@ -248,25 +248,25 @@ function OverviewTab({ agentId }: { agentId: string }) {
               <MiniBar pct={ctxPct} tone={ctxTone} />
               <div className="mt-3 grid grid-cols-3 gap-3 text-sm">
                 <div>
-                  <div className="text-[11px] text-muted-foreground">Used</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Used</div>
                   <div className="font-semibold tabular-nums text-foreground">{totalCtx ? fmtNumber(used) : '—'}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">Available</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Available</div>
                   <div className="font-semibold tabular-nums text-foreground">{totalCtx ? fmtNumber(available) : '—'}</div>
                 </div>
                 <div>
-                  <div className="text-[11px] text-muted-foreground">Total</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Total</div>
                   <div className="font-semibold tabular-nums text-foreground">{totalCtx ? fmtNumber(totalCtx) : '—'}</div>
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap gap-3 rounded-lg bg-muted/40 p-2 text-xs">
+              <div className="mt-3 flex flex-wrap gap-3 rounded-lg border border-border/60 bg-muted/40 p-2 text-xs">
                 <span className="text-muted-foreground">Thresholds</span>
                 <span><span className="text-status-online">●</span> Prune {Math.round(pruneThr * 100)}%</span>
                 <span><span className="text-status-warning">●</span> Compact {Math.round(compactThr * 100)}%</span>
                 <span><span className="text-status-error">●</span> Emergency {Math.round(emergencyThr * 100)}%</span>
               </div>
-              <div className="mt-2 flex flex-wrap gap-3 rounded-lg bg-muted/40 p-2 text-xs">
+              <div className="mt-2 flex flex-wrap gap-3 rounded-lg border border-border/60 bg-muted/40 p-2 text-xs">
                 <span className="text-muted-foreground">Cache</span>
                 {cacheRead == null && cacheWrite == null ? (
                   <span className="text-muted-foreground">—</span>
@@ -298,7 +298,7 @@ function OverviewTab({ agentId }: { agentId: string }) {
                     <AreaSeries data={volume} dataKey="tokens" />
                   </div>
                 ) : (
-                  <div className="flex h-20 items-center justify-center rounded-lg bg-muted/40 text-xs text-muted-foreground">No 24h activity</div>
+                  <div className="flex h-20 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-xs text-muted-foreground">No 24h activity</div>
                 )}
               </div>
               <div className="mt-3 text-xs text-muted-foreground">
@@ -394,7 +394,7 @@ function IdentityTab({ agentId }: { agentId: string }) {
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="space-y-4">
         <InfoCard title="DID" extra={<Pill tone="online">parsed</Pill>}>
-          <code className="block break-all rounded-lg bg-muted/40 p-3 font-mono text-sm text-status-online">
+          <code className="block break-all rounded-lg border border-border bg-muted/40 p-3 font-mono text-sm text-status-online">
             {String(a.did ?? '—')}
           </code>
         </InfoCard>
@@ -660,7 +660,7 @@ function PolicyTab({ agentId }: { agentId: string }) {
 
       {policy.data?.raw && (
         <Section title="Policy document">
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className="rounded-lg border border-border bg-card p-4 shadow-xs">
             <Markdown>{policy.data.raw}</Markdown>
           </div>
         </Section>
@@ -699,30 +699,34 @@ export function AgentDetailPage() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-border px-6 py-4">
+      <div className="flex items-center gap-3 border-b border-border px-6 py-3.5">
         <button
           type="button"
           onClick={() => navigate('/agents')}
-          className="flex size-8 cursor-pointer items-center justify-center rounded-lg border border-border text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+          className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           aria-label="Back to agents"
         >
           <ArrowLeft className="size-4" />
         </button>
         <span
-          className="flex size-9 items-center justify-center rounded-lg text-sm font-semibold text-primary-foreground"
+          className="flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold text-primary-foreground"
           style={{ background: (a.color as string) || 'var(--primary)' }}
         >
           {initials(label)}
         </span>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-lg font-semibold tracking-tight text-foreground">{label}</h1>
-          {a.did != null && <div className="truncate font-mono text-xs text-muted-foreground">{String(a.did)}</div>}
+          {a.did != null && (
+            <span className="mt-1 inline-block max-w-full truncate rounded border border-border bg-muted/40 px-1.5 py-0.5 align-middle font-mono text-[11px] text-muted-foreground">
+              {String(a.did)}
+            </span>
+          )}
         </div>
         <StatusDot online={Boolean(a.online)} />
       </div>
 
       <Tabs value={current} onValueChange={(v) => navigate(`/agents/${id}/${v}`)} className="border-b border-border px-6">
-        <TabsList className="my-2 flex-wrap">
+        <TabsList className="my-2 h-auto flex-wrap">
           {TABS.map((t) => (
             <TabsTrigger key={t} value={t}>{TAB_LABEL[t]}</TabsTrigger>
           ))}

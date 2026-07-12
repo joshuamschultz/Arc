@@ -21,6 +21,16 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useKnowledge, useRoster } from '@/lib/queries'
 
+/** Uppercase micro-label used above each overview section. */
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+      <span aria-hidden className="h-3 w-[2px] rounded-full bg-primary/70" />
+      {children}
+    </h2>
+  )
+}
+
 /** Render a flat dict of scalars as stat tiles; fall back to JSON. */
 function ScalarStats({ data }: { data?: Record<string, unknown> }) {
   if (!data) return null
@@ -102,19 +112,19 @@ export function KnowledgePage() {
               {(data) => (
                 <>
                   <section className="space-y-2">
-                    <h2 className="text-sm font-semibold text-foreground">Context budget</h2>
+                    <SectionLabel>Context budget</SectionLabel>
                     <ScalarStats data={data.context} />
                   </section>
                   <section className="space-y-2">
-                    <h2 className="text-sm font-semibold text-foreground">Graph</h2>
+                    <SectionLabel>Graph</SectionLabel>
                     <ScalarStats data={data.graph} />
                   </section>
                   <section className="space-y-2">
-                    <h2 className="text-sm font-semibold text-foreground">Memory</h2>
+                    <SectionLabel>Memory</SectionLabel>
                     <JsonBlock value={data.memory ?? {}} className="max-h-72" />
                   </section>
                   <section className="space-y-2">
-                    <h2 className="text-sm font-semibold text-foreground">Workspace</h2>
+                    <SectionLabel>Workspace</SectionLabel>
                     <FileTree agentId={agentId} />
                   </section>
                 </>

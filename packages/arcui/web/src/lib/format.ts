@@ -89,3 +89,40 @@ export function initials(name: string | null | undefined): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
   return (parts[0][0] + parts[1][0]).toUpperCase()
 }
+
+/**
+ * XML pretty-printer (U11): tokenize into tags (`<…>`) and text runs, then
+ * re-emit one node per line with depth-based indentation and a blank line
+ * between sibling elements. Tolerant of XML-ish (not strictly well-formed)
+ * content — unbalanced tags degrade to a flat list rather than throwing.
+ */
+export function formatXml(src: string): string {
+  const tokens = src.match(/<[^>]+>|[^<]+/g) ?? []
+  const lines: string[] = []
+  let depth = 0
+  const pad = (): string => '  '.repeat(Math.max(0, depth))
+  for (const token of tokens) {
+    if (token.startsWith('<')) {
+      const isClose = token.startsWith('</')
+      const isSelfContained =
+        token.endsWith('/>') || token.startsWith('<?') || token.startsWith('<!')
+      if (isClose) {
+        depth = Math.max(0, depth - 1)
+        lines.push(pad() + token.trim())
+      } else if (isSelfContained) {
+        lines.push(pad() + token.trim())
+      } else {
+        // A new element opening right after a sibling closed gets a blank line
+        // so consecutive <skill>…</skill><skill>… reads as separated blocks.
+        const prev = lines[lines.length - 1]?.trim() ?? ''
+        if (/<\/[^>]+>$/.test(prev)) lines.push('')
+        lines.push(pad() + token.trim())
+        depth += 1
+      }
+    } else {
+      const text = token.trim()
+      if (text) lines.push(pad() + text)
+    }
+  }
+  return lines.join('\n')
+}

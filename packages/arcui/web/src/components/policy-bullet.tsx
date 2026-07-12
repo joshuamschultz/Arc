@@ -12,10 +12,14 @@ export function PolicyBulletCard({ bullet }: { bullet: PolicyBullet }) {
   const fill = score != null ? Math.max(4, Math.min(100, score * 10)) : 0
 
   return (
-    <div className={cn('rounded-lg border border-border bg-card p-3 shadow-xs', bullet.retired && 'opacity-60')}>
+    <div className={cn('rounded-lg border border-border bg-card p-3 shadow-xs transition-colors duration-150 hover:border-border/80', bullet.retired && 'opacity-60')}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          {bullet.id && <span className="mr-2 font-mono text-[11px] text-primary">{bullet.id}</span>}
+          {bullet.id && (
+            <span className="mr-2 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-primary">
+              {bullet.id}
+            </span>
+          )}
           <span className="text-sm leading-relaxed text-foreground">{bullet.text || '(empty)'}</span>
         </div>
         {score != null && (
@@ -29,12 +33,12 @@ export function PolicyBulletCard({ bullet }: { bullet: PolicyBullet }) {
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         {bullet.agent_id && <span className="font-mono">{bullet.agent_id}</span>}
-        {typeof bullet.uses === 'number' && <span>{bullet.uses} uses</span>}
+        {typeof bullet.uses === 'number' && <span className="tabular-nums">{bullet.uses} uses</span>}
         {bullet.reviewed && <span>reviewed {relativeTime(bullet.reviewed)}</span>}
         {bullet.created && <span>created {relativeTime(bullet.created)}</span>}
         {bullet.source && <span className="font-mono">src {bullet.source}</span>}
         {bullet.retired && (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium">retired</span>
+          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">retired</span>
         )}
       </div>
     </div>

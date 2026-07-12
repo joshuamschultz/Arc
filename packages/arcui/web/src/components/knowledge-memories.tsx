@@ -25,7 +25,11 @@ function ImportanceBadge({ n }: { n: number }) {
       : n >= 4
         ? 'bg-status-warning/15 text-status-warning'
         : 'bg-muted text-muted-foreground'
-  return <span className={cn('rounded px-1.5 py-0.5 font-mono text-[11px]', tone)}>{n}/10</span>
+  return (
+    <span className={cn('rounded-full px-2 py-0.5 font-mono text-[11px] tabular-nums', tone)}>
+      {n}/10
+    </span>
+  )
 }
 
 function RecencyBar({ recency }: { recency: number }) {
@@ -34,9 +38,14 @@ function RecencyBar({ recency }: { recency: number }) {
   return (
     <div className="flex items-center gap-1.5">
       <div className="h-1.5 w-12 overflow-hidden rounded-full bg-muted">
-        <div className={cn('h-full rounded-full', bg)} style={{ width: `${pct}%` }} />
+        <div
+          className={cn('h-full rounded-full transition-all duration-300', bg)}
+          style={{ width: `${pct}%` }}
+        />
       </div>
-      <span className="font-mono text-[11px] text-muted-foreground">{fmtPercent(recency)}</span>
+      <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+        {fmtPercent(recency)}
+      </span>
     </div>
   )
 }
@@ -124,7 +133,9 @@ function MemoryDetail({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
         <SheetHeader className="border-b border-border px-5 py-4">
-          <SheetTitle className="text-sm">Memory {record.entry_id}</SheetTitle>
+          <SheetTitle className="text-sm">
+            Memory <span className="font-mono text-xs text-muted-foreground">{record.entry_id}</span>
+          </SheetTitle>
           <SheetDescription>
             {record.kind} · {record.classification} · {fmtTime(record.created)}
           </SheetDescription>
@@ -138,7 +149,9 @@ function MemoryDetail({
 
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Text</h3>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Text
+              </h3>
               {operatorMode && !editingText && (
                 <Button variant="ghost" size="sm" onClick={startEditText}>
                   <Pencil className="size-3.5" /> Edit
@@ -150,7 +163,7 @@ function MemoryDetail({
                 <textarea
                   value={draftText}
                   onChange={(e) => setDraftText(e.target.value)}
-                  className="h-32 w-full resize-none rounded-lg border border-border bg-muted/30 p-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                  className="h-32 w-full resize-none rounded-md border border-border bg-muted/30 p-2 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
                 />
                 <div className="flex justify-end gap-2">
                   <Button variant="ghost" size="sm" disabled={busy} onClick={() => setEditingText(false)}>
@@ -170,22 +183,28 @@ function MemoryDetail({
 
           <section className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Created</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Created
+              </div>
               <div className="text-foreground">{fmtTime(record.created)}</div>
               <div className="text-xs text-muted-foreground">{relativeTime(record.created)}</div>
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Recency</div>
-              <RecencyBar recency={record.recency} />
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Recency
+              </div>
+              <div className="mt-1">
+                <RecencyBar recency={record.recency} />
+              </div>
             </div>
             <div>
-              <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                 Importance
                 {operatorMode && !editingImportance && (
                   <button
                     type="button"
                     onClick={startEditImportance}
-                    className="cursor-pointer text-primary hover:underline"
+                    className="cursor-pointer normal-case tracking-normal text-primary hover:underline"
                   >
                     edit
                   </button>
@@ -199,7 +218,7 @@ function MemoryDetail({
                     max={10}
                     value={draftImportance}
                     onChange={(e) => setDraftImportance(Number(e.target.value))}
-                    className="h-7 w-14 rounded border border-border bg-muted/30 px-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
+                    className="h-7 w-14 rounded-md border border-border bg-muted/30 px-1.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/60"
                   />
                   <Button variant="ghost" size="icon-xs" disabled={busy} onClick={() => setEditingImportance(false)}>
                     <X className="size-3" />
@@ -217,13 +236,19 @@ function MemoryDetail({
               )}
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Source</div>
-              <div className="truncate font-mono text-xs text-foreground">{record.source}</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Source
+              </div>
+              <div className="mt-1 truncate rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
+                {record.source}
+              </div>
             </div>
           </section>
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Links</h3>
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Links
+            </h3>
             <QueryState
               query={links}
               isEmpty={(d) => d.items.length === 0}
@@ -237,7 +262,7 @@ function MemoryDetail({
                         key={i}
                         type="button"
                         onClick={() => onNavigateEntity(l.target_id)}
-                        className="cursor-pointer rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
+                        className="cursor-pointer rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary transition-colors duration-150 hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                       >
                         {l.target_id} · {l.kind}
                       </button>
@@ -289,16 +314,23 @@ function SearchResults({ agentId, q }: { agentId: string; q: string }) {
   return (
     <div className="space-y-2">
       {query.data.items.map((r, i) => (
-        <div key={i} className="rounded-lg border border-border bg-card p-3">
+        <div
+          key={i}
+          className="rounded-lg border border-border bg-card p-3 shadow-xs transition-colors duration-150 hover:border-primary/25"
+        >
           <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
-            <span className="truncate font-mono">{r.source}</span>
-            <span className="shrink-0 font-mono">score {r.score.toFixed(3)}</span>
+            <span className="truncate rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px]">
+              {r.source}
+            </span>
+            <span className="shrink-0 font-mono text-[11px] tabular-nums">score {r.score.toFixed(3)}</span>
           </div>
           <p className="text-sm text-foreground">{r.content}</p>
-          <div className="mt-1.5 flex gap-1.5 text-[11px] text-muted-foreground">
-            <span className="rounded bg-muted/40 px-1.5 py-0.5">{r.kind}</span>
-            <span className="rounded bg-muted/40 px-1.5 py-0.5">{r.classification}</span>
-            <span className="rounded bg-muted/40 px-1.5 py-0.5">{r.confidence}</span>
+          <div className="mt-1.5 flex gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5">{r.kind}</span>
+            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5">{r.classification}</span>
+            <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 font-mono tabular-nums normal-case">
+              {r.confidence}
+            </span>
           </div>
         </div>
       ))}
@@ -351,33 +383,33 @@ export function MemoryBrowser({
         >
           {(data) => (
             <div className="space-y-3">
-              <div className="overflow-hidden rounded-xl border border-border bg-card">
+              <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/40">
                     <tr className="border-b border-border">
-                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                         Created
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                         Text
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                         Recency
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                         Importance
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                         Source
                       </th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-border/60">
                     {data.items.map((m) => (
                       <tr
                         key={m.entry_id}
                         onClick={() => setSelected(m)}
-                        className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/40"
+                        className="cursor-pointer transition-colors duration-150 hover:bg-muted/40"
                       >
                         <td className="px-3 py-2 align-top text-xs text-muted-foreground">
                           {relativeTime(m.created)}
@@ -389,8 +421,10 @@ export function MemoryBrowser({
                         <td className="px-3 py-2 align-top">
                           <ImportanceBadge n={m.importance} />
                         </td>
-                        <td className="max-w-[16ch] truncate px-3 py-2 align-top font-mono text-xs text-muted-foreground">
-                          {m.source}
+                        <td className="max-w-[16ch] truncate px-3 py-2 align-top">
+                          <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                            {m.source}
+                          </span>
                         </td>
                       </tr>
                     ))}
@@ -398,7 +432,7 @@ export function MemoryBrowser({
                 </table>
               </div>
               <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
+                <span className="tabular-nums">
                   {data.offset + 1}–{Math.min(data.offset + data.items.length, data.total)} of {data.total}
                 </span>
                 <div className="flex gap-2">

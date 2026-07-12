@@ -57,7 +57,7 @@ function FactRow({ fact }: { fact: string }) {
     <li className="flex items-start justify-between gap-3 rounded-lg border border-border bg-muted/20 px-3 py-2">
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+          <span className="rounded-sm border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
             {parsed.predicate.replace(/_/g, ' ')}
           </span>
           <span className="text-sm text-foreground">{parsed.value}</span>
@@ -70,8 +70,8 @@ function FactRow({ fact }: { fact: string }) {
         )}
       </div>
       <div className="shrink-0 text-right text-[11px] text-muted-foreground">
-        <div className="font-mono">{parsed.confidence}</div>
-        <div>{parsed.date}</div>
+        <div className="font-mono tabular-nums">{parsed.confidence}</div>
+        <div className="tabular-nums">{parsed.date}</div>
       </div>
     </li>
   )
@@ -84,7 +84,11 @@ function ImportanceBadge({ n }: { n: number }) {
       : n >= 4
         ? 'bg-status-warning/15 text-status-warning'
         : 'bg-muted text-muted-foreground'
-  return <span className={cn('rounded px-1.5 py-0.5 font-mono text-[11px]', tone)}>{n}/10</span>
+  return (
+    <span className={cn('rounded-full px-2 py-0.5 font-mono text-[11px] tabular-nums', tone)}>
+      {n}/10
+    </span>
+  )
 }
 
 /** Entity detail: facts, tags, and navigable links (entities are read-only —
@@ -111,24 +115,35 @@ function EntityDetail({
         <SheetHeader className="border-b border-border px-5 py-4">
           <SheetTitle className="text-sm">{entity.name}</SheetTitle>
           <SheetDescription>
-            {entity.entity_type} · {entity.classification} · confidence {entity.confidence.toFixed(2)}
+            {entity.entity_type} · {entity.classification} · confidence{' '}
+            <span className="font-mono tabular-nums">{entity.confidence.toFixed(2)}</span>
           </SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-5 overflow-auto p-5">
           <section className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Importance</div>
-              <ImportanceBadge n={entity.importance} />
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Importance
+              </div>
+              <div className="mt-1">
+                <ImportanceBadge n={entity.importance} />
+              </div>
             </div>
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Source</div>
-              <div className="truncate font-mono text-xs text-foreground">{entity.source}</div>
+              <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Source
+              </div>
+              <div className="mt-1 truncate rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
+                {entity.source}
+              </div>
             </div>
           </section>
 
           {entity.tags.length > 0 && (
             <section className="space-y-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h3>
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Tags
+              </h3>
               <div className="flex flex-wrap gap-1.5">
                 {entity.tags.map((t) => (
                   <span key={t} className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
@@ -140,7 +155,7 @@ function EntityDetail({
           )}
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Facts{entity.facts.length ? ` (${entity.facts.length})` : ''}
             </h3>
             {entity.facts.length === 0 ? (
@@ -155,7 +170,9 @@ function EntityDetail({
           </section>
 
           <section className="space-y-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Links</h3>
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Links
+            </h3>
             <QueryState
               query={links}
               isEmpty={(d) => d.items.length === 0}
@@ -169,9 +186,9 @@ function EntityDetail({
                         key={i}
                         type="button"
                         onClick={() => onNavigateEntity(l.target_id)}
-                        className="cursor-pointer rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary hover:bg-primary/20"
+                        className="cursor-pointer rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-xs text-primary transition-colors duration-150 hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
                       >
-                        {l.target_id} · {l.kind} ({l.weight.toFixed(2)})
+                        {l.target_id} · {l.kind} <span className="tabular-nums">({l.weight.toFixed(2)})</span>
                       </button>
                     ) : (
                       <span
@@ -221,23 +238,23 @@ export function EntityBrowser({
         }
       >
         {(data) => (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <div className="overflow-hidden rounded-lg border border-border bg-card shadow-xs">
             <table className="w-full text-sm">
               <thead className="bg-muted/40">
                 <tr className="border-b border-border">
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Name</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Type</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Importance</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</th>
-                  <th className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">Source</th>
+                  <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Name</th>
+                  <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Type</th>
+                  <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Importance</th>
+                  <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Tags</th>
+                  <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Source</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-border/60">
                 {data.items.map((e) => (
                   <tr
                     key={e.slug}
                     onClick={() => onSelectSlug(e.slug)}
-                    className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/40"
+                    className="cursor-pointer transition-colors duration-150 hover:bg-muted/40"
                   >
                     <td className="px-3 py-2 align-top text-foreground">{e.name}</td>
                     <td className="px-3 py-2 align-top text-xs text-muted-foreground">{e.entity_type}</td>
@@ -247,8 +264,10 @@ export function EntityBrowser({
                     <td className="max-w-xs truncate px-3 py-2 align-top text-xs text-muted-foreground">
                       {e.tags.join(', ') || '—'}
                     </td>
-                    <td className="max-w-[16ch] truncate px-3 py-2 align-top font-mono text-xs text-muted-foreground">
-                      {e.source}
+                    <td className="max-w-[16ch] truncate px-3 py-2 align-top">
+                      <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+                        {e.source}
+                      </span>
                     </td>
                   </tr>
                 ))}

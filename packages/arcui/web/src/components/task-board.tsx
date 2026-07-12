@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { TaskCard } from '@/components/task-card'
+import { isBlocked } from '@/lib/tasks'
 import type { Task, TaskStatus } from '@/lib/types'
 
 const COLUMNS: { id: TaskStatus; label: string }[] = [
@@ -10,11 +11,6 @@ const COLUMNS: { id: TaskStatus; label: string }[] = [
   { id: 'done', label: 'Done' },
   { id: 'failed', label: 'Failed' },
 ]
-
-/** True when any of `task.blocked_by` is not yet `done` (SDD §4 v1-derived state). */
-export function isBlocked(task: Task, statusById: Map<string, string>): boolean {
-  return (task.blocked_by ?? []).some((depId) => statusById.get(depId) !== 'done')
-}
 
 /** Kanban board — one column per `TaskStatus`, plus a `failed` lane.
  *
@@ -60,15 +56,19 @@ export function TaskBoard({
         return (
           <div
             key={col.id}
-            className="flex min-w-[11rem] flex-1 basis-0 flex-col gap-2 rounded-xl border border-border bg-card/30 p-2.5"
+            className="flex min-w-[11rem] flex-1 basis-0 flex-col gap-2 rounded-lg border border-border/60 bg-muted/20 p-2.5"
           >
-            <div className="flex items-center justify-between px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <span>{col.label}</span>
-              <span className="tabular-nums">{items.length}</span>
+            <div className="flex items-center justify-between px-1 py-0.5">
+              <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                {col.label}
+              </span>
+              <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                {items.length}
+              </span>
             </div>
             <div className="flex flex-1 flex-col gap-2 overflow-y-auto">
               {items.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-border/60 p-4 text-center text-xs text-muted-foreground">
+                <div className="rounded-md border border-border/50 bg-background/40 p-4 text-center text-[11px] text-muted-foreground">
                   Empty
                 </div>
               ) : (

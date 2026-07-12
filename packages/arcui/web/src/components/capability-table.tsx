@@ -7,15 +7,25 @@ import type { CapabilityInventoryItem } from '@/lib/types'
 /** Source-root family badge — color groups by root, but the label is always
  *  the loader's own verbatim root name (e.g. "workspace-skills"), never a
  *  client-invented label, so a new scan root renders correctly untouched. */
-export function SourceRootBadge({ value }: { value: string }) {
-  const tone = value.startsWith('workspace')
-    ? 'bg-status-online/15 text-status-online'
-    : value.startsWith('agent')
-      ? 'bg-status-warning/15 text-status-warning'
-      : value.startsWith('global')
-        ? 'bg-primary/15 text-primary'
-        : 'bg-muted text-muted-foreground' // builtins*
-  return <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', tone)}>{value}</span>
+export function SourceRootBadge({ value }: { value?: string | null }) {
+  const root = value ?? '' // dynamic builtins (create-tool/skill…) carry no root
+  const tone = root.startsWith('workspace')
+    ? 'border-status-online/30 bg-status-online/15 text-status-online'
+    : root.startsWith('agent')
+      ? 'border-status-warning/30 bg-status-warning/15 text-status-warning'
+      : root.startsWith('global')
+        ? 'border-primary/30 bg-primary/15 text-primary'
+        : 'border-border bg-muted text-muted-foreground' // builtins*
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[11px] font-medium',
+        tone,
+      )}
+    >
+      {root || '—'}
+    </span>
+  )
 }
 
 /** Loader/TOFU verdict badge, rendered VERBATIM (REQ-093/096) — no enum, no
@@ -23,14 +33,23 @@ export function SourceRootBadge({ value }: { value: string }) {
  *  verdict the loader hasn't invented yet still reads as "needs a look"
  *  instead of silently blending in as fine. `detail` (when non-empty) surfaces
  *  in a tooltip — the load-error popover COMP-009 calls for. */
-export function CapabilityStatusBadge({ status, detail }: { status: string; detail?: string }) {
-  const s = status.toLowerCase()
+export function CapabilityStatusBadge({ status, detail }: { status?: string | null; detail?: string }) {
+  const s = (status ?? '').toLowerCase() // dynamic builtins may carry no verdict
   const tone = s.includes('load')
-    ? 'bg-status-online/15 text-status-online'
+    ? 'border-status-online/30 bg-status-online/15 text-status-online'
     : s.includes('deny') || s.includes('invalid') || s.includes('error')
-      ? 'bg-status-error/15 text-status-error'
-      : 'bg-status-warning/15 text-status-warning' // unsigned, new_sighting, or any future verdict
-  const badge = <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', tone)}>{status}</span>
+      ? 'border-status-error/30 bg-status-error/15 text-status-error'
+      : 'border-status-warning/30 bg-status-warning/15 text-status-warning' // unsigned, new_sighting, or any future verdict
+  const badge = (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md border px-1.5 py-0.5 text-[11px] font-medium',
+        tone,
+      )}
+    >
+      {status || '—'}
+    </span>
+  )
   if (!detail) return badge
   return (
     <Tooltip>

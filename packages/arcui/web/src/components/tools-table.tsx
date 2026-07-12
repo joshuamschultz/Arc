@@ -63,10 +63,10 @@ export function ToolsTable({
         placeholder="Filter tools…"
         className="h-8 max-w-xs"
       />
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
+            <tr className="border-b border-border text-left text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               <th className="w-6 px-3 py-2" />
               <th className="px-3 py-2">Tool</th>
               <th className="px-3 py-2">Transport</th>
@@ -82,7 +82,7 @@ export function ToolsTable({
               return (
                 <Fragment key={`${t.name}-${i}`}>
                   <tr
-                    className={cn('cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/40', inactive && 'opacity-50')}
+                    className={cn('cursor-pointer border-b border-border/60 transition-colors duration-150 last:border-0 hover:bg-muted/40', inactive && 'opacity-50')}
                     onClick={() => {
                       setOpen(isOpen ? null : i)
                       onRowClick?.(t)
@@ -91,7 +91,11 @@ export function ToolsTable({
                     <td className="px-3 py-2 text-muted-foreground">
                       {desc && <ChevronRight className={cn('size-3.5 transition-transform', isOpen && 'rotate-90')} />}
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs text-foreground">{String(t.name ?? '—')}</td>
+                    <td className="px-3 py-2">
+                      <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                        {String(t.name ?? '—')}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground">{String(t.transport || '—')}</td>
                     <td className="px-3 py-2"><ClassificationBadge value={t.classification as string} /></td>
                     <td className="px-3 py-2"><StatusBadge value={t.status as string} /></td>

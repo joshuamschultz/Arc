@@ -121,9 +121,9 @@ function TreeNode({
           type="button"
           style={pad}
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full cursor-pointer items-center gap-1.5 rounded py-1 pr-2 text-left text-sm text-foreground hover:bg-muted/50"
+          className="flex w-full cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
-          <ChevronRight className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
+          <ChevronRight className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', open && 'rotate-90')} />
           {open ? (
             <FolderOpen className="size-4 shrink-0 text-primary" />
           ) : (
@@ -152,12 +152,14 @@ function TreeNode({
         style={pad}
         onClick={() => onSelect(entry.path)}
         className={cn(
-          'flex w-full cursor-pointer items-center gap-1.5 rounded py-1 pr-2 text-left text-sm hover:bg-muted/50',
-          selected === entry.path ? 'bg-primary/10 text-foreground' : 'text-muted-foreground',
+          'flex w-full cursor-pointer items-center gap-1.5 rounded-md py-1 pr-2 text-left font-mono text-[13px] transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+          selected === entry.path
+            ? 'bg-primary/10 text-foreground'
+            : 'text-muted-foreground hover:text-foreground',
         )}
       >
         <span className="w-3.5 shrink-0" />
-        <File className="size-4 shrink-0" />
+        <File className={cn('size-4 shrink-0', selected === entry.path && 'text-primary')} />
         <span className="truncate">{name}</span>
       </button>
     </li>
@@ -258,7 +260,7 @@ function FileViewer({ agentId, root, path }: { agentId: string; root: string; pa
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             spellCheck={false}
-            className="h-full min-h-[240px] w-full resize-none rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+            className="h-full min-h-[240px] w-full resize-none rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           />
         ) : isMarkdown ? (
           <MarkdownFile content={q.data.content} />
@@ -284,9 +286,9 @@ export function FileTree({
   const [selected, setSelected] = useState<string | null>(null)
   // Reset selection when switching roots so the viewer never shows a stale file.
   return (
-    <div className="grid h-[460px] grid-cols-[minmax(220px,300px)_1fr] overflow-hidden rounded-xl border border-border bg-card">
+    <div className="grid h-[460px] grid-cols-[minmax(220px,300px)_1fr] overflow-hidden rounded-lg border border-border bg-card shadow-xs">
       <div className="overflow-auto border-r border-border p-2">
-        <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
           {rootLabel ?? root}
         </div>
         <TreeLevel agentId={agentId} root={root} path="" depth={0} selected={selected} onSelect={setSelected} />

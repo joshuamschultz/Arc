@@ -12,7 +12,7 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
         ? 'bg-status-warning/15 text-status-warning'
         : 'bg-muted text-muted-foreground'
   return (
-    <span className={cn('rounded px-1.5 py-0.5 font-mono text-[11px]', tone)}>
+    <span className={cn('rounded-full px-2 py-0.5 font-mono text-[11px] tabular-nums', tone)}>
       {fmtPercent(confidence)}
     </span>
   )
@@ -41,10 +41,12 @@ export function InsightBrowser({ agentId }: { agentId: string }) {
           {data.items.map((insight) => (
             <div
               key={insight.id}
-              className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4"
+              className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4 shadow-xs transition-colors duration-150 hover:border-primary/25"
             >
               <div className="flex items-start justify-between gap-2">
-                <span className="font-mono text-[11px] text-muted-foreground">{insight.id}</span>
+                <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                  {insight.id}
+                </span>
                 <ConfidenceBadge confidence={insight.confidence} />
               </div>
               <p className="text-sm font-medium text-foreground">{insight.statement}</p>
@@ -66,8 +68,12 @@ export function InsightBrowser({ agentId }: { agentId: string }) {
                 </div>
               )}
               <div className="mt-auto flex items-center justify-between pt-1 text-[11px] text-muted-foreground">
-                <span>{insight.instances.length} instance{insight.instances.length === 1 ? '' : 's'}</span>
-                <span className="rounded bg-muted/40 px-1.5 py-0.5">{insight.classification}</span>
+                <span className="tabular-nums">
+                  {insight.instances.length} instance{insight.instances.length === 1 ? '' : 's'}
+                </span>
+                <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {insight.classification}
+                </span>
               </div>
             </div>
           ))}

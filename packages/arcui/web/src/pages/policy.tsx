@@ -49,7 +49,7 @@ export function PolicyPage() {
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-2 shadow-xs">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -66,12 +66,12 @@ export function PolicyPage() {
               <SelectItem value="created">Sort: newest</SelectItem>
             </SelectContent>
           </Select>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <label className="flex items-center gap-2 pl-1 text-xs text-muted-foreground">
             <input
               type="checkbox"
               checked={hideRetired}
               onChange={(e) => setHideRetired(e.target.checked)}
-              className="accent-primary"
+              className="size-3.5 accent-primary"
             />
             Hide retired
           </label>

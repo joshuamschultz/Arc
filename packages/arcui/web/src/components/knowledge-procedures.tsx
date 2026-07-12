@@ -23,11 +23,11 @@ export function ProcedureBrowser({ agentId }: { agentId: string }) {
           {data.items.map((proc) => (
             <div
               key={proc.slug}
-              className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4"
+              className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4 shadow-xs transition-colors duration-150 hover:border-primary/25"
             >
               <div className="flex items-start justify-between gap-2">
                 <h3 className="text-sm font-medium text-foreground">{proc.title}</h3>
-                <span className="shrink-0 rounded bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                <span className="shrink-0 rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 font-mono text-[11px] tabular-nums text-primary">
                   ×{proc.use_count}
                 </span>
               </div>
@@ -44,8 +44,12 @@ export function ProcedureBrowser({ agentId }: { agentId: string }) {
                 </ol>
               )}
               <div className="mt-auto flex items-center justify-between pt-1 text-[11px] text-muted-foreground">
-                <span className="font-mono">{proc.slug}</span>
-                <span className="rounded bg-muted/40 px-1.5 py-0.5">{proc.classification}</span>
+                <span className="rounded-sm border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-muted-foreground">
+                  {proc.slug}
+                </span>
+                <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  {proc.classification}
+                </span>
               </div>
             </div>
           ))}

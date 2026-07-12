@@ -16,8 +16,8 @@ import type { Trace } from '@/lib/types'
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</span>
-      <span className="font-mono text-sm text-foreground">{value}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">{label}</span>
+      <span className="font-mono text-sm tabular-nums text-foreground">{value}</span>
     </div>
   )
 }
@@ -54,8 +54,8 @@ function responseContent(response: unknown): unknown {
 
 function MessageBubble({ message }: { message: Message }) {
   return (
-    <div className="rounded-lg border border-border bg-muted/20 p-3">
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-primary">
+    <div className="rounded-lg border border-l-2 border-border border-l-primary/40 bg-muted/20 p-3">
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-primary">
         {message.role || 'message'}
       </div>
       <LlmContent content={message.content} />
@@ -77,7 +77,7 @@ function CacheBreakdown({ trace }: { trace: Trace }) {
 
   return (
     <div className="space-y-2">
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
         Cache breakdown
       </div>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
@@ -118,7 +118,12 @@ export function TraceDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <SheetHeader className="border-b border-border px-5 py-4">
-          <SheetTitle className="font-mono text-sm">{shortId(full.trace_id, 16)}</SheetTitle>
+          <div className="flex items-center gap-2 pr-8">
+            <SheetTitle className="inline-flex items-center rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-foreground">
+              {shortId(full.trace_id, 16)}
+            </SheetTitle>
+            <StatusText value={full.status} />
+          </div>
           <SheetDescription>
             {full.model || 'unknown model'} · {fmtTime(full.timestamp)}
           </SheetDescription>
@@ -146,7 +151,7 @@ export function TraceDrawer({
 
             {messages.length > 0 && (
               <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   Messages
                 </div>
                 {messages.map((m, i) => (
@@ -157,7 +162,7 @@ export function TraceDrawer({
 
             {response !== undefined && (
               <div className="space-y-1.5">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   Response
                 </div>
                 {responseContent(response) !== undefined ? (
@@ -170,7 +175,7 @@ export function TraceDrawer({
 
             {messages.length === 0 && request !== undefined && (
               <div className="space-y-1.5">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
                   Request
                 </div>
                 <JsonBlock value={request} />

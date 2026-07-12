@@ -14,8 +14,17 @@ export function EmptyState({
   description?: string
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-card/30 px-8 py-12 text-center">
-      <span className="text-muted-foreground">{icon ?? <Inbox className="size-7" />}</span>
+    <div
+      className="relative flex flex-col items-center justify-center gap-3 overflow-hidden rounded-lg border border-border bg-card/40 px-8 py-12 text-center"
+      style={{
+        backgroundImage:
+          'radial-gradient(color-mix(in oklch, var(--muted-foreground) 22%, transparent) 1px, transparent 1px)',
+        backgroundSize: '16px 16px',
+      }}
+    >
+      <span className="flex size-12 items-center justify-center rounded-full border border-border bg-muted/40 text-muted-foreground [&>svg]:size-5">
+        {icon ?? <Inbox className="size-5" />}
+      </span>
       <div className="text-sm font-medium text-foreground">{title}</div>
       {description && (
         <p className="max-w-sm text-xs text-muted-foreground">{description}</p>
@@ -32,8 +41,10 @@ export function ErrorState({ error }: { error: unknown }) {
         ? error.message
         : 'Request failed'
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-8 py-10 text-center">
-      <AlertCircle className="size-7 text-destructive" />
+    <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-8 py-10 text-center">
+      <span className="flex size-12 items-center justify-center rounded-full border border-destructive/30 bg-destructive/10 text-destructive">
+        <AlertCircle className="size-5" />
+      </span>
       <div className="text-sm font-medium text-foreground">Couldn’t load data</div>
       <p className="max-w-sm text-xs text-muted-foreground">{msg}</p>
     </div>

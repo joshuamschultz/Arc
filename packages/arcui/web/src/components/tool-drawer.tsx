@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Pencil } from 'lucide-react'
 import {
@@ -42,12 +42,15 @@ export function ToolDrawer({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveResult, setSaveResult] = useState<FileWriteResponse | null>(null)
 
-  // A newly selected tool always opens in view mode with a clean save state.
-  useEffect(() => {
+  // A newly selected tool always opens in view mode with a clean save state
+  // (state adjusted during render, keyed on the selected tool).
+  const [prevTool, setPrevTool] = useState(toolName)
+  if (prevTool !== toolName) {
+    setPrevTool(toolName)
     setEditing(false)
     setSaveError(null)
     setSaveResult(null)
-  }, [toolName])
+  }
 
   if (toolName == null) return null
 
@@ -93,7 +96,9 @@ export function ToolDrawer({
         </SheetHeader>
 
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-2 text-xs text-muted-foreground">
-          <span className="truncate font-mono">{detail.data?.source_path}</span>
+          <span className="truncate rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px]">
+            {detail.data?.source_path}
+          </span>
           <div className="flex shrink-0 items-center gap-2">
             {operatorMode && detail.data?.editable && !editing && (
               <Button variant="ghost" size="sm" onClick={startEdit}>
@@ -139,7 +144,7 @@ export function ToolDrawer({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               spellCheck={false}
-              className="h-full min-h-[320px] w-full resize-none rounded-lg border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+              className="h-full min-h-[320px] w-full resize-none rounded-md border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             />
           ) : detail.data?.content ? (
             <JsonBlock value={detail.data.content} className="whitespace-pre" />

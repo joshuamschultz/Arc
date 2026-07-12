@@ -3,11 +3,12 @@ import { Plus } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
 import { FilterPills } from '@/components/filter-pills'
 import { StatCard } from '@/components/stat-card'
-import { QueryState } from '@/components/states'
+import { EmptyState, QueryState } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
-import { TaskBoard, isBlocked } from '@/components/task-board'
+import { TaskBoard } from '@/components/task-board'
+import { isBlocked } from '@/lib/tasks'
 import { TaskDrawer } from '@/components/task-drawer'
 import { CreateTaskSheet } from '@/components/create-task-sheet'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
@@ -39,7 +40,7 @@ export function TasksPage() {
   const [creating, setCreating] = useState(false)
 
   const tasks = useMemo(() => query.data?.tasks ?? [], [query.data])
-  const agents = roster.data?.agents ?? []
+  const agents = useMemo(() => roster.data?.agents ?? [], [roster.data])
 
   const statusById = useMemo(() => {
     const m = new Map<string, string>()
@@ -164,13 +165,13 @@ export function TasksPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          <span>{counts.tasks} tasks</span>
-          <span>·</span>
-          <span>{counts.inbox} inbox</span>
-          <span>·</span>
-          <span>{counts.blocked} blocked</span>
-          <span>·</span>
-          <span>{counts.backlog} backlog</span>
+          <span className="tabular-nums">{counts.tasks} tasks</span>
+          <span className="text-border">·</span>
+          <span className="tabular-nums">{counts.inbox} inbox</span>
+          <span className="text-border">·</span>
+          <span className="tabular-nums">{counts.blocked} blocked</span>
+          <span className="text-border">·</span>
+          <span className="tabular-nums">{counts.backlog} backlog</span>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -217,11 +218,7 @@ export function TasksPage() {
         <QueryState
           query={query}
           isEmpty={() => tasks.length === 0}
-          empty={
-            <div className="rounded-xl border border-dashed border-border bg-card/30 p-10 text-center text-sm text-muted-foreground">
-              No tasks across the fleet yet.
-            </div>
-          }
+          empty={<EmptyState title="No tasks across the fleet yet." />}
         >
           {() => (
             <TaskBoard
