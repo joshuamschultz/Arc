@@ -58,12 +58,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
+from arcgateway.commands import CommandRegistry, build_default_registry
 from arcgateway.delivery import DeliveryTarget
 from arcgateway.executor import Delta, Executor, InboundEvent
+from arcgateway.session_epoch import SessionEpochStore
 from arcgateway.session_pairing import PairingInterceptor
 from arcgateway.session_queue import QueueManager
 from arcgateway.stream_bridge import StreamBridge
-from arcgateway.telemetry import hash_user_did
+from arcgateway.telemetry import emit_audit, hash_user_did
 
 if TYPE_CHECKING:
     # IdentityGraph is an optional integration dep; guard prevents circular import.
@@ -100,7 +102,7 @@ class _AdapterProtocol(Protocol):
         ...
 
 
-def build_session_key(agent_did: str, user_did: str) -> str:
+def build_session_key(agent_did: str, user_did: str, *, generation: int = 0) -> str:
     """Build a deterministic 16-hex-char session key from (agent, user) pair.
 
     Same (agent, user) pair always produces the same key, regardless of which
@@ -111,15 +113,22 @@ def build_session_key(agent_did: str, user_did: str) -> str:
     collision probability is negligible for expected concurrency levels (~2^64
     preimage resistance) while keeping session keys human-readable in logs.
 
+    ``generation`` folds a per-(agent, user) rotation counter into the key so a
+    ``/new`` command can mint a fresh, empty session (see SessionEpochStore).
+    ``generation=0`` reproduces the original key exactly — the correct default
+    that keeps every existing on-disk session valid.
+
     Args:
         agent_did: The target agent's DID (e.g. "did:arc:org:agent/id").
         user_did: The resolved cross-platform user DID.
+        generation: Session rotation counter; 0 is the first/plain session.
 
     Returns:
         16-character lowercase hex string.
     """
-    digest = hashlib.sha256(f"{agent_did}:{user_did}".encode()).hexdigest()
-    return digest[:16]
+    base = f"{agent_did}:{user_did}"
+    seed = base if generation == 0 else f"{base}:g{generation}"
+    return hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
 class SessionRouter:
@@ -163,6 +172,8 @@ class SessionRouter:
         adapter: BasePlatformAdapter | None = None,
         adapter_map: dict[str, BasePlatformAdapter] | None = None,
         delivery_target_factory: Any | None = None,
+        command_registry: CommandRegistry | None = None,
+        session_epoch_db_path: Path | None = None,
         _test_hooks: bool = True,
     ) -> None:
         """Initialise SessionRouter with the given executor.
@@ -223,6 +234,13 @@ class SessionRouter:
         self.agent_tasks_spawned: dict[str, int] = {}
         self.queued_events: dict[str, list[InboundEvent]] = {}
 
+        # Slash-command registry + session rotation. The registry is the one
+        # cross-platform command surface (every adapter delivers "/cmd" as
+        # message text through handle()); the epoch store folds a per-(agent,
+        # user) generation into the session key so /new mints a fresh session.
+        self._commands = command_registry or build_default_registry()
+        self._epochs = SessionEpochStore(session_epoch_db_path)
+
     # -----------------------------------------------------------------------
     # Allowlist delegation (public API — callers reference SessionRouter)
     # -----------------------------------------------------------------------
@@ -266,6 +284,37 @@ class SessionRouter:
         self._pairing.remove_approved_user(user_did)
 
     # -----------------------------------------------------------------------
+    # Session rotation (public API — /new command + arcui both call these)
+    # -----------------------------------------------------------------------
+
+    def current_session_key(self, agent_did: str, user_did: str) -> str:
+        """Resolve the (agent, user) pair's *current* session key.
+
+        Folds the pair's rotation generation into the deterministic key, so
+        after a ``/new`` every surface converges on the same fresh session.
+        """
+        base = build_session_key(agent_did, user_did)
+        generation = self._epochs.generation(base)
+        return build_session_key(agent_did, user_did, generation=generation)
+
+    def new_session(self, agent_did: str, user_did: str) -> str:
+        """Rotate the (agent, user) session; return the new session key.
+
+        Bumps the rotation generation so the next message hashes to a brand-new,
+        empty session (``open_or_resume`` touches an empty log). The prior
+        conversation is left intact on disk.
+        """
+        base = build_session_key(agent_did, user_did)
+        generation = self._epochs.bump(base)
+        key = build_session_key(agent_did, user_did, generation=generation)
+        emit_audit(
+            _logger,
+            "gateway.session.rotated",
+            {"uid_h": hash_user_did(user_did), "generation": generation},
+        )
+        return key
+
+    # -----------------------------------------------------------------------
     # Core routing
     # -----------------------------------------------------------------------
 
@@ -298,7 +347,7 @@ class SessionRouter:
         resolved_did = event.user_did
         if self._identity_graph is not None:
             resolved_did = self._resolve_user_did(event.platform, event.user_did)
-        canonical_key = build_session_key(event.agent_did, resolved_did)
+        canonical_key = self.current_session_key(event.agent_did, resolved_did)
         if resolved_did != event.user_did or event.session_key != canonical_key:
             event = event.model_copy(
                 update={"user_did": resolved_did, "session_key": canonical_key}
@@ -307,6 +356,18 @@ class SessionRouter:
         # --- Pairing interceptor (T1.8) ---
         if not await self._pairing.is_user_approved(event.user_did, event.platform):
             await self._pairing.handle_unpaired_user(event)
+            return
+
+        # --- Slash-command interceptor ---
+        # Registered commands (e.g. /new) are handled here and never reach the
+        # session/executor machinery; an unknown "/token" falls through as
+        # ordinary text. Runs AFTER pairing so an unapproved user cannot rotate
+        # sessions or enumerate commands, and BEFORE the race guard so a command
+        # never touches _active_sessions (preserving the pre-await race invariant).
+        async def _reply(text: str) -> None:
+            await self._send_reply(event, text)
+
+        if await self._commands.dispatch(event, event.agent_did, resolved_did, self, _reply):
             return
 
         session_key = event.session_key
@@ -508,6 +569,21 @@ class SessionRouter:
         if self._delivery_target_factory is not None:
             return cast("DeliveryTarget", self._delivery_target_factory(event))
         return DeliveryTarget.parse(f"{event.platform}:{event.chat_id}")
+
+    async def _send_reply(self, event: InboundEvent, text: str) -> None:
+        """Deliver a standalone reply (e.g. a command response) to the source.
+
+        Reuses the same outbound resolution as turn replies and pairing DMs.
+        When no adapter owns the platform (e.g. programmatic dispatch with no
+        registered channel), the reply is logged and dropped rather than guessed.
+        """
+        adapter = self._resolve_outbound(event)
+        if adapter is None:
+            _logger.warning(
+                "command reply dropped — no outbound adapter for platform %s", event.platform
+            )
+            return
+        await adapter.send(self._resolve_delivery_target(event), text)
 
     async def _drain_queue(self, session_key: str) -> None:
         """Process queued events sequentially after the active turn completes.

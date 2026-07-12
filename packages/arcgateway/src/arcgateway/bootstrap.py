@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from arcgateway.commands import build_default_registry
 from arcgateway.executor import AsyncioExecutor, Executor
 from arcgateway.session import SessionRouter
 from arcgateway.stream_bridge import StreamBridge
@@ -250,10 +251,15 @@ async def build_for_embedded(
             gateway_config.pairing.db_path,
         )
 
+    # Slash-command registry + persisted session-rotation epochs. The epoch DB
+    # sits beside the pairing DB so "New session" survives a gateway restart.
+    command_registry = build_default_registry()
     session_router = SessionRouter(
         executor=executor,
         pairing_store=pairing_store,
         user_allowlist=user_allowlist,
+        command_registry=command_registry,
+        session_epoch_db_path=gateway_config.pairing.db_path.parent / "session_epochs.db",
     )
     stream_bridge = StreamBridge()
 

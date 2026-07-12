@@ -130,6 +130,7 @@ class GatewayRunner:
         runtime_dir: Path | None = None,
         pairing_store: Any | None = None,
         user_allowlist: set[str] | None = None,
+        session_epoch_db_path: Path | None = None,
     ) -> None:
         """Initialise GatewayRunner.
 
@@ -160,6 +161,7 @@ class GatewayRunner:
             executor=self._executor,
             pairing_store=pairing_store,
             user_allowlist=user_allowlist,
+            session_epoch_db_path=session_epoch_db_path,
         )
         self._failed_adapters: dict[str, FailedAdapter] = {}
         self._adapter_index: dict[str, BasePlatformAdapter] = {a.name: a for a in self._adapters}
@@ -238,6 +240,7 @@ class GatewayRunner:
             runtime_dir=config.gateway.runtime_dir,
             pairing_store=pairing_store,
             user_allowlist=user_allowlist,
+            session_epoch_db_path=config.pairing.db_path.parent / "session_epochs.db",
         )
 
     def add_adapter(self, adapter: BasePlatformAdapter) -> None:
