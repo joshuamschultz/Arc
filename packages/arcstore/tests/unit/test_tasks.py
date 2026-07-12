@@ -943,3 +943,105 @@ class TestClaimCapConcurrencyStress:
             f"per-owner cap breached on {len(failures)}/100 runs: {failures} — "
             "the claim active-check and the claim are not atomic together"
         )
+
+
+class TestDelete:
+    """delete(task_id, actor_did) — hard-delete over the mutable plane."""
+
+    async def test_delete_removes_task_and_reports_existed(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="d1", title="Drop me", creator_did=_CREATOR))
+            existed = await store.delete("d1", actor_did=_OPERATOR)
+            assert existed is True
+            assert await store.get("d1") is None
+        finally:
+            await be.stop()
+
+    async def test_delete_missing_task_reports_absent(self, tmp_path: Path) -> None:
+        from arcstore.tasks import TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            assert await store.delete("nope", actor_did=_OPERATOR) is False
+        finally:
+            await be.stop()
+
+    async def test_delete_emits_mutable_audit(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            sink = _RecordingSink()
+            store = TaskStore(be, sink=sink)
+            await store.create(Task(id="d1", title="Drop me", creator_did=_CREATOR))
+            await store.delete("d1", actor_did=_OPERATOR)
+            actions = [getattr(e, "action", None) for e in sink.events]
+            assert "mutable.delete" in actions
+        finally:
+            await be.stop()
+
+
+class TestStartTaskRunId:
+    """start_task(run_id=...) — deterministic run linkage (SPEC-056 board fix)."""
+
+    async def test_run_id_is_stamped_on_start(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(id="r1", title="Runnable", creator_did=_CREATOR, status="todo")
+            )
+            started, reason = await store.start_task("r1", _AGENT_A, run_id="run-abc")
+            assert reason == "assigned"
+            assert started is not None
+            assert started.status == "in_progress"
+            assert started.run_id == "run-abc"
+        finally:
+            await be.stop()
+
+    async def test_run_id_is_preserved_through_done_and_failed(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(id="r1", title="One", creator_did=_CREATOR, status="todo")
+            )
+            await store.start_task("r1", _AGENT_A, run_id="run-abc")
+            done = await store.update("r1", {"status": "done", "resolution": "ok"}, actor_did=_AGENT_A)
+            assert done is not None and done.status == "done"
+            assert done.run_id == "run-abc", "complete must not clear the run link"
+
+            await store.create(
+                Task(id="r2", title="Two", creator_did=_CREATOR, status="todo")
+            )
+            await store.start_task("r2", _AGENT_A, run_id="run-xyz")
+            failed = await store.update(
+                "r2", {"status": "failed", "resolution": "boom"}, actor_did=_AGENT_A
+            )
+            assert failed is not None and failed.status == "failed"
+            assert failed.run_id == "run-xyz", "fail must not clear the run link"
+        finally:
+            await be.stop()
+
+    async def test_start_without_run_id_leaves_it_null(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(id="r1", title="Manual", creator_did=_CREATOR, status="todo")
+            )
+            started, _reason = await store.start_task("r1", _AGENT_A)
+            assert started is not None and started.run_id is None
+        finally:
+            await be.stop()

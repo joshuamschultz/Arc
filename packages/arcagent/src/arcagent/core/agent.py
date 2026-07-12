@@ -527,6 +527,7 @@ class ArcAgent:
         tool_choice: dict[str, Any] | None = None,
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
+        run_id: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -546,6 +547,10 @@ class ArcAgent:
         caller pins (e.g. a planner step's slice of the plan aggregate). When
         set they tighten the config-resolved run budget (the lower ceiling
         wins) so a sub-task can never exceed either (SPEC-040 F2, LLM10).
+
+        ``run_id`` optionally pins the run's correlation id (the task dispatcher
+        passes it so a task links its run before the loop starts); when omitted
+        arcrun mints one.
         """
         self._ensure_started()
         async for event in dispatch_stream(
@@ -555,6 +560,7 @@ class ArcAgent:
             tool_choice=tool_choice,
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
+            run_id=run_id,
         ):
             yield event
 
@@ -566,6 +572,7 @@ class ArcAgent:
         tool_choice: dict[str, Any] | None = None,
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
+        run_id: str | None = None,
     ) -> Any:
         """Run a turn on the ``session_key`` session and collect to a result.
 
@@ -585,6 +592,7 @@ class ArcAgent:
                 tool_choice=tool_choice,
                 max_tokens=max_tokens,
                 max_cost_usd=max_cost_usd,
+                run_id=run_id,
             )
         )
 

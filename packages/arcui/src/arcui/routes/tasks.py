@@ -1,4 +1,4 @@
-"""``POST /api/team/tasks`` + ``PATCH /api/tasks/{id}`` — operator-gated task mutation.
+"""``POST /api/team/tasks`` + ``PATCH``/``DELETE /api/tasks/{id}`` — operator-gated task mutation.
 
 SPEC-056 Phase D (D4, FR-7). Mirrors ``agent_detail/files_write.py``'s
 operator-gate -> guard -> write -> audit shape and ``team_chat.
@@ -16,7 +16,7 @@ from typing import Any
 from arcstore.tasks import Task
 from pydantic import ValidationError
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit
@@ -142,9 +142,37 @@ async def patch_task(request: Request) -> JSONResponse:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
+async def delete_task(request: Request) -> Response:
+    """DELETE /api/tasks/{id} — remove a task (operator only).
+
+    Destructive and irreversible (LLM06/ASI09), so operator-gated like the
+    other mutations and audited whichever way it resolves. run_id/status are
+    irrelevant to deletion — an operator can drop a task in any state (a
+    never-run backlog item, a stuck task); the store emits its own
+    tamper-evident ``mutable.delete`` on top of this route audit.
+    """
+    task_id = request.path_params["id"]
+    target = f"task:{task_id}"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request, target=target, operation="task.delete", outcome="denied", detail="viewer role"
+        )
+        return _error("operator_role_required", 403)
+
+    store = request.app.state.task_store
+    existed = await store.delete(task_id, actor_did=_CREATOR)
+    if not existed:
+        return _error("not found", 404)
+
+    emit_mutation_audit(request, target=target, operation="task.delete", outcome="applied")
+    return Response(status_code=204)
+
+
 routes = [
     Route("/api/team/tasks", create_task, methods=["POST"]),
     Route("/api/tasks/{id}", patch_task, methods=["PATCH"]),
+    Route("/api/tasks/{id}", delete_task, methods=["DELETE"]),
 ]
 
-__all__ = ["create_task", "patch_task", "routes"]
+__all__ = ["create_task", "delete_task", "patch_task", "routes"]

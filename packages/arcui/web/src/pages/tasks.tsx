@@ -116,9 +116,12 @@ export function TasksPage() {
     [tasks.length, statusCounts, metrics.blocked],
   )
 
-  const filtered = tasks.filter(
+  // The board is NOT status-filtered — each column self-populates by its own
+  // status, so a task never disappears from the board. Status is applied by
+  // focusing a single column instead (see `statusFilter` -> TaskBoard below),
+  // which keeps the pill counts (over all tasks) and the columns in agreement.
+  const boardTasks = tasks.filter(
     (t) =>
-      (statusFilter === 'all' || t.status === statusFilter) &&
       (priorityFilter === 'all' || t.priority === priorityFilter) &&
       (ownerFilter === 'all' || t.owner_did === ownerFilter) &&
       (tagFilter === 'all' || (t.tags ?? []).includes(tagFilter)),
@@ -220,7 +223,14 @@ export function TasksPage() {
             </div>
           }
         >
-          {() => <TaskBoard tasks={filtered} resolveOwner={resolveOwner} onSelectTask={setSelected} />}
+          {() => (
+            <TaskBoard
+              tasks={boardTasks}
+              resolveOwner={resolveOwner}
+              onSelectTask={setSelected}
+              focusStatus={statusFilter}
+            />
+          )}
         </QueryState>
       </div>
 

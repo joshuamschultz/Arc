@@ -123,6 +123,15 @@ class MutableTaskBackend(Protocol):
 
     async def mutable_read(self, collection: str, key: str) -> dict[str, Any] | None: ...
 
+    async def mutable_delete(
+        self,
+        collection: str,
+        key: str,
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
     async def mutable_query(
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]: ...
@@ -300,7 +309,20 @@ class TaskStore:
                 return await self.get(candidate.id), "assigned"
         return None, "no_tasks_available"
 
-    async def start_task(self, task_id: str, agent_did: str) -> tuple[Task | None, str]:
+    async def delete(self, task_id: str, *, actor_did: str) -> bool:
+        """Hard-delete a task from the directory. Returns True if a row existed.
+
+        The mutable plane emits its own tamper-evident ``mutable.delete`` audit
+        (AU-2), so no separate emission here — deletion is a durable operator
+        action attributed to ``actor_did``.
+        """
+        return await self._backend.mutable_delete(
+            self._COLLECTION, task_id, actor_did=actor_did, sink=self._sink
+        )
+
+    async def start_task(
+        self, task_id: str, agent_did: str, *, run_id: str | None = None
+    ) -> tuple[Task | None, str]:
         active_rows = await self._backend.mutable_query(
             self._COLLECTION, where={"owner_did": agent_did, "status": "in_progress"}
         )
@@ -328,10 +350,18 @@ class TaskStore:
             or target.status not in ("backlog", "todo")
         ):
             return None, "no_tasks_available"
+        # Stamp the dispatched run's id in the SAME atomic write that claims the
+        # task, so an in_progress task deterministically links its run from the
+        # moment it starts (the arcui timeline joins task.run_id to the run's
+        # spooled events). complete/fail patch only status+resolution, so the
+        # merge preserves it through to done/failed.
+        claim: dict[str, Any] = {"owner_did": agent_did, "status": "in_progress"}
+        if run_id is not None:
+            claim["run_id"] = run_id
         won = await self._backend.update_if(
             self._COLLECTION,
             task_id,
-            {"owner_did": agent_did, "status": "in_progress"},
+            claim,
             where={"owner_did": target.owner_did, "status": target.status},
             actor_did=agent_did,
             sink=self._sink,

@@ -51,6 +51,8 @@ async function apiSend<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  // 204 No Content (e.g. DELETE) carries no body — parsing it as JSON would throw.
+  if (res.status === 204) return undefined as T
   return (await res.json()) as T
 }
 

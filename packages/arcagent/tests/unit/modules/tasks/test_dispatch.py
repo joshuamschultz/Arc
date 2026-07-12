@@ -38,9 +38,11 @@ class _RunRecorder:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.run_ids: list[str | None] = []
 
-    async def __call__(self, text: str, *, session_key: str) -> str:
+    async def __call__(self, text: str, *, session_key: str, run_id: str | None = None) -> str:
         self.calls.append((text, session_key))
+        self.run_ids.append(run_id)
         return "ok"
 
 
@@ -90,6 +92,12 @@ class TestDispatchTick:
         after = await st.store.get(created["id"])
         assert after is not None
         assert after.status == "in_progress"
+
+        # The run is linked deterministically: the task carries the run_id and
+        # the SAME id was handed to the run (so the loop's spooled events, which
+        # the arcui timeline joins on, share it).
+        assert after.run_id is not None
+        assert rec.run_ids == [after.run_id]
 
     async def test_noop_when_dispatch_disabled(self, dispatch_state: Any) -> None:
         from arcagent.modules.tasks.capabilities import _dispatch_tick, create_task

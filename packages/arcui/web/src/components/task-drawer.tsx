@@ -15,7 +15,7 @@ import { StatusText, SeverityBadge } from '@/components/status-badge'
 import { MentionComposer, type MentionHandle } from '@/components/mention-composer'
 import { useTeamStream } from '@/hooks/use-team-stream'
 import { useTaskActivity } from '@/lib/queries'
-import { apiPatch, ApiError } from '@/lib/api'
+import { apiDelete, apiPatch, ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
 import type { Agent, Task, TaskPriority } from '@/lib/types'
 
@@ -70,6 +70,8 @@ export function TaskDrawer({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [steerText, setSteerText] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const ownerAgent = roster.find((a) => a.did === task?.owner_did)
 
@@ -81,6 +83,8 @@ export function TaskDrawer({
     setOwnerDid(task.owner_did ?? '')
     setEditing(false)
     setError(null)
+    setConfirmDelete(false)
+    setDeleting(false)
     setSteerText(ownerAgent?.name ? `@${ownerAgent.name} ` : '')
     // eslint-disable-next-line react-hooks/exhaustive-deps -- ownerAgent derives from task+roster; task.id is the real key
   }, [task?.id])
@@ -109,6 +113,21 @@ export function TaskDrawer({
       setError(e instanceof ApiError ? e.message : 'Failed to save task')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const remove = async () => {
+    setDeleting(true)
+    setError(null)
+    try {
+      await apiDelete(`/api/tasks/${encodeURIComponent(task.id)}`)
+      await queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey.some((k) => k === 'tasks'),
+      })
+      onOpenChange(false)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to delete task')
+      setDeleting(false)
     }
   }
 
@@ -254,7 +273,34 @@ export function TaskDrawer({
         {operatorMode && (
           <div className="border-t border-border p-4">
             {atRest ? (
-              !editing && <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
+              !editing && (
+                <div className="space-y-2">
+                  {error && <p className="text-xs text-destructive">{error}</p>}
+                  {confirmDelete ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Delete this task permanently?</span>
+                      <Button size="sm" variant="destructive" disabled={deleting} onClick={remove}>
+                        {deleting ? 'Deleting…' : 'Confirm delete'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={deleting}
+                        onClick={() => setConfirmDelete(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => setEditing(true)}>Edit</Button>
+                      <Button size="sm" variant="destructive" onClick={() => setConfirmDelete(true)}>
+                        Delete
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )
             ) : (
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground">

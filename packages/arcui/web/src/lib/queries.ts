@@ -55,8 +55,15 @@ function useApiQuery<T>(key: unknown[], path: string): UseQueryResult<T> {
 export const useRoster = () =>
   useApiQuery<AgentsListResponse>(['roster'], '/api/team/roster')
 
+// Polls every 4s so live todo -> in_progress -> done transitions and newly
+// dispatched tasks surface on the board without a manual refresh. The board's
+// other driving query (roster) is near-static, so only tasks needs the poll.
 export const useTeamTasks = () =>
-  useApiQuery<TasksResponse>(['team', 'tasks'], '/api/team/tasks')
+  useQuery<TasksResponse>({
+    queryKey: ['team', 'tasks'],
+    queryFn: ({ signal }) => apiGet<TasksResponse>('/api/team/tasks', signal),
+    refetchInterval: 4000,
+  })
 
 export const useTeamToolsSkills = () =>
   useApiQuery<TeamToolsSkillsResponse>(['team', 'tools-skills'], '/api/team/tools-skills')

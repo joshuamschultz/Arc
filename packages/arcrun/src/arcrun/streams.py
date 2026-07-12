@@ -187,6 +187,7 @@ async def run_stream(
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
     resume_from: Any | None = None,
+    run_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -225,12 +226,18 @@ async def run_stream(
             starting a turn that would cross it.
         max_cost_usd: Optional per-run cost ceiling forwarded likewise
             (best-effort secondary — priced, non-streaming responses only).
+        run_id: Optional caller-pinned run id. When set it is used for both the
+            stream audit and the loop's EventBus/spool, so a caller can link the
+            run to durable state before it starts; otherwise one is generated.
 
     Returns:
         An async iterator of StreamEvent objects.
     """
-    # Stable run ID for audit correlation — generated once per stream invocation
-    stream_run_id = str(uuid.uuid4())
+    # Stable run ID for audit correlation. A caller may pin it (the task
+    # dispatcher does, so the task links its run before the loop starts); when
+    # pinned it is also the loop's id, unifying the stream audit and the loop's
+    # spooled events under one run_id. Otherwise one is minted per invocation.
+    stream_run_id = run_id or str(uuid.uuid4())
 
     # Emit stream.start AuditEvent before starting the loop
     _emit_stream_audit(
@@ -310,6 +317,7 @@ async def run_stream(
                 max_repeat=max_repeat,
                 max_consecutive_errors=max_consecutive_errors,
                 resume_from=resume_from,
+                run_id=run_id,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue

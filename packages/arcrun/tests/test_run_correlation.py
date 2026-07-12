@@ -48,6 +48,21 @@ class _SpoolingModel(MockModel):
 
 
 @pytest.mark.asyncio
+async def test_caller_pinned_run_id_is_used_for_the_run() -> None:
+    """A caller may pin the run_id (the task dispatcher does, to link a task to
+    its run before the loop starts). Every event — and thus every spooled
+    ``request_id`` the observability plane joins on — carries that id."""
+    from arcrun.loop import run
+
+    model = MockModel([LLMResponse(content="done", stop_reason="end_turn")])
+    result = await run(
+        model, StaticProvider(_tools()), "prompt", "task", run_id="pinned-run-id"
+    )
+    assert result.events, "the run should emit lifecycle events"
+    assert all(e.run_id == "pinned-run-id" for e in result.events)
+
+
+@pytest.mark.asyncio
 async def test_run_correlates_llm_calls_to_run_id(tmp_path: Path) -> None:
     from arcstore.spool import read
 

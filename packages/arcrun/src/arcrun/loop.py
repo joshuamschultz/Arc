@@ -47,9 +47,12 @@ def _build_state(
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
+    run_id: str | None = None,
 ) -> tuple[RunState, Sandbox]:
     """Shared setup for run() and run_async()."""
-    run_id = str(uuid.uuid4())
+    # A caller (e.g. the task dispatcher) may pin the run id so it can link the
+    # run to durable state before the loop starts; otherwise one is minted here.
+    run_id = run_id or str(uuid.uuid4())
     bus = EventBus(
         run_id=run_id,
         on_event=on_event,
@@ -144,6 +147,7 @@ async def run(
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
+    run_id: str | None = None,
 ) -> LoopResult:
     """Blocking entry point. Runs until task complete, a breaker trip, or resume."""
     handle = await run_async(
@@ -173,6 +177,7 @@ async def run(
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
         resume_from=resume_from,
+        run_id=run_id,
     )
     return await handle.result()
 
@@ -205,6 +210,7 @@ async def run_async(
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
+    run_id: str | None = None,
 ) -> RunHandle:
     """Non-blocking entry point. Returns handle for steering."""
     state, sandbox_obj = _build_state(
@@ -231,6 +237,7 @@ async def run_async(
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
         resume_from=resume_from,
+        run_id=run_id,
     )
 
     # ``create_task`` snapshots the current context, so binding the correlation

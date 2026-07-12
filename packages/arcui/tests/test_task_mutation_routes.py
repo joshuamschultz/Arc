@@ -298,6 +298,79 @@ class TestPatchTaskAtRestOnly:
         row = asyncio.run(store.get("t1"))
         assert row is not None and row.description == "clean"  # unchanged
 
+class TestDeleteTaskOperatorGate:
+    def test_operator_deletes_task_and_it_is_audited(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        asyncio.run(_seed(tmp_path, [_task("t1")]))
+        app, auth = _make_app(tmp_path)
+        app.state.audit = UIAuditLogger()
+        client = TestClient(app)
+
+        with caplog.at_level("INFO", logger="arcui.audit"):
+            resp = client.delete("/api/tasks/t1", headers=_operator(auth))
+
+        assert resp.status_code == 204
+        assert resp.content == b""
+
+        mutations = _mutations(caplog)
+        assert len(mutations) == 1
+        assert mutations[0]["operation"] == "task.delete"
+        assert mutations[0]["outcome"] == "applied"
+        assert mutations[0]["target"] == "task:t1"
+
+        # Actually gone from the store.
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get("t1")) is None
+
+    def test_viewer_is_forbidden_and_denial_is_audited(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        asyncio.run(_seed(tmp_path, [_task("t1")]))
+        app, auth = _make_app(tmp_path)
+        app.state.audit = UIAuditLogger()
+        client = TestClient(app)
+
+        with caplog.at_level("INFO", logger="arcui.audit"):
+            resp = client.delete("/api/tasks/t1", headers=_viewer(auth))
+
+        assert resp.status_code == 403
+        assert resp.json() == {"error": "operator_role_required"}
+
+        mutations = _mutations(caplog)
+        assert len(mutations) == 1
+        assert mutations[0]["operation"] == "task.delete"
+        assert mutations[0]["outcome"] == "denied"
+
+        # Never reached the store — still there.
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get("t1")) is not None
+
+    def test_unknown_task_is_404(self, tmp_path: Path) -> None:
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.delete("/api/tasks/does-not-exist", headers=_operator(auth))
+
+        assert resp.status_code == 404
+
+    def test_in_progress_task_can_be_deleted(self, tmp_path: Path) -> None:
+        """Deletion is state-agnostic — an operator can drop a stuck in_progress
+        task (unlike edit, which is at-rest only)."""
+        asyncio.run(
+            _seed(tmp_path, [_task("t1", owner_did="did:arc:x/aaaa", status="in_progress")])
+        )
+        app, auth = _make_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.delete("/api/tasks/t1", headers=_operator(auth))
+
+        assert resp.status_code == 204
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get("t1")) is None
+
+
+class TestPatchRaceGuard:
     def test_patch_does_not_clobber_a_task_that_raced_into_in_progress(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

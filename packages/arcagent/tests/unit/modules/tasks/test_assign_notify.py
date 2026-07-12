@@ -202,11 +202,11 @@ class TestAdoptHandlerStartsAssignedTask:
     async def test_handler_starts_the_task_named_in_the_envelope(
         self, notify_state: Any
     ) -> None:
-        from arcagent.modules.tasks.handlers import handle_task_assigned
         from arcteam.types import Message, MsgType
 
         from arcagent.modules.tasks import _runtime
         from arcagent.modules.tasks.capabilities import assign_task, create_task
+        from arcagent.modules.tasks.handlers import handle_task_assigned
 
         st, _fake, bob_identity, bob_entity = notify_state
         await st.registry.register(bob_entity)
@@ -240,11 +240,11 @@ class TestAdoptHandlerStartsAssignedTask:
         assert result["task"]["owner_did"] == bob_identity.did
 
     async def test_handler_is_idempotent_on_redelivery(self, notify_state: Any) -> None:
-        from arcagent.modules.tasks.handlers import handle_task_assigned
         from arcteam.types import Message, MsgType
 
         from arcagent.modules.tasks import _runtime
         from arcagent.modules.tasks.capabilities import assign_task, create_task
+        from arcagent.modules.tasks.handlers import handle_task_assigned
 
         st, _fake, bob_identity, bob_entity = notify_state
         await st.registry.register(bob_entity)
@@ -285,11 +285,11 @@ class TestAdoptHandlerStartsAssignedTask:
         # Regression guard for a naive "first token after @" parser — the id
         # must come from the explicit `task_id=` marker, not from proximity
         # to the mention.
-        from arcagent.modules.tasks.handlers import handle_task_assigned
         from arcteam.types import Message, MsgType
 
         from arcagent.modules.tasks import _runtime
         from arcagent.modules.tasks.capabilities import assign_task, create_task
+        from arcagent.modules.tasks.handlers import handle_task_assigned
 
         st, _fake, bob_identity, bob_entity = notify_state
         await st.registry.register(bob_entity)

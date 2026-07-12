@@ -177,6 +177,7 @@ async def dispatch_stream(
     tool_choice: dict[str, Any] | None = None,
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
+    run_id: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
@@ -230,6 +231,7 @@ async def dispatch_stream(
                 store_raw_bodies=agent._config.telemetry.capture_tool_io,
                 max_tokens=run_max_tokens,
                 max_cost_usd=run_max_cost_usd,
+                run_id=run_id,
                 **build_loop_controls(agent, session),
             )
             async for event in raw_stream:

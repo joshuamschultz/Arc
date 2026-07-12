@@ -16,15 +16,25 @@ export function isBlocked(task: Task, statusById: Map<string, string>): boolean 
   return (task.blocked_by ?? []).some((depId) => statusById.get(depId) !== 'done')
 }
 
-/** Kanban board — one column per `TaskStatus`, plus a `failed` lane. */
+/** Kanban board — one column per `TaskStatus`, plus a `failed` lane.
+ *
+ * Columns always self-populate by each task's own status, so a task never
+ * vanishes from the board just because a status filter is active — the caller
+ * feeds the owner/priority/tag-filtered list and lets the columns sort by
+ * status. When `focusStatus` names a single status, only that column renders
+ * (full-width focus) so selecting a status pill shows exactly its tasks; `all`
+ * renders every column. All six columns flex to share width and hit a min so
+ * `done`/`failed` stay reachable (the row scrolls only when they can't fit). */
 export function TaskBoard({
   tasks,
   resolveOwner,
   onSelectTask,
+  focusStatus = 'all',
 }: {
   tasks: Task[]
   resolveOwner: (ownerDid: string | null | undefined) => string | null
   onSelectTask: (task: Task) => void
+  focusStatus?: TaskStatus | 'all'
 }) {
   const statusById = useMemo(() => {
     const m = new Map<string, string>()
@@ -41,12 +51,17 @@ export function TaskBoard({
     return grouped
   }, [tasks])
 
+  const columns = focusStatus === 'all' ? COLUMNS : COLUMNS.filter((c) => c.id === focusStatus)
+
   return (
     <div className="flex h-full gap-3 overflow-x-auto pb-2">
-      {COLUMNS.map((col) => {
+      {columns.map((col) => {
         const items = byColumn.get(col.id) ?? []
         return (
-          <div key={col.id} className="flex w-72 shrink-0 flex-col gap-2 rounded-xl border border-border bg-card/30 p-2.5">
+          <div
+            key={col.id}
+            className="flex min-w-[11rem] flex-1 basis-0 flex-col gap-2 rounded-xl border border-border bg-card/30 p-2.5"
+          >
             <div className="flex items-center justify-between px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               <span>{col.label}</span>
               <span className="tabular-nums">{items.length}</span>

@@ -453,12 +453,18 @@ async def _dispatch_tick() -> None:
         return
     ready.sort(key=lambda t: (_PRIORITY_RANK.get(t.priority, 99), t.created_at or ""))
     picked = ready[0]
-    started, _reason = await st.store.start_task(picked.id, self_did)
+    # Pin the run id up front and stamp it in the same atomic write that claims
+    # the task, then hand the SAME id to the run so the loop's spooled events
+    # share it — the arcui activity timeline joins task.run_id to those events.
+    run_id = str(uuid.uuid4())
+    started, _reason = await st.store.start_task(picked.id, self_did, run_id=run_id)
     if started is None or started.status != "in_progress":
         # Lost the atomic claim (a concurrent starter won) — try again next tick.
         return
     await st.agent_run_fn(
-        _format_task_prompt(started), session_key=f"{_TASK_SESSION}:{started.id}"
+        _format_task_prompt(started),
+        session_key=f"{_TASK_SESSION}:{started.id}",
+        run_id=run_id,
     )
 
 
