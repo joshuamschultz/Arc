@@ -166,7 +166,7 @@ class TaskStore:
                 self._COLLECTION, where={"status": status, "owner_did": None}
             )
             candidates.extend(Task(**row) for row in rows)
-        claimable = [t for t in candidates if await self._deps_met(t)]
+        claimable = [t for t in candidates if await self.deps_met(t)]
         claimable.sort(key=lambda t: _PRIORITY_ORDER[t.priority])
 
         for candidate in claimable:
@@ -225,7 +225,7 @@ class TaskStore:
 
     async def assign(self, task_id: str, to_did: str, by_did: str) -> Task | None:
         current = await self.get(task_id)
-        if current is None or current.status == "in_progress":
+        if current is None or current.status not in ("backlog", "todo"):
             return None
         # Re-check the snapshotted status inside the atomic write: if the
         # task raced into in_progress between the read above and this write,
@@ -246,7 +246,7 @@ class TaskStore:
             return None
         return await self.get(task_id)
 
-    async def _deps_met(self, task: Task) -> bool:
+    async def deps_met(self, task: Task) -> bool:
         for dep_id in task.blocked_by:
             dep = await self.get(dep_id)
             if dep is None or dep.status != "done":

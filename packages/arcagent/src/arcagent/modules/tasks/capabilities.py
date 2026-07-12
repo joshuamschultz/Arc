@@ -84,10 +84,6 @@ def _require_owner(task: Task, st: _runtime._State) -> None:
         raise ValueError(msg)
 
 
-# Claim ordering, mirroring arcstore.tasks._PRIORITY_ORDER (SDD §2).
-_PRIORITY_ORDER: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-
-
 @tool(
     name="create_task",
     description="Create a task, owned by self (default), a teammate (@handle), or unowned",
@@ -192,6 +188,10 @@ async def complete_task(
         if current is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(current, st)
+        if not await st.store.deps_met(current):
+            return json.dumps(
+                {"error": f"Task '{id}' is blocked by unfinished dependencies"}
+            )
         if resolution:
             validate_task_text(resolution)
         patch: dict[str, Any] = {"status": "done", "resolution": resolution}
@@ -322,23 +322,27 @@ async def decompose_task(
         if parent is None:
             return json.dumps({"error": f"Task '{id}' not found"})
         _require_owner(parent, st)
-        created_subs: list[Task] = []
+        # Validate + build ALL subtasks before persisting any, so a bad title in
+        # a later subtask can't leave earlier ones orphaned (no partial write).
+        subs: list[Task] = []
         for spec in subtasks or []:
             sub_title = spec.get("title", "")
             validate_task_text(sub_title)
             sub_description = spec.get("description", "")
             if sub_description:
                 validate_task_text(sub_description)
-            sub = Task(
-                id=_new_task_id(),
-                title=sub_title,
-                description=sub_description,
-                priority=spec.get("priority", "medium"),
-                owner_did=st.identity.did,
-                creator_did=st.identity.did,
-                parent_id=id,
+            subs.append(
+                Task(
+                    id=_new_task_id(),
+                    title=sub_title,
+                    description=sub_description,
+                    priority=spec.get("priority", "medium"),
+                    owner_did=st.identity.did,
+                    creator_did=st.identity.did,
+                    parent_id=id,
+                )
             )
-            created_subs.append(await st.store.create(sub))
+        created_subs = [await st.store.create(sub) for sub in subs]
         sub_ids = [s.id for s in created_subs]
         updated_parent = await st.store.update(
             id, {"blocked_by": [*parent.blocked_by, *sub_ids]}, actor_did=st.identity.did

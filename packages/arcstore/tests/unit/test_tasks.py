@@ -522,6 +522,33 @@ class TestAssign:
         finally:
             await be.stop()
 
+    async def test_assign_rejects_a_terminal_task(self, tmp_path: Path) -> None:
+        # A done/failed task is terminal — assign must NOT resurrect it to todo
+        # under a new owner (review finding F1).
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(
+                Task(
+                    id="done1",
+                    title="Finished",
+                    creator_did=_CREATOR,
+                    owner_did=_AGENT_A,
+                    status="done",
+                    resolution="shipped",
+                )
+            )
+            result = await store.assign("done1", _AGENT_B, _OPERATOR)
+            assert result is None
+            after = await store.get("done1")
+            assert after is not None
+            assert after.status == "done"
+            assert after.owner_did == _AGENT_A
+        finally:
+            await be.stop()
+
     async def test_assignee_can_start_its_assigned_task(self, tmp_path: Path) -> None:
         # assign() gives ownership and moves the task to todo; the assignee then
         # ADOPTS it via start_task even though owner_did is no longer NULL — the
