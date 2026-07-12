@@ -39,6 +39,17 @@ def resolve_data_dir(configured: str | Path | None = None) -> Path:
     return Path.home().joinpath(*_DEFAULT_SUBPATH)
 
 
+def store_db_path(data_dir: str | Path | None = None) -> Path:
+    """Canonical path to the shared operational store DB (``store/arcui.db``).
+
+    The ``store/arcui.db`` literal was hardcoded in arcagent, arcui, and arccli
+    (ARCH-2); one locator over :func:`resolve_data_dir` keeps every entry point
+    pointed at the same file — the agent that writes tasks and the dashboard
+    that reads them must never diverge on the path.
+    """
+    return resolve_data_dir(data_dir) / "store" / "arcui.db"
+
+
 class ArcStoreConfig(BaseModel):
     """The one canonical ``[arcstore]`` block (SPEC-026 FR-7, §13.1).
 

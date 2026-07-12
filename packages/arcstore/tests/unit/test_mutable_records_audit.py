@@ -69,6 +69,45 @@ class TestMutableWriteAudit:
         finally:
             await be.stop()
 
+    async def test_losing_update_if_audits_a_non_applied_outcome(self, tmp_path: Path) -> None:
+        """REL-F5: a conditional write that changed no row must NOT audit ``applied``.
+
+        The row is already owned, so the ``owner IS NULL`` guard never matches;
+        rowcount is 0. Auditing ``applied`` on a no-op is a false compliance
+        record — the outcome must reflect that nothing was written.
+        """
+        be = SqliteBackend(tmp_path / "store.db")
+        await be.start()
+        sink = _RecordingSink()
+        try:
+            await be.mutable_write("tasks", "t1", {"owner": _ACTOR}, actor_did=_ACTOR)
+            won = await be.update_if(
+                "tasks", "t1", {"owner": "other"}, where={"owner": None},
+                actor_did=_ACTOR, sink=sink,
+            )
+            assert won is False
+            assert len(sink.events) == 1
+            assert sink.events[0].outcome != "applied", (
+                "a losing conditional write must not record an 'applied' audit outcome"
+            )
+        finally:
+            await be.stop()
+
+    async def test_winning_update_if_still_audits_applied(self, tmp_path: Path) -> None:
+        be = SqliteBackend(tmp_path / "store.db")
+        await be.start()
+        sink = _RecordingSink()
+        try:
+            await be.mutable_write("tasks", "t1", {"owner": None}, actor_did=_ACTOR)
+            won = await be.update_if(
+                "tasks", "t1", {"owner": _ACTOR}, where={"owner": None},
+                actor_did=_ACTOR, sink=sink,
+            )
+            assert won is True
+            assert sink.events[0].outcome == "applied"
+        finally:
+            await be.stop()
+
     async def test_no_sink_means_no_audit_attempt(self, tmp_path: Path) -> None:
         """A None/omitted sink must not raise — audit is opt-in per call site."""
         be = SqliteBackend(tmp_path / "store.db")

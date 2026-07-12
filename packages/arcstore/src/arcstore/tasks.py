@@ -11,17 +11,61 @@ contract.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
 from arctrust.audit import AuditSink
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TaskStatus = Literal["backlog", "todo", "in_progress", "review", "done", "failed"]
 Priority = Literal["low", "medium", "high", "critical"]
 
 # Claim ordering (SDD §2): highest priority first.
 _PRIORITY_ORDER: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+_MAX_TEXT_LENGTH = 2000
+
+# Zero-width characters used in Unicode homoglyph / split-token attacks.
+_ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff]")
+
+# Prompt-injection patterns (LLM01/ASI06). Kept byte-for-byte in sync with the
+# scheduler's validator so every Task construction path — agent tool, arcui,
+# arccli — is sanitized identically by the model, not by a caller that might
+# forget to call it (SEC-F2/ARCH-4).
+_INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bignore\s+previous\b", re.IGNORECASE),
+    re.compile(r"\bdisregard\b", re.IGNORECASE),
+    re.compile(r"\binstead\b.*\bdo\b", re.IGNORECASE),
+    re.compile(r"\bsystem:", re.IGNORECASE),
+    re.compile(r"\bassistant:", re.IGNORECASE),
+    re.compile(r"\bexfiltrate\b", re.IGNORECASE),
+    re.compile(r"https?://", re.IGNORECASE),
+    re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", re.IGNORECASE),
+    re.compile(r"\bforget\b.*\binstructions?\b", re.IGNORECASE),
+    re.compile(r"\bnew\s+instructions?\b", re.IGNORECASE),
+    re.compile(r"\boverride\b", re.IGNORECASE),
+    re.compile(r"<\|[a-z_]+\|>", re.IGNORECASE),  # role delimiters like <|system|>
+    re.compile(r"\bbase64\b", re.IGNORECASE),
+    re.compile(r"\bdo\s+not\s+follow\b", re.IGNORECASE),
+)
+
+
+def _validate_free_text(text: str) -> None:
+    """Reject over-length or injection-bearing free text. Raises ``ValueError``.
+
+    NFKC folds homoglyphs (e.g. full-width Latin) to ASCII and zero-width
+    separators are stripped, so neither can slip a trigger phrase past the
+    regex. Used by the ``Task`` field validators — a raised ``ValueError``
+    surfaces as a Pydantic ``ValidationError`` at construction.
+    """
+    if len(text) > _MAX_TEXT_LENGTH:
+        raise ValueError(f"Text exceeds maximum length ({len(text)} > {_MAX_TEXT_LENGTH})")
+    normalized = _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", text))
+    for pattern in _INJECTION_PATTERNS:
+        if pattern.search(normalized):
+            raise ValueError("Text rejected: possible injection pattern detected")
 
 
 class Task(BaseModel):
@@ -48,12 +92,24 @@ class Task(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] | None = None
     resolution: str | None = None
+    # No-write-down (SEC-F3): downstream notify propagates this so a task's
+    # classification bounds where it can surface. Defaults to the lowest tier.
+    classification: str = "UNCLASSIFIED"
     created_at: str | None = None
     updated_at: str | None = None
 
+    @field_validator("title", "description")
+    @classmethod
+    def _sanitize_free_text(cls, value: str) -> str:
+        # Sanitize by construction (SEC-F2/ARCH-4): every path that builds a
+        # Task — agent tool, arcui, arccli — is validated here, so a human path
+        # can't bypass the injection/oversized/zero-width checks.
+        _validate_free_text(value)
+        return value
+
 
 class MutableTaskBackend(Protocol):
-    """The four mutable-plane primitives ``TaskStore`` needs (SPEC-056 0a)."""
+    """The mutable-plane primitives ``TaskStore`` needs (SPEC-056 0a)."""
 
     async def mutable_write(
         self,
@@ -71,6 +127,16 @@ class MutableTaskBackend(Protocol):
         self, collection: str, *, where: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]: ...
 
+    async def mutable_merge(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool: ...
+
     async def update_if(
         self,
         collection: str,
@@ -80,6 +146,7 @@ class MutableTaskBackend(Protocol):
         *,
         actor_did: str,
         sink: Any | None = None,
+        absent_where: dict[str, Any] | None = None,
     ) -> bool: ...
 
 
@@ -141,13 +208,15 @@ class TaskStore:
         return [Task(**row) for row in rows]
 
     async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
-        current = await self._backend.mutable_read(self._COLLECTION, task_id)
-        if current is None:
-            return None
-        merged = {**current, **patch}
-        await self._backend.mutable_write(
-            self._COLLECTION, task_id, merged, actor_did=actor_did, sink=self._sink
+        # Atomic server-side merge (REL-F2): a read-merge-write here lets two
+        # concurrent updates of disjoint fields clobber each other (last-writer
+        # drops the loser's field). mutable_merge applies the patch inside one
+        # SQLite step, so both land. False means the row is gone.
+        merged = await self._backend.mutable_merge(
+            self._COLLECTION, task_id, patch, actor_did=actor_did, sink=self._sink
         )
+        if not merged:
+            return None
         return await self.get(task_id)
 
     async def claim_next(self, agent_did: str) -> tuple[Task | None, str]:
@@ -175,7 +244,10 @@ class TaskStore:
             # that makes two concurrent claimers resolve to exactly one
             # winner; losing just means try the next candidate. The where uses
             # the candidate's own status so a backlog and a todo task are both
-            # claimable atomically.
+            # claimable atomically. absent_where enforces the one-in_progress
+            # cap in the same step (REL-F0): the active-check above and this
+            # claim straddle two txns, so a second concurrent claim_next for the
+            # same owner would otherwise land a second in_progress task.
             won = await self._backend.update_if(
                 self._COLLECTION,
                 candidate.id,
@@ -183,6 +255,7 @@ class TaskStore:
                 where={"owner_did": None, "status": candidate.status},
                 actor_did=agent_did,
                 sink=self._sink,
+                absent_where={"owner_did": agent_did, "status": "in_progress"},
             )
             if won:
                 return await self.get(candidate.id), "assigned"
@@ -192,6 +265,11 @@ class TaskStore:
         active_rows = await self._backend.mutable_query(
             self._COLLECTION, where={"owner_did": agent_did, "status": "in_progress"}
         )
+        # Reaching the claim with an active task means this is a chain adoption
+        # (an independent second task already returned continue_current below) —
+        # exempt from the cap (FR-5). A claim with no active task is independent
+        # and must be capped so two concurrent starts can't both land (REL-F0).
+        is_chain_adoption = bool(active_rows)
         if active_rows:
             active = Task(**active_rows[0])
             target = await self.get(task_id)
@@ -218,6 +296,9 @@ class TaskStore:
             where={"owner_did": target.owner_did, "status": target.status},
             actor_did=agent_did,
             sink=self._sink,
+            absent_where=(
+                None if is_chain_adoption else {"owner_did": agent_did, "status": "in_progress"}
+            ),
         )
         if not won:
             return None, "no_tasks_available"

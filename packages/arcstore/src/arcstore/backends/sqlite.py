@@ -298,6 +298,33 @@ class SqliteBackend:
         """Return every value in ``collection`` (optionally filtered by ``where``)."""
         return await asyncio.to_thread(self._mutable_query, collection, where)
 
+    async def mutable_merge(
+        self,
+        collection: str,
+        key: str,
+        patch: dict[str, Any],
+        *,
+        actor_did: str,
+        sink: Any | None = None,
+    ) -> bool:
+        """Atomically merge ``patch`` into the row at ``(collection, key)``.
+
+        Single-statement ``UPDATE ... SET value=json_patch(value, ?)`` under
+        ``BEGIN IMMEDIATE`` — a read-modify-write from two concurrent callers
+        drops whichever field the loser didn't touch (REL-F2 lost update);
+        merging inside SQLite's atomic step lets two field-disjoint updates both
+        persist. Returns True iff the row existed (rowcount > 0).
+        """
+        merged = await asyncio.to_thread(self._mutable_merge, collection, key, patch)
+        self._emit_mutable_audit(
+            action="mutable.merge",
+            target=f"{collection}/{key}",
+            actor_did=actor_did,
+            sink=sink,
+            outcome="applied" if merged else "no-op",
+        )
+        return merged
+
     async def update_if(
         self,
         collection: str,
@@ -307,6 +334,7 @@ class SqliteBackend:
         *,
         actor_did: str,
         sink: Any | None = None,
+        absent_where: dict[str, Any] | None = None,
     ) -> bool:
         """Atomically merge ``patch`` into the row iff it currently matches ``where``.
 
@@ -315,23 +343,37 @@ class SqliteBackend:
         inside SQLite's own atomic step, so two concurrent callers racing the
         same key can never both observe a match and both win (unlike a
         read-then-write claim, which is not atomic across the read/write gap).
+
+        ``absent_where`` adds a cross-row guard: the write also requires that NO
+        *other* row in the collection matches ``absent_where``. This closes
+        REL-F0 — two concurrent claims for one owner can't each land a different
+        task, because the second's guard sees the first's just-committed
+        ``in_progress`` row within the same atomic step.
         """
-        won = await asyncio.to_thread(self._update_if, collection, key, patch, where)
+        won = await asyncio.to_thread(self._update_if, collection, key, patch, where, absent_where)
         self._emit_mutable_audit(
             action="mutable.update_if",
             target=f"{collection}/{key}",
             actor_did=actor_did,
             sink=sink,
+            outcome="applied" if won else "no-op",
         )
         return won
 
-    def _emit_mutable_audit(self, *, action: str, target: str, actor_did: str, sink: Any) -> None:
-        """Emit an AU-2/AU-3 AuditEvent for a mutable-plane write. Fail-open (AU-5)."""
+    def _emit_mutable_audit(
+        self, *, action: str, target: str, actor_did: str, sink: Any, outcome: str = "applied"
+    ) -> None:
+        """Emit an AU-2/AU-3 AuditEvent for a mutable-plane write. Fail-open (AU-5).
+
+        ``outcome`` must reflect what actually happened: a conditional write that
+        matched no row changed nothing, so auditing ``applied`` on it (REL-F5)
+        would be a false compliance record. Callers pass ``no-op`` in that case.
+        """
         if sink is None:
             return
         try:
             event = AuditEvent(
-                actor_did=actor_did, action=action, target=target, outcome="applied"
+                actor_did=actor_did, action=action, target=target, outcome=outcome
             )
             emit(event, sink)
         except Exception:  # reason: fail-open — audit must never break the write path
@@ -514,12 +556,36 @@ class SqliteBackend:
         finally:
             conn.close()
 
+    def _mutable_merge(self, collection: str, key: str, patch: dict[str, Any]) -> bool:
+        conn = self._connect()
+        try:
+            # BEGIN IMMEDIATE + a single UPDATE...SET value=json_patch(...) means
+            # the merge is one atomic SQLite step, so two concurrent callers
+            # patching disjoint fields both land (no read-then-write gap where
+            # the loser overwrites the winner's field — REL-F2).
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "UPDATE mutable_records SET value=json_patch(value, ?), updated_at=? "
+                "WHERE collection=? AND key=?",
+                (
+                    json.dumps(patch, ensure_ascii=True, separators=(",", ":")),
+                    datetime.now(UTC).isoformat(),
+                    collection,
+                    key,
+                ),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
     def _update_if(
         self,
         collection: str,
         key: str,
         patch: dict[str, Any],
         where: dict[str, Any],
+        absent_where: dict[str, Any] | None = None,
     ) -> bool:
         clause, where_params = _json_where(where)
         # clause is built from _json_where, which only ever splices bound-param
@@ -528,6 +594,23 @@ class SqliteBackend:
             "UPDATE mutable_records SET value=json_patch(value, ?), updated_at=? "  # noqa: S608
             f"WHERE collection=? AND key=? AND {clause}"
         )
+        params: list[Any] = [
+            json.dumps(patch, ensure_ascii=True, separators=(",", ":")),
+            datetime.now(UTC).isoformat(),
+            collection,
+            key,
+            *where_params,
+        ]
+        if absent_where:
+            # Cross-row cap guard: refuse the write if any OTHER row in the
+            # collection already matches absent_where. The aliased m2.value keeps
+            # the guard's json paths as bound params (no data reaches SQL text).
+            absent_clause, absent_params = _json_where(absent_where, column="m2.value")
+            sql += (
+                " AND NOT EXISTS (SELECT 1 FROM mutable_records m2 "  # noqa: S608
+                f"WHERE m2.collection=? AND m2.key<>? AND {absent_clause})"
+            )
+            params.extend([collection, key, *absent_params])
         conn = self._connect()
         try:
             # BEGIN IMMEDIATE + a single UPDATE...WHERE means the match check
@@ -535,16 +618,7 @@ class SqliteBackend:
             # pairing.py:788-794 claim pattern) — no read-then-write gap for a
             # second concurrent caller to slip through.
             conn.execute("BEGIN IMMEDIATE")
-            cur = conn.execute(
-                sql,
-                (
-                    json.dumps(patch, ensure_ascii=True, separators=(",", ":")),
-                    datetime.now(UTC).isoformat(),
-                    collection,
-                    key,
-                    *where_params,
-                ),
-            )
+            cur = conn.execute(sql, params)
             conn.commit()
             return cur.rowcount > 0
         finally:
@@ -600,19 +674,21 @@ def _decode_mutable_row(row: sqlite3.Row) -> dict[str, Any]:
     return value
 
 
-def _json_where(where: dict[str, Any]) -> tuple[str, list[Any]]:
-    """Build a ``json_extract(value, ?) <op> ?`` clause per key (bound params only).
+def _json_where(where: dict[str, Any], *, column: str = "value") -> tuple[str, list[Any]]:
+    """Build a ``json_extract(<column>, ?) <op> ?`` clause per key (bound params only).
 
     ``IS`` (not ``=``) for a None value — SQL ``= NULL`` is never true, but a
     JSON ``null`` decodes to SQL ``NULL`` and callers filter on it (e.g. an
     unclaimed owner). The JSON path travels as a bound parameter, so an
-    arbitrary key name is never spliced into SQL text.
+    arbitrary key name is never spliced into SQL text. ``column`` selects the
+    JSON source (``value`` for the target row, ``m2.value`` for the aliased
+    NOT-EXISTS guard subquery) and is a caller-controlled constant, never data.
     """
     clauses: list[str] = []
     params: list[Any] = []
     for field, val in where.items():
         op = "IS" if val is None else "="
-        clauses.append(f"json_extract(value, ?) {op} ?")
+        clauses.append(f"json_extract({column}, ?) {op} ?")
         params.append(f"$.{field}")
         params.append(val)
     return " AND ".join(clauses), params
