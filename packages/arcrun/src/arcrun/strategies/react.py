@@ -243,9 +243,6 @@ async def _execute_tool_calls(
             else:
                 state.consecutive_tool_errors += 1
 
-    if not state.steer_queue.empty():
-        _inject(state, state.steer_queue.get_nowait(), "steer.injected")
-
     ordered = [tool_results_map[idx] for idx in sorted(tool_results_map.keys())]
     return ordered, succeeded_ids
 
@@ -341,6 +338,14 @@ async def react_loop(
             response.tool_calls, state, sandbox
         )
         state.messages.extend(result_messages)
+        # Drain a steer that arrived DURING the turn only after the tool_results
+        # are appended: Anthropic rejects a tool_use that is not immediately
+        # followed by its tool_result, so an injected user message must never
+        # land between the assistant(tool_use) and its result (the mid-run
+        # interrupt an always-on agent triggers). The top-of-loop drain handles
+        # a steer arriving between turns.
+        if not state.steer_queue.empty():
+            _inject(state, state.steer_queue.get_nowait(), "steer.injected")
         # Feed the runaway detector with THIS turn's signatures (REQ-020/025).
         _update_runaway(state, response.tool_calls)
 
