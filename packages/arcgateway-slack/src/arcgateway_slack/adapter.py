@@ -28,7 +28,7 @@ import asyncio
 import logging
 import sqlite3
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -196,6 +196,19 @@ class SlackAdapter:
 
         self._app: Any = None
         self._handler: Any = None
+        self._command_names: tuple[str, ...] = ()
+
+    def set_command_names(self, names: Sequence[str]) -> None:
+        """Register slash-command names to subscribe to on ``connect``.
+
+        Slack — unlike Telegram — does NOT deliver slash commands as ``message``
+        events, so each command must be explicitly subscribed via
+        ``@app.command``. Bootstrap calls this with the gateway's
+        ``CommandRegistry.names()`` before ``connect``. Every name here must
+        also be declared in the Slack app manifest with the ``commands`` scope
+        (a manifest/reinstall step — code alone cannot register Slack commands).
+        """
+        self._command_names = tuple(names)
 
     async def connect(self) -> None:
         """Establish Socket Mode connection."""
@@ -222,6 +235,16 @@ class SlackAdapter:
         @self._app.event("message_deleted")  # type: ignore[untyped-decorator]  # reason: slack_bolt's @app.event decorator is untyped; mypy treats it as decorating away the function signature
         async def _handle_deleted(event: dict[str, Any]) -> None:
             pass
+
+        # Slash commands arrive as a separate `command` payload, not a message
+        # event — subscribe each so it reaches the gateway's one command
+        # interceptor as an InboundEvent whose message is "/<name> <text>".
+        for _name in self._command_names:
+
+            @self._app.command(f"/{_name}")  # type: ignore[untyped-decorator]  # reason: slack_bolt's @app.command decorator is untyped
+            async def _handle_command(ack: Any, command: dict[str, Any]) -> None:
+                await ack()  # Slack requires an ack within 3s
+                await self._handle_slash_command(command)
 
         self._handler = AsyncSocketModeHandler(self._app, self._app_token)
         try:
@@ -426,6 +449,31 @@ class SlackAdapter:
             user_id,
             channel,
             len(text),
+        )
+        await self._on_message(inbound)
+
+    async def _handle_slash_command(self, command: dict[str, Any]) -> None:
+        """Re-inject a Slack slash command as a normal InboundEvent.
+
+        Slack delivers slash commands out-of-band from messages, so we
+        reconstruct the ``/<name> <text>`` line and forward it exactly like a
+        message. The gateway's single command interceptor then handles it —
+        identical to Telegram/web, which deliver ``/<name>`` as message text.
+        """
+        name = str(command.get("command", "")).lstrip("/")
+        text = str(command.get("text", "")).strip()
+        user_id = str(command.get("user_id", ""))
+        channel = str(command.get("channel_id", ""))
+        message = f"/{name} {text}".strip()
+
+        inbound = InboundEvent(
+            platform="slack",
+            chat_id=channel,
+            user_did=f"slack:{user_id}",
+            agent_did=self._agent_did,
+            session_key=f"slack:{channel}:{user_id}",
+            message=message,
+            raw_payload=dict(command),
         )
         await self._on_message(inbound)
 

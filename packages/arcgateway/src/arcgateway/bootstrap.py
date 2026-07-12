@@ -290,6 +290,13 @@ async def build_for_embedded(
         if outbound is not None:
             session_router.register_adapter(outbound)
 
+    # Hand the command set to any adapter that must subscribe explicitly
+    # (Slack) — Telegram/web deliver "/cmd" as message text and need nothing.
+    for outbound in remote_adapters:
+        set_names = getattr(outbound, "set_command_names", None)
+        if callable(set_names):
+            set_names(command_registry.names())
+
     _logger.info(
         "bootstrap: embedded gateway built (tier=%s web=%s remote=%s)",
         gateway_config.gateway.tier,
