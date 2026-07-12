@@ -15,12 +15,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from arcstore import query as store_query
 from arcstore.backends import open_backend
 from arcstore.config import resolve_data_dir
 from arcstore.ingest import StoreIngest
+from arcstore.tasks import MutableTaskBackend, TaskStore
 
 from arcui.observe_stats import (
     compute_cost_efficiency,
@@ -204,12 +205,35 @@ class Observe:
         rows = await self._backend.query("llm_calls", where={"record_id": trace_id}, limit=1)
         return _row_to_trace(rows[0]) if rows else None
 
-    async def audit(self, *, agent: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    async def audit(
+        self, *, agent: str | None = None, target: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
         await self._ensure()
-        where = {"actor_did": agent} if agent else None
+        where: dict[str, Any] = {}
+        if agent:
+            where["actor_did"] = agent
+        if target:
+            where["target"] = target
         return await self._backend.query(
-            "audit_chain", where=where, order_by="seq DESC", limit=limit
+            "audit_chain", where=where or None, order_by="seq DESC", limit=limit
         )
+
+    async def tasks(
+        self, *, owner_did: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Task rows from the arcstore mutable plane (SPEC-056 Phase D, FR-6).
+
+        Reads through the same ``TaskStore`` seam arcagent writes with. The
+        mutable-plane methods aren't on the shared ``StorageBackend`` Protocol
+        yet (SPEC-032 migration — see ``arcstore.tasks`` docstring), so the
+        backend is cast to the narrow ``MutableTaskBackend`` Protocol
+        ``TaskStore`` actually needs; at runtime it's the same ``SqliteBackend``
+        that implements both.
+        """
+        await self._ensure()
+        store = TaskStore(cast(MutableTaskBackend, self._backend))
+        rows = await store.list(status=status, owner_did=owner_did)
+        return [t.model_dump(mode="json") for t in rows]
 
     async def _llm_rows_in_window(
         self, window: str, *, agent: str | None = None

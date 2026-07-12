@@ -19,6 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
+from arcstore.backends.sqlite import SqliteBackend
+from arcstore.config import resolve_data_dir
+from arcstore.tasks import TaskStore
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -39,6 +42,7 @@ from arcui.routes import export as export_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
+from arcui.routes import tasks as tasks_routes
 from arcui.routes import team_chat as team_chat_routes
 from arcui.routes import team_pages as team_pages_routes
 from arcui.routes import team_ws as team_ws_routes
@@ -157,6 +161,13 @@ def create_app(
     """
     auth = auth_config or AuthConfig()
 
+    # TaskStore writer (SPEC-056 Phase D, FR-7): a separate SqliteBackend
+    # instance pointed at the SAME `store/arcui.db` file `app.state.observe`
+    # reads — mutation routes never go through the read-side Observe plane.
+    task_store_backend = SqliteBackend(
+        (data_dir if data_dir is not None else resolve_data_dir()) / "store" / "arcui.db"
+    )
+
     routes = [
         Route("/", _index),
         Route("/sw.js", _service_worker),
@@ -176,6 +187,7 @@ def create_app(
         *team_pages_routes.routes,
         *team_chat_routes.routes,
         *team_ws_routes.routes,
+        *tasks_routes.routes,
     ]
 
     # Mount static files if the directory exists.
@@ -245,6 +257,10 @@ def create_app(
             await starlette_app.state.observe.start()
         except Exception:  # reason: fail-open — dashboard still serves
             logger.exception("lifespan: arcstore Observe failed to start; reads will be empty")
+        try:
+            await task_store_backend.start()
+        except Exception:  # reason: fail-open — dashboard still serves
+            logger.exception("lifespan: task_store backend failed to start; writes will fail")
         # SPEC-023: when a gateway_config is supplied, compose the in-process
         # gateway runtime and expose its components on app.state. Routes that
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
@@ -351,6 +367,10 @@ def create_app(
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
                 logger.exception("lifespan: error stopping arcstore Observe")
+            try:
+                await task_store_backend.stop()
+            except Exception:  # reason: fail-open — continue shutdown
+                logger.exception("lifespan: error stopping task_store backend")
             # SPEC-023: shut adapters down in reverse — disconnect cancels
             # all per-socket tasks and closes the WebSockets cleanly.
             if embedded_gateway is not None:
@@ -382,6 +402,8 @@ def create_app(
     # Observe plane (SPEC-026 FR-5): arcui's read-only mirror of the durable
     # operational record. Reads come from here, not a live push wire.
     app.state.observe = Observe(data_dir=data_dir, workspace_dir=workspace_dir)
+    # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
+    app.state.task_store = TaskStore(task_store_backend)
     app.state.config_controller = config_controller
     # arcteam MessagingService used by the Team Chat routes. ``None`` is
     # a supported state — the routes degrade to empty payloads so the

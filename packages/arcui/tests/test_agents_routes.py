@@ -6,11 +6,14 @@ from a synthetic ``team/`` directory through ``arcgateway.fs_reader``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 from arcgateway import team_roster
+from arcstore.backends.sqlite import SqliteBackend
+from arcstore.tasks import Task, TaskStore
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
@@ -21,6 +24,18 @@ from arcui.registry import AgentRegistry
 from arcui.routes.agent_detail import routes as agent_detail_routes
 from arcui.routes.agents import routes as agent_routes
 from arcui.types import AgentRegistration
+
+
+async def _seed_task(data_dir: Path, task: Task) -> None:
+    """Seed one task into the arcstore mutable plane `Observe.tasks()` reads.
+
+    SPEC-056 Phase D re-pointed `/api/agents/{id}/tasks` off `tasks.json`
+    (which `_build_team_dir` still writes for the directory-layout docstring,
+    but is never read) onto arcstore — this seeds the real source of truth.
+    """
+    backend = SqliteBackend(data_dir / "store" / "arcui.db")
+    await backend.start()
+    await TaskStore(backend).create(task)
 
 
 def _make_app() -> tuple[Starlette, AuthConfig, AgentRegistry]:
@@ -553,8 +568,14 @@ class TestPolicyRoutes:
 
 
 class TestTasksAndSchedulesRoutes:
-    def test_tasks_returns_array(self, tmp_path):
+    def test_tasks_returns_array(self, tmp_path, _isolated_arc_data_dir: Path):
         team = _build_team_dir(tmp_path)
+        asyncio.run(
+            _seed_task(
+                _isolated_arc_data_dir,
+                Task(id="t1", title="Investigate", creator_did="did:arc:alpha", owner_did="did:arc:alpha", priority="high"),
+            )
+        )
         app, auth, _ = _make_detail_app(team_root=team)
         client = TestClient(app)
         resp = client.get("/api/agents/alpha/tasks", headers=_viewer(auth))

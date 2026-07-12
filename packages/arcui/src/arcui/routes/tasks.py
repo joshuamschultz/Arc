@@ -1,0 +1,123 @@
+"""``POST /api/team/tasks`` + ``PATCH /api/tasks/{id}`` — operator-gated task mutation.
+
+SPEC-056 Phase D (D4, FR-7). Mirrors ``agent_detail/files_write.py``'s
+operator-gate -> guard -> write -> audit shape and ``team_chat.
+create_channel_route``'s create-resource wire convention (201, raw resource
+dict in the body, no envelope). Edit is at-rest only (NFR-4): an
+``in_progress`` task is steered via an arcteam message to its owner, not
+edited here — see SDD §6.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+from arcstore.tasks import Task
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
+from arcui.audit import emit_mutation_audit
+from arcui.schemas import ErrorResponse
+
+# arcui holds no agent identity; operator-originated writes are attributed to
+# this fixed DID (mirrors `_CALLER_DID` in agent_detail/_common.py).
+_CREATOR = "did:arc:ui:operator"
+
+_CREATE_FIELDS = ("description", "priority", "owner_did", "tags")
+
+
+def _error(message: str, status: int) -> JSONResponse:
+    return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
+
+
+def _is_operator(request: Request) -> bool:
+    return getattr(request.state, "role", None) == "operator"
+
+
+async def _json_body(request: Request) -> dict[str, Any] | None:
+    try:
+        body = await request.json()
+    except Exception:  # reason: malformed body is a client error, not a 500
+        return None
+    return body if isinstance(body, dict) else None
+
+
+async def create_task(request: Request) -> JSONResponse:
+    """POST /api/team/tasks — create a task (operator only)."""
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request,
+            target="task:new",
+            operation="task.create",
+            outcome="denied",
+            detail="viewer role",
+        )
+        return _error("operator_role_required", 403)
+
+    body = await _json_body(request)
+    if body is None:
+        return _error("expected a JSON object body", 400)
+    title = body.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return _error("missing or blank title", 400)
+
+    fields: dict[str, Any] = {"title": title, "creator_did": _CREATOR}
+    for key in _CREATE_FIELDS:
+        if key in body:
+            fields[key] = body[key]
+    task = Task(id=str(uuid.uuid4()), **fields)
+
+    store = request.app.state.task_store
+    created = await store.create(task)
+
+    emit_mutation_audit(
+        request, target=f"task:{created.id}", operation="task.create", outcome="applied"
+    )
+    return JSONResponse(created.model_dump(mode="json"), status_code=201)
+
+
+async def patch_task(request: Request) -> JSONResponse:
+    """PATCH /api/tasks/{id} — edit an at-rest task (operator only)."""
+    task_id = request.path_params["id"]
+    target = f"task:{task_id}"
+
+    if not _is_operator(request):
+        emit_mutation_audit(
+            request, target=target, operation="task.update", outcome="denied", detail="viewer role"
+        )
+        return _error("operator_role_required", 403)
+
+    store = request.app.state.task_store
+    current = await store.get(task_id)
+    if current is None:
+        return _error("not found", 404)
+    if current.status == "in_progress":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="task.update",
+            outcome="denied",
+            detail="task_in_progress",
+        )
+        return _error("task_in_progress", 409)
+
+    patch = await _json_body(request)
+    if patch is None:
+        return _error("expected a JSON object body", 400)
+
+    updated = await store.update(task_id, patch, actor_did=_CREATOR)
+    if updated is None:  # pragma: no cover — race between the get and the write above
+        return _error("not found", 404)
+
+    emit_mutation_audit(request, target=target, operation="task.update", outcome="applied")
+    return JSONResponse(updated.model_dump(mode="json"))
+
+
+routes = [
+    Route("/api/team/tasks", create_task, methods=["POST"]),
+    Route("/api/tasks/{id}", patch_task, methods=["PATCH"]),
+]
+
+__all__ = ["create_task", "patch_task", "routes"]

@@ -12,7 +12,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from arcui.query_validators import parse_pagination
-from arcui.routes.agent_detail._common import _CALLER_DID, _VALID_SID, _agent_root
+from arcui.routes.agent_detail._common import _CALLER_DID, _VALID_SID, _agent_did, _agent_root
 from arcui.schemas import (
     ErrorResponse,
     SchedulesResponse,
@@ -141,12 +141,17 @@ def _parse_jsonl(text: str) -> list[dict[str, Any]]:
 
 
 async def get_tasks(request: Request) -> JSONResponse:
-    return await _read_json_array(
-        request,
-        rel_path="tasks.json",
-        key="tasks",
-        model_cls=TasksResponse,
-    )
+    """GET /api/agents/{id}/tasks — this agent's arcstore-owned task rows."""
+    agent_id = request.path_params["id"]
+    agent_root = _agent_root(request, agent_id)
+    if agent_root is None:
+        return JSONResponse(
+            ErrorResponse(error="Agent not found").model_dump(mode="json"),
+            status_code=404,
+        )
+    owner_did = _agent_did(request, agent_id)
+    rows = await request.app.state.observe.tasks(owner_did=owner_did)
+    return JSONResponse(TasksResponse(tasks=rows).model_dump(mode="json"))
 
 
 async def get_schedules(request: Request) -> JSONResponse:
