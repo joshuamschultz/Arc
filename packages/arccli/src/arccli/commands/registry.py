@@ -122,6 +122,13 @@ def _ext_handler(args: list[str]) -> None:
     ext_handler(args)
 
 
+def _task_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.task import task_handler
+
+    task_handler(args)
+
+
 def _blueprint_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.blueprint import blueprint_handler
@@ -423,7 +430,7 @@ COMMAND_REGISTRY: list[CommandDef] = [
     ),
     CommandDef(
         name="run",
-        description="Run tasks directly with arcrun (no agent directory)",
+        description="Run prompts directly with arcrun (no agent directory)",
         category="Session",
         args_hint="<subcommand>",
         handler=_run_handler,
@@ -495,6 +502,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_store_handler,
+    ),
+    CommandDef(
+        name="task",
+        description="Mission-control tasks — create, list, edit, assign, complete, talk",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_task_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.
