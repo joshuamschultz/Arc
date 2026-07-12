@@ -108,6 +108,30 @@ async def test_use_skill_loads_body_lazily() -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoke_extra_is_stashed_on_context() -> None:
+    """A provider's CapabilityResult.extra is passed through onto ctx.tool_extra
+    so the executor can spool it verbatim (U13). arcrun assigns it no meaning."""
+
+    class _ExtraProvider(_FakeProvider):
+        async def invoke(
+            self, name: str, args: dict[str, Any], *, caller_did: str
+        ) -> CapabilityResult:
+            return CapabilityResult(
+                content="ok", extra={"activated_skill": "s", "skill_activated": True}
+            )
+
+    tools = provider_tools(_ExtraProvider(), caller_did="did:arc:agent:x")
+    echo = next(t for t in tools if t.name == "echo")
+
+    from arcrun.capabilities import detached_context
+
+    ctx = detached_context()
+    assert ctx.tool_extra is None
+    await echo.execute({"text": "hi"}, ctx)
+    assert ctx.tool_extra == {"activated_skill": "s", "skill_activated": True}
+
+
+@pytest.mark.asyncio
 async def test_static_provider_wraps_a_tool_list() -> None:
     """StaticProvider adapts a fixed tool list — advertise + invoke round-trip."""
 

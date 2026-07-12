@@ -156,3 +156,105 @@ async def test_federal_gate_denies_workspace_capabilities(tmp_path: Path) -> Non
     personal_names = {s.name for s in personal.advertise()}
     assert "ws_tool" in personal_names
     assert "ws_skill" in personal_names
+
+
+# --- U13: a tool that declares requires_skill activates it on invoke ----------
+
+
+def _audit_sink() -> tuple[list[tuple[str, dict[str, Any]]], Any]:
+    """A capturing telemetry.audit_event stand-in."""
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def _emit(event_type: str, details: dict[str, Any]) -> None:
+        events.append((event_type, details))
+
+    return events, _emit
+
+
+@pytest.mark.asyncio
+async def test_invoke_activates_required_skill(tmp_path: Path) -> None:
+    """A tool with requires_skill pulls that skill's body into the result (U13)."""
+    events, sink = _audit_sink()
+    provider = AgentCapabilityProvider(
+        tools=[_tool("create_skill")],
+        skills=[_skill("create-skill", tmp_path, body="STEP 1: author SKILL.md")],
+        tier="personal",
+        caller_did="did:arc:agent",
+        requires_skill={"create_skill": "create-skill"},
+        audit=sink,
+    )
+    result = await provider.invoke("create_skill", {"x": "hi"}, caller_did="did:arc:agent")
+    # The skill body is now IN the result content (activated via the tool call).
+    assert "STEP 1: author SKILL.md" in result.content
+    assert "ran create_skill" in result.content
+    assert result.is_error is False
+    # The generic passthrough carries the signal arcrun spools onto the tool_event.
+    assert result.extra == {"activated_skill": "create-skill", "skill_activated": True}
+    # Exactly one skill-activation audit event, marked activated.
+    activations = [d for e, d in events if e == "tool.skill_activated"]
+    assert len(activations) == 1
+    assert activations[0]["requires_skill"] == "create-skill"
+    assert activations[0]["skill_activated"] is True
+    assert activations[0]["tool"] == "create_skill"
+
+
+@pytest.mark.asyncio
+async def test_required_skill_activated_once_per_run(tmp_path: Path) -> None:
+    """The skill body is injected once per run; later calls don't re-inject it."""
+    events, sink = _audit_sink()
+    provider = AgentCapabilityProvider(
+        tools=[_tool("create_skill")],
+        skills=[_skill("create-skill", tmp_path, body="RUNBOOK")],
+        tier="personal",
+        caller_did="did:arc:agent",
+        requires_skill={"create_skill": "create-skill"},
+        audit=sink,
+    )
+    first = await provider.invoke("create_skill", {}, caller_did="did:arc:agent")
+    assert "RUNBOOK" in first.content
+    second = await provider.invoke("create_skill", {}, caller_did="did:arc:agent")
+    # Already active — body not re-injected, but still audited as active.
+    assert "RUNBOOK" not in second.content
+    activations = [d for e, d in events if e == "tool.skill_activated"]
+    assert len(activations) == 2
+    assert activations[1]["already_active"] is True
+    assert activations[1]["skill_activated"] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_required_skill_fails_open(tmp_path: Path) -> None:
+    """A required skill that can't be loaded doesn't crash the tool call (fail-open)."""
+    events, sink = _audit_sink()
+    provider = AgentCapabilityProvider(
+        tools=[_tool("create_skill")],
+        skills=[],  # the required skill is absent
+        tier="personal",
+        caller_did="did:arc:agent",
+        requires_skill={"create_skill": "ghost-skill"},
+        audit=sink,
+    )
+    result = await provider.invoke("create_skill", {}, caller_did="did:arc:agent")
+    assert result.is_error is False
+    assert "ran create_skill" in result.content
+    assert result.extra == {"activated_skill": "ghost-skill", "skill_activated": False}
+    activations = [d for e, d in events if e == "tool.skill_activated"]
+    assert len(activations) == 1
+    assert activations[0]["skill_activated"] is False
+
+
+@pytest.mark.asyncio
+async def test_tool_without_requires_skill_is_untouched(tmp_path: Path) -> None:
+    """No requires_skill → result content and audit are unchanged."""
+    events, sink = _audit_sink()
+    provider = AgentCapabilityProvider(
+        tools=[_tool("search")],
+        skills=[_skill("create-skill", tmp_path, body="RUNBOOK")],
+        tier="personal",
+        caller_did="did:arc:agent",
+        requires_skill={"create_skill": "create-skill"},
+        audit=sink,
+    )
+    result = await provider.invoke("search", {"x": "hi"}, caller_did="did:arc:agent")
+    assert result.content == "ran search({'x': 'hi'})"
+    assert result.extra is None
+    assert [e for e, _ in events if e == "tool.skill_activated"] == []

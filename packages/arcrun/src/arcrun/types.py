@@ -59,6 +59,10 @@ class ToolContext:
     event_bus: EventBus | None
     cancelled: asyncio.Event
     parent_state: Any = None
+    # Opaque annotation a tool may set during execute; the executor merges it
+    # onto the ``tool.end`` event so it reaches the tool_event spool. arcrun
+    # assigns it no meaning (used e.g. to record a provider skill activation).
+    tool_extra: dict[str, Any] | None = None
 
 
 @dataclass

@@ -31,18 +31,18 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from arcagent.modules.skills.outcome import (
-    OutcomeClassifier,
-    OutcomeLabel,
-    has_feedback_signal,
-    has_policy_risk_praise,
-)
 from pydantic import ValidationError
 
 from arcagent.capabilities.capability_registry import CapabilityRegistry, SkillEntry
 from arcagent.modules.skills import _runtime
 from arcagent.modules.skills.capabilities import skills_post_plan, skills_post_tool, skills_ready
 from arcagent.modules.skills.config import SkillsConfig
+from arcagent.modules.skills.outcome import (
+    OutcomeClassifier,
+    OutcomeLabel,
+    has_feedback_signal,
+    has_policy_risk_praise,
+)
 
 # ---------------------------------------------------------------------------- fixtures
 

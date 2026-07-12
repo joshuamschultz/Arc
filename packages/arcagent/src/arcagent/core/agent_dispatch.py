@@ -112,6 +112,8 @@ async def build_run_context(
         tier=str(agent._config.security.tier),
         caller_did=agent._identity.did if agent._identity else "did:arc:unknown",
         workspace_authored=_workspace_authored(agent),
+        requires_skill=_requires_skill_map(agent),
+        audit=telemetry.audit_event,
     )
 
     await bus.emit("agent:pre_respond", {"task": task})
@@ -127,6 +129,21 @@ def _agent_skills(agent: ArcAgent) -> list[_Skill]:
         _Skill(name=e.name, description=e.description, location=e.location, scan_root=e.scan_root)
         for e in registry._skills.values()
     ]
+
+
+def _requires_skill_map(agent: ArcAgent) -> dict[str, str]:
+    """Tool name -> the skill that teaches it (R-014), for the tools that declare
+    one. Sourced from the capability registry's tool metadata — the core
+    ToolRegistry's ``RegisteredTool`` drops ``requires_skill``, so the capability
+    layer is the source of truth. The provider activates these on invoke (U13)."""
+    registry = agent._capability_registry
+    if registry is None:
+        return {}
+    return {
+        entry.meta.name: entry.meta.requires_skill
+        for entry in registry._tools.values()
+        if entry.meta.requires_skill
+    }
 
 
 def _workspace_authored(agent: ArcAgent) -> frozenset[str]:

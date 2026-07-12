@@ -228,6 +228,10 @@ class EventBus:
                 extra["args"] = dict(data["arguments"])
             if "result" in data:
                 extra["result"] = data["result"]
+        # A tool's opaque self-annotation is small scalar signal (not a body), so
+        # it is always kept — never gated behind raw-body capture.
+        if isinstance(data.get("tool_extra"), dict):
+            extra.update(data["tool_extra"])
         _spool_record(
             _SpoolRecord(
                 kind="tool_event",

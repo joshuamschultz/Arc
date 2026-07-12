@@ -109,6 +109,22 @@ async def test_tool_event_bodies_under_flag() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_extra_annotation_always_spooled() -> None:
+    """A tool that sets ctx.tool_extra surfaces it on the end event's extra even
+    with store_raw_bodies=false — it is small scalar signal, not a body (U13:
+    a provider records which skill a tool activated so the UI can show it)."""
+
+    async def _annotating(params: dict, ctx: object) -> str:
+        ctx.tool_extra = {"activated_skill": "create-skill", "skill_activated": True}  # type: ignore[attr-defined]
+        return "done"
+
+    recorded = await _run_tool(_bus(), _tool("create_skill", _annotating), {"input": "x"})
+    end = next(r for r in recorded if r.kind == "tool_event" and r.phase == "end")
+    assert end.extra["activated_skill"] == "create-skill"
+    assert end.extra["skill_activated"] is True
+
+
+@pytest.mark.asyncio
 async def test_tool_error_spooled() -> None:
     """Task 2.3 — a raising tool spools phase=error, outcome=error."""
     recorded = await _run_tool(_bus(), _tool("bomb", _explode), {"input": "x"})

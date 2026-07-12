@@ -21,6 +21,7 @@ all: in federal they are neither advertised nor loadable (AC-6.1 / ADR-023 §3).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,11 @@ from typing import Any
 from arcrun import CapabilityResult, CapabilitySpec, Tool, detached_context
 
 _logger = logging.getLogger("arcagent.capability_provider")
+
+# telemetry.audit_event(event_type, details) — the sink the provider emits its
+# skill-activation signal through. Optional so the provider stays testable and
+# usable without a telemetry stack.
+AuditSink = Callable[[str, dict[str, Any]], None]
 
 # scan_root of capabilities the agent authored at runtime under <workspace>/capabilities
 WORKSPACE_ROOT = "workspace"
@@ -60,6 +66,8 @@ class AgentCapabilityProvider:
         caller_did: str,
         ctx_tools: list[Tool] | None = None,
         workspace_authored: frozenset[str] = frozenset(),
+        requires_skill: dict[str, str] | None = None,
+        audit: AuditSink | None = None,
     ) -> None:
         federal = tier == "federal"
 
@@ -74,6 +82,16 @@ class AgentCapabilityProvider:
         # its live ToolContext — they read depth/budget from it, so they cannot
         # route through the context-free invoke() path.
         self._ctx_tools: list[Tool] = list(ctx_tools or [])
+        self._caller_did = caller_did
+        # tool name -> the skill that teaches it (R-014). When such a tool is
+        # invoked, that skill is activated into context as part of the call
+        # (U13) — the requirement was previously only a system-prompt hint the
+        # model had to honour voluntarily via ``use_skill``.
+        self._requires_skill: dict[str, str] = dict(requires_skill or {})
+        self._audit = audit
+        # Skills already pulled this run — activation is idempotent (load the
+        # body once, not on every call to the requiring tool).
+        self._activated: set[str] = set()
 
     def raw_tools(self) -> list[Tool]:
         """Tools the loop must dispatch directly (live ToolContext preserved)."""
@@ -117,16 +135,70 @@ class AgentCapabilityProvider:
     async def invoke(
         self, name: str, args: dict[str, Any], *, caller_did: str
     ) -> CapabilityResult:
-        """Dispatch a tool call through its policy-wrapped execute (fail-closed)."""
+        """Dispatch a tool call through its policy-wrapped execute (fail-closed).
+
+        If the tool declares a ``requires_skill``, that skill is activated into
+        context as part of the call (U13) — see :meth:`_activate_required_skill`.
+        """
         tool = self._tools.get(name)
         if tool is None:
             return CapabilityResult(content=f"unknown capability '{name}'", is_error=True)
         try:
-            out = await tool.execute(dict(args), detached_context())
+            out = str(await tool.execute(dict(args), detached_context()))
+            is_error = False
         except Exception as exc:  # reason: surface as an error result, never crash the loop
             _logger.exception("Capability '%s' raised during invoke", name)
-            return CapabilityResult(content=f"{type(exc).__name__}: {exc}", is_error=True)
-        return CapabilityResult(content=out)
+            out, is_error = f"{type(exc).__name__}: {exc}", True
+        content, extra = await self._activate_required_skill(name, out, caller_did=caller_did)
+        return CapabilityResult(content=content, is_error=is_error, extra=extra)
+
+    async def _activate_required_skill(
+        self, tool_name: str, out: str, *, caller_did: str
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Pull the tool's required skill into context, once per run (U13).
+
+        The skill body enters the conversation via the tool result — the same
+        channel ``use_skill`` uses (arcrun capabilities.py) — so the model gains
+        the skill's instructions the moment the tool it teaches is called, rather
+        than relying on the model to voluntarily call ``use_skill`` first.
+
+        Fail-open: an unreadable/absent skill records ``skill_activated=False``
+        and returns the tool output unchanged — a missing skill must never break
+        the tool call. Idempotent: the body is injected only on first activation.
+        """
+        required = self._requires_skill.get(tool_name)
+        if required is None:
+            return out, None
+        already = required in self._activated
+        body = None if already else await self.load(required, caller_did=caller_did)
+        if body is not None:
+            self._activated.add(required)
+        activated = already or body is not None
+        self._emit_activation(tool_name, required, activated=activated, already=already)
+        # Generic passthrough dict — arcrun spools it onto the tool_event verbatim
+        # (it never learns "skill"); arcui reads it to show "pulled skill: X".
+        extra = {"activated_skill": required, "skill_activated": activated}
+        if body is None:
+            # Already active, or the load failed — return the tool output as-is.
+            return out, extra
+        return f'<activated-skill name="{required}">\n{body}\n</activated-skill>\n\n{out}', extra
+
+    def _emit_activation(
+        self, tool_name: str, skill: str, *, activated: bool, already: bool
+    ) -> None:
+        """Audit the tool->skill activation so it is observable (U13)."""
+        if self._audit is None:
+            return
+        self._audit(
+            "tool.skill_activated",
+            {
+                "tool": tool_name,
+                "requires_skill": skill,
+                "skill_activated": activated,
+                "already_active": already,
+                "actor_did": self._caller_did,
+            },
+        )
 
 
 __all__ = ["AgentCapabilityProvider"]

@@ -48,10 +48,17 @@ class CapabilitySpec:
 
 @dataclass
 class CapabilityResult:
-    """Outcome of a capability invocation."""
+    """Outcome of a capability invocation.
+
+    ``extra`` is an opaque provider-supplied dict of small scalars that the loop
+    passes through onto the tool's ``tool_event`` spool record verbatim — arcrun
+    assigns it no meaning (a provider uses it to annotate a call, e.g. which
+    skill it activated). Kept out of the model-visible ``content``.
+    """
 
     content: str
     is_error: bool = False
+    extra: dict[str, Any] | None = None
 
 
 @runtime_checkable
@@ -183,6 +190,10 @@ def provider_tools(provider: CapabilityProvider, *, caller_did: str) -> list[Too
 def _invoke_tool(spec: CapabilitySpec, provider: CapabilityProvider, *, caller_did: str) -> Tool:
     async def _execute(args: dict[str, Any], ctx: ToolContext, _name: str = spec.name) -> str:
         result = await provider.invoke(_name, args, caller_did=caller_did)
+        # Pass the provider's opaque annotation onto this call's lifecycle event
+        # so it reaches the tool_event spool (the executor reads ctx.tool_extra).
+        if result.extra:
+            ctx.tool_extra = result.extra
         if result.is_error:
             return f"Error: {result.content}"
         return result.content

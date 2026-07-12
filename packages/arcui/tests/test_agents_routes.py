@@ -458,6 +458,24 @@ class TestSessionsRoute:
         resp = client.get("/api/agents/alpha/sessions/..%2Fetc%2Fpasswd", headers=_viewer(auth))
         assert resp.status_code in (400, 404)
 
+    def test_replay_namespaced_sid_round_trips(self, tmp_path):
+        # U12 — namespaced session ids (``messaging:inbox``) are legitimate
+        # session filenames; the colon must not be rejected as invalid.
+        team = _build_team_dir(tmp_path)
+        sessions = next(team.glob("*/workspace/sessions"))
+        (sessions / "messaging:inbox.jsonl").write_text(
+            '{"role": "user", "content": "ping"}\n'
+            '{"role": "assistant", "content": "pong"}\n',
+            encoding="utf-8",
+        )
+        app, auth, _ = _make_detail_app(team_root=team)
+        client = TestClient(app)
+        # Both raw and %3A-encoded colon must resolve to the same session (200).
+        for sid in ("messaging:inbox", "messaging%3Ainbox"):
+            resp = client.get(f"/api/agents/alpha/sessions/{sid}", headers=_viewer(auth))
+            assert resp.status_code == 200, sid
+            assert resp.json()["total"] == 2
+
 
 class TestStatsRoute:
     def test_stats_falls_back_to_global_when_no_per_agent(self, tmp_path):

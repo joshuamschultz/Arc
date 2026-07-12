@@ -42,7 +42,10 @@ _CALLER_DID = "did:arc:ui:viewer"
 
 # Session id format: alphanumeric / dash / underscore / dot only. Defends
 # against ``../`` injection on session replay (path component, not query).
-_VALID_SID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+# Session ids are namespaced (``messaging:inbox``, ``pulse:tick``, ``cli:run:…``),
+# so the colon is legitimate — the raw session filename minus ``.jsonl``. ``/`` is
+# still excluded (path-traversal is caught here and again in fs_reader).
+_VALID_SID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 # Roots accepted by /files/* endpoints. ``workspace`` resolves to
 # ``team/<agent>/workspace/``; ``agent`` to ``team/<agent>/``.

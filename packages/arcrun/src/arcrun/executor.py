@@ -129,6 +129,10 @@ async def execute_tool_call(
     # it stays out of memory and the spool entirely.
     if bus.store_raw_bodies:
         end_data["result"] = result
+    # A tool may annotate its own call (ctx.tool_extra) — a small opaque scalar
+    # dict the spool always keeps (it is signal, not a body).
+    if ctx.tool_extra:
+        end_data["tool_extra"] = dict(ctx.tool_extra)
     bus.emit("tool.end", end_data)
 
     state.tool_calls_made += 1

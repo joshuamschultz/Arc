@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Wrench, Code, Bot, Circle } from 'lucide-react'
+import { Wrench, Code, Bot, Circle, Sparkles } from 'lucide-react'
 import {
   Sheet,
   SheetContent,
@@ -28,6 +28,10 @@ interface ToolItem {
   output: unknown
   status: string
   latency_ms?: number | null
+  // U13 — when this tool declared a required skill, the loader records which
+  // skill it pulled (and whether the load succeeded) on the end event's extra.
+  activatedSkill?: string | null
+  skillActivated?: boolean
 }
 interface LlmItem {
   kind: 'llm'
@@ -73,10 +77,15 @@ function mergeTimeline(entries: TimelineEntry[]): Item[] {
         const target = q?.shift()
         const out = e.extra?.result ?? null
         const status = e.outcome === 'error' || e.phase === 'error' ? 'error' : 'ok'
+        // U13 — the tool->skill activation signal rides the end event's extra.
+        const activatedSkill = (e.extra?.activated_skill as string | undefined) ?? null
+        const skillActivated = e.extra?.skill_activated as boolean | undefined
         if (target) {
           target.output = out
           target.status = status
           target.latency_ms = e.latency_ms
+          target.activatedSkill = activatedSkill
+          target.skillActivated = skillActivated
         } else {
           items.push({
             kind: 'tool',
@@ -87,6 +96,8 @@ function mergeTimeline(entries: TimelineEntry[]): Item[] {
             output: out,
             status,
             latency_ms: e.latency_ms,
+            activatedSkill,
+            skillActivated,
           })
         }
       }
@@ -136,6 +147,23 @@ function ToolRow({ item }: { item: ToolItem }) {
         <Icon className="size-3.5 shrink-0 text-primary" />
         <span className="font-mono text-foreground">{item.name}</span>
         <StatusText value={item.status} />
+        {item.activatedSkill && (
+          <span
+            className={
+              item.skillActivated === false
+                ? 'inline-flex items-center gap-1 rounded border border-status-warning/40 bg-status-warning/10 px-1.5 py-0.5 text-[11px] text-status-warning'
+                : 'inline-flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[11px] text-primary'
+            }
+            title={
+              item.skillActivated === false
+                ? `required skill "${item.activatedSkill}" could not be loaded`
+                : `pulled required skill "${item.activatedSkill}"`
+            }
+          >
+            <Sparkles className="size-3" />
+            {item.skillActivated === false ? `skill missing: ${item.activatedSkill}` : `pulled skill: ${item.activatedSkill}`}
+          </span>
+        )}
         {item.latency_ms != null && (
           <span className="tabular-nums text-muted-foreground">{fmtLatency(item.latency_ms)}</span>
         )}
