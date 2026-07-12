@@ -21,6 +21,7 @@ from arcagent.modules.memory import _runtime
 from arcagent.modules.memory.capabilities import (
     capture_respond,
     capture_tool,
+    capture_user,
     consolidate_poll_once,
     inject_memory_disabled_note,
     inject_recall,
@@ -207,6 +208,81 @@ async def test_capture_hooks_call_brain_and_count_events() -> None:
     await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "done"}]}))
     assert len(spy.captures) == 2
     assert _runtime.state().events_since_consolidate == 2
+
+
+class _KindSpyBrain(_SpyBrain):
+    """Spy that also records the ``kind`` each capture was tagged with."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.kinds: list[str] = []
+
+    async def capture(self, text: str, *, kind: str = "observation", **_: Any) -> None:
+        self.kinds.append(kind)
+        await super().capture(text)
+
+
+async def test_capture_user_records_user_kind_and_counts_event() -> None:
+    """The user's input turn is captured as kind='user' (previously never stored)."""
+    spy = _KindSpyBrain()
+    _configure_with(spy)
+    await capture_user(_ctx({"task": "how do I deploy the gateway?"}))
+    assert spy.captures == ["how do I deploy the gateway?"]
+    assert spy.kinds == ["user"]
+    assert _runtime.state().events_since_consolidate == 1
+
+
+async def test_capture_user_empty_task_is_noop() -> None:
+    spy = _KindSpyBrain()
+    _configure_with(spy)
+    await capture_user(_ctx({"task": "   "}))
+    assert spy.captures == []
+    assert _runtime.state().events_since_consolidate == 0
+
+
+async def test_user_message_survives_curation_into_distillation(tmp_path: Path) -> None:
+    """End-to-end (both halves): a captured user turn reaches the distiller, while
+    tool plumbing is curated out — proving Part A + Part B compose."""
+    pytest.importorskip("arcmemory")
+    from arcmemory.brain import ArcMemoryBrain
+    from arcmemory.distill import (
+        DaySummaryDraft,
+        FactExtraction,
+        InsightMint,
+        ProcedureExtraction,
+    )
+
+    class _RecordingDistiller:
+        def __init__(self) -> None:
+            self.texts: list[str] = []
+
+        async def extract_facts(self, events: Any) -> FactExtraction:
+            self.texts += [e.text for e in events]
+            return FactExtraction()
+
+        async def mint_insights(self, events: Any, facts: Any) -> InsightMint:
+            self.texts += [e.text for e in events]
+            return InsightMint()
+
+        async def extract_procedures(self, events: Any) -> ProcedureExtraction:
+            self.texts += [e.text for e in events]
+            return ProcedureExtraction()
+
+        async def summarize_day(self, events: Any) -> DaySummaryDraft:
+            self.texts += [e.text for e in events]
+            return DaySummaryDraft()
+
+    distiller = _RecordingDistiller()
+    brain = ArcMemoryBrain(tmp_path, _DID, distiller=distiller)
+    _configure_with(brain)
+
+    await capture_user(_ctx({"task": "alice shipped the payments service"}))
+    await capture_tool(_ctx({"tool": "bash", "result": "exit status 0 with a long mechanical trace"}))
+    await brain.consolidate()
+
+    joined = " ".join(distiller.texts)
+    assert "alice shipped the payments service" in joined  # user turn survived curation
+    assert "exit status 0" not in joined  # tool plumbing curated out
 
 
 async def test_capture_tool_skips_noise() -> None:

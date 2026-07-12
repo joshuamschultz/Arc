@@ -197,6 +197,23 @@ async def capture_tool(ctx: Any) -> None:
     await _capture(st, text, kind="tool")
 
 
+@hook(event="agent:pre_respond", priority=_CAPTURE_PRIORITY)
+async def capture_user(ctx: Any) -> None:
+    """Capture the user's input turn (fast, zero-LLM).
+
+    Without this, memory is built only from tool plumbing and the agent's own
+    responses — the human's actual words never enter it. The task text is the
+    external input driving the turn; captured as ``user`` so curation keeps it and
+    distillation learns from what was asked. Sanitize/dedup happen in the Brain's
+    fast path (untrusted input, LLM01), same as every other capture.
+    """
+    st = _runtime.state()
+    if not st.active:
+        return
+    text = str(ctx.data.get("task", "")).strip()
+    await _capture(st, text, kind="user")
+
+
 @hook(event="agent:post_respond", priority=_CAPTURE_PRIORITY)
 async def capture_respond(ctx: Any) -> None:
     """Capture the assistant's response turn (fast, zero-LLM)."""
@@ -295,6 +312,7 @@ async def consolidate_poll_once(*, now: float | None = None) -> bool:
 __all__ = [
     "capture_respond",
     "capture_tool",
+    "capture_user",
     "consolidate_poll_once",
     "inject_insight",
     "inject_memory_disabled_note",
