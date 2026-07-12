@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -519,3 +520,39 @@ class TestLifecycle:
         )
         engine.set_agent_run_fn(new_fn)
         assert engine._agent_run_fn is new_fn
+
+
+# --- Live reload of on-disk edits (arcui schedule editor contract) ---
+
+
+class TestLiveReload:
+    """The timer loop calls ``store.load()`` every tick, so an external editor
+    (the arcui operator PATCH) that atomically rewrites ``schedules.json`` is
+    honored on the next tick without restarting the agent. This locks that
+    contract, which the arcui schedule-edit route depends on."""
+
+    @pytest.mark.asyncio
+    async def test_timer_loop_picks_up_disk_edit(self, tmp_path: Path) -> None:
+        store = ScheduleStore(tmp_path / "schedules.json")
+        # Starts disabled — the loop must not fire it.
+        store.save([make_entry(id="sched_reload", enabled=False, every_seconds=60)])
+
+        cfg = make_config()
+        cfg.check_interval_seconds = 0.01
+
+        fired = asyncio.Event()
+        run_fn = AsyncMock(side_effect=lambda *_a, **_k: fired.set())
+        engine = SchedulerEngine(
+            store=store, config=cfg, telemetry=MagicMock(), agent_run_fn=run_fn
+        )
+        engine.set_agent_run_fn(run_fn)
+        await engine.start()
+        try:
+            await asyncio.sleep(0.05)
+            assert not fired.is_set()  # disabled on disk -> never fires
+            # An operator edit lands on disk; the loop reloads and fires it.
+            store.save([make_entry(id="sched_reload", enabled=True, every_seconds=60)])
+            await asyncio.wait_for(fired.wait(), timeout=2.0)
+        finally:
+            await engine.stop()
+        run_fn.assert_awaited()

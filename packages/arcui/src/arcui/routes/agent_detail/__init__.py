@@ -50,6 +50,7 @@ from arcui.routes.agent_detail.policy import (
     get_policy_bullets,
     get_policy_stats,
 )
+from arcui.routes.agent_detail.schedules_write import patch_schedule
 from arcui.routes.agent_detail.sessions import (
     get_schedules,
     get_session_replay,
@@ -104,6 +105,7 @@ routes = [
     Route("/api/agents/{id}/policy/stats", get_policy_stats, methods=["GET"]),
     Route("/api/agents/{id}/tasks", get_tasks, methods=["GET"]),
     Route("/api/agents/{id}/schedules", get_schedules, methods=["GET"]),
+    Route("/api/agents/{id}/schedules/{sid}", patch_schedule, methods=["PATCH"]),
 ]
 
 __all__ = ["routes"]

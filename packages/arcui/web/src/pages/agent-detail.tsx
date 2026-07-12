@@ -20,7 +20,8 @@ import { CapabilityTable } from '@/components/capability-table'
 import { ToolsTable } from '@/components/tools-table'
 import { SkillDrawer } from '@/components/skill-drawer'
 import { ToolDrawer } from '@/components/tool-drawer'
-import { ScheduleDrawer, scheduleTiming } from '@/components/schedule-drawer'
+import { ScheduleDrawer } from '@/components/schedule-drawer'
+import { scheduleTiming, scheduleTitle } from '@/lib/schedule-format'
 import { TaskBoard } from '@/components/task-board'
 import { TaskDrawer } from '@/components/task-drawer'
 import { AreaSeries } from '@/components/charts'
@@ -592,9 +593,9 @@ function TasksTab({ agentId }: { agentId: string }) {
 }
 
 const scheduleColumns: ColumnDef<Dict, unknown>[] = [
-  { accessorKey: 'id', header: 'Schedule', cell: (c) => <span className="font-mono text-xs text-primary">{String(c.getValue())}</span> },
+  { id: 'title', header: 'Schedule', accessorFn: (r) => scheduleTitle(r), cell: (c) => <span className="text-xs text-foreground">{c.getValue() as string}</span> },
   { accessorKey: 'type', header: 'Type', cell: (c) => <span className="text-xs text-muted-foreground">{String(c.getValue())}</span> },
-  { id: 'timing', header: 'Timing', accessorFn: (r) => scheduleTiming(r), cell: (c) => <span className="font-mono text-xs text-muted-foreground">{c.getValue() as string}</span> },
+  { id: 'timing', header: 'Runs', accessorFn: (r) => scheduleTiming(r), cell: (c) => <span className="text-xs text-muted-foreground">{c.getValue() as string}</span> },
   { accessorKey: 'enabled', header: 'Enabled', cell: (c) => <span className="text-xs text-foreground">{c.getValue() === false ? 'no' : 'yes'}</span> },
 ]
 
@@ -602,6 +603,7 @@ function SchedulesTab({ agentId }: { agentId: string }) {
   const q = useAgentSchedules(agentId)
   const rows = (q.data?.schedules ?? []) as Dict[]
   const [selected, setSelected] = useState<Dict | null>(null)
+  const [operatorMode] = useOperatorMode()
   return (
     <>
       <QueryState query={q} isEmpty={() => rows.length === 0}
@@ -611,7 +613,13 @@ function SchedulesTab({ agentId }: { agentId: string }) {
             onRowClick={(r) => setSelected(r)} emptyTitle="No schedules" />
         )}
       </QueryState>
-      <ScheduleDrawer schedule={selected} open={selected != null} onOpenChange={(o) => !o && setSelected(null)} />
+      <ScheduleDrawer
+        schedule={selected}
+        open={selected != null}
+        onOpenChange={(o) => !o && setSelected(null)}
+        agentId={agentId}
+        operatorMode={operatorMode}
+      />
     </>
   )
 }

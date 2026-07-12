@@ -22,6 +22,7 @@ dependencies = [
     "arcllm>=0.1",
     "arcgateway>=0.2",
     "arcskill",
+    "croniter>=2.0",
     "arcstore",
     "arcteam>=0.1",
     "arctrust>=0.1",
