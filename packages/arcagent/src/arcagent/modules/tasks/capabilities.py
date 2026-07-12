@@ -118,14 +118,22 @@ async def create_task(
     st = await _state()
     try:
         owner_did = await _resolve_owner(owner, st)
+        task_id = _new_task_id()
+        deps = blocked_by or []
+        # Reject a dependency cycle up front (P2): a cyclic task could never
+        # become ready, so it must never be written (ASI08 — no unsatisfiable
+        # work in the DAG). A brand-new id can only cycle via a self-edge here,
+        # but the guard is the single enforcement point for every blocked_by.
+        if await st.store.deps_would_cycle(task_id, deps):
+            return json.dumps({"error": "blocked_by would create a dependency cycle"})
         task = Task(
-            id=_new_task_id(),
+            id=task_id,
             title=title,
             description=description,
             priority=priority,  # type: ignore[arg-type] # validated by Task's Literal on construction
             owner_did=owner_did,
             creator_did=st.identity.did,
-            blocked_by=blocked_by or [],
+            blocked_by=deps,
             # Seed the retry ceiling from config so this agent's created tasks
             # honor the deployment default; the per-task field is authoritative
             # thereafter (the reliability engine reads task.max_attempts).
@@ -356,10 +364,15 @@ async def decompose_task(
                     parent_id=id,
                 )
             )
+        # Cycle guard BEFORE any write (P2), so a rejected decompose leaves no
+        # orphan children. Fresh leaf subtasks can't close a loop, but this keeps
+        # every blocked_by mutation flowing through the one acyclicity check.
+        proposed_blocked_by = [*parent.blocked_by, *(s.id for s in subs)]
+        if await st.store.deps_would_cycle(id, proposed_blocked_by):
+            return json.dumps({"error": "decompose would create a dependency cycle"})
         created_subs = [await st.store.create(sub) for sub in subs]
-        sub_ids = [s.id for s in created_subs]
         updated_parent = await st.store.update(
-            id, {"blocked_by": [*parent.blocked_by, *sub_ids]}, actor_did=st.identity.did
+            id, {"blocked_by": proposed_blocked_by}, actor_did=st.identity.did
         )
         if updated_parent is None:
             return json.dumps({"error": f"Task '{id}' not found"})
@@ -461,6 +474,20 @@ def _backoff_elapsed(task: Task, now: str) -> bool:
     return task.next_attempt_at is None or task.next_attempt_at <= now
 
 
+async def _is_dispatchable(st: _runtime._State, task: Task, now: str) -> bool:
+    """Whether a todo task should be started now (P1 gates + P2 DAG gates).
+
+    Skips a task whose retry backoff has not elapsed, whose dependencies aren't
+    all done, or that has subtasks — a coordinator parent auto-completes from
+    its children (reconcile), it never runs.
+    """
+    if not _backoff_elapsed(task, now):
+        return False
+    if not await st.store.deps_met(task):
+        return False
+    return not await st.store.children(task.id)
+
+
 async def _dispatch_tick() -> None:
     """Run one poll-and-dispatch tick. Factored out so it is directly testable.
 
@@ -479,9 +506,7 @@ async def _dispatch_tick() -> None:
         return
     todos = await st.store.list(status="todo", owner_did=self_did)
     now = datetime.now(UTC).isoformat()
-    ready = [
-        t for t in todos if _backoff_elapsed(t, now) and await st.store.deps_met(t)
-    ]
+    ready = [t for t in todos if await _is_dispatchable(st, t, now)]
     if not ready:
         return
     ready.sort(key=lambda t: (_PRIORITY_RANK.get(t.priority, 99), t.created_at or ""))
@@ -604,6 +629,54 @@ async def _reliability_tick() -> None:
                 st, task.id, self_did, "stuck: no active run — reclaimed"
             )
     st.reclaim_done = True
+    await _reconcile_parents(st, self_did)
+
+
+async def _reconcile_parents(st: _runtime._State, self_did: str) -> None:
+    """Roll a decomposition parent up from its children's terminal states (P2).
+
+    A parent this agent owns that is still open and has subtasks auto-completes
+    when every child is ``done``, and auto-fails the moment any child fails
+    terminally (a failed subtask makes the parent unachievable — fail-fast,
+    ASI08). Runs each reliability tick so multi-level DAGs settle bottom-up over
+    successive passes. The transition is deterministic and audited (the store
+    write's resolution records why).
+    """
+    # One list + in-memory grouping (no children() query per task). Children of
+    # a decomposition are created owned by the same agent as the parent, so
+    # grouping this agent's own tasks by parent_id sees the whole family;
+    # cross-owner children (post-reassignment, a later phase) are out of scope.
+    mine = await st.store.list(owner_did=self_did)
+    children_by_parent: dict[str, list[Task]] = {}
+    for task in mine:
+        if task.parent_id:
+            children_by_parent.setdefault(task.parent_id, []).append(task)
+    for parent in mine:
+        if parent.status in ("done", "failed"):
+            continue
+        children = children_by_parent.get(parent.id)
+        if children:
+            await _reconcile_one_parent(st, parent, children, self_did)
+
+
+async def _reconcile_one_parent(
+    st: _runtime._State, parent: Task, children: list[Task], self_did: str
+) -> None:
+    """Apply the roll-up rule to one open parent (fail-fast, else all-done)."""
+    if any(c.status == "failed" for c in children):
+        await st.store.finish(
+            parent.id,
+            status="failed",
+            resolution="a subtask failed — parent cannot complete",
+            actor_did=self_did,
+        )
+    elif all(c.status == "done" for c in children):
+        await st.store.finish(
+            parent.id,
+            status="done",
+            resolution="all subtasks complete",
+            actor_did=self_did,
+        )
 
 
 def _should_reclaim(st: _runtime._State, task: Task, now: datetime, first_pass: bool) -> bool:

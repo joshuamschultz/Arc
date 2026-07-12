@@ -1175,3 +1175,62 @@ class TestReliabilityTransitions:
             assert await store.request_cancel("t1", actor_did=_OPERATOR) is None
         finally:
             await be.stop()
+
+
+class TestDecompositionDag:
+    """SPEC-056 Phase 2 — children() query + deps_would_cycle() guard."""
+
+    async def test_children_lists_subtasks_of_a_parent(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="p", title="Parent", creator_did=_CREATOR))
+            await store.create(Task(id="c1", title="Sub 1", creator_did=_CREATOR, parent_id="p"))
+            await store.create(Task(id="c2", title="Sub 2", creator_did=_CREATOR, parent_id="p"))
+            await store.create(Task(id="other", title="Unrelated", creator_did=_CREATOR))
+
+            kids = await store.children("p")
+            assert {k.id for k in kids} == {"c1", "c2"}
+            assert await store.children("nope") == []
+        finally:
+            await be.stop()
+
+    async def test_self_dependency_is_a_cycle(self, tmp_path: Path) -> None:
+        from arcstore.tasks import TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            assert await store.deps_would_cycle("A", ["A"]) is True
+        finally:
+            await be.stop()
+
+    async def test_transitive_cycle_is_detected(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            # X -> Y -> Z (X blocked_by Y, Y blocked_by Z).
+            await store.create(Task(id="Z", title="Z", creator_did=_CREATOR))
+            await store.create(Task(id="Y", title="Y", creator_did=_CREATOR, blocked_by=["Z"]))
+            await store.create(Task(id="X", title="X", creator_did=_CREATOR, blocked_by=["Y"]))
+            # Adding Z -> X would close the loop Z->X->Y->Z.
+            assert await store.deps_would_cycle("Z", ["X"]) is True
+        finally:
+            await be.stop()
+
+    async def test_acyclic_edge_is_allowed(self, tmp_path: Path) -> None:
+        from arcstore.tasks import Task, TaskStore
+
+        be = await _backend(tmp_path)
+        try:
+            store = TaskStore(be)
+            await store.create(Task(id="X", title="X", creator_did=_CREATOR))
+            await store.create(Task(id="Y", title="Y", creator_did=_CREATOR, blocked_by=["X"]))
+            # New task W -> X does not reach W (nothing points at W) -> no cycle.
+            assert await store.deps_would_cycle("W", ["X"]) is False
+        finally:
+            await be.stop()

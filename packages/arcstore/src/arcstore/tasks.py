@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal, Protocol
 
@@ -552,3 +553,44 @@ class TaskStore:
             if dep is None or dep.status != "done":
                 return False
         return True
+
+    async def children(self, parent_id: str) -> Sequence[Task]:
+        """Every subtask that names ``parent_id`` as its parent (any owner).
+
+        The decomposition DAG's downward edge — used to reconcile a parent's
+        terminal state from its children (SPEC-056 Phase 2). Cross-owner because
+        a subtask may be reassigned, but the parent's owner still reconciles it.
+
+        (``Sequence`` not ``list`` in the annotation only because the
+        ``TaskStore.list`` method shadows the builtin ``list`` in class-scope
+        annotations under ``from __future__ import annotations``.)
+        """
+        rows = await self._backend.mutable_query(
+            self._COLLECTION, where={"parent_id": parent_id}
+        )
+        return [Task(**row) for row in rows]
+
+    async def deps_would_cycle(self, task_id: str, blocked_by: Sequence[str]) -> bool:
+        """Whether adding ``task_id -> blocked_by`` edges would form a cycle (P2).
+
+        A self-edge is an immediate cycle; otherwise walk the existing
+        ``blocked_by`` graph forward from each proposed dependency — if any path
+        reaches ``task_id``, the new edge closes a loop. Deterministic and
+        bounded by the task count; used to reject an unsatisfiable dependency
+        before it is ever written (a cyclic task could never become ready).
+        """
+        if task_id in blocked_by:
+            return True
+        seen: set[str] = set()
+        stack: list[str] = [*blocked_by]
+        while stack:
+            current = stack.pop()
+            if current == task_id:
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            dep = await self.get(current)
+            if dep is not None:
+                stack.extend(dep.blocked_by)
+        return False
