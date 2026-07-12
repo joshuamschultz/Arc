@@ -112,9 +112,15 @@ async def reflect_on_consolidation(ctx: Any) -> None:
     )
     if grounding.is_empty:
         return
+    # Throttle to a turn cadence. The consolidation bus event fires far more
+    # often than a policy eval is wanted; without this gate the eval ran on
+    # every consolidation pass (the observed cost burn).
+    if st.turn_count - st.last_reflect_turn < st.config.daily_notes_every_turns:
+        return
     model = _eval_model()
     if model is None:
         return
+    st.last_reflect_turn = st.turn_count
     try:
         await reflect_and_curate(st.engine, model, grounding, tier=st.config.tier)
     except Exception:  # reason: fail-open — reflection must not break consolidation

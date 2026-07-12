@@ -273,7 +273,8 @@ brain = "none"
 enabled = true
 
 [modules.policy.config]
-eval_interval_turns = 5
+eval_interval_turns = 50
+daily_notes_every_turns = 20
 
 [modules.scheduler]
 enabled = true

@@ -110,6 +110,12 @@ def cli_group(workspace: Path) -> click.Group:
                 ),
             ),
             (
+                "daily_notes_every_turns",
+                str(
+                    cfg.get("daily_notes_every_turns", d.daily_notes_every_turns),
+                ),
+            ),
+            (
                 "max_bullets",
                 str(
                     cfg.get("max_bullets", d.max_bullets),

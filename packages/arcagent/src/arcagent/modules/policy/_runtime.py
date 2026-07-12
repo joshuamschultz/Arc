@@ -41,6 +41,9 @@ class _State:
     eval_model: Any = None
     session_messages: list[dict[str, Any]] = field(default_factory=list)
     turn_count: int = 0
+    # Turn at which the consolidation-grounded reflection ("daily notes" eval)
+    # last ran, so it fires on a turn cadence rather than every consolidation.
+    last_reflect_turn: int = 0
     background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
     semaphore: asyncio.Semaphore | None = None
 
@@ -70,7 +73,12 @@ def configure(
             workspace=ws,
             telemetry=telemetry,
             llm_config=llm_config,
-            engine=PolicyEngine(config=cfg, workspace=ws, telemetry=telemetry),
+            engine=PolicyEngine(
+                config=cfg,
+                workspace=ws,
+                telemetry=telemetry,
+                max_input_tokens=ec.max_input_tokens,
+            ),
             eval_label=f"{agent_name}/eval" if agent_name else "eval",
             semaphore=asyncio.Semaphore(ec.max_concurrent),
         )

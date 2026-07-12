@@ -179,7 +179,8 @@ distill_model = "claude-sonnet-4-5-20250929"
 enabled = true
 
 [modules.policy.config]
-eval_interval_turns = 5
+eval_interval_turns = 50
+daily_notes_every_turns = 20
 
 [modules.scheduler]
 enabled = true

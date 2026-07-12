@@ -223,6 +223,12 @@ class EvalConfig(BaseModel):
     provider: str = ""  # Empty = use same provider as agent
     model: str = ""  # Empty = use agent's model
     max_tokens: int = 1024
+    # Approximate input budget (~4 chars/token) for a single eval request.
+    # Over-budget input is split into sequential eval runs rather than sent as one
+    # request that overflows the context window and errors. Default 100000 keeps a
+    # single request safely under a 128k context with output headroom, so it
+    # self-heals without operator action. 0 = unlimited (one call, model max).
+    max_input_tokens: int = 100000
     temperature: float = 0.2  # Low for evaluation consistency
     timeout_seconds: int = 30
     fallback_behavior: str = "skip"  # "skip" | "error"

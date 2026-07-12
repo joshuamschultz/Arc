@@ -63,6 +63,35 @@ Return empty arrays if nothing noteworthy.
 """
 
 
+def _split_by_lines(text: str, limit: int) -> list[str]:
+    """Greedily pack newline-delimited lines into <=``limit``-char chunks.
+
+    A single line longer than ``limit`` is hard-split so nothing is dropped: a
+    huge tool result becomes several sequential eval chunks instead of one
+    context-overflowing request.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for raw_line in text.split("\n"):
+        line = raw_line
+        while len(line) > limit:
+            if current:
+                chunks.append("\n".join(current))
+                current, size = [], 0
+            chunks.append(line[:limit])
+            line = line[limit:]
+        add = len(line) + (1 if current else 0)
+        if current and size + add > limit:
+            chunks.append("\n".join(current))
+            current, size, add = [], 0, len(line)
+        current.append(line)
+        size += add
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
 @dataclass
 class PolicyBullet:
     """A structured policy bullet with metadata."""
@@ -117,10 +146,15 @@ class PolicyEngine:
         config: PolicyConfig,
         workspace: Path,
         telemetry: Any,
+        *,
+        max_input_tokens: int = 100000,
     ) -> None:
         self._config = config
         self._workspace = workspace
         self._telemetry = telemetry
+        # Approximate per-request input budget (0 = unlimited). Over-budget eval
+        # input is split into sequential runs instead of one overflowing request.
+        self._max_input_tokens = max_input_tokens
         self._policy_path = workspace / "policy.md"
         # Federal write-approval staging target (SPEC-041 Phase 9). Never
         # identity.md — the engine has no code path to the immutable goal file.
@@ -165,36 +199,67 @@ class PolicyEngine:
     ) -> tuple[PolicyDelta | None, str]:
         """Call eval model to evaluate agent behavior.
 
+        The full transcript is sent in one request when within budget, or split
+        into sequential eval runs whose deltas are assembled into one before the
+        curator writes (LLM10: never one context-overflowing request).
         Returns (delta, current_policy_text) so _curate can skip re-reading.
         """
         current_policy = ""
         if self._policy_path.exists():
             current_policy = self._policy_path.read_text(encoding="utf-8")
 
-        msg_text = format_messages(messages)
+        chunks = self._chunk_for_budget(format_messages(messages, limit=0), current_policy)
+        merged = PolicyDelta(session_id=session_id)
+        for chunk in chunks:
+            delta = await self._reflect_chunk(chunk, model, current_policy)
+            if delta is not None:
+                merged.additions.extend(delta.additions)
+                merged.updates.extend(delta.updates)
+                merged.rewrites.extend(delta.rewrites)
 
+        if not (merged.additions or merged.updates or merged.rewrites):
+            _logger.info(
+                "policy.reflect: empty delta over %d chunk(s); policy.md unchanged (session=%s)",
+                len(chunks),
+                session_id,
+            )
+            return None, current_policy
+
+        _logger.info(
+            "policy.reflect: delta has %d additions, %d updates, %d rewrites "
+            "over %d chunk(s) (session=%s)",
+            len(merged.additions),
+            len(merged.updates),
+            len(merged.rewrites),
+            len(chunks),
+            session_id,
+        )
+        return merged, current_policy
+
+    async def _reflect_chunk(
+        self, chunk_text: str, model: Any, current_policy: str
+    ) -> PolicyDelta | None:
+        """Run one eval request over a single (in-budget) slice of the transcript."""
         prompt = _REFLECTION_PROMPT.format(
             current_policy=current_policy or "(empty)",
-            messages=msg_text,
+            messages=chunk_text,
         )
-
         response = await model.invoke([Message(role="user", content=prompt)])
-        raw = response.content
-        _logger.info(
-            "policy.reflect: eval returned %d chars (session=%s)", len(raw or ""), session_id
-        )
+        return self._parse_delta(response.content)
 
+    def _parse_delta(self, raw: str | None) -> PolicyDelta | None:
+        """Parse one eval response into a PolicyDelta (None if unparseable/empty)."""
         try:
             data = json.loads(extract_json(raw))
         except (json.JSONDecodeError, TypeError):
             # The eval model didn't return parseable JSON — no bullets can be
             # derived. Logged so this silent path is observable (was invisible).
             _logger.warning(
-                "policy.reflect: eval output was not valid JSON; no bullets written. "
+                "policy.reflect: eval output was not valid JSON; no bullets from this chunk. "
                 "First 200 chars: %r",
                 (raw or "")[:200],
             )
-            return None, current_policy
+            return None
 
         additions = [
             self._sanitize_bullet_text(a)
@@ -202,10 +267,7 @@ class PolicyEngine:
             if self._sanitize_bullet_text(a)
         ]
         updates = [
-            BulletUpdate(
-                bullet_id=u["bullet_id"],
-                score_delta=u.get("score_delta", 0),
-            )
+            BulletUpdate(bullet_id=u["bullet_id"], score_delta=u.get("score_delta", 0))
             for u in data.get("updates", [])
         ]
         rewrites = [
@@ -216,30 +278,23 @@ class PolicyEngine:
             )
             for r in data.get("rewrites", [])
         ]
-
         if not additions and not updates and not rewrites:
-            # Valid JSON, but the eval found nothing noteworthy — common and
-            # expected. Logged so "no bullets" is explainable rather than silent.
-            _logger.info(
-                "policy.reflect: eval produced an empty delta "
-                "(0 additions/updates/rewrites); policy.md unchanged (session=%s)",
-                session_id,
-            )
-            return None, current_policy
+            return None
+        return PolicyDelta(additions=additions, updates=updates, rewrites=rewrites)
 
-        _logger.info(
-            "policy.reflect: delta has %d additions, %d updates, %d rewrites (session=%s)",
-            len(additions),
-            len(updates),
-            len(rewrites),
-            session_id,
-        )
-        return PolicyDelta(
-            additions=additions,
-            updates=updates,
-            rewrites=rewrites,
-            session_id=session_id,
-        ), current_policy
+    def _chunk_for_budget(self, msg_text: str, current_policy: str) -> list[str]:
+        """Split the transcript so each eval request stays within the input budget.
+
+        0 = unlimited (one request). Otherwise the ~4-chars/token budget is
+        reduced by the fixed prompt + current policy already sharing the request.
+        """
+        if self._max_input_tokens <= 0:
+            return [msg_text]
+        overhead = len(_REFLECTION_PROMPT) + len(current_policy)
+        avail = max(1, self._max_input_tokens * 4 - overhead)
+        if len(msg_text) <= avail:
+            return [msg_text]
+        return _split_by_lines(msg_text, avail)
 
     async def _curate(
         self,

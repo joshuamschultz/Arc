@@ -44,6 +44,94 @@ def _make_engine(workspace: Path) -> PolicyEngine:
     )
 
 
+_EMPTY_DELTA = '{"additions": [], "updates": [], "rewrites": []}'
+
+
+class TestEvalInputBudget:
+    """The eval input budget (EvalConfig.max_input_tokens) must never error on
+    oversize input: the 100k-token default self-heals by chunking; the explicit
+    0 opt-out sends one call up to the model's own context window."""
+
+    def test_default_budget_is_100k(self) -> None:
+        from arcagent.core.config import EvalConfig
+
+        assert EvalConfig().max_input_tokens == 100_000
+
+    async def test_default_budget_self_heals_oversize(self, tmp_path: Path) -> None:
+        engine = _make_engine(tmp_path)  # bare construct -> 100k-token default
+        model = _mock_model(return_value=_EMPTY_DELTA)
+        # 100k tokens ~= 400k chars; this exceeds it, so it chunks without any
+        # operator config (the self-healing fix for the 165k overflow errors).
+        big = [{"role": "user", "content": "x" * 600_000}]
+        await engine.evaluate(big, model)
+        assert model.invoke.call_count > 1
+
+    async def test_explicit_unlimited_is_single_call(self, tmp_path: Path) -> None:
+        engine = PolicyEngine(
+            config=PolicyConfig(),
+            workspace=tmp_path,
+            telemetry=_make_telemetry(),
+            max_input_tokens=0,  # explicit unlimited opt-out
+        )
+        model = _mock_model(return_value=_EMPTY_DELTA)
+        big = [{"role": "user", "content": "x" * 600_000}]
+        await engine.evaluate(big, model)
+        assert model.invoke.call_count == 1
+
+    async def test_over_budget_chunks_sequentially(self, tmp_path: Path) -> None:
+        engine = PolicyEngine(
+            config=PolicyConfig(),
+            workspace=tmp_path,
+            telemetry=_make_telemetry(),
+            max_input_tokens=1000,  # ~4000 chars/request
+        )
+        model = _mock_model(return_value=_EMPTY_DELTA)
+        big = [{"role": "user", "content": "x" * 40_000}]  # ~10k tokens >> 1000 budget
+        await engine.evaluate(big, model)
+        assert model.invoke.call_count > 1
+
+    async def test_oversize_does_not_raise(self, tmp_path: Path) -> None:
+        engine = PolicyEngine(
+            config=PolicyConfig(),
+            workspace=tmp_path,
+            telemetry=_make_telemetry(),
+            max_input_tokens=500,
+        )
+        model = _mock_model(return_value='{"additions": ["a lesson"], "updates": [], "rewrites": []}')
+        big = [{"role": "user", "content": "y" * 20_000}]
+        await engine.evaluate(big, model)  # must not raise
+        assert (tmp_path / "policy.md").exists()
+
+    async def test_chunk_deltas_are_merged_into_one_write(self, tmp_path: Path) -> None:
+        engine = PolicyEngine(
+            config=PolicyConfig(),
+            workspace=tmp_path,
+            telemetry=_make_telemetry(),
+            max_input_tokens=1000,
+        )
+        # First two chunks each contribute a distinct addition; the rest are
+        # empty. A stateful side effect tolerates however many chunks the
+        # splitter produces, proving the deltas are assembled before one write.
+        payloads = [
+            '{"additions": ["lesson one"], "updates": [], "rewrites": []}',
+            '{"additions": ["lesson two"], "updates": [], "rewrites": []}',
+        ]
+        calls = {"n": 0}
+
+        def _respond(_messages: Any) -> MagicMock:
+            i = calls["n"]
+            calls["n"] += 1
+            return MagicMock(content=payloads[i] if i < len(payloads) else _EMPTY_DELTA)
+
+        model = MagicMock()
+        model.invoke = AsyncMock(side_effect=_respond)
+        big = [{"role": "user", "content": "z" * 6_000}]  # forces multiple chunks
+        await engine.evaluate(big, model)
+        content = (tmp_path / "policy.md").read_text()
+        assert "lesson one" in content
+        assert "lesson two" in content
+
+
 class TestPolicyBulletParsing:
     """T4.3.1: Parse bullets from markdown."""
 

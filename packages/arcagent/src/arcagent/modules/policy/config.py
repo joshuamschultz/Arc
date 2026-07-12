@@ -18,7 +18,13 @@ class PolicyConfig(ModuleConfig):
     Inherits ``extra="forbid"`` from ModuleConfig for typo detection.
     """
 
-    eval_interval_turns: int = 20
+    # Interactive turn cadence for the two policy eval jobs. A "turn" is one
+    # eval-eligible ``agent:post_respond`` cycle (see ``periodic_policy_eval``).
+    # policy eval: the periodic Reflector over the live transcript.
+    eval_interval_turns: int = 50
+    # daily-notes eval: the grounded reflection that rides on ``memory.consolidated``.
+    # Throttled to a turn cadence so it stops firing on every consolidation pass.
+    daily_notes_every_turns: int = 20
     max_bullets: int = 200
     max_bullet_text_length: int = 500
 

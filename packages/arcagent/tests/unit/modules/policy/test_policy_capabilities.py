@@ -227,6 +227,86 @@ class TestPeriodicPolicyEvalTurnCounting:
 
 
 @pytest.mark.asyncio
+class TestPolicyCadenceDefaults:
+    async def test_policy_default_is_fifty(self, configured: Path) -> None:
+        assert _runtime.state().config.eval_interval_turns == 50
+
+    async def test_daily_notes_default_is_twenty(self, configured: Path) -> None:
+        assert _runtime.state().config.daily_notes_every_turns == 20
+
+
+@pytest.mark.asyncio
+class TestReflectConsolidationCadence:
+    """``reflect_on_consolidation`` must throttle to a turn cadence, not fire on
+    every consolidation pass (the observed ``<agent>/eval`` cost burn)."""
+
+    async def test_skips_before_cadence(self, configured: Path) -> None:
+        from arcagent.modules.policy import capabilities as policy_caps
+
+        st = _runtime.state()
+        st.eval_model = AsyncMock()
+        st.turn_count = 19  # default daily_notes_every_turns = 20 not yet reached
+        ctx = SimpleNamespace(data={"episode_summary": "did work"})
+        with patch.object(policy_caps, "reflect_and_curate", new_callable=AsyncMock) as mock:
+            await policy_caps.reflect_on_consolidation(ctx)
+            mock.assert_not_called()
+
+    async def test_runs_at_cadence_and_records_turn(self, configured: Path) -> None:
+        from arcagent.modules.policy import capabilities as policy_caps
+
+        st = _runtime.state()
+        st.eval_model = AsyncMock()
+        st.turn_count = 20
+        ctx = SimpleNamespace(data={"episode_summary": "did work"})
+        with patch.object(policy_caps, "reflect_and_curate", new_callable=AsyncMock) as mock:
+            await policy_caps.reflect_on_consolidation(ctx)
+            mock.assert_called_once()
+        assert _runtime.state().last_reflect_turn == 20
+
+    async def test_second_consolidation_within_window_skips(self, configured: Path) -> None:
+        from arcagent.modules.policy import capabilities as policy_caps
+
+        st = _runtime.state()
+        st.eval_model = AsyncMock()
+        st.turn_count = 20
+        ctx = SimpleNamespace(data={"episode_summary": "did work"})
+        with patch.object(policy_caps, "reflect_and_curate", new_callable=AsyncMock) as mock:
+            await policy_caps.reflect_on_consolidation(ctx)  # runs, sets last_reflect_turn=20
+            st.turn_count = 39  # only 19 turns later — still inside the window
+            await policy_caps.reflect_on_consolidation(ctx)
+            assert mock.call_count == 1
+
+    async def test_config_override_changes_gate(self, tmp_path: Path) -> None:
+        from arcagent.modules.policy import capabilities as policy_caps
+
+        ws = tmp_path / "ws"
+        ws.mkdir()
+        _configure_with(ws, config={"daily_notes_every_turns": 5})
+        st = _runtime.state()
+        st.eval_model = AsyncMock()
+        ctx = SimpleNamespace(data={"episode_summary": "did work"})
+        with patch.object(policy_caps, "reflect_and_curate", new_callable=AsyncMock) as mock:
+            st.turn_count = 4
+            await policy_caps.reflect_on_consolidation(ctx)
+            assert mock.call_count == 0
+            st.turn_count = 5
+            await policy_caps.reflect_on_consolidation(ctx)
+            assert mock.call_count == 1
+
+    async def test_empty_grounding_never_evals(self, configured: Path) -> None:
+        from arcagent.modules.policy import capabilities as policy_caps
+
+        st = _runtime.state()
+        st.eval_model = AsyncMock()
+        st.turn_count = 500  # well past any cadence
+        ctx = SimpleNamespace(data={})  # empty grounding
+        with patch.object(policy_caps, "reflect_and_curate", new_callable=AsyncMock) as mock:
+            await policy_caps.reflect_on_consolidation(ctx)
+            mock.assert_not_called()
+        assert _runtime.state().last_reflect_turn == 0  # window slot not consumed
+
+
+@pytest.mark.asyncio
 class TestTerminalPolicyEval:
     async def test_evaluates_session_messages(self, configured: Path) -> None:
         from arcagent.modules.policy.capabilities import terminal_policy_eval
