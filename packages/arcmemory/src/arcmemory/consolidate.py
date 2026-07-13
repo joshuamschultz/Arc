@@ -8,7 +8,9 @@ This is the orchestrator (SDD 4.4, REQ-030/031/034). Off the hot path, over a
 3. **promotes procedures** (action-sequences seen >= threshold — zero-LLM);
 4. **decays** unreinforced edges (salience-slowed, so a rare-but-vital edge lives);
 5. **merges near-duplicate cues** to bound controlled-vocabulary drift (T-054);
-6. **reindexes** the touched chunks so surface recall sees the new curated files.
+6. **merges near-duplicate entity cards** (same-type, name-embedding) so identity
+   drift ("Austin, Texas" / "Austin, TX") folds into one card instead of many;
+7. **reindexes** the touched chunks so surface recall sees the new curated files.
 
 Every mutation emits an ``AuditEvent`` to the injected sink (REQ-034), so the whole
 cycle is reconstructable from a tamper-evident chain.
@@ -46,6 +48,7 @@ from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import (
     ConsolidationResult,
     DaySummary,
+    Entity,
     Event,
     Fact,
     Insight,
@@ -165,6 +168,7 @@ class Consolidator:
         days = await self._summarize_days(events)
         decayed = self._decay(now)
         await self._merge_cues_audited()
+        await self._merge_entities_audited()
         await self._surface.index_if_needed()
         self._commit_manifest()
         self._stamp_last_run(now)
@@ -314,6 +318,64 @@ class Consolidator:
             self._repoint_cue(cue, canonical)
             merges.append((cue, canonical))
         return merges
+
+    async def merge_entities(self) -> list[tuple[str, str]]:
+        """Merge near-duplicate SAME-TYPE entity cards; fold facts + repoint links.
+
+        The entity analogue of :meth:`merge_cues`, and the fix for identity drift:
+        ``write_fact`` upserts by canonical slug only, so the distiller phrasing the
+        same real-world thing differently across runs ("Austin, Texas" / "Austin, TX")
+        minted separate cards. Here each card's NAME is embedded; within one
+        ``entity_type`` the names are greedily clustered, and every non-canonical card
+        folds into the richest one (most facts, slug tie-break) via
+        :meth:`SemanticStore.merge_into`, with its graph edges repointed onto the
+        survivor. Returns the ``(merged_from, merged_into)`` slug pairs.
+
+        Same-type gating + a conservative cosine threshold keep a place from ever
+        folding into a person; needs an embedder, so it is a no-op when none is wired.
+        """
+        entities = [(s, e) for s in self._semantic.slugs() if (e := self._semantic.read(s))]
+        if len(entities) < 2:
+            return []
+        embedded = await embed_or_none(self._embedder, [e.name for _, e in entities])
+        if embedded is None:
+            return []
+        vectors = {slug: vec for (slug, _), vec in zip(entities, embedded, strict=True)}
+
+        by_type: dict[str, list[tuple[str, Entity]]] = defaultdict(list)
+        for slug, entity in entities:
+            by_type[entity.entity_type].append((slug, entity))
+
+        merges: list[tuple[str, str]] = []
+        for group in by_type.values():
+            merges += self._merge_entity_group(group, vectors)
+        return merges
+
+    def _merge_entity_group(
+        self, group: list[tuple[str, Entity]], vectors: dict[str, list[float]]
+    ) -> list[tuple[str, str]]:
+        """Greedily fold each same-type card into the richest near-duplicate survivor."""
+        # Richest first (most facts, slug tie-break) so canonicals keep the fullest card.
+        group.sort(key=lambda se: (-len(se[1].facts), se[0]))
+        threshold = self._cfg.entity_merge_threshold
+        canonicals: list[str] = []
+        merged: list[tuple[str, str]] = []
+        for slug, _entity in group:
+            match = next(
+                (c for c in canonicals if _cosine(vectors[slug], vectors[c]) >= threshold),
+                None,
+            )
+            if match is None:
+                canonicals.append(slug)
+            elif self._semantic.merge_into(match, slug):
+                self._graph.rename_node(self._scope.key, slug, match)
+                merged.append((slug, match))
+        return merged
+
+    async def _merge_entities_audited(self) -> None:
+        """Run entity merge and audit each fold (part of the nightly hygiene)."""
+        for merged_from, merged_into in await self.merge_entities():
+            self._emit("memory.entity_merged", f"{merged_from}->{merged_into}")
 
     # -- cue-merge helpers -------------------------------------------------
 

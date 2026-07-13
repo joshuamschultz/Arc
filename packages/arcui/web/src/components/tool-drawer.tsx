@@ -9,7 +9,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { JsonBlock } from '@/components/json-block'
+import { CodeBlock } from '@/components/code-block'
+import { inferLanguage } from '@/lib/highlight'
 import { ErrorState, LoadingRows } from '@/components/states'
 import { ClassificationBadge } from '@/components/tools-table'
 import { useAgentToolDetail } from '@/lib/queries'
@@ -147,7 +148,10 @@ export function ToolDrawer({
               className="h-full min-h-[320px] w-full resize-none rounded-md border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             />
           ) : detail.data?.content ? (
-            <JsonBlock value={detail.data.content} className="whitespace-pre" />
+            <CodeBlock
+              code={detail.data.content}
+              language={inferLanguage(detail.data.source_path) ?? 'python'}
+            />
           ) : (
             <p className="text-xs text-muted-foreground">No source available for this tool.</p>
           )}

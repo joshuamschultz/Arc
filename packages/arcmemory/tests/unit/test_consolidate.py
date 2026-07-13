@@ -375,3 +375,75 @@ async def test_cue_merge_repoints_instance_links(workspace, db, scope) -> None:
     canonical_cue = next(iter(canonical))
     linkers = {node for node, _ in graph.neighbors(scope.key, canonical_cue)}
     assert {"i-a", "i-b"} <= linkers
+
+
+# -- entity de-dup / merge folds identity drift into one card ---------------
+
+
+class EntityNameEmbedder:
+    """Embeds entity NAMES so near-duplicate phrasings land on one vector."""
+
+    _CLUSTERS: ClassVar[dict[str, int]] = {"austin": 0, "acme": 1, "berlin": 2}
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for text in texts:
+            vec = [0.0, 0.0, 0.0]
+            for word, dim in self._CLUSTERS.items():
+                if word in text.lower():
+                    vec[dim] = 1.0
+            out.append(vec)
+        return out
+
+
+async def test_merge_entities_folds_same_type_duplicates(workspace, db, scope) -> None:
+    graph = WeightedGraph(db)
+    store = SemanticStore(workspace, graph, scope=scope.key)
+    # Two same-type cards for one place (drifted names) + one distinct place.
+    store.write_fact("austin-texas", "state", "TX", confidence=0.9, name="Austin, Texas",
+                     entity_type="place")
+    store.write_fact("austin-tx", "population", "1M", confidence=0.8, name="Austin, TX",
+                     entity_type="place")
+    store.write_fact("berlin", "country", "DE", confidence=0.9, name="Berlin",
+                     entity_type="place")
+    graph.link(scope.key, "austin-tx", "acme", kind="link")  # edge must follow the merge
+
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=EntityNameEmbedder(),
+    )
+    merges = await consolidator.merge_entities()
+
+    assert merges == [("austin-tx", "austin-texas")]  # richer card (2 preds via fold) survives
+    slugs = store.slugs()
+    assert "austin-tx" not in slugs and "austin-texas" in slugs and "berlin" in slugs
+    survivor = store.read("austin-texas")
+    assert {f.predicate for f in survivor.facts} == {"state", "population"}  # facts folded
+    # The duplicate's graph edge repointed onto the survivor.
+    assert "austin-texas" in {n for n, _ in graph.neighbors(scope.key, "acme")}
+
+
+async def test_merge_entities_never_crosses_type(workspace, db, scope) -> None:
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    # Same name, different type — a place must never fold into a person.
+    store.write_fact("austin-place", "state", "TX", name="Austin", entity_type="place")
+    store.write_fact("austin-person", "role", "eng", name="Austin", entity_type="person")
+
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=EntityNameEmbedder(),
+    )
+    assert await consolidator.merge_entities() == []
+    assert set(store.slugs()) == {"austin-place", "austin-person"}
+
+
+async def test_merge_entities_noop_without_embedder(workspace, db, scope) -> None:
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    store.write_fact("austin-texas", "state", "TX", name="Austin, Texas", entity_type="place")
+    store.write_fact("austin-tx", "population", "1M", name="Austin, TX", entity_type="place")
+
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(), embedder=None
+    )
+    assert await consolidator.merge_entities() == []  # degrades cleanly
+    assert set(store.slugs()) == {"austin-texas", "austin-tx"}

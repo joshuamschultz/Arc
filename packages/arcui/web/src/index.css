@@ -307,6 +307,63 @@
   padding: 0;
   font-size: 0.8rem;
 }
+
+/* Syntax highlighting (highlight.js token classes), tuned to the graphite +
+ * emerald palette. Colors live on theme-scoped vars so `.hljs-*` rules stay
+ * theme-agnostic; `:root` is light, `.dark` overrides with brighter hues. */
+:root {
+  --code-keyword: oklch(0.55 0.17 300);
+  --code-string: oklch(0.52 0.13 150);
+  --code-number: oklch(0.56 0.13 55);
+  --code-comment: oklch(0.6 0.02 265);
+  --code-function: oklch(0.52 0.14 250);
+  --code-type: oklch(0.52 0.1 200);
+  --code-attr: oklch(0.5 0.13 250);
+  --code-meta: oklch(0.55 0.02 265);
+}
+.dark {
+  --code-keyword: oklch(0.78 0.14 300);
+  --code-string: oklch(0.8 0.15 150);
+  --code-number: oklch(0.82 0.13 65);
+  --code-comment: oklch(0.6 0.015 265);
+  --code-function: oklch(0.78 0.13 250);
+  --code-type: oklch(0.8 0.11 195);
+  --code-attr: oklch(0.78 0.12 250);
+  --code-meta: oklch(0.66 0.015 265);
+}
+.hljs { color: var(--foreground); background: transparent; }
+.hljs-comment,
+.hljs-quote { color: var(--code-comment); font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-doctag { color: var(--code-keyword); }
+.hljs-string,
+.hljs-regexp,
+.hljs-addition { color: var(--code-string); }
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet { color: var(--code-number); }
+.hljs-title,
+.hljs-title.function_,
+.hljs-name { color: var(--code-function); }
+.hljs-type,
+.hljs-title.class_,
+.hljs-built_in,
+.hljs-class .hljs-title { color: var(--code-type); }
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-property,
+.hljs-selector-attr,
+.hljs-selector-class { color: var(--code-attr); }
+.hljs-meta,
+.hljs-tag,
+.hljs-params { color: var(--code-meta); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
 .prose-arc blockquote {
   border-left: 2px solid var(--primary);
   padding-left: 0.8em;

@@ -53,6 +53,30 @@ def format_fact(fact: Fact) -> str:
     return line
 
 
+def _fold_fact(existing: Fact | None, incoming: Fact) -> Fact:
+    """Merge two facts for one predicate, keeping the higher-confidence value current.
+
+    No prior value -> take the incoming fact verbatim. Same value -> keep the more
+    corroborated one. Differing values -> the higher-confidence value wins as current
+    and the loser folds into a ``| was:`` trail (additive, never destructive — the
+    entity-merge analogue of ``write_fact``'s contradiction handling).
+    """
+    if existing is None:
+        return incoming
+    if existing.value == incoming.value:
+        return existing if existing.confidence >= incoming.confidence else incoming
+    incoming_wins = incoming.confidence > existing.confidence
+    winner, loser = (incoming, existing) if incoming_wins else (existing, incoming)
+    return Fact(
+        predicate=winner.predicate,
+        value=winner.value,
+        confidence=winner.confidence,
+        date=winner.date,
+        was_value=loser.value,
+        was_confidence=loser.confidence,
+    )
+
+
 def parse_fact(line: str) -> Fact | None:
     """Parse one triplet line into a ``Fact`` (None if it is not a triplet)."""
     match = _FACT_RE.match(line.strip())
@@ -113,6 +137,7 @@ class SemanticStore:
             facts=parse_facts(body),
             links_to=[str(x) for x in fm.get("links_to", [])],
             tags=[str(x) for x in fm.get("tags", [])],
+            aliases=[str(x) for x in fm.get("aliases", [])],
         )
 
     def write_fact(
@@ -172,6 +197,45 @@ class SemanticStore:
         self._persist(entity)
         return entity
 
+    def merge_into(self, canonical_slug_: str, other_slug: str) -> bool:
+        """Fold the ``other`` entity card into ``canonical`` and delete ``other``'s file.
+
+        The de-dup primitive behind the slow-path entity merge (mirrors cue-merge for
+        entities). Non-destructive: every fact survives — a predicate the canonical
+        lacks is copied over, a contradiction folds the lower-confidence value into a
+        ``| was:`` trail, and the losing card's name/slug is recorded in ``aliases`` so
+        the fold is inspectable and reversible from the audit chain. Links union;
+        a known ``entity_type`` fills an ``unknown`` one. Returns False when either
+        card is missing or the two resolve to the same slug (nothing to merge).
+        """
+        canonical = canonical_slug(canonical_slug_)
+        other = canonical_slug(other_slug)
+        if canonical == other:
+            return False
+        dst = self.read(canonical)
+        src = self.read(other)
+        if dst is None or src is None:
+            return False
+
+        by_predicate = {f.predicate: f for f in dst.facts}
+        for fact in src.facts:
+            existing = by_predicate.get(fact.predicate)
+            by_predicate[fact.predicate] = _fold_fact(existing, fact)
+        dst.facts = [by_predicate[p] for p in sorted(by_predicate)]
+
+        for link in src.links_to:
+            if link not in dst.links_to:
+                dst.links_to.append(link)
+        dst.aliases = sorted(
+            set(dst.aliases) | set(src.aliases) | {src.name, src.slug} - {dst.name, dst.slug}
+        )
+        if dst.entity_type == "unknown" and src.entity_type != "unknown":
+            dst.entity_type = src.entity_type
+
+        self._persist(dst)
+        self.path_for(other).unlink(missing_ok=True)
+        return True
+
     def add_link(self, src_slug: str, dst_slug: str) -> None:
         """Create a directed wiki-link edge and record it in an entity's frontmatter."""
         self._graph.link(self._scope, src_slug, dst_slug, kind="link")
@@ -195,6 +259,7 @@ class SemanticStore:
             "last_updated": _today(),
             "links_to": entity.links_to,
             "tags": entity.tags,
+            "aliases": entity.aliases,
         }
         fact_lines = "\n".join(format_fact(f) for f in entity.facts)
         body = f"# {entity.name}\n\n## Facts\n{fact_lines}"

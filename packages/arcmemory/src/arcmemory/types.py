@@ -110,6 +110,8 @@ class Entity(BaseModel):
     facts: list[Fact] = Field(default_factory=list)
     links_to: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
+    """Names/slugs of duplicate cards folded into this one (entity-merge trail)."""
 
 
 class DaySummary(BaseModel):

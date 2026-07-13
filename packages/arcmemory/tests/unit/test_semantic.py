@@ -30,6 +30,41 @@ def test_slugs_lists_entities_on_disk(workspace: Path, db: MemoryDB) -> None:
     assert store.slugs() == ["alice", "bob"]  # sorted
 
 
+def test_merge_into_folds_facts_and_deletes_duplicate(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    # Two cards for the same real-world project, minted under different slugs.
+    store.write_fact("custom-erp", "vendor", "Acme", confidence=0.9)
+    store.write_fact("custom-erp-system", "budget", "500k", confidence=0.8)
+
+    assert store.merge_into("custom-erp", "custom-erp-system") is True
+
+    survivor = store.read("custom-erp")
+    assert survivor is not None
+    predicates = {f.predicate: f.value for f in survivor.facts}
+    assert predicates == {"vendor": "Acme", "budget": "500k"}  # both facts survive
+    assert "custom-erp-system" in survivor.aliases  # fold is inspectable
+    assert store.path_for("custom-erp-system").exists() is False  # duplicate gone
+    assert store.slugs() == ["custom-erp"]
+
+
+def test_merge_into_folds_contradiction_into_was_trail(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    store.write_fact("acme", "hq", "Austin", confidence=0.9)
+    store.write_fact("acme-inc", "hq", "Dallas", confidence=0.6)
+
+    store.merge_into("acme", "acme-inc")
+
+    fact = next(f for f in store.read("acme").facts if f.predicate == "hq")
+    assert fact.value == "Austin"  # higher-confidence value stays current
+    assert fact.was_value == "Dallas"  # loser folded, not erased
+
+
+def test_merge_into_same_slug_is_noop(workspace: Path, db: MemoryDB) -> None:
+    store = _store(workspace, db)
+    store.write_fact("acme", "hq", "Austin")
+    assert store.merge_into("acme", "acme") is False
+
+
 def test_contradiction_writes_was_trail_additively(workspace: Path, db: MemoryDB) -> None:
     store = _store(workspace, db)
     store.write_fact("alice", "works_at", "Acme", confidence=0.9)

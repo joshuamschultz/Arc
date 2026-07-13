@@ -65,6 +65,16 @@ class MemoryConfig(BaseModel):
     fan_strength: float = Field(default=1.6, description="S in S_ji = S - ln(fan)")
     max_hops: int = Field(default=3, description="spreading-activation hop cap")
 
+    # Entity de-duplication — cosine at/above which two SAME-TYPE entity cards
+    # are treated as the same real-world thing and merged (the slow-path hygiene
+    # step, mirroring cue-merge). Conservative by default: only near-identical
+    # names ("Austin, Texas" vs "Austin, TX") fold together, and only when the
+    # entity_type matches, so a place is never merged into a person. Needs an
+    # embedder — degrades to no-op when none is wired.
+    entity_merge_threshold: float = Field(
+        default=0.93, description="min cosine for same-type entity-card merge"
+    )
+
     # Structural / analogical retrieval (the centerpiece)
     struct_trigger_min: float = Field(
         default=0.25, description="min trigger-embedding cosine for the (a) channel"
@@ -133,6 +143,7 @@ class MemoryConfig(BaseModel):
                 beta=0.5,
                 gamma=0.7,
                 forget_floor=0.05,
+                entity_merge_threshold=0.97,
             )
         if tier == "enterprise":
             return cls(tier="enterprise", alpha=0.2)

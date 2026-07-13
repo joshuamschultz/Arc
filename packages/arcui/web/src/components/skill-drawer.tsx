@@ -9,7 +9,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { Markdown } from '@/components/markdown'
+import { MarkdownFile } from '@/components/frontmatter'
 import { ErrorState, LoadingRows } from '@/components/states'
 import { CapabilityStatusBadge, SourceRootBadge } from '@/components/capability-table'
 import { useAgentSkillDetail } from '@/lib/queries'
@@ -149,7 +149,7 @@ export function SkillDrawer({
               className="h-full min-h-[320px] w-full resize-none rounded-md border border-border bg-muted/30 p-3 font-mono text-xs text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
             />
           ) : (
-            <Markdown>{detail.data?.content ?? ''}</Markdown>
+            <MarkdownFile content={detail.data?.content ?? ''} />
           )}
         </div>
       </SheetContent>
