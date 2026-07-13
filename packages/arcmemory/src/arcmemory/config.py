@@ -1,6 +1,6 @@
 """MemoryConfig — tiered dynamics constants and budgets.
 
-The FERNme write/decay/confidence dynamics (SDD §4, Research R-9) are governed by
+The memory write/decay/confidence dynamics (SDD §4, Research R-9) are governed by
 a handful of scalars whose *stringency* varies by tier: federal writes slower,
 decays slower, and demands more corroboration before trusting a memory. Tier is
 stringency metadata, not a gate — every tier still captures, decays, and gates.
@@ -73,6 +73,14 @@ class MemoryConfig(BaseModel):
     # embedder — degrades to no-op when none is wired.
     entity_merge_threshold: float = Field(
         default=0.93, description="min cosine for same-type entity-card merge"
+    )
+    # Search-before-write disambiguation band: a same-type candidate whose name
+    # cosine falls in ``[entity_disambiguate_min, entity_merge_threshold)`` is too
+    # close to mint blindly yet too far to fold automatically — it is an "ambiguous
+    # near match" worth one bounded LLM disambiguation call (only when a distiller is
+    # wired). Below this floor the candidate is treated as genuinely new.
+    entity_disambiguate_min: float = Field(
+        default=0.60, description="min cosine for a same-type candidate to be LLM-disambiguated"
     )
 
     # Structural / analogical retrieval (the centerpiece)

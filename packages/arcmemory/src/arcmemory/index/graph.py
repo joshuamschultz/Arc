@@ -1,6 +1,6 @@
 """Weighted associative graph — Hebbian write, decay/salience, spreading activation.
 
-This is the FERNme core (SDD R-5/R-8). One table (``edges``) carries the whole
+This is the memory core (SDD R-5/R-8). One table (``edges``) carries the whole
 learned "situation-shape -> pattern" mapping:
 
 * **hebbian_bump** strengthens a co-active pair with a *saturating* update

@@ -29,6 +29,8 @@ from pydantic import BaseModel, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.index.graph import WeightedGraph
+from arcmemory.index.rebuild import Embedder, embed_or_none
+from arcmemory.index.surface import _cosine
 from arcmemory.security import dominating_classification, token_estimate
 from arcmemory.slug import canonical_slug
 from arcmemory.stores.insight import InsightStore
@@ -119,9 +121,98 @@ class Distiller(Protocol):
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft: ...
 
+    async def disambiguate_entity(
+        self, name: str, entity_type: str, candidates: list[str]
+    ) -> str | None: ...
+
+
+class EntityDisambiguator(Protocol):
+    """The single-method seam used by search-before-write identity resolution.
+
+    Asks whether a new entity candidate is the SAME real-world thing as one of a few
+    existing cards (the ``candidates`` canonical slugs), returning the matching slug or
+    ``None``. Any :class:`Distiller` satisfies it structurally, so production passes the
+    same arcllm-backed distiller; tests inject a stub with only this method.
+    """
+
+    async def disambiguate_entity(
+        self, name: str, entity_type: str, candidates: list[str]
+    ) -> str | None: ...
+
+
+async def resolve_entity(
+    store: SemanticStore,
+    *,
+    slug: str,
+    name: str,
+    entity_type: str,
+    embedder: Embedder | None = None,
+    distiller: EntityDisambiguator | None = None,
+    config: MemoryConfig | None = None,
+) -> str:
+    """Resolve a distiller-proposed entity onto its canonical slug (search-before-write).
+
+    In order: (1) an exact canonical-slug file / (2) a recorded alias resolves to the
+    existing card (both deterministic, embedder-free — this alone collapses common
+    variants and closes the re-dup loop); (3) with an embedder, a same-type name whose
+    cosine clears ``entity_merge_threshold`` folds onto the nearest card; (4) with a
+    distiller AND an ambiguous near match, one bounded LLM call decides; (5) otherwise
+    it is genuinely new and the canonical slug is returned. Never raises when the
+    embedder/distiller is absent — steps 1-2 always run.
+    """
+    cfg = config or MemoryConfig()
+    deterministic = store.resolve(slug, name)
+    if store.read(deterministic) is not None:
+        return deterministic  # exact-file or alias hit -> an existing card
+    if embedder is None:
+        return deterministic  # brand-new; nothing to embed against
+    match, near = await _fuzzy_entity_match(store, name, entity_type, embedder, cfg)
+    if match is not None:
+        return match
+    if distiller is not None and near:
+        chosen = await distiller.disambiguate_entity(name, entity_type, near)
+        if chosen and store.read(canonical_slug(chosen)) is not None:
+            return canonical_slug(chosen)
+    return deterministic
+
+
+async def _fuzzy_entity_match(
+    store: SemanticStore,
+    name: str,
+    entity_type: str,
+    embedder: Embedder,
+    config: MemoryConfig,
+) -> tuple[str | None, list[str]]:
+    """Embedding fuzz over SAME-TYPE cards: a fold match, plus the ambiguous near band.
+
+    Returns ``(match, near)`` — ``match`` is the canonical slug at/above the merge
+    threshold (fold now), and ``near`` is the same-type slugs in the disambiguation band
+    ``[entity_disambiguate_min, entity_merge_threshold)`` (worth an LLM call). Both empty
+    when embeddings are unavailable, so the caller degrades cleanly.
+    """
+    same_type = [
+        (s, e) for s in store.slugs() if (e := store.read(s)) and e.entity_type == entity_type
+    ]
+    if not same_type:
+        return None, []
+    embedded = await embed_or_none(embedder, [name] + [e.name for _, e in same_type])
+    if embedded is None:
+        return None, []
+    query, existing = embedded[0], embedded[1:]
+    scored = sorted(
+        ((slug, _cosine(query, vec)) for (slug, _e), vec in zip(same_type, existing, strict=True)),
+        key=lambda pair: pair[1],
+        reverse=True,
+    )
+    best_slug, best_score = scored[0]
+    if best_score >= config.entity_merge_threshold:
+        return best_slug, []
+    near = [slug for slug, score in scored if score >= config.entity_disambiguate_min]
+    return None, near
+
 
 def confidence_from_hits(hits: float, gamma: float) -> float:
-    """FERNme confidence ``1 - e^(-gamma*hits)`` — rises, saturating, with corroboration."""
+    """Memory confidence ``1 - e^(-gamma*hits)`` — rises, saturating, with corroboration."""
     return 1.0 - math.exp(-gamma * max(0.0, hits))
 
 
@@ -164,12 +255,15 @@ async def extract_facts(
     distiller: Distiller,
     store: SemanticStore,
     config: MemoryConfig,
+    embedder: Embedder | None = None,
 ) -> list[tuple[str, Fact]]:
     """Apply the distiller's facts additively; return the (slug, fact) mutations.
 
-    Over-budget windows are distilled in sequential chunks and their facts
-    assembled here. Corroboration accumulates: when the value is unchanged the
-    prior confidence is inverted back to hits and the window's hits are added, so a
+    Each candidate slug is first resolved onto its canonical card (search-before-write,
+    :func:`resolve_entity`) so a variant spelling folds into the existing entity instead
+    of minting a duplicate. Over-budget windows are distilled in sequential chunks and
+    their facts assembled here. Corroboration accumulates: when the value is unchanged
+    the prior confidence is inverted back to hits and the window's hits are added, so a
     repeated fact grows more confident. A changed value is a contradiction —
     ``write_fact`` folds the prior into a ``was:`` trail rather than erasing it.
     """
@@ -177,9 +271,18 @@ async def extract_facts(
     for chunk in chunk_events(events, config.distill_max_input_tokens):
         extraction = await distiller.extract_facts(chunk)
         for cand in extraction.facts:
-            confidence = _accumulated_confidence(store, cand, config.gamma)
+            resolved = await resolve_entity(
+                store,
+                slug=cand.slug,
+                name=cand.name or cand.slug,
+                entity_type=cand.entity_type,
+                embedder=embedder,
+                distiller=distiller,
+                config=config,
+            )
+            confidence = _accumulated_confidence(store, resolved, cand, config.gamma)
             entity = store.write_fact(
-                cand.slug,
+                resolved,
                 cand.predicate,
                 cand.value,
                 confidence=confidence,
@@ -188,13 +291,15 @@ async def extract_facts(
                 classification=cand.classification,
             )
             fact = next(f for f in entity.facts if f.predicate == cand.predicate)
-            applied.append((cand.slug, fact))
+            applied.append((resolved, fact))
     return applied
 
 
-def _accumulated_confidence(store: SemanticStore, cand: FactCandidate, gamma: float) -> float:
+def _accumulated_confidence(
+    store: SemanticStore, slug: str, cand: FactCandidate, gamma: float
+) -> float:
     """Confidence for a candidate, accumulating prior hits when the value is unchanged."""
-    entity = store.read(cand.slug)
+    entity = store.read(slug)
     prior = None
     if entity is not None:
         prior = next((f for f in entity.facts if f.predicate == cand.predicate), None)
@@ -307,6 +412,7 @@ def _merge_unique(existing: list[str], new: list[str]) -> list[str]:
 __all__ = [
     "DaySummaryDraft",
     "Distiller",
+    "EntityDisambiguator",
     "FactCandidate",
     "FactExtraction",
     "InsightCandidate",
@@ -319,4 +425,5 @@ __all__ = [
     "extract_procedures",
     "hits_from_confidence",
     "mint_insights",
+    "resolve_entity",
 ]

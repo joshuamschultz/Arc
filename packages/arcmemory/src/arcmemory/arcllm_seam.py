@@ -114,6 +114,15 @@ _INSIGHT_SYSTEM = (
     "'instances' are the event ids the insight generalizes. No prose."
 )
 
+_DISAMBIGUATE_SYSTEM = (
+    "You resolve entity identity for a memory system. Given a NEW entity candidate "
+    "and a short list of EXISTING card slugs, decide whether the candidate is the SAME "
+    "real-world entity as one of them (e.g. 'ACME' vs 'acme-corp'), not merely similar. "
+    'Return ONLY a JSON object of the form {"slug": str|null}: the matching existing '
+    "slug if one is the same entity, or null if the candidate is genuinely new. Choose "
+    "at most one. When unsure, answer null — a wrong merge is worse than a duplicate."
+)
+
 _DAY_SYSTEM = (
     "You are taking detailed MEETING MINUTES from one day of raw agent events (a "
     "conversation + tool transcript). Produce rich, reference-grade notes — enough to "
@@ -163,6 +172,18 @@ class ArcLLMDistiller:
         """One structured completion → meeting-minutes daily notes (chronological)."""
         data = await self._complete(_DAY_SYSTEM, self._render_events(events))
         return DaySummaryDraft.model_validate(data)
+
+    async def disambiguate_entity(
+        self, name: str, entity_type: str, candidates: list[str]
+    ) -> str | None:
+        """One bounded call → the existing slug this candidate IS, or None (new)."""
+        listing = "\n".join(f"- {slug}" for slug in candidates)
+        user = f"New candidate: {name} (type: {entity_type})\nExisting cards:\n{listing}"
+        data = await self._complete(_DISAMBIGUATE_SYSTEM, user)
+        chosen = data.get("slug")
+        if not isinstance(chosen, str) or not chosen.strip():
+            return None
+        return chosen if chosen in candidates else None
 
     async def _complete(self, system: str, user: str) -> dict[str, Any]:
         """Run one bounded JSON completion and parse the object (provider-agnostic)."""

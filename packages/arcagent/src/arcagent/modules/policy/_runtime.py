@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -23,8 +25,14 @@ from typing import Any
 from arcagent.core.config import EvalConfig
 from arcagent.modules.policy.config import PolicyConfig
 from arcagent.modules.policy.policy_engine import PolicyEngine
+from arcagent.utils.io import atomic_write_text
 
 _logger = logging.getLogger("arcagent.modules.policy._runtime")
+
+# Cadence counters persist here so a process restart resumes mid-cadence instead
+# of resetting turn_count to 0 (the production box restarts every 1-5 minutes,
+# which never let an in-memory counter reach eval_interval_turns).
+_STATE_FILE = ".policy-state.json"
 
 
 @dataclass
@@ -44,8 +52,35 @@ class _State:
     # Turn at which the consolidation-grounded reflection ("daily notes" eval)
     # last ran, so it fires on a turn cadence rather than every consolidation.
     last_reflect_turn: int = 0
+    # Wall-clock time and turn_count at the last policy eval — persisted so the
+    # idle-flush backstop accumulates across restarts.
+    last_eval_ts: float = 0.0
+    turns_at_last_eval: int = 0
     background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
     semaphore: asyncio.Semaphore | None = None
+
+    def persist(self) -> None:
+        """Atomically write the cadence counters so a restart resumes mid-cadence."""
+        atomic_write_text(
+            self.workspace / _STATE_FILE,
+            json.dumps(
+                {
+                    "turn_count": self.turn_count,
+                    "last_reflect_turn": self.last_reflect_turn,
+                    "last_eval_ts": self.last_eval_ts,
+                    "turns_at_last_eval": self.turns_at_last_eval,
+                }
+            ),
+        )
+
+
+def _load_persisted(workspace: Path) -> dict[str, Any]:
+    """Read the persisted cadence counters; tolerate a missing/corrupt file."""
+    try:
+        data = json.loads((workspace / _STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -66,23 +101,30 @@ def configure(
     cfg = PolicyConfig(**(config or {}))
     ec = eval_config or EvalConfig()
     ws = workspace.resolve()
-    _state_var.set(
-        _State(
+    persisted = _load_persisted(ws)
+    new_state = _State(
+        config=cfg,
+        eval_config=ec,
+        workspace=ws,
+        telemetry=telemetry,
+        llm_config=llm_config,
+        engine=PolicyEngine(
             config=cfg,
-            eval_config=ec,
             workspace=ws,
             telemetry=telemetry,
-            llm_config=llm_config,
-            engine=PolicyEngine(
-                config=cfg,
-                workspace=ws,
-                telemetry=telemetry,
-                max_input_tokens=ec.max_input_tokens,
-            ),
-            eval_label=f"{agent_name}/eval" if agent_name else "eval",
-            semaphore=asyncio.Semaphore(ec.max_concurrent),
-        )
+            max_input_tokens=ec.max_input_tokens,
+        ),
+        eval_label=f"{agent_name}/eval" if agent_name else "eval",
+        semaphore=asyncio.Semaphore(ec.max_concurrent),
+        turn_count=int(persisted.get("turn_count", 0)),
+        last_reflect_turn=int(persisted.get("last_reflect_turn", 0)),
+        last_eval_ts=float(persisted.get("last_eval_ts", time.time())),
+        turns_at_last_eval=int(persisted.get("turns_at_last_eval", 0)),
     )
+    _state_var.set(new_state)
+    if not persisted:
+        # Seed the idle clock so it accumulates across restarts before the first eval.
+        new_state.persist()
 
 
 def state() -> _State:

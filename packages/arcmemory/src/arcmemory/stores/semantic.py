@@ -236,16 +236,58 @@ class SemanticStore:
         self.path_for(other).unlink(missing_ok=True)
         return True
 
-    def add_link(self, src_slug: str, dst_slug: str) -> None:
-        """Create a directed wiki-link edge and record it in an entity's frontmatter."""
+    def add_link(self, src_slug: str, dst_slug: str) -> bool:
+        """Create a directed wiki-link edge and record it in ``src``'s frontmatter.
+
+        Returns True when a new frontmatter link was written (False when the source
+        card is missing or already records the link) — so backlink repair can count
+        only real changes and stay idempotent.
+        """
         self._graph.link(self._scope, src_slug, dst_slug, kind="link")
         entity = self.read(src_slug)
         if entity is None:
-            return
+            return False
         ref = f"[[{dst_slug}]]"
-        if ref not in entity.links_to and dst_slug not in entity.links_to:
-            entity.links_to.append(ref)
-            self._persist(entity)
+        if ref in entity.links_to or dst_slug in entity.links_to:
+            return False
+        entity.links_to.append(ref)
+        self._persist(entity)
+        return True
+
+    def aliases_index(self) -> dict[str, str]:
+        """Map ``canonical(alias) -> owning entity slug`` across every card's aliases.
+
+        The reverse index that closes the re-duplication loop: ``merge_into`` records a
+        folded card's name/slug in the survivor's ``aliases``, and :meth:`resolve`
+        consults this index so a later write of the aliased identity lands on the
+        survivor instead of minting the duplicate anew.
+        """
+        index: dict[str, str] = {}
+        for slug in self.slugs():
+            entity = self.read(slug)
+            if entity is None:
+                continue
+            for alias in entity.aliases:
+                index[canonical_slug(alias)] = slug
+        return index
+
+    def resolve(self, slug: str, name: str = "") -> str:
+        """Deterministic identity resolution: exact file, then alias, else the raw slug.
+
+        The embedder-independent core of search-before-write: an exact canonical-slug
+        file hit wins; failing that, a slug/name matching a recorded alias resolves to
+        that card's canonical slug (closing the re-dup loop); otherwise the canonical
+        slug is returned unchanged (a genuinely new entity). Never raises.
+        """
+        canonical = canonical_slug(slug)
+        if self.path_for(canonical).exists():
+            return canonical
+        index = self.aliases_index()
+        keys = [canonical] + ([canonical_slug(name)] if name.strip() else [])
+        for key in keys:
+            if key in index:
+                return index[key]
+        return canonical
 
     def _persist(self, entity: Entity) -> None:
         """Render an entity to markdown and atomically write it."""

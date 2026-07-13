@@ -133,6 +133,29 @@ async def test_consolidate_is_gated_by_interval(workspace: Path) -> None:
     assert second["facts_updated"] == 0
 
 
+async def test_consolidate_escalates_to_nightly_hygiene_on_first_call(workspace: Path) -> None:
+    """arcmemory owns cadence: the first consolidate of a local day runs hygiene.
+
+    The heavier pass repairs bidirectional backlinks; observe the reciprocal link a
+    plain light pass would not write. The hygiene stamp is persisted so arcagent stays
+    ignorant of memory scheduling.
+    """
+    from arcmemory.index.graph import WeightedGraph
+    from arcmemory.stores.semantic import SemanticStore
+
+    brain = ArcMemoryBrain(workspace, _DID, config=MemoryConfig(), distiller=_FakeDistiller())
+    store = SemanticStore(workspace, WeightedGraph(brain._db), scope=_DID)
+    store.write_fact("alice", "role", "eng", name="Alice", entity_type="person")
+    store.write_fact("acme", "kind", "co", name="Acme", entity_type="company")
+    store.add_link("alice", "acme")  # one-directional
+
+    await brain.consolidate()
+
+    assert (workspace / "memory" / ".hygiene-last-run").exists()
+    acme = store.read("acme")
+    assert acme is not None and "[[alice]]" in acme.links_to  # reciprocal backlink repaired
+
+
 async def test_requires_identity() -> None:
     with pytest.raises(ValueError, match="agent_did"):
         ArcMemoryBrain(Path("."), "")
