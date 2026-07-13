@@ -127,6 +127,7 @@ def create_app(
     team_stream_interval: float = 1.0,
     data_dir: Path | None = None,
     workspace_dir: Path | None = None,
+    allow_external_task_refs: bool = False,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -156,6 +157,11 @@ def create_app(
         workspace_dir: Agent workspace root for the Observe ingest's arcskill
             candidate-store + skills-WORM scan (SPEC-054 REQ-120). ``None``
             keeps the mirror on spool + audit WORM only.
+        allow_external_task_refs: Ingest policy for operator-authored task text
+            (ADR-019 tier = stringency). Federal → False (default): URLs/emails
+            in a task title/description are rejected as an external-comms
+            surface. Personal/enterprise → True: pointing an agent at a repo or
+            doc is a core use. Never gates reads of already-persisted tasks.
 
     Returns:
         Configured Starlette app, ready for uvicorn.
@@ -406,6 +412,10 @@ def create_app(
     app.state.observe = Observe(data_dir=data_dir, workspace_dir=workspace_dir)
     # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
     app.state.task_store = TaskStore(task_store_backend)
+    # Ingest policy (ADR-019 tier = stringency): may operator-authored task
+    # text carry URLs/emails? Federal → False (default, secure-by-default);
+    # the launcher raises it for personal/enterprise. Reads are never gated.
+    app.state.allow_external_task_refs = allow_external_task_refs
     app.state.config_controller = config_controller
     # arcteam MessagingService used by the Team Chat routes. ``None`` is
     # a supported state — the routes degrade to empty payloads so the

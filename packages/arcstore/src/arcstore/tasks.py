@@ -15,10 +15,10 @@ import re
 import unicodedata
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, ClassVar, Literal, Protocol
 
 from arctrust.audit import AuditSink
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 TaskStatus = Literal["backlog", "todo", "in_progress", "review", "done", "failed"]
 Priority = Literal["low", "medium", "high", "critical"]
@@ -31,10 +31,9 @@ _MAX_TEXT_LENGTH = 2000
 # Zero-width characters used in Unicode homoglyph / split-token attacks.
 _ZERO_WIDTH_RE = re.compile(r"[\u200b\u200c\u200d\u200e\u200f\ufeff]")
 
-# Prompt-injection patterns (LLM01/ASI06). Kept byte-for-byte in sync with the
-# scheduler's validator so every Task construction path — agent tool, arcui,
-# arccli — is sanitized identically by the model, not by a caller that might
-# forget to call it (SEC-F2/ARCH-4).
+# Hard prompt-injection patterns (LLM01/ASI06) — always rejected, every tier,
+# every construction path (agent tool, arcui, arccli), sanitized by the model
+# so a caller can't forget to call it (SEC-F2/ARCH-4).
 _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bignore\s+previous\b", re.IGNORECASE),
     re.compile(r"\bdisregard\b", re.IGNORECASE),
@@ -42,14 +41,22 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsystem:", re.IGNORECASE),
     re.compile(r"\bassistant:", re.IGNORECASE),
     re.compile(r"\bexfiltrate\b", re.IGNORECASE),
-    re.compile(r"https?://", re.IGNORECASE),
-    re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", re.IGNORECASE),
     re.compile(r"\bforget\b.*\binstructions?\b", re.IGNORECASE),
     re.compile(r"\bnew\s+instructions?\b", re.IGNORECASE),
     re.compile(r"\boverride\b", re.IGNORECASE),
     re.compile(r"<\|[a-z_]+\|>", re.IGNORECASE),  # role delimiters like <|system|>
     re.compile(r"\bbase64\b", re.IGNORECASE),
     re.compile(r"\bdo\s+not\s+follow\b", re.IGNORECASE),
+)
+
+# External-reference patterns — a URL or email in task text. Blocked at federal
+# tier (the default, secure-by-default), allowed at personal/enterprise where
+# pointing an agent at a repo/doc is a core use (ADR-019 tier = stringency). The
+# gate is opened per-construction via ``context={"allow_external_refs": True}``;
+# with no context it stays closed (fail-closed for any untrusted ingest path).
+_EXTERNAL_REF_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"https?://", re.IGNORECASE),
+    re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", re.IGNORECASE),
 )
 
 
@@ -69,13 +76,16 @@ def _duration_seconds(started_at: str | None, completed_at: str) -> float | None
         return None
 
 
-def _validate_free_text(text: str) -> None:
+def _validate_free_text(text: str, *, allow_external_refs: bool = False) -> None:
     """Reject over-length or injection-bearing free text. Raises ``ValueError``.
 
     NFKC folds homoglyphs (e.g. full-width Latin) to ASCII and zero-width
     separators are stripped, so neither can slip a trigger phrase past the
     regex. Used by the ``Task`` field validators — a raised ``ValueError``
     surfaces as a Pydantic ``ValidationError`` at construction.
+
+    ``allow_external_refs`` opens the URL/email gate for personal/enterprise
+    tiers; the hard injection patterns fire regardless.
     """
     if len(text) > _MAX_TEXT_LENGTH:
         raise ValueError(f"Text exceeds maximum length ({len(text)} > {_MAX_TEXT_LENGTH})")
@@ -83,6 +93,10 @@ def _validate_free_text(text: str) -> None:
     for pattern in _INJECTION_PATTERNS:
         if pattern.search(normalized):
             raise ValueError("Text rejected: possible injection pattern detected")
+    if not allow_external_refs:
+        for pattern in _EXTERNAL_REF_PATTERNS:
+            if pattern.search(normalized):
+                raise ValueError("Text rejected: URLs and emails are not allowed at this tier")
 
 
 class Task(BaseModel):
@@ -137,11 +151,13 @@ class Task(BaseModel):
 
     @field_validator("title", "description")
     @classmethod
-    def _sanitize_free_text(cls, value: str) -> str:
+    def _sanitize_free_text(cls, value: str, info: ValidationInfo) -> str:
         # Sanitize by construction (SEC-F2/ARCH-4): every path that builds a
         # Task — agent tool, arcui, arccli — is validated here, so a human path
-        # can't bypass the injection/oversized/zero-width checks.
-        _validate_free_text(value)
+        # can't bypass the injection/oversized/zero-width checks. The URL/email
+        # gate is tier-driven via validation context; absent context = closed.
+        allow_external_refs = bool((info.context or {}).get("allow_external_refs", False))
+        _validate_free_text(value, allow_external_refs=allow_external_refs)
         return value
 
 
@@ -215,9 +231,18 @@ class TaskStore:
 
     _COLLECTION = "tasks"
 
+    # Deserializing a persisted row is trusted: the external-ref (URL/email)
+    # policy is an ingest-time gate, not a storage invariant, so a personal-tier
+    # task carrying a URL must read back everywhere regardless of the reader's
+    # tier. The hard injection patterns still run on every load.
+    _READ_CONTEXT: ClassVar[dict[str, bool]] = {"allow_external_refs": True}
+
     def __init__(self, backend: MutableTaskBackend, *, sink: AuditSink | None = None) -> None:
         self._backend = backend
         self._sink = sink
+
+    def _load(self, row: dict[str, Any]) -> Task:
+        return Task.model_validate(row, context=self._READ_CONTEXT)
 
     async def create(self, task: Task) -> Task:
         # A caller that didn't set status explicitly gets the SDD §4 default
@@ -240,7 +265,7 @@ class TaskStore:
 
     async def get(self, task_id: str) -> Task | None:
         raw = await self._backend.mutable_read(self._COLLECTION, task_id)
-        return Task(**raw) if raw is not None else None
+        return self._load(raw) if raw is not None else None
 
     async def list(
         self, *, status: str | None = None, owner_did: str | None = None
@@ -251,7 +276,7 @@ class TaskStore:
         if owner_did is not None:
             where["owner_did"] = owner_did
         rows = await self._backend.mutable_query(self._COLLECTION, where=where)
-        return [Task(**row) for row in rows]
+        return [self._load(row) for row in rows]
 
     async def update(self, task_id: str, patch: dict[str, Any], *, actor_did: str) -> Task | None:
         # Atomic server-side merge (REL-F2): a read-merge-write here lets two
@@ -309,7 +334,7 @@ class TaskStore:
             self._COLLECTION, where={"owner_did": agent_did, "status": "in_progress"}
         )
         if active:
-            return Task(**active[0]), "continue_current"
+            return self._load(active[0]), "continue_current"
 
         # The unowned pool is both `backlog` (freshly created, unassigned) and
         # `todo` (triaged) — a self-claim grabs from either, so the team backlog
@@ -319,7 +344,7 @@ class TaskStore:
             rows = await self._backend.mutable_query(
                 self._COLLECTION, where={"status": status, "owner_did": None}
             )
-            candidates.extend(Task(**row) for row in rows)
+            candidates.extend(self._load(row) for row in rows)
         claimable = [t for t in candidates if await self.deps_met(t)]
         claimable.sort(key=lambda t: _PRIORITY_ORDER[t.priority])
 
@@ -369,7 +394,7 @@ class TaskStore:
         # and must be capped so two concurrent starts can't both land (REL-F0).
         is_chain_adoption = bool(active_rows)
         if active_rows:
-            active = Task(**active_rows[0])
+            active = self._load(active_rows[0])
             target = await self.get(task_id)
             # Dependency-chain relatives are exempt from the cap (FR-5); a
             # genuinely independent second task is capped to continue_current.
@@ -539,7 +564,7 @@ class TaskStore:
             rows = await self._backend.mutable_query(
                 self._COLLECTION, where={"status": status, "owner_did": None}
             )
-            out.extend(Task(**row) for row in rows)
+            out.extend(self._load(row) for row in rows)
         return out
 
     async def route(self, task_id: str, to_did: str, by_did: str) -> Task | None:
@@ -644,7 +669,7 @@ class TaskStore:
         rows = await self._backend.mutable_query(
             self._COLLECTION, where={"parent_id": parent_id}
         )
-        return [Task(**row) for row in rows]
+        return [self._load(row) for row in rows]
 
     async def deps_would_cycle(self, task_id: str, blocked_by: Sequence[str]) -> bool:
         """Whether adding ``task_id -> blocked_by`` edges would form a cycle (P2).

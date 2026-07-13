@@ -36,21 +36,44 @@ _CREATE_FIELDS = ("description", "priority", "owner_did", "tags", "requires_revi
 _PATCH_FIELDS = ("title", *_CREATE_FIELDS)
 
 
-def _valid_edits(task_id: str, edits: dict[str, Any]) -> bool:
+def _first_error_message(exc: ValidationError) -> str:
+    """Turn a Pydantic ``ValidationError`` into one actionable client message.
+
+    The raw exception is noisy and leaks the model's internals; the operator
+    only needs the offending field and why it was rejected (e.g. the injection
+    guard). Pydantic prefixes ``ValueError`` text with ``"Value error, "`` —
+    strip it so the sanitizer's own message reads cleanly.
+    """
+    err = exc.errors()[0]
+    loc = ".".join(str(part) for part in err.get("loc", ())) or "body"
+    msg = str(err.get("msg", "invalid value")).removeprefix("Value error, ")
+    return f"{loc}: {msg}"
+
+
+def _valid_edits(task_id: str, edits: dict[str, Any], *, allow_external_refs: bool) -> str | None:
     """Validate patched fields through the ``Task`` model (SEC-F2).
 
     A partial patch never constructs a full ``Task``, so it would otherwise
     bypass the model's injection/oversized/zero-width sanitizer. Build a probe
-    task carrying the edited values and let the model's field validators run;
-    a ``ValidationError`` means the patch is unsafe.
+    task carrying the edited values and let the model's field validators run.
+    Returns ``None`` when the patch is safe, else the client-facing reason.
     """
     probe: dict[str, Any] = {"id": task_id, "creator_did": _CREATOR, "title": "probe"}
     probe.update(edits)
     try:
-        Task(**probe)
-    except ValidationError:
-        return False
-    return True
+        Task.model_validate(probe, context={"allow_external_refs": allow_external_refs})
+    except ValidationError as exc:
+        return _first_error_message(exc)
+    return None
+
+
+def _allow_external_refs(request: Request) -> bool:
+    """Deployment ingest policy: may operator task text carry URLs/emails?
+
+    Set by ``create_app`` from the deployment tier (federal → False). Absent on
+    a bare test app → fail-closed to the federal default.
+    """
+    return bool(getattr(request.app.state, "allow_external_task_refs", False))
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -88,11 +111,18 @@ async def create_task(request: Request) -> JSONResponse:
     if not isinstance(title, str) or not title.strip():
         return _error("missing or blank title", 400)
 
-    fields: dict[str, Any] = {"title": title, "creator_did": _CREATOR}
+    fields: dict[str, Any] = {"id": str(uuid.uuid4()), "title": title, "creator_did": _CREATOR}
     for key in _CREATE_FIELDS:
         if key in body:
             fields[key] = body[key]
-    task = Task(id=str(uuid.uuid4()), **fields)
+    # A rejected value (injection guard, over-length, tier-blocked URL) is a
+    # client error, not a 500: validate here and surface the reason as a 400.
+    try:
+        task = Task.model_validate(
+            fields, context={"allow_external_refs": _allow_external_refs(request)}
+        )
+    except ValidationError as exc:
+        return _error(_first_error_message(exc), 400)
 
     store = request.app.state.task_store
     created = await store.create(task)
@@ -122,8 +152,9 @@ async def patch_task(request: Request) -> JSONResponse:
     edits = {key: body[key] for key in _PATCH_FIELDS if key in body}
     if not edits:
         return _error("no editable fields", 400)
-    if not _valid_edits(task_id, edits):
-        return _error("invalid field value", 400)
+    reason = _valid_edits(task_id, edits, allow_external_refs=_allow_external_refs(request))
+    if reason is not None:
+        return _error(reason, 400)
 
     store = request.app.state.task_store
     updated, outcome = await store.edit(task_id, edits, actor_did=_CREATOR)

@@ -252,6 +252,9 @@ def _start(args: argparse.Namespace) -> None:
         max_agents=max_agents,
         team_root=team_root,
         gateway_config=gateway_config,
+        # Personal/enterprise operators may put URLs/emails in task text (e.g.
+        # "research this repo <url>"); federal keeps that gate closed (ADR-019).
+        allow_external_task_refs=_deployment_tier(gateway_config) != "federal",
     )
 
     is_loopback = host in LOOPBACK_HOSTS
@@ -344,6 +347,17 @@ def _start(args: argparse.Namespace) -> None:
             infra.terminate_sync()
 
 
+def _deployment_tier(gateway_config: Any | None) -> str:
+    """The deployment tier string for tier-gated policy ('personal' default).
+
+    ``None`` (e.g. --no-chat) has no gateway to read a tier from; personal is
+    the local-dev default the dashboard is built for.
+    """
+    if gateway_config is None:
+        return "personal"
+    return str(getattr(getattr(gateway_config, "gateway", None), "tier", "personal"))
+
+
 def _fleet_enabled(gateway_config: Any | None) -> bool:
     """Whether to run the in-process always-on fleet for this deployment.
 
@@ -353,9 +367,7 @@ def _fleet_enabled(gateway_config: Any | None) -> bool:
     and does not share the factory the subprocess model uses. Federal always-on
     is a separate (per-agent daemon) design, out of scope here.
     """
-    if gateway_config is None:
-        return True  # --no-chat: agents still consume; no gateway to conflict with
-    return str(getattr(getattr(gateway_config, "gateway", None), "tier", "personal")) != "federal"
+    return _deployment_tier(gateway_config) != "federal"
 
 
 def _register_fleet_startup(app: Any, team_root: Path) -> Any:
