@@ -25,6 +25,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from arccli.commands._arcllm_surface import (
+    BUDGET_BLOCK,
+    EVAL_BLOCK,
+    commented_module_surface,
+)
 from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import print_table as _print_table
 
@@ -367,6 +372,14 @@ store_path = "schedules.json"  # schedule store file
 [team]
 root = ""  # shared team root dir; all team modules read it from here
 
+[spawn]
+# Multi-agent fan-out — a run spawning child runs via the spawn_task tool.
+enabled = true            # register spawn_task as an LLM-callable tool
+max_depth = 3             # max nesting depth for spawned children
+max_concurrent = 5        # max concurrent child runs
+timeout_seconds = 300     # wall-clock timeout per child run
+# max_total_tokens =      # shared token pool across all children (LLM10; unset = uncapped)
+
 [modules.messaging]
 enabled = true
 priority = 100
@@ -517,43 +530,39 @@ retention = ""              # retention window (empty = keep all)
 sample_rate = 1.0           # recording sample rate (0.0-1.0)
 """
 
-_DEFAULT_ARCLLM_CONFIG = """\
+_ARCLLM_HEADER = """\
 # ArcLLM config — everything LLM-wire for this agent. arcagent composes the
-# [llm]/[eval]/[budget] tables below into the effective config. (arcllm's OWN
-# global provider routing/retry/rate_limit/circuit_breaker lives in the
-# user-wide ~/.arc/arcllm.toml under [defaults]/[modules]/[vault]; those are
-# read by arcllm itself, not per-agent.)
+# [llm]/[eval]/[budget] tables below into the effective config. The full arcllm
+# module surface is listed at the bottom under [llm.modules.*], commented at its
+# packaged default — uncomment a line to override that module for THIS agent
+# only. arcllm's OWN global module + provider defaults live in the user-wide
+# ~/.arc/arcllm.toml ([defaults]/[modules]/[vault]), read by arcllm itself.
 
 [llm]
 model = "anthropic/claude-sonnet-4-5-20250929"  # ArcLLM model id (provider/model)
 max_tokens = 8192   # max output tokens per LLM call
 temperature = 0.7   # sampling temperature
-# Per-agent arcllm module overrides (merged into that module's defaults at
-# model load; unknown module names are rejected). Examples:
-# [llm.modules.queue]      call_timeout = 600
-# [llm.modules.retry]      max_attempts = 3
-# [llm.modules.rate_limit] requests_per_minute = 60
-
-[eval]
-# The cheaper background/eval model (entity extraction, policy eval, compaction).
-provider = ""            # empty = agent's provider
-model = ""               # empty = agent's model
-max_tokens = 1024        # eval output cap
-max_input_tokens = 100000  # per-eval input budget (over-budget = chunked; 0 = unlimited)
-temperature = 0.2        # low for evaluation consistency
-timeout_seconds = 30     # per eval call
-fallback_behavior = "skip"  # skip | error
-max_concurrent = 2       # eval semaphore limit
-background_queue_size = 10   # per-module background task queue depth
-background_task_timeout = 120  # seconds before a background task times out
-
-[budget]
-# Per-run LLM consumption ceilings (LLM10). Unset = unbounded at personal;
-# enterprise/federal treat a set value as a non-relaxable floor.
-# max_tokens =      # per-run token ceiling
-# max_cost_usd =    # per-run cost ceiling
-# max_requests =    # per-run request ceiling
 """
+
+
+def _build_default_arcllm_config() -> str:
+    """Compose the per-agent arcllm.toml: [llm]/[eval]/[budget] + the full,
+    commented [llm.modules.*] override surface (derived from arcllm's config)."""
+    parts = [
+        _ARCLLM_HEADER,
+        "\n".join(EVAL_BLOCK),
+        "",
+        "\n".join(BUDGET_BLOCK),
+        "",
+        "# --- Per-agent arcllm module overrides. Every module below is shown",
+        "# commented at its packaged default; uncomment a line to override that",
+        "# module for THIS agent only (unknown module names are rejected). ---",
+        commented_module_surface(prefix="llm."),
+    ]
+    return "\n".join(parts).rstrip() + "\n"
+
+
+_DEFAULT_ARCLLM_CONFIG = _build_default_arcllm_config()
 
 _DEFAULT_ARCRUN_CONFIG = """\
 # ArcRun config — the agentic-loop controls arcagent hands to the run loop.

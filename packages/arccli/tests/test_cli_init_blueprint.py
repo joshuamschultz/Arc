@@ -8,6 +8,7 @@ P6 AC-3 E2E — DC-8b: __main__ flat-reads the per-agent file, not ~/.arc.)
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tomllib
@@ -70,4 +71,6 @@ def test_init_arcllm_toml_uses_personal_vocab(tmp_path: Path) -> None:
     _arc("init", "--tier", "personal", "--provider", "anthropic", "--dir", str(tmp_path))
     content = (tmp_path / "arcllm.toml").read_text(encoding="utf-8")
     assert "personal" in content
-    assert "open" not in content
+    # Guard the REMOVED "open" tier alias — as a standalone word, not the
+    # substring (the module surface legitimately carries half_open_max_calls).
+    assert not re.search(r"\bopen\b", content)

@@ -12,6 +12,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from arccli.commands._arcllm_surface import (
+    BUDGET_BLOCK,
+    EVAL_BLOCK,
+    commented_module_surface,
+)
 from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import write as _write
 
@@ -156,19 +161,15 @@ def _generate_arcllm_toml(tier: str, provider: str = "anthropic") -> str:
         "max_tokens = 8192",
         "temperature = 0.7",
         "",
-        "[eval]",
-        'provider = ""',
-        'model = ""',
-        "max_tokens = 1024",
-        "max_input_tokens = 100000",
-        "temperature = 0.2",
+        *EVAL_BLOCK,
         "",
-        "[budget]",
-        "# max_tokens =      # per-run token ceiling (unset = unbounded at personal)",
-        "# max_cost_usd =    # per-run cost ceiling",
-        "# max_requests =    # per-run request ceiling",
+        *BUDGET_BLOCK,
         "",
+        "# --- arcllm provider modules (read by arcllm at THIS ~/.arc layer). ---",
+        "# Tier-preset modules are active below; the rest are listed commented at",
+        "# their packaged default so every knob is discoverable and editable here.",
         *_emit_module_blocks(preset),
+        commented_module_surface(exclude=preset.keys(), prefix=""),
     ]
     return "\n".join(lines) + "\n"
 
