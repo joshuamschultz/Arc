@@ -32,7 +32,8 @@ from arcmemory.index.rebuild import Embedder
 from arcmemory.index.structural import Reranker, StructuralIndex
 from arcmemory.index.surface import SurfaceIndex
 from arcmemory.security import enforce_budget, gate_no_read_up, render_recalls
-from arcmemory.types import Bundle, Confidence, Recall, Scope, Situation
+from arcmemory.stores.semantic import extract_wiki_links
+from arcmemory.types import Bundle, Confidence, Recall, RecallCard, Scope, Situation
 
 _DEFAULT_BUDGET = 1024
 
@@ -114,6 +115,43 @@ class Retriever:
             budget=budget,
             text=render_recalls(bounded),
         )
+
+
+    async def recall_cards(
+        self,
+        situation: Situation,
+        *,
+        clearance: Classification,
+        top_k: int = 5,
+        budget: int = _DEFAULT_BUDGET,
+        reranker: Reranker | None = None,
+    ) -> list[RecallCard]:
+        """Structured, glass-box recall: ranked cards WITH provenance + outbound links.
+
+        Same single bounded pass as :meth:`retrieve`, but each kept recall is
+        surfaced as a :class:`RecallCard` carrying its provenance (source slug ·
+        kind · confidence) and the ``[[links]]`` its content points to — the shape
+        the agent-side ``recall`` tool renders (retrieval stays non-agentic).
+        """
+        bundle = await self.retrieve(
+            situation, clearance=clearance, top_k=top_k, budget=budget, reranker=reranker
+        )
+        return [_to_card(recall) for recall in bundle.recalls]
+
+
+def _to_card(recall: Recall) -> RecallCard:
+    """Project one gated recall onto its glass-box card (provenance + links)."""
+    return RecallCard(
+        source=recall.source,
+        kind=recall.kind,
+        content=recall.content,
+        score=recall.score,
+        confidence=recall.confidence,
+        classification=recall.classification,
+        verify_first=recall.verify_first,
+        provenance=[recall.source, recall.kind, recall.confidence.value],
+        links=extract_wiki_links(recall.content),
+    )
 
 
 def _rrf_fuse(channels: list[list[Recall]]) -> list[Recall]:

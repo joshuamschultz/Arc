@@ -52,6 +52,11 @@ class FakeDistiller:
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft(timeline=["09:00 the day happened"], people=["Alice"])
 
+    async def disambiguate_entity(
+        self, name: str, entity_type: str, candidates: list[str]
+    ) -> str | None:
+        return None
+
 
 class RaisingDistiller:
     """Succeeds at facts, then crashes minting — simulates a mid-run failure."""
