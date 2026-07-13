@@ -92,6 +92,42 @@ def test_arcmemory_brain_receives_model_identity_and_pipeline(
     assert recorded["policy_pipeline"] is pipe  # memory writes are authorized
 
 
+def test_memory_dynamics_override_reaches_arcmemory_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Toml `[modules.memory.dynamics]` overrides must reach arcmemory's MemoryConfig
+    (otherwise its dynamics knobs stay tier-locked and untunable from the toml)."""
+    import arcmemory
+
+    recorded: dict[str, object] = {}
+
+    class _SpyBrain:
+        def __init__(self, _workspace: Path, _agent_did: str, *, config: object = None, **_k: object) -> None:
+            recorded["config"] = config
+
+        async def capture(self, *_a: object, **_k: object) -> None: ...
+        async def retrieve(self, *_a: object, **_k: object) -> str:
+            return ""
+
+        async def consolidate(self, **_k: object) -> dict[str, object]:
+            return {}
+
+        async def rebuild_index(self, **_k: object) -> None: ...
+
+    monkeypatch.setattr(arcmemory, "ArcMemoryBrain", _SpyBrain)
+
+    select.select_brain(
+        "arcmemory",
+        workspace=tmp_path,
+        agent_did="did:arc:a",
+        tier="personal",
+        embed_backend="none",
+        memory_dynamics={"entity_merge_candidate_threshold": 0.55},
+    )
+    cfg = recorded["config"]
+    assert cfg.entity_merge_candidate_threshold == 0.55  # type: ignore[attr-defined]
+
+
 def test_byo_class_path_allowed_at_personal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -40,6 +40,10 @@ def _build_arcmemory(module: Any, context: dict[str, Any]) -> Brain | None:
     tier = context["tier"]
     safe_tier = tier if tier in ("personal", "enterprise", "federal") else "personal"
     config = module.MemoryConfig.for_tier(safe_tier)
+    dynamics = context.get("memory_dynamics") or {}
+    if dynamics:
+        # Toml-supplied overrides applied OVER the tier defaults, re-validated by arcmemory.
+        config = module.MemoryConfig(**{**config.model_dump(), **dynamics})
     agent_did = context["agent_did"]
     embedder = _build_embedder(module, agent_did, context["embed_backend"], context["embed_model"])
     distiller = _build_distiller(
@@ -123,6 +127,7 @@ def select_brain(
     brain_allowlist: tuple[str, ...] = (),
     identity: Any = None,
     policy_pipeline: Any = None,
+    memory_dynamics: dict[str, Any] | None = None,
 ) -> Brain:
     """Return the configured Brain (fail-safe: any degrade path yields NullBrain).
 
@@ -142,6 +147,7 @@ def select_brain(
         "distill_model": distill_model,
         "identity": identity,
         "policy_pipeline": policy_pipeline,
+        "memory_dynamics": memory_dynamics or {},
     }
     brain: Brain = select_extension(
         _BRAIN_POINT,
