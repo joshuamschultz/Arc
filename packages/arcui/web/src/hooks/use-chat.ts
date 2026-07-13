@@ -55,12 +55,26 @@ export function useChatSession(agentId: string | null) {
           `/api/agents/${agent}/sessions/${sid}?page_size=200`,
         )
         if (historyLoaded.current) return
-        const hist: ChatMessage[] = data.messages.map((m: Dict, i) => ({
-          id: `h${i}`,
-          role: ((m.role as string) || (m.from as string) || 'agent') as ChatRole,
-          text: String(m.text ?? m.content ?? ''),
-          time: String(m.ts ?? m.timestamp ?? ''),
-        }))
+        // The session log interleaves real chat turns (role=user/assistant with
+        // content) with run-completion telemetry records (type/completion_payload,
+        // no role, no text). Keep only chat turns with renderable text so the
+        // telemetry rows don't render as empty bubbles.
+        const hist: ChatMessage[] = data.messages
+          .map((m: Dict, i) => {
+            const rawRole = String(m.role ?? m.from ?? '')
+            const role: ChatRole = rawRole === 'user' ? 'user' : 'agent'
+            return {
+              id: `h${i}`,
+              role,
+              rawRole,
+              text: String(m.text ?? m.content ?? '').trim(),
+              time: String(m.ts ?? m.timestamp ?? ''),
+            }
+          })
+          .filter(
+            (m) => m.text !== '' && (m.rawRole === 'user' || m.rawRole === 'assistant'),
+          )
+          .map(({ rawRole: _rawRole, ...m }) => m)
         // Only seed if live frames haven't already populated the thread.
         setMessages((prev) => (prev.length === 0 ? hist : prev))
         historyLoaded.current = true
