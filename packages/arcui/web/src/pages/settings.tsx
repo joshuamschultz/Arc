@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Pencil, Check, X } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -8,6 +8,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -15,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { QueryState, EmptyState } from '@/components/states'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { apiPatch, ApiError } from '@/lib/api'
-import { useRoster, useAgentConfigFile } from '@/lib/queries'
+import { useRoster, useAgentConfigFile, useSystemConfigFile } from '@/lib/queries'
 import type { Dict } from '@/lib/types'
 
 // The three per-agent config files, one editor tab each.
@@ -25,28 +26,55 @@ const CONFIG_FILES = [
   { key: 'arcagent', label: 'ArcAgent' },
 ] as const
 
+// Sentinel scope: the fleet-wide `~/.arc` files that per-agent files layer over.
+const SYSTEM_SCOPE = '__system__'
+
+function isPlainObject(value: unknown): value is Dict {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function ReadValue({ value }: { value: unknown }) {
   if (value === null || value === undefined) return <span className="text-muted-foreground">—</span>
   if (Array.isArray(value)) {
     return value.length === 0 ? (
       <span className="text-muted-foreground">[]</span>
     ) : (
-      <span className="font-mono text-xs">{value.map((v) => String(v)).join(', ')}</span>
+      <span className="font-mono text-xs text-foreground">{value.map((v) => String(v)).join(', ')}</span>
     )
   }
-  if (typeof value === 'object') return <KeyTree obj={value as Dict} />
+  if (isPlainObject(value)) return <ConfigTree obj={value} />
   return <span className="font-mono text-xs text-foreground">{String(value)}</span>
 }
 
-function KeyTree({ obj }: { obj: Dict }) {
+// Renders a config (sub-)object: scalar keys as an aligned `key  value` grid,
+// and each nested object as its own labeled, delimited sub-block (a chip header
+// + indented body). Recurses so deep nesting (e.g. modules -> memory -> config
+// -> dynamics) stays readable instead of collapsing into one thin rail.
+function ConfigTree({ obj }: { obj: Dict }) {
   const entries = Object.entries(obj)
   if (entries.length === 0) return <span className="text-muted-foreground">{'{}'}</span>
+
+  const scalars = entries.filter(([, v]) => !isPlainObject(v))
+  const objects = entries.filter(([, v]) => isPlainObject(v))
+
   return (
-    <div className="space-y-1 border-l border-border pl-3">
-      {entries.map(([k, v]) => (
-        <div key={k} className="flex flex-wrap items-baseline gap-2 text-sm">
-          <span className="text-muted-foreground">{k}:</span>
-          <ReadValue value={v} />
+    <div className="space-y-2.5">
+      {scalars.length > 0 && (
+        <div className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-baseline gap-x-4 gap-y-1">
+          {scalars.map(([k, v]) => (
+            <Fragment key={k}>
+              <span className="font-mono text-xs text-muted-foreground">{k}</span>
+              <ReadValue value={v} />
+            </Fragment>
+          ))}
+        </div>
+      )}
+      {objects.map(([k, v]) => (
+        <div key={k} className="rounded-md border border-border/60 bg-muted/20 p-2.5">
+          <div className="mb-2 inline-flex rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px] font-semibold text-foreground">
+            {k}
+          </div>
+          <ConfigTree obj={v as Dict} />
         </div>
       ))}
     </div>
@@ -140,19 +168,27 @@ function ConfigSection({
 }
 
 function ConfigFilePanel({
+  system,
   agentId,
   file,
   label,
   editable,
 }: {
-  agentId: string
+  system: boolean
+  agentId: string | null
   file: string
   label: string
   editable: boolean
 }) {
-  const query = useAgentConfigFile(agentId, file)
-  const endpoint = `/api/agents/${agentId}/config/${file}`
-  const queryKey = ['agent', agentId, 'config', file]
+  // Both hooks always run (rules of hooks); only the active scope is enabled.
+  const agentQuery = useAgentConfigFile(system ? null : agentId, file)
+  const systemQuery = useSystemConfigFile(file, system)
+  const query = system ? systemQuery : agentQuery
+  const endpoint = system
+    ? `/api/system-config/${file}`
+    : `/api/agents/${agentId}/config/${file}`
+  const queryKey = system ? ['system', 'config', file] : ['agent', agentId, 'config', file]
+  const scopeLabel = system ? 'System (~/.arc)' : 'this agent'
 
   return (
     <QueryState
@@ -160,8 +196,8 @@ function ConfigFilePanel({
       isEmpty={(data) => !data.sections || Object.keys(data.sections).length === 0}
       empty={
         <EmptyState
-          title={`No ${file}.toml for this agent`}
-          description={`This agent has no ${label} config file (${file}.toml). Nothing to edit here.`}
+          title={`No ${file}.toml`}
+          description={`${scopeLabel} has no ${label} config file (${file}.toml). Nothing to edit here.`}
         />
       }
     >
@@ -187,22 +223,33 @@ export function SettingsPage() {
   const roster = useRoster()
   const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
   const [picked, setPicked] = useState<string | null>(null)
-  const agentId = picked ?? agents[0]?.agent_id ?? null
+  const scope = picked ?? agents[0]?.agent_id ?? null
+  const isSystem = scope === SYSTEM_SCOPE
   const [operatorMode] = useOperatorMode()
+
+  const currentAgent = agents.find((a) => a.agent_id === scope)
+  const scopeName = isSystem
+    ? 'System (~/.arc)'
+    : currentAgent?.display_name || currentAgent?.name || currentAgent?.agent_id || 'agent'
+  const description = isSystem
+    ? 'System (~/.arc) config editor — fleet-wide arcagent.toml, arcllm.toml, arcrun.toml. Per-agent files layer over these.'
+    : `Config editor for ${scopeName} — arcagent.toml, arcllm.toml, arcrun.toml.`
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Settings"
-        description="Per-agent config editor — arcagent.toml, arcllm.toml, arcrun.toml."
+        description={description}
         actions={
           <>
             <OperatorModeToggle />
-            <Select value={agentId ?? ''} onValueChange={setPicked}>
+            <Select value={scope ?? ''} onValueChange={setPicked}>
               <SelectTrigger className="w-52">
-                <SelectValue placeholder="Select agent" />
+                <SelectValue placeholder="Select scope" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={SYSTEM_SCOPE}>System (~/.arc)</SelectItem>
+                {agents.length > 0 && <SelectSeparator />}
                 {agents.map((a) => (
                   <SelectItem key={a.agent_id} value={a.agent_id ?? ''}>
                     {a.display_name || a.name || a.agent_id}
@@ -213,11 +260,11 @@ export function SettingsPage() {
           </>
         }
       />
-      {!agentId ? (
+      {!scope ? (
         <div className="flex-1 overflow-auto p-6">
           <EmptyState
-            title="No agent selected"
-            description="Pick an agent from the selector to view and edit its config."
+            title="No scope selected"
+            description="Pick System (~/.arc) or an agent from the selector to view and edit its config."
           />
         </div>
       ) : (
@@ -234,7 +281,8 @@ export function SettingsPage() {
           {CONFIG_FILES.map((f) => (
             <TabsContent key={f.key} value={f.key} className="flex-1 overflow-auto p-6">
               <ConfigFilePanel
-                agentId={agentId}
+                system={isSystem}
+                agentId={scope}
                 file={f.key}
                 label={f.label}
                 editable={operatorMode}

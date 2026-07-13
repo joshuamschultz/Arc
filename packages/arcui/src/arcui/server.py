@@ -43,6 +43,7 @@ from arcui.routes import export as export_routes
 from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
+from arcui.routes import system_config as system_config_routes
 from arcui.routes import tasks as tasks_routes
 from arcui.routes import team_chat as team_chat_routes
 from arcui.routes import team_pages as team_pages_routes
@@ -183,6 +184,7 @@ def create_app(
         *traces_routes.routes,
         *config_routes.routes,
         *arcllm_config_routes.routes,
+        *system_config_routes.routes,
         *stats_routes.routes,
         *observe_run_routes.routes,
         *export_routes.routes,

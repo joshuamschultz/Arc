@@ -135,6 +135,17 @@ export const useAgentConfigFile = (agentId: string | null, file: string) =>
     enabled: !!agentId,
   })
 
+// System-level (fleet-wide `~/.arc`) config editor. Same shape as
+// `useAgentConfigFile`, but the target is the user config root the per-agent
+// files layer over — so the Settings page can edit fleet defaults, not just a
+// single agent's override.
+export const useSystemConfigFile = (file: string, enabled = true) =>
+  useQuery<AgentConfigFileResponse>({
+    queryKey: ['system', 'config', file],
+    queryFn: ({ signal }) => apiGet(`/api/system-config/${file}`, signal),
+    enabled,
+  })
+
 // --- Knowledge -------------------------------------------------------------
 
 export interface KnowledgeResponse {
