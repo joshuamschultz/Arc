@@ -107,6 +107,24 @@ class MemoryConfig(BaseModel):
         default=60.0, description="minimum minutes between consolidation runs"
     )
 
+    # Consolidation engine — how the DISTILL step turns a window into durable
+    # memory. ``agentic`` (default) runs a bounded ReAct loop over the memory
+    # tools (search-before-write, merge, link); ``pipeline`` runs the
+    # deterministic single-shot distiller. Agentic degrades to pipeline on
+    # arcrun-absence, loop breach, or timeout (no data loss).
+    consolidate_engine: Literal["agentic", "pipeline"] = Field(
+        default="agentic", description="DISTILL engine; agentic degrades to pipeline"
+    )
+    consolidate_agent_max_turns: int = Field(
+        default=8, description="max ReAct turns for one agentic consolidation (LLM10)"
+    )
+    consolidate_agent_max_tokens: int = Field(
+        default=12_000, description="max tokens for one agentic consolidation (LLM10)"
+    )
+    consolidate_agent_timeout_seconds: float = Field(
+        default=120.0, description="wall-clock cap for one agentic consolidation (LLM10)"
+    )
+
     # Distillation input budget — the max estimated tokens of raw events fed to a
     # single eval/distill call. A window over budget is split into sequential
     # chunks (assembled before writing), so a large window never overflows the
@@ -152,6 +170,11 @@ class MemoryConfig(BaseModel):
                 gamma=0.7,
                 forget_floor=0.05,
                 entity_merge_threshold=0.97,
+                # Federal caps the agentic loop harder — a non-relaxable floor on
+                # bounded consumption (LLM10) for the sleep-path sub-agent.
+                consolidate_agent_max_turns=6,
+                consolidate_agent_max_tokens=8_000,
+                consolidate_agent_timeout_seconds=90.0,
             )
         if tier == "enterprise":
             return cls(tier="enterprise", alpha=0.2)

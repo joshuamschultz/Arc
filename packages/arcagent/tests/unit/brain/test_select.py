@@ -46,6 +46,52 @@ def _patch_import(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
 _PATH = "byo_brain_mod:_FakeBrain"
 
 
+def test_arcmemory_brain_receives_model_identity_and_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Producer wiring (guards the producers-unwired trap): agentic consolidation is
+    DEAD (model=None -> always degrades to pipeline) and memory writes are UNSIGNED
+    unless select_brain threads model + identity + policy_pipeline into ArcMemoryBrain.
+    """
+    import arcllm
+    import arcmemory
+
+    recorded: dict[str, object] = {}
+
+    class _SpyBrain:
+        def __init__(self, _workspace: Path, _agent_did: str, **kw: object) -> None:
+            recorded.update(kw)
+
+        async def capture(self, *_a: object, **_k: object) -> None: ...
+        async def retrieve(self, *_a: object, **_k: object) -> str:
+            return ""
+
+        async def consolidate(self, **_k: object) -> dict[str, object]:
+            return {}
+
+        async def rebuild_index(self, **_k: object) -> None: ...
+
+    monkeypatch.setattr(arcmemory, "ArcMemoryBrain", _SpyBrain)
+    monkeypatch.setattr(arcllm, "load_model", lambda *_a, **_k: "MODEL")
+    ident, pipe = object(), object()
+
+    select.select_brain(
+        "arcmemory",
+        workspace=tmp_path,
+        agent_did="did:arc:a",
+        tier="personal",
+        embed_backend="none",
+        distill_provider="anthropic",
+        distill_model="claude",
+        identity=ident,
+        policy_pipeline=pipe,
+    )
+
+    assert recorded["model"] == "MODEL"  # agentic loop can actually run
+    assert recorded["identity"] is ident  # memory writes are signed
+    assert recorded["policy_pipeline"] is pipe  # memory writes are authorized
+
+
 def test_byo_class_path_allowed_at_personal(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

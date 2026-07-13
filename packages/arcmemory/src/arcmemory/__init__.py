@@ -10,6 +10,11 @@ distiller seams onto arcllm so semantic recall and consolidation run in producti
 
 from __future__ import annotations
 
+from arcmemory.agent_consolidate import (
+    CONSOLIDATION_SYSTEM_PROMPT,
+    AgenticResult,
+    run_agentic_consolidation,
+)
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
 from arcmemory.brain import ArcMemoryBrain
 from arcmemory.capture import FastCapture
@@ -54,6 +59,7 @@ from arcmemory.operator import (
     MutationResult,
     MutationStatus,
 )
+from arcmemory.react_adapter import ReactLoop, ReactOutcome, run_react_loop
 from arcmemory.retrieve import Retriever
 from arcmemory.security import (
     boundary_mark,
@@ -64,6 +70,7 @@ from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
+from arcmemory.tools import MemoryTool, build_memory_tools
 from arcmemory.types import (
     Bundle,
     Confidence,
@@ -74,6 +81,7 @@ from arcmemory.types import (
     Insight,
     Procedure,
     Recall,
+    RecallCard,
     Scope,
     Situation,
     TimeWindow,
@@ -82,6 +90,8 @@ from arcmemory.types import (
 __version__ = "0.6.0"
 
 __all__ = [
+    "CONSOLIDATION_SYSTEM_PROMPT",
+    "AgenticResult",
     "ArcLLMDistiller",
     "ArcLLMEmbedder",
     "ArcMemoryBrain",
@@ -115,11 +125,15 @@ __all__ = [
     "MemoryOperator",
     "MemoryPage",
     "MemoryRecord",
+    "MemoryTool",
     "MutationResult",
     "MutationStatus",
     "ProceduralStore",
     "Procedure",
+    "ReactLoop",
+    "ReactOutcome",
     "Recall",
+    "RecallCard",
     "Reranker",
     "Retriever",
     "Scope",
@@ -135,6 +149,7 @@ __all__ = [
     "WeightedGraph",
     "__version__",
     "boundary_mark",
+    "build_memory_tools",
     "confidence_from_hits",
     "dedup_workspace",
     "discover_workspaces",
@@ -144,4 +159,6 @@ __all__ = [
     "render_recalls",
     "repair_backlinks",
     "resolve_entity",
+    "run_agentic_consolidation",
+    "run_react_loop",
 ]

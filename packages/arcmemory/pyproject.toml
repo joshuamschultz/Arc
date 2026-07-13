@@ -18,13 +18,16 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
-# arcmemory sits BELOW arcagent in the DAG: it depends only on arctrust
-# (audit/policy/classification), arcllm (embed + distill), and arcstore
-# (optional telemetry spool). It NEVER depends on arcagent or arcrun.
+# arcmemory sits BELOW arcagent in the DAG: it depends on arctrust
+# (audit/policy/classification), arcllm (embed + distill), arcstore (telemetry
+# spool), and arcrun (the agentic "sleep" consolidation loop — confined to the
+# single react_adapter module, guarded so an arcrun-less install degrades to the
+# pipeline distiller). It NEVER depends on arcagent.
 dependencies = [
     "arctrust>=0.1",
     "arcllm>=0.1",
     "arcstore>=0.1",
+    "arcrun>=0.1",
     "pydantic>=2.0,<3",
     "pyyaml>=6.0",
     # In-process vector index (surface + structural channels) — shipped by

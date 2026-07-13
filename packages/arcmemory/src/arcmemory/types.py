@@ -232,6 +232,28 @@ class Recall(BaseModel):
     verify_first: bool = False
 
 
+class RecallCard(BaseModel):
+    """A glass-box recall result — a ranked card WITH provenance and links.
+
+    The structured, first-class ``recall`` shape (distinct from the injectable
+    ``Recall``/``Bundle`` text): the agent-side ``recall`` tool surfaces these so a
+    caller sees WHERE a memory came from (``source`` slug + ``kind`` + ``confidence``)
+    and WHAT it points to (outbound ``[[links]]``), not just an opaque blob.
+    ``verify_first`` carries the confidence gate (a ``guessed`` memory is surfaced
+    tentatively).
+    """
+
+    source: str
+    kind: str
+    content: str
+    score: float
+    confidence: Confidence = Confidence.KNOWN
+    classification: str = "unclassified"
+    verify_first: bool = False
+    provenance: list[str] = Field(default_factory=list)
+    links: list[str] = Field(default_factory=list)
+
+
 class Bundle(BaseModel):
     """The bounded, boundary-marked result of a single retrieval pass.
 
@@ -269,6 +291,7 @@ __all__ = [
     "Insight",
     "Procedure",
     "Recall",
+    "RecallCard",
     "Scope",
     "Situation",
     "TimeWindow",

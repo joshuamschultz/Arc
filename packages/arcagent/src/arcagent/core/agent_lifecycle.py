@@ -222,6 +222,7 @@ def configure_module_runtimes(
             "bus": agent._bus,
             "agent_did": identity.did if identity else "",
             "identity": identity,
+            "policy_pipeline": agent._policy_pipeline,
             "egress_proxy": egress_proxy,
             "human_gate": agent._human_gate,
         }

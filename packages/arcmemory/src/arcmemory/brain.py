@@ -27,6 +27,8 @@ from pathlib import Path
 
 from arctrust.audit import AuditSink, NullSink
 from arctrust.classification import parse_classification
+from arctrust.identity import AgentIdentity
+from arctrust.policy import PolicyPipeline
 
 from arcmemory.capture import FastCapture
 from arcmemory.config import MemoryConfig
@@ -35,8 +37,9 @@ from arcmemory.db import MemoryDB
 from arcmemory.distill import Distiller
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder
+from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.retrieve import Retriever
-from arcmemory.types import ConsolidationResult, Scope, Situation
+from arcmemory.types import ConsolidationResult, RecallCard, Scope, Situation
 
 
 class _ScopeBundle:
@@ -74,6 +77,10 @@ class ArcMemoryBrain:
         distiller: Distiller | None = None,
         audit_sink: AuditSink | None = None,
         seed_vocabulary: Iterable[str] | None = None,
+        model: object | None = None,
+        identity: AgentIdentity | None = None,
+        policy_pipeline: PolicyPipeline | None = None,
+        react_loop: ReactLoop = run_react_loop,
     ) -> None:
         if not agent_did:
             raise ValueError("ArcMemoryBrain requires an agent_did (no memory without identity)")
@@ -84,6 +91,12 @@ class ArcMemoryBrain:
         self._distiller = distiller
         self._audit = audit_sink if audit_sink is not None else NullSink()
         self._seed_vocab = list(seed_vocabulary or [])
+        # Agentic-consolidation seams (default engine); passed through to the
+        # Consolidator. Without a model the engine degrades to the pipeline distiller.
+        self._model = model
+        self._identity = identity
+        self._policy = policy_pipeline
+        self._react_loop = react_loop
         self._db = MemoryDB(self._workspace)
         self._graph = WeightedGraph(self._db, self._cfg)
         self._bundles: dict[str, _ScopeBundle] = {}
@@ -135,6 +148,32 @@ class ArcMemoryBrain:
             situation, clearance=clr, top_k=top_k, budget=budget
         )
         return result.text
+
+    async def recall(
+        self,
+        query: str,
+        *,
+        clearance: str = "unclassified",
+        top_k: int = 5,
+        budget: int = 1024,
+        summary: str = "",
+        cues: list[str] | None = None,
+        session_id: str | None = None,
+    ) -> list[RecallCard]:
+        """Structured glass-box recall — ranked cards WITH provenance + ``[[links]]``.
+
+        The first-class ``recall`` the agent-side tool surfaces: same fast, gated,
+        bounded pass as :meth:`retrieve` (retrieval is NOT agentic), but returns the
+        typed cards instead of the injectable text, so a caller can see WHERE each
+        memory came from and WHAT it points to. Never raises on a missing embedder.
+        """
+        bundle = self._bundle(session_id)
+        await bundle.retriever.index()
+        clr = parse_classification(clearance, strict=self._cfg.tier == "federal")
+        situation = Situation(text=query, summary=summary, cues=list(cues or []))
+        return await bundle.retriever.recall_cards(
+            situation, clearance=clr, top_k=top_k, budget=budget
+        )
 
     async def consolidate(self, *, session_id: str | None = None) -> Mapping[str, object]:
         """Slow "sleep" consolidation over the raw stream (REQ-030..034).
@@ -211,6 +250,10 @@ class ArcMemoryBrain:
                 audit_sink=self._audit,
                 embedder=self._embedder,
                 seed_vocabulary=self._seed_vocab,
+                model=self._model,
+                identity=self._identity,
+                policy_pipeline=self._policy,
+                react_loop=self._react_loop,
             )
             if self._distiller is not None
             else None

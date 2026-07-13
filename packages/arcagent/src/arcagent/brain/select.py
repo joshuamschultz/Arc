@@ -52,8 +52,25 @@ def _build_arcmemory(module: Any, context: dict[str, Any]) -> Brain | None:
         embedder=embedder,
         distiller=distiller,
         audit_sink=context["audit_sink"],
+        model=_build_loop_model(context["distill_provider"], context["distill_model"], agent_did),
+        identity=context.get("identity"),
+        policy_pipeline=context.get("policy_pipeline"),
     )
     return brain
+
+
+def _build_loop_model(provider: str, model: str, agent_did: str) -> Any:
+    """arcllm model handle for the agentic consolidation loop, or ``None`` when off.
+
+    Same provider/model as the distiller, loaded WITH telemetry so the memory agent's
+    turns ride the SPEC-038 budget/circuit-breaker (LLM10). ``None`` (no distill
+    provider) → the agentic engine degrades to the pipeline distiller.
+    """
+    if not provider:
+        return None
+    import arcllm
+
+    return arcllm.load_model(provider, model or None, telemetry={"agent_did": agent_did})
 
 
 def _build_embedder(arcmemory: Any, agent_did: str, backend: str, model: str) -> Any:
@@ -104,8 +121,16 @@ def select_brain(
     distill_provider: str = "",
     distill_model: str = "",
     brain_allowlist: tuple[str, ...] = (),
+    identity: Any = None,
+    policy_pipeline: Any = None,
 ) -> Brain:
-    """Return the configured Brain (fail-safe: any degrade path yields NullBrain)."""
+    """Return the configured Brain (fail-safe: any degrade path yields NullBrain).
+
+    ``identity`` (the agent's signing key) and ``policy_pipeline`` are threaded into the
+    Brain so the agentic consolidation engine's memory-tool writes are signed and
+    policy-authorized (fail-closed). ``None`` for either leaves the memory tools in the
+    unconfigured-gate path (audit-only) — the single-dev default.
+    """
     context: dict[str, Any] = {
         "workspace": workspace,
         "agent_did": agent_did,
@@ -115,6 +140,8 @@ def select_brain(
         "embed_model": embed_model,
         "distill_provider": distill_provider,
         "distill_model": distill_model,
+        "identity": identity,
+        "policy_pipeline": policy_pipeline,
     }
     brain: Brain = select_extension(
         _BRAIN_POINT,

@@ -73,10 +73,14 @@ def configure(
     bus: Any = None,
     agent_did: str = "",
     agent_name: str = "",
+    identity: Any = None,
+    policy_pipeline: Any = None,
 ) -> None:
     """Bind module state for the CURRENT asyncio task; select the Brain.
 
-    Called once at agent startup.
+    Called once at agent startup. ``identity`` (the agent's signer) and
+    ``policy_pipeline`` are threaded to the Brain so the agentic consolidation engine's
+    memory-tool writes are signed + policy-authorized.
     """
     del agent_name  # accepted for signature-dispatch parity; unused here
     cfg = MemoryConfig(**(config or {}))
@@ -91,6 +95,8 @@ def configure(
         distill_provider=cfg.distill_provider,
         distill_model=cfg.distill_model,
         brain_allowlist=tuple(cfg.brain_allowlist),
+        identity=identity,
+        policy_pipeline=policy_pipeline,
     )
     new_state = _State(
         config=cfg,

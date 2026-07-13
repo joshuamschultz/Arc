@@ -32,8 +32,11 @@ from pathlib import Path
 from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
+from arctrust.identity import AgentIdentity
+from arctrust.policy import PolicyPipeline
 
 from arcmemory import distill
+from arcmemory.agent_consolidate import AgenticResult, run_agentic_consolidation
 from arcmemory.config import MemoryConfig
 from arcmemory.curate import curate_for_distillation
 from arcmemory.db import MemoryDB
@@ -41,11 +44,13 @@ from arcmemory.hygiene import dedup_workspace, repair_backlinks
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _cosine
+from arcmemory.react_adapter import ReactLoop, run_react_loop
 from arcmemory.stores.daily import DailyNotesStore
 from arcmemory.stores.episodic import EpisodicStore
 from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
+from arcmemory.tools import build_memory_tools
 from arcmemory.types import (
     ConsolidationResult,
     DaySummary,
@@ -98,6 +103,10 @@ class Consolidator:
         embedder: Embedder | None = None,
         seed_vocabulary: Iterable[str] | None = None,
         promote_threshold: int = 2,
+        model: object | None = None,
+        identity: AgentIdentity | None = None,
+        policy_pipeline: PolicyPipeline | None = None,
+        react_loop: ReactLoop = run_react_loop,
     ) -> None:
         self._db = db
         self._workspace = Path(workspace)
@@ -108,6 +117,12 @@ class Consolidator:
         self._embedder = embedder
         self._seed_vocab = set(seed_vocabulary or [])
         self._promote_threshold = promote_threshold
+        # Agentic-engine seams (the DEFAULT DISTILL path). Without a model the
+        # engine cannot run, so consolidation falls back to the pipeline distiller.
+        self._model = model
+        self._identity = identity
+        self._policy = policy_pipeline
+        self._react_loop = react_loop
 
         self._graph = WeightedGraph(db, self._cfg)
         self._semantic = SemanticStore(workspace, self._graph, scope=scope.key)
@@ -165,9 +180,7 @@ class Consolidator:
             return ConsolidationResult()
 
         self._begin_manifest(len(events))
-        facts = await self._extract_facts(events)
-        insights = await self._mint_insights(events, [f for _, f in facts])
-        procedures = self._promote_procedures(events) + await self._extract_procedures(events)
+        facts, insights, procedures, agentic_writes = await self._distill(events)
         days = await self._summarize_days(events)
         decayed = self._decay(now)
         await self._merge_cues_audited()
@@ -182,9 +195,64 @@ class Consolidator:
             procedures_promoted=len(procedures),
             days_summarized=len(days),
             edges_decayed=decayed,
-            files_rewritten=len(facts) + len(insights) + len(procedures) + len(days),
+            files_rewritten=(
+                len(facts) + len(insights) + len(procedures) + len(days) + agentic_writes
+            ),
             window_events=len(events),
         )
+
+    # -- distill step: agentic engine (default) with pipeline fallback -----
+
+    async def _distill(
+        self, events: list[Event]
+    ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], int]:
+        """Route the DISTILL step: agentic engine by default, pipeline as fallback.
+
+        Agentic mode runs the bounded ReAct loop over the memory tools (which write
+        cards directly). On a clean run the deterministic ``_promote_procedures``
+        zero-LLM step still runs; on a degrade (breach/timeout/arcrun-absent, or no
+        model wired) the whole window is finished by the pipeline distiller so no
+        data is lost.
+        """
+        if self._cfg.consolidate_engine == "agentic" and self._model is not None:
+            result = await self._run_agentic(events)
+            if not result.degraded:
+                return [], [], self._promote_procedures(events), result.tool_calls_made
+            self._emit("memory.consolidation_degraded", result.reason or "degraded")
+        return await self._distill_pipeline(events)
+
+    async def _run_agentic(self, events: list[Event]) -> AgenticResult:
+        """Run one bounded agentic consolidation over this scope's memory tools."""
+        tools = build_memory_tools(
+            workspace=self._workspace,
+            db=self._db,
+            config=self._cfg,
+            caller_did=self._scope.agent_did,
+            session_id=self._scope.session_id,
+            identity=self._identity,
+            policy_pipeline=self._policy,
+            audit_sink=self._audit,
+            embedder=self._embedder,
+            distiller=self._distiller,
+        )
+        actor_did = self._identity.did if self._identity is not None else self._scope.agent_did
+        return await run_agentic_consolidation(
+            episodes=events,
+            model=self._model,
+            tools=tools,
+            config=self._cfg,
+            actor_did=actor_did,
+            react_loop=self._react_loop,
+        )
+
+    async def _distill_pipeline(
+        self, events: list[Event]
+    ) -> tuple[list[tuple[str, Fact]], list[Insight], list[Procedure], int]:
+        """The deterministic single-shot distiller path (fallback + engine=pipeline)."""
+        facts = await self._extract_facts(events)
+        insights = await self._mint_insights(events, [f for _, f in facts])
+        procedures = self._promote_procedures(events) + await self._extract_procedures(events)
+        return facts, insights, procedures, 0
 
     # -- nightly hygiene (heavier, once-per-local-day) ---------------------
 
