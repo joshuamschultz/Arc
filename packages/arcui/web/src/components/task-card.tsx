@@ -1,4 +1,4 @@
-import { Link2, Lock } from 'lucide-react'
+import { Link2, Lock, Eye } from 'lucide-react'
 import { SeverityBadge } from '@/components/status-badge'
 import { cn } from '@/lib/utils'
 import { shortId } from '@/lib/format'
@@ -35,6 +35,11 @@ export function TaskCard({
           {ownerLabel ?? 'Unassigned'}
         </span>
         <div className="flex shrink-0 items-center gap-1.5">
+          {task.status === 'review' && (
+            <span className="flex items-center gap-1 rounded-full bg-status-info/15 px-1.5 py-0.5 text-status-info" title="Awaiting operator review">
+              <Eye className="size-3" /> review
+            </span>
+          )}
           {blocked && (
             <span className="flex items-center gap-1 rounded-full bg-status-warning/15 px-1.5 py-0.5 text-status-warning" title="Blocked on unfinished dependencies">
               <Lock className="size-3" /> blocked

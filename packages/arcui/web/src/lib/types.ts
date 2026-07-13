@@ -91,6 +91,17 @@ export interface Task {
   created_at?: string | null
   updated_at?: string | null
   agent_id?: string | null
+  // Lifecycle reliability + review gate (SPEC-056 Phases 1–3).
+  started_at?: string | null
+  completed_at?: string | null
+  duration_seconds?: number | null
+  attempts?: number
+  max_attempts?: number
+  last_error?: string | null
+  timeout_seconds?: number | null
+  next_attempt_at?: string | null
+  cancel_requested?: boolean
+  requires_review?: boolean
 }
 
 export interface AuditEvent {

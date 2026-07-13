@@ -30,6 +30,7 @@ export function CreateTaskSheet({
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<TaskPriority>('medium')
   const [ownerDid, setOwnerDid] = useState('')
+  const [requiresReview, setRequiresReview] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -38,6 +39,7 @@ export function CreateTaskSheet({
     setDescription('')
     setPriority('medium')
     setOwnerDid('')
+    setRequiresReview(false)
     setError(null)
   }
 
@@ -50,6 +52,7 @@ export function CreateTaskSheet({
         description: description.trim() || undefined,
         priority,
         owner_did: ownerDid || undefined,
+        requires_review: requiresReview || undefined,
       })
       await queryClient.invalidateQueries({
         predicate: (q) => q.queryKey.some((k) => k === 'tasks'),
@@ -124,6 +127,18 @@ export function CreateTaskSheet({
               </Select>
             </div>
           </div>
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <input
+              type="checkbox"
+              checked={requiresReview}
+              onChange={(e) => setRequiresReview(e.target.checked)}
+              className="size-4 accent-primary"
+            />
+            <span>
+              Require review
+              <span className="ml-1 text-xs text-muted-foreground">— completion lands in review for operator approval</span>
+            </span>
+          </label>
           <Button className="w-full" disabled={busy || !title.trim()} onClick={submit}>
             {busy ? 'Creating…' : 'Create task'}
           </Button>

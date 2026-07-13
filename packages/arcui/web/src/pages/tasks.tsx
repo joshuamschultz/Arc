@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { TaskBoard } from '@/components/task-board'
-import { isBlocked } from '@/lib/tasks'
+import { fmtSeconds, isBlocked } from '@/lib/tasks'
 import { TaskDrawer } from '@/components/task-drawer'
 import { CreateTaskSheet } from '@/components/create-task-sheet'
 import { useOperatorMode } from '@/hooks/use-operator-mode'
@@ -20,13 +20,6 @@ const STATUS_FILTERS: (TaskStatus | 'all')[] = [
   'all', 'backlog', 'todo', 'in_progress', 'review', 'done', 'failed',
 ]
 const PRIORITY_FILTERS: (TaskPriority | 'all')[] = ['all', 'low', 'medium', 'high', 'critical']
-
-function fmtDuration(ms: number): string {
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`
-  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`
-  return `${Math.round(ms / 86_400_000)}d`
-}
 
 export function TasksPage() {
   const query = useTeamTasks()
@@ -89,15 +82,17 @@ export function TasksPage() {
     let doneToday = 0
     let failed = 0
     let blocked = 0
-    const doneDurations: number[] = []
+    const doneDurations: number[] = [] // seconds, from the real lifecycle fields
     for (const t of tasks) {
       if (t.status === 'in_progress') inProgress++
       if (t.status === 'failed') failed++
       if (isBlocked(t, statusById)) blocked++
       if (t.status === 'done') {
-        if (t.updated_at?.slice(0, 10) === today) doneToday++
-        if (t.created_at && t.updated_at) {
-          doneDurations.push(Date.parse(t.updated_at) - Date.parse(t.created_at))
+        const completed = t.completed_at ?? t.updated_at
+        if (completed?.slice(0, 10) === today) doneToday++
+        if (t.duration_seconds != null) doneDurations.push(t.duration_seconds)
+        else if (t.started_at && t.completed_at) {
+          doneDurations.push((Date.parse(t.completed_at) - Date.parse(t.started_at)) / 1000)
         }
       }
     }
@@ -160,7 +155,7 @@ export function TasksPage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="In progress" value={metrics.inProgress} />
           <StatCard label="Done today" value={metrics.doneToday} />
-          <StatCard label="Avg time to done" value={metrics.avgDone != null ? fmtDuration(metrics.avgDone) : '—'} />
+          <StatCard label="Avg time to done" value={metrics.avgDone != null ? fmtSeconds(metrics.avgDone) : '—'} />
           <StatCard label="Failed" value={metrics.failed} />
         </div>
 
@@ -238,6 +233,7 @@ export function TasksPage() {
         operatorMode={operatorMode}
         roster={agents}
         mentionHandles={mentionHandles}
+        allTasks={tasks}
       />
       <CreateTaskSheet open={creating} onOpenChange={setCreating} roster={agents} />
     </div>

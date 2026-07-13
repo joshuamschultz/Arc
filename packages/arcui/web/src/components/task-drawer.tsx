@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Sheet,
@@ -17,6 +18,7 @@ import { useTeamStream } from '@/hooks/use-team-stream'
 import { useTaskActivity } from '@/lib/queries'
 import { apiDelete, apiPatch, apiPost, ApiError } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
+import { fmtSeconds, subtaskProgress } from '@/lib/tasks'
 import type { Agent, Task, TaskPriority } from '@/lib/types'
 
 const PRIORITIES: TaskPriority[] = ['low', 'medium', 'high', 'critical']
@@ -49,6 +51,7 @@ export function TaskDrawer({
   operatorMode,
   roster,
   mentionHandles,
+  allTasks = [],
 }: {
   task: Task | null
   open: boolean
@@ -56,6 +59,7 @@ export function TaskDrawer({
   operatorMode: boolean
   roster: Agent[]
   mentionHandles: MentionHandle[]
+  allTasks?: Task[]
 }) {
   const queryClient = useQueryClient()
   const activity = useTaskActivity(task?.id ?? null)
@@ -73,6 +77,7 @@ export function TaskDrawer({
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [deciding, setDeciding] = useState(false)
 
   const ownerAgent = roster.find((a) => a.did === task?.owner_did)
 
@@ -92,6 +97,7 @@ export function TaskDrawer({
       setConfirmDelete(false)
       setDeleting(false)
       setStopping(false)
+      setDeciding(false)
       setSteerText(ownerAgent?.name ? `@${ownerAgent.name} ` : '')
     }
   }
@@ -153,11 +159,29 @@ export function TaskDrawer({
     }
   }
 
+  const decide = async (approve: boolean) => {
+    setDeciding(true)
+    setError(null)
+    try {
+      await apiPost(`/api/tasks/${encodeURIComponent(task.id)}/${approve ? 'approve' : 'reject'}`)
+      await queryClient.invalidateQueries({
+        predicate: (q) => q.queryKey.some((k) => k === 'tasks'),
+      })
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to record decision')
+    } finally {
+      setDeciding(false)
+    }
+  }
+
   const sendSteer = () => {
     if (!steerText.trim()) return
     steerPost(steerText)
     setSteerText(ownerAgent?.name ? `@${ownerAgent.name} ` : '')
   }
+
+  const subtasks = subtaskProgress(task.id, allTasks)
+  const deps = (task.blocked_by ?? []).map((id) => allTasks.find((t) => t.id === id) ?? { id })
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -235,11 +259,68 @@ export function TaskDrawer({
               <Field label="Owner" value={ownerLabel} />
               <Field label="Creator" value={task.creator_did} />
               <Field label="Parent" value={task.parent_id} />
-              <Field label="Run" value={task.run_id} />
+              <Field
+                label="Run"
+                value={
+                  task.run_id ? (
+                    <Link
+                      to={`/arcrun?run=${encodeURIComponent(task.run_id)}`}
+                      className="text-primary hover:underline"
+                      title="Open in ArcRun"
+                    >
+                      {task.run_id}
+                    </Link>
+                  ) : (
+                    '—'
+                  )
+                }
+              />
+              <Field label="Attempts" value={`${task.attempts ?? 0} / ${task.max_attempts ?? 3}`} />
+              <Field label="Duration" value={fmtSeconds(task.duration_seconds)} />
               <Field label="Created" value={task.created_at ? relativeTime(task.created_at) : '—'} />
-              <Field label="Updated" value={task.updated_at ? relativeTime(task.updated_at) : '—'} />
-              <Field label="Blocked by" value={task.blocked_by?.length ? task.blocked_by.join(', ') : '—'} />
+              <Field label="Started" value={task.started_at ? relativeTime(task.started_at) : '—'} />
+              <Field label="Completed" value={task.completed_at ? relativeTime(task.completed_at) : '—'} />
               <Field label="Tags" value={task.tags?.length ? task.tags.join(', ') : '—'} />
+            </section>
+          )}
+
+          {!editing && subtasks.total > 0 && (
+            <section className="space-y-2">
+              <h3 className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                <span>Subtasks</span>
+                <span className="tabular-nums text-foreground">{subtasks.done}/{subtasks.total} done</span>
+              </h3>
+              <ul className="space-y-1">
+                {subtasks.children.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
+                    <span className="truncate text-foreground">{c.title}</span>
+                    <StatusText value={c.status} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {!editing && deps.length > 0 && (
+            <section className="space-y-2">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Blocked by</h3>
+              <ul className="space-y-1">
+                {deps.map((d) => (
+                  <li key={d.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs">
+                    <span className="truncate text-foreground">{('title' in d && d.title) || d.id}</span>
+                    <StatusText value={'status' in d ? d.status : undefined} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {task.last_error && !editing && (
+            <section className="space-y-2">
+              <h3 className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Last error</h3>
+              <p className="whitespace-pre-wrap rounded-lg border border-status-error/30 bg-status-error/10 p-3 text-xs text-status-error">
+                {task.last_error}
+              </p>
             </section>
           )}
 
@@ -300,6 +381,17 @@ export function TaskDrawer({
               !editing && (
                 <div className="space-y-2">
                   {error && <p className="text-xs text-destructive">{error}</p>}
+                  {task.status === 'review' && !confirmDelete && (
+                    <div className="flex items-center gap-2">
+                      <span className="mr-auto text-xs text-muted-foreground">Awaiting review</span>
+                      <Button size="sm" disabled={deciding} onClick={() => decide(true)}>
+                        {deciding ? '…' : 'Approve'}
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={deciding} onClick={() => decide(false)}>
+                        Reject
+                      </Button>
+                    </div>
+                  )}
                   {confirmDelete ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs text-muted-foreground">Delete this task permanently?</span>
