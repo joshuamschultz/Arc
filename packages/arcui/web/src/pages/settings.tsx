@@ -1,13 +1,29 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Lock, Pencil, Check, X } from 'lucide-react'
+import { Pencil, Check, X } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
+import { OperatorModeToggle } from '@/components/operator-mode-toggle'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { QueryState } from '@/components/states'
+import { QueryState, EmptyState } from '@/components/states'
+import { useOperatorMode } from '@/hooks/use-operator-mode'
 import { apiPatch, ApiError } from '@/lib/api'
-import { useArcllmConfig, useViewerConfig } from '@/lib/queries'
+import { useRoster, useAgentConfigFile } from '@/lib/queries'
 import type { Dict } from '@/lib/types'
+
+// The three per-agent config files, one editor tab each.
+const CONFIG_FILES = [
+  { key: 'arcagent', label: 'ArcAgent' },
+  { key: 'arcllm', label: 'ArcLLM' },
+  { key: 'arcrun', label: 'ArcRun' },
+] as const
 
 function ReadValue({ value }: { value: unknown }) {
   if (value === null || value === undefined) return <span className="text-muted-foreground">—</span>
@@ -39,17 +55,18 @@ function KeyTree({ obj }: { obj: Dict }) {
 
 function ConfigSection({
   endpoint,
+  queryKey,
   sectionKey,
   value,
   editable,
 }: {
   endpoint: string
+  queryKey: unknown[]
   sectionKey: string
   value: unknown
   editable: boolean
 }) {
   const queryClient = useQueryClient()
-  const queryKey = endpoint === '/api/arcllm-config' ? ['arcllm-config'] : ['config']
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -122,13 +139,43 @@ function ConfigSection({
   )
 }
 
-function ConfigPanel({ endpoint, query, editable }: { endpoint: string; query: ReturnType<typeof useViewerConfig>; editable: boolean }) {
+function ConfigFilePanel({
+  agentId,
+  file,
+  label,
+  editable,
+}: {
+  agentId: string
+  file: string
+  label: string
+  editable: boolean
+}) {
+  const query = useAgentConfigFile(agentId, file)
+  const endpoint = `/api/agents/${agentId}/config/${file}`
+  const queryKey = ['agent', agentId, 'config', file]
+
   return (
-    <QueryState query={query} isEmpty={() => !query.data || Object.keys(query.data).length === 0}>
-      {(cfg) => (
+    <QueryState
+      query={query}
+      isEmpty={(data) => !data.sections || Object.keys(data.sections).length === 0}
+      empty={
+        <EmptyState
+          title={`No ${file}.toml for this agent`}
+          description={`This agent has no ${label} config file (${file}.toml). Nothing to edit here.`}
+        />
+      }
+    >
+      {(data) => (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          {Object.entries(cfg).map(([key, value]) => (
-            <ConfigSection key={key} endpoint={endpoint} sectionKey={key} value={value} editable={editable} />
+          {Object.entries(data.sections).map(([key, value]) => (
+            <ConfigSection
+              key={key}
+              endpoint={endpoint}
+              queryKey={queryKey}
+              sectionKey={key}
+              value={value}
+              editable={editable}
+            />
           ))}
         </div>
       )}
@@ -137,39 +184,65 @@ function ConfigPanel({ endpoint, query, editable }: { endpoint: string; query: R
 }
 
 export function SettingsPage() {
-  // Editable when running with an operator token. Without a live WS auth signal,
-  // the server enforces authorization — the UI defaults to read-only until the
-  // user explicitly enables edits (future: derive from a /api/me endpoint).
-  const editable = false
-  const arcllm = useArcllmConfig()
-  const viewer = useViewerConfig()
+  const roster = useRoster()
+  const agents = (roster.data?.agents ?? []).filter((a) => !a.hidden)
+  const [picked, setPicked] = useState<string | null>(null)
+  const agentId = picked ?? agents[0]?.agent_id ?? null
+  const [operatorMode] = useOperatorMode()
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Settings"
-        description="ArcLLM and viewer configuration."
+        description="Per-agent config editor — arcagent.toml, arcllm.toml, arcrun.toml."
         actions={
-          <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground">
-            <Lock className="size-3.5" />
-            Viewer — read-only
-          </span>
+          <>
+            <OperatorModeToggle />
+            <Select value={agentId ?? ''} onValueChange={setPicked}>
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="Select agent" />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map((a) => (
+                  <SelectItem key={a.agent_id} value={a.agent_id ?? ''}>
+                    {a.display_name || a.name || a.agent_id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
         }
       />
-      <Tabs defaultValue="arcllm" className="flex flex-1 flex-col overflow-hidden">
-        <div className="border-b border-border px-6">
-          <TabsList className="my-2">
-            <TabsTrigger value="arcllm">ArcLLM</TabsTrigger>
-            <TabsTrigger value="viewer">Viewer</TabsTrigger>
-          </TabsList>
+      {!agentId ? (
+        <div className="flex-1 overflow-auto p-6">
+          <EmptyState
+            title="No agent selected"
+            description="Pick an agent from the selector to view and edit its config."
+          />
         </div>
-        <TabsContent value="arcllm" className="flex-1 overflow-auto p-6">
-          <ConfigPanel endpoint="/api/arcllm-config" query={arcllm} editable={editable} />
-        </TabsContent>
-        <TabsContent value="viewer" className="flex-1 overflow-auto p-6">
-          <ConfigPanel endpoint="/api/config" query={viewer} editable={editable} />
-        </TabsContent>
-      </Tabs>
+      ) : (
+        <Tabs defaultValue="arcagent" className="flex flex-1 flex-col overflow-hidden">
+          <div className="border-b border-border px-6">
+            <TabsList className="my-2">
+              {CONFIG_FILES.map((f) => (
+                <TabsTrigger key={f.key} value={f.key}>
+                  {f.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
+          {CONFIG_FILES.map((f) => (
+            <TabsContent key={f.key} value={f.key} className="flex-1 overflow-auto p-6">
+              <ConfigFilePanel
+                agentId={agentId}
+                file={f.key}
+                label={f.label}
+                editable={operatorMode}
+              />
+            </TabsContent>
+          ))}
+        </Tabs>
+      )}
     </div>
   )
 }

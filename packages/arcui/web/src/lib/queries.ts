@@ -119,6 +119,22 @@ export const useViewerConfig = () =>
 export const useArcllmConfig = () =>
   useApiQuery<Dict>(['arcllm-config'], '/api/arcllm-config')
 
+// Per-agent, per-file config editor (arcagent / arcllm / arcrun). Each file's
+// top-level TOML tables come back as `sections`; the Settings page renders one
+// editable cell per section and PATCHes a single section back.
+export interface AgentConfigFileResponse {
+  file: string
+  sections: Record<string, unknown>
+  mtime: number
+}
+
+export const useAgentConfigFile = (agentId: string | null, file: string) =>
+  useQuery<AgentConfigFileResponse>({
+    queryKey: ['agent', agentId, 'config', file],
+    queryFn: ({ signal }) => apiGet(`/api/agents/${agentId}/config/${file}`, signal),
+    enabled: !!agentId,
+  })
+
 // --- Knowledge -------------------------------------------------------------
 
 export interface KnowledgeResponse {

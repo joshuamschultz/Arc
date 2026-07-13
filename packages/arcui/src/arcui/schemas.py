@@ -383,6 +383,21 @@ class ConfigResponse(BaseModel):
     mtime: float
 
 
+class AgentConfigFileResponse(BaseModel):
+    """Body of ``GET/PATCH /api/agents/{id}/config/{file}``.
+
+    ``sections`` is the file's top-level TOML tables (dict passthrough), the
+    editable surface of the per-agent config editor. ``mtime`` is ``0.0`` when
+    the file does not exist (the editor renders an empty state).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    file: str
+    sections: dict[str, Any]
+    mtime: float
+
+
 # ---------------------------------------------------------------------------
 # Team aggregation routes
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ from starlette.routing import Route
 from arcui.routes.agent_detail._common import _agent_root  # noqa: F401
 from arcui.routes.agent_detail.capabilities import get_capabilities
 from arcui.routes.agent_detail.config import get_config, get_file_read, get_files_tree
+from arcui.routes.agent_detail.config_files import get_config_file, patch_config_file
 from arcui.routes.agent_detail.files_write import put_file_write
 from arcui.routes.agent_detail.policy import (
     get_policy,
@@ -70,6 +71,8 @@ from arcui.routes.agent_detail.tools import get_tool_detail, get_tools
 
 routes = [
     Route("/api/agents/{id}/config", get_config, methods=["GET"]),
+    Route("/api/agents/{id}/config/{file}", get_config_file, methods=["GET"]),
+    Route("/api/agents/{id}/config/{file}", patch_config_file, methods=["PATCH"]),
     Route("/api/agents/{id}/files/tree", get_files_tree, methods=["GET"]),
     Route("/api/agents/{id}/files/read", get_file_read, methods=["GET"]),
     Route("/api/agents/{id}/files/read", put_file_write, methods=["PUT"]),
