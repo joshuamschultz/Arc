@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Workflow, Users } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -80,6 +81,19 @@ export function ArcRunPage() {
   const rows = useMemo<RunSummary[]>(() => data?.runs ?? [], [data])
   const [active, setActive] = useState<RunSummary | null>(null)
   const agentsWithRuns = new Set(rows.map((r) => resolveAgent(r, nameByDid))).size
+
+  // Deep-link support: `/arcrun?run=<id>` (e.g. a task's run link) auto-opens
+  // that run once the rows load. Applied during render — keyed on the param so
+  // it fires once and never fights a manual selection (mirrors the drawer's
+  // render-time state-sync pattern; no setState-in-effect).
+  const [searchParams] = useSearchParams()
+  const runParam = searchParams.get('run')
+  const [appliedRun, setAppliedRun] = useState<string | null>(null)
+  if (runParam && runParam !== appliedRun && rows.length > 0) {
+    setAppliedRun(runParam)
+    const match = rows.find((r) => r.run_id === runParam)
+    if (match) setActive(match)
+  }
 
   return (
     <div className="flex h-full flex-col">
