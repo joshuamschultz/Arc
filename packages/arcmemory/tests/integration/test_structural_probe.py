@@ -140,7 +140,7 @@ async def test_planted_structural_probe_retrieved_both_channels_then_enriched(
                 event_id=f"e{i}",
                 ts=f"2026-01-01T00:00:0{i}+00:00",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text=text,
             )
         )
@@ -206,7 +206,7 @@ async def test_never_recurring_guessed_insight_decays_out(
                 event_id=f"e{i}",
                 ts=f"2026-01-01T00:00:0{i}+00:00",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text=text,
             )
         )

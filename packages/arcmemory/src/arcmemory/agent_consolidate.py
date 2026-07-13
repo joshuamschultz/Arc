@@ -42,7 +42,9 @@ CONSOLIDATION_SYSTEM_PROMPT = (
     "related cards; set_alias so future writes fold correctly.\n"
     "5. Be NON-LOSSY and specific — many precise facts beat one vague sentence. "
     "Ground everything in the episodes; invent nothing.\n"
-    "6. Stop when the window is fully consolidated. Do not loop."
+    "6. Be decisive: search only as much as you need, then WRITE. Don't spend the turn "
+    "budget reading — prioritize write_fact / merge_entities / link over exploration.\n"
+    "7. Stop when the window is fully consolidated. Do not loop."
 )
 
 

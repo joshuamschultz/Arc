@@ -136,7 +136,7 @@ async def _plant_probe(workspace: Path, *, bridge: bool) -> ArcMemoryBrain:
     episodic = EpisodicStore(seed_db, workspace)
     for i, text in enumerate(_EPISODES):
         ev = Event(
-            event_id=f"e{i}", scope=scope.key, kind="obs", text=text, ts=f"2026-01-01T00:00:0{i}Z"
+            event_id=f"e{i}", scope=scope.key, kind="respond", text=text, ts=f"2026-01-01T00:00:0{i}Z"
         )
         episodic.append(ev)
 

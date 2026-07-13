@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added / Changed
+
+- **Config split into three files.** An agent's configuration is now `arcagent.toml`
+  (identity, security, tools, context, memory, and all behaviour/comms modules) +
+  `arcllm.toml` (`[llm]` / `[eval]` / `[budget]` — everything LLM-wire) + `arcrun.toml`
+  (loop controls: `max_turns`, `tool_timeout`, strategies, sandbox, approvals). The loader
+  composes the three sibling file-families (packaged < user-wide `~/.arc` < per-agent) with
+  env overrides last; `arc agent create` scaffolds all three, fully populated with every
+  operator-settable knob and a comment. Existing single-file tomls must be regenerated.
+- **Memory producer wiring.** `select_brain` now threads the loop model + the agent's signing
+  identity + policy pipeline into `ArcMemoryBrain`, so the agentic consolidation engine
+  actually runs and its memory-tool writes are signed + authorized (previously dead/unsigned).
+- Persisted workpad/policy cadence counters (survive restarts) + idle-flush so `context.md`
+  and learned policy update in real sessions, not only on an unreachable turn threshold.
+
 SPEC-056 Mission Control, Phases 1–4 — the `tasks` module grows from a shared list into a
 self-driving execution engine: agents autonomously run assigned work with retry/timeout/reclaim
 reliability, decompose tasks into dependency DAGs, auto-route ownerless work, gate results behind

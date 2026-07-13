@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
@@ -21,6 +22,7 @@ from arcmemory.distill import (
     FactExtraction,
     InsightCandidate,
     InsightMint,
+    ProcedureCandidate,
     ProcedureExtraction,
 )
 from arcmemory.index.graph import WeightedGraph
@@ -47,7 +49,13 @@ class FakeDistiller:
         return self._mint
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
-        return ProcedureExtraction()
+        return ProcedureExtraction(
+            procedures=[
+                ProcedureCandidate(
+                    slug="check-gauge", title="Check the gauge", steps=["open valve", "read gauge"]
+                )
+            ]
+        )
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft(timeline=["09:00 the day happened"], people=["Alice"])
@@ -71,7 +79,13 @@ class RaisingDistiller:
         raise RuntimeError("boom mid-consolidation")
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
-        return ProcedureExtraction()
+        return ProcedureExtraction(
+            procedures=[
+                ProcedureCandidate(
+                    slug="check-gauge", title="Check the gauge", steps=["open valve", "read gauge"]
+                )
+            ]
+        )
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft()
@@ -84,39 +98,39 @@ def _seed_day(workspace: Path, db: MemoryDB, scope: Scope) -> None:
 
     episodic = EpisodicStore(db, workspace)
     events = [
-        # A repeated action-sequence -> promotable procedure.
+        # Conversation turns the distiller consolidates.
         Event(
             event_id="a0",
             scope=scope.key,
-            kind="action",
+            kind="respond",
             text="open valve",
             ts="2026-07-07T00:00:00+00:00",
         ),
         Event(
             event_id="a1",
             scope=scope.key,
-            kind="action",
+            kind="respond",
             text="check gauge",
             ts="2026-07-07T00:00:01+00:00",
         ),
         Event(
             event_id="b0",
             scope=scope.key,
-            kind="obs",
+            kind="respond",
             text="boundary",
             ts="2026-07-07T00:00:02+00:00",
         ),
         Event(
             event_id="a2",
             scope=scope.key,
-            kind="action",
+            kind="respond",
             text="open valve",
             ts="2026-07-07T00:00:03+00:00",
         ),
         Event(
             event_id="a3",
             scope=scope.key,
-            kind="action",
+            kind="respond",
             text="check gauge",
             ts="2026-07-07T00:00:04+00:00",
         ),
@@ -292,7 +306,7 @@ async def test_curation_keeps_tool_plumbing_out_of_every_distiller_input(workspa
         Event(
             event_id="said",
             scope=scope.key,
-            kind="obs",  # what was actually observed
+            kind="respond",  # what was actually observed
             text="alice shipped payments",
             ts="2026-07-07T00:00:01+00:00",
         )
@@ -325,7 +339,7 @@ async def test_every_mutation_is_audited_and_chain_verifies(
     }
     assert "memory.fact_updated" in actions
     assert "memory.insight_minted" in actions
-    assert "memory.procedure_promoted" in actions
+    assert "memory.procedure_extracted" in actions
     assert "memory.edges_decayed" in actions
     assert "memory.file_rewritten" in actions
     assert sink.verify_chain()  # tamper-evident chain intact
@@ -382,73 +396,208 @@ async def test_cue_merge_repoints_instance_links(workspace, db, scope) -> None:
     assert {"i-a", "i-b"} <= linkers
 
 
-# -- entity de-dup / merge folds identity drift into one card ---------------
+# -- entity de-dup: candidate generation -> LLM confirmation -> merge --------
 
 
-class EntityNameEmbedder:
-    """Embeds entity NAMES so near-duplicate phrasings land on one vector."""
+class SubstringEmbedder:
+    """One-hot NAME embedder: cards sharing a keyword land on the SAME vector.
 
-    _CLUSTERS: ClassVar[dict[str, int]] = {"austin": 0, "acme": 1, "berlin": 2}
+    A keyword hit -> a 1 in that dim; two names sharing a keyword score cosine 1.0
+    (>= the candidate threshold, so they cluster), while names on different keywords
+    are orthogonal (cosine 0, never clustered). Deterministic + network-free.
+    """
+
+    _KEYWORDS: ClassVar[list[str]] = ["austin", "berlin", "josh", "acme"]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        out: list[list[float]] = []
-        for text in texts:
-            vec = [0.0, 0.0, 0.0]
-            for word, dim in self._CLUSTERS.items():
-                if word in text.lower():
-                    vec[dim] = 1.0
-            out.append(vec)
-        return out
+        return [[1.0 if kw in t.lower() else 0.0 for kw in self._KEYWORDS] for t in texts]
 
 
-async def test_merge_entities_folds_same_type_duplicates(workspace, db, scope) -> None:
-    graph = WeightedGraph(db)
-    store = SemanticStore(workspace, graph, scope=scope.key)
-    # Two same-type cards for one place (drifted names) + one distinct place.
-    store.write_fact("austin-texas", "state", "TX", confidence=0.9, name="Austin, Texas",
-                     entity_type="place")
-    store.write_fact("austin-tx", "population", "1M", confidence=0.8, name="Austin, TX",
-                     entity_type="place")
-    store.write_fact("berlin", "country", "DE", confidence=0.9, name="Berlin",
-                     entity_type="place")
-    graph.link(scope.key, "austin-tx", "acme", kind="link")  # edge must follow the merge
+class RecordingConfirmer:
+    """Records the candidate groups it is asked to confirm; confirms every one."""
+
+    def __init__(self) -> None:
+        self.groups: list[list[str]] = []
+
+    async def confirm_entity_merges(self, groups: list) -> list[list[str]]:
+        self.groups = [[ref.slug for ref in group] for group in groups]
+        return [list(slugs) for slugs in self.groups]
+
+
+class SubsetConfirmer:
+    """Confirms ONLY a fixed subset of slugs as the same entity (the rest stay apart)."""
+
+    def __init__(self, subset: set[str]) -> None:
+        self._subset = subset
+
+    async def confirm_entity_merges(self, groups: list) -> list[list[str]]:
+        confirmed: list[list[str]] = []
+        for group in groups:
+            picked = [ref.slug for ref in group if ref.slug in self._subset]
+            if len(picked) >= 2:
+                confirmed.append(picked)
+        return confirmed
+
+
+class RejectingConfirmer:
+    """Judges every candidate cluster NOT the same entity (records what it saw)."""
+
+    def __init__(self) -> None:
+        self.seen: list[list[str]] = []
+
+    async def confirm_entity_merges(self, groups: list) -> list[list[str]]:
+        self.seen = [[ref.slug for ref in group] for group in groups]
+        return []
+
+
+class RecordingSink:
+    """Captures every emitted ``AuditEvent`` (the AuditSink write-seam)."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    def write(self, event: object) -> None:
+        self.events.append(event)
+
+    def _reasons(self) -> list[str]:
+        return [
+            e.extra.get("reason")
+            for e in self.events
+            if getattr(e, "action", None) == "memory.dedup_skipped"
+        ]
+
+
+def _place(store: SemanticStore, slug: str, name: str, pred: str, value: str) -> None:
+    store.write_fact(slug, pred, value, name=name, entity_type="place")
+
+
+async def test_candidate_clustering_groups_similar_not_distinct(workspace, db, scope) -> None:
+    """Similar same-type names cluster into ONE candidate group; a distinct card does not."""
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+    _place(store, "austin-metro", "Austin metro", "note", "hub")
+    _place(store, "berlin", "Berlin", "country", "DE")  # distinct -> no neighbor -> no LLM
+
+    confirmer = RecordingConfirmer()
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=SubstringEmbedder(), confirmer=confirmer,
+    )
+    await consolidator.merge_entities()
+
+    assert len(confirmer.groups) == 1
+    assert set(confirmer.groups[0]) == {"austin-texas", "austin-tx", "austin-metro"}
+    assert "berlin" not in confirmer.groups[0]  # no similar neighbor -> never sent to the LLM
+
+
+async def test_only_llm_confirmed_subset_merges(workspace, db, scope) -> None:
+    """A 3-card candidate cluster where the LLM confirms only 2 -> only those 2 fold."""
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+    _place(store, "austin-metro", "Austin metro", "note", "hub")
 
     consolidator = Consolidator(
         db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=EntityNameEmbedder(),
+        embedder=SubstringEmbedder(),
+        confirmer=SubsetConfirmer({"austin-texas", "austin-tx"}),
     )
     merges = await consolidator.merge_entities()
 
-    assert merges == [("austin-tx", "austin-texas")]  # richer card (2 preds via fold) survives
-    slugs = store.slugs()
-    assert "austin-tx" not in slugs and "austin-texas" in slugs and "berlin" in slugs
-    survivor = store.read("austin-texas")
-    assert {f.predicate for f in survivor.facts} == {"state", "population"}  # facts folded
-    # The duplicate's graph edge repointed onto the survivor.
-    assert "austin-texas" in {n for n, _ in graph.neighbors(scope.key, "acme")}
+    assert merges == [("austin-tx", "austin-texas")]  # richest survivor keeps the card
+    slugs = set(store.slugs())
+    assert "austin-tx" not in slugs  # folded
+    assert {"austin-texas", "austin-metro"} <= slugs  # survivor + unconfirmed both remain
 
 
-async def test_merge_entities_never_crosses_type(workspace, db, scope) -> None:
+async def test_confirmer_keeps_similar_but_different_people(workspace, db, scope) -> None:
+    """Josh Schultz vs Joshua Shubbie: a candidate pair the LLM rejects -> NO merge."""
     store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
-    # Same name, different type — a place must never fold into a person.
+    store.write_fact("josh-schultz", "role", "founder", name="Josh Schultz", entity_type="person")
+    store.write_fact("joshua-shubbie", "role", "artist", name="Joshua Shubbie",
+                     entity_type="person")
+
+    confirmer = RejectingConfirmer()
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=SubstringEmbedder(), confirmer=confirmer,
+    )
+    merges = await consolidator.merge_entities()
+
+    assert set(confirmer.seen[0]) == {"josh-schultz", "joshua-shubbie"}  # they WERE candidates
+    assert merges == []  # ...but the LLM kept them apart
+    assert set(store.slugs()) == {"josh-schultz", "joshua-shubbie"}
+
+
+async def test_candidate_clusters_never_cross_type(workspace, db, scope) -> None:
+    """Same name, different type never even becomes a candidate (place is not a person)."""
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
     store.write_fact("austin-place", "state", "TX", name="Austin", entity_type="place")
     store.write_fact("austin-person", "role", "eng", name="Austin", entity_type="person")
 
+    confirmer = RecordingConfirmer()
     consolidator = Consolidator(
         db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
-        embedder=EntityNameEmbedder(),
+        embedder=SubstringEmbedder(), confirmer=confirmer,
     )
     assert await consolidator.merge_entities() == []
+    assert confirmer.groups == []  # cross-type pairs never reach the LLM
     assert set(store.slugs()) == {"austin-place", "austin-person"}
 
 
-async def test_merge_entities_noop_without_embedder(workspace, db, scope) -> None:
+async def test_no_embedder_emits_loud_dedup_skipped(workspace, db, scope) -> None:
+    """No embedder + real cards to dedup -> LOUD audit (never a silent [])."""
     store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
-    store.write_fact("austin-texas", "state", "TX", name="Austin, Texas", entity_type="place")
-    store.write_fact("austin-tx", "population", "1M", name="Austin, TX", entity_type="place")
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=None, confirmer=RecordingConfirmer(), audit_sink=sink,
+    )
+    assert await consolidator.merge_entities() == []
+    assert "no-embedder" in sink._reasons()
+    assert set(store.slugs()) == {"austin-texas", "austin-tx"}  # nothing merged
+
+
+async def test_no_confirmer_skips_and_logs(workspace, db, scope, caplog) -> None:
+    """Candidates found but no confirmer wired -> no merge, LOUD warn + audit."""
+    store = SemanticStore(workspace, WeightedGraph(db), scope=scope.key)
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+
+    sink = RecordingSink()
+    consolidator = Consolidator(
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=SubstringEmbedder(), confirmer=None, audit_sink=sink,
+    )
+    with caplog.at_level(logging.WARNING):
+        assert await consolidator.merge_entities() == []
+
+    assert "no-confirmer" in sink._reasons()
+    assert any("no-confirmer" in r.getMessage() for r in caplog.records)
+    assert set(store.slugs()) == {"austin-texas", "austin-tx"}  # unconfirmed -> unmerged
+
+
+async def test_confirmed_merge_is_non_lossy(workspace, db, scope) -> None:
+    """A confirmed fold unions facts + records the loser as an alias + repoints edges."""
+    graph = WeightedGraph(db)
+    store = SemanticStore(workspace, graph, scope=scope.key)
+    _place(store, "austin-texas", "Austin, Texas", "state", "TX")
+    _place(store, "austin-tx", "Austin, TX", "population", "1M")
+    graph.link(scope.key, "austin-tx", "acme", kind="link")  # edge must follow the survivor
 
     consolidator = Consolidator(
-        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(), embedder=None
+        db, workspace, scope, distiller=_distiller(), config=MemoryConfig(),
+        embedder=SubstringEmbedder(), confirmer=RecordingConfirmer(),
     )
-    assert await consolidator.merge_entities() == []  # degrades cleanly
-    assert set(store.slugs()) == {"austin-texas", "austin-tx"}
+    merges = await consolidator.merge_entities()
+
+    assert merges == [("austin-tx", "austin-texas")]
+    survivor = store.read("austin-texas")
+    assert {f.predicate for f in survivor.facts} == {"state", "population"}  # facts unioned
+    assert "Austin, TX" in survivor.aliases or "austin-tx" in survivor.aliases  # alias trail
+    assert "austin-tx" not in store.slugs()
+    assert "austin-texas" in {n for n, _ in graph.neighbors(scope.key, "acme")}  # edge repointed

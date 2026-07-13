@@ -23,22 +23,10 @@ Tier = Literal["personal", "enterprise", "federal"]
 # information. Kept even when short. Extend this via ``MemoryConfig`` when a new
 # knowledge tool is added; ``read``/``grep``/``bash`` are deliberately absent —
 # their worth is judged by result length, so a bare ``read -> ok`` still drops.
-_DEFAULT_KEEP_TOOLS: frozenset[str] = frozenset(
-    {
-        "web_search",
-        "research",
-        "browser_read_page",
-        "browser_navigate",
-        "session_search",
-        "write",
-        "edit",
-        "create_skill",
-        "create_tool",
-        "store_team_file",
-        "synthesize",
-        "transcribe",
-    }
-)
+# The session-conversation event kinds distillation learns from — the user's turns
+# and the agent's responses. Everything else the agent emits (``tool`` frames and any
+# other operational/runtime plumbing) is dropped before the LLM call (see curate.py).
+_DEFAULT_CONVERSATION_KINDS: frozenset[str] = frozenset({"user", "respond"})
 
 
 class MemoryConfig(BaseModel):
@@ -65,14 +53,22 @@ class MemoryConfig(BaseModel):
     fan_strength: float = Field(default=1.6, description="S in S_ji = S - ln(fan)")
     max_hops: int = Field(default=3, description="spreading-activation hop cap")
 
-    # Entity de-duplication — cosine at/above which two SAME-TYPE entity cards
-    # are treated as the same real-world thing and merged (the slow-path hygiene
-    # step, mirroring cue-merge). Conservative by default: only near-identical
-    # names ("Austin, Texas" vs "Austin, TX") fold together, and only when the
-    # entity_type matches, so a place is never merged into a person. Needs an
-    # embedder — degrades to no-op when none is wired.
+    # Entity de-duplication (write-time) — cosine at/above which a distiller-proposed
+    # candidate name folds onto an existing SAME-TYPE card in search-before-write
+    # (``resolve_entity``). Conservative so only near-identical names auto-fold.
     entity_merge_threshold: float = Field(
-        default=0.93, description="min cosine for same-type entity-card merge"
+        default=0.93, description="min cosine for same-type write-time entity fold"
+    )
+    # Entity de-duplication (slow-path hygiene) — cosine at/above which two SAME-TYPE
+    # cards are treated as POSSIBLE duplicates and clustered into a CANDIDATE group.
+    # Intentionally WIDER (lower) than the write-time fold: candidates are not merged
+    # on embedding alone — each cluster of >= 2 is sent to one bounded LLM call that
+    # conservatively confirms which cards are the same real-world entity, and only the
+    # confirmed sub-groups fold. A card with no same-type neighbor above this bar forms
+    # no cluster, so no LLM call is made for it. Federal is stricter (higher) because a
+    # false merge is worse there.
+    entity_merge_candidate_threshold: float = Field(
+        default=0.80, description="min cosine for a same-type candidate-duplicate cluster"
     )
     # Search-before-write disambiguation band: a same-type candidate whose name
     # cosine falls in ``[entity_disambiguate_min, entity_merge_threshold)`` is too
@@ -116,13 +112,13 @@ class MemoryConfig(BaseModel):
         default="agentic", description="DISTILL engine; agentic degrades to pipeline"
     )
     consolidate_agent_max_turns: int = Field(
-        default=8, description="max ReAct turns for one agentic consolidation (LLM10)"
+        default=16, description="max ReAct turns for one agentic consolidation (LLM10)"
     )
     consolidate_agent_max_tokens: int = Field(
-        default=12_000, description="max tokens for one agentic consolidation (LLM10)"
+        default=20_000, description="max tokens for one agentic consolidation (LLM10)"
     )
     consolidate_agent_timeout_seconds: float = Field(
-        default=120.0, description="wall-clock cap for one agentic consolidation (LLM10)"
+        default=180.0, description="wall-clock cap for one agentic consolidation (LLM10)"
     )
 
     # Distillation input budget — the max estimated tokens of raw events fed to a
@@ -135,28 +131,16 @@ class MemoryConfig(BaseModel):
         default=100_000, description="max estimated tokens per distill call before chunking"
     )
 
-    # Input curation — drop mechanical tool plumbing before distillation, KEEP
-    # substantive content (user turns, agent conclusions, agent-gathered/created
-    # knowledge). Pure/deterministic (reuses capture-time entity tags), zero extra
-    # LLM/embedding. A tool event survives if it references an entity, is a
-    # knowledge tool, carries a substantive-length result, or clears the salience
-    # floor; only short mechanical frames (``tool:read -> ok``) are stripped.
+    # Input curation — feed the LLM distillation ONLY the session conversation (the
+    # user's turns + the agent's responses), dropping tool frames and every other
+    # operational kind. Pure/deterministic kind filter, zero extra LLM/embedding: the
+    # model never sees — so cannot distill — the agent's own machinery.
     curate_input: bool = Field(
-        default=True, description="drop mechanical tool plumbing before distillation"
+        default=True, description="feed distillation only the session conversation"
     )
-    curate_keep_tools: frozenset[str] = Field(
-        default=_DEFAULT_KEEP_TOOLS,
-        description="tool names whose output is always kept (knowledge-producing); extensible",
-    )
-    curate_min_substantive_chars: int = Field(
-        default=200, description="a tool result at/above this length is kept as real content"
-    )
-    curate_tool_requires_entity: bool = Field(
-        default=True, description="drop a tool event that clears none of the keep gates"
-    )
-    curate_tool_keep_salience: float = Field(
-        default=0.0,
-        description="keep a tool event at/above this salience; 0 disables the salience escape",
+    curate_conversation_kinds: frozenset[str] = Field(
+        default=_DEFAULT_CONVERSATION_KINDS,
+        description="event kinds distillation keeps (the conversation); all others are dropped",
     )
 
     @classmethod
@@ -170,11 +154,12 @@ class MemoryConfig(BaseModel):
                 gamma=0.7,
                 forget_floor=0.05,
                 entity_merge_threshold=0.97,
+                entity_merge_candidate_threshold=0.85,
                 # Federal caps the agentic loop harder — a non-relaxable floor on
                 # bounded consumption (LLM10) for the sleep-path sub-agent.
-                consolidate_agent_max_turns=6,
-                consolidate_agent_max_tokens=8_000,
-                consolidate_agent_timeout_seconds=90.0,
+                consolidate_agent_max_turns=12,
+                consolidate_agent_max_tokens=14_000,
+                consolidate_agent_timeout_seconds=120.0,
             )
         if tier == "enterprise":
             return cls(tier="enterprise", alpha=0.2)

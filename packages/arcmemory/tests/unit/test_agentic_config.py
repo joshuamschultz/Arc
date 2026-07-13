@@ -11,9 +11,9 @@ def test_default_engine_is_agentic() -> None:
 
 def test_agentic_bounds_have_tight_defaults() -> None:
     cfg = MemoryConfig()
-    assert cfg.consolidate_agent_max_turns == 8
-    assert cfg.consolidate_agent_max_tokens == 12_000
-    assert cfg.consolidate_agent_timeout_seconds == 120.0
+    assert cfg.consolidate_agent_max_turns == 16
+    assert cfg.consolidate_agent_max_tokens == 20_000
+    assert cfg.consolidate_agent_timeout_seconds == 180.0
 
 
 def test_federal_tightens_agentic_bounds() -> None:

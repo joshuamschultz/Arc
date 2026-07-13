@@ -22,37 +22,50 @@ from arcagent.core.config import (
 from arcagent.core.errors import ConfigError
 
 
+@pytest.fixture(autouse=True)
+def _isolated_user_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point the user-wide config root at an empty dir so the real ~/.arc can't leak."""
+    monkeypatch.setenv("ARC_CONFIG_DIR", str(tmp_path_factory.mktemp("empty-arc")))
+
+
 @pytest.fixture()
 def valid_toml(tmp_path: Path) -> Path:
-    config = tmp_path / "arcagent.toml"
-    config.write_text(
+    """A per-agent dir; ``[llm]`` lives in its sibling ``arcllm.toml`` (post-split)."""
+    (tmp_path / "arcagent.toml").write_text(
         textwrap.dedent("""\
         [agent]
         name = "test-agent"
         org = "blackarc"
         type = "executor"
-
+    """)
+    )
+    (tmp_path / "arcllm.toml").write_text(
+        textwrap.dedent("""\
         [llm]
         model = "anthropic/claude-sonnet-4-5-20250929"
         max_tokens = 4096
     """)
     )
-    return config
+    return tmp_path / "arcagent.toml"
 
 
 @pytest.fixture()
 def minimal_toml(tmp_path: Path) -> Path:
-    config = tmp_path / "arcagent.toml"
-    config.write_text(
+    (tmp_path / "arcagent.toml").write_text(
         textwrap.dedent("""\
         [agent]
         name = "minimal"
-
+    """)
+    )
+    (tmp_path / "arcllm.toml").write_text(
+        textwrap.dedent("""\
         [llm]
         model = "anthropic/claude-sonnet-4-5-20250929"
     """)
     )
-    return config
+    return tmp_path / "arcagent.toml"
 
 
 class TestLoadConfig:
@@ -75,18 +88,17 @@ class TestLoadConfig:
         assert exc_info.value.code == "CONFIG_SYNTAX"
 
     def test_validation_error_includes_field_path(self, tmp_path: Path) -> None:
-        bad = tmp_path / "bad.toml"
-        bad.write_text(
+        (tmp_path / "arcagent.toml").write_text("[agent]\nname = \"test\"\n")
+        # Invalid [llm] now lives in the sibling arcllm.toml.
+        (tmp_path / "arcllm.toml").write_text(
             textwrap.dedent("""\
-            [agent]
-            name = "test"
-
             [llm]
+            model = "test/model"
             max_tokens = "not_a_number"
         """)
         )
         with pytest.raises(ConfigError) as exc_info:
-            load_config(bad)
+            load_config(tmp_path / "arcagent.toml")
         assert exc_info.value.code == "CONFIG_VALIDATION"
         assert "llm" in str(exc_info.value.details)
 
@@ -288,11 +300,10 @@ class TestConfigWithNewSections:
 
     def test_eval_from_toml(self, tmp_path: Path) -> None:
         config = tmp_path / "arcagent.toml"
-        config.write_text(
+        config.write_text("[agent]\nname = \"test\"\n")
+        # [llm] and [eval] are LLM-wire — they live in arcllm.toml.
+        (tmp_path / "arcllm.toml").write_text(
             textwrap.dedent("""\
-            [agent]
-            name = "test"
-
             [llm]
             model = "anthropic/claude-sonnet-4-5-20250929"
 
@@ -339,7 +350,15 @@ class TestConfigWithNewSections:
 
 class TestFullConfig:
     def test_full_toml(self, tmp_path: Path) -> None:
-        config = tmp_path / "full.toml"
+        config = tmp_path / "arcagent.toml"
+        (tmp_path / "arcllm.toml").write_text(
+            textwrap.dedent("""\
+            [llm]
+            model = "anthropic/claude-sonnet-4-5-20250929"
+            max_tokens = 8192
+            temperature = 0.5
+        """)
+        )
         config.write_text(
             textwrap.dedent("""\
             [agent]
@@ -347,11 +366,6 @@ class TestFullConfig:
             org = "blackarc"
             type = "planner"
             workspace = "/opt/agents/full"
-
-            [llm]
-            model = "anthropic/claude-sonnet-4-5-20250929"
-            max_tokens = 8192
-            temperature = 0.5
 
             [identity]
             did = "did:arc:blackarc:planner/abcd1234"

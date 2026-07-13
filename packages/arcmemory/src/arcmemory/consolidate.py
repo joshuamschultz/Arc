@@ -8,8 +8,11 @@ This is the orchestrator (SDD 4.4, REQ-030/031/034). Off the hot path, over a
 3. **promotes procedures** (action-sequences seen >= threshold — zero-LLM);
 4. **decays** unreinforced edges (salience-slowed, so a rare-but-vital edge lives);
 5. **merges near-duplicate cues** to bound controlled-vocabulary drift (T-054);
-6. **merges near-duplicate entity cards** (same-type, name-embedding) so identity
-   drift ("Austin, Texas" / "Austin, TX") folds into one card instead of many;
+6. **merges duplicate entity cards** — same-type name embeddings generate CANDIDATE
+   clusters (a wide cosine bar), one bounded LLM call conservatively confirms which
+   cards are the same real-world entity, and only the confirmed sub-groups fold. No
+   merge is ever done on embedding similarity alone (a false merge is worse than a
+   duplicate), and a card with no similar neighbor costs no LLM call;
 7. **reindexes** the touched chunks so surface recall sees the new curated files.
 
 Every mutation emits an ``AuditEvent`` to the injected sink (REQ-034), so the whole
@@ -25,9 +28,11 @@ did land, then clear the marker" — deterministic, no LLM, no partial state.
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -63,11 +68,15 @@ from arcmemory.types import (
     TimeWindow,
 )
 
+_log = logging.getLogger(__name__)
+
 _MANIFEST_NAME = ".consolidate-manifest.json"
 _LAST_RUN_NAME = ".consolidate-last-run"
 _HYGIENE_LAST_NAME = ".hygiene-last-run"
 # Cosine at/above which two cue embeddings are treated as the same concept (T-054).
 _CUE_MERGE_THRESHOLD = 0.92
+# Key facts summarized onto an EntityRef for the LLM merge-confirmer (bounded input).
+_ENTITY_REF_MAX_FACTS = 5
 
 
 def _wikilink_bullets(bullets: list[str], name_to_slug: dict[str, str]) -> list[str]:
@@ -101,8 +110,8 @@ class Consolidator:
         config: MemoryConfig | None = None,
         audit_sink: AuditSink | None = None,
         embedder: Embedder | None = None,
+        confirmer: distill.EntityMergeConfirmer | None = None,
         seed_vocabulary: Iterable[str] | None = None,
-        promote_threshold: int = 2,
         model: object | None = None,
         identity: AgentIdentity | None = None,
         policy_pipeline: PolicyPipeline | None = None,
@@ -115,8 +124,10 @@ class Consolidator:
         self._cfg = config or MemoryConfig()
         self._audit = audit_sink if audit_sink is not None else NullSink()
         self._embedder = embedder
+        # The LLM gate for slow-path entity de-dup. Absent -> candidates are found but
+        # never merged (loud degrade), because merge is never done on embedding alone.
+        self._confirmer = confirmer
         self._seed_vocab = set(seed_vocabulary or [])
-        self._promote_threshold = promote_threshold
         # Agentic-engine seams (the DEFAULT DISTILL path). Without a model the
         # engine cannot run, so consolidation falls back to the pipeline distiller.
         self._model = model
@@ -174,6 +185,9 @@ class Consolidator:
         window = window or TimeWindow()
         now = now or datetime.now(UTC)
         events = [e for e in self._episodic.events(self._scope.key) if window.contains(e.ts)]
+        # Distillation learns from the session CONVERSATION only — the user's turns and the
+        # agent's responses. Tool frames and other machinery are dropped (curate.py), so the
+        # LLM never distills the agent's own operational mechanics into facts/insights/methods.
         events = curate_for_distillation(events, self._cfg)
         if not events:
             self._stamp_last_run(now)
@@ -209,15 +223,14 @@ class Consolidator:
         """Route the DISTILL step: agentic engine by default, pipeline as fallback.
 
         Agentic mode runs the bounded ReAct loop over the memory tools (which write
-        cards directly). On a clean run the deterministic ``_promote_procedures``
-        zero-LLM step still runs; on a degrade (breach/timeout/arcrun-absent, or no
-        model wired) the whole window is finished by the pipeline distiller so no
-        data is lost.
+        cards — facts, insights, and procedures — directly). On a degrade
+        (breach/timeout/arcrun-absent, or no model wired) the whole window is finished
+        by the pipeline distiller so no data is lost.
         """
         if self._cfg.consolidate_engine == "agentic" and self._model is not None:
             result = await self._run_agentic(events)
             if not result.degraded:
-                return [], [], self._promote_procedures(events), result.tool_calls_made
+                return [], [], [], result.tool_calls_made
             self._emit("memory.consolidation_degraded", result.reason or "degraded")
         return await self._distill_pipeline(events)
 
@@ -251,7 +264,7 @@ class Consolidator:
         """The deterministic single-shot distiller path (fallback + engine=pipeline)."""
         facts = await self._extract_facts(events)
         insights = await self._mint_insights(events, [f for _, f in facts])
-        procedures = self._promote_procedures(events) + await self._extract_procedures(events)
+        procedures = await self._extract_procedures(events)
         return facts, insights, procedures, 0
 
     # -- nightly hygiene (heavier, once-per-local-day) ---------------------
@@ -357,14 +370,6 @@ class Consolidator:
             self._emit("memory.file_rewritten", str(self._insights.path_for(insight.id)))
         return minted
 
-    def _promote_procedures(self, events: list[Event]) -> list[Procedure]:
-        """Promote repeated action-sequences; audit each promotion + its file."""
-        promoted = self._procedures.promote(events, threshold=self._promote_threshold)
-        for procedure in promoted:
-            self._emit("memory.procedure_promoted", procedure.slug)
-            self._emit("memory.file_rewritten", str(self._procedures.path_for(procedure.slug)))
-        return promoted
-
     async def _extract_procedures(self, events: list[Event]) -> list[Procedure]:
         """Distill reusable how-to procedures (LLM); audit each upsert + its file."""
         extracted = await distill.extract_procedures(
@@ -466,25 +471,30 @@ class Consolidator:
         return merges
 
     async def merge_entities(self) -> list[tuple[str, str]]:
-        """Merge near-duplicate SAME-TYPE entity cards; fold facts + repoint links.
+        """Confirm-gated de-dup: candidate clusters -> ONE LLM call -> fold only confirmed.
 
-        The entity analogue of :meth:`merge_cues`, and the fix for identity drift:
-        ``write_fact`` upserts by canonical slug only, so the distiller phrasing the
-        same real-world thing differently across runs ("Austin, Texas" / "Austin, TX")
-        minted separate cards. Here each card's NAME is embedded; within one
-        ``entity_type`` the names are greedily clustered, and every non-canonical card
-        folds into the richest one (most facts, slug tie-break) via
-        :meth:`SemanticStore.merge_into`, with its graph edges repointed onto the
-        survivor. Returns the ``(merged_from, merged_into)`` slug pairs.
+        The fix for identity drift, done safely: ``write_fact`` upserts by canonical slug
+        only, so the distiller phrasing the same thing differently ("Austin, Texas" /
+        "Austin, TX") minted separate cards. Here each same-type card's NAME is embedded and
+        clustered at the WIDER ``entity_merge_candidate_threshold`` into CANDIDATE groups —
+        *possible* duplicates, never merged on that alone. Each cluster of >= 2 goes to
+        :meth:`EntityMergeConfirmer.confirm_entity_merges`, one bounded LLM call that
+        conservatively returns the slug sub-groups that are the SAME real-world entity; only
+        those fold, into the richest survivor (most facts, slug tie-break) via
+        :meth:`SemanticStore.merge_into`, with graph edges repointed. Returns the
+        ``(merged_from, merged_into)`` pairs.
 
-        Same-type gating + a conservative cosine threshold keep a place from ever
-        folding into a person; needs an embedder, so it is a no-op when none is wired.
+        LOUD degrade (never a silent ``[]``): with no embedder wired, or candidates found
+        but no confirmer wired, it emits a WARNING + a ``memory.dedup_skipped`` audit and
+        merges nothing. A card with no similar same-type neighbor forms no cluster, so no
+        LLM call is spent on it.
         """
         entities = [(s, e) for s in self._semantic.slugs() if (e := self._semantic.read(s))]
         if len(entities) < 2:
             return []
         embedded = await embed_or_none(self._embedder, [e.name for _, e in entities])
         if embedded is None:
+            self._emit_dedup_skipped("no-embedder")
             return []
         vectors = {slug: vec for (slug, _), vec in zip(entities, embedded, strict=True)}
 
@@ -492,31 +502,81 @@ class Consolidator:
         for slug, entity in entities:
             by_type[entity.entity_type].append((slug, entity))
 
-        merges: list[tuple[str, str]] = []
+        clusters: list[list[tuple[str, Entity]]] = []
         for group in by_type.values():
-            merges += self._merge_entity_group(group, vectors)
-        return merges
+            clusters += self._candidate_clusters(group, vectors)
+        if not clusters:
+            return []
+        if self._confirmer is None:
+            self._emit_dedup_skipped("no-confirmer")
+            return []
 
-    def _merge_entity_group(
+        candidate_groups = [[self._entity_ref(s, e) for s, e in cluster] for cluster in clusters]
+        confirmed = await self._confirmer.confirm_entity_merges(candidate_groups)
+        return self._apply_confirmed_merges(confirmed, dict(entities))
+
+    def _candidate_clusters(
         self, group: list[tuple[str, Entity]], vectors: dict[str, list[float]]
+    ) -> list[list[tuple[str, Entity]]]:
+        """Connected-components clustering of same-type cards by pairwise name-cosine.
+
+        Two cards share a cluster when their name embeddings clear the wide candidate
+        threshold (a *possible* duplicate). A card with no such neighbor forms no
+        cluster and is dropped, so it never reaches the LLM confirmer.
+        """
+        threshold = self._cfg.entity_merge_candidate_threshold
+        slugs = [slug for slug, _ in group]
+        parent = {slug: slug for slug in slugs}
+
+        def find(node: str) -> str:
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        for a, b in combinations(slugs, 2):
+            if _cosine(vectors[a], vectors[b]) >= threshold:
+                parent[find(a)] = find(b)
+
+        by_root: dict[str, list[tuple[str, Entity]]] = defaultdict(list)
+        for slug, entity in group:
+            by_root[find(slug)].append((slug, entity))
+        return [members for members in by_root.values() if len(members) >= 2]
+
+    def _entity_ref(self, slug: str, entity: Entity) -> distill.EntityRef:
+        """Summarize a card as an ``EntityRef`` (slug + name + type + a few key facts)."""
+        facts = [f"{f.predicate}: {f.value}" for f in entity.facts[:_ENTITY_REF_MAX_FACTS]]
+        return distill.EntityRef(
+            slug=slug, name=entity.name, entity_type=entity.entity_type, facts=facts
+        )
+
+    def _apply_confirmed_merges(
+        self, confirmed: list[list[str]], by_slug: dict[str, Entity]
     ) -> list[tuple[str, str]]:
-        """Greedily fold each same-type card into the richest near-duplicate survivor."""
-        # Richest first (most facts, slug tie-break) so canonicals keep the fullest card.
-        group.sort(key=lambda se: (-len(se[1].facts), se[0]))
-        threshold = self._cfg.entity_merge_threshold
-        canonicals: list[str] = []
+        """Fold each LLM-confirmed sub-group into its richest survivor; repoint edges."""
         merged: list[tuple[str, str]] = []
-        for slug, _entity in group:
-            match = next(
-                (c for c in canonicals if _cosine(vectors[slug], vectors[c]) >= threshold),
-                None,
-            )
-            if match is None:
-                canonicals.append(slug)
-            elif self._semantic.merge_into(match, slug):
-                self._graph.rename_node(self._scope.key, slug, match)
-                merged.append((slug, match))
+        for subgroup in confirmed:
+            cards = [(slug, by_slug[slug]) for slug in subgroup if slug in by_slug]
+            if len(cards) >= 2:
+                merged += self._merge_entity_group(cards)
         return merged
+
+    def _merge_entity_group(self, group: list[tuple[str, Entity]]) -> list[tuple[str, str]]:
+        """Fold a CONFIRMED same-entity sub-group into its richest survivor (non-lossy)."""
+        # Richest first (most facts, slug tie-break) so the survivor keeps the fullest card.
+        group.sort(key=lambda se: (-len(se[1].facts), se[0]))
+        survivor = group[0][0]
+        merged: list[tuple[str, str]] = []
+        for slug, _entity in group[1:]:
+            if self._semantic.merge_into(survivor, slug):
+                self._graph.rename_node(self._scope.key, slug, survivor)
+                merged.append((slug, survivor))
+        return merged
+
+    def _emit_dedup_skipped(self, reason: str) -> None:
+        """LOUD degrade for entity de-dup: WARNING log + a ``memory.dedup_skipped`` audit."""
+        _log.warning("arcmemory entity de-dup skipped: %s", reason)
+        self._emit("memory.dedup_skipped", "memory", extra={"reason": reason})
 
     async def _merge_entities_audited(self) -> None:
         """Run entity merge and audit each fold (part of the nightly hygiene)."""

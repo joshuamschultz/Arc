@@ -10,6 +10,8 @@ from typing import Any
 
 from arccli.commands.agent._common import (
     _CALCULATOR_TOOL,
+    _DEFAULT_ARCLLM_CONFIG,
+    _DEFAULT_ARCRUN_CONFIG,
     _DEFAULT_CONFIG,
     _print_scaffold_summary,
     _scaffold_workspace,
@@ -32,13 +34,18 @@ def _create(args: argparse.Namespace) -> None:
 
     agent_dir.mkdir(parents=True)
 
-    config_content = _DEFAULT_CONFIG.format(name=name)
+    # Three sibling config files compose into one effective config: arcagent.toml
+    # (everything else) + arcllm.toml (LLM-wire) + arcrun.toml (loop controls).
+    (agent_dir / "arcagent.toml").write_text(_DEFAULT_CONFIG.format(name=name))
+
+    arcllm_content = _DEFAULT_ARCLLM_CONFIG
     if model != "anthropic/claude-sonnet-4-5-20250929":
-        config_content = config_content.replace(
+        arcllm_content = arcllm_content.replace(
             'model = "anthropic/claude-sonnet-4-5-20250929"',
             f'model = "{model}"',
         )
-    (agent_dir / "arcagent.toml").write_text(config_content)
+    (agent_dir / "arcllm.toml").write_text(arcllm_content)
+    (agent_dir / "arcrun.toml").write_text(_DEFAULT_ARCRUN_CONFIG)
 
     _scaffold_workspace(agent_dir, name)
 
