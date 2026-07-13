@@ -75,13 +75,11 @@ class TestCreate:
         config = tomllib.loads(config_path.read_text())
         expected_sections = [
             "agent",
-            "llm",
             "identity",
             "vault",
             "tools",
             "telemetry",
             "context",
-            "eval",
             "modules",
             "session",
             "security",
@@ -89,6 +87,12 @@ class TestCreate:
         ]
         for section in expected_sections:
             assert section in config, f"Missing config section: {section}"
+        # LLM-wire + loop controls moved to sibling files (config split).
+        assert "llm" not in config and "eval" not in config, "LLM-wire lives in arcllm.toml"
+        arcllm = tomllib.loads((config_path.parent / "arcllm.toml").read_text())
+        assert {"llm", "eval", "budget"} <= arcllm.keys()
+        arcrun = tomllib.loads((config_path.parent / "arcrun.toml").read_text())
+        assert arcrun["max_turns"] == 25
         # Old SPEC-021-deprecated section must not reappear.
         assert "extensions" not in config, "[extensions] block should be gone (SPEC-021)"
         # SPEC-026 AC-6.1: [arcstore] block must have secure defaults.
@@ -209,9 +213,10 @@ class TestCreate:
 
     def test_create_custom_model(self, tmp_path):
         _arc("agent", "create", "my-agent", "--dir", str(tmp_path), "--model", "openai/gpt-4o")
-        config_path = tmp_path / "my-agent" / "arcagent.toml"
-        config = tomllib.loads(config_path.read_text())
-        assert config["llm"]["model"] == "openai/gpt-4o"
+        # Model is LLM-wire — it lands in arcllm.toml, not arcagent.toml.
+        arcllm_path = tmp_path / "my-agent" / "arcllm.toml"
+        arcllm = tomllib.loads(arcllm_path.read_text())
+        assert arcllm["llm"]["model"] == "openai/gpt-4o"
 
     def test_create_custom_dir(self, tmp_path):
         custom_dir = tmp_path / "custom" / "nested"

@@ -130,7 +130,12 @@ def _emit_module_blocks(preset: dict[str, dict[str, Any]]) -> list[str]:
 
 
 def _generate_arcllm_toml(tier: str, provider: str = "anthropic") -> str:
-    """Generate ~/.arc/arcllm.toml content for a given tier."""
+    """Generate ~/.arc/arcllm.toml content for a given tier.
+
+    Carries BOTH consumers of this file: arcllm's own global provider routing
+    ([defaults]/[vault]/[modules], read by arcllm) AND the user-wide LLM-wire
+    defaults arcagent composes ([llm]/[eval]/[budget]).
+    """
     preset = _TIER_PRESETS[tier]
     lines = [
         _USER_CONFIG_HEADER.format(pkg="arcllm", tier=tier),
@@ -145,7 +150,40 @@ def _generate_arcllm_toml(tier: str, provider: str = "anthropic") -> str:
         'url = ""',
         'region = ""',
         "",
+        "# --- LLM-wire defaults composed by arcagent (per-agent files override) ---",
+        "[llm]",
+        'model = "anthropic/claude-sonnet-4-5-20250929"',
+        "max_tokens = 8192",
+        "temperature = 0.7",
+        "",
+        "[eval]",
+        'provider = ""',
+        'model = ""',
+        "max_tokens = 1024",
+        "max_input_tokens = 100000",
+        "temperature = 0.2",
+        "",
+        "[budget]",
+        "# max_tokens =      # per-run token ceiling (unset = unbounded at personal)",
+        "# max_cost_usd =    # per-run cost ceiling",
+        "# max_requests =    # per-run request ceiling",
+        "",
         *_emit_module_blocks(preset),
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _generate_arcrun_toml(tier: str) -> str:
+    """Generate ~/.arc/arcrun.toml content — user-wide agentic-loop defaults."""
+    lines = [
+        _USER_CONFIG_HEADER.format(pkg="arcrun", tier=tier),
+        "max_turns = 25",
+        "# tool_timeout = 30.0             # per-tool wall-clock timeout (seconds)",
+        '# allowed_strategies = ["react"]  # restrict loop strategies; unset = all',
+        "approval_opt_in = []",
+        "",
+        "[sandbox]",
+        '# allowed_tools = ["calculate"]   # restrict loop tools; unset = all allowed',
     ]
     return "\n".join(lines) + "\n"
 
@@ -165,7 +203,6 @@ def _arcagent_base_config(tier: str) -> dict[str, Any]:
             "compact_threshold": 0.85,
             "emergency_threshold": 0.95,
         },
-        "eval": {"provider": "", "model": "", "max_tokens": 1024, "temperature": 0.2},
         "session": {"retention_count": 50, "retention_days": 30},
         # Memory ON by default (arcmemory): zero-LLM capture writes the raw
         # episodic stream + entity graph each turn; the distiller drives the slow
@@ -314,6 +351,7 @@ def _init(args: argparse.Namespace) -> None:
 
     targets: list[tuple[Path, str]] = [
         (arc_dir / "arcllm.toml", _generate_arcllm_toml(tier, provider)),
+        (arc_dir / "arcrun.toml", _generate_arcrun_toml(tier)),
         (arc_dir / "arcagent.toml", arcagent_content),
         (arc_dir / "gateway.toml", _generate_gateway_toml(tier)),
     ]

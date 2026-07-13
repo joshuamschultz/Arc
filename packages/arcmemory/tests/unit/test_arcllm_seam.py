@@ -15,6 +15,7 @@ import arcllm
 import pytest
 
 from arcmemory.arcllm_seam import ArcLLMDistiller, ArcLLMEmbedder
+from arcmemory.distill import EntityRef
 from arcmemory.index.rebuild import EmbeddingUnavailableError
 from arcmemory.types import Event, Fact
 
@@ -193,3 +194,42 @@ async def test_distiller_tolerates_garbage_content() -> None:
     result = await distiller.extract_facts([Event(event_id="e0", scope="s", kind="obs", text="t")])
 
     assert result.facts == []  # empty object, never a crash
+
+
+def _ref(slug: str) -> EntityRef:
+    return EntityRef(slug=slug, name=slug.title(), entity_type="place", facts=[])
+
+
+async def test_confirm_entity_merges_keeps_only_valid_subgroups() -> None:
+    """Confirmed subgroups are filtered to the cluster's own slugs and to >= 2 members."""
+    provider = _FakeProvider(
+        parsed={"merge": [["austin-texas", "austin-tx"], ["austin-metro"], ["austin-tx", "zzz"]]}
+    )
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    confirmed = await distiller.confirm_entity_merges(
+        [[_ref("austin-texas"), _ref("austin-tx"), _ref("austin-metro")]]
+    )
+
+    # ["austin-metro"] dropped (< 2); ["austin-tx","zzz"] -> ["austin-tx"] dropped (< 2).
+    assert confirmed == [["austin-texas", "austin-tx"]]
+    assert len(provider.invocations) == 1  # one bounded call for the one cluster
+
+
+async def test_confirm_entity_merges_empty_when_model_declines() -> None:
+    provider = _FakeProvider(parsed={"merge": []})
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    confirmed = await distiller.confirm_entity_merges([[_ref("a"), _ref("b")]])
+
+    assert confirmed == []  # nothing merged when the model says none are the same
+
+
+async def test_confirm_entity_merges_skips_singleton_cluster_without_a_call() -> None:
+    provider = _FakeProvider(parsed={"merge": [["a", "b"]]})
+    distiller = ArcLLMDistiller(_factory(provider), model="m")
+
+    confirmed = await distiller.confirm_entity_merges([[_ref("solo")]])
+
+    assert confirmed == []
+    assert provider.invocations == []  # a < 2 cluster costs no LLM call

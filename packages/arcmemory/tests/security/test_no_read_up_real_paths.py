@@ -103,7 +103,7 @@ async def test_secret_episodic_and_daily_log_dropped_for_unclassified(workspace:
     )  # BM25 + graph (no embedder)
 
     await brain.capture(
-        "the launch override code is alpha-seven", kind="obs", classification="SECRET"
+        "the launch override code is alpha-seven", kind="respond", classification="SECRET"
     )
     await brain.consolidate()  # writes a SECRET-labeled curated daily-notes file
     text = await brain.retrieve(
@@ -133,7 +133,7 @@ async def test_secret_insight_dropped_for_unclassified(workspace: Path) -> None:
     )
 
     await brain.capture(
-        "the reactor override sequence is asserted nightly", kind="obs", classification="SECRET"
+        "the reactor override sequence is asserted nightly", kind="respond", classification="SECRET"
     )
     await brain.consolidate()  # mints an insight whose instances are the SECRET event
     text = await brain.retrieve(
@@ -155,7 +155,7 @@ async def test_unlabeled_episodic_fails_closed_at_federal(workspace: Path) -> No
 
     # Empty label == "unknown provenance": at federal it must fail closed on the
     # raw episodic stream, even for a TOP_SECRET caller.
-    await brain.capture("the widget of unknown provenance", kind="obs", classification="")
+    await brain.capture("the widget of unknown provenance", kind="respond", classification="")
     text = await brain.retrieve(
         "widget provenance", clearance=Classification.TOP_SECRET.name, top_k=5, budget=10_000
     )
@@ -178,7 +178,7 @@ async def test_unlabeled_insight_fails_closed_at_federal(workspace: Path) -> Non
         audit_sink=sink,
     )
 
-    await brain.capture("the override step is asserted", kind="obs", classification="")
+    await brain.capture("the override step is asserted", kind="respond", classification="")
     await brain.consolidate()  # insight inherits the unknown label of its sole instance
     text = await brain.retrieve(
         "override procedure", clearance=Classification.TOP_SECRET.name, top_k=5, budget=10_000

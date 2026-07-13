@@ -820,10 +820,12 @@ class TestEdgeCases:
         body = resp.json()
         skills = body["skills"]
         # Workspace skills: 0 (no workspace/skills dir).
-        # Builtin skills: 4 known names from arcagent.builtins.capabilities.skills
-        sources = {s.get("source") for s in skills}
-        assert sources == {"builtin"} or sources == set(), (
-            f"expected only builtin skills, got sources={sources}"
+        # Builtin skills: 4 known names from arcagent.builtins.capabilities.skills.
+        # Inventory rows carry the loader's ``source_root`` (e.g. "builtins-skills");
+        # every surfaced skill must originate from a builtins scan root.
+        source_roots = {str(s.get("source_root", "")) for s in skills}
+        assert all(r.startswith("builtins") for r in source_roots) or not skills, (
+            f"expected only builtin skills, got source_roots={source_roots}"
         )
         # If arcagent is installed and has the canonical builtins, all 4 show up.
         if skills:

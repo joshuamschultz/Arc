@@ -249,6 +249,7 @@ class ArcMemoryBrain:
                 config=self._cfg,
                 audit_sink=self._audit,
                 embedder=self._embedder,
+                confirmer=self._distiller,
                 seed_vocabulary=self._seed_vocab,
                 model=self._model,
                 identity=self._identity,

@@ -105,7 +105,7 @@ returns the structured glass-box cards (provenance + `[[links]]`) behind the inj
 <workspace>/memory/
   entities/<slug>.md      # people/places/projects — fact triplets + wiki-links
   insights/<id>.md        # minted patterns/theses — the centerpiece
-  procedures/<slug>.md    # how-to cards, promoted by repetition
+  procedures/<slug>.md    # how-to methods distilled from the conversation
   daily-log/YYYY-MM-DD.md # curated daily meeting-minutes (not a transcript)
   index.db                # disposable SQLite index (see below)
 ```
@@ -116,8 +116,10 @@ returns the structured glass-box cards (provenance + `[[links]]`) behind the inj
 - **Insight (centerpiece).** Each card carries a mechanism-level `trigger` (embedded
   into abstraction space), abstract `cues` (graph nodes), and `instances` (the episodes
   it generalizes). Starts `guessed`, becomes `known` once corroborated.
-- **Procedural.** How-to cards with `use_count`; promoted from repeated action
-  sequences (zero-LLM) or extracted by the sleep pass.
+- **Procedural.** Reusable **methods** — explicit or implicit ways of doing something
+  the session revealed (how a thing is analyzed, decided, handled). Distilled by the LLM
+  from the conversation and **evolved in place** as later sessions add / remove / modify
+  steps. Never mined from tool/agentic activity.
 - **Daily notes.** A curated per-day rollup (timeline, discussions, decisions, people,
   goals, tasks) written by the sleep pass. It is *not* a raw per-turn transcript — the
   raw stream stays in the episodic store and is never duplicated here.
@@ -170,12 +172,21 @@ the host drives deeper, iterative recall by calling the recall **tool** from its
 agent loop, not by arcmemory spinning a sub-agent on the hot path.
 
 ### Consolidate (the sleep pass) & nightly hygiene
-Off the hot path, over a bounded window of the stream, the engine extracts facts
-(additive, corroboration-grown confidence), mints insights, promotes/extracts
-procedures, summarizes each day into curated notes, decays unreinforced edges, and
-merges near-duplicate cues and entities. Once per local day the first pass escalates
-to **nightly hygiene**: an embedder-free alias merge, reciprocal backlink repair, and
+Off the hot path, over a bounded window of the stream, the engine distills the **session
+conversation only** (the user's turns + the agent's responses — tool frames and other
+machinery are filtered out deterministically, so the agent's own mechanics never become
+memory): it extracts facts (additive, corroboration-grown confidence), mints insights,
+distills reusable methods (procedures), and summarizes each day into curated notes. It
+also decays unreinforced edges and de-duplicates entities. Once per local day the first
+pass escalates to **nightly hygiene**: alias merge, reciprocal backlink repair, and
 workspace dedup — all idempotent and file-driven.
+
+**Entity de-duplication is confirm-gated, never automatic.** Same-type cards are
+clustered by name-embedding into *candidate* groups (a wide net), then **one bounded LLM
+call per cluster** decides which are truly the same real-world entity — so "Josh Schultz"
+and "Joshua Shubbie" stay separate even though they embed alike. Only confirmed groups
+fold (non-lossy). With no embedder or no confirmer wired, it emits a loud
+`memory.dedup_skipped` audit rather than silently doing nothing.
 
 arcmemory owns cadence: the host polls `consolidate()`; arcmemory decides internally
 whether to recover a crashed run, run nightly hygiene, run the light pass, or no-op. A

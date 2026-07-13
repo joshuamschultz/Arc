@@ -8,6 +8,33 @@ versioning.
 
 ### Added
 
+- **Agentic consolidation (default engine).** The "sleep" pass is now a bounded arcrun
+  ReAct loop over a signed/authorized/audited memory-tool registry (`arcmemory.tools`) —
+  it searches before writing, merges, and links with judgment. Degrades cleanly to the
+  deterministic pipeline distiller on breach/timeout/no-model/arcrun-absent (no data loss).
+  arcrun is confined to a single adapter (`react_adapter.py`) so another harness is a
+  sibling adapter, not a refactor. Retrieval stays fast (ambient recall + a `recall` tool).
+- **Confirm-gated entity de-duplication.** Same-type cards are clustered by name-embedding
+  into candidates (wide `entity_merge_candidate_threshold`), then **one LLM call per cluster
+  confirms** which are the same real-world entity before any merge — never auto-merged on
+  embedding alone. Loud `memory.dedup_skipped` audit when no embedder/confirmer is wired.
+- **Search-before-write identity resolution** (exact → alias → embedding → LLM) and
+  **nightly hygiene** (alias merge + reciprocal backlink repair + workspace dedup).
+- **`SETUP.md`** — out-of-band setup (the `sentence-transformers` embedder requirement).
+
+### Changed
+
+- **Distillation learns from the session CONVERSATION only** (`user` + `respond` turns).
+  Tool frames and other operational kinds are filtered deterministically before the LLM
+  call, so the agent's own mechanics never become facts/insights/methods.
+- **Procedures are session-derived methods, not tool-sequence detection.** The deterministic
+  `_promote_procedures` (repeated action-sequences → cards) is removed; procedures are
+  distilled by the LLM as reusable methods (explicit + implicit) and **evolve in place** as
+  steps are added / removed / modified.
+- Agentic-loop caps raised (turns 8→16, tokens 12k→20k, timeout 120s→180s) so a memory-rich
+  agent has room to write, not just read. Day-summary distillation tolerates dict-shaped LLM
+  bullets instead of crashing the whole consolidation.
+
 - **`MemoryOperator`** (`arcmemory.operator`, T-702/703, COMP-001) — the single typed
   read/search/mutation facade arcui (and any other consumer) uses instead of touching SQLite
   directly (REQ-087). Paged episodic listing with created/recency/importance(1–10)/source

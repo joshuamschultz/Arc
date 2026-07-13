@@ -51,7 +51,7 @@ class _FakeDistiller:
 
 async def test_capture_is_zero_llm_and_writes_only_the_raw_stream(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID)
-    await brain.capture("Ada shipped the retry fix", kind="observation")
+    await brain.capture("Ada shipped the retry fix", kind="respond")
     # Capture writes the raw SQLite stream only; the curated daily-notes are a
     # consolidation output, so the fast path leaves no glass-box daily-log file.
     assert (workspace / "memory" / "index.db").exists()
@@ -60,7 +60,7 @@ async def test_capture_is_zero_llm_and_writes_only_the_raw_stream(workspace: Pat
 
 async def test_retrieve_returns_boundary_marked_text(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID)
-    await brain.capture("Ada owns the payments service", kind="observation")
+    await brain.capture("Ada owns the payments service", kind="respond")
     out = await brain.retrieve("who owns payments", top_k=5)
     assert isinstance(out, str)
     # Degraded (no embedder) still returns via BM25 + graph; boundary-marked when present.
@@ -76,7 +76,7 @@ async def test_retrieve_degrades_without_embedder_never_raises(workspace: Path) 
 
 async def test_consolidate_without_distiller_is_noop(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID)
-    await brain.capture("something happened", kind="observation")
+    await brain.capture("something happened", kind="respond")
     result = await brain.consolidate()
     assert result["insights_minted"] == 0
     assert "episode_summary" in result
@@ -84,7 +84,7 @@ async def test_consolidate_without_distiller_is_noop(workspace: Path) -> None:
 
 async def test_consolidate_with_distiller_mints_and_summarizes(workspace: Path) -> None:
     brain = ArcMemoryBrain(workspace, _DID, config=MemoryConfig(), distiller=_FakeDistiller())
-    await brain.capture("Ada retried the transient failure and it worked", kind="observation")
+    await brain.capture("Ada retried the transient failure and it worked", kind="respond")
     result = await brain.consolidate()
     assert result["insights_minted"] == 1
     assert result["facts_updated"] == 1
@@ -121,7 +121,7 @@ async def test_consolidate_is_gated_by_interval(workspace: Path) -> None:
         config=MemoryConfig(consolidate_interval_minutes=60),
         distiller=distiller,
     )
-    await brain.capture("Ada retried the transient failure and it worked", kind="observation")
+    await brain.capture("Ada retried the transient failure and it worked", kind="respond")
 
     first = await brain.consolidate()
     assert first["facts_updated"] == 1

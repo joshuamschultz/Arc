@@ -23,9 +23,9 @@ keeps this module free of any provider dependency.
 from __future__ import annotations
 
 import math
-from typing import Protocol
+from typing import Annotated, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 
 from arcmemory.config import MemoryConfig
 from arcmemory.index.graph import WeightedGraph
@@ -37,6 +37,30 @@ from arcmemory.stores.insight import InsightStore
 from arcmemory.stores.procedural import ProceduralStore
 from arcmemory.stores.semantic import SemanticStore
 from arcmemory.types import Confidence, Event, Fact, Insight, Procedure, Scope
+
+
+def _coerce_str_items(value: object) -> object:
+    """Coerce an LLM-proposed bullet list to ``list[str]`` instead of crashing.
+
+    The distiller occasionally returns items as objects (e.g. ``{"topic": "..."}``)
+    rather than plain strings; tolerate that — a dict folds to its joined values, any
+    other non-string is stringified — so one odd bullet can't abort the whole day
+    summary (and with it the entire consolidation).
+    """
+    if not isinstance(value, list):
+        return value
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            out.append("; ".join(str(v) for v in item.values() if v is not None))
+        else:
+            out.append(str(item))
+    return out
+
+
+_StrList = Annotated[list[str], BeforeValidator(_coerce_str_items)]
 
 
 class FactCandidate(BaseModel):
@@ -82,12 +106,12 @@ class DaySummaryDraft(BaseModel):
     the caller (not the LLM), so they are absent here.
     """
 
-    timeline: list[str] = Field(default_factory=list)
-    discussions: list[str] = Field(default_factory=list)
-    decisions: list[str] = Field(default_factory=list)
-    people: list[str] = Field(default_factory=list)
-    goals: list[str] = Field(default_factory=list)
-    tasks: list[str] = Field(default_factory=list)
+    timeline: _StrList = Field(default_factory=list)
+    discussions: _StrList = Field(default_factory=list)
+    decisions: _StrList = Field(default_factory=list)
+    people: _StrList = Field(default_factory=list)
+    goals: _StrList = Field(default_factory=list)
+    tasks: _StrList = Field(default_factory=list)
 
 
 class ProcedureCandidate(BaseModel):
@@ -105,12 +129,27 @@ class ProcedureExtraction(BaseModel):
     procedures: list[ProcedureCandidate] = Field(default_factory=list)
 
 
+class EntityRef(BaseModel):
+    """A compact card summary handed to the LLM merge-confirmer (slug + a few facts).
+
+    Just enough for the model to judge identity: the ``slug`` it decides on, the
+    human ``name``, the ``entity_type``, and a handful of key ``predicate: value`` facts.
+    """
+
+    slug: str
+    name: str
+    entity_type: str
+    facts: list[str] = Field(default_factory=list)
+
+
 class Distiller(Protocol):
     """The bounded structured-completion seam. Injected, never imported.
 
     Single-shot calls, no agentic loop: ``extract_facts`` proposes fact triplets;
     ``mint_insights`` proposes abstractions; ``extract_procedures`` proposes reusable
-    how-tos; ``summarize_day`` condenses a day's events into meeting-minutes notes.
+    how-tos; ``summarize_day`` condenses a day's events into meeting-minutes notes;
+    ``confirm_entity_merges`` conservatively confirms which candidate cards are the
+    same real-world entity (the slow-path de-dup gate).
     """
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction: ...
@@ -124,6 +163,22 @@ class Distiller(Protocol):
     async def disambiguate_entity(
         self, name: str, entity_type: str, candidates: list[str]
     ) -> str | None: ...
+
+    async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]: ...
+
+
+class EntityMergeConfirmer(Protocol):
+    """The single-method seam that gates slow-path entity de-duplication.
+
+    Given CANDIDATE clusters (same-type cards whose names merely embed close), it
+    returns the slug sub-groups that are UNAMBIGUOUSLY the same real-world entity —
+    each returned sub-group has >= 2 slugs, and different-but-similar entities (a
+    'Josh Schultz' vs a 'Joshua Shubbie') are kept apart. Any :class:`Distiller`
+    satisfies it structurally, so production passes the same arcllm-backed distiller;
+    tests inject a stub with only this method. Merge is never done on embedding alone.
+    """
+
+    async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]: ...
 
 
 class EntityDisambiguator(Protocol):
@@ -413,6 +468,8 @@ __all__ = [
     "DaySummaryDraft",
     "Distiller",
     "EntityDisambiguator",
+    "EntityMergeConfirmer",
+    "EntityRef",
     "FactCandidate",
     "FactExtraction",
     "InsightCandidate",

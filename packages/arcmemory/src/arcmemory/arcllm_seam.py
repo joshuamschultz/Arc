@@ -31,7 +31,13 @@ from typing import Any
 
 import arcllm
 
-from arcmemory.distill import DaySummaryDraft, FactExtraction, InsightMint, ProcedureExtraction
+from arcmemory.distill import (
+    DaySummaryDraft,
+    EntityRef,
+    FactExtraction,
+    InsightMint,
+    ProcedureExtraction,
+)
 from arcmemory.index.rebuild import EmbeddingUnavailableError
 from arcmemory.types import Event, Fact
 
@@ -93,15 +99,26 @@ _FACT_SYSTEM = (
 )
 
 _PROCEDURE_SYSTEM = (
-    "You are the memory of an executive assistant. From a window of raw agent events, "
-    "extract reusable PROCEDURES — how a recurring task or process gets done — so the "
-    "next time a similar situation arises the correct steps can be found and followed. "
+    "You are the memory of an executive assistant. From the session conversation, extract "
+    "reusable PROCEDURES — the durable METHODS behind how something is done, so the same "
+    "approach can be found and reapplied next time a like situation arises.\n"
+    "Capture the method whether it is STATED explicitly (a walked-through, step-by-step "
+    "how-to) or left IMPLICIT (a consistent way of approaching, deciding, or handling a "
+    "recurring kind of situation that you can infer from how it was reasoned through here). "
+    "A procedure is domain-agnostic: any repeatable way of doing, analyzing, deciding, "
+    "creating, or handling counts — abstract the transferable method, not the one specific "
+    "instance.\n"
     "Return ONLY a JSON object of the form "
     '{"procedures": [{"slug": str, "title": str, "when_to_use": str, "steps": [str]}]}. '
-    "slug is a stable lowercase id; title names the process; when_to_use is the trigger "
-    "situation to match against later (make it searchable); steps are the ordered actions. "
-    "Only emit a procedure for a real, repeatable how-to demonstrated in the events — not "
-    "one-off facts or chatter. Emit nothing you cannot ground. No prose."
+    "slug is a STABLE lowercase id for the method — reuse the SAME slug for the same method "
+    "across sessions so it accumulates rather than duplicates; title names the method; "
+    "when_to_use is the trigger situation to match against later (make it searchable); "
+    "steps are the ordered actions/considerations of the method. If the session refines a "
+    "method you have seen before (a step added, removed, or changed), re-emit it under its "
+    "existing slug with the FULL updated steps so the card evolves in place.\n"
+    "Only emit a method that is genuinely reusable and grounded in the conversation — never "
+    "one-off facts, chatter, or the agent's own tool/runtime mechanics. Emit nothing you "
+    "cannot ground. No prose."
 )
 
 _INSIGHT_SYSTEM = (
@@ -121,6 +138,22 @@ _DISAMBIGUATE_SYSTEM = (
     'Return ONLY a JSON object of the form {"slug": str|null}: the matching existing '
     "slug if one is the same entity, or null if the candidate is genuinely new. Choose "
     "at most one. When unsure, answer null — a wrong merge is worse than a duplicate."
+)
+
+_MERGE_CONFIRM_SYSTEM = (
+    "You decide which entity cards describe the SAME real-world entity so a memory "
+    "system can safely merge duplicates. You are given a small CANDIDATE CLUSTER of "
+    "cards (slug, name, type, and a few key facts) that share only a similar NAME. "
+    "Group together ONLY the cards that are UNAMBIGUOUSLY the same real-world person, "
+    "place, project, company, or thing — e.g. 'ACME' and 'acme-corp', or 'Austin, "
+    "Texas' and 'Austin, TX'. Different people, places, projects, or organizations "
+    "that merely sound or spell alike (e.g. 'Josh Schultz' vs 'Joshua Shubbie', or two "
+    "different projects both called 'Custom ERP' at different companies) MUST NOT be "
+    "grouped. When in doubt, keep them SEPARATE — a wrong merge is far worse than a "
+    "leftover duplicate. Use the facts, not just the names, to decide. Return ONLY a "
+    'JSON object of the form {"merge": [["slug-a", "slug-b"], ...]}: each inner list is '
+    "a set of >= 2 slugs (drawn from the input) that are the same entity. Return "
+    '{"merge": []} when none should be merged. No prose.'
 )
 
 _DAY_SYSTEM = (
@@ -185,6 +218,28 @@ class ArcLLMDistiller:
             return None
         return chosen if chosen in candidates else None
 
+    async def confirm_entity_merges(self, groups: list[list[EntityRef]]) -> list[list[str]]:
+        """One bounded, conservative call per candidate cluster -> confirmed same-entity subgroups.
+
+        A card without a similar same-type neighbour never reaches here (the caller only
+        clusters >= 2 cards), so the LLM is spent only on high-probability duplicates. Each
+        confirmed subgroup is filtered back to the cluster's own slugs and to >= 2 members,
+        so a hallucinated or singleton answer can never trigger a merge.
+        """
+        confirmed: list[list[str]] = []
+        for group in groups:
+            if len(group) < 2:
+                continue
+            slugs = {ref.slug for ref in group}
+            data = await self._complete(_MERGE_CONFIRM_SYSTEM, self._render_cards(group))
+            for sub in data.get("merge", []):
+                if not isinstance(sub, list):
+                    continue
+                picked = [s for s in dict.fromkeys(sub) if isinstance(s, str) and s in slugs]
+                if len(picked) >= 2:
+                    confirmed.append(picked)
+        return confirmed
+
     async def _complete(self, system: str, user: str) -> dict[str, Any]:
         """Run one bounded JSON completion and parse the object (provider-agnostic)."""
         messages = [
@@ -225,6 +280,17 @@ class ArcLLMDistiller:
     def _render_facts(facts: list[Fact]) -> str:
         """One line per known fact, for insight grounding."""
         return "\n".join(f"- {f.predicate}: {f.value}" for f in facts) or "(none)"
+
+    @staticmethod
+    def _render_cards(cards: list[EntityRef]) -> str:
+        """One line per candidate card (slug + name + type + key facts) for the confirmer."""
+        lines: list[str] = []
+        for card in cards:
+            facts = "; ".join(card.facts) if card.facts else "(no facts)"
+            lines.append(
+                f"- slug={card.slug} | name={card.name} | type={card.entity_type} | {facts}"
+            )
+        return "\n".join(lines)
 
 
 __all__ = ["ArcLLMDistiller", "ArcLLMEmbedder", "ProviderFactory"]

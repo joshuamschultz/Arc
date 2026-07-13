@@ -20,6 +20,8 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
+from arcrun import SandboxConfig
+
 from arcagent.tools._transport import RegisteredTool
 from arcagent.tools.checkpoint_signing import sign_record
 from arcagent.tools.human_gate import HumanGate
@@ -90,9 +92,12 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
     thresholds as dumb mechanism (same split as the SPEC-038 budget floor).
     """
     sec = agent._config.security
+    run_cfg = agent._config.arcrun
     registry = agent._tool_registry
     tools = list(registry.tools.values()) if registry is not None else []
-    approval_set = resolve_approval_set(tools, sec.tier)
+    approval_set = resolve_approval_set(
+        tools, sec.tier, opt_in=frozenset(run_cfg.approval_opt_in)
+    )
     provider = None
     if approval_set and agent._human_gate is not None:
         provider = build_approval_provider(
@@ -113,10 +118,23 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
             session.persist_checkpoint(cp, signature=signature)
         )
 
+    sandbox = (
+        SandboxConfig(allowed_tools=run_cfg.sandbox.allowed_tools)
+        if run_cfg.sandbox.allowed_tools is not None
+        else None
+    )
+
     return {
         "on_checkpoint": _on_checkpoint,
         "approval_provider": provider,
         "approval_required_tools": approval_set,
+        # Loop mechanics (arcrun.toml). Behaviour-preserving defaults: max_turns=25,
+        # tool_timeout=None, allowed_strategies=None, sandbox=None (full-allow).
+        "max_turns": run_cfg.max_turns,
+        "tool_timeout": run_cfg.tool_timeout,
+        "allowed_strategies": run_cfg.allowed_strategies,
+        "sandbox": sandbox,
+        # Security floors ([security]) — tier-resolved circuit breakers + parallelism cap.
         "max_parallel": sec.loop_max_parallel,
         "max_repeat": sec.runaway_max_repeat,
         "max_consecutive_errors": sec.error_cascade_max,

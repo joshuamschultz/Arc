@@ -1,18 +1,32 @@
 """Config parser — TOML + Pydantic 2.x validation with env var overrides.
 
+An agent's configuration is split across THREE sibling files in one directory,
+one per concern boundary (CLAUDE.md: "don't mix concerns"):
+
+  * ``arcagent.toml`` — agent/identity/vault/tools/telemetry/context/session/
+    security/capabilities/team/spawn/ui/``[modules.*]``/``[arcstore]``.
+  * ``arcllm.toml``   — LLM-wire: ``[llm]`` (+ ``[llm.modules.*]``), ``[eval]``,
+    ``[budget]``. (The same file also carries arcllm's own global provider
+    routing at ``[defaults]``/``[modules]``/``[vault]``, read by arcllm itself —
+    this loader only ever reads ``[llm]``/``[eval]``/``[budget]`` from it.)
+  * ``arcrun.toml``   — the agentic-loop controls (``ArcRunConfig``, top-level).
+
 Two-phase error handling:
 1. TOML syntax errors (with line/column from tomllib)
 2. Pydantic validation errors (with field paths)
 
-Layered precedence (later wins):
-  1. User-wide defaults  (${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml)
-  2. Per-agent file      (the path argument — REQUIRED, supplies identity)
-  3. Env var overrides   (ARCAGENT_ prefix with __ for nesting)
+Each file-family deep-merges independently (later wins):
+  1. Packaged defaults   (in-code: the required ``[llm].model`` fallback)
+  2. User-wide defaults   (${ARC_CONFIG_DIR:-~/.arc}/<file>.toml)
+  3. Per-agent file       (<agent-dir>/<file>.toml)
+The three merged results are composed into one :class:`ArcAgentConfig`; a
+missing sibling falls through to packaged/Pydantic defaults. Env vars
+(ARCAGENT_ prefix, ``__`` for nesting) override the composed result last.
 
-Dicts deep-merge across layers; lists and scalars are replaced. Missing
-user-wide file = no-op (current behavior preserved).
+Dicts deep-merge across layers; lists and scalars are replaced.
 
-  ARCAGENT_LLM__MODEL=openai/gpt-4o overrides [llm] model
+  ARCAGENT_LLM__MODEL=openai/gpt-4o        overrides [llm] model (arcllm.toml)
+  ARCAGENT_ARCRUN__MAX_TURNS=50            overrides the loop cap (arcrun.toml)
 """
 
 from __future__ import annotations
@@ -29,6 +43,11 @@ from arcagent.core.errors import ConfigError
 from arcagent.tiers import SECURITY_CONFIG_KNOBS, resolve_tier_floor
 
 _logger = logging.getLogger("arcagent.config")
+
+# Packaged fallback model — the base layer of the arcllm.toml chain. Ensures an
+# agent whose directory has ONLY arcagent.toml still boots with a valid LLM
+# config (``[llm].model`` is otherwise required and has no field default).
+DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 
 # --- Nested config models ---
 
@@ -536,6 +555,54 @@ class CapabilitiesConfig(BaseModel):
     )
 
 
+class SandboxSettings(BaseModel):
+    """``[arcrun.sandbox]`` — the loop's tool-permission boundary.
+
+    ``allowed_tools = None`` (the default) permits every registered tool; a list
+    restricts the loop to exactly those tool names. Maps to arcrun's
+    ``SandboxConfig`` at dispatch; the runtime ``check`` predicate is wired in
+    code, never from config.
+    """
+
+    allowed_tools: list[str] | None = None
+
+
+class ArcRunConfig(BaseModel):
+    """``arcrun.toml`` — the agentic-loop controls (arcrun's mechanism knobs).
+
+    Owns the loop mechanics arcagent hands to :func:`arcrun.run_stream` /
+    :func:`arcrun.run_async`: turn ceiling, per-tool timeout, strategy filter,
+    the sandbox tool boundary, and the personal/enterprise approval opt-in list.
+
+    NOT here: the per-run token/cost/request ceilings (``[budget]`` — an LLM-cost
+    concern that lives in ``arcllm.toml``) and the tier-floored circuit breakers
+    (``runaway_max_repeat`` / ``error_cascade_max`` / ``loop_max_parallel`` — SC
+    security floors that live in ``[security]``). Both are still resolved and
+    handed to the loop by ``build_loop_controls``; they are simply owned by the
+    concern that governs their stringency.
+    """
+
+    max_turns: int = Field(default=25, gt=0, description="Hard cap on agentic loop turns.")
+    tool_timeout: float | None = Field(
+        default=None,
+        gt=0,
+        description="Per-tool-call wall-clock timeout (seconds). None = no loop-level timeout.",
+    )
+    allowed_strategies: list[str] | None = Field(
+        default=None,
+        description="Restrict the loop to these strategy names. None = all registered strategies.",
+    )
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    approval_opt_in: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Tool names that require human approval at personal/enterprise tier "
+            "even when the tier ladder would not flag them. Ignored at federal "
+            "(the full surface is already gated)."
+        ),
+    )
+
+
 # --- Root config ---
 
 
@@ -564,6 +631,7 @@ class ArcAgentConfig(BaseModel):
     spawn: SpawnConfig = SpawnConfig()
     ui: UIConfig = UIConfig()
     budget: BudgetConfig = BudgetConfig()
+    arcrun: ArcRunConfig = ArcRunConfig()
 
 
 _ENV_PREFIX = "ARCAGENT_"
@@ -612,11 +680,34 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _user_config_path() -> Path:
-    """Return the user-wide override path: ${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml."""
+# LLM-wire sections composed from the arcllm.toml chain (never from arcagent.toml).
+_ARCLLM_SECTIONS = ("llm", "eval", "budget")
+
+# Base layer of the arcllm.toml chain: the one required field that has no Pydantic
+# default, so an agent dir with only arcagent.toml still validates.
+_PACKAGED_LLM_DEFAULTS: dict[str, Any] = {"llm": {"model": DEFAULT_MODEL}}
+
+
+def _user_config_root() -> Path:
+    """Return the user-wide config dir: ${ARC_CONFIG_DIR:-~/.arc}."""
     base = os.environ.get("ARC_CONFIG_DIR")
-    root = Path(base).expanduser() if base else Path.home() / ".arc"
-    return root / "arcagent.toml"
+    return Path(base).expanduser() if base else Path.home() / ".arc"
+
+
+def _sibling_chain(filename: str, agent_dir: Path) -> dict[str, Any]:
+    """Merge one file-family: user-wide ``${ARC_CONFIG_DIR}/<file>`` < per-agent.
+
+    Each layer is optional; a missing file is a no-op. Returns the merged raw
+    dict (empty when neither layer exists).
+    """
+    data: dict[str, Any] = {}
+    user_path = _user_config_root() / filename
+    if user_path.exists():
+        data = _parse_toml(user_path)
+    per_agent = agent_dir / filename
+    if per_agent.exists():
+        data = _deep_merge(data, _parse_toml(per_agent))
+    return data
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -643,12 +734,46 @@ def _parse_toml(path: Path) -> dict[str, Any]:
         ) from exc
 
 
-def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
-    """Load and validate ArcAgent configuration.
+def _compose_raw_config(path: Path) -> dict[str, Any]:
+    """Compose the raw config dict from the three sibling file-families.
 
-    Layered: ${ARC_CONFIG_DIR:-~/.arc}/arcagent.toml is the user-wide base
-    (when present); ``path`` is the per-agent file and supplies identity.
-    Env vars (ARCAGENT_ prefix) override both.
+    ``path`` is the per-agent ``arcagent.toml``; its siblings ``arcllm.toml`` and
+    ``arcrun.toml`` are read from the SAME directory. Each family merges
+    independently, then LLM-wire sections and the loop-control block are grafted
+    onto the arcagent dict — so ``[llm]``/``[eval]``/``[budget]`` load ONLY from
+    the arcllm chain and the loop controls ONLY from the arcrun chain.
+    """
+    agent_dir = path.parent
+
+    # arcagent family: user-wide base < the per-agent file itself (``path`` — its
+    # basename is caller-chosen, so it is parsed directly, not by fixed name).
+    raw: dict[str, Any] = {}
+    user_agent = _user_config_root() / "arcagent.toml"
+    if user_agent.exists():
+        raw = _parse_toml(user_agent)
+    raw = _deep_merge(raw, _parse_toml(path))
+
+    # arcllm family: packaged default < user-wide < per-agent. Graft the
+    # LLM-wire sections on, replacing any stray copies in arcagent.toml.
+    llm_raw = _deep_merge(_PACKAGED_LLM_DEFAULTS, _sibling_chain("arcllm.toml", agent_dir))
+    for section in _ARCLLM_SECTIONS:
+        raw.pop(section, None)
+        if section in llm_raw:
+            raw[section] = llm_raw[section]
+
+    # arcrun family: the whole file IS the loop-control block.
+    raw["arcrun"] = _sibling_chain("arcrun.toml", agent_dir)
+    return raw
+
+
+def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
+    """Load and validate an agent's composed ArcAgent configuration.
+
+    Reads ``path`` (the per-agent ``arcagent.toml``) plus its sibling
+    ``arcllm.toml`` and ``arcrun.toml`` from the same directory, deep-merging
+    each file-family over its user-wide (${ARC_CONFIG_DIR:-~/.arc}) base, then
+    composing the three into one config. Env vars (ARCAGENT_ prefix) override
+    the composed result.
     """
     if not path.exists():
         raise ConfigError(
@@ -657,14 +782,7 @@ def load_config(path: Path = Path("arcagent.toml")) -> ArcAgentConfig:
             details={"path": str(path)},
         )
 
-    raw_data: dict[str, Any] = {}
-
-    user_path = _user_config_path()
-    if user_path.exists():
-        raw_data = _parse_toml(user_path)
-
-    raw_data = _deep_merge(raw_data, _parse_toml(path))
-
+    raw_data = _compose_raw_config(path)
     _apply_env_overrides(raw_data)
 
     try:

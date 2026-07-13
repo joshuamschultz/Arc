@@ -89,64 +89,76 @@ Working memory for the agent. Updated during conversations.
 """
 
 _DEFAULT_CONFIG = """\
-[agent]
-name = "{name}"
-org = "local"
-type = "executor"
-workspace = "./workspace"
+# ArcAgent config — everything EXCEPT LLM-wire (arcllm.toml) and the agentic
+# loop controls (arcrun.toml). Grouped by concern; every operator-settable knob
+# is present at its default with a one-line note. Sibling files load from the
+# SAME directory and compose into one effective config.
 
-[llm]
-model = "anthropic/claude-sonnet-4-5-20250929"
-max_tokens = 8192
-temperature = 0.7
+# =========================================================================
+# 1. IDENTITY & CORE — who this agent is
+# =========================================================================
+[agent]
+name = "{name}"          # logical/display name
+org = "local"            # owning org/namespace
+type = "executor"        # agent role label
+workspace = "./workspace"  # workspace dir (relative to this file)
 
 [identity]
-did = ""
-key_dir = "~/.arcagent/keys"
+did = ""                     # agent DID (minted by `arc agent create`)
+key_dir = "~/.arcagent/keys"  # keypair dir (env-override blocked)
+vault_path = ""              # resolve identity key via vault instead of disk
 
-[vault]
-backend = ""
+[ui]
+# ArcUI Fleet / Team-Chat display metadata (read by arcui; core ignores it).
+display_name = ""  # falls back to agent.name when empty
+role_label = ""    # role chip shown in the Fleet panel
+color = ""         # display color (hex or name)
+hidden = false     # hide this agent from the Fleet panel
 
-[tools.policy]
-allow = []
-deny = []
-timeout_seconds = 30
-
-[telemetry]
-enabled = true
-service_name = "{name}"
-log_level = "INFO"
-export_traces = false
-
+# =========================================================================
+# 2. CONTEXT & SESSION — the agent's working-memory lifecycle
+# =========================================================================
 [context]
-max_tokens = 128000
-
-[eval]
-provider = ""
-model = ""
-max_tokens = 1024
-temperature = 0.2
-fallback_behavior = "skip"
+max_tokens = 128000        # context-window token budget
+prune_threshold = 0.70     # fraction of budget → prune
+compact_threshold = 0.85   # fraction → compact
+emergency_threshold = 0.95  # fraction → emergency compaction
+estimate_multiplier = 1.1  # token-estimate safety multiplier
 
 [session]
-retention_count = 50
-retention_days = 30
+retention_count = 50               # keep last N sessions
+retention_days = 30                # or sessions from last N days
+compaction_summary_max_chars = 2000  # cap on a compaction summary
 
+# =========================================================================
+# 3. SECURITY & EXECUTION — the federal-first envelope (review as a unit)
+# =========================================================================
 [security]
-tier = "personal"
+tier = "personal"                # federal | enterprise | personal (canonical tier)
+clearance = "UNCLASSIFIED"       # agent max clearance (operator-authored)
+classification_enforced = false  # fail closed on missing clearance (federal posture)
+# Loop circuit breakers (tier-floored security controls; None disables at
+# personal). runaway = identical tool-call signatures; cascade = consecutive
+# failures; parallel = concurrent in-flight tool calls.
+# runaway_max_repeat = 8         # (federal floor; unset = disabled at personal)
+# error_cascade_max = 5          # (federal floor; unset = disabled at personal)
+loop_max_parallel = 10
+policy_audit_log = ""            # WORM policy-decision chain (empty = <workspace>/audit/)
+operator_key_dir = "~/.arc/operator"  # deployment operator key dir (audit authority)
+operator_vault_path = ""         # resolve operator key via vault instead of disk
+signing_algorithm = "ed25519"    # ed25519 | ecdsa-p256 (federal forces ecdsa-p256)
+custody = "in_process"           # in_process | vault_transit (enterprise default vault_transit)
+notary_keystore = ""             # vault_transit keystore (empty = <operator_key_dir>/notary)
+require_fips = false             # federal floor: fail closed unless FIPS-validated crypto
+witness_medium_path = "~/.arc/witness/anchor.log"  # federal witness (outside operator_key_dir)
+witness_mode = "offline"         # offline | transparency_log
+witness_log_url = ""             # transparency-log endpoint when witness_mode = transparency_log
 
 [security.validators]
+# Personal-only: auto-run agent-authored Python after the AST gate.
+# Enterprise/federal must TOFU-approve via `arc trust approve`.
 auto_run_agent_code = false
-
-[execution]
-# Code-execution isolation floor follows [security] tier:
-#   federal -> VM (Firecracker/KVM), enterprise -> container, personal -> container.
-# A PERSONAL-tier operator MAY relax down to a bare host subprocess
-# ("sandbox off" — full host filesystem access, no container) by uncommenting
-# exactly one of the lines below. Rejected at enterprise/federal (cannot go
-# below the tier floor). Unset = the tier default (container for personal).
-#   relax_isolation = "off"        # sandbox OFF: run on the host, no isolation
-#   relax_isolation = "container"  # explicit container (same as the default)
+# [[security.validators.approved]] entries are appended only by `arc trust approve`.
 
 [capabilities]
 # Relax the AST import gate for agent-authored tools under
@@ -158,8 +170,54 @@ auto_run_agent_code = false
 allow_all_imports = false
 allow_imports = []
 
+[execution]
+# Code-execution isolation floor follows [security] tier:
+#   federal -> VM (Firecracker/KVM), enterprise -> container, personal -> container.
+# A PERSONAL-tier operator MAY relax down to a bare host subprocess
+# ("sandbox off" — full host filesystem access, no container) by uncommenting
+# exactly one of the lines below. Rejected at enterprise/federal (cannot go
+# below the tier floor). Unset = the tier default (container for personal).
+#   relax_isolation = "off"        # sandbox OFF: run on the host, no isolation
+#   relax_isolation = "container"  # explicit container (same as the default)
+
+[vault]
+backend = ""            # vault backend selector (ArcLLM VaultResolver; env-override blocked)
+cache_ttl_seconds = 300  # credential cache TTL (seconds)
+
+# =========================================================================
+# 4. TOOLS — the agent's hands and their guardrails
+# =========================================================================
+[tools]
+allowed_module_prefixes = ["arcagent."]  # import prefixes permitted for module-transport tools
+preamble = ""                            # tool-system preamble text (env-override blocked)
+
+[tools.policy]
+allow = []              # tool allowlist (empty = allow all)
+deny = []               # tool denylist (deny wins)
+timeout_seconds = 30    # per-tool call timeout
+allowed_paths = []      # filesystem paths tools may access
+protected_paths = []    # read-only-to-agent paths (unioned with goal-file defaults)
+egress_allowlist = []   # scheme://host[:port] origins external-comms tools may reach
+classifications = {{}}    # per-tool resource classification label (no-read-up)
+egress_clearances = {{}}  # per-origin destination clearance (no-exfil)
+
+[tools.human_gate]
+# Lethal-trifecta human-approval gate. auto_approve lists named low-risk leg
+# compositions personal/enterprise may approve without a human (federal ignores).
+timeout_seconds = 300.0
+auto_approve = []
+
+# Tool transports (add entries as needed):
+# [tools.mcp_servers.<name>]  command = "..."  args = []  env = {{}}  timeout_seconds = 30
+# [tools.http.<name>]         url = "..."  method = "POST"  headers = {{}}  timeout_seconds = 30
+# [tools.process.<name>]      command = "..."  args = []  timeout_seconds = 30  (env blocked)
+
+# =========================================================================
+# 5. MEMORY — durable-memory concerns (Brain, ACL, cockpit, profiles)
+# =========================================================================
 [modules.memory]
 enabled = true
+priority = 100
 
 [modules.memory.config]
 # Dual-speed analogical memory (arcmemory). Fresh agents get memory ON:
@@ -169,69 +227,336 @@ enabled = true
 # insights, and the human-readable daily-notes (workspace/memory/daily-log/
 # YYYY-MM-DD.md, a summary — not a transcript). Without distill_provider,
 # consolidation is a no-op and none of those curated files are ever written.
-# Override the provider/model to match your agent's LLM; brain = "none" turns
-# memory off entirely.
-brain = "arcmemory"
-distill_provider = "anthropic"
-distill_model = "claude-sonnet-4-5-20250929"
+# brain = "none" turns memory off entirely.
+brain = "arcmemory"          # none | arcmemory | auto | module:Class
+tier = "personal"            # memory-dynamics stringency tier
+brain_allowlist = []         # operator-vetted BYO brain class-paths (above personal)
+embed_backend = "local"      # local (arcllm offline model) | none (BM25 + graph only)
+embed_model = ""             # empty → arcllm default (all-MiniLM-L6-v2)
+distill_provider = "anthropic"  # consolidation distiller provider (empty = no-op)
+distill_model = "claude-sonnet-4-5-20250929"  # distiller model
+top_k = 5                    # recall count at assemble_prompt
+budget = 1024                # recall token budget
+consolidate_event_threshold = 20      # fire consolidation after N events
+consolidate_idle_seconds = 900.0      # fire after idle seconds
+consolidate_interval_seconds = 3600.0  # time-based cadence floor
 
-[modules.policy]
+[modules.memory_acl]
 enabled = true
+priority = 100
 
-[modules.policy.config]
-eval_interval_turns = 50
-daily_notes_every_turns = 20
+[modules.memory_acl.config]
+tier = "personal"                          # federal | enterprise | personal
+federal_default = "private"                # cross-session visibility at federal
+enterprise_default = "shared-with-agent"   # at enterprise
+personal_default = "shared-with-agent"     # at personal
 
 [modules.workpad]
 enabled = true
+priority = 100
 
 [modules.workpad.config]
 # Sole writer of context.md: every ``every_n_runs`` real runs it rewrites the
 # file as a curated cockpit of open loops. ``flush_idle_seconds`` is the idle
-# backstop — a slow session below the cadence still flushes once that many
-# wall-clock seconds elapse with new activity. Both counters persist to
-# workspace/.workpad-state.json so a restart resumes mid-cadence.
+# backstop. Counters persist to workspace/.workpad-state.json.
 every_n_runs = 20
-flush_idle_seconds = 900
+max_transcript_chars = 24000  # recent-activity transcript cap fed to the maintainer
+max_context_chars = 8000      # hard cap on rewritten context.md
+flush_idle_seconds = 900      # idle-flush backstop seconds
+
+[modules.user_profile]
+enabled = false
+priority = 100
+
+[modules.user_profile.config]
+profile_dir = "user_profile"        # workspace sub-dir for profiles
+body_cap_bytes = 2048               # markdown body cap
+tombstone_dir = "tombstone_events"  # GDPR tombstone dir
+schema_version = 1                  # profile schema version
+
+# =========================================================================
+# 6. BEHAVIOR MODULES — self-learning + autonomy loops
+# =========================================================================
+[modules.policy]
+enabled = true
+priority = 100
+
+[modules.policy.config]
+eval_interval_turns = 50        # Policy Reflector cadence (turns)
+daily_notes_every_turns = 20    # grounded daily-notes reflection cadence (turns)
+max_bullets = 200               # max policy bullets
+max_bullet_text_length = 500    # max chars per bullet
+flush_idle_seconds = 900        # idle-flush backstop seconds
+tier = "personal"               # federal stages to policy.pending; else auto-applies
+
+[modules.skills]
+enabled = true
+priority = 100
+
+[modules.skills.config]
+# arcskill is the workspace-declared default skills adapter (see root
+# pyproject.toml) — without this block SkillsConfig defaults to adapter = "none"
+# and the agent's scaffolded skills/improver never run.
+adapter = "arcskill"        # none | arcskill | module:Class
+tier = "personal"           # adapter tier
+classify_outcomes = false   # consult eval-LLM OutcomeClassifier at post_plan
+sweep_poll_seconds = 3600.0  # curator lifecycle-sweep poll cadence
+adapter_allowlist = []      # operator-vetted BYO adapter class-paths
+# [modules.skills.improver] block is forwarded verbatim to arcskill ImproverConfig.
+
+[modules.planning]
+enabled = false
+priority = 100
+
+[modules.planning.config]
+max_replans = 3       # replan ceiling
+# max_tokens =        # aggregate plan token budget (unset = unbounded)
+# max_cost_usd =      # plan cost budget (unset = unbounded)
+concurrent = false    # concurrent DAG-frontier dispatch
+max_parallel = 8      # max concurrent branches
+
+[modules.pulse]
+enabled = false
+priority = 100
+
+[modules.pulse.config]
+interval_seconds = 600      # pulse tick interval (>= 10)
+pulse_file = "pulse.md"     # checks-definition file
+state_file = "pulse-state.json"  # state file
+timeout_seconds = 300.0     # per-check timeout
+
+[modules.proactive]
+enabled = false
+priority = 100
+
+[modules.proactive.config]
+leader = "noop"             # noop | redis | k8s (leader election backend)
+identity = ""               # empty = agent name / hostname
+redis_url = ""
+redis_key = "arcagent:proactive:leader"
+k8s_namespace = ""
+k8s_lease_name = ""
 
 [modules.scheduler]
 enabled = true
+priority = 100
 
 [modules.scheduler.config]
-check_interval_seconds = 30
+min_interval_seconds = 60      # schedule interval floor
+max_schedules = 50            # max schedules
+max_prompt_length = 500       # max scheduled-prompt chars
+default_timeout_seconds = 300  # default run timeout
+max_timeout_seconds = 3600    # timeout ceiling
+circuit_breaker_threshold = 3  # failures → trip
+check_interval_seconds = 30   # scheduler poll cadence
+store_path = "schedules.json"  # schedule store file
+
+# =========================================================================
+# 7. COMMS & TASKS — inter-agent bus, task board, external gateways, I/O
+# =========================================================================
+[team]
+root = ""  # shared team root dir; all team modules read it from here
 
 [modules.messaging]
 enabled = true
+priority = 100
 
 [modules.messaging.config]
 # Join the shared team bus. ensure_live_backend degrades to an in-memory
 # backend (with a warning) if no server is reachable, so a solo agent still runs.
-nats_url = "nats://127.0.0.1:4222"
-
-[modules.skills]
-enabled = true
-
-[modules.skills.config]
-# arcskill is the workspace-declared default skills adapter (see root
-# pyproject.toml) — without this block SkillsConfig defaults to
-# adapter = "none" and the agent's scaffolded skills/improver never run.
-adapter = "arcskill"
-tier = "personal"
+entity_id = ""                # registry entity id (empty = agent name)
+entity_name = ""              # registry entity name
+nats_url = "nats://127.0.0.1:4222"  # NATS JetStream url; empty → in-memory backend
+auto_ack = true               # auto-ack on tool read
+max_messages_per_poll = 20    # per-poll message cap
+roster_ttl_seconds = 60.0     # team roster cache TTL
 
 [modules.tasks]
 enabled = true
+priority = 100
 
 [modules.tasks.config]
 # Mission Control (SPEC-056): a per-agent task list plus a shared team board.
-# nats_url mirrors messaging so assign_task can resolve @handles over the team
-# bus; empty defers @handle resolution (a solo agent still runs its own list).
-# data_dir empty defers to arcstore.resolve_data_dir so this module and arcui
-# read the SAME durable task directory.
-nats_url = "nats://127.0.0.1:4222"
+# nats_url mirrors messaging so assign_task can resolve @handles; data_dir empty
+# defers to arcstore.resolve_data_dir so this module and arcui share the store.
+dispatch = false             # autonomous execution toggle (off = list-only)
+data_dir = ""                # empty defers to arcstore.resolve_data_dir
+nats_url = "nats://127.0.0.1:4222"  # shared arcteam registry url (@handle resolution)
+default_max_attempts = 3     # retry ceiling (1 disables retry)
+retry_backoff_seconds = 30.0  # base exponential backoff
+task_timeout_seconds = 0.0   # per-run wall-clock cap (0 = unbounded)
+stuck_reclaim_seconds = 300.0  # orphaned in_progress reclaim threshold
+routing = true               # auto-route ownerless tasks to least-loaded agent
+notify = true                # operator/assignee notifications on transitions
+
+[modules.slack]
+enabled = false
+priority = 100
+
+[modules.slack.config]
+allowed_user_ids = []        # empty = allow all
+max_message_length = 4000
+bot_token_env_var = "ARCAGENT_SLACK_BOT_TOKEN"
+app_token_env_var = "ARCAGENT_SLACK_APP_TOKEN"
+max_file_size_mb = 20
+allowed_extensions = []      # empty = allow all
+
+[modules.telegram]
+enabled = false
+priority = 100
+
+[modules.telegram.config]
+allowed_chat_ids = []
+poll_interval = 1.0
+max_message_length = 4096
+bot_token_env_var = "ARCAGENT_TELEGRAM_BOT_TOKEN"
+max_file_size_mb = 20
+allowed_extensions = []
+
+[modules.web]
+enabled = false
+priority = 100
+
+[modules.web.config]
+search_provider = "tavily"      # parallel | firecrawl | tavily
+extract_provider = "firecrawl"  # parallel | firecrawl | tavily
+tier = "personal"               # drives allowlist / PII enforcement
+url_allowlist = []              # glob allowlist (federal requires non-empty)
+max_content_bytes = 1000000     # extracted-content truncation cap
+pii_redaction_enabled = true    # mandatory at federal
+request_timeout_s = 30.0        # provider HTTP timeout
+
+[modules.voice]
+enabled = false
+priority = 100
+
+[modules.voice.config]
+tier = "personal"                # drives air_gap / redact_pii defaults
+stt_provider = "whisper_cpp"     # whisper_cpp | whisper_api
+tts_provider = "piper"           # piper | elevenlabs
+air_gap = false                  # local-only providers (federal always true)
+redact_pii = false               # federal/enterprise always true
+elevenlabs_api_key_env = "ELEVENLABS_API_KEY"
+elevenlabs_base_url = "https://api.elevenlabs.io/v1"
+elevenlabs_default_voice_id = "21m00Tcm4TlvDq8ikWAM"
+openai_api_key_env = "OPENAI_API_KEY"
+openai_whisper_model = "whisper-1"
+whisper_cpp_binary = "whisper-cpp"
+whisper_cpp_model = "base.en"
+whisper_cpp_threads = 4
+piper_binary = "piper"
+piper_model = "en_US-lessac-medium"
+piper_data_dir = ""
+transcribe_timeout_s = 60
+synthesize_timeout_s = 30
+
+[modules.browser]
+enabled = false
+priority = 100
+
+[modules.browser.config]
+tier = "personal"                # federal forbids local Chrome (remote CDP only)
+accessibility_tree_depth = 10
+chrome_memory_limit_mb = 512
+
+[modules.browser.config.security]
+url_mode = "denylist"
+url_patterns = []
+blocked_schemes = ["file", "chrome", "chrome-extension", "javascript", "data", "blob", "ftp"]
+allow_js_execution = true
+allow_downloads = true
+download_path = "/tmp/arcagent-downloads"
+redact_inputs = false
+max_page_text_length = 50000
+max_screenshot_width = 1920
+max_screenshot_height = 1080
+
+[modules.browser.config.connection]
+cdp_url = ""
+chrome_path = ""
+headless = true
+remote_debugging_port = 0
+chrome_flags = []
+startup_timeout_seconds = 10
+
+[modules.browser.config.cookies]
+persist = false
+encryption_key_env = "ARCAGENT_BROWSER_COOKIE_KEY"
+storage_path = ""
+
+# =========================================================================
+# 8. TELEMETRY & STORE — observability + the durable operational store
+# =========================================================================
+[telemetry]
+enabled = true              # enable OTel + logging
+service_name = "{name}"      # OTel service name
+log_level = "INFO"          # log level
+export_traces = false       # export OTel traces
+exporter_endpoint = ""      # OTLP endpoint
+# Persist raw tool args + results to the spool (feeds arcstore store_raw_bodies).
+# Federal/enterprise set false to keep only digests.
+capture_tool_io = true
 
 [arcstore]
-enabled = true
-store_raw_bodies = false
+enabled = true              # single on/off gate for spool/ingest recording
+data_dir = ""               # empty → resolve_data_dir (env > this > ~/.arc/store)
+backend = "sqlite"          # store backend
+store_raw_bodies = false    # persist raw request/response bodies
+rotation = "daily"          # store file rotation
+retention = ""              # retention window (empty = keep all)
+sample_rate = 1.0           # recording sample rate (0.0-1.0)
+"""
+
+_DEFAULT_ARCLLM_CONFIG = """\
+# ArcLLM config — everything LLM-wire for this agent. arcagent composes the
+# [llm]/[eval]/[budget] tables below into the effective config. (arcllm's OWN
+# global provider routing/retry/rate_limit/circuit_breaker lives in the
+# user-wide ~/.arc/arcllm.toml under [defaults]/[modules]/[vault]; those are
+# read by arcllm itself, not per-agent.)
+
+[llm]
+model = "anthropic/claude-sonnet-4-5-20250929"  # ArcLLM model id (provider/model)
+max_tokens = 8192   # max output tokens per LLM call
+temperature = 0.7   # sampling temperature
+# Per-agent arcllm module overrides (merged into that module's defaults at
+# model load; unknown module names are rejected). Examples:
+# [llm.modules.queue]      call_timeout = 600
+# [llm.modules.retry]      max_attempts = 3
+# [llm.modules.rate_limit] requests_per_minute = 60
+
+[eval]
+# The cheaper background/eval model (entity extraction, policy eval, compaction).
+provider = ""            # empty = agent's provider
+model = ""               # empty = agent's model
+max_tokens = 1024        # eval output cap
+max_input_tokens = 100000  # per-eval input budget (over-budget = chunked; 0 = unlimited)
+temperature = 0.2        # low for evaluation consistency
+timeout_seconds = 30     # per eval call
+fallback_behavior = "skip"  # skip | error
+max_concurrent = 2       # eval semaphore limit
+background_queue_size = 10   # per-module background task queue depth
+background_task_timeout = 120  # seconds before a background task times out
+
+[budget]
+# Per-run LLM consumption ceilings (LLM10). Unset = unbounded at personal;
+# enterprise/federal treat a set value as a non-relaxable floor.
+# max_tokens =      # per-run token ceiling
+# max_cost_usd =    # per-run cost ceiling
+# max_requests =    # per-run request ceiling
+"""
+
+_DEFAULT_ARCRUN_CONFIG = """\
+# ArcRun config — the agentic-loop controls arcagent hands to the run loop.
+# (Per-run token/cost/request ceilings live in arcllm.toml [budget]; the
+# tier-floored circuit breakers live in arcagent.toml [security].)
+
+max_turns = 25          # hard cap on agentic loop turns
+# tool_timeout = 30.0   # per-tool-call wall-clock timeout (seconds); unset = none
+# allowed_strategies = ["react"]  # restrict the loop to these strategies; unset = all
+approval_opt_in = []    # tool names always requiring human approval at personal/enterprise
+
+[sandbox]
+# allowed_tools = ["calculate"]  # restrict the loop to these tools; unset = all allowed
 """
 
 _CALCULATOR_TOOL = '''\
@@ -476,7 +801,9 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
     sys.stdout.write("\n")
     sys.stdout.write("Structure:\n")
     sys.stdout.write(f"  {display_name}/\n")
-    sys.stdout.write("    arcagent.toml\n")
+    sys.stdout.write("    arcagent.toml             # agent/tools/security/modules/store\n")
+    sys.stdout.write("    arcllm.toml               # LLM-wire: [llm] / [eval] / [budget]\n")
+    sys.stdout.write("    arcrun.toml               # agentic-loop controls\n")
     sys.stdout.write("    capabilities/             # per-agent capabilities (trusted)\n")
     sys.stdout.write("      calculator.py\n")
     sys.stdout.write("    workspace/\n")
@@ -573,6 +900,8 @@ def _print_result_json(result: Any) -> None:
 # Re-export asyncio for convenience in subcommand modules that call asyncio.run.
 __all__ = [
     "_CALCULATOR_TOOL",
+    "_DEFAULT_ARCLLM_CONFIG",
+    "_DEFAULT_ARCRUN_CONFIG",
     "_DEFAULT_CONFIG",
     "_DEFAULT_CONTEXT",
     "_DEFAULT_IDENTITY",

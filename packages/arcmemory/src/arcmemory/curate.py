@@ -1,25 +1,20 @@
-"""Input curation — keep substantive content, drop mechanical tool plumbing.
+"""Input curation — feed distillation the session conversation, not the machinery.
 
-Distillation should learn from the conversation (user turns, agent responses,
-observations) AND from the knowledge the agent gathers or creates (web search,
-research, retrieval, file writes) — but NOT from the high-volume mechanical frames
-a tool loop emits (argument echoes, short status/ack results, retries, traces).
-Those inflate the distiller's input (more tokens, more chunks) and pollute the
-extracted entities/insights with plumbing.
+Distillation (facts, insights, day summaries) should learn from the CONVERSATION —
+the user's turns and the agent's responses — NOT from the high-volume tool-call
+frames the agent emits while working (argument echoes, results, retries, traces) or
+any other operational/runtime plumbing. Passing only the conversation to the LLM is:
 
-A ``tool`` event survives if ANY keep gate fires: it references a real entity, it
-is a knowledge-producing tool (``cfg.curate_keep_tools``), its result is
-substantive by length, or it clears the salience floor. Only short mechanical
-frames like ``tool:read -> ok`` are stripped. The tool name is read from the
-capture convention ``tool:<name> -> <result>``; an unrecognized shape simply falls
-through to the length/entity/salience gates.
+* **fewer tokens** — a session is a handful of turns; tool frames are the bulk;
+* **less LLM reliance** — we don't ask the model to "ignore" noise, it never sees it;
+* **more deterministic** — the model literally cannot mint a fact/insight about the
+  agent's own tool-running or messaging mechanics, because those events are removed
+  before the call.
 
-This filter is **pure and deterministic** — it reuses the entity tags already set
-at capture time (``Event.entities``) and issues NO LLM or embedding call. It runs
-upstream of chunking, so dropping plumbing here also shrinks the token budget the
-distiller must chunk over. Order and ``event_id`` are preserved so downstream
-citations stay intact. Toggle it off (``cfg.curate_input=False``) for the
-identity function.
+This filter is **pure and deterministic** — a kind-based keep list, no LLM or
+embedding call. It preserves order and ``event_id`` so downstream citations stay
+intact, and runs upstream of chunking so it also shrinks the token budget. Toggle it
+off (``cfg.curate_input=False``) for the identity function.
 """
 
 from __future__ import annotations
@@ -27,45 +22,18 @@ from __future__ import annotations
 from arcmemory.config import MemoryConfig
 from arcmemory.types import Event
 
-_TOOL_KIND = "tool"
-_TOOL_PREFIX = "tool:"
-
-
-def _tool_name(text: str) -> str:
-    """Extract ``<name>`` from a captured ``tool:<name> -> <result>`` frame ('' if absent)."""
-    if not text.startswith(_TOOL_PREFIX):
-        return ""
-    return text[len(_TOOL_PREFIX) :].split("->", 1)[0].split(" ", 1)[0].strip()
-
-
-def _keep_tool(event: Event, cfg: MemoryConfig) -> bool:
-    """Whether one ``tool`` event carries enough signal to survive curation.
-
-    Kept when it references a real entity (the capture tagger found one — plumbing
-    tags nothing, domain content does), is a knowledge-producing tool, carries a
-    substantive-length result, or clears a configured salience floor. Otherwise it
-    survives only when entity-gating is turned off entirely.
-    """
-    if event.entities:
-        return True
-    if _tool_name(event.text) in cfg.curate_keep_tools:
-        return True
-    if len(event.text) >= cfg.curate_min_substantive_chars:
-        return True
-    if cfg.curate_tool_keep_salience > 0.0 and event.salience >= cfg.curate_tool_keep_salience:
-        return True
-    return not cfg.curate_tool_requires_entity
-
 
 def curate_for_distillation(events: list[Event], cfg: MemoryConfig) -> list[Event]:
-    """Return the events worth distilling: conversation always, tools if meaningful.
+    """Return only the session-conversation events worth distilling.
 
-    Non-``tool`` kinds (user, respond, observation, action, …) are always kept.
-    ``tool`` events pass only ``_keep_tool``. Preserves order + ``event_id``.
+    Keeps events whose ``kind`` is in ``cfg.curate_conversation_kinds`` (default the
+    user's turns + the agent's responses) and drops ``tool`` frames and every other
+    operational kind. Order and ``event_id`` are preserved.
     """
     if not cfg.curate_input:
         return events
-    return [e for e in events if e.kind != _TOOL_KIND or _keep_tool(e, cfg)]
+    keep = cfg.curate_conversation_kinds
+    return [event for event in events if event.kind in keep]
 
 
 __all__ = ["curate_for_distillation"]

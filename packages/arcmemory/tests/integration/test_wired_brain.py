@@ -32,6 +32,7 @@ from arcmemory.distill import (
     FactExtraction,
     InsightCandidate,
     InsightMint,
+    ProcedureCandidate,
     ProcedureExtraction,
 )
 from arcmemory.index.graph import WeightedGraph
@@ -126,7 +127,15 @@ class ConsolidatingDistiller:
         )
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
-        return ProcedureExtraction()
+        return ProcedureExtraction(
+            procedures=[
+                ProcedureCandidate(
+                    slug="verify-loop",
+                    title="Engage then verify",
+                    steps=["engage the resource", "verify its state"],
+                )
+            ]
+        )
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         return DaySummaryDraft(timeline=["engaged then verified"], people=["Alice"])
@@ -231,35 +240,35 @@ async def test_t101_consolidate_mints_promotes_decays_and_audits(workspace: Path
             Event(
                 event_id="a0",
                 scope=scope.key,
-                kind="action",
+                kind="respond",
                 text="open valve",
                 ts="2026-07-07T00:00:00+00:00",
             ),
             Event(
                 event_id="a1",
                 scope=scope.key,
-                kind="action",
+                kind="respond",
                 text="check gauge",
                 ts="2026-07-07T00:00:01+00:00",
             ),
             Event(
                 event_id="b0",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="shift boundary",
                 ts="2026-07-07T00:00:02+00:00",
             ),
             Event(
                 event_id="a2",
                 scope=scope.key,
-                kind="action",
+                kind="respond",
                 text="open valve",
                 ts="2026-07-07T00:00:03+00:00",
             ),
             Event(
                 event_id="a3",
                 scope=scope.key,
-                kind="action",
+                kind="respond",
                 text="check gauge",
                 ts="2026-07-07T00:00:04+00:00",
             ),
@@ -293,7 +302,7 @@ async def test_t101_consolidate_mints_promotes_decays_and_audits(workspace: Path
     actions = {e.action for e in sink.events}
     assert {
         "memory.insight_minted",
-        "memory.procedure_promoted",
+        "memory.procedure_extracted",
         "memory.fact_updated",
         "memory.edges_decayed",
     } <= actions
@@ -311,21 +320,21 @@ async def test_t102_semantic_recall_uses_real_vectors_not_degrade(workspace: Pat
             Event(
                 event_id="e0",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="the hound sailed away",
                 ts="2026-07-07T00:00:00+00:00",
             ),
             Event(
                 event_id="e1",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="the kitten meowed loudly",
                 ts="2026-07-07T00:00:01+00:00",
             ),
             Event(
                 event_id="e2",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="the sedan needs an engine",
                 ts="2026-07-07T00:00:02+00:00",
             ),
@@ -363,21 +372,21 @@ async def test_t103_structural_probe_both_channels_live_only_when_embedder_wired
         Event(
             event_id="e0",
             scope=_scope().key,
-            kind="obs",
+            kind="respond",
             text="the recipe lists salt but the cook forgets it",
             ts="2026-01-01T00:00:00+00:00",
         ),
         Event(
             event_id="e1",
             scope=_scope().key,
-            kind="obs",
+            kind="respond",
             text="the checklist names a valve the operator skips",
             ts="2026-01-01T00:00:01+00:00",
         ),
         Event(
             event_id="e2",
             scope=_scope().key,
-            kind="obs",
+            kind="respond",
             text="the manifest names a step nobody performs",
             ts="2026-01-01T00:00:02+00:00",
         ),
@@ -519,14 +528,14 @@ async def test_t105_rebuild_is_byte_identical(workspace: Path) -> None:
             Event(
                 event_id="e0",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="the puppy barked",
                 ts="2026-07-07T00:00:00+00:00",
             ),
             Event(
                 event_id="e1",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="the sedan has an engine",
                 ts="2026-07-07T00:00:01+00:00",
             ),
@@ -550,7 +559,7 @@ async def test_t105_embedder_disabled_degrades_but_still_injects(workspace: Path
             Event(
                 event_id="e0",
                 scope=scope.key,
-                kind="obs",
+                kind="respond",
                 text="the puppy barked",
                 ts="2026-07-07T00:00:00+00:00",
             )

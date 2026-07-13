@@ -241,3 +241,19 @@ async def test_mint_insight_from_lexically_different_episodes(workspace, db, sco
     neighbors = {node for node, _ in graph.neighbors(scope.key, "producers-unwired")}
     assert "claims-property" in neighbors
     assert "predicate-without-producer" in neighbors
+
+
+def test_day_summary_tolerates_dict_shaped_bullets() -> None:
+    """A distiller that returns object bullets (not strings) must not crash the day
+    summary — the exact production failure on marketer_agent. Dicts fold to their
+    joined values; the model is built, not raised."""
+    from arcmemory.distill import DaySummaryDraft
+
+    draft = DaySummaryDraft.model_validate(
+        {
+            "discussions": [{"topic": "margin on the CTG quote"}, "plain string bullet"],
+            "timeline": ["09:00 kickoff"],
+        }
+    )
+    assert draft.discussions == ["margin on the CTG quote", "plain string bullet"]
+    assert draft.timeline == ["09:00 kickoff"]
