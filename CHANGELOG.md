@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### SPEC-056 Mission Control — task-lifecycle, dispatch + coordination hardening
+
+The task system grows from a shared list into a self-driving execution engine, and coordination
+signals move onto the team bus. See each package `CHANGELOG.md` for detail.
+
+- **arcstore** — additive `Task` lifecycle fields (timing, retry, review, classification) +
+  race-safe `TaskStore` transitions (`finish`/`requeue`/`dead_letter`/`request_cancel`/`route`/
+  `approve_review`/`reject_review`/`edit`/`delete`) and decomposition-DAG support.
+- **arcagent** — opt-in task-dispatch loop, lifecycle reliability engine (retry/backoff, timeout,
+  stuck-reclaim, cancel, dead-letter), decomposition + dependency DAG, auto-routing, opt-in review
+  gate, operator notifications; user messages captured into memory; background jobs (policy eval,
+  daily-notes, distillation) gated to a turn cadence; owner's-own-channel exempt from the
+  Lethal-Trifecta gate.
+- **arcmemory** — distillation-input curation (drop mechanical tool plumbing, keep substantive
+  content); entity dedup by canonical slug; consolidation gated to an interval; oversized distill
+  input chunked.
+- **arccli** — `arc memory dedup [--apply]` (merge legacy duplicate memory files); multiline input
+  in `arc agent chat` (Enter sends, Shift+Enter newline).
+- **arcgateway** — cross-surface slash-command framework (`/new`, `/reset`, `/help`) with session
+  epoch rotation; Slack slash-command intake.
+- **arcui** — Mission Control board UX (status transitions, cancel/approve/reject, delete),
+  editable + human-readable agent schedules, New-session button, markdown-rendered replies,
+  multiline composer.
+
+Documentation: `packages/arcagent/docs/tasks-module.md` (full task-system reference),
+`docs/config-reference.md` (consolidated config knobs).
+
 ## [2026-07-12] — SPEC-056 Mission Control multi-agent task system
 
 A shared task system that turns arc from "agents that message" into "agents that coordinate

@@ -146,6 +146,25 @@ Every approve / revoke / pair-attempt emits an arctrust audit event with the ope
 
 ---
 
+## 💬 Slash-Commands
+
+A user can type a slash-command to the agent from any surface (Slack, Telegram, web). They flow
+through one shared `CommandRegistry` — a message is intercepted only when a **registered** command
+matches; an unknown `/foo` falls through to the agent as ordinary text. Adding a command is a
+one-liner (`registry.register(MyCommand())`); Slack subscribes the registered names as native
+slash-commands and re-injects them as inbound events.
+
+| Command | Effect |
+|---|---|
+| `/new` | Start a fresh conversation — rotates the **session epoch** (bumps a per-session generation folded into the session key, so a new generation opens a new, empty session). No file is reset; the old conversation stays resumable |
+| `/reset` | Alias for `/new` |
+| `/help` | List the registered slash-commands (generated from the live registry) |
+
+The session epoch (`SessionEpochStore`) persists across gateway restarts when db-backed, so
+"New session" doesn't silently un-rotate on the next bounce.
+
+---
+
 ## 🧱 Public API
 
 ```python

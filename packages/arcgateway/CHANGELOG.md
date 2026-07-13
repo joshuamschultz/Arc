@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cross-surface slash-command framework** — an in-chat slash-command a user types to the agent
+  (Slack, Telegram, web) resolves through one shared `CommandRegistry`; a message is handled only
+  when a *registered* command matches (an unknown `/foo` falls through to the agent as normal
+  text). Adding a command is a one-liner (`registry.register(MyCommand())`).
+- **`/new` (alias `/reset`) — session rotation.** Starts a fresh conversation by bumping a
+  per-session **generation** folded into the deterministic session key (`SessionEpochStore`), so
+  the new generation hashes to a new, empty session. No file is reset — minting a new key *is* the
+  reset, and the old conversation stays resumable. Generations persist across gateway restarts (a
+  db-backed store) so "New session" doesn't silently un-rotate on the next bounce.
+- **`/help`** — lists the currently registered slash-commands, generated from the live registry
+  (no hardcoded list to drift).
+- **Slack slash-command intake** — the Slack adapter subscribes the registered command names as
+  native slash-commands and re-injects them as inbound `InboundEvent`s, so the same registry drives
+  both typed `/new` text and Slack's native command UI.
+
 ### Fixed
 
 DM pairing and standalone-daemon fixes from a live single-node + four-agent-fleet deployment:

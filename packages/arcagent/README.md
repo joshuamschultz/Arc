@@ -430,10 +430,42 @@ silent hand-off. Claiming is atomic (no two agents can grab the same task); an a
 `in_progress` task at a time, except for its own dependency chain (`blocked_by` / decomposed
 sub-tasks), which it works one-at-a-time in order.
 
+Tasks move through a deterministic lifecycle — `backlog` → `todo` → `in_progress` → `review` →
+`done` / `failed` — and, when the **dispatch loop** is turned on, the agent *runs* its assigned
+work autonomously with a full reliability engine behind it:
+
+- **Autonomous dispatch** (`dispatch = true`, off by default) — a background loop pulls the
+  agent's highest-priority ready `todo` task (deps met, backoff elapsed), starts it, and wakes a
+  real agent run. One `in_progress` task at a time.
+- **Reliability** — retry with exponential backoff up to `max_attempts`, per-task wall-clock
+  `timeout` (a timeout is a failed attempt), stuck-task reclaim on restart, dead-letter when
+  retries are exhausted, and operator **cancel** of a running task.
+- **Decomposition + dependencies** — `decompose_task` splits a task into subtasks; the parent
+  auto-completes when all children are `done` and fail-fast auto-fails if any child fails. A
+  `blocked_by` DAG (cycle-checked) gates dispatch until dependencies finish.
+- **Auto-routing** — an ownerless task is routed to the least-loaded, capability-matched agent.
+- **Opt-in review gate** — `requires_review` lands a finished task in `review` for an operator to
+  approve or reject.
+- **Notifications** — the operator is alerted on done / needs-review / fail / dead-letter / stuck,
+  best-effort and classification-aware.
+
 ```toml
 [modules.tasks]
 enabled = true
+
+[modules.tasks.config]
+dispatch = true                  # opt into autonomously running assigned tasks (default false)
+default_max_attempts = 3         # retry ceiling stamped on created tasks
+retry_backoff_seconds = 30.0     # base backoff; grows exponentially per attempt
+task_timeout_seconds = 0.0       # wall-clock cap per run; 0 = unbounded
+stuck_reclaim_seconds = 300.0    # in_progress task with no live run reclaimed after this
+routing = true                   # auto-route ownerless tasks to the best agent
+notify = true                    # operator alerts on key transitions
+nats_url = "nats://127.0.0.1:4222"  # live registry/messenger for @handle + notify
 ```
+
+See **[`docs/tasks-module.md`](docs/tasks-module.md)** for the full lifecycle, the dispatch and
+reliability engine, and every config knob.
 
 ---
 

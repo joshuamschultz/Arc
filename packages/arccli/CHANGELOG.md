@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`arc memory dedup [--apply] <workspace…>`** — operator maintenance that merges memory cards
+  whose slugs diverged before slug canonicalization landed (e.g. `Custom ERP.md` / `custom_erp.md`
+  / `custom-erp.md` for one real thing). Groups variant files by their canonical slug (via
+  `arcmemory.canonical_slug`, the same function the store uses), merges each group into the single
+  canonical file (facts/cues/instances unioned, richest metadata wins, confidence/use-count
+  combined), and deletes the variants. Dry-run by default; `--apply` writes. A path that is itself
+  a workspace is cleaned directly; otherwise it is treated as a root and searched for nested
+  workspaces, so a whole fleet dir cleans in one call. Restart each agent after applying so its
+  index rebuilds and stale rows drop.
+- **Multiline input in `arc agent chat`** — in a TTY, Enter submits and Shift+Enter / Alt+Enter
+  insert a newline (prompt_toolkit multiline session), so multi-paragraph prompts compose without
+  premature submission. Non-interactive stdin (pipes) still reads a line at a time.
+
 ## [0.7.0] - 2026-07-12
 
 SPEC-056 Mission Control, Phase F: `arc task` — the same operations the tools and arcui expose,

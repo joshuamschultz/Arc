@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+SPEC-056 Mission Control, Phases 1–4 — the `tasks` module grows from a shared list into a
+self-driving execution engine: agents autonomously run assigned work with retry/timeout/reclaim
+reliability, decompose tasks into dependency DAGs, auto-route ownerless work, gate results behind
+an opt-in human review, and notify the operator on every key transition. Plus memory-curation and
+policy-cadence fixes that cut background-job cost.
+
+### Added
+- **Opt-in task-dispatch loop** (`[modules.tasks.config] dispatch = true`, off by default) — a
+  `@background_task` that pulls the agent's highest-priority ready `todo` task (dependencies met,
+  retry backoff elapsed, not a coordinator parent) and wakes a real agent run via the `agent_run_fn`
+  bound at `agent:ready`. One `in_progress` task at a time; the awaited run keeps dispatch serial
+  so the cap holds without extra locking. Reacting to the durable arcstore owner write is what makes
+  a teammate's `assign_task` and an arcui board assignment dispatch uniformly (arcui can't sign an
+  inter-agent envelope, so a poll of the shared store is the only mechanism that covers both).
+- **Lifecycle reliability engine (Phase 1)** — retry with exponential backoff up to `max_attempts`
+  then dead-letter (terminal `failed`); per-task wall-clock `timeout` (a timeout is a failed
+  attempt); a reliability watcher (`5s`) that honors operator **cancel** of a running task and
+  reclaims stuck `in_progress` tasks with no live run (immediately on the first pass after a
+  restart, else past `stuck_reclaim_seconds`). Deterministic `run_id` is pinned at dispatch and
+  stamped in the same atomic write that starts the task, so arcui joins task → run events.
+- **Decomposition + dependency DAG (Phase 2)** — `decompose_task` splits an owned task into
+  subtasks (`parent_id`), the parent becoming `blocked_by` them; a parent auto-completes when every
+  child is `done` and fail-fast auto-fails the moment any child fails. `blocked_by` edges gate
+  dispatch until dependencies finish, and a cycle check rejects an unsatisfiable edge before it is
+  written.
+- **Auto-routing + handoff (Phase 3)** — ownerless tasks are routed to the least-loaded eligible
+  agent, preferring a capability match (task tag ∈ agent capabilities); selection is deterministic
+  so concurrent routers converge and the store's owner-null-conditional `route` lands exactly one
+  write.
+- **Opt-in review gate (Phase 3)** — a task with `requires_review` lands in `review` on completion
+  (not `done`); an operator approves (→ `done`) or rejects (→ `todo` for re-dispatch).
+- **Operator notifications + escalation (Phase 4)** — best-effort, classification-aware alerts to
+  `user://operator` on done / needs-review / fail / dead-letter / stuck-reclaim, and a
+  `task_assigned` DM to the assignee on assign/route. A delivery failure is logged and swallowed —
+  it can never block or roll back the durable transition that triggered it.
+- **User messages captured into memory** — the memory capture path now records inbound user turns,
+  not only tool calls and agent self-talk, so consolidation sees the human side of the conversation.
+
+### Fixed
+- **Background jobs gated to a turn cadence.** Policy eval, daily-notes reflection, and distillation
+  were firing on effectively every turn/consolidation pass. Policy eval now runs on an
+  `eval_interval_turns` (default 50) cadence and daily-notes on `daily_notes_every_turns` (default
+  20); oversized eval input is split into sequential chunks (`EvalConfig.max_input_tokens`, default
+  100000) instead of overflowing the model context.
+- **Owner's-own-channel exempt from the Lethal-Trifecta gate.** A scheduled/notify delivery to the
+  operator's own channel (`user://operator`) was being blocked as private-data + external-comms +
+  untrusted-input; the owner's own channel is not an external exfiltration sink, so it is exempted
+  (other external sinks still gated).
+
 ## [0.16.0] - 2026-07-12
 
 SPEC-056 Mission Control: arcagent gets a `tasks` module — the per-agent + team-backlog task

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+SPEC-056 Mission Control, task-lifecycle hardening — additive `Task` fields + `TaskStore`
+transitions that back the reliability engine, decomposition DAG, and review gate. All new
+fields have defaults, so rows written before they existed still load.
+
+### Added
+- **Lifecycle timing + retry fields on `Task`** — `started_at`, `completed_at`,
+  `duration_seconds` (the board's DONE-TODAY / AVG-TIME read these durable fields, not inferred
+  timestamps); `attempts`, `max_attempts`, `last_error`, `next_attempt_at` (retry engine state);
+  `timeout_seconds` + `cancel_requested` (per-task wall-clock cap + operator stop signal);
+  `requires_review` (opt-in human gate); `classification` (no-write-down bound carried onto
+  downstream notifications).
+- **Deterministic run linkage** — `start_task` stamps `run_id` in the *same* atomic write that
+  claims a task, so an `in_progress` task links its run from the moment it starts.
+- **Race-safe terminal + retry transitions on `TaskStore`** — `finish`, `requeue`, `dead_letter`,
+  `request_cancel`, `route` (assign an unowned task), `approve_review`/`reject_review` (operator
+  resolves a `review` task), and `edit` (status-conditional at-rest edit, refuses `in_progress`).
+  Each is a status-conditional `update_if`, so two contending actors resolve to exactly one winner.
+- **Decomposition DAG support** — `children` (subtasks by `parent_id`), `deps_met`
+  (all `blocked_by` done), and `deps_would_cycle` (reject an edge that would form a cycle before
+  it is ever written).
+- **`delete`** — hard-delete a task row (operator action, attributed + audited).
+
 ## [0.2.0] - 2026-07-12
 
 SPEC-056 Mission Control, Phase 0A: the mutable directory plane (completing the SPEC-032

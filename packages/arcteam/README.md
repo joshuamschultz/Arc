@@ -153,11 +153,12 @@ from arcteam.types import (
 | `MsgType` | Use For |
 |---|---|
 | `info` | General information |
+| `request` | A message expecting a reply |
 | `task` | Work assignment |
+| `task_assigned` | A durable task was handed to an owner (see coordination substrate below) |
 | `result` | Result from an executed task |
-| `alert` | Time-sensitive notification |
+| `alert` | Time-sensitive notification (failures, escalations) |
 | `ack` | Acknowledgement |
-| `broadcast` | One-to-many message |
 
 | `Priority` | Use For |
 |---|---|
@@ -165,6 +166,30 @@ from arcteam.types import (
 | `normal` | Default |
 | `high` | Time-sensitive |
 | `critical` | Stop-the-world |
+
+---
+
+## 🧭 The Task System Is the Coordination Substrate (SPEC-056)
+
+`arcteam` provides the **plumbing** for multi-agent coordination — the entity registry
+(who exists, their DIDs, roles, capabilities) and the signed messaging bus. The **durable
+coordination state** lives in the shared `arcstore` `tasks` directory, driven by the
+arcagent `tasks` module. The two compose:
+
+| Coordination act | Durable state (arcstore/arcagent) | arcteam plumbing it rides on |
+|---|---|---|
+| **Assignment** | `TaskStore.assign` (atomic single-owner claim) | `registry.resolve(@handle → DID)`; a signed `task_assigned` DM wakes the owner |
+| **Dispatch** | The owner's dispatch loop pulls its ready `todo` tasks and runs them | — (a poll of the shared store; arcui in a separate process can't sign an envelope) |
+| **Auto-routing** | `TaskStore.route` sends an ownerless task to the least-loaded, capability-matched agent | `registry.list_entities()` is the roster + capability source; routed owner gets a `task_assigned` DM |
+| **Review gate** | `requires_review` → task lands in `review`; operator approves/rejects | `alert`/`info` DMs to `user://operator` |
+| **Notifications** | done / needs-review / fail / dead-letter / stuck-reclaim transitions | best-effort `info`/`alert` messages, carrying the task's `classification` (no-write-down) |
+
+Why the split: task **state** must be a single durable row every surface (agent tool, `arc
+task` CLI, arcui kanban) reads and writes atomically — that's arcstore's mutable plane, not a
+message. `arcteam` carries the *signals* around that state (who to wake, who to alert), each one
+signed and audited. Task assignment is therefore never a silent hand-off: the durable owner
+write is truth, and the signed `task_assigned` DM is the wake. See
+`packages/arcagent/docs/tasks-module.md` for the full lifecycle.
 
 ---
 

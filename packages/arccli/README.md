@@ -235,6 +235,11 @@ arc task assign <task_id> @analyst-1 --actor @lead              # atomic; notifi
 arc task complete <task_id> --actor @analyst-1 --resolution "done"
 arc task talk <task_id> "any update?" --actor @lead              # steer an in-progress owner, not an edit
 
+# === Memory maintenance ===
+arc memory dedup ./agents                     # dry-run: report legacy duplicate memory cards that would merge
+arc memory dedup --apply ./agents             # merge variant-slug cards into the canonical file, delete variants
+arc memory dedup --apply <agent-dir>/workspace  # one workspace, or a root that is searched for nested workspaces
+
 # === Multi-agent dashboard ===
 arc ui start
 arc ui start --port 9000 --show-tokens
@@ -262,6 +267,10 @@ arc                                                             # start interact
 ---
 
 ## 💬 In-Chat REPL Commands
+
+`arc agent chat` uses a multiline editor in a TTY: **Enter sends**, **Shift+Enter** (or
+**Alt+Enter**) inserts a newline — so you can compose multi-paragraph prompts before submitting.
+Piped/non-interactive stdin still reads a line at a time.
 
 While inside `arc agent chat`:
 
@@ -313,6 +322,21 @@ Why this design:
 1. **Fewer dependencies in the trust path.** No Click, no Typer — `argparse` ships with Python and is only used inside subcommand groups, not at the top level.
 2. **Shared contract.** The registry is the single source of truth for arccli, arcgateway, and chat platforms. Gateway-only commands (`gateway pair *`) are invisible in the CLI help. CLI-only commands (`init`, `quit`) don't appear in Telegram menus.
 3. **Easier to read and modify.** Every command entry is a `CommandDef` in `arccli.commands.registry`. Handlers are plain functions. No metaclasses, no decorator trees.
+
+### Gateway slash-commands
+
+The gateway surfaces (Slack, Telegram, web chat) share the same registry pattern for **in-chat
+slash-commands** an end user types to the agent:
+
+| Command | Effect |
+|---|---|
+| `/new` | Start a fresh conversation — rotates the session epoch (a new generation → a new, empty session key). The old conversation is not deleted and stays resumable |
+| `/reset` | Alias for `/new` |
+| `/help` | List the registered slash-commands (generated from the live registry) |
+
+`/new` persists its rotation across gateway restarts, so "New session" doesn't silently un-rotate
+on the next bounce. Slack subscribes the registered names as native slash-commands and re-injects
+them as inbound events.
 
 ---
 
