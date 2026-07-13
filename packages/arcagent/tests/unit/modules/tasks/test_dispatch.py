@@ -23,6 +23,8 @@ Assumed seams (do not exist before Phase D):
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -154,3 +156,55 @@ class TestDispatchTick:
         await _dispatch_tick()
 
         assert rec.calls == []
+
+
+@pytest.mark.asyncio
+class TestDispatchLoopIsPeriodic:
+    """The ``@background_task`` loop must run the tick REPEATEDLY, not once.
+
+    ``register_task`` spawns the decorated fn exactly once, so the ``while True``
+    has to live inside it. A one-shot body (the reported bug) runs a single tick
+    at agent startup and never sees a task assigned afterward — exactly what
+    happened on the fleet: a board assignment made minutes after startup sat in
+    ``todo`` forever with no run. The other dispatch tests call ``_dispatch_tick``
+    directly, so they never exercised the loop and never caught this.
+    """
+
+    async def test_loop_ticks_repeatedly_and_picks_up_late_task(
+        self, dispatch_state: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import arcagent.modules.tasks.capabilities as caps
+
+        st, identity, rec = dispatch_state
+        monkeypatch.setattr(caps, "_DISPATCH_TICK", 0.01)
+
+        ran = asyncio.Event()
+
+        async def _recorder(text: str, *, session_key: str, run_id: str | None = None) -> str:
+            rec.calls.append((text, session_key))
+            rec.run_ids.append(run_id)
+            ran.set()
+            return "ok"
+
+        st.agent_run_fn = _recorder
+
+        loop_task = asyncio.ensure_future(caps.tasks_dispatch_loop(None))
+        try:
+            # Loop is running with nothing to do — it must keep spinning.
+            await asyncio.sleep(0.05)
+            assert rec.calls == []
+
+            # Assign a task AFTER the loop is already running (the fleet case).
+            created = json.loads(await caps.create_task(title="Late task"))
+            assert created["owner_did"] == identity.did
+
+            # A still-ticking loop picks it up; a one-shot loop never would.
+            await asyncio.wait_for(ran.wait(), timeout=2.0)
+            assert any(created["id"] in prompt for prompt, _ in rec.calls)
+
+            after = await st.store.get(created["id"])
+            assert after is not None and after.status == "in_progress"
+        finally:
+            loop_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await loop_task

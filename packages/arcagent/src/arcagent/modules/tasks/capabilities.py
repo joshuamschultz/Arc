@@ -839,24 +839,42 @@ async def tasks_bind_run_fn(ctx: Any) -> None:
 async def tasks_dispatch_loop(_ctx: Any) -> None:
     """Background loop: pull and run the agent's ready assigned tasks.
 
-    Gated by ``config.dispatch`` inside :func:`_dispatch_tick`. The awaited run
-    inside each tick keeps dispatch serial — the loop does not tick again until
-    the current task's run returns — so the in-progress cap holds without extra
-    locking.
+    The loader spawns this once and it owns its own cadence (mirrors the memory
+    consolidate + skills curator loops — ``register_task`` calls ``fn(None)`` a
+    single time, so the ``while True`` MUST live here or the loop runs one tick
+    and dies). Gated by ``config.dispatch`` inside :func:`_dispatch_tick`. The
+    awaited run inside each tick keeps dispatch serial — a tick does not return
+    until the current task's run does — so the in-progress cap holds without
+    extra locking.
     """
-    await _dispatch_tick()
+    while True:
+        try:
+            await _dispatch_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # reason: fail-open — a tick error must never crash the agent
+            _logger.warning("tasks dispatch tick failed", exc_info=True)
+        await asyncio.sleep(_DISPATCH_TICK)
 
 
 @background_task(name="tasks_reliability_watcher", interval=_RELIABILITY_TICK)
 async def tasks_reliability_watcher(_ctx: Any) -> None:
     """Background loop: honor operator cancels and reclaim stuck runs.
 
-    Runs concurrently with (and faster than) the dispatch loop so an operator
-    "stop" reaches a run while the dispatch tick is still awaiting it, and so a
-    task orphaned in_progress by a crash/restart is recovered rather than
-    stranded. Gated by ``config.dispatch`` inside :func:`_reliability_tick`.
+    Owns its own cadence (see :func:`tasks_dispatch_loop`). Runs concurrently
+    with (and faster than) the dispatch loop so an operator "stop" reaches a run
+    while the dispatch tick is still awaiting it, and so a task orphaned
+    in_progress by a crash/restart is recovered rather than stranded. Gated by
+    ``config.dispatch`` inside :func:`_reliability_tick`.
     """
-    await _reliability_tick()
+    while True:
+        try:
+            await _reliability_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # reason: fail-open — a tick error must never crash the agent
+            _logger.warning("tasks reliability tick failed", exc_info=True)
+        await asyncio.sleep(_RELIABILITY_TICK)
 
 
 __all__ = [
