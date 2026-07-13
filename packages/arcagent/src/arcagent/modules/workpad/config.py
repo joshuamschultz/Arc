@@ -30,5 +30,11 @@ class WorkpadConfig(ModuleConfig):
     # without bound stops being a cockpit; truncation is the backstop.
     max_context_chars: int = Field(default=8000, ge=1000)
 
+    # Idle-flush backstop: once this many wall-clock seconds have elapsed since the
+    # last rewrite AND the run counter has advanced, flush on the next run even
+    # below ``every_n_runs``. Guarantees a long, slow session still leaves an
+    # update instead of stalling forever just under the cadence boundary.
+    flush_idle_seconds: int = Field(default=900, ge=1)
+
 
 __all__ = ["WorkpadConfig"]

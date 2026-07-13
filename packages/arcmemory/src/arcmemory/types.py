@@ -10,7 +10,7 @@ Two vocabularies worth stating once:
 * **Scope** — the shared-nothing isolation key. Every capture, every recall, every
   edge belongs to exactly one ``Scope`` (an agent DID, optionally narrowed to a
   session). No cross-scope table ever holds another scope's plaintext (LLM08).
-* **confidence / salience** — the two scalars that drive FERNme dynamics.
+* **confidence / salience** — the two scalars that drive memory dynamics.
   ``confidence`` grows with corroboration (``1 - e^(-gamma*hits)``) and separates a
   ``guessed`` memory (verify first) from a ``known`` one (actionable). ``salience``
   slows forgetting so a rare-but-significant signal survives decay.

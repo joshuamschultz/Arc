@@ -182,6 +182,18 @@ enabled = true
 eval_interval_turns = 50
 daily_notes_every_turns = 20
 
+[modules.workpad]
+enabled = true
+
+[modules.workpad.config]
+# Sole writer of context.md: every ``every_n_runs`` real runs it rewrites the
+# file as a curated cockpit of open loops. ``flush_idle_seconds`` is the idle
+# backstop — a slow session below the cadence still flushes once that many
+# wall-clock seconds elapse with new activity. Both counters persist to
+# workspace/.workpad-state.json so a restart resumes mid-cadence.
+every_n_runs = 20
+flush_idle_seconds = 900
+
 [modules.scheduler]
 enabled = true
 

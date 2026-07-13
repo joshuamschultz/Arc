@@ -18,6 +18,7 @@ from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
 from arcmemory.distill import (
     Distiller,
+    EntityDisambiguator,
     FactCandidate,
     FactExtraction,
     InsightCandidate,
@@ -25,6 +26,15 @@ from arcmemory.distill import (
     confidence_from_hits,
     extract_facts,
     mint_insights,
+    resolve_entity,
+)
+from arcmemory.hygiene import (
+    DedupReport,
+    GroupMerge,
+    StoreReport,
+    dedup_workspace,
+    discover_workspaces,
+    repair_backlinks,
 )
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, EmbeddingUnavailableError, IndexRebuilder
@@ -79,10 +89,12 @@ __all__ = [
     "Confidence",
     "ConsolidationResult",
     "Consolidator",
+    "DedupReport",
     "Distiller",
     "Embedder",
     "EmbeddingUnavailableError",
     "Entity",
+    "EntityDisambiguator",
     "EntityRecord",
     "EpisodicStore",
     "Event",
@@ -90,6 +102,7 @@ __all__ = [
     "FactCandidate",
     "FactExtraction",
     "FastCapture",
+    "GroupMerge",
     "IndexRebuilder",
     "Insight",
     "InsightBundle",
@@ -112,6 +125,7 @@ __all__ = [
     "Scope",
     "SemanticStore",
     "Situation",
+    "StoreReport",
     "StructuralIndex",
     "StructuralResult",
     "SurfaceIndex",
@@ -122,8 +136,12 @@ __all__ = [
     "__version__",
     "boundary_mark",
     "confidence_from_hits",
+    "dedup_workspace",
+    "discover_workspaces",
     "extract_facts",
     "gate_no_read_up",
     "mint_insights",
     "render_recalls",
+    "repair_backlinks",
+    "resolve_entity",
 ]

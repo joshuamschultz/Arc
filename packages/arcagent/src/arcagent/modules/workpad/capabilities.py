@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 from arcllm.types import Message
@@ -61,24 +62,29 @@ def _eval_model() -> Any:
 
 @hook(event="agent:post_respond", priority=_TRACK_PRIORITY)
 async def track_runs(ctx: Any) -> None:
-    """Count non-automated runs, accumulate transcript, rewrite every N runs.
+    """Count non-automated runs, accumulate transcript, rewrite on the cadence.
 
-    Automated runs (pulse / scheduler) are session activity but not user-facing
-    interactions; counting them would make "every 20 runs" unpredictable and
-    burn eval tokens on background churn, so they are skipped (parity with the
-    policy eval cadence).
+    ``automated=True`` marks only the checkpoint-resume turn and the tracked-run
+    finalizer — background churn that should not count as a user interaction.
+    Pulse, scheduler, and task runs go through ``dispatch_stream`` with
+    ``automated=False`` and ARE counted toward the cadence (the desired behavior:
+    that work still belongs in the context cockpit).
     """
     if ctx.data.get("automated", False):
         return
     st = _runtime.state()
     _accumulate(st, ctx.data.get("messages", []))
     st.run_count += 1
-    if st.run_count % st.config.every_n_runs != 0:
+    st.persist()
+    if not _should_maintain(st):
         return
     model = _eval_model()
     if model is None:
         return
     transcript_text = _drain_transcript(st)
+    st.last_maintenance_ts = time.time()
+    st.runs_at_last_maintenance = st.run_count
+    st.persist()
     await safe_audit(
         st.telemetry,
         "workpad.triggered",
@@ -96,6 +102,20 @@ async def track_runs(ctx: Any) -> None:
         audit_event_name="workpad.background_error",
         logger=_logger,
     )
+
+
+def _should_maintain(st: _runtime._State) -> bool:
+    """Fire on the cadence boundary, or after an idle gap with unflushed activity.
+
+    The idle path is the restart-resilience backstop: a long, slow session that
+    never lands exactly on ``every_n_runs`` still flushes once the run counter has
+    advanced past the last rewrite and enough wall time has elapsed.
+    """
+    if st.run_count % st.config.every_n_runs == 0:
+        return True
+    if st.run_count <= st.runs_at_last_maintenance:
+        return False
+    return time.time() - st.last_maintenance_ts >= st.config.flush_idle_seconds
 
 
 @hook(event="agent:shutdown", priority=_SHUTDOWN_PRIORITY)

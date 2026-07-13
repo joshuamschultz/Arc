@@ -16,15 +16,23 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from arcagent.core.config import EvalConfig
 from arcagent.modules.workpad.config import WorkpadConfig
+from arcagent.utils.io import atomic_write_text
 
 _logger = logging.getLogger("arcagent.modules.workpad._runtime")
+
+# Cadence counters persist here so a process restart resumes mid-cadence instead
+# of resetting run_count to 0 (the production box restarts every 1-5 minutes,
+# which never let an in-memory counter reach every_n_runs).
+_STATE_FILE = ".workpad-state.json"
 
 
 @dataclass
@@ -39,11 +47,37 @@ class _State:
     eval_label: str
     eval_model: Any = None
     run_count: int = 0
+    # Wall-clock time and run_count at the last maintenance trigger — persisted so
+    # the idle-flush backstop accumulates across restarts.
+    last_maintenance_ts: float = 0.0
+    runs_at_last_maintenance: int = 0
     # Recent role-tagged activity lines accumulated since the last rewrite; drained
     # (snapshotted + cleared) when the maintainer fires. Bounded by config.
     transcript: list[str] = field(default_factory=list)
     background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
     semaphore: asyncio.Semaphore | None = None
+
+    def persist(self) -> None:
+        """Atomically write the cadence counters so a restart resumes mid-cadence."""
+        atomic_write_text(
+            self.workspace / _STATE_FILE,
+            json.dumps(
+                {
+                    "run_count": self.run_count,
+                    "last_maintenance_ts": self.last_maintenance_ts,
+                    "runs_at_last_maintenance": self.runs_at_last_maintenance,
+                }
+            ),
+        )
+
+
+def _load_persisted(workspace: Path) -> dict[str, Any]:
+    """Read the persisted cadence counters; tolerate a missing/corrupt file."""
+    try:
+        data = json.loads((workspace / _STATE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
@@ -64,17 +98,23 @@ def configure(
     cfg = WorkpadConfig(**(config or {}))
     ec = eval_config or EvalConfig()
     ws = Path(workspace).resolve()
-    _state_var.set(
-        _State(
-            config=cfg,
-            eval_config=ec,
-            workspace=ws,
-            telemetry=telemetry,
-            llm_config=llm_config,
-            eval_label=f"{agent_name}/workpad" if agent_name else "workpad",
-            semaphore=asyncio.Semaphore(ec.max_concurrent),
-        )
+    persisted = _load_persisted(ws)
+    new_state = _State(
+        config=cfg,
+        eval_config=ec,
+        workspace=ws,
+        telemetry=telemetry,
+        llm_config=llm_config,
+        eval_label=f"{agent_name}/workpad" if agent_name else "workpad",
+        semaphore=asyncio.Semaphore(ec.max_concurrent),
+        run_count=int(persisted.get("run_count", 0)),
+        last_maintenance_ts=float(persisted.get("last_maintenance_ts", time.time())),
+        runs_at_last_maintenance=int(persisted.get("runs_at_last_maintenance", 0)),
     )
+    _state_var.set(new_state)
+    if not persisted:
+        # Seed the idle clock so it accumulates across restarts before the first flush.
+        new_state.persist()
     _logger.info("workpad module configured (every_n_runs=%d)", cfg.every_n_runs)
 
 

@@ -26,7 +26,8 @@ from typing import Protocol, runtime_checkable
 class Brain(Protocol):
     """The pluggable memory contract arcagent talks to (structural).
 
-    Three FERNme speeds + an index rebuild. All parameters are primitives; a
+    Three memory speeds (fast capture, query-conditioned retrieve, slow
+    consolidate) plus an index rebuild. All parameters are primitives; a
     ``session_id`` optionally narrows the shared-nothing scope.
     """
 

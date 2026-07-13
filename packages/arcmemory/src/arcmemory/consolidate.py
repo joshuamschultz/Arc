@@ -37,6 +37,7 @@ from arcmemory import distill
 from arcmemory.config import MemoryConfig
 from arcmemory.curate import curate_for_distillation
 from arcmemory.db import MemoryDB
+from arcmemory.hygiene import dedup_workspace, repair_backlinks
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder, IndexRebuilder, embed_or_none
 from arcmemory.index.surface import SurfaceIndex, _cosine
@@ -59,6 +60,7 @@ from arcmemory.types import (
 
 _MANIFEST_NAME = ".consolidate-manifest.json"
 _LAST_RUN_NAME = ".consolidate-last-run"
+_HYGIENE_LAST_NAME = ".hygiene-last-run"
 # Cosine at/above which two cue embeddings are treated as the same concept (T-054).
 _CUE_MERGE_THRESHOLD = 0.92
 
@@ -124,6 +126,7 @@ class Consolidator:
         )
         self._manifest_path = self._workspace / "memory" / _MANIFEST_NAME
         self._last_run_path = self._workspace / "memory" / _LAST_RUN_NAME
+        self._hygiene_last_path = self._workspace / "memory" / _HYGIENE_LAST_NAME
 
     @property
     def pending_recovery(self) -> bool:
@@ -183,12 +186,87 @@ class Consolidator:
             window_events=len(events),
         )
 
+    # -- nightly hygiene (heavier, once-per-local-day) ---------------------
+
+    def hygiene_due(self, *, now: datetime) -> bool:
+        """Whether the heavier nightly hygiene pass is due (first call of a new local day).
+
+        arcmemory owns this decision, not arcagent: the poll heartbeat calls
+        ``consolidate()`` and arcmemory escalates to hygiene the first time it runs after
+        the local date rolls over. Tracked by a persisted stamp so an agent restart still
+        fires at most once per local day.
+        """
+        last = self._read_hygiene_date()
+        return last is None or last < self._local_date(now)
+
+    async def run_hygiene(self, *, now: datetime | None = None) -> ConsolidationResult:
+        """Run the light pass, then the day-level hygiene: merge + backlink repair + dedup.
+
+        Every step is idempotent and file-driven (independent of the window), so running
+        hygiene on a quiet day still reconciles the glass-box files. Stamps the hygiene
+        date last so a same-day re-entry stays a light pass.
+        """
+        now = now or datetime.now(UTC)
+        result = await self.run(now=now)
+        self._merge_entities_deterministic()
+        self._repair_backlinks()
+        self._dedup_workspace()
+        self._stamp_hygiene(now)
+        return result
+
+    def _merge_entities_deterministic(self) -> None:
+        """Fold alias-related duplicate cards WITHOUT an embedder (closes the re-dup loop).
+
+        ``merge_entities`` needs embeddings; this deterministic pre-pass folds any card
+        whose slug matches a recorded alias of another card, so common variants collapse
+        even on a model-less deployment. Graph edges follow the survivor.
+        """
+        index = self._semantic.aliases_index()
+        for slug in self._semantic.slugs():
+            owner = index.get(slug)
+            if owner is None or owner == slug or self._semantic.read(owner) is None:
+                continue
+            if self._semantic.merge_into(owner, slug):
+                self._graph.rename_node(self._scope.key, slug, owner)
+                self._emit("memory.entity_merged", f"{slug}->{owner}")
+
+    def _repair_backlinks(self) -> None:
+        """Write reciprocal backlinks into every wiki-link target (bidirectional links)."""
+        written = repair_backlinks(self._semantic)
+        if written:
+            self._emit("memory.backlinks_repaired", "graph", extra={"written": written})
+
+    def _dedup_workspace(self) -> None:
+        """Collapse any pre-canonicalization duplicate cards across the three stores."""
+        report = dedup_workspace(self._workspace, apply=True)
+        if report.groups:
+            self._emit("memory.workspace_deduped", "memory", extra={"groups": report.groups})
+
+    def _local_date(self, now: datetime) -> str:
+        """The local calendar date (``YYYY-MM-DD``) for a UTC-aware instant."""
+        return now.astimezone().date().isoformat()
+
+    def _read_hygiene_date(self) -> str | None:
+        """The local date hygiene last ran (None if it never has here)."""
+        if not self._hygiene_last_path.exists():
+            return None
+        return self._hygiene_last_path.read_text(encoding="utf-8").strip() or None
+
+    def _stamp_hygiene(self, now: datetime) -> None:
+        """Persist the hygiene date so the once-per-local-day gate survives a restart."""
+        self._hygiene_last_path.parent.mkdir(parents=True, exist_ok=True)
+        self._hygiene_last_path.write_text(self._local_date(now), encoding="utf-8")
+
     # -- steps -------------------------------------------------------------
 
     async def _extract_facts(self, events: list[Event]) -> list[tuple[str, Fact]]:
         """Distill + apply facts; audit each mutation + the file it rewrote."""
         applied = await distill.extract_facts(
-            events, distiller=self._distiller, store=self._semantic, config=self._cfg
+            events,
+            distiller=self._distiller,
+            store=self._semantic,
+            config=self._cfg,
+            embedder=self._embedder,
         )
         for slug, fact in applied:
             self._emit("memory.fact_updated", f"{slug}:{fact.predicate}")

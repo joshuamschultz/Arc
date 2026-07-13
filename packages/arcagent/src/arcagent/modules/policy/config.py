@@ -28,6 +28,12 @@ class PolicyConfig(ModuleConfig):
     max_bullets: int = 200
     max_bullet_text_length: int = 500
 
+    # Idle-flush backstop: once this many wall-clock seconds have elapsed since the
+    # last policy eval AND the turn counter has advanced, evaluate on the next turn
+    # even below ``eval_interval_turns``. Guarantees a slow session still learns
+    # instead of stalling just under the cadence boundary.
+    flush_idle_seconds: int = 900
+
     # Grounded-reflection write approval (SPEC-041 Phase 9). Federal stages the
     # curated bullets to ``policy.pending`` for human review; personal/enterprise
     # auto-apply to ``policy.md``.

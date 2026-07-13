@@ -6,7 +6,7 @@ Protocol structurally — it imports nothing from arcagent (the architecture tes
 ``tests/architecture`` guards that), speaking only in primitives (``str``/``int``) at
 its edge and arcmemory's own types on the inside.
 
-One brain per agent workspace. The three FERNme speeds are wired here over the four
+One brain per agent workspace. The three memory speeds are wired here over the four
 stores + two indices:
 
 * ``capture``     → :class:`~arcmemory.capture.FastCapture` (fast, zero-LLM);
@@ -143,9 +143,12 @@ class ArcMemoryBrain:
         to ground reflection (SPEC-041 Phase 9). A brain with no distiller cannot
         distill facts/insights, so it returns an empty result rather than erroring.
 
-        Cadence-gated: the slow LLM sleep-path runs at most once per
-        ``consolidate_interval_minutes`` (default 60), so a per-turn call within
-        that window is a no-op rather than a fresh distillation.
+        arcmemory owns the cadence, not arcagent: the caller's poll heartbeat invokes
+        this every trigger; arcmemory decides internally which pass to run. The first
+        call after the local date rolls over escalates to the heavier nightly hygiene
+        pass (full merge + backlink repair + dedup); otherwise the light per-interval
+        consolidation runs at most once per ``consolidate_interval_minutes`` (default
+        60), and a call inside both windows is a no-op.
         """
         consolidator = self._bundle(session_id).consolidator
         if consolidator is None:
@@ -153,10 +156,11 @@ class ArcMemoryBrain:
         if consolidator.pending_recovery:
             await consolidator.recover()
         now = datetime.now(UTC)
-        if not consolidator.due(now=now, interval_minutes=self._cfg.consolidate_interval_minutes):
-            return self._summarize(ConsolidationResult())
-        result = await consolidator.run(now=now)
-        return self._summarize(result)
+        if consolidator.hygiene_due(now=now):
+            return self._summarize(await consolidator.run_hygiene(now=now))
+        if consolidator.due(now=now, interval_minutes=self._cfg.consolidate_interval_minutes):
+            return self._summarize(await consolidator.run(now=now))
+        return self._summarize(ConsolidationResult())
 
     async def rebuild_index(self, *, session_id: str | None = None) -> None:
         """Re-derive the disposable indices from the glass-box files + stream (REQ-022)."""

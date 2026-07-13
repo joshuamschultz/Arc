@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from arcagent.modules.policy import _runtime
@@ -56,11 +57,12 @@ async def inject_policy_md(ctx: Any) -> None:
 
 @hook(event="agent:post_respond", priority=110)
 async def periodic_policy_eval(ctx: Any) -> None:
-    """Fire policy eval every ``eval_interval_turns`` turns.
+    """Fire policy eval on the ``eval_interval_turns`` cadence, or after an idle gap.
 
-    Skips automated runs (pulse, scheduler) so transient tool errors
-    don't pollute learned policies. Callers opt in by passing
-    ``automated=True`` in the ``agent:post_respond`` event data.
+    ``automated=True`` marks only the checkpoint-resume turn and the tracked-run
+    finalizer. Pulse, scheduler, and task runs go through ``dispatch_stream`` with
+    ``automated=False`` and ARE counted toward the cadence (the desired behavior:
+    that work still shapes learned policy).
     """
     if ctx.data.get("automated", False):
         return
@@ -75,8 +77,12 @@ async def periodic_policy_eval(ctx: Any) -> None:
     st = _runtime.state()
     st.session_messages = messages
     st.turn_count += 1
-    if st.turn_count % st.config.eval_interval_turns != 0:
+    st.persist()
+    if not _should_eval(st):
         return
+    st.last_eval_ts = time.time()
+    st.turns_at_last_eval = st.turn_count
+    st.persist()
     if st.telemetry is not None:
         st.telemetry.audit_event(
             "policy.eval_triggered",
@@ -93,6 +99,20 @@ async def periodic_policy_eval(ctx: Any) -> None:
         audit_event_name="policy.background_error",
         logger=_logger,
     )
+
+
+def _should_eval(st: _runtime._State) -> bool:
+    """Fire on the cadence boundary, or after an idle gap with unflushed activity.
+
+    The idle path is the restart-resilience backstop: a slow session that never
+    lands exactly on ``eval_interval_turns`` still evaluates once the turn counter
+    has advanced past the last eval and enough wall time has elapsed.
+    """
+    if st.turn_count % st.config.eval_interval_turns == 0:
+        return True
+    if st.turn_count <= st.turns_at_last_eval:
+        return False
+    return time.time() - st.last_eval_ts >= st.config.flush_idle_seconds
 
 
 @hook(event="memory.consolidated", priority=60, name="policy_reflect_on_consolidation")
@@ -121,6 +141,7 @@ async def reflect_on_consolidation(ctx: Any) -> None:
     if model is None:
         return
     st.last_reflect_turn = st.turn_count
+    st.persist()
     try:
         await reflect_and_curate(st.engine, model, grounding, tier=st.config.tier)
     except Exception:  # reason: fail-open — reflection must not break consolidation

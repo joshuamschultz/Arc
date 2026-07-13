@@ -84,7 +84,7 @@ adds the concrete implementation that satisfies it.
 
 ### Added
 
-- **`brain.ArcMemoryBrain`** — the concrete Brain that wraps the three FERNme speeds
+- **`brain.ArcMemoryBrain`** — the concrete Brain that wraps the three memory speeds
   behind arcagent's structural Protocol: `capture` → `FastCapture` (zero-LLM),
   `retrieve` → `Retriever` (single-pass, clearance-gated, boundary-marked, returns
   injectable text), `consolidate` → `Consolidator` (slow sleep path; returns mutation
