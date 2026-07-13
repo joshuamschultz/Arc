@@ -20,9 +20,9 @@ import type { Dict } from '@/lib/types'
 
 // The three per-agent config files, one editor tab each.
 const CONFIG_FILES = [
-  { key: 'arcagent', label: 'ArcAgent' },
   { key: 'arcllm', label: 'ArcLLM' },
   { key: 'arcrun', label: 'ArcRun' },
+  { key: 'arcagent', label: 'ArcAgent' },
 ] as const
 
 function ReadValue({ value }: { value: unknown }) {
@@ -221,7 +221,7 @@ export function SettingsPage() {
           />
         </div>
       ) : (
-        <Tabs defaultValue="arcagent" className="flex flex-1 flex-col overflow-hidden">
+        <Tabs defaultValue="arcllm" className="flex flex-1 flex-col overflow-hidden">
           <div className="border-b border-border px-6">
             <TabsList className="my-2">
               {CONFIG_FILES.map((f) => (
