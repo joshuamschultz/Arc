@@ -241,7 +241,7 @@ consolidate_event_threshold = 20      # fire consolidation after N events
 consolidate_idle_seconds = 900.0      # fire after idle seconds
 consolidate_interval_seconds = 3600.0  # time-based cadence floor
 
-[modules.memory.dynamics]
+[modules.memory.config.dynamics]
 # Overrides for the memory backend's own dynamics (arcmemory MemoryConfig), applied
 # OVER the tier defaults. Otherwise these are tier-locked. Uncomment to tune. Examples:
 #   entity_merge_candidate_threshold = 0.80  # name-embedding cosine to become a merge
