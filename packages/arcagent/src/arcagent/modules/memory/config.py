@@ -11,6 +11,8 @@ recall + consolidation scheduling. ``brain`` is the SPEC-047 selector:
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import Field
 
 from arcagent.modules.base_config import ModuleConfig
@@ -46,6 +48,13 @@ class MemoryConfig(ModuleConfig):
     # Time-based cadence: consolidate at least this often while events are pending
     # (default hourly), so curated memory stays fresh even on a steady low volume.
     consolidate_interval_seconds: float = 3600.0
+
+    # Pass-through overrides for the selected Brain's OWN dynamics config — e.g.
+    # arcmemory's MemoryConfig fields (entity_merge_candidate_threshold, decay/confidence
+    # scalars, structural-recall knobs) that are otherwise tier-locked. Applied OVER the
+    # tier defaults; the Brain validates them. This thin module stays ignorant of the
+    # Brain's field names — it just forwards the dict.
+    dynamics: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = ["MemoryConfig"]

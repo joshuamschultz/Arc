@@ -97,6 +97,7 @@ def configure(
         brain_allowlist=tuple(cfg.brain_allowlist),
         identity=identity,
         policy_pipeline=policy_pipeline,
+        memory_dynamics=dict(cfg.dynamics),
     )
     new_state = _State(
         config=cfg,
