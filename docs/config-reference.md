@@ -120,7 +120,11 @@ operator-gated route:
 
 | Method + path | Purpose |
 |---|---|
-| `PATCH /api/agents/{id}/schedules/{sid}` | Edit a schedule (operator only). Type-aware timing field: `cron` → `expression` (validated with `croniter`), `interval` → `every_seconds` (interval floor enforced), `once` → `at`. Timeout ceiling and prompt length are bounded |
+| `PATCH /api/agents/{id}/schedules/{sid}` | Edit a schedule (operator only). Editable: `enabled`, `prompt` (≤500 chars), `timeout_seconds` (≤3600), plus exactly one timing field by type — `cron` → `expression` (validated with `croniter`), `interval` → `every_seconds` (floor 60), `once` → `at`. `id`/`type`/`metadata` are never writable |
 
-Writes are atomic (temp-file swap) and audited, same posture as the workspace file editor.
+Writes are atomic (temp-file swap) and audited, same posture as the workspace file editor. The
+scheduler reloads the schedule store each tick, so an edit takes effect on the next tick with no
+restart. The dashboard renders each schedule **human-readable** rather than as a raw cron string —
+e.g. `40 10 * * *` → "Daily at 10:40", intervals → "Every N minutes/hours", `once` → "Once,
+&lt;datetime&gt;" — and titles a schedule by the first line of its prompt, never the `sched_…` id.
 
