@@ -112,3 +112,19 @@ def test_unknown_agent_is_404(tmp_path: Path) -> None:
     client, _agent_id, _agent_dir = _agent(tmp_path)
     resp = _detail(client, "nobody", "word_count")
     assert resp.status_code == 404
+
+
+def test_module_tool_returns_read_only_detail(tmp_path: Path) -> None:
+    """A module-derived tool (e.g. schedule_update) has no editable file, but it IS in
+    the Tools list — so detail must surface a READ-ONLY view, not a 404 dead-end."""
+    client, agent_id, agent_dir = _agent(tmp_path)
+    toml = agent_dir / "arcagent.toml"
+    toml.write_text(toml.read_text() + "\n[modules.scheduler]\nenabled = true\n", encoding="utf-8")
+
+    resp = _detail(client, agent_id, "schedule_update")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["name"] == "schedule_update"
+    assert body["transport"] == "module:scheduler"
+    assert body["editable"] is False
+    assert body["write_root"] is None and body["write_path"] is None

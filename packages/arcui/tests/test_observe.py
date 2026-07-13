@@ -407,10 +407,13 @@ def test_row_to_trace_surfaces_bodies_from_extra() -> None:
             "response_body": {"content": "hello"},
         },
     }
-    trace = _row_to_trace(row)
+    trace = _row_to_trace(row, include_bodies=True)
     assert trace["request"]["messages"][0]["content"] == "hi"
     assert trace["response"]["content"] == "hello"
     assert trace["messages"][0]["content"] == "hi"
+    # The LIST shape (default) is lightweight — bodies are omitted entirely.
+    assert "request" not in _row_to_trace(row)
+    assert "response" not in _row_to_trace(row)
 
 
 def test_row_to_trace_handles_json_string_extra() -> None:
@@ -424,18 +427,21 @@ def test_row_to_trace_handles_json_string_extra() -> None:
         "outcome": "ok",
         "extra": _json.dumps({"response_body": {"content": "hey"}}),
     }
-    trace = _row_to_trace(row)
+    trace = _row_to_trace(row, include_bodies=True)
     assert trace["response"]["content"] == "hey"
 
 
 def test_row_to_trace_metadata_only_has_no_bodies() -> None:
-    """Default (no raw capture): request/response are None, nothing breaks."""
+    """The list shape omits body keys entirely; detail with no extra yields None."""
     from arcui.observe import _row_to_trace
 
-    trace = _row_to_trace({"record_id": "r3", "outcome": "ok"})
-    assert trace["request"] is None
-    assert trace["response"] is None
-    assert trace["messages"] is None
+    listed = _row_to_trace({"record_id": "r3", "outcome": "ok"})
+    assert "request" not in listed and "response" not in listed and "messages" not in listed
+
+    detail = _row_to_trace({"record_id": "r3", "outcome": "ok"}, include_bodies=True)
+    assert detail["request"] is None
+    assert detail["response"] is None
+    assert detail["messages"] is None
 
 
 def test_row_to_trace_exposes_cache_token_breakdown() -> None:

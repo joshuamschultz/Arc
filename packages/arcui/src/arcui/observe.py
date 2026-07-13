@@ -46,27 +46,21 @@ def _window_cutoff(window: str) -> str:
     return (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
 
 
-def _row_to_trace(row: dict[str, Any]) -> dict[str, Any]:
+def _row_to_trace(row: dict[str, Any], *, include_bodies: bool = False) -> dict[str, Any]:
     """Map an arcstore ``llm_calls`` row to the UI trace shape.
 
-    When raw capture is enabled (``store_raw_bodies``), the producer parks the
-    request/response payloads in ``extra``; surface them as ``request`` /
-    ``response`` / ``messages`` so the drawer shows the actual call. They are
-    absent (metadata-only) under the federal/CUI default — the UI handles that.
+    The LIST is metadata-only (``include_bodies=False``): the raw request/response
+    payloads (parked in ``extra`` when ``store_raw_bodies`` is on) can be ~100KB+
+    EACH, so shipping them for a whole page is a multi-MB response the drawer would
+    re-fetch per-row anyway (it calls the single-trace endpoint on open). The
+    single-trace DETAIL sets ``include_bodies=True`` to surface ``request`` /
+    ``response`` / ``messages`` / ``tools``. Under the federal/CUI default the bodies
+    are absent regardless — the UI handles that.
     """
     prompt = row.get("prompt_tokens") or 0
     completion = row.get("completion_tokens") or 0
     outcome = row.get("outcome")
-    extra = row.get("extra")
-    if isinstance(extra, str):
-        try:
-            extra = json.loads(extra)
-        except (json.JSONDecodeError, TypeError):
-            extra = None
-    extra = extra if isinstance(extra, dict) else {}
-    request_body = extra.get("request_body")
-    response_body = extra.get("response_body")
-    return {
+    trace: dict[str, Any] = {
         "trace_id": row.get("record_id"),
         "timestamp": row.get("ts"),
         "model": row.get("model"),
@@ -85,11 +79,22 @@ def _row_to_trace(row: dict[str, Any]) -> dict[str, Any]:
         "cache_read_tokens": row.get("cache_read_tokens"),
         "cache_write_tokens": row.get("cache_write_tokens"),
         "request_id": row.get("request_id"),
-        "request": request_body,
-        "response": response_body,
-        "messages": (request_body or {}).get("messages"),
-        "tools": (request_body or {}).get("tools"),
     }
+    if not include_bodies:
+        return trace
+    extra = row.get("extra")
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra)
+        except (json.JSONDecodeError, TypeError):
+            extra = None
+    extra = extra if isinstance(extra, dict) else {}
+    request_body = extra.get("request_body")
+    trace["request"] = request_body
+    trace["response"] = extra.get("response_body")
+    trace["messages"] = (request_body or {}).get("messages")
+    trace["tools"] = (request_body or {}).get("tools")
+    return trace
 
 
 def _spawn_node(
@@ -198,12 +203,13 @@ class Observe:
         # not the full DID; filter on that.
         where = {"agent_label": agent} if agent else None
         rows = await self._backend.query("llm_calls", where=where, order_by="ts DESC", limit=limit)
-        return [_row_to_trace(r) for r in rows]
+        return [_row_to_trace(r) for r in rows]  # list = metadata only (lightweight)
 
     async def trace(self, trace_id: str) -> dict[str, Any] | None:
         await self._ensure()
         rows = await self._backend.query("llm_calls", where={"record_id": trace_id}, limit=1)
-        return _row_to_trace(rows[0]) if rows else None
+        # Single-trace detail includes the full request/response bodies.
+        return _row_to_trace(rows[0], include_bodies=True) if rows else None
 
     async def audit(
         self, *, agent: str | None = None, target: str | None = None, limit: int = 100

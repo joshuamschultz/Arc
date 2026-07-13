@@ -532,4 +532,25 @@ async def get_tool_detail(request: Request) -> JSONResponse:
         )
         return JSONResponse(payload.model_dump(mode="json"))
 
+    # Read-only fallback: module-derived tools (modules/*/capabilities.py) have no
+    # editable file, but they DO appear in the Tools list — so surface their metadata
+    # as a read-only detail instead of a 404 (a listed tool that errors on click is a
+    # dead end). Same source the list uses.
+    _, _, enabled_modules = _load_tool_policy(agent_id, agent_root)
+    for row in _collect_module_tools(enabled_modules):
+        if row["name"] == tool_name:
+            return JSONResponse(
+                ToolDetailResponse(
+                    name=tool_name,
+                    transport=row["transport"],
+                    classification=row.get("classification") or "",
+                    description=row.get("description") or "",
+                    source_path="",
+                    content="",
+                    editable=False,
+                    write_root=None,
+                    write_path=None,
+                ).model_dump(mode="json")
+            )
+
     return _error(f"tool {tool_name!r} not found", 404)
