@@ -14,7 +14,13 @@ import pytest
 from arcstore.approvals import ApprovalStore
 from arcstore.backends.sqlite import SqliteBackend
 from arctrust.identity import AgentIdentity
-from arctrust.policy import ToolCall, _hash_call, grant_to_wire, sign_approval_for_hash
+from arctrust.policy import (
+    OperatorApprovalAuthority,
+    ToolCall,
+    _hash_call,
+    grant_to_wire,
+    sign_approval_for_hash,
+)
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
@@ -92,7 +98,10 @@ async def test_end_to_end_gate_admits_only_valid_operator_grant(tmp_path: Path) 
     # it; a grant an attacker signs for a different hash is rejected by the gate.
     store, be = await _store(tmp_path)
     try:
-        operator = AgentIdentity.generate(org="operator", agent_type="approver")
+        # The operator signing the grant MUST be the deployment operator the gate
+        # pins to — so derive the approver authority from the gate's own signer.
+        op_signer = InProcessSigner(bytes(SigningKey.generate()))
+        operator = OperatorApprovalAuthority(op_signer)
         call = ToolCall(
             tool_name="egress", arguments={"url": "https://x"}, agent_did=_AGENT,
             session_id="", classification="unclassified",
@@ -101,7 +110,7 @@ async def test_end_to_end_gate_admits_only_valid_operator_grant(tmp_path: Path) 
         call_hash = _hash_call(call)
         channel = ArcStoreApprovalChannel(store, id_factory=lambda: "req1")
         gate = HumanGate(
-            operator_signer=InProcessSigner(bytes(SigningKey.generate())),
+            operator_signer=op_signer,
             agent_did=_AGENT, tier="enterprise", channel=channel,
         )
 

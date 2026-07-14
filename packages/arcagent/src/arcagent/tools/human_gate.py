@@ -26,8 +26,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from arctrust.identity import did_from_public_key
-from arctrust.policy import ApprovalGrant, ToolCall, sign_approval, verify_approval
+from arctrust.policy import (
+    ApprovalGrant,
+    OperatorApprovalAuthority,
+    ToolCall,
+    sign_approval,
+    verify_approval,
+)
 from arctrust.signer import Signer
 
 _logger = logging.getLogger("arcagent.human_gate")
@@ -103,7 +108,7 @@ class HumanGate:
         self._config = config or HumanGateConfig()
         self._audit_sink = audit_sink
         self._channel = channel
-        self._operator = _OperatorApprovalAuthority(operator_signer)
+        self._operator = OperatorApprovalAuthority(operator_signer)
 
     async def request(self, call: ToolCall, *, legs: frozenset[str]) -> ApprovalGrant | None:
         """Obtain a one-shot approval for ``call`` or return None (fail closed).
@@ -134,9 +139,11 @@ class HumanGate:
             return None
 
         # The grant came from an out-of-process operator surface — trust nothing
-        # until it verifies: bound to THIS call_hash, signed by the operator key,
-        # and NOT the agent's own DID (ASI09). A forged/mismatched grant fails closed.
-        if not verify_approval(call, grant):
+        # until it both verifies (bound to THIS call_hash, valid signature, not the
+        # agent's own DID — ASI09) AND is pinned to the DEPLOYMENT operator. Pinning
+        # is what stops a foreign actor: verify_approval alone accepts any non-agent
+        # key, so without the DID pin any keypair could self-mint an approval.
+        if not verify_approval(call, grant) or grant.approver_did != self._operator.did:
             self._emit("human_gate.denied", request, outcome="invalid_grant")
             return None
 
@@ -192,35 +199,6 @@ class HumanGate:
             )
         except Exception:  # reason: fail-open — audit must not mask the decision
             _logger.exception("Human-gate audit sink raised; continuing")
-
-
-@dataclass(frozen=True)
-class _OperatorApprovalAuthority:
-    """Adapt an operator :class:`~arctrust.signer.Signer` to the approval authority.
-
-    Satisfies ``arctrust.policy.ApprovalAuthority`` (did + public_key + algorithm
-    + sign). The DID is derived from the operator public key so
-    ``did_matches_pubkey`` holds inside ``verify_approval`` and the approver DID
-    is provably distinct from any agent DID (ASI09 self-approval guard) — for
-    Ed25519 (in-process) and ECDSA-P256 (vault_transit/federal) alike.
-    """
-
-    _signer: Signer
-
-    @property
-    def did(self) -> str:
-        return did_from_public_key(self._signer.public_key, org="operator", agent_type="approver")
-
-    @property
-    def public_key(self) -> bytes:
-        return self._signer.public_key
-
-    @property
-    def algorithm(self) -> str:
-        return self._signer.algorithm
-
-    def sign(self, message: bytes) -> bytes:
-        return self._signer.sign(message)
 
 
 __all__ = [

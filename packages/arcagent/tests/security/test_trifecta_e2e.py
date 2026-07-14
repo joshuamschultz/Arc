@@ -193,10 +193,15 @@ class TestTrifectaRealE2E:
         assert sent == []
 
     async def test_human_gate_engages_and_admits_one_egress(self, tmp_path: Path) -> None:
-        from arctrust.policy import ApprovalGrant, sign_approval_for_hash
+        from arctrust.policy import (
+            ApprovalGrant,
+            OperatorApprovalAuthority,
+            sign_approval_for_hash,
+        )
 
         requests: list[ApprovalRequest] = []
-        operator = AgentIdentity.generate("operator", "approver")
+        op_signer = _op_signer()
+        operator = OperatorApprovalAuthority(op_signer)
 
         async def approve(req: ApprovalRequest) -> ApprovalGrant | None:
             requests.append(req)
@@ -204,7 +209,7 @@ class TestTrifectaRealE2E:
 
         identity = AgentIdentity.generate("org", "agent")
         gate = HumanGate(
-            operator_signer=_op_signer(),
+            operator_signer=op_signer,
             agent_did=identity.did,
             tier="enterprise",
             channel=approve,

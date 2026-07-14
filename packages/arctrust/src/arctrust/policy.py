@@ -49,9 +49,9 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict
 
 from arctrust.classification import Classification, dominates
-from arctrust.identity import AgentIdentity, did_matches_pubkey
+from arctrust.identity import AgentIdentity, did_from_public_key, did_matches_pubkey
 from arctrust.keypair import verify as _ed25519_verify
-from arctrust.signer import verify_signature
+from arctrust.signer import Signer, verify_signature
 
 _logger = logging.getLogger("arctrust.policy")
 
@@ -390,6 +390,38 @@ class ApprovalAuthority(Protocol):
     def algorithm(self) -> str: ...
 
     def sign(self, message: bytes) -> bytes: ...
+
+
+class OperatorApprovalAuthority:
+    """Adapt an operator :class:`~arctrust.signer.Signer` to :class:`ApprovalAuthority`.
+
+    The single canonical operator-approver identity: the DID is DERIVED from the
+    operator public key with a fixed ``org="operator"``/``agent_type="approver"``
+    label, so every surface that mints approvals — the agent's in-process gate,
+    the ``arc approve`` CLI, the arcui operator action — produces the SAME
+    ``approver_did`` for the same operator key. That lets the gate pin an incoming
+    grant to the deployment operator (``grant.approver_did == operator.did``): a
+    foreign key yields a different DID and is rejected, even though it too is
+    "not the agent". Works for Ed25519 (in-process) and ECDSA-P256 (vault_transit).
+    """
+
+    def __init__(self, signer: Signer) -> None:
+        self._signer = signer
+
+    @property
+    def did(self) -> str:
+        return did_from_public_key(self._signer.public_key, org="operator", agent_type="approver")
+
+    @property
+    def public_key(self) -> bytes:
+        return self._signer.public_key
+
+    @property
+    def algorithm(self) -> str:
+        return self._signer.algorithm
+
+    def sign(self, message: bytes) -> bytes:
+        return self._signer.sign(message)
 
 
 def sign_approval(call: ToolCall, operator: ApprovalAuthority) -> ApprovalGrant:
@@ -1313,6 +1345,7 @@ __all__ = [
     "Decision",
     "GlobalLayer",
     "IdentityLayer",
+    "OperatorApprovalAuthority",
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",

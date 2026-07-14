@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from arctrust.identity import AgentIdentity
 from arctrust.policy import (
     ApprovalGrant,
+    OperatorApprovalAuthority,
     PolicyContext,
     ToolCall,
     sign_approval_for_hash,
@@ -92,9 +92,10 @@ class TestHumanGate:
         assert await gate.request(_call(), legs=_TRIFECTA) is None
 
     async def test_channel_approve_and_deny(self) -> None:
-        # The channel returns an OPERATOR-signed grant for the call_hash (the
-        # mechanical surface); deny returns None. The gate verifies the grant.
-        operator = AgentIdentity.generate(org="operator", agent_type="approver")
+        # The channel returns a grant signed by the DEPLOYMENT operator key (the
+        # same key the gate pins to); deny returns None. The gate verifies + pins.
+        signer = _operator_signer()
+        operator = OperatorApprovalAuthority(signer)
 
         async def approve(req: ApprovalRequest) -> ApprovalGrant | None:
             return sign_approval_for_hash(req.call_hash, operator)
@@ -102,7 +103,6 @@ class TestHumanGate:
         async def deny(_req: ApprovalRequest) -> ApprovalGrant | None:
             return None
 
-        signer = _operator_signer()
         agent_did = "did:arc:example:org:agent:abc"
         approving = HumanGate(
             operator_signer=signer, agent_did=agent_did, tier="enterprise", channel=approve
@@ -116,16 +116,35 @@ class TestHumanGate:
     async def test_channel_grant_for_wrong_call_is_rejected(self) -> None:
         # A grant the channel signs for a DIFFERENT call_hash must fail the gate's
         # verify — approval binds to exactly the call that tripped it (ASI09).
-        operator = AgentIdentity.generate(org="operator", agent_type="approver")
+        signer = _operator_signer()
+        operator = OperatorApprovalAuthority(signer)
 
         async def wrong_hash(_req: ApprovalRequest) -> ApprovalGrant | None:
             return sign_approval_for_hash("deadbeefdeadbeef", operator)
 
         gate = HumanGate(
-            operator_signer=_operator_signer(),
+            operator_signer=signer,
             agent_did="did:arc:example:org:agent:abc",
             tier="enterprise",
             channel=wrong_hash,
+        )
+        assert await gate.request(_call(), legs=_TRIFECTA) is None
+
+    async def test_grant_from_foreign_operator_key_is_rejected(self) -> None:
+        # THE spoof-proofness property: a grant correctly signed for the right
+        # call, but by a DIFFERENT (foreign) key than the deployment operator's,
+        # is rejected — verify_approval accepts any non-agent key, so only the
+        # gate's operator-DID pin stops a foreign actor from self-approving.
+        foreign = OperatorApprovalAuthority(_operator_signer())
+
+        async def foreign_approve(req: ApprovalRequest) -> ApprovalGrant | None:
+            return sign_approval_for_hash(req.call_hash, foreign)
+
+        gate = HumanGate(
+            operator_signer=_operator_signer(),  # the DEPLOYMENT key — different
+            agent_did="did:arc:example:org:agent:abc",
+            tier="enterprise",
+            channel=foreign_approve,
         )
         assert await gate.request(_call(), legs=_TRIFECTA) is None
 
