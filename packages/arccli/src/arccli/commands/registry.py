@@ -136,6 +136,13 @@ def _memory_handler(args: list[str]) -> None:
     memory_handler(args)
 
 
+def _approve_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.approve import approve_handler
+
+    approve_handler(args)
+
+
 def _blueprint_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.blueprint import blueprint_handler
@@ -525,6 +532,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_memory_handler,
+    ),
+    CommandDef(
+        name="approve",
+        description="Mechanical operator approval for blocked agent actions — list, <id>, --deny",
+        category="Tools & Skills",
+        args_hint="[list | <id> [--deny]]",
+        cli_only=True,
+        handler=_approve_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.
