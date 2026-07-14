@@ -21,6 +21,7 @@ from typing import Any
 from arcgateway import team_roster
 from arcstore.backends.sqlite import SqliteBackend
 from arcstore.config import resolve_data_dir
+from arcstore.approvals import ApprovalStore
 from arcstore.tasks import TaskStore
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -44,6 +45,7 @@ from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import system_config as system_config_routes
+from arcui.routes import approvals as approvals_routes
 from arcui.routes import tasks as tasks_routes
 from arcui.routes import team_chat as team_chat_routes
 from arcui.routes import team_pages as team_pages_routes
@@ -198,6 +200,7 @@ def create_app(
         *team_chat_routes.routes,
         *team_ws_routes.routes,
         *tasks_routes.routes,
+        *approvals_routes.routes,
     ]
 
     # Mount static files if the directory exists.
@@ -414,6 +417,9 @@ def create_app(
     app.state.observe = Observe(data_dir=data_dir, workspace_dir=workspace_dir)
     # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
     app.state.task_store = TaskStore(task_store_backend)
+    # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
+    # collection; the operator surface for trifecta-block requests.
+    app.state.approval_store = ApprovalStore(task_store_backend)
     # Ingest policy (ADR-019 tier = stringency): may operator-authored task
     # text carry URLs/emails? Federal → False (default, secure-by-default);
     # the launcher raises it for personal/enterprise. Reads are never gated.
