@@ -10,7 +10,14 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from arctrust.policy import PolicyContext, ToolCall, verify_approval
+from arctrust.identity import AgentIdentity
+from arctrust.policy import (
+    ApprovalGrant,
+    PolicyContext,
+    ToolCall,
+    sign_approval_for_hash,
+    verify_approval,
+)
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
@@ -85,11 +92,15 @@ class TestHumanGate:
         assert await gate.request(_call(), legs=_TRIFECTA) is None
 
     async def test_channel_approve_and_deny(self) -> None:
-        async def approve(_req: ApprovalRequest) -> bool:
-            return True
+        # The channel returns an OPERATOR-signed grant for the call_hash (the
+        # mechanical surface); deny returns None. The gate verifies the grant.
+        operator = AgentIdentity.generate(org="operator", agent_type="approver")
 
-        async def deny(_req: ApprovalRequest) -> bool:
-            return False
+        async def approve(req: ApprovalRequest) -> ApprovalGrant | None:
+            return sign_approval_for_hash(req.call_hash, operator)
+
+        async def deny(_req: ApprovalRequest) -> ApprovalGrant | None:
+            return None
 
         signer = _operator_signer()
         agent_did = "did:arc:example:org:agent:abc"
@@ -102,10 +113,26 @@ class TestHumanGate:
         assert await approving.request(_call(), legs=_TRIFECTA) is not None
         assert await denying.request(_call(), legs=_TRIFECTA) is None
 
+    async def test_channel_grant_for_wrong_call_is_rejected(self) -> None:
+        # A grant the channel signs for a DIFFERENT call_hash must fail the gate's
+        # verify — approval binds to exactly the call that tripped it (ASI09).
+        operator = AgentIdentity.generate(org="operator", agent_type="approver")
+
+        async def wrong_hash(_req: ApprovalRequest) -> ApprovalGrant | None:
+            return sign_approval_for_hash("deadbeefdeadbeef", operator)
+
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did="did:arc:example:org:agent:abc",
+            tier="enterprise",
+            channel=wrong_hash,
+        )
+        assert await gate.request(_call(), legs=_TRIFECTA) is None
+
     async def test_channel_timeout_fails_closed(self) -> None:
-        async def hang(_req: ApprovalRequest) -> bool:
+        async def hang(_req: ApprovalRequest) -> ApprovalGrant | None:
             await asyncio.sleep(10)
-            return True
+            return None
 
         gate = HumanGate(
             operator_signer=_operator_signer(),

@@ -168,11 +168,14 @@ class TestTrifectaDispatch:
         assert await _dispatch_in_session(reg, "egress", "s2") == "egress-ok"
 
     async def test_channel_approval_admits_the_call(self) -> None:
-        approvals: list[ApprovalRequest] = []
+        from arctrust.policy import ApprovalGrant, sign_approval_for_hash
 
-        async def approve(req: ApprovalRequest) -> bool:
+        approvals: list[ApprovalRequest] = []
+        operator = AgentIdentity.generate("operator", "approver")
+
+        async def approve(req: ApprovalRequest) -> ApprovalGrant | None:
             approvals.append(req)
-            return True
+            return sign_approval_for_hash(req.call_hash, operator)
 
         identity = AgentIdentity.generate("org", "agent")
         gate = HumanGate(

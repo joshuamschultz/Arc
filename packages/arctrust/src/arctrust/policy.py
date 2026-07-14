@@ -37,6 +37,7 @@ call actually carries the policy/telemetry they gate (SPEC-034, SPEC-038).
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -400,7 +401,47 @@ def sign_approval(call: ToolCall, operator: ApprovalAuthority) -> ApprovalGrant:
     grant records the operator's ``algorithm`` so ECDSA-P256 (federal
     out-of-process) grants verify without the verifier assuming Ed25519.
     """
-    call_hash = _hash_call(call)
+    return sign_approval_for_hash(_hash_call(call), operator)
+
+
+def grant_to_wire(grant: ApprovalGrant) -> dict[str, str]:
+    """JSON-safe form of an :class:`ApprovalGrant` for storage/transport.
+
+    ``ApprovalGrant`` carries raw ``bytes`` (public_key, signature) that Pydantic's
+    JSON mode cannot encode, so the two binary fields are base64-encoded. This is
+    the single serialization seam shared by the operator surfaces (which mint +
+    store) and the agent channel (which reads + verifies) — none reinvents it.
+    """
+    return {
+        "call_hash": grant.call_hash,
+        "approver_did": grant.approver_did,
+        "public_key": base64.b64encode(grant.public_key).decode("ascii"),
+        "algorithm": grant.algorithm,
+        "signature": base64.b64encode(grant.signature).decode("ascii"),
+    }
+
+
+def grant_from_wire(data: dict[str, Any]) -> ApprovalGrant:
+    """Reconstruct an :class:`ApprovalGrant` from :func:`grant_to_wire` output."""
+    return ApprovalGrant(
+        call_hash=str(data["call_hash"]),
+        approver_did=str(data["approver_did"]),
+        public_key=base64.b64decode(str(data["public_key"])),
+        algorithm=str(data.get("algorithm", "ed25519")),
+        signature=base64.b64decode(str(data["signature"])),
+    )
+
+
+def sign_approval_for_hash(call_hash: str, operator: ApprovalAuthority) -> ApprovalGrant:
+    """Mint an operator-signed approval bound to a precomputed ``call_hash``.
+
+    The hash-only form of :func:`sign_approval` — used by the out-of-process
+    operator surfaces (``arc approve`` CLI, arcui operator action) that hold only
+    the pending request's ``call_hash``, never the full :class:`ToolCall`. The
+    resulting grant verifies identically: :func:`verify_approval` recomputes the
+    hash from the agent's call and requires it to equal ``call_hash``, so a grant
+    minted here unlocks exactly the call the agent stored and no other.
+    """
     signature = operator.sign(_approval_signing_bytes(call_hash, operator.did))
     return ApprovalGrant(
         call_hash=call_hash,
@@ -1284,7 +1325,10 @@ __all__ = [
     "ToolCall",
     "ToolRuntimeStatus",
     "build_pipeline",
+    "grant_from_wire",
+    "grant_to_wire",
     "sign_approval",
+    "sign_approval_for_hash",
     "sign_call",
     "verify_approval",
     "verify_call",

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -68,7 +69,7 @@ from arcagent.core.tool_policy import build_pipeline
 from arcagent.core.tool_registry import RegisteredTool, ToolRegistry
 from arcagent.core.vault_resolver import _validate_vault_backend, create_vault_resolver
 from arcagent.tools._policy_fill import resolve_provider_limits
-from arcagent.tools.human_gate import HumanGate, HumanGateConfig
+from arcagent.tools.human_gate import ApprovalChannel, HumanGate, HumanGateConfig
 
 if TYPE_CHECKING:
     from arcrun import RunHandle, StreamEvent
@@ -383,9 +384,11 @@ class ArcAgent:
         )
         self._policy_pipeline = pipeline
         # SPEC-035 REQ-012/014 — per-session capability ledger + human-approval
-        # gate for trifecta completion. The gate signs one-shot approvals with
-        # the OPERATOR key (SPEC-053 authority), never the agent DID (ASI09); no
-        # channel is wired by default → fail-closed unless personal auto-approve.
+        # gate for trifecta completion. The gate verifies a one-shot approval
+        # signed with the OPERATOR key (SPEC-053 authority), never the agent DID
+        # (ASI09). The channel is the MECHANICAL, spoof-proof operator handoff:
+        # the shared arcstore approvals directory the `arc approve` CLI and arcui
+        # operator surface resolve — never agent chat, which could be forged.
         self._capability_ledger = SessionCapabilityLedger()
         gate_cfg = self._config.tools.human_gate
         human_gate = HumanGate(
@@ -397,6 +400,7 @@ class ArcAgent:
                 auto_approve=[frozenset(legs) for legs in gate_cfg.auto_approve],
             ),
             audit_sink=policy_sink,
+            channel=self._build_approval_channel(gate_cfg.timeout_seconds),
         )
         self._human_gate = human_gate
         self._tool_registry = ToolRegistry(
@@ -455,6 +459,26 @@ class ArcAgent:
             "Agent %s started (DID: %s)",
             self._config.agent.name,
             self._identity.did,
+        )
+
+    def _build_approval_channel(self, ttl_seconds: float) -> ApprovalChannel | None:
+        """Mechanical operator handoff for the human-approval gate (SPEC-035).
+
+        Lazy: opens the shared arcstore ``approvals`` directory only on the first
+        trifecta block. Any construction error degrades to ``None`` (the gate then
+        fails closed, exactly as with no channel) — approval must never crash boot.
+        """
+        try:
+            from arcagent.tools.approval_channel import ArcStoreApprovalChannel
+            from arcagent.tools.approval_store import open_approval_store
+        except ImportError:  # arcstore not installed — fail closed, don't crash
+            return None
+        label = self._config.ui.display_name or self._config.agent.name
+        return ArcStoreApprovalChannel(
+            store_opener=open_approval_store,
+            id_factory=lambda: uuid.uuid4().hex[:16],
+            agent_label=label,
+            ttl_seconds=ttl_seconds,
         )
 
     def _ensure_started(

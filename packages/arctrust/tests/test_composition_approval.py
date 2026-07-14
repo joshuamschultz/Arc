@@ -169,6 +169,36 @@ def test_verify_approval_true_for_operator_signed() -> None:
     assert verify_approval(approved, grant) is True
 
 
+def test_sign_approval_for_hash_matches_full_form() -> None:
+    """The hash-only minter (used by CLI/UI) verifies exactly like sign_approval:
+    an operator holding only the stored call_hash unlocks precisely that call."""
+    from arctrust.policy import _hash_call, sign_approval_for_hash
+
+    agent = AgentIdentity.generate(org="test", agent_type="exec")
+    operator = AgentIdentity.generate(org="test", agent_type="operator")
+    call = _call(agent_did=agent.did, capability_tags=frozenset({"c"}))
+    grant = sign_approval_for_hash(_hash_call(call), operator)
+    assert verify_approval(call, grant) is True
+    # A grant minted for a different hash must not verify against this call.
+    wrong = sign_approval_for_hash("deadbeefdeadbeef", operator)
+    assert verify_approval(call, wrong) is False
+
+
+def test_grant_wire_round_trip_preserves_verification() -> None:
+    """A grant stored via grant_to_wire and reloaded still verifies (base64 bytes)."""
+    from arctrust.policy import _hash_call, grant_from_wire, grant_to_wire, sign_approval_for_hash
+
+    agent = AgentIdentity.generate(org="test", agent_type="exec")
+    operator = AgentIdentity.generate(org="test", agent_type="operator")
+    call = _call(agent_did=agent.did, capability_tags=frozenset({"c"}))
+    grant = sign_approval_for_hash(_hash_call(call), operator)
+    import json
+
+    reloaded = grant_from_wire(json.loads(json.dumps(grant_to_wire(grant))))
+    assert reloaded == grant
+    assert verify_approval(call, reloaded) is True
+
+
 async def test_self_approval_rejected() -> None:
     """Approval signed by the AGENT's own identity is rejected (ASI09)."""
     agent = AgentIdentity.generate(org="test", agent_type="exec")

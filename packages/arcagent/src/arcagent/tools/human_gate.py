@@ -27,15 +27,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from arctrust.identity import did_from_public_key
-from arctrust.policy import ApprovalGrant, ToolCall, sign_approval
+from arctrust.policy import ApprovalGrant, ToolCall, sign_approval, verify_approval
 from arctrust.signer import Signer
 
 _logger = logging.getLogger("arcagent.human_gate")
 
-# An approval channel surfaces the request to a human (arcteam human-channel/DM
-# path, OQ-3) and returns True iff a human explicitly approved. Fail-closed on
-# any exception/timeout is enforced by the gate, not the channel.
-ApprovalChannel = Callable[["ApprovalRequest"], Awaitable[bool]]
+# An approval channel surfaces the request to a human via a MECHANICAL,
+# operator-authenticated surface (the arcstore-backed `arc approve` CLI / arcui
+# operator action — never agent chat, which a prompt-injected or foreign message
+# could forge) and returns the operator-signed ``ApprovalGrant`` for THIS call,
+# or ``None`` if denied/timed-out. The gate VERIFIES the returned grant against
+# the operator public key (:func:`verify_approval`) before it counts — the agent
+# never mints its own approval for the human path (ASI09). Fail-closed on any
+# exception/timeout is enforced by the gate, not the channel.
+ApprovalChannel = Callable[["ApprovalRequest"], Awaitable["ApprovalGrant | None"]]
 AuditSink = Callable[[str, dict[str, Any]], None]
 
 
@@ -123,13 +128,20 @@ class HumanGate:
             self._emit("human_gate.denied", request, outcome="no_channel")
             return None
 
-        approved = await self._ask_human(request)
-        if not approved:
+        grant = await self._ask_human(request)
+        if grant is None:
             self._emit("human_gate.denied", request, outcome="denied_or_timeout")
             return None
 
+        # The grant came from an out-of-process operator surface — trust nothing
+        # until it verifies: bound to THIS call_hash, signed by the operator key,
+        # and NOT the agent's own DID (ASI09). A forged/mismatched grant fails closed.
+        if not verify_approval(call, grant):
+            self._emit("human_gate.denied", request, outcome="invalid_grant")
+            return None
+
         self._emit("human_gate.granted", request, outcome="granted")
-        return sign_approval(call, self._operator)
+        return grant
 
     def _auto_approvable(self, legs: frozenset[str]) -> bool:
         """Personal/enterprise may auto-approve named compositions; federal never.
@@ -143,18 +155,23 @@ class HumanGate:
             return False
         return any(named == legs for named in self._config.auto_approve)
 
-    async def _ask_human(self, request: ApprovalRequest) -> bool:
-        """Surface the request to the human channel; fail closed on timeout/error."""
+    async def _ask_human(self, request: ApprovalRequest) -> ApprovalGrant | None:
+        """Surface the request to the operator channel; fail closed on timeout/error.
+
+        Returns the operator-signed grant (unverified here — the caller verifies)
+        or None on denial/timeout/error. The gate owns the timeout so a channel
+        that blocks forever still fails closed.
+        """
         channel = self._channel
         if channel is None:
-            return False
+            return None
         try:
             return await asyncio.wait_for(channel(request), timeout=self._config.timeout_seconds)
         except TimeoutError:
-            return False
+            return None
         except Exception:  # reason: fail-closed — any channel error denies
             _logger.exception("Approval channel raised; failing closed")
-            return False
+            return None
 
     def _emit(self, event: str, request: ApprovalRequest, *, outcome: str) -> None:
         if self._audit_sink is None:
