@@ -10,6 +10,7 @@ import { ArcLlmPage } from '@/pages/arcllm'
 import { ArcRunPage } from '@/pages/arcrun'
 import { AgentDetailPage } from '@/pages/agent-detail'
 import { MessagesPage } from '@/pages/messages'
+import { ApprovalsPage } from '@/pages/approvals'
 import { SettingsPage } from '@/pages/settings'
 import { DEFAULT_PATH } from './nav'
 
@@ -23,6 +24,7 @@ export const router = createBrowserRouter([
       // Phase 3 — fleet pages.
       { path: 'agents', element: <AgentsPage /> },
       { path: 'tasks', element: <TasksPage /> },
+      { path: 'approvals', element: <ApprovalsPage /> },
       { path: 'tools-skills', element: <ToolsSkillsPage /> },
       { path: 'policy', element: <PolicyPage /> },
       { path: 'security', element: <SecurityPage /> },

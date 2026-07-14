@@ -65,6 +65,30 @@ export const useTeamTasks = () =>
     refetchInterval: 4000,
   })
 
+export interface PendingApproval {
+  id: string
+  agent_did: string
+  agent_label: string
+  tool: string
+  legs: string[]
+  call_hash: string
+  status: string
+  created_at: string
+  expires_at: string
+}
+export interface ApprovalsResponse {
+  approvals: PendingApproval[]
+}
+
+// Polls every 4s: agents park a pending row while blocked on a trifecta-
+// completing call, so a new request must surface without a manual refresh.
+export const useApprovals = () =>
+  useQuery<ApprovalsResponse>({
+    queryKey: ['approvals'],
+    queryFn: ({ signal }) => apiGet<ApprovalsResponse>('/api/approvals', signal),
+    refetchInterval: 4000,
+  })
+
 export const useTeamToolsSkills = () =>
   useApiQuery<TeamToolsSkillsResponse>(['team', 'tools-skills'], '/api/team/tools-skills')
 
