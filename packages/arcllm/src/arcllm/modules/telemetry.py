@@ -57,6 +57,7 @@ _DEFAULT_MAX_BODY_BYTES = 256 * 1024
 # a downstream log viewer or classification filter (LLM01 hardening).
 _MAX_CLASSIFICATION_LEN = 128
 _MAX_LINEAGE_BYTES = 8192
+_MAX_ERROR_LEN = 500  # bound the error-reason string on the spool error path (LLM02)
 
 # Classification ordering floor enforcement (D-439). Unrecognized labels
 # rank below every configured floor — fail-safe: an unverifiable label
@@ -794,15 +795,20 @@ class TelemetryModule(BaseModule):
                 response, cost, total_ms, prepared = await self._invoke_inner(
                     messages, tools, tel_span, t0, **kwargs
                 )
-            except Exception:
+            except Exception as exc:
                 # FR-4 / C3 — a raising call still records an operational line.
+                # Record the KNOWN model (never None — a dashed model column hides
+                # WHICH call failed, e.g. a flapping eval-model instance) and a
+                # bounded error reason, so a failure is a diagnosable
+                # ``<model> / error: <reason>`` row, not a bare ``— / error / 0ms``.
                 error_prepared = self._prepare_bodies(messages, tools, kwargs, None)
                 self._record_spool(
                     outcome="error",
-                    model=None,
+                    model=self._inner.model_name,
                     cost=None,
                     latency_ms=round((time.monotonic() - t0) * 1000, 1),
                     request_body=error_prepared.request_body,
+                    error=f"{type(exc).__name__}: {exc}"[:_MAX_ERROR_LEN],
                 )
                 raise
             self._record_spool(
@@ -929,6 +935,7 @@ class TelemetryModule(BaseModule):
         cache_write_tokens: int | None = None,
         request_body: dict[str, Any] | None = None,
         response_body: dict[str, Any] | None = None,
+        error: str | None = None,
     ) -> None:
         """Append one ``llm_call`` operational record to the arcstore spool.
 
@@ -946,6 +953,8 @@ class TelemetryModule(BaseModule):
             extra["request_body"] = request_body
         if response_body is not None:
             extra["response_body"] = response_body
+        if error is not None:
+            extra["error"] = error
         _spool_record(
             _SpoolRecord(
                 kind="llm_call",

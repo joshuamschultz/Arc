@@ -115,6 +115,12 @@ async def test_error_call_records_outcome_error(messages: list[Message]) -> None
             await module.invoke(messages)
     assert len(recorded) == 1
     assert recorded[0].outcome == "error"
+    # The failing row must carry the KNOWN model (not None → dashed column) and a
+    # diagnosable error reason, so a flapping instance isn't a bare `— / error`.
+    assert recorded[0].model == inner.model_name
+    assert recorded[0].model is not None
+    assert "boom" in recorded[0].extra["error"]
+    assert "RuntimeError" in recorded[0].extra["error"]
 
 
 async def test_disabled_records_nothing(messages: list[Message]) -> None:
