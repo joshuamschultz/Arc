@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -189,7 +190,13 @@ class ArcAgent:
             from arcstore.config import resolve_data_dir
         except ImportError:
             return self._workspace / "audit" / "policy-chain.jsonl"
-        slug = self._workspace.name or "agent"
+        # Slug from the AGENT NAME (unique per deployment — agents are named like
+        # people), NOT the workspace basename: every fleet agent's workspace is
+        # "./workspace", so a workspace-name slug collides all agents on one
+        # audit-chain-workspace.jsonl and its exclusive flock. Sanitize so the
+        # name can never introduce a path separator.
+        raw = self._config.agent.name or self._workspace.name or "agent"
+        slug = re.sub(r"[^A-Za-z0-9._-]", "-", raw) or "agent"
         return resolve_data_dir() / "worm" / f"audit-chain-{slug}.jsonl"
 
     def _operator_key_path(self) -> Path:

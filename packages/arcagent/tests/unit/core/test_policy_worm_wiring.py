@@ -109,6 +109,28 @@ def test_policy_audit_log_path_resolution(tmp_path: Path, configured: str | None
         # filename so the ingest feeding the arcui Security screen tails it.
         from arcstore.config import resolve_data_dir
 
-        assert path == resolve_data_dir() / "worm" / f"audit-chain-{agent._workspace.name}.jsonl"
+        assert path == resolve_data_dir() / "worm" / f"audit-chain-{config.agent.name}.jsonl"
     else:
         assert path == agent._workspace / "custom" / "audit.jsonl"
+
+
+def test_worm_slug_uses_agent_name_not_workspace_basename(tmp_path: Path) -> None:
+    """Two fleet agents share ``workspace = "./workspace"``; the WORM chain must
+    still be per-agent (slug from the unique agent NAME), or they collide on one
+    audit-chain-workspace.jsonl and its exclusive flock (the deploy regression).
+    """
+    from arcagent.core.agent import ArcAgent
+
+    a_cfg = _config(tmp_path / "a")
+    a_cfg.agent.name = "josh_agent"
+    a_cfg.agent.workspace = str(tmp_path / "a" / "workspace")
+    b_cfg = _config(tmp_path / "b")
+    b_cfg.agent.name = "coder_agent"
+    b_cfg.agent.workspace = str(tmp_path / "b" / "workspace")
+
+    a = ArcAgent(config=a_cfg, config_path=tmp_path / "a" / "arcagent.toml")
+    b = ArcAgent(config=b_cfg, config_path=tmp_path / "b" / "arcagent.toml")
+    assert a._workspace.name == b._workspace.name == "workspace"  # the collision precondition
+    assert a._policy_audit_log_path() != b._policy_audit_log_path()
+    assert a._policy_audit_log_path().name == "audit-chain-josh_agent.jsonl"
+    assert b._policy_audit_log_path().name == "audit-chain-coder_agent.jsonl"
