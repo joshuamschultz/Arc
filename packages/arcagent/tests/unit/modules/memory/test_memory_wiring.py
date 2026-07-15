@@ -66,10 +66,14 @@ class _SpyBrain:
 
 
 def _configure_with(brain: Any, cfg: dict[str, Any] | None = None) -> None:
-    """Install a spy/real brain directly into runtime state (bypass select)."""
+    """Install a spy/real brain directly into runtime state (bypass select).
+
+    Registers under ``_DID`` and binds it as the current turn's agent via
+    :func:`_runtime.bind`, so ``state()`` resolves it in this task.
+    """
     from arcagent.modules.memory.config import MemoryConfig
 
-    _runtime._state_var.set(
+    _runtime.bind(
         _runtime._State(
             config=MemoryConfig(**(cfg or {})),
             brain=brain,
@@ -108,7 +112,10 @@ async def test_bind_makes_state_visible_in_a_sibling_task(tmp_path: Path) -> Non
     assert built_state is not None
 
     async def turn_two() -> object:
-        with pytest.raises(RuntimeError, match="before runtime is configured"):
+        # No DID is bound in this fresh sibling task → state() fails closed
+        # (the registry persists across tasks, but the current-DID binding does
+        # not, so a read here refuses rather than guessing another agent's brain).
+        with pytest.raises(RuntimeError, match="no agent DID bound"):
             _runtime.state()
         _runtime.bind(built_state)
         return _runtime.state()

@@ -255,14 +255,21 @@ def _warn_config_without_folder(agent: ArcAgent) -> None:
 
 
 def activate_runtime_bindings(agent: ArcAgent) -> None:
-    """Rebind every built runtime state into the CURRENT asyncio task.
+    """Bind THIS agent's built runtime state into the CURRENT asyncio task.
 
     ``ContextVar`` values set during ``startup()`` are visible only to that
     task and its descendants — never to a sibling task created later (task
     27 follow-up hotfix). ``SessionRouter.handle()`` spawns exactly such a
-    sibling per turn, so this must run at the top of every turn-dispatch
-    entry point before any builtin or module tool reads its runtime state.
-    Cheap and idempotent — each ``bind`` call is a single ``ContextVar.set``.
+    sibling per turn, so this runs at the top of every turn-dispatch entry
+    point so each module's ``state()`` resolves to THIS agent's DID.
+
+    For the DID-keyed module runtimes (memory, workpad) each ``bind`` both
+    registers the state under its ``agent_did`` and binds that DID as the
+    running turn's current agent. Rebinding is a correctness convenience, not
+    the sole isolation guard: those modules' ``state()`` fail closed on a
+    missing or mismatched DID, so a missed rebind refuses the read rather than
+    leaking another agent's state. Cheap and idempotent — each ``bind`` call is
+    a dict insert plus a single ``ContextVar.set``.
     """
     for bind_fn, built_state in agent._runtime_bindings:
         bind_fn(built_state)

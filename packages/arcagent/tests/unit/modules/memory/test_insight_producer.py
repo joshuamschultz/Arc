@@ -36,7 +36,7 @@ class _Brain:
 
 
 def _install(brain: Any) -> None:
-    _runtime._state_var.set(
+    _runtime.bind(
         _runtime._State(
             config=MemoryConfig(),
             brain=brain,

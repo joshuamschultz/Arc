@@ -60,21 +60,31 @@ class TestCounterPersistence:
 
         ws = tmp_path / "ws"
         ws.mkdir()
-        _runtime.configure(workspace=ws, agent_name="t", config={"every_n_runs": 100})
+        _runtime.configure(
+            workspace=ws,
+            agent_name="t",
+            agent_did="did:arc:test-workpad",
+            config={"every_n_runs": 100},
+        )
         for _ in range(3):  # no eval model → never fires; just counts
             await track_runs(_post_respond("a", "b"))
         assert _runtime.state().run_count == 3
 
         # Simulate a process restart: fresh runtime, same workspace.
         _runtime.reset()
-        _runtime.configure(workspace=ws, agent_name="t", config={"every_n_runs": 100})
+        _runtime.configure(
+            workspace=ws,
+            agent_name="t",
+            agent_did="did:arc:test-workpad",
+            config={"every_n_runs": 100},
+        )
         assert _runtime.state().run_count == 3
 
     async def test_corrupt_state_file_defaults_to_zero(self, tmp_path: Path) -> None:
         ws = tmp_path / "ws"
         ws.mkdir()
         (ws / ".workpad-state.json").write_text("{ not json", encoding="utf-8")
-        _runtime.configure(workspace=ws, agent_name="t")
+        _runtime.configure(workspace=ws, agent_name="t", agent_did="did:arc:test-workpad")
         assert _runtime.state().run_count == 0
 
 
@@ -88,6 +98,7 @@ class TestIdleFlush:
         _runtime.configure(
             workspace=ws,
             agent_name="t",
+            agent_did="did:arc:test-workpad",
             config={"every_n_runs": 100, "flush_idle_seconds": 900},
         )
         st = _runtime.state()
@@ -109,6 +120,7 @@ class TestIdleFlush:
         _runtime.configure(
             workspace=ws,
             agent_name="t",
+            agent_did="did:arc:test-workpad",
             config={"every_n_runs": 100, "flush_idle_seconds": 900},
         )
         st = _runtime.state()
@@ -125,6 +137,7 @@ class TestIdleFlush:
         _runtime.configure(
             workspace=ws,
             agent_name="t",
+            agent_did="did:arc:test-workpad",
             config={"every_n_runs": 100, "flush_idle_seconds": 900},
         )
         st = _runtime.state()
@@ -148,7 +161,7 @@ class TestErrorLogging:
 
         ws = tmp_path / "ws"
         ws.mkdir()
-        _runtime.configure(workspace=ws, agent_name="t")
+        _runtime.configure(workspace=ws, agent_name="t", agent_did="did:arc:test-workpad")
         st = _runtime.state()
         model = MagicMock()
         model.invoke = AsyncMock(side_effect=RuntimeError("boom"))

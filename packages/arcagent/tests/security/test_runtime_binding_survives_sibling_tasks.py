@@ -220,8 +220,13 @@ class TestTwoAgentsInterleaved:
         tmp_path: Path,
     ) -> None:
         mock_load_model.return_value = MagicMock()
-        josh_ws = tmp_path / "josh_agent" / "workspace"
-        coder_ws = tmp_path / "coder_agent" / "workspace"
+        # Distinct workspace BASENAMES: the WORM audit-chain filename is slugged
+        # from ``workspace.name`` (ArcAgent._policy_audit_log_path), and a WormSink
+        # holds an exclusive flock for its lifetime — two agents whose workspaces
+        # share a basename would collide on one chain file. Real fleets give each
+        # agent a distinct workspace; the test must too.
+        josh_ws = tmp_path / "josh_agent" / "josh-workspace"
+        coder_ws = tmp_path / "coder_agent" / "coder-workspace"
         josh_ws.mkdir(parents=True)
         coder_ws.mkdir(parents=True)
 

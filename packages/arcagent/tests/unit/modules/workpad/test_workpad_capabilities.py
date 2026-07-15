@@ -33,7 +33,12 @@ def _reset_runtime() -> None:
 def configured(tmp_path: Path) -> Path:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    _runtime.configure(workspace=workspace, agent_name="test", config={"every_n_runs": 3})
+    _runtime.configure(
+        workspace=workspace,
+        agent_name="test",
+        agent_did="did:arc:test-workpad",
+        config={"every_n_runs": 3},
+    )
     return workspace
 
 
@@ -145,6 +150,7 @@ class TestTrackRuns:
         _runtime.configure(
             workspace=ws,
             agent_name="t",
+            agent_did="did:arc:test-workpad",
             config={"every_n_runs": 100, "max_transcript_chars": 1000},
         )
         big = "z" * 400
@@ -218,5 +224,7 @@ class TestShutdownAndContract:
     async def test_unconfigured_raises(self) -> None:
         from arcagent.modules.workpad.capabilities import track_runs
 
-        with pytest.raises(RuntimeError, match="before runtime is configured"):
+        # No agent DID is bound after reset() → state() fails closed rather than
+        # hand back another agent's cockpit.
+        with pytest.raises(RuntimeError, match="no agent DID bound"):
             await track_runs(_post_respond("x", "y"))
