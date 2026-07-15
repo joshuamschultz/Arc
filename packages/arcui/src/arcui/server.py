@@ -30,7 +30,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from arcui.audit import UIAuditLogger
+from arcui.audit import UIAuditLogger, build_mutation_worm_writer
 from arcui.auth import AuthConfig, AuthMiddleware, SessionTracker
 from arcui.observe import Observe
 from arcui.registry import AgentRegistry
@@ -385,6 +385,10 @@ def create_app(
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
                 logger.exception("lifespan: error stopping arcstore Observe")
+            # Release the mutation WORM chain's exclusive flock (if one was built).
+            worm_writer = getattr(starlette_app.state, "audit_worm", None)
+            if worm_writer is not None:
+                worm_writer.sink.close()
             try:
                 await task_store_backend.stop()
             except Exception:  # reason: fail-open — continue shutdown
@@ -413,6 +417,14 @@ def create_app(
     app.state.sw_js = cached_sw_js
     app.state._extra_startup_hooks = []
     app.state.audit = UIAuditLogger()
+    # Operator mutations (task/approval/cancellation/file writes) also append to a
+    # durable, operator-signed WORM chain in the shared worm dir the Observe ingest
+    # tails, so they surface on the Security screen — not just the ephemeral log +
+    # OTel span above. ``None`` when the on-box operator key is absent (degrade to
+    # log+OTel), consumed by ``emit_mutation_audit`` via ``app.state.audit_worm``.
+    app.state.audit_worm = build_mutation_worm_writer(
+        data_dir if data_dir is not None else resolve_data_dir()
+    )
     # SPEC-019 T5.3: tracker is consulted by AuthMiddleware to emit
     # `ui.session_start` exactly once per (token, remote_addr).
     app.state.session_tracker = SessionTracker()

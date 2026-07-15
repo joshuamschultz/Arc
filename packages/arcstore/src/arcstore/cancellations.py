@@ -16,7 +16,8 @@ a request is applied exactly once even if two watcher ticks overlap.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar, Literal, Protocol
 
 from arctrust.audit import AuditSink
@@ -151,6 +152,42 @@ class CancelStore:
             sink=self._sink,
         )
         return await self.get(request_id) if won else None
+
+    async def expire_stale(
+        self,
+        *,
+        ttl_seconds: int,
+        actor_did: str,
+        now: datetime | None = None,
+    ) -> Sequence[CancelRequest]:
+        """Age out pending requests older than ``ttl_seconds`` to ``expired``.
+
+        A request whose target never materialised — the run already ended before
+        the watcher saw the request, or it is a streaming run the cooperative path
+        can't reach (GAP-A) — would otherwise sit ``pending`` forever. Any pending
+        row whose ``created_at`` predates ``now - ttl_seconds`` is swept through the
+        same conditional :meth:`resolve` claim, so a watcher tick that is
+        concurrently applying the request still wins the race and cancels normally;
+        the sweep loser no-ops. Returns the requests actually expired (won the
+        claim) so the caller can audit each age-out.
+        """
+        cutoff = (now or datetime.now(UTC)) - timedelta(seconds=ttl_seconds)
+        stale_ids = [
+            req.id
+            for req in await self.list(status="pending")
+            if req.created_at and datetime.fromisoformat(req.created_at) <= cutoff
+        ]
+        resolved = [
+            await self.resolve(
+                request_id,
+                status="expired",
+                actor_did=actor_did,
+                resolved_by=actor_did,
+                note=f"aged out: no matching live run within {ttl_seconds}s TTL",
+            )
+            for request_id in stale_ids
+        ]
+        return [req for req in resolved if req is not None]
 
 
 __all__ = ["CancelRequest", "CancelStatus", "CancelStore", "MutableCancelBackend"]

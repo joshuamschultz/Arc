@@ -8,6 +8,7 @@ per-agent watcher meet on: create a ``pending`` row naming a run, resolve it onc
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -114,3 +115,58 @@ class TestCancelStore:
             assert len(winners) == 1
         finally:
             await be.stop()
+
+
+class TestExpireStale:
+    async def test_ages_out_pending_older_than_ttl(self, tmp_path: Path) -> None:
+        be = await _backend(tmp_path)
+        try:
+            store = CancelStore(be)
+            created = await store.create(_request())
+            # A wall-clock 301s past creation with a 300s TTL — the request never
+            # matched a live run, so it is swept to ``expired``.
+            future = datetime.fromisoformat(created.created_at or _now()) + timedelta(seconds=301)
+            expired = await store.expire_stale(
+                ttl_seconds=300, actor_did=_OPERATOR, now=future
+            )
+            assert [r.id for r in expired] == ["c1"]
+            assert expired[0].status == "expired"
+            assert expired[0].resolved_at is not None
+            got = await store.get("c1")
+            assert got is not None and got.status == "expired"
+        finally:
+            await be.stop()
+
+    async def test_leaves_fresh_pending_untouched(self, tmp_path: Path) -> None:
+        be = await _backend(tmp_path)
+        try:
+            store = CancelStore(be)
+            await store.create(_request())
+            # Evaluated at creation time: well within the TTL, so nothing ages out.
+            expired = await store.expire_stale(ttl_seconds=300, actor_did=_OPERATOR)
+            assert expired == []
+            got = await store.get("c1")
+            assert got is not None and got.status == "pending"
+        finally:
+            await be.stop()
+
+    async def test_ignores_already_resolved(self, tmp_path: Path) -> None:
+        be = await _backend(tmp_path)
+        try:
+            store = CancelStore(be)
+            created = await store.create(_request())
+            await store.resolve("c1", status="applied", actor_did=_OPERATOR)
+            future = datetime.fromisoformat(created.created_at or _now()) + timedelta(seconds=301)
+            expired = await store.expire_stale(
+                ttl_seconds=300, actor_did=_OPERATOR, now=future
+            )
+            # Only pending rows are candidates — a terminal request is never touched.
+            assert expired == []
+            got = await store.get("c1")
+            assert got is not None and got.status == "applied"
+        finally:
+            await be.stop()
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()

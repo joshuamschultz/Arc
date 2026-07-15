@@ -50,10 +50,11 @@ async def _apply_cancel(st: _runtime._State, req: CancelRequest) -> None:
     """Cancel the live run a request names and mark it applied (attributed).
 
     No live handle → leave the request pending: the run may not have started yet,
-    or it is a streaming run this cooperative path can't reach (GAP-A). A
-    stale-request ``not_found`` sweep is deferred. On a hit, the run is stopped via
-    its handle (carrying the operator DID as ``caller_did``) and the request is
-    resolved ``applied`` race-safely; an explicit audit event names the operator.
+    or it is a streaming run this cooperative path can't reach (GAP-A);
+    :func:`_sweep_stale` ages it out once it exceeds the TTL. On a hit, the run is
+    stopped via its handle (carrying the operator DID as ``caller_did``) and the
+    request is resolved ``applied`` race-safely; an explicit audit event names the
+    operator.
     """
     match = _find_handle(st.agent, req)
     if match is None:
@@ -82,17 +83,46 @@ async def _apply_cancel(st: _runtime._State, req: CancelRequest) -> None:
         )
 
 
+async def _sweep_stale(st: _runtime._State) -> None:
+    """Age out pending requests that never matched a live run (operator visibility).
+
+    Runs every tick regardless of agent readiness — a request whose target already
+    ended, or a streaming run this cooperative path can't reach (GAP-A), would
+    otherwise sit ``pending`` forever. The store sweep is race-safe (it shares the
+    conditional ``resolve`` claim), so an apply in the same tick still wins; each
+    age-out gets an operator-attributed audit event.
+    """
+    try:
+        expired = await st.store.expire_stale(
+            ttl_seconds=st.config.stale_ttl_seconds, actor_did=st.identity.did
+        )
+    except Exception:  # reason: fail-open — a sweep error must never stall the watcher
+        _logger.warning("runcontrol: stale-cancel sweep failed", exc_info=True)
+        return
+    for req in expired:
+        if st.telemetry is not None:
+            st.telemetry.audit_event(
+                "run.cancel.expired",
+                {
+                    "caller_did": req.requested_by,
+                    "run_id": req.run_id,
+                    "session_key": req.session_key,
+                    "reason": req.reason,
+                },
+            )
+
+
 async def _watch_tick() -> None:
-    """One watcher pass: apply every pending cancel request that matches a live run."""
+    """One watcher pass: apply matching cancels, then age out stale unmatched ones."""
     await _runtime.ensure_store()
     st = _runtime.state()
-    if st.agent is None:
-        return  # agent:ready has not fired yet — nothing to cancel against
-    for req in await st.store.list(status="pending"):
-        try:
-            await _apply_cancel(st, req)
-        except Exception:  # reason: fail-open — one bad request must not stall the watcher
-            _logger.warning("runcontrol: failed to apply cancel %s", req.id, exc_info=True)
+    if st.agent is not None:
+        for req in await st.store.list(status="pending"):
+            try:
+                await _apply_cancel(st, req)
+            except Exception:  # reason: fail-open — one bad request must not stall the watcher
+                _logger.warning("runcontrol: failed to apply cancel %s", req.id, exc_info=True)
+    await _sweep_stale(st)
 
 
 @hook(event="agent:ready", priority=100)

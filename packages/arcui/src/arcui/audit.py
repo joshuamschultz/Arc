@@ -10,11 +10,16 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
+from arctrust.audit import AuditEvent, WormSink
 from opentelemetry import trace
 from pydantic import BaseModel
+
+_logger = logging.getLogger("arcui.audit")
 
 
 class UIAuditEvent(StrEnum):
@@ -219,6 +224,73 @@ class UIAuditLogger:
                 )
 
 
+_WORM_FILENAME = "audit-chain-arcui.jsonl"
+
+
+@dataclass(frozen=True)
+class MutationWormWriter:
+    """Durable, operator-signed WORM record for UI mutations (COMP-010, NIST AU-9).
+
+    The log line + OTel span :class:`UIAuditLogger` emits are ephemeral — they never
+    reach the arcui Security screen, which reads the ``audit_chain`` the Observe
+    ingest tails out of the shared worm dir. This writer closes that gap: every
+    operator control action (task mutation, approval, cancellation, file/skill/
+    channel write) is also appended to an Ed25519-signed hash chain the ingest
+    picks up, so the mutation is visible AND tamper-evident.
+
+    Holds a long-lived :class:`~arctrust.audit.WormSink` (which keeps an exclusive
+    ``flock`` for its lifetime — hence the per-writer ``audit-chain-arcui.jsonl``
+    filename, distinct from each agent's own chain) plus the deployment operator
+    DID the records are attributed to.
+    """
+
+    sink: WormSink
+    operator_did: str
+
+    def write(self, fields: MutationAuditFields) -> None:
+        """Append one signed, chained record for a mutation. Fail-open (AU-5)."""
+        self.sink.write(
+            AuditEvent(
+                actor_did=self.operator_did,
+                action=fields.operation,
+                target=fields.target,
+                outcome=fields.outcome,
+                request_id=fields.session_id,
+                extra={"actor_role": fields.actor_role, "detail": fields.detail},
+            )
+        )
+
+
+def build_mutation_worm_writer(data_dir: Path) -> MutationWormWriter | None:
+    """Build the operator-signed WORM writer for UI mutations, or ``None``.
+
+    Resolves the on-box operator key (the deployment's audit-signing authority, the
+    same key the approval/cancellation routes and the ``arc`` CLI sign with) into a
+    :class:`~arctrust.audit.WormSink` over ``<data_dir>/worm/audit-chain-arcui.jsonl``
+    — the same worm dir the Observe ingest tails, so mutations reach the Security
+    screen. Returns ``None`` when the operator key is absent (an uninitialised
+    deployment) or the chain file can't be opened, so the server degrades to
+    log+OTel rather than minting a signing authority out of nothing.
+    """
+    from arctrust import OperatorKey, default_operator_key_path
+    from arctrust.policy import OperatorApprovalAuthority
+
+    try:
+        signer = OperatorKey.load(
+            default_operator_key_path(), generate_if_absent=False
+        ).into_signer()
+    except (OSError, ValueError, RuntimeError):
+        _logger.warning("arcui mutation WORM: operator key unavailable; mutations log+OTel only")
+        return None
+    worm_path = Path(data_dir) / "worm" / _WORM_FILENAME
+    try:
+        sink = WormSink(worm_path, signer)
+    except (OSError, RuntimeError):
+        _logger.warning("arcui mutation WORM: could not open %s", worm_path, exc_info=True)
+        return None
+    return MutationWormWriter(sink=sink, operator_did=OperatorApprovalAuthority(signer).did)
+
+
 def emit_mutation_audit(
     request: Any,
     *,
@@ -229,16 +301,14 @@ def emit_mutation_audit(
 ) -> None:
     """Single emission point for every UI-originated mutation (COMP-010).
 
-    Resolves the actor (role + session id) from the auth layer's per-request
-    state and emits one ``ui.mutation`` audit event through the shared
-    ``app.state.audit`` sink. Mutation routes call this — never ``audit_event``
-    directly — so actor/target/operation/outcome are recorded uniformly.
-    Absent audit sink (a bare test app) is a no-op, matching the session-start
-    emitter's tolerance.
+    Resolves the actor (role + session id) from the auth layer's per-request state
+    and records one mutation to two independent surfaces: the shared
+    ``app.state.audit`` sink (ephemeral log + OTel span) AND, when present, the
+    signed ``app.state.audit_worm`` chain the Security screen ingests. Mutation
+    routes call this — never ``audit_event`` directly — so actor/target/operation/
+    outcome are recorded uniformly. Both surfaces are optional: a bare test app has
+    neither, matching the session-start emitter's tolerance.
     """
-    audit = getattr(request.app.state, "audit", None)
-    if audit is None:
-        return
     role = getattr(request.state, "role", None) or "unknown"
     session_id = getattr(request.state, "session_id", None) or "unknown"
     fields = MutationAuditFields(
@@ -249,14 +319,21 @@ def emit_mutation_audit(
         outcome=outcome,
         detail=detail,
     )
-    audit.audit_event(UIAuditEvent.UI_MUTATION, fields.model_dump())
+    audit = getattr(request.app.state, "audit", None)
+    if audit is not None:
+        audit.audit_event(UIAuditEvent.UI_MUTATION, fields.model_dump())
+    worm = getattr(request.app.state, "audit_worm", None)
+    if worm is not None:
+        worm.write(fields)
 
 
 __all__ = [
     "AgentAutoconnectFields",
     "MutationAuditFields",
+    "MutationWormWriter",
     "SessionStartFields",
     "UIAuditEvent",
     "UIAuditLogger",
+    "build_mutation_worm_writer",
     "emit_mutation_audit",
 ]

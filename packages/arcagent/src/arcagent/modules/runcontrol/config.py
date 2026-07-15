@@ -23,3 +23,8 @@ class RuncontrolConfig(ModuleConfig):
     # module, arcui, and the CLI always agree on which SQLite file holds the
     # durable ``cancellations`` directory.
     data_dir: str = ""
+    # A pending request that never matches a live run (already-ended run, or a
+    # streaming run the cooperative path can't reach) is swept to ``expired`` once
+    # it is older than this. Default gives a run ample time to start before its
+    # cancel request is aged out.
+    stale_ttl_seconds: int = 300

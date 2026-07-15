@@ -138,3 +138,58 @@ class TestWatcher:
 
         req = await store.get("c1")
         assert req is not None and req.status == "pending"
+
+    async def test_stale_unmatched_request_ages_out_to_expired(self, store: CancelStore) -> None:
+        handle = _FakeHandle("run-abc")
+        telemetry = _FakeTelemetry()
+        st = _configure(store, _FakeAgent({"sess-1": handle}), telemetry)
+        # A zero TTL makes the fresh request already stale — it names no live run,
+        # so the tick's sweep ages it out to ``expired`` rather than leaving it
+        # pending forever.
+        st.config = st.config.model_copy(update={"stale_ttl_seconds": 0})
+        await store.create(
+            CancelRequest(id="c1", run_id="run-GONE", requested_by=_OPERATOR, reason="gone")
+        )
+
+        await _watch_tick()
+
+        req = await store.get("c1")
+        assert req is not None and req.status == "expired"
+        # The handle was never touched — nothing matched.
+        assert handle.cancelled_with is None
+        # An operator-attributed age-out audit event fires.
+        assert (
+            "run.cancel.expired",
+            {
+                "caller_did": _OPERATOR,
+                "run_id": "run-GONE",
+                "session_key": "",
+                "reason": "gone",
+            },
+        ) in telemetry.events
+
+    async def test_fresh_unmatched_request_is_not_expired(self, store: CancelStore) -> None:
+        st = _configure(store, _FakeAgent({}), _FakeTelemetry())
+        # Default 300s TTL: a just-created request is well within it and must stay
+        # pending (its run may not have started yet).
+        assert st.config.stale_ttl_seconds == 300
+        await store.create(CancelRequest(id="c1", run_id="run-later", requested_by=_OPERATOR))
+
+        await _watch_tick()
+
+        req = await store.get("c1")
+        assert req is not None and req.status == "pending"
+
+    async def test_matching_request_still_cancels_before_expiry(self, store: CancelStore) -> None:
+        handle = _FakeHandle("run-abc")
+        st = _configure(store, _FakeAgent({"sess-1": handle}), _FakeTelemetry())
+        # Even with a zero TTL, a request that matches a live run is applied by the
+        # cancel pass before the sweep sees it (no regression).
+        st.config = st.config.model_copy(update={"stale_ttl_seconds": 0})
+        await store.create(CancelRequest(id="c1", run_id="run-abc", requested_by=_OPERATOR))
+
+        await _watch_tick()
+
+        assert handle.cancelled_with == (_OPERATOR, None)
+        req = await store.get("c1")
+        assert req is not None and req.status == "applied"
