@@ -125,7 +125,7 @@ class TestWatcher:
         await _watch_tick()
 
         # No live run named run-GONE: the handle is untouched and the request is
-        # left pending (the run may not have started, or it is a GAP-A run).
+        # left pending (the run may not have started, or it already ended).
         assert handle.cancelled_with is None
         req = await store.get("c1")
         assert req is not None and req.status == "pending"

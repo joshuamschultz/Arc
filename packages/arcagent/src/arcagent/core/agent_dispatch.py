@@ -169,6 +169,32 @@ def _tighter(a: float | None, b: float | None) -> float | None:
     return min(vals) if vals else None
 
 
+def track_active_run(
+    agent: ArcAgent, session_id: str
+) -> tuple[Callable[[RunHandle], None], Callable[[], None]]:
+    """Register a streaming run's live handle so the operator kill-switch can reach it.
+
+    Returns ``(on_handle, untrack)``: pass ``on_handle`` to ``arcrun.run_stream`` so
+    the loop's :class:`RunHandle` lands in ``agent._active_runs`` (keyed by session
+    id — the operator's ``session_key``; the watcher also matches by ``run_id``),
+    and call ``untrack`` in a ``finally`` to remove it. The removal is
+    identity-guarded so a re-entrant run for the same session is never evicted by a
+    stale finalizer. This is the streaming-path parity for what ``start_tracked_run``
+    already does for tracked runs (GAP-A).
+    """
+    registered: list[RunHandle] = []
+
+    def on_handle(handle: RunHandle) -> None:
+        registered.append(handle)
+        agent._active_runs[session_id] = handle
+
+    def untrack() -> None:
+        if registered and agent._active_runs.get(session_id) is registered[0]:
+            del agent._active_runs[session_id]
+
+    return on_handle, untrack
+
+
 async def dispatch_stream(
     agent: ArcAgent,
     input_text: str,
@@ -212,6 +238,8 @@ async def dispatch_stream(
     run_max_cost_usd = _tighter(cfg_cost, max_cost_usd)
 
     final_text = ""
+    # Expose the streaming run's handle so the operator kill-switch can cancel it.
+    on_handle, untrack_run = track_active_run(agent, session.session_id)
     # Bind the session id for this dispatch so the capability ledger (and the
     # per-agent egress proxy) key trifecta legs to THIS session (SPEC-035).
     session_token = bind_session_id(session.session_id)
@@ -232,6 +260,7 @@ async def dispatch_stream(
                 max_tokens=run_max_tokens,
                 max_cost_usd=run_max_cost_usd,
                 run_id=run_id,
+                on_handle=on_handle,
                 **build_loop_controls(agent, session),
             )
             async for event in raw_stream:
@@ -246,6 +275,7 @@ async def dispatch_stream(
         raise
     finally:
         reset_session_id(session_token)
+        untrack_run()
 
     await session.append_message({"role": "assistant", "content": final_text})
     await maybe_compact(agent, session)

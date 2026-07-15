@@ -134,8 +134,8 @@ class CancelStore:
         Conditional on ``status == "pending"`` inside one atomic step so two
         overlapping watcher ticks can't both apply one request — the loser
         no-ops and returns ``None``. ``applied`` means the live run was stopped;
-        ``not_found`` means no matching run existed (already ended, or a run the
-        cooperative-cancel path can't reach); ``expired`` means it aged out.
+        ``not_found`` means no matching run existed (already ended before the
+        watcher saw the request); ``expired`` means it aged out.
         """
         patch: dict[str, Any] = {
             "status": status,
@@ -163,8 +163,8 @@ class CancelStore:
         """Age out pending requests older than ``ttl_seconds`` to ``expired``.
 
         A request whose target never materialised — the run already ended before
-        the watcher saw the request, or it is a streaming run the cooperative path
-        can't reach (GAP-A) — would otherwise sit ``pending`` forever. Any pending
+        the watcher saw the request, or named a run that never started — would
+        otherwise sit ``pending`` forever. Any pending
         row whose ``created_at`` predates ``now - ttl_seconds`` is swept through the
         same conditional :meth:`resolve` claim, so a watcher tick that is
         concurrently applying the request still wins the race and cancels normally;

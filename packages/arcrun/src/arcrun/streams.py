@@ -26,11 +26,14 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from arcrun.capabilities import CapabilityProvider
 from arcrun.events import Event
 from arcrun.types import LoopResult, SandboxConfig, Tool
+
+if TYPE_CHECKING:
+    from arcrun.loop import RunHandle
 
 # ---------------------------------------------------------------------------
 # StreamEvent hierarchy
@@ -189,6 +192,7 @@ async def run_stream(
     max_consecutive_errors: int | None = None,
     resume_from: Any | None = None,
     run_id: str | None = None,
+    on_handle: Callable[[RunHandle], None] | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """Run the agent loop and stream events as they occur.
 
@@ -230,6 +234,13 @@ async def run_stream(
         run_id: Optional caller-pinned run id. When set it is used for both the
             stream audit and the loop's EventBus/spool, so a caller can link the
             run to durable state before it starts; otherwise one is generated.
+        on_handle: Optional callback invoked once with the live :class:`RunHandle`
+            as soon as the loop starts. This is the seam that makes a streaming
+            run cancellable by the operator kill-switch (GAP-A): the caller
+            registers the handle where the runcontrol watcher can resolve it, and
+            ``handle.cancel(caller_did, reason)`` routes through the SAME
+            ``cancel_event`` + ``_halt_on_cancel`` terminator the tracked path
+            uses. Inert when None — an uncancelled run behaves exactly as before.
 
     Returns:
         An async iterator of StreamEvent objects.
@@ -295,6 +306,10 @@ async def run_stream(
 
     async def _run_loop() -> None:
         try:
+            # ``on_handle`` is forwarded to the blocking entry, which exposes its
+            # live RunHandle before awaiting the result — the seam that makes this
+            # streaming run cancellable by the operator kill-switch (GAP-A). An
+            # uncancelled run is byte-for-byte identical to before.
             result = await run(
                 model,
                 capabilities,
@@ -320,6 +335,7 @@ async def run_stream(
                 max_consecutive_errors=max_consecutive_errors,
                 resume_from=resume_from,
                 run_id=run_id,
+                on_handle=on_handle,
             )
             loop_future.set_result(result)
         except Exception as exc:  # reason: fail-open — continue

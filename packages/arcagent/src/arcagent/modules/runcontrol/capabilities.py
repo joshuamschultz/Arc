@@ -4,8 +4,9 @@ A ``@hook`` captures the live agent at ``agent:ready``; a ``@background_task``
 polls the shared ``cancellations`` directory and, for each pending request,
 resolves the matching live :class:`arcrun.RunHandle` in the agent's tracked-run
 map and calls ``cancel(caller_did, reason)`` — a cooperative, attributable stop
-(ASI09/ASI10). Only tracked runs (``agent._active_runs``) are reachable this way;
-streaming/chat runs expose no handle (GAP-A, deferred).
+(ASI09/ASI10). Both tracked runs and streaming/chat runs register their handle in
+``agent._active_runs`` (``dispatch_stream`` wires the latter via arcrun's
+``run_stream(on_handle=...)`` seam), so both are reachable this way.
 """
 
 from __future__ import annotations
@@ -33,9 +34,10 @@ def _find_handle(agent: Any, req: CancelRequest) -> tuple[str, Any] | None:
 
     Matches on ``run_id`` first (the cross-surface identifier the arcui timeline
     and traces join on), then falls back to ``session_key`` (the agent's
-    ``_active_runs`` key). arcagent exposes no public enumerator over live runs, so
-    the watcher reads the tracked-run map directly — read-only, in-process, and the
-    only seam available without editing the agent orchestrator.
+    ``_active_runs`` key — for a chat run this is the session id). arcagent exposes
+    no public enumerator over live runs, so the watcher reads the tracked-run map
+    directly — read-only, in-process, and the only seam available without editing
+    the agent orchestrator. Both tracked and streaming runs register here.
     """
     active: dict[str, Any] = getattr(agent, "_active_runs", {})
     for session_key, handle in list(active.items()):
@@ -50,7 +52,7 @@ async def _apply_cancel(st: _runtime._State, req: CancelRequest) -> None:
     """Cancel the live run a request names and mark it applied (attributed).
 
     No live handle → leave the request pending: the run may not have started yet,
-    or it is a streaming run this cooperative path can't reach (GAP-A);
+    or it already ended before the watcher observed the request;
     :func:`_sweep_stale` ages it out once it exceeds the TTL. On a hit, the run is
     stopped via its handle (carrying the operator DID as ``caller_did``) and the
     request is resolved ``applied`` race-safely; an explicit audit event names the
@@ -87,8 +89,8 @@ async def _sweep_stale(st: _runtime._State) -> None:
     """Age out pending requests that never matched a live run (operator visibility).
 
     Runs every tick regardless of agent readiness — a request whose target already
-    ended, or a streaming run this cooperative path can't reach (GAP-A), would
-    otherwise sit ``pending`` forever. The store sweep is race-safe (it shares the
+    ended before the watcher observed it, or that named a run that never started,
+    would otherwise sit ``pending`` forever. The store sweep is race-safe (it shares the
     conditional ``resolve`` claim), so an apply in the same tick still wins; each
     age-out gets an operator-attributed audit event.
     """

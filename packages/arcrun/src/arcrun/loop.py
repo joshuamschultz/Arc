@@ -148,8 +148,15 @@ async def run(
     max_consecutive_errors: int | None = None,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
+    on_handle: Callable[[RunHandle], None] | None = None,
 ) -> LoopResult:
-    """Blocking entry point. Runs until task complete, a breaker trip, or resume."""
+    """Blocking entry point. Runs until task complete, a breaker trip, or resume.
+
+    ``on_handle``, when set, is called once with the live :class:`RunHandle`
+    before the result is awaited — the seam a streaming caller uses to expose the
+    handle to an operator kill-switch (GAP-A) without giving up the blocking
+    return contract. Inert when None.
+    """
     handle = await run_async(
         model,
         capabilities,
@@ -179,6 +186,8 @@ async def run(
         resume_from=resume_from,
         run_id=run_id,
     )
+    if on_handle is not None:
+        on_handle(handle)
     return await handle.result()
 
 

@@ -22,7 +22,7 @@ from arcllm import Message
 from arcrun import LoopCheckpoint, StreamEvent, TurnEndEvent
 from arcrun import run_stream as arcrun_run_stream
 
-from arcagent.core.agent_dispatch import build_run_context, maybe_compact
+from arcagent.core.agent_dispatch import build_run_context, maybe_compact, track_active_run
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.session_internal.capability_ledger import bind_session_id, reset_session_id
 from arcagent.tools.approval_policy import build_loop_controls
@@ -62,6 +62,9 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
     transform = agent._context.transform_context if agent._context else None
 
     final_text = ""
+    # A resumed run is long-running too — expose its handle so the operator
+    # kill-switch can cancel it, exactly as the live streaming path does (GAP-A).
+    on_handle, untrack_run = track_active_run(agent, session.session_id)
     session_token = bind_session_id(session.session_id)
     try:
         raw_stream = await arcrun_run_stream(
@@ -75,6 +78,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
             actor_did=agent._identity.did if agent._identity else None,
             store_raw_bodies=agent._config.telemetry.capture_tool_io,
             resume_from=cp,
+            on_handle=on_handle,
             **build_loop_controls(agent, session),
         )
         async for event in raw_stream:
@@ -83,6 +87,7 @@ async def resume_stream(agent: ArcAgent, *, session_key: str) -> AsyncIterator[S
             yield event
     finally:
         reset_session_id(session_token)
+        untrack_run()
 
     await session.append_message({"role": "assistant", "content": final_text})
     await maybe_compact(agent, session)
