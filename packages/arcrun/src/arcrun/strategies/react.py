@@ -10,7 +10,11 @@ import time
 from typing import Any
 
 from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
-from arcrun.builtins.task_complete import BudgetBreachReason, make_budget_breach_args
+from arcrun.builtins.task_complete import (
+    BudgetBreachReason,
+    make_budget_breach_args,
+    make_cancel_args,
+)
 from arcrun.checkpoint import to_checkpoint
 from arcrun.executor import execute_tool_call
 from arcrun.parallel_dispatch import BatchClassifier, dispatch_batch
@@ -153,8 +157,12 @@ class ReactStrategy(Strategy):
             "receive the result and decide the next action. The loop continues "
             "until you produce a final response with no tool calls.\n\n"
             "GUIDELINES:\n"
-            "- Break complex work into discrete tool calls — one action per step\n"
-            "- Examine tool results before deciding the next action\n"
+            "- Issue independent, read-only tool calls TOGETHER in a single "
+            "step — they run in parallel and each is still traced and audited "
+            "individually. Fetching several URLs or running several searches is "
+            "one step, not one per turn. Reserve one-at-a-time calls for actions "
+            "that depend on a previous result or that modify state\n"
+            "- Examine tool results before taking dependent follow-up actions\n"
             "- If a tool call fails, analyze the error and adapt your approach\n"
             "- After 3 failures on the same approach, try a fundamentally "
             "different method\n"
@@ -210,7 +218,7 @@ async def _execute_tool_calls(
     succeeded_ids: set[str] = set()
 
     if state.cancel_event.is_set():
-        cancelled = [tool_result(tc.id, "operation cancelled: steered") for tc in tool_calls]
+        cancelled = [tool_result(tc.id, "operation cancelled") for tc in tool_calls]
         return cancelled, succeeded_ids
 
     # Resolve proactive approvals before dispatch; a denied call is excluded.
@@ -267,7 +275,7 @@ async def react_loop(
 
     while True:
         if state.cancel_event.is_set():
-            break
+            return _halt_on_cancel(state)
 
         # SPEC-043 REQ-020..024 — ONE top-of-turn circuit breaker folds
         # token/cost/turn caps and the runaway/error-cascade detectors into a
@@ -369,7 +377,28 @@ async def react_loop(
 
         _end_turn(state, bus)
 
-    return _build_result(state, None)
+
+def _halt_on_cancel(state: RunState) -> LoopResult:
+    """Terminate on an operator cancel with a structured payload (GAP-B).
+
+    Mirrors :func:`_halt_on_breach`: the cancel flows through the one terminator
+    factory (``make_cancel_args``) so a cancelled run yields the same structured
+    ``completion_payload`` + human-visible partial as every other halt, attributed
+    to the operator that requested it. ``loop.cancelled`` carries the caller_did
+    into the tamper-evident event chain (ASI09/ASI10) so the kill switch is
+    auditable without re-scanning.
+    """
+    bus = state.event_bus
+    caller = state.cancelled_by or "did:arc:unknown"
+    reason = state.cancel_reason
+    state.completion_payload = make_cancel_args(caller_did=caller, reason=reason).model_dump(
+        exclude_none=True
+    )
+    bus.emit(
+        "loop.cancelled",
+        {"caller_did": caller, "reason": reason, "turns": state.turn_count},
+    )
+    return _build_result(state, state.completion_payload["summary"])
 
 
 def _halt_on_breach(state: RunState, reason: BudgetBreachReason) -> LoopResult:

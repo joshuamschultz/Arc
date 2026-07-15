@@ -163,7 +163,7 @@ class TestCancel:
         )
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task", max_turns=10)
         await asyncio.sleep(0.02)
-        await handle.cancel()
+        await handle.cancel("did:arc:operator")
         result = await handle.result()
         assert handle.state.cancel_event.is_set()
         assert isinstance(result, type(result))  # got a result, not an exception
@@ -183,6 +183,6 @@ class TestCancel:
         )
         handle = await run_async(model, StaticProvider(_tools()), "prompt", "task", max_turns=10)
         await asyncio.sleep(0.02)
-        await handle.cancel()
+        await handle.cancel("did:arc:operator")
         result = await handle.result()
         assert result.turns < 10

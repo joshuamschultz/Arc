@@ -137,7 +137,10 @@ class StoreIngest:
     def _worm_chains(self) -> list[Path]:
         """Every WORM chain to mirror: the audit-chain segments + the skills chain."""
         chains: list[Path] = []
-        if (self._worm_dir / WORM_ACTIVE_FILENAME).exists():
+        # Glob every audit-chain segment unconditionally — a fleet writes
+        # per-agent chains (``audit-chain-<agent>.jsonl``) and the bare
+        # ``audit-chain.jsonl`` may never exist, so gating on it skipped them all.
+        if self._worm_dir.exists():
             chains.extend(sorted(self._worm_dir.glob("audit-chain*.jsonl")))
         if self._workspace_dir is not None:
             skills_chain = self._workspace_dir / SKILLS_WORM_RELPATH

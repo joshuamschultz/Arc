@@ -2,7 +2,7 @@
 
 Proves the previously-dormant SPEC-035 trifecta now has real leg producers:
 messaging_send / Telegram notify_user emit external_comms; the inbound readers
-emit untrusted_input; browser_navigate maps to both legs.
+(and web/browser reads) emit untrusted_input only — a read is not egress.
 
 The final class is the REAL end-to-end proof (F7): the ACTUAL ``messaging_send``
 capability, dispatched through the real ToolRegistry + arctrust pipeline after a
@@ -57,10 +57,12 @@ class TestCommsTags:
 
         assert EXTERNAL_COMMS in _legs(notify_user)
 
-    def test_browser_navigate_maps_to_both_legs(self) -> None:
+    def test_browser_navigate_is_untrusted_input_only(self) -> None:
+        # A navigation is a GET (a read): it ingests untrusted page content but
+        # is not an egress channel. external_comms is reserved for actual pushes.
         legs = legs_for_tags(["browser_navigate"])
-        assert EXTERNAL_COMMS in legs
         assert UNTRUSTED_INPUT in legs
+        assert EXTERNAL_COMMS not in legs
 
 
 class _Telemetry:

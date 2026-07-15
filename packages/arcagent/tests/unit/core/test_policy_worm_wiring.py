@@ -105,6 +105,10 @@ def test_policy_audit_log_path_resolution(tmp_path: Path, configured: str | None
     agent = ArcAgent(config=config, config_path=tmp_path / "arcagent.toml")
     path = agent._policy_audit_log_path()
     if configured is None:
-        assert path == agent._workspace / "audit" / "policy-chain.jsonl"
+        # Default lands in the shared arcstore worm dir with a per-agent
+        # filename so the ingest feeding the arcui Security screen tails it.
+        from arcstore.config import resolve_data_dir
+
+        assert path == resolve_data_dir() / "worm" / f"audit-chain-{agent._workspace.name}.jsonl"
     else:
         assert path == agent._workspace / "custom" / "audit.jsonl"

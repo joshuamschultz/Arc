@@ -45,6 +45,40 @@ def _request(call_hash: str = "hash123") -> ApprovalRequest:
     )
 
 
+async def test_channel_writes_enriched_pending_row(tmp_path: Path) -> None:
+    # SPEC-035 approval enrichment — the pending row carries session_id, the
+    # redacted argument preview, and the leg provenance for operator triage.
+    store, be = await _store(tmp_path)
+    try:
+        channel = ArcStoreApprovalChannel(store, id_factory=lambda: "req1")
+        req = ApprovalRequest(
+            tool_name="messaging_send",
+            agent_did=_AGENT,
+            legs=_TRIFECTA,
+            call_hash="hash123",
+            arguments={"to": "x@example.com", "body": "hi"},
+            leg_provenance=[{"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}],
+            session_id="sess-9",
+        )
+
+        async def resolve_soon() -> None:
+            for _ in range(50):
+                row = await store.get("req1")
+                if row is not None:
+                    assert row.session_id == "sess-9"
+                    assert row.arguments == {"to": "x@example.com", "body": "hi"}
+                    assert row.provenance == req.leg_provenance
+                    break
+                await asyncio.sleep(0.01)
+            await store.resolve("req1", status="denied", actor_did="op", resolved_by="op")
+
+        resolver = asyncio.create_task(resolve_soon())
+        await asyncio.wait_for(channel(req), timeout=2)
+        await resolver
+    finally:
+        await be.stop()
+
+
 async def test_channel_returns_operator_grant_when_approved(tmp_path: Path) -> None:
     store, be = await _store(tmp_path)
     try:

@@ -69,7 +69,9 @@ class TestWebConfig:
         assert cfg.tier == "personal"
         assert cfg.url_allowlist == []
         assert cfg.max_content_bytes == 1_000_000
-        assert cfg.pii_redaction_enabled is True
+        # OFF by default at personal/enterprise; federal forces it on at the
+        # call site regardless of this flag.
+        assert cfg.pii_redaction_enabled is False
 
     def test_invalid_provider_rejected(self) -> None:
         with pytest.raises(ValidationError):

@@ -1,15 +1,15 @@
-"""Unit tests for url_policy — deny-by-default at all tiers.
+"""Unit tests for url_policy — tier-differentiated default (ADR-019).
 
-Policy: empty allowlist = deny all URLs at every tier (ASI04 + LLM10).
-Operators must explicitly configure which destinations are allowed.
+Policy: deny-by-default open-internet control is a FEDERAL stringency
+requirement. Personal/enterprise allow by default (empty allowlist = allow all)
+so ordinary research is not bricked; an operator may still set an allowlist to
+opt into restriction. Federal denies by default and requires a non-empty list.
 
 Verifies:
-- All tiers deny when allowlist is empty (deny-by-default)
-- Federal tier allows URLs matching glob patterns
-- Enterprise tier allows URLs matching glob patterns
-- Personal tier allows URLs matching glob patterns
-- Non-matching URLs are denied at all tiers
-- Wildcard (*) opens all traffic at personal when configured
+- Federal denies when the allowlist is empty (deny-by-default, locked down)
+- Personal/enterprise ALLOW when the allowlist is empty (allow-by-default)
+- A configured (non-empty) allowlist is enforced at every tier
+- Non-matching URLs are denied when an allowlist is configured
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from arcagent.modules.web.url_policy import is_url_allowed
 
 
 class TestFederalTier:
-    """Federal tier: deny-by-default; empty allowlist = deny all."""
+    """Federal tier: deny-by-default; empty allowlist = deny all (locked down)."""
 
     def test_empty_allowlist_denies_all(self) -> None:
         assert is_url_allowed("https://example.com/page", allowlist=[], tier="federal") is False
@@ -70,12 +70,11 @@ class TestFederalTier:
 
 
 class TestEnterpriseTier:
-    """Enterprise tier: deny-by-default; empty allowlist = deny all."""
+    """Enterprise tier: allow-by-default; a non-empty allowlist is enforced."""
 
-    def test_empty_allowlist_denies_all(self) -> None:
-        # Changed: empty allowlist now denies all at enterprise (ASI04 + LLM10)
+    def test_empty_allowlist_allows_all(self) -> None:
         assert (
-            is_url_allowed("https://anything.com/path", allowlist=[], tier="enterprise") is False
+            is_url_allowed("https://anything.com/path", allowlist=[], tier="enterprise") is True
         )
 
     def test_non_empty_allowlist_enforced(self) -> None:
@@ -107,11 +106,10 @@ class TestEnterpriseTier:
 
 
 class TestPersonalTier:
-    """Personal tier: deny-by-default; explicit allowlist required."""
+    """Personal tier: allow-by-default; an operator may opt into restriction."""
 
-    def test_empty_allowlist_denies_all(self) -> None:
-        # Changed: personal tier now denies with empty allowlist (ASI04 + LLM10)
-        assert is_url_allowed("https://example.com", allowlist=[], tier="personal") is False
+    def test_empty_allowlist_allows_all(self) -> None:
+        assert is_url_allowed("https://example.com", allowlist=[], tier="personal") is True
 
     def test_configured_allowlist_permits_matching_url(self) -> None:
         allowlist = ["https://only.this.com/*"]
@@ -121,32 +119,30 @@ class TestPersonalTier:
         )
 
     def test_configured_allowlist_denies_non_matching(self) -> None:
-        # With an allowlist, only matching URLs pass
+        # An operator who sets an allowlist opts into restriction — only matches pass.
         allowlist = ["https://only.this.com/*"]
         assert (
             is_url_allowed("https://other.com/path", allowlist=allowlist, tier="personal") is False
         )
 
-    def test_explicit_wildcard_allows_any_url(self) -> None:
-        """Operator can opt in to open internet with explicit wildcard."""
-        allowlist = ["*"]
+    def test_open_internet_by_default(self) -> None:
+        """No allowlist configured — any URL is reachable on personal."""
         for url in [
             "https://google.com",
             "http://localhost:8080",
             "https://192.168.1.1/api",
         ]:
-            assert is_url_allowed(url, allowlist=allowlist, tier="personal") is True
+            assert is_url_allowed(url, allowlist=[], tier="personal") is True
 
 
 class TestTierCaseInsensitive:
     """Tier string matching is case-insensitive."""
 
-    def test_federal_uppercase(self) -> None:
+    def test_federal_uppercase_empty_denies(self) -> None:
         assert is_url_allowed("https://x.com", allowlist=[], tier="FEDERAL") is False
 
-    def test_personal_mixed_case_empty_allowlist_denies(self) -> None:
-        # Changed: deny-by-default applies regardless of case
-        assert is_url_allowed("https://x.com", allowlist=[], tier="Personal") is False
+    def test_personal_mixed_case_empty_allows(self) -> None:
+        assert is_url_allowed("https://x.com", allowlist=[], tier="Personal") is True
 
     def test_personal_mixed_case_with_allowlist(self) -> None:
         allowlist = ["https://x.com"]

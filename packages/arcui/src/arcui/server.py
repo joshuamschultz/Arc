@@ -21,6 +21,7 @@ from typing import Any
 from arcgateway import team_roster
 from arcstore.approvals import ApprovalStore
 from arcstore.backends.sqlite import SqliteBackend
+from arcstore.cancellations import CancelStore
 from arcstore.config import resolve_data_dir
 from arcstore.tasks import TaskStore
 from starlette.applications import Starlette
@@ -38,6 +39,7 @@ from arcui.routes import agent_sessions as agent_sessions_routes
 from arcui.routes import agents as agents_routes
 from arcui.routes import approvals as approvals_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
+from arcui.routes import cancellations as cancellations_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
 from arcui.routes import cost_efficiency as cost_efficiency_routes
@@ -202,6 +204,7 @@ def create_app(
         *team_ws_routes.routes,
         *tasks_routes.routes,
         *approvals_routes.routes,
+        *cancellations_routes.routes,
         *trust_routes.routes,
     ]
 
@@ -422,6 +425,9 @@ def create_app(
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
     # collection; the operator surface for trifecta-block requests.
     app.state.approval_store = ApprovalStore(task_store_backend)
+    # Operator kill switch (run cancellation) — same shared backend, "cancellations"
+    # collection; the surface that parks a stop request for a per-agent watcher.
+    app.state.cancel_store = CancelStore(task_store_backend)
     # Ingest policy (ADR-019 tier = stringency): may operator-authored task
     # text carry URLs/emails? Federal → False (default, secure-by-default);
     # the launcher raises it for personal/enterprise. Reads are never gated.

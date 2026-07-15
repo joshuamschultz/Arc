@@ -266,3 +266,36 @@ class TestWormIngest:
             await backend2.stop()
         finally:
             await backend.stop()
+
+    async def test_per_agent_chain_ingested_without_bare_active_file(self, tmp_path: Path) -> None:
+        """A fleet writes ``audit-chain-<agent>.jsonl`` and never the bare file.
+
+        The old gate required ``audit-chain.jsonl`` to exist before globbing, so
+        per-agent chains were skipped entirely — this is the arcui-Security-screen
+        regression. The glob must now pick them up unconditionally.
+        """
+        from arctrust.audit import AuditEvent, WormSink
+        from arctrust.keypair import generate_keypair
+        from arctrust.signer import InProcessSigner
+
+        data_dir = tmp_path / "data"
+        worm_dir = data_dir / "worm"
+        worm_dir.mkdir(parents=True, exist_ok=True)
+        kp = generate_keypair()
+        # Per-agent chain only — the bare audit-chain.jsonl is deliberately absent.
+        sink = WormSink(worm_dir / "audit-chain-olivia.jsonl", InProcessSigner(kp.private_key))
+        sink.write(AuditEvent(actor_did="did:arc:t:x/0", action="tool.call", target="read_file", outcome="allow"))
+        sink.close()
+        assert not (worm_dir / "audit-chain.jsonl").exists()
+
+        backend = SqliteBackend(data_dir / "store" / "inst.db")
+        await backend.start()
+        ingest = StoreIngest(
+            backend, spool_dir=data_dir / "spool", worm_dir=worm_dir, worm_public_key=kp.public_key
+        )
+        try:
+            await ingest.backfill()
+            rows = await backend.query("audit_chain")
+            assert len(rows) == 1  # the per-agent chain was ingested despite no bare file
+        finally:
+            await backend.stop()

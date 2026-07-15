@@ -2,17 +2,20 @@
 
 Implements glob-pattern matching for outbound URL control.
 
-Tier behaviour (deny-by-default at all tiers per ASI04 + LLM10):
+Tier behaviour (stringency is tier metadata, not a universal gate — ADR-019):
     Federal    — deny by default; every URL must match at least one pattern.
                  Empty allowlist = deny all. Module startup rejects empty list.
-    Enterprise — deny by default; empty allowlist = deny all. When non-empty,
-                 check against patterns. Logs WARNING for cross-org URLs.
-    Personal   — deny by default; empty allowlist = deny all. Explicit
-                 wildcard (``*``) opens all traffic if operator chooses.
+    Enterprise — allow by default; empty allowlist = allow all. When non-empty,
+                 the list becomes an allowlist (deny non-matching) and cross-org
+                 URLs log a WARNING.
+    Personal   — allow by default; empty allowlist = allow all. An operator MAY
+                 still set an allowlist to opt into restriction.
 
-Rationale: ASI04 (Agentic Supply Chain) and LLM10 (Unbounded Consumption)
-prohibit implicit open-internet access at any tier. The operator must
-explicitly configure which destinations are allowed.
+Rationale: deny-by-default open-internet control is a FEDERAL stringency
+requirement (ASI04 + LLM10). Personal/enterprise agents do ordinary research;
+forcing an allowlist there bricks basic web use. The destination constraint
+that matters for the lethal trifecta is enforced here, not by tagging a read
+as an egress leg.
 
 ``is_url_allowed`` returns ``True`` when the URL is permitted, ``False``
 when denied. Callers raise ``URLNotAllowed`` on ``False``.
@@ -47,10 +50,11 @@ def is_url_allowed(
     Returns:
         True if the URL is allowed, False if it should be denied.
     """
-    # Deny-by-default at every tier: empty allowlist = deny all (ASI04 + LLM10).
-    # The operator must explicitly configure allowed destinations.
+    # Empty allowlist: federal denies (open-internet control is a federal
+    # stringency requirement — startup also rejects an empty federal list);
+    # personal/enterprise allow by default so ordinary research is not bricked.
     if not allowlist:
-        return False
+        return tier.lower() != "federal"
 
     if tier.lower() == "enterprise":
         _warn_cross_org_if_needed(url, allowlist)

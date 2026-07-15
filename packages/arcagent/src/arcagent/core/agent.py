@@ -174,14 +174,23 @@ class ArcAgent:
         """Resolve the WORM chain file for policy-decision audit (SPEC-034).
 
         Uses ``config.security.policy_audit_log`` when set (relative paths
-        resolve against the workspace); otherwise defaults to
-        ``<workspace>/audit/policy-chain.jsonl``.
+        resolve against the workspace); otherwise defaults into the SHARED
+        arcstore worm dir (``<data_dir>/worm/audit-chain-<agent>.jsonl``) so the
+        ingest that feeds the arcui Security screen actually tails it. The
+        per-agent filename is required because a ``WormSink`` holds an exclusive
+        flock for its lifetime — a fleet cannot share one active chain file.
+        Falls back to the workspace when arcstore is not installed.
         """
         configured = self._config.security.policy_audit_log
         if configured:
             path = Path(configured)
             return path if path.is_absolute() else (self._workspace / path)
-        return self._workspace / "audit" / "policy-chain.jsonl"
+        try:
+            from arcstore.config import resolve_data_dir
+        except ImportError:
+            return self._workspace / "audit" / "policy-chain.jsonl"
+        slug = self._workspace.name or "agent"
+        return resolve_data_dir() / "worm" / f"audit-chain-{slug}.jsonl"
 
     def _operator_key_path(self) -> Path:
         """Resolve the operator-key file (SPEC-053 REQ-004).

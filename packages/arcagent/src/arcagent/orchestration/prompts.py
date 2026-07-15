@@ -9,8 +9,12 @@ from __future__ import annotations
 
 SPAWN_GUIDANCE = """\
 ## Task Delegation (spawn_task)
-Before executing multi-step work sequentially, evaluate whether subtasks
-should be delegated to child agents. Use spawn_task when:
+When work splits into independent pieces, STRONGLY PREFER delegating them
+to child agents via spawn_task over grinding through them one step at a
+time in this thread. Delegation keeps your own context small and runs the
+pieces concurrently — a research-and-synthesize task (gather several
+sources, then write) is the canonical case: fan the per-source work out to
+children, then compose their results. Use spawn_task when:
 - Subtasks are independent and can run in parallel
 - A subtask requires specialized focus (research, verification, review)
 - A subtask would consume significant context that the main thread does

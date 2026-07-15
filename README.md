@@ -458,6 +458,22 @@ The deployment tier (Personal / Enterprise / Federal) only changes how *strict* 
 
 ---
 
+## 🕸️ Breaking the Lethal Trifecta
+
+Three capabilities are catastrophic *together*: **private data + external comms + untrusted input**. That combination is the exfiltration path — untrusted content instructs an agent to send private data to an adversary. Arc's policy engine accumulates these "legs" across a session and, the moment they complete, **denies the call and requires a human approval** (operator-signed, reachable via arcui, arccli, or your paired channel).
+
+Each leg is defined by the *real* condition, not a crude label — so the gate blocks actual exfiltration without smothering ordinary work:
+
+| Leg | Fires on | …but **not** when |
+|---|---|---|
+| **Private data** | reading anything on your machine — workspace, `.env`, tomls, traces, agent files, memory | (it's all private from the outside world) |
+| **External comms** | talking to a **non-owner** | you're talking to **yourself** — the paired owner over arcui / Telegram / Slack / messaging |
+| **Untrusted input** | ingesting **unvetted** content | the source is **operator-vetted** — a trusted/allowlisted URL |
+
+**Your tier sets the trust default, never whether the gate runs.** On **Personal**, the open web is trusted by default (you keep a denylist) — so you research, read your files, and write freely, and the gate only fires on flagged-untrusted content leaving to a stranger. On **Federal**, nothing is trusted but the allowlist — so any unvetted fetch arms the gate. Same guarantee, dialed to the environment. **You can't bypass the trifecta to make a workflow convenient — only define the legs correctly and approve when it legitimately fires.**
+
+---
+
 ## 🌐 Supported LLM Providers
 
 All 16 providers go through direct HTTP — never a vendor SDK.

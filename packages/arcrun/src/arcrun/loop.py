@@ -272,8 +272,19 @@ class RunHandle:
         """
         self._state.followup_queue.put_nowait(Injection.new(caller_did, message))
 
-    async def cancel(self) -> None:
-        """Hard stop. Drains queues and sets cancel signal."""
+    async def cancel(self, caller_did: str, reason: str | None = None) -> None:
+        """Hard stop, attributed to a verified caller. Drains queues, sets signal.
+
+        ``caller_did`` must be a non-empty verified identity: arcrun records it so
+        the kill switch is attributable (ASI09/ASI10) but does not authorize it —
+        that policy decision belongs to the caller (arcagent), mirroring ``steer``
+        and ``follow_up``. ``reason`` is an optional operator note carried into the
+        structured cancelled result and the ``loop.cancelled`` audit event.
+        """
+        if not caller_did:
+            raise ValueError("caller_did is required to cancel a run")
+        self._state.cancelled_by = caller_did
+        self._state.cancel_reason = reason or ""
         # Drain pending messages to prevent stale items on partial result
         for q in (self._state.steer_queue, self._state.followup_queue):
             while not q.empty():

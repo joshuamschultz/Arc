@@ -125,10 +125,26 @@ def make_budget_breach_args(*, reason: BudgetBreachReason) -> TaskCompleteArgs:
     return TaskCompleteArgs(status="failed", summary=_BREACH_SUMMARIES[reason], error=reason)
 
 
+def make_cancel_args(*, caller_did: str, reason: str = "") -> TaskCompleteArgs:
+    """Synthesize a ``task_complete`` payload for an operator-cancelled run.
+
+    Mirrors :func:`make_budget_breach_args` — one terminator factory, one
+    vocabulary — so a cancelled run yields the same structured shape as every
+    other halt. ``error="cancelled"`` lets consumers distinguish an operator
+    kill switch (ASI09/ASI10) from a budget breach; the summary names the
+    operator (and reason, when supplied) for the human-visible partial.
+    """
+    detail = f"Run cancelled by {caller_did}"
+    if reason:
+        detail += f": {reason}"
+    return TaskCompleteArgs(status="failed", summary=detail, error="cancelled")
+
+
 __all__ = [
     "BudgetBreachReason",
     "TaskCompleteArgs",
     "TaskStatus",
     "make_budget_breach_args",
+    "make_cancel_args",
     "make_task_complete_tool",
 ]

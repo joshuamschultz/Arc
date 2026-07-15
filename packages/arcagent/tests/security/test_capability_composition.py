@@ -27,9 +27,11 @@ class TestTagToLegMapping:
     def test_network_egress_maps_to_external_comms(self) -> None:
         assert legs_for_tags(["network_egress"]) == frozenset({EXTERNAL_COMMS})
 
-    def test_web_read_maps_to_both_egress_and_untrusted(self) -> None:
-        # OQ-1 proxy: a web/browser read both egresses and ingests untrusted input.
-        assert legs_for_tags(["web"]) == frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT})
+    def test_web_read_maps_to_untrusted_input_only(self) -> None:
+        # A web/browser read INGESTS untrusted content but is not an egress
+        # channel — external_comms is reserved for tools that push agent content
+        # out. Tagging a read as egress double-counts and bricks research+write.
+        assert legs_for_tags(["web"]) == frozenset({UNTRUSTED_INPUT})
 
     def test_subprocess_maps_to_untrusted_input(self) -> None:
         # A shell/subprocess ingests untrusted content (command output, fetched

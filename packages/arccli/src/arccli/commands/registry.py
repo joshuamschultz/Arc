@@ -143,6 +143,13 @@ def _approve_handler(args: list[str]) -> None:
     approve_handler(args)
 
 
+def _stop_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.stop import stop_handler
+
+    stop_handler(args)
+
+
 def _blueprint_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.blueprint import blueprint_handler
@@ -547,6 +554,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="[list | <id> [--deny]]",
         cli_only=True,
         handler=_approve_handler,
+    ),
+    CommandDef(
+        name="stop",
+        description="Operator kill switch — stop a running agent run by run id or session",
+        category="Tools & Skills",
+        args_hint="[list | <run_id> [--reason ...] | --session <key>]",
+        cli_only=True,
+        handler=_stop_handler,
     ),
     CommandDef(
         name="trust",

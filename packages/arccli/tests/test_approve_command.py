@@ -39,14 +39,22 @@ def _call() -> ToolCall:
     )
 
 
-async def _seed_pending(call_hash: str) -> None:
+async def _seed_pending(call_hash: str, *, enriched: bool = False) -> None:
     backend = SqliteBackend(store_db_path(None))
     await backend.start()
+    extra: dict[str, object] = {}
+    if enriched:
+        extra = {
+            "session_id": "sess-1",
+            "arguments": {"to": "coder_agent", "body": "hello"},
+            "provenance": [{"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}],
+        }
     try:
         await ApprovalStore(backend).create(
             PendingApproval(
                 id="req1", agent_did=_AGENT, agent_label="josh_agent",
                 tool="send_message", legs=["external_comms", "private_data"], call_hash=call_hash,
+                **extra,
             )
         )
     finally:
@@ -80,6 +88,33 @@ def test_approve_mints_grant_that_verifies_against_the_call() -> None:
 
     expected_did = OperatorApprovalAuthority(resolve_operator_signer()).did
     assert grant.approver_did == expected_did
+
+
+def test_list_displays_enrichment_context(capsys: pytest.CaptureFixture[str]) -> None:
+    # SPEC-035 approval enrichment — the operator sees session, redacted args, and
+    # leg provenance when listing pending requests.
+    asyncio.run(_seed_pending(_hash_call(_call()), enriched=True))
+
+    approve_handler(["list"])
+
+    out = capsys.readouterr().out
+    assert "sess-1" in out
+    assert "to: coder_agent" in out
+    assert "file_read" in out
+
+
+def test_resolve_displays_context_before_approving(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # `arc approve <id>` prints the triage context (what + why) before signing.
+    asyncio.run(_seed_pending(_hash_call(_call()), enriched=True))
+
+    approve_handler(["req1"])
+
+    out = capsys.readouterr().out
+    assert "arguments:" in out
+    assert "leg provenance" in out
+    assert "Approved req1" in out
 
 
 def test_deny_marks_denied_without_a_grant() -> None:

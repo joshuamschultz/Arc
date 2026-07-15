@@ -49,6 +49,40 @@ class TestApprovalStore:
         finally:
             await be.stop()
 
+    async def test_enrichment_fields_roundtrip(self, tmp_path: Path) -> None:
+        # SPEC-035 approval enrichment — session_id, redacted arguments preview,
+        # and leg provenance survive create → get unchanged.
+        be = await _backend(tmp_path)
+        try:
+            store = ApprovalStore(be)
+            enriched = _pending().model_copy(
+                update={
+                    "session_id": "sess-1",
+                    "arguments": {"to": "x@example.com", "body": "hi"},
+                    "provenance": [{"legs": ["private_data"], "tool": "file_read", "args": "p"}],
+                }
+            )
+            await store.create(enriched)
+            got = await store.get("req1")
+            assert got is not None
+            assert got.session_id == "sess-1"
+            assert got.arguments == {"to": "x@example.com", "body": "hi"}
+            assert got.provenance == [{"legs": ["private_data"], "tool": "file_read", "args": "p"}]
+        finally:
+            await be.stop()
+
+    async def test_defaults_are_empty(self, tmp_path: Path) -> None:
+        be = await _backend(tmp_path)
+        try:
+            store = ApprovalStore(be)
+            await store.create(_pending())
+            got = await store.get("req1")
+            assert got is not None
+            assert got.arguments == {}
+            assert got.provenance == []
+        finally:
+            await be.stop()
+
     async def test_list_filters_by_status(self, tmp_path: Path) -> None:
         be = await _backend(tmp_path)
         try:

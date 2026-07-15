@@ -131,7 +131,7 @@ class TestTimingAttacks:
 
         handle = await run_async(model, StaticProvider([tool]), "prompt", "task")
         await asyncio.sleep(0.1)  # Let run start
-        await handle.cancel()
+        await handle.cancel("did:arc:operator")
 
         result = await handle.result()
         # Run should complete (cancelled or partial)

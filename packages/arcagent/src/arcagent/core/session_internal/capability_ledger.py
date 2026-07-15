@@ -19,8 +19,39 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from arctrust.classification import Classification
+
+
+def _now() -> str:
+    """ISO-8601 UTC timestamp for a provenance entry."""
+    return datetime.now(UTC).isoformat()
+
+
+@dataclass(frozen=True)
+class ProvenanceEntry:
+    """One ALLOWED call that contributed trifecta legs to a session (SPEC-035).
+
+    Surfaced to the operator on a trifecta block so the completed composition is
+    triageable: WHICH prior tool call lit each leg, a short redacted argument
+    summary, and WHEN. ``legs`` is sorted for stable display.
+    """
+
+    legs: tuple[str, ...]
+    tool_name: str
+    arg_summary: str
+    at: str
+
+    def as_dict(self) -> dict[str, object]:
+        """JSON-friendly form for approval requests and audit payloads."""
+        return {
+            "legs": list(self.legs),
+            "tool": self.tool_name,
+            "args": self.arg_summary,
+            "at": self.at,
+        }
 
 # The three legs of the lethal trifecta (REQ-011).
 PRIVATE_DATA = "private_data"
@@ -44,13 +75,16 @@ TAG_TO_LEGS: dict[str, frozenset[str]] = {
     "network_egress": frozenset({EXTERNAL_COMMS}),
     "slack_notify": frozenset({EXTERNAL_COMMS}),
     "audio": frozenset({EXTERNAL_COMMS}),
-    # web/browser reads egress AND ingest untrusted content (both legs)
-    "web": frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT}),
-    "browser": frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT}),
-    # SPEC-038 REQ-030 — the browser_navigate tool declares this tag; without
-    # a map entry it produced no leg (dormant). Navigation both egresses and
-    # ingests untrusted page content.
-    "browser_navigate": frozenset({EXTERNAL_COMMS, UNTRUSTED_INPUT}),
+    # web/browser reads INGEST untrusted content but are NOT an egress channel.
+    # A search hits a fixed provider with a (federally PII-redacted) query; a
+    # fetch/navigation is a GET whose destination is governed by the web/browser
+    # module's own URL policy, not the trifecta. external_comms is reserved for
+    # tools that PUSH agent-chosen content to an agent-chosen sink (messaging,
+    # notify, post, raw network egress) — the leg that actually exfiltrates.
+    # Tagging a read as egress double-counts and bricks ordinary research+write.
+    "web": frozenset({UNTRUSTED_INPUT}),
+    "browser": frozenset({UNTRUSTED_INPUT}),
+    "browser_navigate": frozenset({UNTRUSTED_INPUT}),
     "extract": frozenset({UNTRUSTED_INPUT}),
     # a shell ingests untrusted content (command output, fetched files, curl
     # responses). NOT external_comms: at ent/fed bash runs --network=none, so
@@ -162,6 +196,10 @@ class SessionCapabilityLedger:
 
     def __init__(self) -> None:
         self._by_session: dict[str, set[str]] = {}
+        # SPEC-035 approval enrichment — ordered provenance of leg-contributing
+        # calls per session, so a later trifecta block can be explained leg-by-leg
+        # to the operator (which prior call lit each leg, and when).
+        self._provenance_by_session: dict[str, list[ProvenanceEntry]] = {}
         # SPEC-038 F2 — the highest classification of data READ this session,
         # keyed by session id. The no-exfil egress gate reads this so a SECRET
         # read this session bars an UNCLASSIFIED-cleared destination.
@@ -182,11 +220,36 @@ class SessionCapabilityLedger:
         """Return the accumulated legs for a session (empty if none yet)."""
         return frozenset(self._by_session.get(session_id, set()))
 
-    def record(self, session_id: str, legs: frozenset[str]) -> None:
-        """Accumulate the legs of an ALLOWED call into the session's union."""
+    def record(
+        self,
+        session_id: str,
+        legs: frozenset[str],
+        *,
+        tool_name: str = "",
+        arg_summary: str = "",
+    ) -> None:
+        """Accumulate the legs of an ALLOWED call into the session's union.
+
+        Also appends a :class:`ProvenanceEntry` recording which tool lit these legs
+        (with a short redacted argument summary and a UTC timestamp) so a later
+        trifecta block can be explained leg-by-leg to the operator. The caller is
+        responsible for redacting/bounding ``arg_summary`` before it reaches here.
+        """
         if not legs:
             return
         self._by_session.setdefault(session_id, set()).update(legs)
+        self._provenance_by_session.setdefault(session_id, []).append(
+            ProvenanceEntry(
+                legs=tuple(sorted(legs)),
+                tool_name=tool_name,
+                arg_summary=arg_summary,
+                at=_now(),
+            )
+        )
+
+    def provenance(self, session_id: str) -> list[ProvenanceEntry]:
+        """Return the ordered provenance of leg-contributing calls for a session."""
+        return list(self._provenance_by_session.get(session_id, []))
 
     def record_read(self, session_id: str, classification: Classification) -> None:
         """Raise the session's max-read classification (monotone, SPEC-038 F2).
@@ -205,6 +268,7 @@ class SessionCapabilityLedger:
     def reset(self, session_id: str) -> None:
         """Drop a session's accumulated legs (e.g. on session close)."""
         self._by_session.pop(session_id, None)
+        self._provenance_by_session.pop(session_id, None)
         self._read_class_by_session.pop(session_id, None)
 
 
@@ -215,6 +279,7 @@ __all__ = [
     "PRIVATE_DATA",
     "TAG_TO_LEGS",
     "UNTRUSTED_INPUT",
+    "ProvenanceEntry",
     "SessionCapabilityLedger",
     "bind_session_id",
     "current_session_id",

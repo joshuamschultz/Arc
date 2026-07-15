@@ -57,6 +57,12 @@ class RunState:
     max_depth: int = 3
     parent_run_id: str = ""
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Operator attribution for a hard cancel (kill switch, ASI09/ASI10). Set by
+    # ``RunHandle.cancel`` before the event so the cancel terminator can name the
+    # caller (and optional reason) in the structured result and audit event.
+    # arcrun records but does not authorize — that policy call is the caller's.
+    cancelled_by: str = ""
+    cancel_reason: str = ""
     steer_queue: asyncio.Queue[Injection] = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     followup_queue: asyncio.Queue[Injection] = field(
         default_factory=lambda: asyncio.Queue(maxsize=16)

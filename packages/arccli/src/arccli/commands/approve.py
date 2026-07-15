@@ -45,7 +45,29 @@ async def _open_store() -> tuple[ApprovalStore, Any]:
 def _row(a: PendingApproval) -> list[str]:
     legs = "+".join(a.legs)
     who = a.agent_label or a.agent_did.rsplit("/", 1)[-1]
-    return [a.id, a.status, who, a.tool, legs, (a.created_at or "")[:19]]
+    session = (a.session_id or "")[:12]
+    return [a.id, a.status, who, a.tool, legs, session, (a.created_at or "")[:19]]
+
+
+def _print_context(a: PendingApproval) -> None:
+    """Print the SPEC-035 triage context for one request: what + why.
+
+    ``arguments`` (WHAT the completing call acts on) and ``provenance`` (WHICH
+    prior calls lit each trifecta leg, and when) are already redacted/bounded by
+    the agent — printed verbatim so the operator can decide before signing.
+    """
+    if a.session_id:
+        _write(f"  session:  {a.session_id}")
+    if a.arguments:
+        _write("  arguments:")
+        for name, value in a.arguments.items():
+            _write(f"    {name}: {value}")
+    if a.provenance:
+        _write("  leg provenance (what lit each trifecta leg):")
+        for entry in a.provenance:
+            legs = "+".join(entry.get("legs", []))
+            tool = entry.get("tool", "")
+            _write(f"    [{legs}] {tool}: {entry.get('args', '')} @ {entry.get('at', '')}")
 
 
 def _list(_args: argparse.Namespace) -> None:
@@ -59,9 +81,12 @@ def _list(_args: argparse.Namespace) -> None:
             _write("No pending approvals.")
             return
         _print_table(
-            ["ID", "STATUS", "AGENT", "TOOL", "COMPOSITION", "CREATED"],
+            ["ID", "STATUS", "AGENT", "TOOL", "COMPOSITION", "SESSION", "CREATED"],
             [_row(a) for a in pending],
         )
+        for a in pending:
+            _write(f"\n{a.id} ({a.tool}):")
+            _print_context(a)
 
     asyncio.run(_run())
 
@@ -79,6 +104,10 @@ def _resolve(args: argparse.Namespace) -> None:
             if row.status != "pending":
                 _err(f"arc approve: request {args.id!r} is already {row.status}")
                 sys.exit(1)
+
+            # Surface the triage context (what + why) before the operator commits.
+            _write(f"{row.id} ({row.tool}):")
+            _print_context(row)
 
             if deny:
                 resolved = await store.resolve(

@@ -110,7 +110,7 @@ async def test_token_ceiling_halts_real_run_through_dispatch(
     result = await collect(agent.run("go forever", session=session))
 
     # The breaker halted after the first turn crossed the 80-token ceiling;
-    # without wiring the loop would have run to max_turns (25).
+    # without wiring the loop would have run to max_turns (40).
     assert result.turns == 1
     assert agent._model.calls == 1
     await agent.shutdown()
@@ -176,7 +176,7 @@ async def test_no_ceiling_lets_run_proceed(tmp_path: Path) -> None:
     session = await agent.session("nobudget")
     events = [ev async for ev in agent.run("go", session=session)]
 
-    # Ran to max_turns (25) — many more model calls than the ceiling test.
+    # Ran to max_turns (40) — many more model calls than the ceiling test.
     assert isinstance(events[-1], TurnEndEvent)
     assert agent._model.calls > 1
     await agent.shutdown()

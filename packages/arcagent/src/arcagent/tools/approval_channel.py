@@ -92,6 +92,9 @@ class ArcStoreApprovalChannel:
             tool=request.tool_name,
             legs=sorted(request.legs),
             call_hash=request.call_hash,
+            session_id=request.session_id,
+            arguments=request.arguments,
+            provenance=request.leg_provenance,
             expires_at=expires_at,
         )
         await store.create(pending)

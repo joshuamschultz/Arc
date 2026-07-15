@@ -119,7 +119,7 @@ class TestMissingSiblingsFallThrough:
         cfg = load_config(tmp_path / "arcagent.toml")
         # arcllm.toml absent → packaged default model; arcrun.toml absent → defaults.
         assert cfg.llm.model == DEFAULT_MODEL
-        assert cfg.arcrun.max_turns == 25
+        assert cfg.arcrun.max_turns == 40
         assert cfg.eval.max_tokens == 1024  # EvalConfig default
 
     def test_llm_in_arcagent_toml_is_ignored(self, tmp_path: Path) -> None:

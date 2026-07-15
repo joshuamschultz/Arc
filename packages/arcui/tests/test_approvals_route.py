@@ -43,20 +43,32 @@ def _call() -> ToolCall:
     )
 
 
-async def _seed_store(data_dir: Path, call_hash: str) -> ApprovalStore:
+async def _seed_store(
+    data_dir: Path, call_hash: str, *, enriched: bool = False
+) -> ApprovalStore:
     backend = SqliteBackend(data_dir / "store" / "arcui.db")
     await backend.start()
     store = ApprovalStore(backend)
+    extra: dict[str, Any] = {}
+    if enriched:
+        extra = {
+            "session_id": "sess-1",
+            "arguments": {"to": "coder_agent", "body": "hi"},
+            "provenance": [{"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}],
+        }
     await store.create(
         PendingApproval(
             id="req1", agent_did=_AGENT, agent_label="josh_agent",
             tool="send_message", legs=["external_comms", "private_data"], call_hash=call_hash,
+            **extra,
         )
     )
     return store
 
 
-def _make_app(tmp_path: Path, call_hash: str) -> tuple[Starlette, AuthConfig]:
+def _make_app(
+    tmp_path: Path, call_hash: str, *, enriched: bool = False
+) -> tuple[Starlette, AuthConfig]:
     from arcui.routes.approvals import routes as approval_routes
 
     auth = AuthConfig({"viewer_token": "viewer", "operator_token": "operator"})
@@ -64,7 +76,7 @@ def _make_app(tmp_path: Path, call_hash: str) -> tuple[Starlette, AuthConfig]:
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
-    app.state.approval_store = asyncio.run(_seed_store(tmp_path, call_hash))
+    app.state.approval_store = asyncio.run(_seed_store(tmp_path, call_hash, enriched=enriched))
     return app, auth
 
 
@@ -95,6 +107,21 @@ def test_list_pending_visible_to_viewer(tmp_path: Path) -> None:
     assert resp.status_code == 200
     ids = [a["id"] for a in resp.json()["approvals"]]
     assert ids == ["req1"]
+
+
+def test_list_surfaces_enrichment_fields(tmp_path: Path) -> None:
+    # SPEC-035 approval enrichment — GET exposes session_id, redacted arguments,
+    # and leg provenance so the panel can render triage context.
+    app, auth = _make_app(tmp_path, _hash_call(_call()), enriched=True)
+    client = TestClient(app)
+    resp = client.get("/api/approvals", headers=_viewer(auth))
+    assert resp.status_code == 200
+    row = resp.json()["approvals"][0]
+    assert row["session_id"] == "sess-1"
+    assert row["arguments"] == {"to": "coder_agent", "body": "hi"}
+    assert row["provenance"] == [
+        {"legs": ["private_data"], "tool": "file_read", "args": "p", "at": "t"}
+    ]
 
 
 def test_viewer_cannot_approve(tmp_path: Path) -> None:

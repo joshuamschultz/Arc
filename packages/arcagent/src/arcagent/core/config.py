@@ -556,7 +556,7 @@ class ArcRunConfig(BaseModel):
     concern that governs their stringency.
     """
 
-    max_turns: int = Field(default=25, gt=0, description="Hard cap on agentic loop turns.")
+    max_turns: int = Field(default=40, gt=0, description="Hard cap on agentic loop turns.")
     tool_timeout: float | None = Field(
         default=None,
         gt=0,

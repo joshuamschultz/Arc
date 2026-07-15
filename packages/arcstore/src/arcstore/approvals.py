@@ -48,6 +48,13 @@ class PendingApproval(BaseModel):
     legs: list[str] = Field(default_factory=list)
     call_hash: str
     session_id: str = ""
+    # SPEC-035 approval enrichment — operator triage context. ``arguments`` is a
+    # redacted, length-bounded per-argument preview (WHAT is being acted on);
+    # ``provenance`` records which prior tool calls lit each trifecta leg and when
+    # (WHY the composition is complete). Both are already redacted/bounded by the
+    # agent before the row is written — the store treats them as opaque data.
+    arguments: dict[str, str] = Field(default_factory=dict)
+    provenance: list[dict[str, Any]] = Field(default_factory=list)
     status: ApprovalStatus = "pending"
     note: str = ""
     grant: dict[str, Any] | None = None

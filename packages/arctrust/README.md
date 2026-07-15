@@ -186,6 +186,37 @@ Tier is stringency metadata, not a different code path: the same `Signer` seam r
 | Enterprise | ✅ | ✅ | ✅ | — | — |
 | Federal | ✅ | ✅ | ✅ | ✅ | ✅ |
 
+**The Lethal Trifecta (`GlobalLayer` forbidden composition):**
+
+Private data + external comms + untrusted input must never co-occur in one
+session without human approval — Simon Willison's *lethal trifecta*, the
+exfiltration path where untrusted content instructs an agent to send private
+data to an adversary. The `GlobalLayer` denies a call whose session-accumulated
+capability legs complete the forbidden set and routes it to a signed operator
+approval instead of letting it through.
+
+Each leg is a **context-resolved definition** — it fires on the *real* condition
+evaluated per call, never on a static label. That is what keeps the gate honest:
+stringency lives in the *definition* of each leg, never in disabling the gate.
+
+| Leg | Fires on | Exempt when |
+|---|---|---|
+| `private_data` | reading **anything on the machine** — workspace files, `.env`, tomls, traces, agent files, memory, profile, recall | never — it is all private from the outside world |
+| `external_comms` | outbound communication to a **non-owner** | the counterparty is the **paired owner** (arcui / Telegram / Slack / messaging) — talking to yourself is not exfiltration |
+| `untrusted_input` | ingesting **unvetted** content | the source is **operator-vetted** — an allowlisted/trusted URL is not untrusted |
+
+**Tier sets the trust default — not whether the gate exists:**
+
+| Tier | Web-content trust | Effect |
+|---|---|---|
+| Personal | Trusted by default (denylist) | `untrusted_input` rarely present → agents research freely; the gate fires only on denylisted content + private data + non-owner egress |
+| Federal | Untrusted by default (allowlist) | any unvetted fetch is `untrusted_input` → the gate fires whenever an agent egresses to a non-owner after touching unvetted content + private data |
+
+A completed trifecta always requires a human. Approvals are operator-signed
+(never the agent's own DID) and reachable via arcui, arccli, or the owner's
+paired channel. Owner-identity pairing and per-tier URL trust resolution are
+formalized in the arctrust user-identity spec.
+
 ### Artifact Signing (`arctrust.artifact`)
 
 | Symbol | What It Does |

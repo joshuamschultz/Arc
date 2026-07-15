@@ -67,7 +67,7 @@ from arcagent.tools._transport import (
     _validate_tool_args,
     native_tool,
 )
-from arcagent.tools.human_gate import HumanGate
+from arcagent.tools.human_gate import HumanGate, summarize_arguments
 
 _logger = logging.getLogger("arcagent.tool_registry")
 
@@ -320,6 +320,9 @@ class ToolRegistry:
         session_id: str,
         tool_legs: frozenset[str],
         clearance_ctx: Any,
+        *,
+        tool_name: str = "",
+        arg_summary: str = "",
     ) -> None:
         """Record an admitted call's legs + max-read class under the lock (REQ-032).
 
@@ -327,11 +330,14 @@ class ToolRegistry:
         ALLOW (or a granted one-shot) the tool's trifecta legs join the session
         union so the NEXT call sees them, and the session's max-read
         classification is raised for the no-exfil egress gate (SPEC-038 F2).
+        ``tool_name``/``arg_summary`` are recorded as leg provenance (SPEC-035
+        approval enrichment); the summary is redacted/bounded by the caller so no
+        redaction work happens under the admission lock.
         """
         if ledger is None:
             return
         if tool_legs:
-            ledger.record(session_id, tool_legs)
+            ledger.record(session_id, tool_legs, tool_name=tool_name, arg_summary=arg_summary)
         if clearance_ctx is not None:
             ledger.record_read(session_id, clearance_ctx.resource_classification)
 
@@ -355,7 +361,16 @@ class ToolRegistry:
         if decision.rule_id != "global.forbidden_composition" or human_gate is None:
             raise PolicyDenied(decision)
         union = frozenset(tool_legs) | frozenset(accumulated)
-        approval = await human_gate.request(call, legs=union)
+        # SPEC-035 approval enrichment — the ledger's provenance explains which
+        # PRIOR calls lit the accumulated legs (this blocked call is described by
+        # the request's own tool + arguments). Read-only snapshot, JSON-ready.
+        ledger = self._capability_ledger
+        provenance = (
+            [entry.as_dict() for entry in ledger.provenance(call.session_id)]
+            if ledger is not None
+            else []
+        )
+        approval = await human_gate.request(call, legs=union, provenance=provenance)
         if approval is None:
             raise PolicyDenied(decision)
         approved_call = call.model_copy(update={"approval": approval})
@@ -436,6 +451,11 @@ class ToolRegistry:
                 # must not fire on the agent delivering a result to its own owner
                 # (ASI09). Any non-owner recipient keeps the leg and still trips.
                 call_legs = legs_for_call(tool.name, tool.capability_tags, args)
+                # SPEC-035 approval enrichment — a redacted, bounded one-line arg
+                # summary for this call's leg provenance. Computed here (OUTSIDE the
+                # admission lock) and only for leg-bearing calls, so PII redaction
+                # never runs under the O(1) critical section (REQ-032).
+                arg_summary = summarize_arguments(args) if call_legs else ""
                 if EXTERNAL_COMMS in declared_legs and EXTERNAL_COMMS not in call_legs:
                     telemetry.audit_event(
                         "policy.owner_channel_exempt",
@@ -495,7 +515,10 @@ class ToolRegistry:
                     decision = await pipeline.evaluate(call, ctx_pol)
                     denied = decision.is_deny()
                     if not denied:
-                        self._record_admission(ledger, session_id, call_legs, clearance_ctx)
+                        self._record_admission(
+                            ledger, session_id, call_legs, clearance_ctx,
+                            tool_name=tool.name, arg_summary=arg_summary,
+                        )
                 if denied:
                     # Human approval awaits OUTSIDE the lock (REQ-032): a granted
                     # one-shot re-evaluates and, on ALLOW, records the legs.
@@ -503,7 +526,10 @@ class ToolRegistry:
                         call, ctx_pol, decision, human_gate, call_legs, accumulated
                     )
                     async with lock:
-                        self._record_admission(ledger, session_id, call_legs, clearance_ctx)
+                        self._record_admission(
+                            ledger, session_id, call_legs, clearance_ctx,
+                            tool_name=tool.name, arg_summary=arg_summary,
+                        )
 
             # 2. Pre-tool event (may veto)
             ctx = await bus.emit(
