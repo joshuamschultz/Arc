@@ -38,7 +38,7 @@ from arctrust.policy import PolicyContext, PolicyPipeline, ToolCall, sign_call
 
 from arcmemory.config import MemoryConfig
 from arcmemory.db import MemoryDB
-from arcmemory.distill import EntityDisambiguator, resolve_entity
+from arcmemory.distill import EntityDisambiguator, confidence_from_hits, resolve_entity
 from arcmemory.index.graph import WeightedGraph
 from arcmemory.index.rebuild import Embedder
 from arcmemory.retrieve import Retriever
@@ -301,15 +301,28 @@ class _MemoryToolFactory:
     async def _record_insight(self, args: dict[str, Any]) -> str:
         insight_id = canonical_slug(str(args.get("id", "")))
         cues = [str(c) for c in args.get("cues", [])]
+        instances = [str(i) for i in args.get("instances", [])]
+        # Corroboration: a re-seen insight carries prior hits/cues/instances forward
+        # (non-lossy) so confidence accumulates across passes instead of resetting.
+        existing = self._insights.read(insight_id)
+        hits = (existing.hits if existing else 0) + 1
+        if existing is not None:
+            cues = list(dict.fromkeys([*existing.cues, *cues]))
+            instances = list(dict.fromkeys([*existing.instances, *instances]))
+        confidence = confidence_from_hits(hits, self._cfg.gamma)
+        status = (
+            Confidence.KNOWN if confidence >= self._cfg.known_threshold else Confidence.GUESSED
+        )
         insight = Insight(
             id=insight_id,
-            statement=str(args.get("statement", "")),
-            trigger=str(args.get("trigger", "")),
+            statement=str(args.get("statement", "")) or (existing.statement if existing else ""),
+            trigger=str(args.get("trigger", "")) or (existing.trigger if existing else ""),
             cues=cues,
-            instances=[str(i) for i in args.get("instances", [])],
+            instances=instances,
             classification=str(args.get("classification", "unclassified")),
-            status=Confidence.GUESSED,
-            hits=1,
+            confidence=confidence,
+            status=status,
+            hits=hits,
         )
         self._insights.write(insight)
         for cue in cues:

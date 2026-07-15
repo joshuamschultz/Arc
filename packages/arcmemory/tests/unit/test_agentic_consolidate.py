@@ -8,7 +8,7 @@ from typing import Any
 
 from arctrust.identity import AgentIdentity
 
-from arcmemory.agent_consolidate import run_agentic_consolidation
+from arcmemory.agent_consolidate import CONSOLIDATION_SYSTEM_PROMPT, run_agentic_consolidation
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
@@ -153,3 +153,16 @@ async def test_engine_empty_episodes_is_clean() -> None:
         episodes=[], model=object(), tools=[], config=MemoryConfig(), actor_did="did:arc:x"
     )
     assert result.degraded is False
+
+
+def test_prompt_scopes_to_user_knowledge_and_excludes_harness_mechanics() -> None:
+    """The consolidation prompt must record the USER's domain knowledge and EXPLICITLY
+    exclude the agent's own operational/harness mechanics (the bad-card sources)."""
+    prompt = CONSOLIDATION_SYSTEM_PROMPT.lower()
+    # Records the user's durable world.
+    assert "do not record" in prompt
+    for cue in ("people", "projects", "decisions", "preferences"):
+        assert cue in prompt
+    # Excludes the operational self-talk that produced the bad cards.
+    for banned in ("skill signing", "tofu", "policy gate", "approval", "harness"):
+        assert banned in prompt
