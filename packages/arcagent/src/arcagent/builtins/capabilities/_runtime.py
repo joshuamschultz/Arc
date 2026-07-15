@@ -59,6 +59,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcagent.tools._dynamic_loader import DEFAULT_IMPORT_POLICY, ImportPolicy
+
 if TYPE_CHECKING:
     from arctrust.identity import AgentIdentity
 
@@ -93,6 +95,11 @@ _egress_proxy_var: contextvars.ContextVar[Any] = contextvars.ContextVar(
 _tier_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "arcagent_builtin_tier", default="personal"
 )
+# Fail-closed default: an unconfigured runtime authors under the enterprise
+# blocklist, never allow-all (the authoring gate for create_tool/update_tool).
+_import_policy_var: contextvars.ContextVar[ImportPolicy] = contextvars.ContextVar(
+    "arcagent_builtin_import_policy", default=DEFAULT_IMPORT_POLICY
+)
 
 
 def configure(
@@ -106,6 +113,7 @@ def configure(
     audit_sink: Any = None,
     egress_proxy: Any = None,
     tier: str | None = None,
+    import_policy: ImportPolicy | None = None,
 ) -> None:
     """Bind per-agent runtime state for the CURRENT asyncio task.
 
@@ -127,11 +135,13 @@ def configure(
         _egress_proxy_var.set(egress_proxy)
     if tier is not None:
         _tier_var.set(tier)
+    if import_policy is not None:
+        _import_policy_var.set(import_policy)
 
 
 @dataclass(frozen=True)
 class RuntimeSnapshot:
-    """Immutable capture of all nine builtin-runtime ContextVars.
+    """Immutable capture of all ten builtin-runtime ContextVars.
 
     Built once via :func:`snapshot` after startup's two :func:`configure`
     calls have both run; re-applied via :func:`bind` at the top of every
@@ -148,6 +158,7 @@ class RuntimeSnapshot:
     audit_sink: Any
     egress_proxy: Any
     tier: str
+    import_policy: ImportPolicy
 
 
 def snapshot() -> RuntimeSnapshot:
@@ -168,6 +179,7 @@ def snapshot() -> RuntimeSnapshot:
         audit_sink=_audit_sink_var.get(),
         egress_proxy=_egress_proxy_var.get(),
         tier=_tier_var.get(),
+        import_policy=_import_policy_var.get(),
     )
 
 
@@ -188,6 +200,7 @@ def bind(snap: RuntimeSnapshot) -> None:
     _audit_sink_var.set(snap.audit_sink)
     _egress_proxy_var.set(snap.egress_proxy)
     _tier_var.set(snap.tier)
+    _import_policy_var.set(snap.import_policy)
 
 
 def sign_artifact_file(artifact: Path, content: bytes) -> bool:
@@ -316,6 +329,16 @@ def egress() -> Any:
 def tier() -> str:
     """Return the deployment tier (personal/enterprise/federal)."""
     return _tier_var.get()
+
+
+def import_policy() -> ImportPolicy:
+    """Return the tier-resolved import policy for authoring workspace tools.
+
+    The authoring gate (``create_tool``/``update_tool``) validates against this,
+    so the authoring decision matches the loader's — a tool refused here is never
+    one the loader would run. Unconfigured → the fail-closed enterprise default.
+    """
+    return _import_policy_var.get()
 
 
 class _ArcRunAuditAdapter:
@@ -537,6 +560,7 @@ def reset() -> None:
     _audit_sink_var.set(None)
     _egress_proxy_var.set(None)
     _tier_var.set("personal")
+    _import_policy_var.set(DEFAULT_IMPORT_POLICY)
 
 
 __all__ = [
@@ -550,6 +574,7 @@ __all__ = [
     "configure",
     "egress",
     "get_secret",
+    "import_policy",
     "loader",
     "protected_paths",
     "reset",

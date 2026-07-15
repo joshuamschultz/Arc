@@ -20,7 +20,7 @@ import tomllib
 from pathlib import Path
 
 import tomlkit
-from arcagent.core.config import _user_config_root
+from arctrust import arc_home
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -39,7 +39,7 @@ logger = logging.getLogger("arcui.routes.system_config")
 
 def _system_path(file: str) -> Path:
     """Resolve ``<config_dir>/{file}.toml`` under the user-wide config root."""
-    return _user_config_root() / f"{file}.toml"
+    return arc_home() / f"{file}.toml"
 
 
 async def get_system_config(request: Request) -> JSONResponse:

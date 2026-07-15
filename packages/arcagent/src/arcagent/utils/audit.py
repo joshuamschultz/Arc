@@ -9,8 +9,6 @@ layers, e.g.:
 
     arcagent.modules.voice.capabilities
     arcagent.modules.memory.capabilities
-    arcagent.modules.memory_acl.capabilities._emit_veto_audit
-    arcagent.modules.memory_acl.capabilities._emit_cross_session_read_audit
 
 NIST 800-53 AU-5 (Response to Audit Processing Failures):
     Audit failures are logged locally at WARNING level but never

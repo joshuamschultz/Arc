@@ -384,8 +384,7 @@ class GatewayRunner:
         try:
             await adapter.connect()
             _logger.info("Adapter %s connected", adapter.name)
-            # Block until the shutdown event fires (cancelled by TaskGroup on exit).
-            await self._shutdown_event.wait()
+            await self._supervise_adapter(adapter)
         except asyncio.CancelledError:
             _logger.info("Adapter %s cancelled (shutdown)", adapter.name)
             raise  # CancelledError must propagate to TaskGroup for clean exit
@@ -393,6 +392,64 @@ class GatewayRunner:
             _logger.exception("Adapter %s failed: %s", adapter.name, exc)
             self._failed_adapters[adapter.name] = FailedAdapter(name=adapter.name, last_error=exc)
             # TODO (M1 integration): emit gateway.adapter.fail audit event
+
+    async def _supervise_adapter(self, adapter: BasePlatformAdapter) -> None:
+        """Watch a connected adapter's event-source liveness until shutdown.
+
+        An adapter whose loop can die silently (Telegram long-poll) reports the
+        death via the optional ``wait_closed`` capability. The runner races that
+        against shutdown; on a death it records a :class:`FailedAdapter` so the
+        existing reconnect watcher restarts the adapter, then re-arms observation
+        once the watcher clears the entry — so recovery survives repeat failures,
+        not just the first. Adapters without ``wait_closed`` simply block until
+        shutdown (their failures surface by ``connect`` raising).
+        """
+        wait_closed = getattr(adapter, "wait_closed", None)
+        if wait_closed is None:
+            await self._shutdown_event.wait()
+            return
+
+        shutdown = asyncio.ensure_future(self._shutdown_event.wait())
+        try:
+            while not self._shutdown_event.is_set():
+                closed = asyncio.ensure_future(wait_closed())
+                await asyncio.wait({closed, shutdown}, return_when=asyncio.FIRST_COMPLETED)
+                if self._shutdown_event.is_set():
+                    closed.cancel()
+                    return
+                retryable, error = closed.result()
+                self._failed_adapters[adapter.name] = FailedAdapter(
+                    name=adapter.name,
+                    last_error=error,
+                    permanently_failed=not retryable,
+                )
+                _logger.warning(
+                    "Adapter %s event loop closed (retryable=%s): %s "
+                    "— handed to reconnect watcher",
+                    adapter.name,
+                    retryable,
+                    error,
+                )
+                if not retryable or not await self._await_reconnect(adapter.name):
+                    return
+        finally:
+            shutdown.cancel()
+
+    async def _await_reconnect(self, name: str) -> bool:
+        """Block until the reconnect watcher restores ``name``.
+
+        Returns True to re-arm liveness observation (the watcher reconnected and
+        cleared the entry), or False when the adapter is permanently failed or
+        the gateway is shutting down.
+        """
+        while not self._shutdown_event.is_set():
+            entry = self._failed_adapters.get(name)
+            if entry is None:
+                return True
+            if entry.permanently_failed:
+                return False
+            await asyncio.sleep(_RECONNECT_POLL_INTERVAL)
+        return False
 
     async def _wait_for_shutdown(self) -> None:
         """Wait until the shutdown event is set (SIGINT or SIGTERM received)."""

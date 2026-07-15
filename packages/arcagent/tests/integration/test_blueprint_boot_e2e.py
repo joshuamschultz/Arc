@@ -62,8 +62,9 @@ async def test_blueprint_flat_boot_selects_concrete_brain(tmp_path: Path) -> Non
     # The distiller is what powers consolidation (entity/insight/daily-summary
     # files). A blueprint that sets brain=arcmemory but leaves distill_provider
     # empty boots a live-looking brain whose slow path is DEAD — the exact
-    # producers-unwired trap. Guard the wiring, not just the brain type.
-    assert config.modules["memory"].config["distill_provider"]
+    # producers-unwired trap. Guard the wiring, not just the brain type. The
+    # distiller is a backend-specific setting under the opaque `backend` passthrough.
+    assert config.modules["memory"].config["backend"]["distill_provider"]
 
     agent = ArcAgent(config=config, config_path=config_path)
     await agent.startup()
@@ -73,7 +74,11 @@ async def test_blueprint_flat_boot_selects_concrete_brain(tmp_path: Path) -> Non
         assert type(brain).__name__ == "ArcMemoryBrain"
         assert memory_runtime.state().active is True
         # ...and the distiller seam is wired, so consolidation is not a silent no-op.
-        assert brain._distiller is not None, "blueprint must wire the distiller (consolidation dead)"
+        # ``_distiller`` is an ArcMemoryBrain internal; probe via getattr rather than
+        # importing the concrete class, keeping arcagent decoupled from the backend.
+        assert getattr(brain, "_distiller", None) is not None, (
+            "blueprint must wire the distiller (consolidation dead)"
+        )
     finally:
         await agent.shutdown()
 

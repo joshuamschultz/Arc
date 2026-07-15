@@ -59,9 +59,9 @@ class MockModel:
     def __init__(self, responses: list[LLMResponse]) -> None:
         self._responses = list(responses)
         self._call_count = 0
-        self.invoke_calls: list[dict] = []
+        self.invoke_calls: list[dict[str, Any]] = []
 
-    async def invoke(self, messages: list, tools: list | None = None) -> LLMResponse:
+    async def invoke(self, messages: list[Any], tools: list[Any] | None = None) -> LLMResponse:
         self.invoke_calls.append({"messages": messages, "tools": tools})
         if self._call_count >= len(self._responses):
             raise RuntimeError("MockModel exhausted responses")

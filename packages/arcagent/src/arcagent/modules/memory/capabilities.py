@@ -10,11 +10,11 @@ This module holds no memory logic; it wires the config-selected
 * ``consolidate`` scheduled by a ``@background_task`` that polls an event-count /
   idle trigger (DC-5) and emits ``memory.consolidated`` for grounded reflection.
 
-Every Brain call is preceded by the priority-10 ``memory_acl`` veto: the wiring
-emits the matching ``memory.search`` / ``memory.write`` bus event and honors a
-veto before touching the brain (T-083). With a :class:`~arcagent.brain.NullBrain`
-selected, ``state().active`` is ``False`` and every hook short-circuits — a truly
-silent no-op that writes nothing.
+Every Brain call is preceded by a generic ACL check: the wiring asks the selected
+Brain provider to :meth:`authorize` the operation and honors a denial before touching
+the brain (the ACL *policy* lives in the backend; arcagent only asks). With a
+:class:`~arcagent.brain.NullBrain` selected, ``state().active`` is ``False`` and every
+hook short-circuits — a truly silent no-op that writes nothing.
 """
 
 from __future__ import annotations
@@ -51,21 +51,18 @@ _MEMORY_DISABLED_NOTE = (
 
 
 async def _acl_allows(operation: str, caller_did: str) -> bool:
-    """Emit the memory_acl event at priority 10; return False if it vetoes.
+    """Ask the selected Brain provider to authorize a memory operation.
 
-    The wiring routes every Brain read/write through the ``memory.search`` /
-    ``memory.write`` bus events so the priority-10 ``memory_acl`` guard fires
-    *before* recall or capture. No bus (unit context) → allow.
+    The generic "ask the provider" seam: the ACL *policy* lives in the backend, so the
+    wiring simply calls the Brain's optional ``authorize(operation, caller_did=...)``
+    before recall or capture. A backend that exposes no such method (or the NullBrain)
+    imposes no gate — allow.
     """
     st = _runtime.state()
-    if st.bus is None:
+    authorize = getattr(st.brain, "authorize", None)
+    if authorize is None:
         return True
-    ctx = await st.bus.emit(
-        operation,
-        {"caller_did": caller_did, "target_user_did": "", "owner_did": caller_did},
-        agent_did=st.agent_did,
-    )
-    return not ctx.is_vetoed
+    return bool(await authorize(operation, caller_did=caller_did))
 
 
 async def _audit(event: str, detail: dict[str, Any]) -> None:
@@ -145,7 +142,7 @@ async def inject_insight(ctx: Any) -> None:
     recall text on ``ctx.data["insight"]`` so the improver's code/prose mutator gets
     grounded context. ACL-gated like every Brain read; empty/absent when memory is off, so
     the improver stays fully memory-less. (A narrower failure-only insight channel is a
-    possible arcmemory/SPEC-047 follow-on.)
+    possible SPEC-047 follow-on.)
     """
     st = _runtime.state()
     if not st.active:

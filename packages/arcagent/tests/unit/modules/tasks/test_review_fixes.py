@@ -93,7 +93,7 @@ class TestLiveServicesUseRealOperatorSigner:
             return MemoryBackend()
 
         monkeypatch.setattr(
-            "arcagent.modules.messaging._bootstrap.make_backend", fake_make_backend
+            "arcagent.core.arcteam_bootstrap.make_backend", fake_make_backend
         )
 
         identity = AgentIdentity.generate(org="local", agent_type="agent")
@@ -204,6 +204,7 @@ class TestEnsureStoreBuildsOnce:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from arcagent.modules.tasks import _runtime
+        from arcagent.modules.tasks.store import open_store as real_open
 
         monkeypatch.delenv("ARCSTORE_DATA_DIR", raising=False)
         _runtime.reset()
@@ -218,7 +219,6 @@ class TestEnsureStoreBuildsOnce:
         )
 
         calls = {"n": 0}
-        real_open = _runtime.open_store
 
         async def slow_open(data_dir: str) -> Any:
             calls["n"] += 1

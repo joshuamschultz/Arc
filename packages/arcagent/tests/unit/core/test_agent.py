@@ -618,15 +618,15 @@ class TestVaultResolverEdgeCases:
     def test_create_vault_resolver_wraps_backend_in_cache(self) -> None:
         """The instantiated backend is wrapped in a CachedVaultBackend honoring
         config.vault.cache_ttl_seconds (the tested TTL cache is now live)."""
+        from arcagent.core.vault.backends.env import EnvBackend
+        from arcagent.core.vault.cache import CachedVaultBackend
         from arcagent.core.vault_resolver import create_vault_resolver
-        from arcagent.modules.vault.backends.env import EnvBackend
-        from arcagent.modules.vault.cache import CachedVaultBackend
 
         config = ArcAgentConfig(
             agent=AgentConfig(name="test"),
             llm=LLMConfig(model="test/model"),
             vault=VaultConfig(
-                backend="arcagent.modules.vault.backends.env:EnvBackend",
+                backend="arcagent.core.vault.backends.env:EnvBackend",
                 cache_ttl_seconds=123,
             ),
         )

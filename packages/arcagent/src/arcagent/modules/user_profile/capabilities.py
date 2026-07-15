@@ -34,7 +34,7 @@ from arcagent.tools._decorator import hook, tool
 
 _logger = logging.getLogger("arcagent.modules.user_profile.capabilities")
 
-# Module bus priority — after memory_acl (10) and after default (100).
+# Module bus priority — after the default subscriber band (100).
 _MODULE_PRIORITY = 120
 
 

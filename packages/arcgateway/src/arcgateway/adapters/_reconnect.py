@@ -128,6 +128,12 @@ async def reconnect_watcher(
 
             entry.attempt += 1
             try:
+                # Tear down first: an adapter whose event-source loop died may
+                # still hold platform resources (Telegram's updater keeps polling
+                # even after our keepalive task ends). Reconnecting without this
+                # leaves an orphaned poller → a fresh getUpdates conflict. base.py
+                # documents disconnect() as "called before reconnect"; honor it.
+                await adapter.disconnect()
                 await adapter.connect()
                 _logger.info("reconnect_watcher: adapter %r reconnected successfully.", name)
                 failed_adapters.pop(name, None)

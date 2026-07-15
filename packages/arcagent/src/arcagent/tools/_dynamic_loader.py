@@ -24,28 +24,106 @@ from __future__ import annotations
 
 import ast
 import builtins as _builtins
+import enum
 import hashlib
 import re
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from arcagent.core.errors import ArcAgentError, ToolError
 
-# --- Rejection categories -------------------------------------------------
+# --- Import policy --------------------------------------------------------
 
-_BLOCKED_IMPORTS: frozenset[str] = frozenset(
-    {
-        "ctypes",
-        "subprocess",
-        "socket",
-        "os",
-        "sys",
-        "pickle",
-        "marshal",
-        "shelve",
-    }
+# The enterprise blocklist, grouped for self-documenting errors. Four groups
+# of privileged modules an agent-authored tool must not import at enterprise
+# tier (operator ``allow_imports`` entries are subtracted as exceptions):
+#   filesystem   — read/write outside the workspace boundary
+#   process/exec — spawn processes / bypass the isolation backend
+#   interpreter  — reach the interpreter internals / (de)serialize arbitrary objects
+#   network      — open outbound sockets outside the audited egress proxy
+_ENTERPRISE_BLOCKED_GROUPS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("filesystem", frozenset({"os", "shutil", "pathlib", "tempfile", "glob"})),
+    ("process/exec", frozenset({"subprocess", "multiprocessing"})),
+    ("interpreter", frozenset({"sys", "ctypes", "importlib", "pickle", "marshal", "shelve"})),
+    ("network", frozenset({"socket", "urllib", "http", "requests", "httpx"})),
 )
+
+# Minimal always-allowed set at federal (pure allowlist) so the @tool decorator
+# import and ``from __future__ import annotations`` always validate — without it
+# no tool could ever be authored at federal.
+_FEDERAL_SEED_IMPORTS: frozenset[str] = frozenset({"__future__", "arcagent"})
+
+
+class ImportMode(enum.Enum):
+    """How :class:`ImportPolicy` decides whether a module import is permitted."""
+
+    ALLOW_ALL = "allow_all"  # personal (or an enterprise blanket opt-out)
+    BLOCKLIST = "blocklist"  # enterprise: allow most, block the four groups
+    ALLOWLIST = "allowlist"  # federal: deny by default, only listed modules pass
+
+
+@dataclass(frozen=True)
+class ImportPolicy:
+    """Single source of truth for which module imports agent-authored tools may use.
+
+    Shared by the authoring gate (``create_tool``/``update_tool``) and the load
+    gate (:class:`CapabilityLoader`) so a tool refused at authoring is never one
+    the loader would have run, and vice-versa. Only *module imports* are
+    policy-relaxable; sandbox-escape checks (eval/exec, frame traversal, blocked
+    attributes, encoding) are always enforced by :class:`AstValidator`.
+
+    Construct via :func:`resolve_workspace_import_policy`, never directly.
+    """
+
+    mode: ImportMode
+    tier: str
+    # ALLOWLIST mode: the exact set of permitted top-level modules.
+    allowed: frozenset[str] = field(default_factory=frozenset)
+    # BLOCKLIST mode: operator exceptions subtracted from the blocked groups.
+    exceptions: frozenset[str] = field(default_factory=frozenset)
+
+    def allows(self, module: str) -> bool:
+        """Return True if ``module`` (dotted path) may be imported."""
+        top = module.split(".", 1)[0]
+        if self.mode is ImportMode.ALLOW_ALL:
+            return True
+        if self.mode is ImportMode.ALLOWLIST:
+            return top in self.allowed
+        return top not in self._blocked_modules()
+
+    def _blocked_modules(self) -> frozenset[str]:
+        blocked: set[str] = set()
+        for _group, modules in _ENTERPRISE_BLOCKED_GROUPS:
+            blocked |= modules
+        return frozenset(blocked - self.exceptions)
+
+    def describe(self) -> str:
+        """One-line, human-readable description of the effective policy.
+
+        The single place the policy prose lives, so an authoring-rejection error
+        (which the agent cannot supplement by reading files outside its
+        workspace) can teach the rule inline.
+        """
+        if self.mode is ImportMode.ALLOW_ALL:
+            return "all imports are permitted"
+        if self.mode is ImportMode.ALLOWLIST:
+            allowed = ", ".join(sorted(self.allowed)) or "(none)"
+            return f"only these imports are permitted: {allowed}"
+        groups = "; ".join(
+            f"{name} ({', '.join(sorted(modules - self.exceptions))})"
+            for name, modules in _ENTERPRISE_BLOCKED_GROUPS
+            if modules - self.exceptions
+        )
+        exc = ", ".join(sorted(self.exceptions)) or "(none)"
+        return f"blocked import groups: {groups}; exceptions configured: {exc}"
+
+
+# Bare ``AstValidator()`` / unconfigured runtime default: enterprise blocklist
+# with no exceptions — fail-closed, so a misconfigured caller never silently
+# gets allow-all.
+DEFAULT_IMPORT_POLICY: ImportPolicy = ImportPolicy(mode=ImportMode.BLOCKLIST, tier="enterprise")
 
 _BLOCKED_ATTRIBUTES: frozenset[str] = frozenset(
     {
@@ -122,6 +200,27 @@ class ASTValidationError(ArcAgentError):
         self.category = category
 
 
+# Single-place guidance appended to every authoring rejection: the agent must
+# author tools only via the signing tools, or the artifact is denied at load.
+_AUTHORING_GUIDANCE = (
+    "Author tools only via create_tool/update_tool — they sign the artifact; "
+    "files written any other way are unsigned and will be denied at load (TOFU)."
+)
+
+
+def format_authoring_rejection(exc: ASTValidationError, policy: ImportPolicy) -> str:
+    """Build a self-documenting rejection string for create_tool/update_tool.
+
+    Names the resolved tier, the specific violation, the effective policy
+    (via :meth:`ImportPolicy.describe`), and the authoring guidance — the agent
+    cannot read policy files outside its workspace, so the rule is taught inline.
+    """
+    return (
+        f"Error: AST validation rejected source — {exc}. "
+        f"Tier {policy.tier}: {policy.describe()}. {_AUTHORING_GUIDANCE}"
+    )
+
+
 # --- Validator ------------------------------------------------------------
 
 
@@ -132,19 +231,13 @@ class AstValidator(ast.NodeVisitor):
     raises immediately. Construct fresh per source file.
     """
 
-    def __init__(
-        self,
-        *,
-        allow_all_imports: bool = False,
-        allowed_imports: frozenset[str] = frozenset(),
-    ) -> None:
+    def __init__(self, *, policy: ImportPolicy = DEFAULT_IMPORT_POLICY) -> None:
         self._violation: tuple[str, str] | None = None
-        # Import relaxations (tier-resolved by the caller). Default = no
-        # relaxation, so the validator is fail-closed when constructed bare.
-        # Only module imports are relaxable; eval/exec/frame-traversal stay
-        # blocked unconditionally.
-        self._allow_all_imports = allow_all_imports
-        self._allowed_imports = allowed_imports
+        # Tier-resolved import policy (single source of truth). Default is the
+        # fail-closed enterprise blocklist, so a bare validator never silently
+        # allows all imports. Only module imports are policy-relaxable;
+        # eval/exec/frame-traversal stay blocked unconditionally.
+        self._policy = policy
         # Names bound by ``except AttributeError as <name>`` — accessing
         # ``.obj`` / ``.name`` on these is rejected (R-040).
         self._attr_error_vars: set[str] = set()
@@ -199,11 +292,10 @@ class AstValidator(ast.NodeVisitor):
         self.generic_visit(node)
 
     def _check_import_name(self, module: str) -> None:
-        if self._allow_all_imports:
+        if self._policy.allows(module):
             return
         top = module.split(".", 1)[0]
-        if top in _BLOCKED_IMPORTS and top not in self._allowed_imports:
-            self._reject("import:" + top, f"module {module!r} is blocked")
+        self._reject("import:" + top, f"module {module!r} is blocked")
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
         if node.attr in _BLOCKED_ATTRIBUTES:
@@ -338,28 +430,36 @@ def resolve_workspace_import_policy(
     *,
     allow_all_imports: bool,
     allow_imports: list[str],
-) -> tuple[bool, frozenset[str]]:
-    """Resolve the effective import policy for workspace-authored tools by tier.
+) -> ImportPolicy:
+    """Resolve the effective :class:`ImportPolicy` for workspace-authored tools.
 
-    Returns ``(allow_all, allowed_modules)`` for :class:`AstValidator`:
+    - personal:   allow-all — every import passes.
+    - enterprise: blocklist — allow most, block the four privileged groups;
+                  ``allow_imports`` entries are subtracted as operator
+                  exceptions; ``allow_all_imports=True`` is honored as a blanket
+                  operator opt-out (allow-all).
+    - federal:    pure allowlist (deny by default) — ONLY ``allow_imports`` (plus
+                  the minimal always-allowed seed ``__future__``/``arcagent``)
+                  passes; ``allow_all_imports`` is IGNORED (no blanket relaxation).
 
-    - personal:   ``(True, {})``      — every import passes.
-    - federal:    ``(False, allow_imports)`` — ONLY the explicit allowlist;
-                  ``allow_all_imports`` is ignored (no blanket relaxation).
-    - enterprise: ``allow_all_imports`` honored, else the explicit allowlist;
-                  deny-by-default otherwise.
-
-    Sandbox-escape protections (eval/exec, frame traversal) are unaffected —
-    this governs module imports only.
+    Any unknown tier falls toward the stricter enterprise blocklist. Sandbox-escape
+    protections (eval/exec, frame traversal) are unaffected — this governs module
+    imports only.
     """
     if tier == "personal":
-        return True, frozenset()
+        return ImportPolicy(mode=ImportMode.ALLOW_ALL, tier="personal")
     if tier == "federal":
-        return False, frozenset(allow_imports)
-    # enterprise (and any unknown tier — fail toward the stricter enterprise rule)
+        return ImportPolicy(
+            mode=ImportMode.ALLOWLIST,
+            tier="federal",
+            allowed=_FEDERAL_SEED_IMPORTS | frozenset(allow_imports),
+        )
+    resolved_tier = tier if tier == "enterprise" else "enterprise"
     if allow_all_imports:
-        return True, frozenset()
-    return False, frozenset(allow_imports)
+        return ImportPolicy(mode=ImportMode.ALLOW_ALL, tier=resolved_tier)
+    return ImportPolicy(
+        mode=ImportMode.BLOCKLIST, tier=resolved_tier, exceptions=frozenset(allow_imports)
+    )
 
 
 class AstValidationCache:
@@ -372,15 +472,9 @@ class AstValidationCache:
     and re-raises (no false positives, no silent passes).
     """
 
-    def __init__(
-        self,
-        *,
-        allow_all_imports: bool = False,
-        allowed_imports: frozenset[str] = frozenset(),
-    ) -> None:
+    def __init__(self, *, policy: ImportPolicy = DEFAULT_IMPORT_POLICY) -> None:
         self._entries: dict[Path, tuple[str, float]] = {}
-        self._allow_all_imports = allow_all_imports
-        self._allowed_imports = allowed_imports
+        self._policy = policy
 
     def validate(self, path: Path) -> None:
         """Validate ``path`` once per (md5, mtime) tuple.
@@ -401,10 +495,7 @@ class AstValidationCache:
         # AstValidator looked up via module dict so test patches stick.
         from arcagent.tools import _dynamic_loader as _self
 
-        _self.AstValidator(
-            allow_all_imports=self._allow_all_imports,
-            allowed_imports=self._allowed_imports,
-        ).validate(source)
+        _self.AstValidator(policy=self._policy).validate(source)
         self._entries[path] = (digest, mtime)
 
     def invalidate(self, path: Path) -> None:
@@ -491,17 +582,14 @@ def _egress_accessor() -> Any:
 
 
 def build_restricted_builtins(
-    *,
-    allow_all_imports: bool = False,
-    allowed_imports: frozenset[str] = frozenset(),
+    *, policy: ImportPolicy = DEFAULT_IMPORT_POLICY
 ) -> dict[str, object]:
     """Build a ``__builtins__`` dict for executing agent-authored module source.
 
     RESTRICTED_BUILTINS (no ``open``/``eval``/``exec``) plus ``__build_class__``
     (so class-based capabilities can be defined) and a runtime ``__import__``
-    that mirrors the AST import denylist — the same privileged modules the
-    static gate rejects are refused at runtime too, honoring the tier-resolved
-    ``allow_all_imports``/``allowed_imports`` relaxations.
+    that mirrors the AST import gate — the same modules the static gate rejects
+    under ``policy`` are refused at runtime too.
 
     This is the hardened namespace the capability loader uses in place of a
     bare ``exec(code, module.__dict__)``. It is defense-in-depth / a fast-fail
@@ -512,23 +600,16 @@ def build_restricted_builtins(
         **RESTRICTED_BUILTINS,
         "__build_class__": _builtins.__build_class__,
         "egress": _egress_accessor,
-        "__import__": _make_denylist_import(
-            allow_all_imports=allow_all_imports,
-            allowed_imports=allowed_imports,
-        ),
+        "__import__": _make_policy_import(policy),
     }
 
 
-def _make_denylist_import(
-    *,
-    allow_all_imports: bool,
-    allowed_imports: frozenset[str],
-) -> Callable[..., Any]:
-    """Return an ``__import__`` refusing the AST-blocked privileged modules.
+def _make_policy_import(policy: ImportPolicy) -> Callable[..., Any]:
+    """Return an ``__import__`` refusing modules the ``policy`` denies.
 
-    Mirrors the AST validator's denylist so multi-capability workspace files
-    may still use ordinary stdlib (``json``/``re``/...) while
-    ``os``/``sys``/``subprocess`` stay blocked.
+    Mirrors the AST validator's policy so multi-capability workspace files may
+    still use permitted modules (``json``/``re``/...) while denied ones are
+    refused at runtime.
     """
     real_import = _builtins.__import__
 
@@ -539,8 +620,8 @@ def _make_denylist_import(
         fromlist: tuple[str, ...] = (),
         level: int = 0,
     ) -> Any:
-        top = name.split(".", 1)[0]
-        if not allow_all_imports and top in _BLOCKED_IMPORTS and top not in allowed_imports:
+        if not policy.allows(name):
+            top = name.split(".", 1)[0]
             raise ASTValidationError(
                 category="import:" + top,
                 detail=f"runtime import of {name!r} is blocked in workspace source",
@@ -551,9 +632,14 @@ def _make_denylist_import(
 
 
 __all__ = [
+    "DEFAULT_IMPORT_POLICY",
     "RESTRICTED_BUILTINS",
     "ASTValidationError",
     "AstValidationCache",
     "AstValidator",
+    "ImportMode",
+    "ImportPolicy",
     "build_restricted_builtins",
+    "format_authoring_rejection",
+    "resolve_workspace_import_policy",
 ]

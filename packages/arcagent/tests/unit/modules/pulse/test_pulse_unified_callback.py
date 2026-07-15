@@ -12,8 +12,9 @@ from typing import Any
 
 import pytest
 
-from arcagent.modules.pulse import PulseCheck, PulseConfig, PulseState, _runtime
+from arcagent.modules.pulse import PulseCheck, PulseState, _runtime
 from arcagent.modules.pulse.capabilities import bind_agent_run_fn
+from arcagent.modules.pulse.config import PulseConfig
 from arcagent.modules.pulse.engine import PulseEngine
 
 

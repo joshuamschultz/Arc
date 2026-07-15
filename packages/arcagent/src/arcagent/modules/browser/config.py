@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from arcagent.modules.base_config import ModuleConfig
+from arcagent.core.module_config import ModuleConfig
 
 
 class BrowserSecurityConfig(ModuleConfig):

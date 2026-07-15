@@ -11,6 +11,7 @@ import { ArcRunPage } from '@/pages/arcrun'
 import { AgentDetailPage } from '@/pages/agent-detail'
 import { MessagesPage } from '@/pages/messages'
 import { ApprovalsPage } from '@/pages/approvals'
+import { GatedCapabilitiesPage } from '@/pages/gated-capabilities'
 import { SettingsPage } from '@/pages/settings'
 import { DEFAULT_PATH } from './nav'
 
@@ -25,6 +26,7 @@ export const router = createBrowserRouter([
       { path: 'agents', element: <AgentsPage /> },
       { path: 'tasks', element: <TasksPage /> },
       { path: 'approvals', element: <ApprovalsPage /> },
+      { path: 'gated', element: <GatedCapabilitiesPage /> },
       { path: 'tools-skills', element: <ToolsSkillsPage /> },
       { path: 'policy', element: <PolicyPage /> },
       { path: 'security', element: <SecurityPage /> },

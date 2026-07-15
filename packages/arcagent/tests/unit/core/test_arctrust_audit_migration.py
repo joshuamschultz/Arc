@@ -6,8 +6,6 @@ not ad-hoc log strings.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 from arctrust import AuditEvent, NullSink, emit
 
 
@@ -113,34 +111,6 @@ class TestTelemetryEmitsStructuredEvents:
         assert parsed["details"]["user"] == "alice"
 
 
-class TestMemoryACLEmitsAuditEvents:
-    """The memory_acl veto hook must emit structured audit events."""
-
-    async def test_acl_veto_emits_structured_audit(self) -> None:
-        from arcagent.core.module_bus import EventContext
-        from arcagent.modules.memory_acl import _runtime
-        from arcagent.modules.memory_acl.capabilities import memory_acl_read
-
-        _runtime.reset()
-        telemetry = MagicMock()
-        telemetry.audit_event = MagicMock()
-        _runtime.configure(config={"tier": "personal"}, telemetry=telemetry)
-        try:
-            # A cross-user read the ACL denies must veto and audit.
-            ctx = EventContext(
-                event="memory.read",
-                data={
-                    "caller_did": "did:arc:testorg:executor/other",
-                    "target_user_did": "did:arc:testorg:user/owner",
-                },
-                agent_did="did:arc:testorg:agent/agent1",
-                trace_id="trace-test",
-            )
-
-            await memory_acl_read(ctx)
-
-            assert ctx.is_vetoed
-            assert telemetry.audit_event.called
-            assert telemetry.audit_event.call_args[0][0] == "session.acl.veto"
-        finally:
-            _runtime.reset()
+# The memory ACL veto/audit moved to arcmemory with the rest of the memory-visibility
+# policy (arcagent no longer owns a memory_acl module); its audit behavior is verified in
+# arcmemory's own test suite (test_acl.py::TestBrainAuthorize::test_denial_emits_structured_audit).

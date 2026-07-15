@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from arcagent.modules.base_config import ModuleConfig
+from arcagent.core.module_config import ModuleConfig
 
 
 class WorkpadConfig(ModuleConfig):

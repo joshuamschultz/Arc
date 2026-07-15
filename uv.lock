@@ -328,6 +328,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pynacl" },
     { name = "pyyaml" },
+    { name = "tomlkit" },
     { name = "websockets" },
 ]
 
@@ -379,6 +380,7 @@ requires-dist = [
     { name = "python-telegram-bot", marker = "extra == 'telegram'", specifier = ">=20.0,<22" },
     { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.20.0" },
+    { name = "tomlkit", specifier = ">=0.12" },
     { name = "websockets", specifier = ">=13.0,<16" },
 ]
 provides-extras = ["memory", "telegram", "slack", "azure"]
@@ -569,6 +571,7 @@ version = "0.6.0"
 source = { editable = "packages/arcmemory" }
 dependencies = [
     { name = "arcllm" },
+    { name = "arcrun" },
     { name = "arcstore" },
     { name = "arctrust" },
     { name = "pydantic" },
@@ -596,6 +599,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "arcllm", editable = "packages/arcllm" },
+    { name = "arcrun", editable = "packages/arcrun" },
     { name = "arcstore", editable = "packages/arcstore" },
     { name = "arctrust", editable = "packages/arctrust" },
     { name = "pydantic", specifier = ">=2.0,<3" },
@@ -725,6 +729,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "pydantic" },
     { name = "pynacl" },
+    { name = "tomlkit" },
 ]
 
 [package.dev-dependencies]
@@ -739,6 +744,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "pydantic", specifier = ">=2.0,<3" },
     { name = "pynacl", specifier = ">=1.5,<2" },
+    { name = "tomlkit", specifier = ">=0.13,<1" },
 ]
 
 [package.metadata.requires-dev]

@@ -40,6 +40,7 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
     import arcagent.builtins.capabilities as builtins_pkg
     from arcagent.capabilities.capability_loader import CapabilityLoader
     from arcagent.capabilities.capability_registry import CapabilityRegistry
+    from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
 
     builtins_root = Path(builtins_pkg.__file__).parent
     roots: list[tuple[str, Path]] = [
@@ -60,7 +61,13 @@ def build_capability_registry(config: Any, agent_root: Path | None) -> Any | Non
     loader = CapabilityLoader(
         scan_roots=roots,
         registry=registry,
-        allow_all_imports=True,
+        # Read-only enumeration: import policy must never hide a discoverable
+        # tool from the listing, so scan under the allow-all (personal) policy
+        # regardless of the agent's real tier. Signed/gated status is reported
+        # separately by the inspect layer.
+        import_policy=resolve_workspace_import_policy(
+            "personal", allow_all_imports=True, allow_imports=[]
+        ),
         # Task #39: this is a read-only scan over a throwaway registry — a
         # discovered @background_task (e.g. the memory module's
         # consolidation loop) must never actually start. Its body depends

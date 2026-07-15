@@ -7,7 +7,7 @@ Validated internally by the module on construction.
 
 from __future__ import annotations
 
-from arcagent.modules.base_config import ModuleConfig
+from arcagent.core.module_config import ModuleConfig
 
 
 class PolicyConfig(ModuleConfig):

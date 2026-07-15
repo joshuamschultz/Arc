@@ -279,7 +279,22 @@ class SessionManager:
             messages_before = len(self._messages)
             to_summarize, to_keep = self._split_for_compaction()
 
-            summary_text = await self._summarize_messages(to_summarize, model)
+            try:
+                summary_text = await self._summarize_messages(to_summarize, model)
+            except TimeoutError:
+                # Best-effort compaction: a hung summarizer must not wedge the
+                # turn. Skip this cycle (messages untouched) and record it.
+                _logger.warning(
+                    "Compaction summarizer timed out after %.1fs; skipping for session %s",
+                    self._config.compaction_timeout_seconds,
+                    self._session_id,
+                )
+                if self._telemetry is not None:
+                    self._telemetry.audit_event(
+                        "context.compaction_skipped",
+                        {"session_id": self._session_id, "reason": "summarizer_timeout"},
+                    )
+                return
 
             # Observation masking on the kept window: keep tool-call metadata,
             # replace stale output bodies with placeholders. Persisted below so
@@ -379,11 +394,16 @@ class SessionManager:
         msg_text = format_messages(messages, limit=0, type_filter="message")
 
         try:
-            response = await model.invoke(
-                [Message(role="user", content=self._SUMMARY_TEMPLATE + msg_text)]
+            response = await asyncio.wait_for(
+                model.invoke([Message(role="user", content=self._SUMMARY_TEMPLATE + msg_text)]),
+                timeout=self._config.compaction_timeout_seconds,
             )
             summary: str = response.content or ""
             return summary[: self._config.compaction_summary_max_chars]
+        except TimeoutError:
+            # Distinct from a provider error: the caller skips compaction entirely
+            # so a hung call never wedges the turn (or drops its reply).
+            raise
         except Exception:  # reason: fail-open — log + continue
             _logger.warning("Summarization failed, using truncated messages")
             return f"[Compacted {len(messages)} messages]"

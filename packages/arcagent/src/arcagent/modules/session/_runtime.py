@@ -34,9 +34,6 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger("arcagent.modules.session._runtime")
 
-# Default poll interval (seconds). Tests override via config.
-_DEFAULT_POLL_INTERVAL = 30.0
-
 
 @dataclass
 class _State:
@@ -66,12 +63,13 @@ def configure(
     is added.
     """
     del telemetry  # Unused until telemetry wiring is implemented.
-    cfg = config or {}
-    poll_interval = float(cfg.get("poll_interval", _DEFAULT_POLL_INTERVAL))
+    from arcagent.modules.session.config import SessionConfig
+
+    cfg = SessionConfig(**(config or {}))
     _state_var.set(
         _State(
             workspace=workspace.resolve(),
-            poll_interval=poll_interval,
+            poll_interval=cfg.poll_interval,
         )
     )
 

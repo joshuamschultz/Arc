@@ -18,6 +18,7 @@ Test coverage:
 from __future__ import annotations
 
 import asyncio
+import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -229,6 +230,36 @@ async def test_connect_sets_bot_id() -> None:
     await adapter._initialize_with_retry()
 
     assert adapter._bot_id == 99
+
+
+@pytest.mark.asyncio
+async def test_connect_enables_concurrent_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Application must be built with concurrent_updates enabled so the single
+    PTB consumer never serializes behind an inline pre-dispatch await — a wedged
+    turn must not freeze every later message from the same DM user.
+    """
+    adapter = _make_adapter()
+
+    builder = MagicMock()
+    builder.token.return_value = builder
+    builder.concurrent_updates.return_value = builder
+    builder.build.return_value = _make_mock_application()
+
+    application_cls = MagicMock()
+    application_cls.builder.return_value = builder
+
+    fake_ext = MagicMock()
+    fake_ext.Application = application_cls
+    monkeypatch.setitem(sys.modules, "telegram", MagicMock())
+    monkeypatch.setitem(sys.modules, "telegram.ext", fake_ext)
+    monkeypatch.setattr(adapter, "_initialize_with_retry", AsyncMock())
+    monkeypatch.setattr(adapter, "_run_polling_loop", AsyncMock())
+
+    await adapter.connect()
+    try:
+        builder.concurrent_updates.assert_called_once_with(True)
+    finally:
+        await adapter.disconnect()
 
 
 # ── disconnect() tests ────────────────────────────────────────────────────────

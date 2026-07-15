@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 import pytest
 
+from arcgateway.adapters import BasePlatformAdapter
 from arcgateway.adapters._reconnect import FailedAdapter
 from arcgateway.executor import AsyncioExecutor
 from arcgateway.runner import GatewayAlreadyRunning, GatewayRunner
@@ -53,6 +54,10 @@ class _StubAdapter:
 
     async def send(self, target: Any, message: str, *, reply_to: str | None = None) -> None:
         pass
+
+    async def send_with_id(self, target: Any, message: str) -> str | None:
+        await self.send(target, message)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +484,7 @@ db_path = "{db_path}"
 
     runner = GatewayRunner.from_config(config)
 
+    assert runner._pairing_store is not None
     assert runner._pairing_store._db_path == db_path.expanduser().resolve()
 
 
@@ -597,7 +603,7 @@ async def test_reconnect_watcher_attempts_reconnect() -> None:
     failed_adapters: dict[str, FailedAdapter] = {
         "retry_me": FailedAdapter(name="retry_me", attempt=0)
     }
-    adapter_factory = {"retry_me": adapter}
+    adapter_factory: dict[str, BasePlatformAdapter] = {"retry_me": adapter}
 
     task = asyncio.create_task(
         reconnect_watcher(
@@ -619,6 +625,104 @@ async def test_reconnect_watcher_attempts_reconnect() -> None:
 
 
 @pytest.mark.asyncio
+class _LivenessAdapter(_StubAdapter):
+    """Adapter whose event-source loop can die asynchronously (Telegram-style).
+
+    Reports the death via ``wait_closed()`` so the runner can observe a silent
+    polling failure and hand it to the reconnect watcher.
+    """
+
+    def __init__(self, name: str = "telegram") -> None:
+        super().__init__(name)
+        self._closed = asyncio.Event()
+        self._close_result: tuple[bool, Exception | None] = (True, RuntimeError("polling died"))
+
+    async def connect(self) -> None:
+        await super().connect()
+        self._closed = asyncio.Event()  # re-arm liveness on each (re)connect
+
+    async def wait_closed(self) -> tuple[bool, Exception | None]:
+        await self._closed.wait()
+        return self._close_result
+
+    def kill(self, *, retryable: bool = True) -> None:
+        self._close_result = (retryable, RuntimeError("polling died"))
+        self._closed.set()
+
+
+@pytest.mark.asyncio
+async def test_polling_death_reaches_failed_adapters_and_reconnects(tmp_path: Path) -> None:
+    """A silent event-loop death must reach _failed_adapters and trigger a
+    reconnect (disconnect-then-connect) via the existing reconnect watcher.
+
+    This is the decisive freeze fix: without observation the dead adapter is
+    never restarted and the bot stays silent until a manual process restart.
+    """
+    from arcgateway.adapters._reconnect import reconnect_watcher
+
+    adapter = _LivenessAdapter("telegram")
+    runner = GatewayRunner(adapters=[adapter], runtime_dir=tmp_path)
+
+    supervise = asyncio.create_task(runner._run_adapter(adapter))
+    watcher = asyncio.create_task(
+        reconnect_watcher(
+            runner._failed_adapters,
+            runner._adapter_index,
+            poll_interval_seconds=0.01,
+        )
+    )
+    try:
+        await asyncio.sleep(0.03)
+        assert adapter.connect_calls == 1  # initial connect
+
+        adapter.kill(retryable=True)  # polling loop dies silently
+        await asyncio.sleep(0.1)
+
+        assert adapter.connect_calls >= 2  # reconnected
+        assert adapter.disconnect_calls >= 1  # disconnect BEFORE reconnect
+        assert "telegram" not in runner._failed_adapters  # cleared on success
+    finally:
+        runner._shutdown_event.set()
+        for task in (supervise, watcher):
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup
+                pass
+
+
+@pytest.mark.asyncio
+async def test_clean_shutdown_is_not_misclassified_as_fatal(tmp_path: Path) -> None:
+    """A clean shutdown while an adapter is healthy must NOT record a
+    FailedAdapter or trigger a reconnect — only a real event-loop death does.
+
+    Guards the shutdown branch of _supervise_adapter: when the shutdown event
+    wins the race against wait_closed(), the adapter is left untouched instead
+    of being handed to the reconnect watcher.
+    """
+    adapter = _LivenessAdapter("telegram")
+    runner = GatewayRunner(adapters=[adapter], runtime_dir=tmp_path)
+
+    supervise = asyncio.create_task(runner._run_adapter(adapter))
+    try:
+        await asyncio.sleep(0.03)
+        assert adapter.connect_calls == 1  # connected, event loop still alive
+
+        runner._shutdown_event.set()  # clean shutdown, adapter never killed
+        await asyncio.wait_for(supervise, timeout=1.0)
+
+        assert "telegram" not in runner._failed_adapters  # no fatal recorded
+        assert adapter.connect_calls == 1  # never reconnected
+    finally:
+        if not supervise.done():
+            supervise.cancel()
+            try:
+                await supervise
+            except (asyncio.CancelledError, Exception):  # noqa: S110 — test cleanup
+                pass
+
+
+@pytest.mark.asyncio
 async def test_reconnect_watcher_marks_permanently_failed() -> None:
     """reconnect_watcher() marks adapter permanently failed after 20 attempts."""
     from arcgateway.adapters._reconnect import _MAX_RECONNECT_ATTEMPTS, reconnect_watcher
@@ -632,7 +736,7 @@ async def test_reconnect_watcher_marks_permanently_failed() -> None:
     failed_adapters: dict[str, FailedAdapter] = {
         "always_fail": FailedAdapter(name="always_fail", attempt=_MAX_RECONNECT_ATTEMPTS)
     }
-    adapter_factory = {"always_fail": adapter}
+    adapter_factory: dict[str, BasePlatformAdapter] = {"always_fail": adapter}
 
     task = asyncio.create_task(
         reconnect_watcher(

@@ -65,6 +65,10 @@ _NETWORK_MAX_RETRIES = 5
 _NETWORK_BACKOFF_BASE_SECONDS = 2.0
 _NETWORK_BACKOFF_CAP_SECONDS = 60.0
 
+# Consecutive getUpdates errors (which PTB surfaces to the error handler while
+# keeping the poll loop alive) before escalating to a fatal-retryable reconnect.
+_MAX_CONSECUTIVE_UPDATE_ERRORS = 5
+
 # ── Audit event names (SDD §4.2) ─────────────────────────────────────────────
 _EVENT_CONNECT = "gateway.adapter.connect"
 _EVENT_DISCONNECT = "gateway.adapter.disconnect"
@@ -136,6 +140,12 @@ class TelegramAdapter:
         _polling_task: Background asyncio.Task running the polling loop.
         _fatal_error: Set when a non-retryable or escalated error occurs.
         _fatal_retryable: Whether GatewayRunner should attempt to restart.
+        _closed_event: Set when the event-source loop dies; awaited by
+            wait_closed() so GatewayRunner observes a silent polling death.
+        _consecutive_update_errors: Streak of getUpdates errors; escalates to a
+            fatal-retryable reconnect once it reaches _MAX_CONSECUTIVE_UPDATE_ERRORS.
+        _drop_pending_updates: True only for the first clean start; a reconnect
+            must NOT drop the messages that queued during the outage.
     """
 
     name = "telegram"
@@ -187,9 +197,13 @@ class TelegramAdapter:
         self._bot_id: int | None = None
         self._running = False
 
-        # Fatal error tracking — set by _set_fatal_error(), read by runner
+        # Fatal error tracking — set by _set_fatal_error(), observed by the
+        # runner through wait_closed() (which unblocks on _closed_event).
         self._fatal_error: Exception | None = None
         self._fatal_retryable = False
+        self._closed_event = asyncio.Event()
+        self._consecutive_update_errors = 0
+        self._drop_pending_updates = True
 
     # ── BasePlatformAdapter Protocol ──────────────────────────────────────────
 
@@ -216,8 +230,22 @@ class TelegramAdapter:
         _logger.info("TelegramAdapter: connecting (agent_did=%s)", self._agent_did)
         self._running = True
 
+        # Re-arm liveness so a reconnect starts observably clean: a fresh
+        # _closed_event the runner's wait_closed() can block on, and cleared
+        # fatal/error state. _drop_pending_updates is intentionally NOT reset —
+        # it stays False after the first start so a reconnect keeps queued msgs.
+        self._fatal_error = None
+        self._fatal_retryable = False
+        self._consecutive_update_errors = 0
+        self._closed_event = asyncio.Event()
+
         # Build the Application — this does NOT open a network connection yet.
-        self._application = Application.builder().token(self._bot_token).build()
+        # concurrent_updates(True) lets PTB dispatch updates concurrently so a
+        # single DM user's later messages are not serialized behind an in-flight
+        # turn's inline pre-dispatch awaits (a wedged turn must not freeze the DM).
+        self._application = (
+            Application.builder().token(self._bot_token).concurrent_updates(True).build()
+        )
         self._register_handlers()
 
         # Initialize the bot (one-time API call to verify token + get bot_info).
@@ -527,8 +555,11 @@ class TelegramAdapter:
             await self._application.updater.start_polling(
                 poll_interval=self._poll_interval,
                 allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
+                drop_pending_updates=self._drop_pending_updates,
             )
+            # Only the first clean start drops the backlog; a reconnect keeps the
+            # messages that queued during the outage instead of silently losing them.
+            self._drop_pending_updates = False
             _logger.info("TelegramAdapter: polling started")
 
             # Polling is now running in the background via PTB's updater.
@@ -567,9 +598,11 @@ class TelegramAdapter:
                 self._set_fatal_error(exc, retryable=True)
                 return
 
+            # Non-retryable: record fatal state and return. Re-raising here only
+            # produces a silent "exception never retrieved" on this un-awaited
+            # task; the runner instead observes the death via wait_closed().
             _logger.exception("TelegramAdapter: unhandled error in polling loop: %s", exc)
             self._set_fatal_error(exc, retryable=False)
-            raise
 
     # ── Internal: Message Handling ────────────────────────────────────────────
 
@@ -585,6 +618,9 @@ class TelegramAdapter:
             update: python-telegram-bot Update object.
             context: python-telegram-bot CallbackContext (unused).
         """
+        # A delivered update proves getUpdates is healthy — clear the error streak.
+        self._consecutive_update_errors = 0
+
         if update.effective_message is None or update.effective_user is None:
             return
 
@@ -671,13 +707,31 @@ class TelegramAdapter:
             )
 
     async def _on_error(self, update: Any, context: Any) -> None:
-        """Log errors from python-telegram-bot update processing."""
+        """Handle errors from python-telegram-bot update processing.
+
+        PTB delivers getUpdates failures (e.g. a 502 during long-poll) here while
+        keeping the poll loop alive, so logging alone means a persistent outage
+        never triggers a reconnect. A sustained streak of network/conflict errors
+        escalates to a fatal-retryable close so the runner restarts the adapter.
+        """
+        err = context.error
         _logger.error(
             "TelegramAdapter: update error: %s (update=%s)",
-            context.error,
+            err,
             update,
-            exc_info=context.error,
+            exc_info=err,
         )
+        if not (_is_network_error(err) or _is_conflict_error(err)):
+            return
+        self._consecutive_update_errors += 1
+        if self._consecutive_update_errors >= _MAX_CONSECUTIVE_UPDATE_ERRORS:
+            _logger.warning(
+                "TelegramAdapter: %d consecutive getUpdates failures — escalating to "
+                "fatal-retryable so GatewayRunner reconnects. Last error: %s",
+                self._consecutive_update_errors,
+                err,
+            )
+            self._set_fatal_error(err, retryable=True)
 
     # ── Internal: Auth ────────────────────────────────────────────────────────
 
@@ -709,6 +763,9 @@ class TelegramAdapter:
         """
         self._fatal_error = exc
         self._fatal_retryable = retryable
+        # Unblock wait_closed() so GatewayRunner observes the death and drives
+        # reconnect — the signal the loop previously dropped on the floor.
+        self._closed_event.set()
         self._audit(
             _EVENT_FAIL,
             {
@@ -718,6 +775,18 @@ class TelegramAdapter:
                 "agent_did": self._agent_did,
             },
         )
+
+    async def wait_closed(self) -> tuple[bool, Exception | None]:
+        """Block until the event-source loop dies; report the fatal state.
+
+        Returns ``(retryable, error)`` once the polling loop terminates fatally:
+        ``retryable`` tells GatewayRunner whether to hand this adapter to the
+        reconnect watcher (transient network / poll conflict) or leave it
+        permanently failed (bad credentials). A healthy adapter blocks for its
+        whole lifetime; connect() re-arms the underlying event on each restart.
+        """
+        await self._closed_event.wait()
+        return self._fatal_retryable, self._fatal_error
 
     # ── Internal: Audit ───────────────────────────────────────────────────────
 

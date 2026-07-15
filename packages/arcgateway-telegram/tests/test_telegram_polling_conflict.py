@@ -175,7 +175,12 @@ async def test_network_error_reconnects() -> None:
 
 @pytest.mark.asyncio
 async def test_unhandled_error_is_not_retryable() -> None:
-    """An unknown exception type is fatal-NOT-retryable (needs human attention)."""
+    """An unknown exception type is fatal-NOT-retryable (needs human attention).
+
+    The loop must NOT re-raise inside its un-awaited task (that produces a
+    silent "exception never retrieved"); it records fatal state and returns so
+    the runner observes it via wait_closed().
+    """
     adapter = _make_adapter()
     mock_app = _make_mock_application()
     adapter._application = mock_app
@@ -201,11 +206,107 @@ async def test_unhandled_error_is_not_retryable() -> None:
             },
         ),
     ):
-        with pytest.raises(ValueError):
-            await adapter._run_polling_loop()
+        await adapter._run_polling_loop()
 
-    # Unhandled errors set retryable=False — manual intervention required
+    # Unhandled errors set retryable=False — manual intervention required —
+    # and close the adapter so the runner stops observing it (no reconnect).
     assert adapter._fatal_retryable is False
+    assert adapter._fatal_error is not None
+    assert adapter._closed_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_wait_closed_returns_fatal_state_after_polling_death() -> None:
+    """wait_closed() blocks until the polling loop dies, then reports the fatal
+    state (retryable flag + error) so the runner can feed the reconnect watcher."""
+    adapter = _make_adapter()
+    mock_app = _make_mock_application()
+    adapter._application = mock_app
+    adapter._running = True
+    adapter._bot_id = 77
+
+    mock_app.updater.start_polling.side_effect = _FakeConflictError("conflict")
+
+    with (
+        patch(
+            "arcgateway_telegram.adapter._is_conflict_error",
+            side_effect=lambda e: isinstance(e, _FakeConflictError),
+        ),
+        patch(
+            "arcgateway_telegram.adapter._is_network_error",
+            return_value=False,
+        ),
+        patch("arcgateway_telegram.adapter.asyncio.sleep", new_callable=AsyncMock),
+        patch.dict(
+            "sys.modules",
+            {
+                "telegram": MagicMock(),
+                "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+            },
+        ),
+    ):
+        await adapter._run_polling_loop()
+        retryable, error = await asyncio.wait_for(adapter.wait_closed(), timeout=1.0)
+
+    assert retryable is True
+    assert error is adapter._fatal_error
+
+
+@pytest.mark.asyncio
+async def test_on_error_escalates_persistent_getupdates_failure() -> None:
+    """A persistent stream of getUpdates network errors (which PTB only surfaces
+    to the error handler, keeping the loop alive) must escalate to fatal-retryable
+    so the runner reconnects — not merely be logged forever."""
+    from arcgateway_telegram.adapter import _MAX_CONSECUTIVE_UPDATE_ERRORS
+
+    adapter = _make_adapter()
+    ctx = MagicMock()
+    ctx.error = _FakeNetworkError("502 Bad Gateway")
+
+    with (
+        patch(
+            "arcgateway_telegram.adapter._is_network_error",
+            side_effect=lambda e: isinstance(e, _FakeNetworkError),
+        ),
+        patch("arcgateway_telegram.adapter._is_conflict_error", return_value=False),
+    ):
+        for _ in range(_MAX_CONSECUTIVE_UPDATE_ERRORS):
+            await adapter._on_error(MagicMock(), ctx)
+
+    assert adapter._fatal_retryable is True
+    assert adapter._closed_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_does_not_drop_pending_updates() -> None:
+    """First (clean) start drops pending updates; a RECONNECT must NOT — otherwise
+    every message that arrived during the outage is silently discarded."""
+    adapter = _make_adapter()
+    mock_app = _make_mock_application()
+    adapter._application = mock_app
+    adapter._bot_id = 77
+
+    captured: list[bool] = []
+
+    async def _start_polling(**kwargs: Any) -> None:
+        captured.append(bool(kwargs.get("drop_pending_updates")))
+        adapter._running = False  # let the keepalive loop exit immediately
+
+    mock_app.updater.start_polling.side_effect = _start_polling
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "telegram": MagicMock(),
+            "telegram.ext": MagicMock(Update=MagicMock(ALL_TYPES=[])),
+        },
+    ):
+        adapter._running = True
+        await adapter._run_polling_loop()  # first clean start
+        adapter._running = True
+        await adapter._run_polling_loop()  # reconnect
+
+    assert captured == [True, False]
 
 
 @pytest.mark.asyncio

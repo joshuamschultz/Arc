@@ -72,7 +72,9 @@ def configure(
     ``leader='redis'`` or ``leader='k8s'`` so exactly one replica ticks the
     engine (R-048).
     """
-    cfg = config or {}
+    from arcagent.modules.proactive.config import ProactiveConfig
+
+    cfg = ProactiveConfig(**(config or {})).model_dump()
     _state_var.set(
         _State(
             config=cfg,

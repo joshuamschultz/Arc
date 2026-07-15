@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from arcagent.modules.base_config import ModuleConfig
+from arcagent.core.module_config import ModuleConfig
 
 # Providers that require network access (not air-gap safe).
 # Validated against tier in _runtime.configure.

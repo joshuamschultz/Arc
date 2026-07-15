@@ -13,7 +13,11 @@ import re
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._dynamic_loader import ASTValidationError, AstValidator
+from arcagent.tools._dynamic_loader import (
+    ASTValidationError,
+    AstValidator,
+    format_authoring_rejection,
+)
 
 _CAPABILITIES_SUBDIR = "capabilities"
 _VERSION_RE = re.compile(r'version\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)["\']')
@@ -83,10 +87,12 @@ async def update_tool(
             f'Error: new_source must declare version="{new_version}" '
             f"after a {version_bump} bump from {match.group(1)}"
         )
+    # Validate against the SAME tier-resolved policy the loader will enforce.
+    policy = _runtime.import_policy()
     try:
-        AstValidator().validate(new_source)
+        AstValidator(policy=policy).validate(new_source)
     except ASTValidationError as exc:
-        return f"Error: AST validation rejected source — {exc}"
+        return format_authoring_rejection(exc, policy)
     target.write_text(new_source, encoding="utf-8")
     message = f"Updated tool {name!r} {match.group(1)} → {new_version}"
     if not _runtime.sign_artifact_file(target, new_source.encode("utf-8")):

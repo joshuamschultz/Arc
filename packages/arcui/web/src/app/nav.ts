@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   Shield,
+  PackageCheck,
   Settings,
   type LucideIcon,
 } from 'lucide-react'
@@ -36,6 +37,7 @@ export const NAV_ITEMS: NavItem[] = [
   { path: 'tools-skills', label: 'Tools & Skills', icon: Wrench },
   { path: 'tasks', label: 'Tasks', icon: ListChecks },
   { path: 'approvals', label: 'Approvals', icon: ShieldAlert },
+  { path: 'gated', label: 'Gated', icon: PackageCheck },
   { path: 'policy', label: 'Policy', icon: ShieldCheck },
   { path: 'security', label: 'Security', icon: Shield },
   { path: 'settings', label: 'Settings', icon: Settings },

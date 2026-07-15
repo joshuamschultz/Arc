@@ -20,10 +20,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust import ValidatorsConfig
 from arctrust.identity import AgentIdentity
 
 from arcagent.capabilities import artifact_signing
-from arcagent.core.config import CapabilitiesConfig, SecurityConfig, ValidatorsConfig
+from arcagent.core.config import CapabilitiesConfig, SecurityConfig
 
 _VALID_SKILL = (
     "---\n"
@@ -127,8 +128,9 @@ class TestResolveTrustPosture:
 @pytest.mark.asyncio
 class TestCollectAgentInventory:
     async def test_personal_agent_dir_verbatim_verdicts(self, tmp_path: Path) -> None:
+        from arctrust import TofuDecision
+
         from arcagent.capabilities.inventory import collect_agent_capability_inventory
-        from arcagent.core.tofu_layer import Decision
 
         config_path, identity = _build_agent_dir(tmp_path, tier="personal")
         ws_skills = config_path.parent / "workspace" / "capabilities" / "skills"
@@ -141,7 +143,7 @@ class TestCollectAgentInventory:
         )
         by_name = {it.name: it for it in result.items}
         assert by_name["signed"].status == "loaded"
-        assert by_name["unsigned"].status == Decision.DENY.value
+        assert by_name["unsigned"].status == TofuDecision.DENY.value
         assert by_name["broken"].status == "invalid"
         assert result.runtime is False
         assert result.runtime_tools == []
@@ -179,7 +181,7 @@ class TestCollectAgentInventory:
                         input_schema={},
                         transport=ToolTransport.NATIVE,
                         execute=None,
-                        classification="external_effect",
+                        classification="state_modifying",
                     )
                 ]
 
@@ -192,7 +194,7 @@ class TestCollectAgentInventory:
         names = {t.name for t in result.runtime_tools}
         assert "bash" in names
         tool = next(t for t in result.runtime_tools if t.name == "bash")
-        assert tool.classification == "external_effect"
+        assert tool.classification == "state_modifying"
 
 
 class TestRegisteredToolsAccessor:

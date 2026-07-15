@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arctrust import CapabilitySource, TofuDecision, TofuLayer
+
 from arcagent.capabilities.capability_registry import (
     BackgroundTaskEntry,
     CapabilityRegistry,
@@ -52,14 +54,18 @@ from arcagent.capabilities.capability_registry import (
 )
 from arcagent.capabilities.skill_validator import validate_skill_folder
 from arcagent.capabilities.trust_backend import Ed25519TrustBackend, TrustBackend
-from arcagent.core.tofu_layer import CapabilitySource, Decision, TofuLayer
 from arcagent.tools._decorator import (
     BackgroundTaskMetadata,
     CapabilityClassMetadata,
     HookMetadata,
     ToolMetadata,
 )
-from arcagent.tools._dynamic_loader import AstValidationCache, build_restricted_builtins
+from arcagent.tools._dynamic_loader import (
+    DEFAULT_IMPORT_POLICY,
+    AstValidationCache,
+    ImportPolicy,
+    build_restricted_builtins,
+)
 
 # Roots that go through the AST validator + Sign/TOFU gate + restricted
 # builtins. Every root an agent can write to is untrusted: ``workspace``
@@ -102,7 +108,7 @@ class CapabilityOutcome:
     capability inventory renders it as-is, REQ-094):
 
       * ``"loaded"``            — registered into the :class:`CapabilityRegistry`.
-      * a :class:`Decision` value (``"deny"`` / ``"new_sighting"``) — the
+      * a :class:`TofuDecision` value (``"deny"`` / ``"new_sighting"``) — the
         TOFU adjudication for an agent-writable source.
       * ``"unsigned"``          — a required-signature floor refusal (above
         personal) before TOFU is consulted.
@@ -196,8 +202,7 @@ class CapabilityLoader:
         registry: CapabilityRegistry,
         bus: Any | None = None,
         audit_sink: Any | None = None,
-        allow_all_imports: bool = False,
-        allowed_imports: frozenset[str] = frozenset(),
+        import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
         tofu: TofuLayer | None = None,
         require_signature: bool = False,
         trusted_public_key: bytes | None = None,
@@ -226,14 +231,11 @@ class CapabilityLoader:
         self._trust_backend: TrustBackend = trust_backend or Ed25519TrustBackend()
         self._known_tools: dict[str, str] = {}  # name → version
         self._known_skills: dict[str, str] = {}
-        # Import policy for the untrusted ``workspace`` root (tier-resolved by
-        # the caller). Defaults are fail-closed so a bare loader blocks imports.
-        self._allow_all_imports = allow_all_imports
-        self._allowed_imports = allowed_imports
-        self._ast_cache = AstValidationCache(
-            allow_all_imports=allow_all_imports,
-            allowed_imports=allowed_imports,
-        )
+        # Import policy for untrusted (agent-writable) roots (tier-resolved by
+        # the caller). Default is the fail-closed enterprise blocklist so a bare
+        # loader never silently allows all imports.
+        self._import_policy = import_policy
+        self._ast_cache = AstValidationCache(policy=import_policy)
 
     async def scan_and_register(self) -> _ReloadDelta:
         """Walk scan roots in precedence order; register everything found."""
@@ -302,10 +304,7 @@ class CapabilityLoader:
             if not gate.allowed:
                 self._record_tool_outcome(delta, path, root_name, gate.status, gate.detail)
                 return
-            restricted_builtins = build_restricted_builtins(
-                allow_all_imports=self._allow_all_imports,
-                allowed_imports=self._allowed_imports,
-            )
+            restricted_builtins = build_restricted_builtins(policy=self._import_policy)
         try:
             module = _load_module(path, restricted_builtins=restricted_builtins)
         except Exception as exc:  # reason: best-effort — record + continue
@@ -366,9 +365,9 @@ class CapabilityLoader:
             await self._deny_capability(path, "signature", _short_error(exc))
             delta.errors.append((str(path), f"trust-gate error: {_short_error(exc)}"))
             return _GateResult(allowed=False, status="error", detail=_short_error(exc))
-        if decision is Decision.ALLOW:
+        if decision is TofuDecision.ALLOW:
             return _GateResult(allowed=True)
-        action = "new_sighting" if decision is Decision.NEW_SIGHTING else "deny"
+        action = "new_sighting" if decision is TofuDecision.NEW_SIGHTING else "deny"
         await self._deny_capability(path, action, f"tofu decision {decision.value}")
         delta.errors.append((str(path), f"tofu: {decision.value}"))
         return _GateResult(

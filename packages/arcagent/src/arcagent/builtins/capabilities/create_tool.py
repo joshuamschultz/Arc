@@ -11,7 +11,11 @@ from __future__ import annotations
 
 from arcagent.builtins.capabilities import _runtime
 from arcagent.tools._decorator import tool
-from arcagent.tools._dynamic_loader import ASTValidationError, AstValidator
+from arcagent.tools._dynamic_loader import (
+    ASTValidationError,
+    AstValidator,
+    format_authoring_rejection,
+)
 
 _CAPABILITIES_SUBDIR = "capabilities"
 
@@ -48,10 +52,13 @@ async def create_tool(name: str, source: str) -> str:
             f"Error: tool {name!r} already exists at {target.relative_to(workspace)}; "
             f"use update_tool to change it"
         )
+    # Validate against the SAME tier-resolved policy the loader will enforce, so
+    # an author is never refused a tool the loader would run (or vice-versa).
+    policy = _runtime.import_policy()
     try:
-        AstValidator().validate(source)
+        AstValidator(policy=policy).validate(source)
     except ASTValidationError as exc:
-        return f"Error: AST validation rejected source — {exc}"
+        return format_authoring_rejection(exc, policy)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding="utf-8")
     message = f"Created tool {name!r} at {target.relative_to(workspace)}"

@@ -3,14 +3,14 @@
 arcagent ships **memory-less by default**. It depends on no memory package: this
 module defines a *structural* ``Brain`` Protocol (primitives only, so an
 implementation need not import arcagent) and a no-op :class:`NullBrain` that is the
-default. A user who wants memory ``pip install``s ``arcmemory`` (whose
-``ArcMemoryBrain`` satisfies this Protocol structurally) or plugs in their own
-compatible class — selected by config (see :mod:`arcagent.brain.select`).
+default. A user who wants memory ``pip install``s a memory backend (whose Brain class
+satisfies this Protocol structurally) or plugs in their own compatible class — selected
+by config (see :mod:`arcagent.brain.select`).
 
 The Protocol speaks only ``str``/``int``/``float`` at the boundary so that:
 
 * arcagent never imports a memory type, and
-* any Brain (arcmemory, a SaaS provider adapter, a fake) is a drop-in.
+* any Brain (a memory backend, a SaaS provider adapter, a fake) is a drop-in.
 
 With :class:`NullBrain` active, memory is a silent no-op — capture does nothing,
 recall is empty, consolidation is empty — and **no memory files are ever written**.

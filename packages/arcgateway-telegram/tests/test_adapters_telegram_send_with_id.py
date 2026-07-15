@@ -293,7 +293,8 @@ async def test_run_polling_loop_network_error_sets_fatal_retryable() -> None:
 
 @pytest.mark.asyncio
 async def test_run_polling_loop_unhandled_error_sets_fatal_not_retryable() -> None:
-    """Unhandled (non-network, non-conflict) errors set retryable=False and re-raise."""
+    """Unhandled (non-network, non-conflict) errors set retryable=False and close
+    the adapter (no re-raise — the runner observes via wait_closed)."""
     adapter = _make_adapter()
     mock_app = _make_mock_application()
     adapter._application = mock_app
@@ -307,11 +308,11 @@ async def test_run_polling_loop_unhandled_error_sets_fatal_not_retryable() -> No
         "sys.modules",
         {"telegram.ext": MagicMock(Update=fake_update_cls)},
     ):
-        with pytest.raises(ValueError, match="unexpected error"):
-            await adapter._run_polling_loop()
+        await adapter._run_polling_loop()
 
     assert adapter._fatal_error is not None
     assert adapter._fatal_retryable is False
+    assert adapter._closed_event.is_set()
 
 
 # ---------------------------------------------------------------------------

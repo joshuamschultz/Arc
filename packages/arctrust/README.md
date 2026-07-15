@@ -28,6 +28,10 @@ It gives you the four primitives every secure agent needs:
 
 If you're building anything that needs to *prove* what happened, this is where you start.
 
+> 📖 **How a capability becomes allowed or blocked** — the end-to-end trust/capability
+> pipeline (per-tier AST import gate → signing → TOFU → operator approval) is documented
+> in [`docs/trust-model.md`](docs/trust-model.md).
+
 ---
 
 ## 🏗️ Where It Fits

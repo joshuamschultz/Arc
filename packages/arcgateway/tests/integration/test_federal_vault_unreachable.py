@@ -39,7 +39,7 @@ import asyncio
 import logging
 
 import pytest
-from arcagent.modules.vault.protocol import VaultBackend, VaultUnreachable
+from arcagent.core.vault.protocol import VaultBackend, VaultUnreachable
 
 from arcgateway.executor import InboundEvent
 from arcgateway.runner import GatewayRunner
@@ -108,7 +108,7 @@ async def test_federal_tier_vault_unreachable_raises_hard_error() -> None:
     This directly tests the resolver, which is the canonical enforcement point
     for the federal tier policy.
     """
-    from arcagent.modules.vault.resolver import resolve_secret
+    from arcagent.core.vault.resolver import resolve_secret
 
     backend = _UnreachableVaultBackend()
 
@@ -133,7 +133,7 @@ async def test_federal_tier_vault_unreachable_no_env_fallback(
 
     Reference: PLAN.md T1.5.2 federal policy row; MODULE.yaml tier_policy.federal.
     """
-    from arcagent.modules.vault.resolver import resolve_secret
+    from arcagent.core.vault.resolver import resolve_secret
 
     # Set an env var that would be used as fallback in enterprise/personal tier.
     monkeypatch.setenv("PLATFORM_TOKEN_FALLBACK", "super-secret-value")
@@ -159,7 +159,7 @@ async def test_enterprise_tier_vault_unreachable_falls_back_to_env(
     This test ensures the resolver correctly distinguishes tiers and that
     we haven't accidentally tightened enterprise to federal behaviour.
     """
-    from arcagent.modules.vault.resolver import resolve_secret
+    from arcagent.core.vault.resolver import resolve_secret
 
     monkeypatch.setenv("PLATFORM_TOKEN_FALLBACK", "enterprise-fallback-value")
 
@@ -198,7 +198,7 @@ async def test_gateway_runner_no_adapters_connected_on_vault_failure() -> None:
     class _VaultFailExecutor:
         """Executor that simulates vault-unreachable startup failure."""
 
-        async def run(self, event: InboundEvent) -> None:  # type: ignore[override]
+        async def run(self, event: InboundEvent) -> None:
             raise RuntimeError(
                 "gateway.vault_unreachable: federal tier — vault is not reachable. "
                 "Cannot resolve platform credentials. Gateway refuses to start."
@@ -242,11 +242,11 @@ async def test_federal_vault_unreachable_audit_event_emitted(
     Previously xfail: the vault resolver now emits vault.unreachable on federal
     hard-fail, closing the NIST AU-2/AU-9 audit gap.
     """
-    from arcagent.modules.vault.resolver import resolve_secret
+    from arcagent.core.vault.resolver import resolve_secret
 
     backend = _UnreachableVaultBackend()
 
-    with caplog.at_level(logging.WARNING, logger="arcagent.modules.vault"):
+    with caplog.at_level(logging.WARNING, logger="arcagent.core.vault"):
         with pytest.raises(VaultUnreachable):
             await resolve_secret(
                 "platform-token",

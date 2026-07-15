@@ -10,6 +10,13 @@ distiller seams onto arcllm so semantic recall and consolidation run in producti
 
 from __future__ import annotations
 
+from arcmemory.acl import (
+    ACLViolation,
+    CrossSessionVisibility,
+    MemoryACLConfig,
+    SessionACL,
+    extract_acl_from_session_data,
+)
 from arcmemory.agent_consolidate import (
     CONSOLIDATION_SYSTEM_PROMPT,
     AgenticResult,
@@ -59,6 +66,7 @@ from arcmemory.operator import (
     MutationResult,
     MutationStatus,
 )
+from arcmemory.provider import build_brain
 from arcmemory.react_adapter import ReactLoop, ReactOutcome, run_react_loop
 from arcmemory.retrieve import Retriever
 from arcmemory.security import (
@@ -91,6 +99,7 @@ __version__ = "0.6.0"
 
 __all__ = [
     "CONSOLIDATION_SYSTEM_PROMPT",
+    "ACLViolation",
     "AgenticResult",
     "ArcLLMDistiller",
     "ArcLLMEmbedder",
@@ -99,6 +108,7 @@ __all__ = [
     "Confidence",
     "ConsolidationResult",
     "Consolidator",
+    "CrossSessionVisibility",
     "DedupReport",
     "Distiller",
     "Embedder",
@@ -120,6 +130,7 @@ __all__ = [
     "InsightMint",
     "InsightStore",
     "LinkRecord",
+    "MemoryACLConfig",
     "MemoryConfig",
     "MemoryDB",
     "MemoryOperator",
@@ -138,6 +149,7 @@ __all__ = [
     "Retriever",
     "Scope",
     "SemanticStore",
+    "SessionACL",
     "Situation",
     "StoreReport",
     "StructuralIndex",
@@ -149,10 +161,12 @@ __all__ = [
     "WeightedGraph",
     "__version__",
     "boundary_mark",
+    "build_brain",
     "build_memory_tools",
     "confidence_from_hits",
     "dedup_workspace",
     "discover_workspaces",
+    "extract_acl_from_session_data",
     "extract_facts",
     "gate_no_read_up",
     "mint_insights",

@@ -13,14 +13,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from arctrust import TofuLayer, ValidatorsConfig, approve_source
 from arctrust.identity import AgentIdentity
 
 from arcagent.capabilities import artifact_signing
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
-from arcagent.core.config import ValidatorsConfig
 from arcagent.core.tier import Tier
-from arcagent.core.tofu_layer import TofuLayer, approve_source
+from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+
+_PERSONAL_POLICY = resolve_workspace_import_policy(
+    "personal", allow_all_imports=False, allow_imports=[]
+)
 
 _TOOL = (
     "from arcagent.tools._decorator import tool\n"
@@ -93,7 +97,7 @@ def _loader(
         scan_roots=[(root_name, caps)],
         registry=CapabilityRegistry(),
         audit_sink=sink,
-        allow_all_imports=True,
+        import_policy=_PERSONAL_POLICY,
         tofu=TofuLayer(tier, validators),
         require_signature=require_signature,
         trusted_public_key=trusted_public_key,

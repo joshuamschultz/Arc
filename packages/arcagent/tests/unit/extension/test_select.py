@@ -8,6 +8,7 @@ duplicate. The dispatch table is exercised here directly against a synthetic
 
 from __future__ import annotations
 
+import importlib
 import logging
 import types
 from typing import Any
@@ -15,7 +16,6 @@ from typing import Any
 import pytest
 
 from arcagent.extension import ExtensionPoint, select_extension
-from arcagent.extension import select as ext_select
 
 _logger = logging.getLogger("test.extension.select")
 
@@ -65,7 +65,7 @@ def _patch_import(monkeypatch: pytest.MonkeyPatch, *, degrade: bool = False) -> 
         calls["imports"] += 1
         return mod
 
-    monkeypatch.setattr(ext_select.importlib, "import_module", fake_import)
+    monkeypatch.setattr(importlib, "import_module", fake_import)
     return calls
 
 
@@ -95,7 +95,7 @@ def test_builtin_not_importable_degrades_to_null(monkeypatch: pytest.MonkeyPatch
     def raising_import(name: str) -> types.ModuleType:
         raise ImportError(name)
 
-    monkeypatch.setattr(ext_select.importlib, "import_module", raising_import)
+    monkeypatch.setattr(importlib, "import_module", raising_import)
     got = select_extension(
         _POINT,
         "builtin",
@@ -187,3 +187,105 @@ def test_byo_allowed_when_allowlisted_above_personal(
         logger=_logger,
     )
     assert isinstance(got, _Byo)
+
+
+# -- generic provider-entrypoint resolution (Brain's decoupled path) --------
+
+
+class _Provider:
+    """Stand-in provider instance a backend module's ``build_it(context)`` returns."""
+
+    def __init__(self, context: dict[str, Any]) -> None:
+        self.context = context
+
+
+_PROVIDER_POINT = ExtensionPoint(
+    name="provided",
+    null_factory=_Null,
+    byo_constructor=lambda cls, ctx: cls(ctx["workspace"]),
+    provider_entrypoint="build_it",
+)
+
+
+def _patch_provider_import(
+    monkeypatch: pytest.MonkeyPatch, *, entrypoint: bool = True
+) -> dict[str, int]:
+    calls = {"imports": 0}
+    mod = types.ModuleType("backend_pkg")
+    if entrypoint:
+        mod.build_it = lambda context: _Provider(context)  # type: ignore[attr-defined]
+
+    def fake_import(name: str) -> types.ModuleType:
+        calls["imports"] += 1
+        return mod
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    return calls
+
+
+@pytest.mark.parametrize("tier", ["personal", "enterprise", "federal"])
+def test_provider_bare_name_builds_via_entrypoint_ungated(
+    monkeypatch: pytest.MonkeyPatch, tier: str
+) -> None:
+    """A bare backend name imports + calls the entrypoint at EVERY tier (ungated, like a
+    builtin) — this keeps ``brain='arcmemory'`` working without a hardcoded builtin."""
+    _patch_provider_import(monkeypatch)
+    got = select_extension(
+        _PROVIDER_POINT,
+        "backend_pkg",
+        tier=tier,
+        allowlist=(),
+        context={"workspace": "/ws"},
+        logger=_logger,
+    )
+    assert isinstance(got, _Provider)
+    assert got.context["workspace"] == "/ws"
+
+
+def test_provider_missing_package_degrades_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def raising_import(name: str) -> types.ModuleType:
+        raise ImportError(name)
+
+    monkeypatch.setattr(importlib, "import_module", raising_import)
+    with caplog.at_level(logging.WARNING, logger="test.extension.select"):
+        got = select_extension(
+            _PROVIDER_POINT,
+            "backend_pkg",
+            tier="personal",
+            allowlist=(),
+            context={"workspace": "/ws"},
+            logger=_logger,
+        )
+    assert isinstance(got, _Null)
+    assert caplog.records, "an uninstalled provider must warn as it degrades"
+
+
+def test_provider_without_entrypoint_degrades_to_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_provider_import(monkeypatch, entrypoint=False)
+    got = select_extension(
+        _PROVIDER_POINT,
+        "backend_pkg",
+        tier="personal",
+        allowlist=(),
+        context={"workspace": "/ws"},
+        logger=_logger,
+    )
+    assert isinstance(got, _Null)
+
+
+def test_provider_colon_path_is_still_byo_and_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A colon class-path stays BYO — allowlist-gated above personal — even on a
+    provider point (the two resolution modes coexist)."""
+    calls = _patch_import(monkeypatch)
+    with pytest.raises(ValueError, match="allowlist"):
+        select_extension(
+            _PROVIDER_POINT,
+            "stub_mod:_Byo",
+            tier="federal",
+            allowlist=(),
+            context={"workspace": "/ws"},
+            logger=_logger,
+        )
+    assert calls["imports"] == 0

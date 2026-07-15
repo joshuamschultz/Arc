@@ -15,6 +15,11 @@ import pytest
 
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
+from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+
+_PERSONAL_POLICY = resolve_workspace_import_policy(
+    "personal", allow_all_imports=False, allow_imports=[]
+)
 
 _BENIGN = (
     "from arcagent.tools._decorator import tool\n"
@@ -36,12 +41,12 @@ _USES_OPEN = (
 
 def _loader(workspace_caps: Path) -> tuple[CapabilityLoader, CapabilityRegistry]:
     reg = CapabilityRegistry()
-    # allow_all_imports=True mirrors personal tier so the arcagent.tools import
-    # is never the thing under test — only the builtin surface is.
+    # A personal (allow-all) policy mirrors personal tier so the arcagent.tools
+    # import is never the thing under test — only the builtin surface is.
     loader = CapabilityLoader(
         scan_roots=[("workspace", workspace_caps)],
         registry=reg,
-        allow_all_imports=True,
+        import_policy=_PERSONAL_POLICY,
     )
     return loader, reg
 

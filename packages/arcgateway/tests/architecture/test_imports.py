@@ -69,6 +69,13 @@ def test_arcui_imports_arcagent_only_via_inventory_seam() -> None:
     imported lazily at call time. This narrows, rather than deletes, the
     SPEC-023 §2.2 boundary: every OTHER arcagent import from arcui is still a
     forbidden layering violation.
+
+    Trust, signing, and approval live in ``arctrust`` — the leaf foundation that
+    imports no siblings — so arcui imports it FREELY (operator keys, arc-home
+    resolution, the TOFU approve/disapprove store) as a legitimate lower layer
+    for a view. Only ``arcagent`` is restricted to the single inventory seam;
+    ``arctrust`` is not, which is why the previously-offending ``approvals.py``
+    and ``system_config.py`` now depend on arctrust instead of ``arcagent.core.config``.
     """
     if not _ARCUI_SRC.exists():
         pytest.skip("arcui package not found in this checkout")

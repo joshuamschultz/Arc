@@ -272,6 +272,14 @@ async def test_user_message_survives_curation_into_distillation(tmp_path: Path) 
             self.texts += [e.text for e in events]
             return DaySummaryDraft()
 
+        async def disambiguate_entity(
+            self, name: str, entity_type: str, candidates: Any
+        ) -> str | None:
+            return None
+
+        async def confirm_entity_merges(self, groups: Any) -> list[list[str]]:
+            return []
+
     distiller = _RecordingDistiller()
     brain = ArcMemoryBrain(tmp_path, _DID, distiller=distiller)
     _configure_with(brain)
@@ -309,59 +317,50 @@ async def test_memory_search_tool_off_when_memory_less() -> None:
     assert "not enabled" in out.lower()
 
 
-# -- ACL priority-10 veto fires BEFORE the Brain call (T-083) ------------
+# -- Generic ACL check asks the provider BEFORE the Brain call ----------
 
 
-class _VetoBus:
-    """Stands in for the module bus with memory_acl vetoing at priority 10."""
+class _GatedSpyBrain(_SpyBrain):
+    """A spy Brain whose ``authorize`` verdict is configurable (the provider owns ACL).
 
-    def __init__(self) -> None:
-        self.events: list[str] = []
+    Records the operations the wiring asked it to authorize, so the test proves the
+    generic "ask the provider" seam fires before recall/capture.
+    """
 
-    async def emit(self, event: str, data: dict[str, Any], agent_did: str = "") -> SimpleNamespace:
-        self.events.append(event)
-        return SimpleNamespace(is_vetoed=True, veto_reason="ACL denied")
+    def __init__(self, *, allow: bool) -> None:
+        super().__init__()
+        self._allow = allow
+        self.authorized: list[str] = []
 
-
-class _AllowBus:
-    def __init__(self) -> None:
-        self.events: list[str] = []
-
-    async def emit(self, event: str, data: dict[str, Any], agent_did: str = "") -> SimpleNamespace:
-        self.events.append(event)
-        return SimpleNamespace(is_vetoed=False, veto_reason="")
+    async def authorize(self, operation: str, *, caller_did: str = "") -> bool:
+        self.authorized.append(operation)
+        return self._allow
 
 
 async def test_acl_veto_blocks_recall_before_retrieve() -> None:
-    spy = _SpyBrain()
+    spy = _GatedSpyBrain(allow=False)
     _configure_with(spy)
-    st = _runtime.state()
-    st.bus = _VetoBus()
     sections: dict[str, str] = {}
     await inject_recall(_ctx({"sections": sections, "query": "secret query"}))
-    assert spy.retrieves == []  # ACL fired first — brain never consulted
+    assert spy.retrieves == []  # provider denied — brain never consulted
     assert "recall" not in sections
-    assert st.bus.events == ["memory.search"]
+    assert spy.authorized == ["memory.search"]
 
 
 async def test_acl_veto_blocks_capture_before_brain() -> None:
-    spy = _SpyBrain()
+    spy = _GatedSpyBrain(allow=False)
     _configure_with(spy)
-    st = _runtime.state()
-    st.bus = _VetoBus()
     await capture_respond(_ctx({"messages": [{"role": "assistant", "content": "secret"}]}))
-    assert spy.captures == []  # capture vetoed before Brain.capture
-    assert st.bus.events == ["memory.write"]
+    assert spy.captures == []  # capture denied before Brain.capture
+    assert spy.authorized == ["memory.write"]
 
 
-async def test_acl_allow_emits_search_then_retrieves() -> None:
-    spy = _SpyBrain()
+async def test_acl_allow_asks_provider_then_retrieves() -> None:
+    spy = _GatedSpyBrain(allow=True)
     _configure_with(spy)
-    st = _runtime.state()
-    st.bus = _AllowBus()
     sections: dict[str, str] = {}
     await inject_recall(_ctx({"sections": sections, "query": "ok query"}))
-    assert st.bus.events == ["memory.search"]
+    assert spy.authorized == ["memory.search"]
     assert spy.retrieves == ["ok query"]
     assert "recall" in sections
 

@@ -89,6 +89,30 @@ export const useApprovals = () =>
     refetchInterval: 4000,
   })
 
+export interface GatedCapability {
+  agent_id: string
+  agent_label: string
+  name: string
+  kind: 'tool' | 'skill'
+  status: 'deny' | 'new_sighting' | 'unsigned' | 'invalid' | 'error'
+  path: string
+  hash: string
+  detail: string
+}
+export interface GatedResponse {
+  gated: GatedCapability[]
+}
+
+// Polls every 4s: a capability is gated the moment the loader denies, first-
+// sights, or fails to verify it, so newly quarantined tools/skills must surface
+// without a manual refresh — same cadence as approvals.
+export const useGatedCapabilities = () =>
+  useQuery<GatedResponse>({
+    queryKey: ['trust', 'gated'],
+    queryFn: ({ signal }) => apiGet<GatedResponse>('/api/trust/gated', signal),
+    refetchInterval: 4000,
+  })
+
 export const useTeamToolsSkills = () =>
   useApiQuery<TeamToolsSkillsResponse>(['team', 'tools-skills'], '/api/team/tools-skills')
 

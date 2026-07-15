@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from arcagent.modules.pulse import PulseConfig
+from arcagent.modules.pulse.config import PulseConfig
 
 if TYPE_CHECKING:
     from arcagent.core.telemetry import AgentTelemetry

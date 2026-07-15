@@ -88,6 +88,13 @@ def _inspect_select_one(family: SelectOneFamily, config: Any, tier: str) -> Exte
         return ExtensionStatus(
             family.name, "select_one", setting, available, "builtin", detail=module
         )
+    # A bare backend name on a provider point — available iff its package is importable
+    # (find_spec, no execution). Ungated like a builtin, so no allowlist verdict.
+    if family.point.provider_entrypoint is not None and ":" not in setting:
+        available = _builtin_importable(setting)
+        return ExtensionStatus(
+            family.name, "select_one", setting, available, "provider", detail=setting
+        )
     # BYO dotted path — judged by the allowlist gate only (never imported to "check").
     if tier == "personal":
         return ExtensionStatus(family.name, "select_one", setting, True, "unsigned(personal)")

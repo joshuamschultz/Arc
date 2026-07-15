@@ -6,19 +6,9 @@ via agent_run_fn. Both humans and agents can edit pulse.md.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-# --- Config & Models ---
-
-
-class PulseConfig(BaseModel):
-    """Configuration for the pulse module."""
-
-    enabled: bool = True
-    interval_seconds: int = Field(default=600, ge=10)
-    pulse_file: str = "pulse.md"
-    state_file: str = "pulse-state.json"
-    timeout_seconds: float = Field(default=300.0, gt=0)
+# --- Models ---
 
 
 class PulseCheck(BaseModel):
@@ -43,4 +33,4 @@ class PulseState(BaseModel):
     checks: dict[str, PulseCheckState] = {}
 
 
-__all__ = ["PulseCheck", "PulseCheckState", "PulseConfig", "PulseState"]
+__all__ = ["PulseCheck", "PulseCheckState", "PulseState"]

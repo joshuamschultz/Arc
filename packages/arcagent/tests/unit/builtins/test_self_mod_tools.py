@@ -185,3 +185,61 @@ class TestReload:
 
         result = await reload()
         assert "reload:" in result
+
+
+@pytest.mark.asyncio
+class TestCreateToolImportPolicy:
+    """create_tool honours the tier-resolved import policy (not a bare gate)."""
+
+    async def test_personal_accepts_os_import_and_signs(self, tmp_path: Path) -> None:
+        from arctrust.identity import AgentIdentity
+
+        from arcagent.builtins.capabilities.create_tool import create_tool
+        from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+
+        workspace = tmp_path / "workspace"
+        (workspace / "capabilities").mkdir(parents=True)
+        identity = AgentIdentity.generate(org="blackarc", agent_type="executor")
+        _runtime.configure(
+            workspace=workspace,
+            identity=identity,
+            tier="personal",
+            import_policy=resolve_workspace_import_policy(
+                "personal", allow_all_imports=False, allow_imports=[]
+            ),
+        )
+        source = (
+            "import os\n"
+            "from arcagent.tools._decorator import tool\n"
+            "@tool(description='cwd', version='1.0.0')\n"
+            "async def cwd() -> str:\n"
+            "    return os.getcwd()\n"
+        )
+        result = await create_tool(name="cwd", source=source)
+        assert "Created tool 'cwd'" in result
+        assert "UNSIGNED" not in result  # signed with the agent's own key
+        target = workspace / "capabilities" / "cwd.py"
+        assert target.exists()
+        from arcagent.capabilities.artifact_signing import sidecar_path
+
+        assert sidecar_path(target).exists()
+
+    async def test_enterprise_rejection_message_teaches_policy(self, tmp_path: Path) -> None:
+        from arcagent.builtins.capabilities.create_tool import create_tool
+        from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+
+        workspace = tmp_path / "workspace"
+        (workspace / "capabilities").mkdir(parents=True)
+        _runtime.configure(
+            workspace=workspace,
+            tier="enterprise",
+            import_policy=resolve_workspace_import_policy(
+                "enterprise", allow_all_imports=False, allow_imports=[]
+            ),
+        )
+        result = await create_tool(name="bad", source="import os\n")
+        assert "AST validation rejected" in result
+        assert "enterprise" in result  # resolved tier is named
+        assert "blocked import groups" in result  # effective policy described
+        assert "filesystem" in result
+        assert "create_tool/update_tool" in result  # authoring guidance (TOFU)

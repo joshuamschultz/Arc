@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Any
 
 from arcgateway import team_roster
+from arcstore.approvals import ApprovalStore
 from arcstore.backends.sqlite import SqliteBackend
 from arcstore.config import resolve_data_dir
-from arcstore.approvals import ApprovalStore
 from arcstore.tasks import TaskStore
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -36,6 +36,7 @@ from arcui.registry import AgentRegistry
 from arcui.routes import agent_detail as agent_detail_routes
 from arcui.routes import agent_sessions as agent_sessions_routes
 from arcui.routes import agents as agents_routes
+from arcui.routes import approvals as approvals_routes
 from arcui.routes import arcllm_config as arcllm_config_routes
 from arcui.routes import chat_ws as chat_ws_routes
 from arcui.routes import config as config_routes
@@ -45,12 +46,12 @@ from arcui.routes import knowledge as knowledge_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import stats as stats_routes
 from arcui.routes import system_config as system_config_routes
-from arcui.routes import approvals as approvals_routes
 from arcui.routes import tasks as tasks_routes
 from arcui.routes import team_chat as team_chat_routes
 from arcui.routes import team_pages as team_pages_routes
 from arcui.routes import team_ws as team_ws_routes
 from arcui.routes import traces as traces_routes
+from arcui.routes import trust as trust_routes
 from arcui.team_stream import TeamBusObserver, TeamStreamHub
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,7 @@ def create_app(
         *team_ws_routes.routes,
         *tasks_routes.routes,
         *approvals_routes.routes,
+        *trust_routes.routes,
     ]
 
     # Mount static files if the directory exists.

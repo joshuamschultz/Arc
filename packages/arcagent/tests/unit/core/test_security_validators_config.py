@@ -19,7 +19,7 @@ import pytest
 
 class TestValidatorEntry:
     def test_required_fields(self) -> None:
-        from arcagent.core.config import ValidatorEntry
+        from arctrust import ValidatorEntry
 
         entry = ValidatorEntry(
             name="create-skill",
@@ -31,7 +31,7 @@ class TestValidatorEntry:
         assert entry.hash == "sha256:abc123"
 
     def test_missing_field_rejected(self) -> None:
-        from arcagent.core.config import ValidatorEntry
+        from arctrust import ValidatorEntry
 
         with pytest.raises(Exception):  # pydantic ValidationError
             ValidatorEntry(name="x", hash="sha256:y", approver="a")  # type: ignore[call-arg]
@@ -39,25 +39,25 @@ class TestValidatorEntry:
 
 class TestValidatorsConfigDefaults:
     def test_defaults_safe(self) -> None:
-        from arcagent.core.config import ValidatorsConfig
+        from arctrust import ValidatorsConfig
 
         v = ValidatorsConfig()
         assert v.auto_run_agent_code is False
         assert v.approved == ()
 
     def test_round_trip_with_entries(self) -> None:
-        from arcagent.core.config import ValidatorEntry, ValidatorsConfig
+        from arctrust import ValidatorEntry, ValidatorsConfig
 
         v = ValidatorsConfig(
             auto_run_agent_code=True,
-            approved=[
+            approved=(
                 ValidatorEntry(
                     name="x",
                     hash="sha256:y",
                     approver="a@b",
                     timestamp="2026-04-28T00:00:00Z",
-                )
-            ],
+                ),
+            ),
         )
         assert v.auto_run_agent_code is True
         assert len(v.approved) == 1
@@ -66,7 +66,9 @@ class TestValidatorsConfigDefaults:
 
 class TestSecurityConfigEmbedsValidators:
     def test_validators_field_present(self) -> None:
-        from arcagent.core.config import SecurityConfig, ValidatorsConfig
+        from arctrust import ValidatorsConfig
+
+        from arcagent.core.config import SecurityConfig
 
         s = SecurityConfig()
         assert isinstance(s.validators, ValidatorsConfig)

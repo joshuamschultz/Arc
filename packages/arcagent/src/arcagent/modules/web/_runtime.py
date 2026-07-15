@@ -149,7 +149,7 @@ async def _resolve_api_key(provider_name: str, tier: str) -> str:
     env_var = env_var_map.get(provider_name)
 
     try:
-        from arcagent.modules.vault.resolver import resolve_secret
+        from arcagent.core.vault.resolver import resolve_secret
 
         resolved: str = await resolve_secret(
             secret_name,

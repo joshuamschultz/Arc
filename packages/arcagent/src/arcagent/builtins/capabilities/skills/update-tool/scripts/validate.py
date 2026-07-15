@@ -29,6 +29,9 @@ def main() -> int:
     )
 
     source = path.read_text(encoding="utf-8")
+    # Standalone CLI subprocess: no access to the in-agent tier-resolved import
+    # policy, so it validates against the fail-closed enterprise default — a
+    # conservative pre-check before update_tool applies the agent's real policy.
     try:
         AstValidator().validate(source)
     except ASTValidationError as exc:

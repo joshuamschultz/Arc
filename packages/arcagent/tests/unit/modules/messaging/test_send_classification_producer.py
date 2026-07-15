@@ -16,7 +16,8 @@ import pytest
 from arctrust import AgentIdentity
 from arctrust.classification import Classification
 
-from arcagent.modules.messaging import _bootstrap, _runtime
+from arcagent.core import arcteam_bootstrap as _bootstrap
+from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import messaging_send
 from tests.unit.modules.messaging.conftest import make_config_dict, make_operator_signer
 

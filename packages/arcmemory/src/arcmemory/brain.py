@@ -25,7 +25,7 @@ from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from arctrust.audit import AuditSink, NullSink
+from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 from arctrust.classification import parse_classification
 from arctrust.identity import AgentIdentity
 from arctrust.policy import PolicyPipeline
@@ -211,6 +211,32 @@ class ArcMemoryBrain:
             embedder=self._embedder,
             seed_vocabulary=self._seed_vocab,
         ).rebuild()
+
+    async def authorize(self, operation: str, *, caller_did: str = "") -> bool:
+        """Provider-side ACL gate the host's generic memory adapter consults per op.
+
+        The brain is bound to one agent that owns its store, so the bound agent (and the
+        empty caller of unit contexts) is always authorized to capture/recall/search its
+        own memory. Cross-session visibility of OTHER sessions' memory is a separate
+        concern gated internally by :mod:`arcmemory.acl` when arcmemory surfaces them.
+
+        A denial is audited (AU-2) so every ACL decision remains tamper-evident, keeping
+        the audit property the removed arcagent memory_acl hook used to provide.
+        """
+        allowed = not caller_did or caller_did == self._agent_did
+        if not allowed:
+            emit(
+                AuditEvent(
+                    actor_did=caller_did,
+                    action="memory.acl.denied",
+                    target=operation,
+                    outcome="deny",
+                    tier=self._cfg.tier,
+                    extra={"owner_did": self._agent_did},
+                ),
+                self._audit,
+            )
+        return allowed
 
     # -- internals ---------------------------------------------------------
 

@@ -10,7 +10,7 @@ in ``[team] root`` so all team modules share one setting.
 
 from __future__ import annotations
 
-from arcagent.modules.base_config import ModuleConfig
+from arcagent.core.module_config import ModuleConfig
 
 
 class MessagingConfig(ModuleConfig):

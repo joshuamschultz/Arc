@@ -11,6 +11,7 @@ Covers the reachable-now defects found in review of the audit-authority split:
 
 from __future__ import annotations
 
+import importlib
 import types
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from arcagent.core.config import (
     AgentConfig,
     ArcAgentConfig,
     LLMConfig,
+    ModuleEntry,
     TelemetryConfig,
 )
 from arcagent.core.model_manager import build_checkpoint_sink
@@ -185,7 +187,9 @@ def test_missing_key_with_prior_chain_fails_startup_closed(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def _fake_agent_for_modules(tmp_path: Path, module_name: str, captured: dict[str, Any]) -> Any:
+def _fake_agent_for_modules(
+    tmp_path: Path, module_name: str, fake_mod: Any
+) -> Any:
     cfg = _config(tmp_path)
     agent = ArcAgent(config=cfg, config_path=tmp_path / "arcagent.toml")
     agent._operator_key = OperatorKey.generate()
@@ -193,34 +197,48 @@ def _fake_agent_for_modules(tmp_path: Path, module_name: str, captured: dict[str
     agent._identity = None
     agent._telemetry = None
     agent._bus = None
-    agent._config.modules = {module_name: types.SimpleNamespace(enabled=True, config={})}  # type: ignore[assignment]
+    # module_name must be a real, discovered module folder — the loader only
+    # configures the present-set (folder-driven discovery). ``enabled=True`` makes
+    # it active; import is monkeypatched to the fake runtime under test.
+    agent._config.modules = {module_name: ModuleEntry(enabled=True, config={})}
+    return agent
+
+
+def test_operator_signer_not_delivered_when_configure_omits_the_param(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from arcagent.core import agent_lifecycle
+
+    captured: dict[str, Any] = {"operator_signer": "__unset__"}
+
+    # A generic module whose configure() does NOT declare operator_signer never
+    # receives it — delivery is purely signature-driven, so it cannot harvest
+    # signing authority by any means other than declaring the parameter.
+    def _fake_configure(*, config: Any = None, **_: Any) -> None:
+        captured["called"] = True
+
+    fake_mod = types.SimpleNamespace(configure=_fake_configure)
+    agent = _fake_agent_for_modules(tmp_path, "memory", fake_mod)
+    monkeypatch.setattr(importlib, "import_module", lambda _name: fake_mod)
+    agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
+    assert captured.get("called") is True
+    assert captured["operator_signer"] == "__unset__"
+
+
+def test_operator_signer_delivered_when_configure_declares_the_param(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from arcagent.core import agent_lifecycle
+
+    captured: dict[str, Any] = {}
 
     def _fake_configure(*, operator_signer: Any = None, config: Any = None, **_: Any) -> None:
         captured["operator_signer"] = operator_signer
 
     fake_mod = types.SimpleNamespace(configure=_fake_configure)
-    return agent, fake_mod
-
-
-def test_operator_signer_not_offered_to_generic_module(tmp_path: Path, monkeypatch: Any) -> None:
-    from arcagent.core import agent_lifecycle
-
-    captured: dict[str, Any] = {}
-    agent, fake_mod = _fake_agent_for_modules(tmp_path, "evil", captured)
-    monkeypatch.setattr(agent_lifecycle.importlib, "import_module", lambda _name: fake_mod)
+    agent = _fake_agent_for_modules(tmp_path, "skills", fake_mod)
+    monkeypatch.setattr(importlib, "import_module", lambda _name: fake_mod)
     agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
-    # A module NOT on the WORM-sink allowlist must never be handed signing
-    # authority, even if its configure() declares an operator_signer parameter.
-    assert captured["operator_signer"] is None
-
-
-def test_operator_signer_offered_to_worm_sink_module(tmp_path: Path, monkeypatch: Any) -> None:
-    from arcagent.core import agent_lifecycle
-
-    captured: dict[str, Any] = {}
-    agent, fake_mod = _fake_agent_for_modules(tmp_path, "skills", captured)
-    monkeypatch.setattr(agent_lifecycle.importlib, "import_module", lambda _name: fake_mod)
-    agent_lifecycle.configure_module_runtimes(agent, agent._workspace)
-    # WORM-sink modules receive the config-resolved operator SIGNER (seedless
-    # under vault_transit), never the raw key/seed.
+    # A module declaring operator_signer receives the config-resolved operator
+    # SIGNER (seedless under vault_transit), never the raw key/seed.
     assert captured["operator_signer"] is agent._operator_signer

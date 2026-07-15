@@ -18,6 +18,12 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Rest-sibling destructuring is the idiom for omitting a key
+      // (`const { drop, ...rest } = obj`); don't flag the intentionally
+      // unused sibling.
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
+    },
   },
   {
     // shadcn/ui primitives co-locate a component with its CVA variants

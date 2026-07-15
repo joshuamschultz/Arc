@@ -21,15 +21,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from arctrust import TofuLayer, hash_source
 from pydantic import BaseModel, ConfigDict
 
 import arcagent.builtins.capabilities as _builtins_pkg
 from arcagent.capabilities.capability_loader import CapabilityLoader, ScanRoot
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.config import CapabilitiesConfig, SecurityConfig, load_config
-from arcagent.core.tier import Tier
-from arcagent.core.tofu_layer import TofuLayer
-from arcagent.tools._dynamic_loader import resolve_workspace_import_policy
+from arcagent.tools._dynamic_loader import (
+    DEFAULT_IMPORT_POLICY,
+    ImportPolicy,
+    resolve_workspace_import_policy,
+)
 
 _logger = logging.getLogger("arcagent.capabilities.inventory")
 
@@ -110,8 +113,7 @@ async def collect_capability_inventory(
     tofu: TofuLayer | None = None,
     require_signature: bool = False,
     trusted_public_key: bytes | None = None,
-    allow_all_imports: bool = False,
-    allowed_imports: frozenset[str] = frozenset(),
+    import_policy: ImportPolicy = DEFAULT_IMPORT_POLICY,
 ) -> list[CapabilityInventoryItem]:
     """Enumerate an agent's skills and capability tools with verbatim verdicts.
 
@@ -129,8 +131,7 @@ async def collect_capability_inventory(
         tofu=tofu,
         require_signature=require_signature,
         trusted_public_key=trusted_public_key,
-        allow_all_imports=allow_all_imports,
-        allowed_imports=allowed_imports,
+        import_policy=import_policy,
         # Task #39: this is a read-only scan over a throwaway registry — a
         # discovered @background_task must never actually start (its body
         # may depend on a live agent's module _runtime being configured).
@@ -173,8 +174,7 @@ class TrustPosture:
     tofu: TofuLayer
     require_signature: bool
     trusted_public_key: bytes | None
-    allow_all_imports: bool
-    allowed_imports: frozenset[str]
+    import_policy: ImportPolicy
 
 
 def resolve_trust_posture(
@@ -192,21 +192,20 @@ def resolve_trust_posture(
     caller supplies it because it lives with the identity, not the config.
     """
     tier = security.tier
-    allow_all_imports, allowed_imports = resolve_workspace_import_policy(
+    import_policy = resolve_workspace_import_policy(
         tier,
         allow_all_imports=capabilities.allow_all_imports,
         allow_imports=capabilities.allow_imports,
     )
     tofu = TofuLayer(
-        Tier(tier if tier in _KNOWN_TIERS else "personal"),
+        tier if tier in _KNOWN_TIERS else "personal",
         security.validators,
     )
     return TrustPosture(
         tofu=tofu,
         require_signature=tier in ("enterprise", "federal"),
         trusted_public_key=trusted_public_key,
-        allow_all_imports=allow_all_imports,
-        allowed_imports=allowed_imports,
+        import_policy=import_policy,
     )
 
 
@@ -269,8 +268,7 @@ async def collect_agent_capability_inventory(
         tofu=posture.tofu,
         require_signature=posture.require_signature,
         trusted_public_key=posture.trusted_public_key,
-        allow_all_imports=posture.allow_all_imports,
-        allowed_imports=posture.allowed_imports,
+        import_policy=posture.import_policy,
     )
     if live_agent is None:
         return AgentCapabilityInventory(items=items, runtime=False, runtime_tools=[])
@@ -318,13 +316,115 @@ def _resolve_pinned_key(config: Any, config_path: Path, live_agent: Any) -> byte
         return None
 
 
+# ---------------------------------------------------------------------------
+# Gated-capability listing — the arcui/CLI read seam for ``arc trust``.
+# Discovery (which capabilities did NOT load, and their current source hash)
+# lives here in arcagent because it drives the inventory; the APPROVAL of a
+# gated capability is a trust-store mutation owned by arctrust (``arctrust.approve``
+# / ``arctrust.disapprove``). A caller lists here, then approves via arctrust.
+# ---------------------------------------------------------------------------
+
+
+class GatedItem(BaseModel):
+    """One capability with its load verdict, as the trust surfaces present it.
+
+    Field order and names are the frozen ``/api/trust`` wire contract:
+    ``model_dump(mode="json")`` is the GatedItem the arcui frontend consumes.
+    ``path`` is the gated artifact (the ``.py`` for a tool, ``SKILL.md`` for a
+    skill); ``hash`` is the sha256 of that artifact's current bytes — the hash
+    an approval would pin.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    agent_id: str
+    agent_label: str
+    name: str
+    kind: str
+    status: str
+    path: str
+    hash: str
+    detail: str
+
+
+def read_capability_source(path: Path) -> str | None:
+    """Decode an artifact's bytes exactly as the loader does before hashing.
+
+    The loader hashes ``path.read_bytes().decode("utf-8")``; matching that byte
+    path is what makes an approval pin line up with a later load. Returns None
+    when the source cannot be read (a caller surfaces this rather than pinning
+    an empty hash).
+    """
+    try:
+        return path.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def pin_name_for(item: GatedItem) -> str:
+    """The name TofuLayer keys ``item`` on — NOT always its display name.
+
+    The loader gates a tool under its file stem and a skill under its FOLDER
+    name (``SKILL.md``'s parent), while a skill's displayed ``name`` is its
+    frontmatter name, which can differ. Deriving the pin name from the source
+    path keeps an approval aligned with what the loader will look up. Callers
+    pass this to ``arctrust.approve`` / ``arctrust.disapprove``.
+    """
+    source = Path(item.path)
+    if item.kind == "skill":
+        return source.parent.name
+    return source.stem
+
+
+async def list_gated(
+    agent_root: Path,
+    *,
+    agent_id: str = "",
+    agent_label: str = "",
+    global_root: Path | None = None,
+    include_loaded: bool = False,
+) -> list[GatedItem]:
+    """Enumerate ``agent_root``'s gated capabilities at its real trust posture.
+
+    Runs the capability inventory seam (the same one a real load uses) and
+    returns every item whose ``status`` is not ``"loaded"`` — i.e. refused,
+    awaiting approval, or errored. Pass ``include_loaded=True`` to return the
+    loaded ones too (a caller that shows the whole picture). Each item carries
+    the current sha256 of its source so a UI can show what a pin would fix.
+    """
+    config_path = agent_root / "arcagent.toml"
+    inventory = await collect_agent_capability_inventory(config_path, global_root=global_root)
+    gated: list[GatedItem] = []
+    for item in inventory.items:
+        if item.status == "loaded" and not include_loaded:
+            continue
+        source_text = read_capability_source(Path(item.source_path))
+        gated.append(
+            GatedItem(
+                agent_id=agent_id,
+                agent_label=agent_label or agent_id,
+                name=item.name,
+                kind=item.kind,
+                status=item.status,
+                path=item.source_path,
+                hash=hash_source(source_text) if source_text is not None else "",
+                detail=item.status_detail,
+            )
+        )
+    return gated
+
+
 __all__ = [
     "AgentCapabilityInventory",
     "CapabilityInventoryItem",
+    "GatedItem",
     "RuntimeToolItem",
     "TrustPosture",
     "append_capability_scan_roots",
     "collect_agent_capability_inventory",
     "collect_capability_inventory",
+    "list_gated",
+    "pin_name_for",
+    "read_capability_source",
     "resolve_trust_posture",
 ]

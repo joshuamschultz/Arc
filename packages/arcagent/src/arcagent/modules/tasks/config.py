@@ -6,7 +6,7 @@ Loaded from ``[modules.tasks.config]`` in arcagent.toml.
 
 from __future__ import annotations
 
-from arcagent.modules.base_config import ModuleConfig
+from arcagent.core.module_config import ModuleConfig
 
 
 class TasksConfig(ModuleConfig):

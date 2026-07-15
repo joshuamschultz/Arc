@@ -14,6 +14,6 @@ INFERENCE, existing infra owns persistence + audit. Zero ``arcagent/core`` LOC.
 
 from __future__ import annotations
 
-from arcagent.modules.planning._runtime import PlanningConfig
+from arcagent.modules.planning.config import PlanningConfig
 
 __all__ = ["PlanningConfig"]

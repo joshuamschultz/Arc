@@ -7,6 +7,7 @@ boundary (D-400), deep/debounced split (D-396/024), append-only transform_contex
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -36,6 +37,48 @@ def _sm(workspace: Path, context_manager: Any) -> SessionManager:
         workspace=workspace,
         context_manager=context_manager,
     )
+
+
+# --- Fail-open: a hung compaction must be skipped, never wedge the turn ------
+
+
+class TestCompactionTimeout:
+    async def test_hung_summarizer_skips_compaction_fail_open(self, tmp_path: Path) -> None:
+        """A summarizer LLM call that exceeds ``compaction_timeout_seconds`` is
+        abandoned and compaction is skipped: the message list is left intact and
+        a ``context.compaction_skipped`` audit event is emitted. Compaction is
+        best-effort — a hung provider must not wedge the turn (or drop its reply).
+        """
+        cm = ContextManager(
+            config=ContextConfig(max_tokens=400, estimate_multiplier=1.0),
+            telemetry=_telemetry(),
+        )
+        tel = _telemetry()
+        sm = SessionManager(
+            config=SessionConfig(compaction_timeout_seconds=0.01),
+            context_config=ContextConfig(max_tokens=400, estimate_multiplier=1.0),
+            telemetry=tel,
+            workspace=tmp_path,
+            context_manager=cm,
+        )
+        await sm.create_session()
+        for _ in range(8):
+            await sm.append_message({"role": "user", "content": "x" * 200})
+        before = sm.get_messages()
+
+        async def _hang(*_a: Any, **_k: Any) -> Any:
+            await asyncio.sleep(3)
+
+        model = MagicMock()
+        model.invoke = _hang
+
+        await sm.compact(model)
+
+        after = sm.get_messages()
+        assert after == before  # untouched — no summary entry prepended
+        assert after[0].get("type") != "compaction_summary"
+        skipped = [c for c in tel.audit_event.call_args_list if c.args[0] == "context.compaction_skipped"]
+        assert len(skipped) == 1
 
 
 # --- D-398: transform_context is append-only ------------------------------

@@ -17,7 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 from arctrust import AgentIdentity
 
-from arcagent.modules.messaging import _bootstrap, _runtime
+from arcagent.core import arcteam_bootstrap as _bootstrap
+from arcagent.modules.messaging import _runtime
 from arcagent.modules.messaging.capabilities import (
     list_team_files,
     messaging_check_inbox,
@@ -34,7 +35,7 @@ from tests.unit.modules.messaging.conftest import (
 
 
 @pytest.fixture
-async def messaging_state(tmp_path: Path) -> AsyncIterator[object]:
+async def messaging_state(tmp_path: Path) -> AsyncIterator[_runtime._State]:
     """Bootstrap the live runtime and yield the configured state."""
     _runtime.reset()
     config = make_config_dict(
@@ -70,7 +71,7 @@ async def messaging_state(tmp_path: Path) -> AsyncIterator[object]:
 
 class TestSendTool:
     @pytest.mark.asyncio
-    async def test_send_to_another_agent(self, messaging_state) -> None:
+    async def test_send_to_another_agent(self, messaging_state: _runtime._State) -> None:
         st = messaging_state
         await st.registry.register(make_peer_entity("brad", "Brad", roles=["executor"]))
 
@@ -81,7 +82,7 @@ class TestSendTool:
         assert "thread_id" in data
 
     @pytest.mark.asyncio
-    async def test_send_no_recipient_errors(self, messaging_state) -> None:
+    async def test_send_no_recipient_errors(self, messaging_state: _runtime._State) -> None:
         result = await messaging_send(to="", body="hello")
         data = json.loads(result)
         assert "error" in data
@@ -89,13 +90,13 @@ class TestSendTool:
 
 class TestCheckInboxTool:
     @pytest.mark.asyncio
-    async def test_empty_inbox(self, messaging_state) -> None:
+    async def test_empty_inbox(self, messaging_state: _runtime._State) -> None:
         result = await messaging_check_inbox()
         data = json.loads(result)
         assert data["unread"] == 0
 
     @pytest.mark.asyncio
-    async def test_inbox_with_message(self, messaging_state) -> None:
+    async def test_inbox_with_message(self, messaging_state: _runtime._State) -> None:
         st = messaging_state
         from arcteam.types import Message
 
@@ -115,7 +116,7 @@ class TestCheckInboxTool:
 
 class TestCheckInboxThreadContext:
     @pytest.mark.asyncio
-    async def test_reply_includes_thread_context(self, messaging_state) -> None:
+    async def test_reply_includes_thread_context(self, messaging_state: _runtime._State) -> None:
         """When a reply arrives, check_inbox includes prior thread messages."""
         st = messaging_state
         from arcteam.types import Message
@@ -172,7 +173,7 @@ class TestCheckInboxThreadContext:
         assert "agent://alice" in senders
 
     @pytest.mark.asyncio
-    async def test_no_thread_context_for_new_messages(self, messaging_state) -> None:
+    async def test_no_thread_context_for_new_messages(self, messaging_state: _runtime._State) -> None:
         """New messages (thread_id == id) don't include thread_context."""
         st = messaging_state
         from arcteam.types import Message
@@ -195,7 +196,7 @@ class TestCheckInboxThreadContext:
 
 class TestListEntitiesTool:
     @pytest.mark.asyncio
-    async def test_list_entities(self, messaging_state) -> None:
+    async def test_list_entities(self, messaging_state: _runtime._State) -> None:
         result = await messaging_list_entities()
         data = json.loads(result)
         # At least our own agent should be registered.
@@ -206,13 +207,13 @@ class TestListEntitiesTool:
 
 class TestListChannelsTool:
     @pytest.mark.asyncio
-    async def test_list_channels_empty(self, messaging_state) -> None:
+    async def test_list_channels_empty(self, messaging_state: _runtime._State) -> None:
         result = await messaging_list_channels()
         data = json.loads(result)
         assert data == []
 
     @pytest.mark.asyncio
-    async def test_list_channels_after_create(self, messaging_state) -> None:
+    async def test_list_channels_after_create(self, messaging_state: _runtime._State) -> None:
         st = messaging_state
         from arcteam.types import Channel
 
@@ -232,7 +233,7 @@ class TestListChannelsTool:
 
 class TestTeamFileTools:
     @pytest.mark.asyncio
-    async def test_store_then_list_team_file(self, messaging_state, tmp_path: Path) -> None:
+    async def test_store_then_list_team_file(self, messaging_state: _runtime._State, tmp_path: Path) -> None:
         """store_team_file shares a file that list_team_files then reports."""
         source = tmp_path / "artifact.txt"
         source.write_text("shared payload")
@@ -246,7 +247,7 @@ class TestTeamFileTools:
         assert "artifact.txt" in filenames
 
     @pytest.mark.asyncio
-    async def test_store_team_file_missing_source_errors(self, messaging_state) -> None:
+    async def test_store_team_file_missing_source_errors(self, messaging_state: _runtime._State) -> None:
         result = await store_team_file(file_path="/nonexistent/nope.txt")
         data = json.loads(result)
         assert "error" in data

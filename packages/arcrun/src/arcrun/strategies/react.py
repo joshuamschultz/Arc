@@ -388,7 +388,10 @@ def _halt_on_breach(state: RunState, reason: BudgetBreachReason) -> LoopResult:
         "loop.completed",
         {"reason": reason, "cost_usd": state.cost_usd, "tokens": state.tokens_used.copy()},
     )
-    return _build_result(state, None)
+    # Surface the breach summary as the loop's own final text so every content
+    # consumer (CLI, gateway, tracked-run finalizer) has user-visible words. The
+    # structured reason still rides completion_payload["error"] for detection.
+    return _build_result(state, state.completion_payload["summary"])
 
 
 def _extract_completion_payload(

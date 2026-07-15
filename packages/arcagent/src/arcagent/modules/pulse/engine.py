@@ -18,7 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from arcagent.modules.pulse import PulseCheck, PulseCheckState, PulseConfig, PulseState
+from arcagent.modules.pulse import PulseCheck, PulseCheckState, PulseState
+from arcagent.modules.pulse.config import PulseConfig
 
 if TYPE_CHECKING:
     from arcagent.core.module_bus import ModuleBus

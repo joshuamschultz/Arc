@@ -20,8 +20,8 @@ from arcagent.utils.text import split_message, user_facing_error
 
 if TYPE_CHECKING:
     from arcagent.core.telemetry import AgentTelemetry
-    from arcagent.modules.file_handler import FileHandler
     from arcagent.modules.telegram.config import TelegramConfig
+    from arcagent.utils.file_handler import FileHandler
 
 _logger = logging.getLogger("arcagent.telegram.bot")
 
@@ -73,7 +73,7 @@ class TelegramBot:
     def _init_file_handler(self) -> None:
         """Initialize the shared FileHandler for file downloads."""
         try:
-            from arcagent.modules.file_handler import FileHandler
+            from arcagent.utils.file_handler import FileHandler
 
             max_bytes = self._config.max_file_size_mb * 1024 * 1024
             self._file_handler = FileHandler(

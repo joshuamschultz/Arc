@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 
 from arcstore.approvals import ApprovalStore
-from arctrust import OperatorKey
+from arctrust import OperatorKey, default_operator_key_path
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -49,10 +49,7 @@ def _operator_authority() -> OperatorApprovalAuthority:
     Read-only load — never bootstraps a key here (an unpinned operator is no
     operator); a missing key raises and the caller fails the approve with 500.
     """
-    from arcagent.core.config import _user_config_root
-
-    key_path = _user_config_root() / "operator" / "operator.key"
-    signer = OperatorKey.load(key_path, generate_if_absent=False).into_signer()
+    signer = OperatorKey.load(default_operator_key_path(), generate_if_absent=False).into_signer()
     return OperatorApprovalAuthority(signer)
 
 

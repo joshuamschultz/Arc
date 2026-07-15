@@ -11,7 +11,7 @@ credential to cross in the first place. It only tells the caller where the
 OPERATOR should place the credential, per deployment tier, so the model
 can relay clear instructions instead of writing anything itself.
 
-Design gap (reported, not solved here): :class:`~arcagent.modules.vault.
+Design gap (reported, not solved here): :class:`~arcagent.core.vault.
 protocol.VaultBackend` defines only ``get_secret`` — no write/``set_secret``
 path exists on ANY backend (file/env/azure). A true "agent programmatically
 provisions a vault secret" flow needs that Protocol extended and every

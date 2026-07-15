@@ -14,7 +14,7 @@ Covers:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from arcgateway.delivery import DeliveryTarget
@@ -26,7 +26,9 @@ from arcgateway.stream_bridge import FLOOD_STRIKE_LIMIT, StreamBridge
 # ---------------------------------------------------------------------------
 
 
-def _delta(content: str, kind: str = "token", is_final: bool = False) -> Delta:
+def _delta(
+    content: str, kind: Literal["token", "tool_call", "done"] = "token", is_final: bool = False
+) -> Delta:
     return Delta(kind=kind, content=content, is_final=is_final)
 
 
@@ -246,6 +248,30 @@ async def test_message_sent_still_emitted() -> None:
         await bridge.consume(_stream(*tokens), target, adapter)
 
     assert "gateway.message.sent" in audit_events
+
+
+# ---------------------------------------------------------------------------
+# A breach summary (non-empty final) must reach the user
+# ---------------------------------------------------------------------------
+
+
+async def test_breach_summary_is_delivered() -> None:
+    """A circuit-breaker breach surfaces a non-empty final summary that must be
+    delivered — not dropped as if it were a blank turn. Locks the end-to-end
+    contract that a max_turns/budget halt reaches the user."""
+    bridge = StreamBridge()
+    adapter = _make_adapter()
+    target = _target()
+
+    summary = "Turn limit reached before task completed."
+    tokens = [_delta(summary), _delta("", is_final=True)]
+
+    with patch("arcgateway.stream_bridge._audit"):
+        await bridge.consume(_stream(*tokens), target, adapter)
+
+    adapter.send.assert_not_called()
+    adapter.edit_message.assert_awaited()
+    assert adapter.edit_message.await_args.args[2] == summary
 
 
 # ---------------------------------------------------------------------------

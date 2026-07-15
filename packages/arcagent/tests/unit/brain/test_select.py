@@ -1,22 +1,28 @@
-"""Brain selection — BYO class-path sign/allowlist gate (F3) + distiller budget wiring.
+"""Brain selection — the generic, backend-agnostic seam (SPEC-041 / SPEC-047).
 
-``select_brain`` must never import an arbitrary config-supplied dotted class-path above
-the personal tier (ASI04 / the Sign pillar): a BYO Brain is arbitrary code executed at
-startup, so at enterprise/federal it is refused unless operator-allowlisted — fail-closed,
-never imported. Personal may allow it (documented). Separately, the arcllm-backed distiller
-must ride the SPEC-038 telemetry/budget just like the embedder, so a runaway consolidation
-cannot make an unbounded distillation call (LLM10).
+arcagent names no memory backend. ``select_brain`` resolves ``[modules.memory] brain``
+generically:
+
+* a bare backend name → that package's ``build_brain(context)`` entrypoint (ungated,
+  degrade-to-NullBrain-with-a-warning if the package is absent);
+* a ``module:Class`` path → BYO, which must NEVER be imported above the personal tier
+  unless operator-allowlisted (ASI04 / the Sign pillar) — importing an unverified
+  class-path at startup is arbitrary code execution.
+
+The arcmemory-specific *construction* wiring (embedder / distiller / loop-model /
+dynamics) lives in ``arcmemory.build_brain`` and is tested in arcmemory, not here.
 """
 
 from __future__ import annotations
 
+import importlib
+import logging
 import types
 from pathlib import Path
 
 import pytest
 
-from arcagent.brain import select
-from arcagent.extension import select as ext_select
+from arcagent.brain import NullBrain, select, select_brain
 
 
 class _FakeBrain:
@@ -37,95 +43,55 @@ def _patch_import(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         calls["imports"] += 1
         return mod
 
-    # SPEC-047: the dotted-path import now lives in the shared select_extension
-    # mechanism, so the BYO import is intercepted at arcagent.extension.select.
-    monkeypatch.setattr(ext_select.importlib, "import_module", fake_import)
+    # SPEC-047: the dotted-path import lives in the shared select_extension mechanism.
+    monkeypatch.setattr(importlib, "import_module", fake_import)
     return calls
 
 
 _PATH = "byo_brain_mod:_FakeBrain"
 
 
-def test_arcmemory_brain_receives_model_identity_and_pipeline(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Producer wiring (guards the producers-unwired trap): agentic consolidation is
-    DEAD (model=None -> always degrades to pipeline) and memory writes are UNSIGNED
-    unless select_brain threads model + identity + policy_pipeline into ArcMemoryBrain.
-    """
-    import arcllm
+# -- generic provider path (arcmemory resolves through it, un-named in source) ----------
+
+
+def test_named_backend_resolves_via_build_brain(tmp_path: Path) -> None:
+    """``brain="arcmemory"`` is the generic provider path — arcagent imports the named
+    package and calls its ``build_brain``; arcmemory is installed here, so a real Brain
+    (never a NullBrain) comes back, with no arcmemory symbol named in arcagent source."""
     import arcmemory
 
-    recorded: dict[str, object] = {}
-
-    class _SpyBrain:
-        def __init__(self, _workspace: Path, _agent_did: str, **kw: object) -> None:
-            recorded.update(kw)
-
-        async def capture(self, *_a: object, **_k: object) -> None: ...
-        async def retrieve(self, *_a: object, **_k: object) -> str:
-            return ""
-
-        async def consolidate(self, **_k: object) -> dict[str, object]:
-            return {}
-
-        async def rebuild_index(self, **_k: object) -> None: ...
-
-    monkeypatch.setattr(arcmemory, "ArcMemoryBrain", _SpyBrain)
-    monkeypatch.setattr(arcllm, "load_model", lambda *_a, **_k: "MODEL")
-    ident, pipe = object(), object()
-
-    select.select_brain(
+    brain = select_brain(
         "arcmemory",
         workspace=tmp_path,
         agent_did="did:arc:a",
         tier="personal",
-        embed_backend="none",
-        distill_provider="anthropic",
-        distill_model="claude",
-        identity=ident,
-        policy_pipeline=pipe,
+        backend_config={"embed_backend": "none"},
     )
-
-    assert recorded["model"] == "MODEL"  # agentic loop can actually run
-    assert recorded["identity"] is ident  # memory writes are signed
-    assert recorded["policy_pipeline"] is pipe  # memory writes are authorized
+    assert isinstance(brain, arcmemory.ArcMemoryBrain)
 
 
-def test_memory_dynamics_override_reaches_arcmemory_config(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_uninstalled_backend_degrades_to_nullbrain(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Toml `[modules.memory.dynamics]` overrides must reach arcmemory's MemoryConfig
-    (otherwise its dynamics knobs stay tier-locked and untunable from the toml)."""
-    import arcmemory
+    """A named backend that is not installed degrades to NullBrain WITH a warning — the
+    agent still boots (REQ-005)."""
+    with caplog.at_level(logging.WARNING, logger="arcagent.brain.select"):
+        brain = select_brain(
+            "no_such_memory_pkg",
+            workspace=tmp_path,
+            agent_did="did:arc:a",
+            tier="personal",
+        )
+    assert isinstance(brain, NullBrain)
+    assert caplog.records, "an uninstalled backend must warn as it degrades"
 
-    recorded: dict[str, object] = {}
 
-    class _SpyBrain:
-        def __init__(self, _workspace: Path, _agent_did: str, *, config: object = None, **_k: object) -> None:
-            recorded["config"] = config
+def test_none_selects_nullbrain(tmp_path: Path) -> None:
+    brain = select_brain("none", workspace=tmp_path, agent_did="did:arc:a")
+    assert isinstance(brain, NullBrain)
 
-        async def capture(self, *_a: object, **_k: object) -> None: ...
-        async def retrieve(self, *_a: object, **_k: object) -> str:
-            return ""
 
-        async def consolidate(self, **_k: object) -> dict[str, object]:
-            return {}
-
-        async def rebuild_index(self, **_k: object) -> None: ...
-
-    monkeypatch.setattr(arcmemory, "ArcMemoryBrain", _SpyBrain)
-
-    select.select_brain(
-        "arcmemory",
-        workspace=tmp_path,
-        agent_did="did:arc:a",
-        tier="personal",
-        embed_backend="none",
-        memory_dynamics={"entity_merge_candidate_threshold": 0.55},
-    )
-    cfg = recorded["config"]
-    assert cfg.entity_merge_candidate_threshold == 0.55  # type: ignore[attr-defined]
+# -- BYO class-path sign/allowlist gate (unchanged security invariant) ------------------
 
 
 def test_byo_class_path_allowed_at_personal(
@@ -166,40 +132,3 @@ def test_byo_class_path_allowed_at_federal_when_allowlisted(
         brain_allowlist=(_PATH,),
     )
     assert isinstance(brain, _FakeBrain)  # allowlisted -> imported + instantiated
-
-
-# -- distiller rides the SPEC-038 telemetry/budget --------------------------
-
-
-def test_distiller_provider_is_built_with_budget_telemetry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The distiller's per-run provider must be loaded WITH telemetry (budget-wrapped)."""
-    import arcllm
-    import arcmemory
-
-    captured: dict[str, object] = {}
-
-    class _Ctx:
-        async def __aenter__(self) -> object:
-            return object()
-
-        async def __aexit__(self, *exc: object) -> None:
-            return None
-
-    def fake_load_model(provider: str, model: object = None, **kwargs: object) -> _Ctx:
-        captured["provider"] = provider
-        captured["telemetry"] = kwargs.get("telemetry")
-        return _Ctx()
-
-    monkeypatch.setattr(arcllm, "load_model", fake_load_model)
-
-    distiller = select._build_distiller(arcmemory, "anthropic", "", "did:arc:agent")
-    assert distiller is not None
-    # Open the per-run provider the way consolidation would.
-    distiller._provider_factory()  # type: ignore[attr-defined]
-
-    telemetry = captured["telemetry"]
-    assert isinstance(telemetry, dict) and telemetry.get("agent_did") == "did:arc:agent", (
-        "consolidation LLM calls must ride the SPEC-038 telemetry/budget"
-    )

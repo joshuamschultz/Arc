@@ -14,18 +14,13 @@ a shared, typed vocabulary so tier branches are always ``if policy.tier ==
 Tier.FEDERAL`` rather than ``if tier == "federal"`` strings scattered through
 business logic.
 
-Usage example (core/tofu_layer.py)::
+Usage example::
 
     from arcagent.core.tier import Tier
 
-    class TofuLayer:
-        def __init__(self, tier: Tier, validators: ValidatorsConfig) -> None:
-            self._tier = tier
+    def resolve(context: PolicyContext) -> str:
+        if context.tier == Tier.FEDERAL:
             ...
-
-        def evaluate(self, target: CapabilitySource) -> Decision:
-            if self._tier == Tier.FEDERAL:
-                ...
 """
 
 from __future__ import annotations

@@ -44,12 +44,12 @@ def test_select_one_none_is_available_signed_na() -> None:
     assert brain.signed == "n/a"
 
 
-def test_select_one_builtin_reports_available() -> None:
+def test_select_one_provider_reports_available() -> None:
     rows = inspect_extensions(_config(modules={"memory": {"brain": "arcmemory"}}))
     brain = next(r for r in rows if r.family == "brain")
     assert brain.selected == "arcmemory"
     assert brain.available is True  # arcmemory is installed in this repo
-    assert brain.signed == "builtin"
+    assert brain.signed == "provider"
 
 
 def test_select_one_byo_refused_above_personal_without_allowlist() -> None:

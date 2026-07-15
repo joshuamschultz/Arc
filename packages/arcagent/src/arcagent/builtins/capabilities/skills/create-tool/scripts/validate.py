@@ -29,6 +29,11 @@ def main() -> int:
         AstValidator,
     )
 
+    # Standalone CLI subprocess: it has no access to the in-agent runtime's
+    # tier-resolved import policy (a ContextVar in the agent process), so it
+    # validates against the fail-closed enterprise default. That is the correct
+    # conservative pre-check — a source that passes here still faces the agent's
+    # real (possibly stricter federal) policy inside create_tool.
     try:
         AstValidator().validate(source)
     except ASTValidationError as exc:

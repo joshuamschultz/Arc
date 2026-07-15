@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from conftest import LLMResponse, Message, MockModel, ToolCall
 
@@ -13,11 +15,11 @@ from arcrun.strategies.react import check_breaker, react_loop
 from arcrun.types import Tool
 
 
-async def _echo(params: dict, ctx: object) -> str:
+async def _echo(params: dict[str, Any], ctx: object) -> str:
     return "ok"
 
 
-async def _boom(params: dict, ctx: object) -> str:
+async def _boom(params: dict[str, Any], ctx: object) -> str:
     raise ValueError("boom")
 
 
@@ -51,7 +53,7 @@ def _state(bus: EventBus, **kw: object) -> RunState:
     return state
 
 
-def _repeat(name: str, args: dict, n: int) -> list[LLMResponse]:
+def _repeat(name: str, args: dict[str, Any], n: int) -> list[LLMResponse]:
     return [
         LLMResponse(
             tool_calls=[ToolCall(id=f"c{i}", name=name, arguments=args)],
@@ -118,6 +120,25 @@ class TestRunawayLoop:
         result = await react_loop(model, state, sandbox, max_turns=25)
         assert result.content == "done"
         assert result.completion_payload is None
+
+
+class TestBreachSurfacesSummary:
+    @pytest.mark.asyncio
+    async def test_max_turns_breach_returns_summary_as_content(self) -> None:
+        """A max_turns halt surfaces the breach summary as ``result.content``.
+
+        Downstream consumers (CLI, gateway) key off ``content``/``final_text``, so
+        a None content leaves the user with nothing. The structured reason stays
+        in ``completion_payload["error"]`` for detection — the two must coexist.
+        """
+        bus = EventBus(run_id="t")
+        state = _state(bus)
+        model = MockModel(_repeat("echo", {"input": "x"}, 5))
+        sandbox = Sandbox(config=None, event_bus=bus)
+        result = await react_loop(model, state, sandbox, max_turns=1)
+        assert result.content == "Turn limit reached before task completed."
+        assert result.completion_payload is not None
+        assert result.completion_payload["error"] == "max_turns"
 
 
 class TestErrorCascade:

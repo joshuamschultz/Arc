@@ -32,6 +32,7 @@ dependencies = [
     "arctrust>=0.1",
     "arcui>=0.1",
     "pyyaml>=6.0,<7",
+    "tomlkit>=0.12",
     "websockets>=13.0,<16",
     "croniter>=2.0,<7",
     "aiorwlock>=1.4,<2",

@@ -11,7 +11,7 @@ These tests pin the contract that matters for REQ-093/094:
   * a signed workspace skill loads, an unsigned one is TOFU-denied, and a
     malformed one is invalid;
   * the ``status`` string is exactly what the loader recorded — for the
-    denial it must equal :data:`Decision.DENY` verbatim, proving the seam
+    denial it must equal :data:`TofuDecision.DENY` verbatim, proving the seam
     invents no status literals of its own.
 """
 
@@ -20,13 +20,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from arctrust import TofuDecision, TofuLayer, ValidatorsConfig
 from arctrust.identity import AgentIdentity
 
 from arcagent.capabilities import artifact_signing
 from arcagent.capabilities.inventory import CapabilityInventoryItem, collect_capability_inventory
-from arcagent.core.config import ValidatorsConfig
 from arcagent.core.tier import Tier
-from arcagent.core.tofu_layer import Decision, TofuLayer
 
 _VALID_SKILL = (
     "---\n"
@@ -141,7 +140,7 @@ class TestCollectCapabilityInventoryDoesNotSpawnBackgroundTasks:
             real_init(self, **kwargs)  # type: ignore[arg-type]
 
         class _SpyLoader(CapabilityLoader):
-            __init__ = _spy_init  # type: ignore[assignment]
+            __init__ = _spy_init
 
         monkeypatch.setattr(inventory_mod, "CapabilityLoader", _SpyLoader)
 
@@ -207,7 +206,7 @@ class TestCapabilityInventory:
         items = await self._collect(agent_tree, identity)
         item = _by_name(items)["authored-unsigned"]
         assert item.source_root == "workspace-skills"
-        assert item.status == Decision.DENY.value
+        assert item.status == TofuDecision.DENY.value
 
     async def test_signed_workspace_skill_loads_with_metadata(
         self, agent_tree: dict[str, Path]
@@ -233,7 +232,7 @@ class TestCapabilityInventory:
         item = _by_name(items)["ws-unsigned"]
         assert item.source_root == "workspace"
         # The status is the TofuLayer verdict, not a seam-side literal.
-        assert item.status == Decision.DENY.value
+        assert item.status == TofuDecision.DENY.value
 
     async def test_invalid_workspace_skill_reported_invalid(
         self, agent_tree: dict[str, Path]

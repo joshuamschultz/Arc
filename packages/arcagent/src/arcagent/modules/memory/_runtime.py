@@ -18,9 +18,9 @@ context-copy on task creation captures this agent's state into the
 consolidation loop's own isolated context for its whole lifetime, with no
 ``contextvars.copy_context()`` special-casing needed.
 
-Mirrors :mod:`arcagent.modules.memory_acl._runtime`. When the selected brain is a
-:class:`~arcagent.brain.NullBrain`, ``active`` is ``False`` and every hook
-short-circuits — memory is a truly silent no-op (no events, no files).
+When the selected brain is a :class:`~arcagent.brain.NullBrain`, ``active`` is
+``False`` and every hook short-circuits — memory is a truly silent no-op (no
+events, no files).
 """
 
 from __future__ import annotations
@@ -90,14 +90,10 @@ def configure(
         workspace=ws,
         agent_did=agent_did,
         tier=cfg.tier,
-        embed_backend=cfg.embed_backend,
-        embed_model=cfg.embed_model,
-        distill_provider=cfg.distill_provider,
-        distill_model=cfg.distill_model,
         brain_allowlist=tuple(cfg.brain_allowlist),
         identity=identity,
         policy_pipeline=policy_pipeline,
-        memory_dynamics=dict(cfg.dynamics),
+        backend_config=dict(cfg.backend),
     )
     new_state = _State(
         config=cfg,

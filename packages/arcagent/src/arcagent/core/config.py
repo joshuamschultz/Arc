@@ -37,6 +37,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from arctrust import ValidatorsConfig, arc_home
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from arcagent.core.errors import ConfigError
@@ -262,6 +263,11 @@ class SessionConfig(BaseModel):
     retention_count: int = 50  # Keep last N sessions
     retention_days: int = 30  # Or sessions from last N days
     compaction_summary_max_chars: int = 2000
+    # Wall-clock cap on the post-turn compaction summarizer LLM call. Compaction
+    # is best-effort: a hung provider must never wedge the turn, so on timeout it
+    # is skipped (messages left intact) rather than awaited forever. "Timeouts on
+    # everything external" (CLAUDE.md).
+    compaction_timeout_seconds: float = Field(default=30.0, gt=0)
 
 
 class TeamSection(BaseModel):
@@ -318,45 +324,6 @@ class SpawnConfig(BaseModel):
             "set, each spawned child's tokens debit this pool; once exhausted, "
             "further spawns are refused. None leaves the pool uncapped."
         ),
-    )
-
-
-class ValidatorEntry(BaseModel):
-    """A single TOFU-approved validator script (R-042 / R-043).
-
-    Persisted under ``[[security.validators.approved]]`` in
-    ``arcagent.toml``. Written only by the human user via
-    ``arc trust approve`` — the agent has no write access.
-
-    ``hash`` is the sha256 digest of the validator source body, prefixed
-    ``sha256:``. ``timestamp`` is RFC3339 UTC.
-    """
-
-    name: str = Field(description="Validator script logical name")
-    hash: str = Field(description="sha256:<digest> of approved source")
-    approver: str = Field(description="Identity that approved (email or DID)")
-    timestamp: str = Field(description="RFC3339 UTC timestamp of approval")
-
-
-class ValidatorsConfig(BaseModel):
-    """``[security.validators]`` block — TOFU policy state.
-
-    Lives at agent-root, never inside workspace (R-043). Default is
-    federal-safe: ``auto_run_agent_code = False`` and zero approved
-    entries. Personal-tier templates seed it to ``True``; enterprise +
-    federal templates leave it ``False``.
-    """
-
-    auto_run_agent_code: bool = Field(
-        default=False,
-        description=(
-            "Personal tier only — auto-run agent-authored Python after "
-            "AST validation. Enterprise/federal must approve via TOFU."
-        ),
-    )
-    approved: tuple[ValidatorEntry, ...] = Field(
-        default=(),
-        description="Persisted TOFU approvals; appended by `arc trust approve`",
     )
 
 
@@ -525,14 +492,20 @@ class CapabilitiesConfig(BaseModel):
     workspace capability validation.
 
     Agent-authored tools under ``<workspace>/capabilities/`` pass an AST gate
-    that blocks privileged imports (``sys``, ``os``, ``subprocess``, ...). These
-    knobs permit specific imports WITHOUT moving the tool out of the protected
-    workspace root. They are tier-gated (resolved in
-    ``arcagent.tools._dynamic_loader.resolve_workspace_import_policy``):
+    whose module-import rule is tier-resolved into one
+    ``arcagent.tools._dynamic_loader.ImportPolicy`` (via
+    ``resolve_workspace_import_policy``), shared by the authoring gate
+    (``create_tool``/``update_tool``) and the load gate (``CapabilityLoader``):
 
-    - personal:   all imports allowed (this block is moot — everything passes).
-    - enterprise: deny by default; opt in via ``allow_all_imports`` OR ``allow_imports``.
-    - federal:    deny by default; ONLY ``allow_imports`` is honored;
+    - personal:   allow-all — every import passes (this block is moot).
+    - enterprise: blocklist — allow most, block four privileged groups
+                  (filesystem: os/shutil/pathlib/tempfile/glob; process/exec:
+                  subprocess/multiprocessing; interpreter: sys/ctypes/importlib/
+                  pickle/marshal/shelve; network: socket/urllib/http/requests/
+                  httpx). ``allow_imports`` entries are subtracted as exceptions;
+                  ``allow_all_imports=True`` is honored as a blanket opt-out.
+    - federal:    pure allowlist (deny by default) — ONLY ``allow_imports`` (plus
+                  the always-allowed seed ``__future__``/``arcagent``) passes;
                   ``allow_all_imports`` is IGNORED (no blanket relaxation).
 
     Sandbox-escape protections (eval/exec, frame/class traversal) are always
@@ -550,7 +523,8 @@ class CapabilitiesConfig(BaseModel):
         default_factory=list,
         description=(
             "Specific otherwise-blocked modules to permit in workspace-authored "
-            "tools (e.g. ['sys', 'subprocess']). Honored at enterprise + federal."
+            "tools (e.g. ['sys', 'subprocess']). At enterprise these are exceptions "
+            "subtracted from the blocklist; at federal they are the allowlist itself."
         ),
     )
 
@@ -689,9 +663,13 @@ _PACKAGED_LLM_DEFAULTS: dict[str, Any] = {"llm": {"model": DEFAULT_MODEL}}
 
 
 def _user_config_root() -> Path:
-    """Return the user-wide config dir: ${ARC_CONFIG_DIR:-~/.arc}."""
-    base = os.environ.get("ARC_CONFIG_DIR")
-    return Path(base).expanduser() if base else Path.home() / ".arc"
+    """Return the user-wide config dir: ${ARC_CONFIG_DIR:-~/.arc}.
+
+    Delegates to :func:`arctrust.arc_home` — the single source of truth for the
+    Arc config root, shared with arcui and the CLI so the env override resolves
+    identically everywhere.
+    """
+    return arc_home()
 
 
 def _sibling_chain(filename: str, agent_dir: Path) -> dict[str, Any]:

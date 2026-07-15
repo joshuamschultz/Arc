@@ -180,13 +180,13 @@ async def _build_live_services(
     authority, never an ephemeral key — or the record is repudiable and no
     verifier can validate the chain (SEC-F1, AU-9/10). The messenger signs
     outbound notifications with the agent's own identity (REQ-030), mirroring
-    the messaging module's ``_bootstrap.message_signer``.
+    the shared ``arcteam_bootstrap.message_signer``.
     """
     from arcteam.audit import AuditLogger
     from arcteam.messenger import MessagingService
     from arcteam.registry import EntityRegistry
 
-    from arcagent.modules.messaging._bootstrap import make_backend, message_signer
+    from arcagent.core.arcteam_bootstrap import make_backend, message_signer
 
     backend = await make_backend(nats_url)
     audit = AuditLogger(backend, operator_signer)

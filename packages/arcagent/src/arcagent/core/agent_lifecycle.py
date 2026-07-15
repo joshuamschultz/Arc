@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
+from arcagent.core.module_discovery import active_modules, module_statuses
 from arcagent.core.tool_registry import RegisteredTool, ToolTransport
 from arcagent.tools._egress_build import build_egress_proxy
 
@@ -32,11 +33,6 @@ if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
-
-# SPEC-053/037 — modules that construct an operator-signed WORM audit sink and so
-# receive the config-RESOLVED operator Signer (same custody + algorithm as the
-# policy chain). No other module is handed it, and none is handed the raw seed.
-_WORM_SINK_MODULE_NAMES = frozenset({"skills", "messaging", "planning", "tasks"})
 
 # Per D-346/D-347 — short skill-usage instruction injected at priority 91.
 _SKILL_USAGE_INSTRUCTION = (
@@ -126,12 +122,8 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     append_capability_scan_roots(scan_roots, "workspace", workspace / "capabilities")
 
     modules_dir = Path(__file__).parent.parent / "modules"
-    for mod_name, mod_entry in agent._config.modules.items():
-        if not mod_entry.enabled:
-            continue
-        mod_dir = modules_dir / mod_name
-        if (mod_dir / "capabilities.py").is_file():
-            scan_roots.append((f"module:{mod_name}", mod_dir))
+    for mod_name in active_modules(agent._config):
+        scan_roots.append((f"module:{mod_name}", modules_dir / mod_name))
 
     # SPEC-033 Sign gate: re-verify signatures at load and adjudicate via TOFU.
     # Signature is the floor above personal; personal may relax (auto_run). The
@@ -150,8 +142,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         scan_roots=scan_roots,
         registry=agent._capability_registry,
         bus=bus,
-        allow_all_imports=posture.allow_all_imports,
-        allowed_imports=posture.allowed_imports,
+        import_policy=posture.import_policy,
         tofu=posture.tofu,
         require_signature=posture.require_signature,
         trusted_public_key=posture.trusted_public_key,
@@ -166,6 +157,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         audit_sink=protected_audit,
         egress_proxy=egress_proxy,
         tier=agent._config.security.tier,
+        import_policy=posture.import_policy,
     )
     # Task 27 follow-up (hotfix) — this is the FINAL builtin_runtime.configure()
     # call, so its snapshot is the one every turn must rebind.
@@ -200,17 +192,21 @@ def configure_module_runtimes(
     llm_config = agent._config.llm
     eval_config = agent._config.eval
 
-    for mod_name, mod_entry in agent._config.modules.items():
-        if not mod_entry.enabled:
-            continue
-        try:
-            runtime_mod = importlib.import_module(f"arcagent.modules.{mod_name}._runtime")
-        except ImportError:
-            continue
+    _warn_config_without_folder(agent)
+
+    for mod_name in active_modules(agent._config):
+        mod_entry = agent._config.modules[mod_name]
+        runtime_mod = importlib.import_module(f"arcagent.modules.{mod_name}._runtime")
         configure_fn = getattr(runtime_mod, "configure", None)
         if configure_fn is None:
             continue
 
+        # SPEC-053/037 — the resolved operator Signer is offered to EVERY module,
+        # but delivered only by signature: a module receives it iff its
+        # ``configure()`` declares an ``operator_signer`` parameter. Core names no
+        # module; a generic module cannot harvest signing authority unless it
+        # explicitly asks for the parameter (and the WORM-sink modules that do ask
+        # sign by reference under vault_transit — SPEC-037 F1 — never the seed).
         available: dict[str, Any] = {
             "config": mod_entry.config,
             "eval_config": eval_config,
@@ -225,15 +221,8 @@ def configure_module_runtimes(
             "policy_pipeline": agent._policy_pipeline,
             "egress_proxy": egress_proxy,
             "human_gate": agent._human_gate,
+            "operator_signer": agent._operator_signer,
         }
-        # SPEC-053/037 — the operator authority is NOT broadcast to every module.
-        # Only modules that actually build a WORM audit sink receive the resolved
-        # operator Signer, shrinking the in-process attack surface: a compromised
-        # generic module cannot harvest signing authority by declaring the
-        # parameter. Under vault_transit this Signer holds NO seed — it signs by
-        # reference (SPEC-037 F1), so no module ever dereferences the operator seed.
-        if mod_name in _WORM_SINK_MODULE_NAMES:
-            available["operator_signer"] = agent._operator_signer
         sig = inspect.signature(configure_fn)
         kwargs = {name: value for name, value in available.items() if name in sig.parameters}
         try:
@@ -248,6 +237,21 @@ def configure_module_runtimes(
         state_fn = getattr(runtime_mod, "state", None)
         if bind_fn is not None and state_fn is not None:
             agent._runtime_bindings.append((bind_fn, state_fn()))
+
+
+def _warn_config_without_folder(agent: ArcAgent) -> None:
+    """Warn (once) about any ``[modules.NAME]`` entry naming an absent folder.
+
+    Discovery is folder-driven, so a config entry with no matching module folder
+    can never load. Surface it clearly instead of failing silently — a typo'd or
+    stale module name is a config error, not a crash.
+    """
+    for name, status in module_statuses(agent._config).items():
+        entry = agent._config.modules.get(name)
+        if entry is not None and entry.enabled and not status.discovered:
+            _logger.warning(
+                "Config enables module %r but no module folder is present; skipping", name
+            )
 
 
 def activate_runtime_bindings(agent: ArcAgent) -> None:

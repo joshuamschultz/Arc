@@ -75,7 +75,7 @@ class SlackBot:
     def _init_file_handler(self) -> None:
         """Initialize the shared FileHandler for file downloads."""
         try:
-            from arcagent.modules.file_handler import FileHandler
+            from arcagent.utils.file_handler import FileHandler
 
             max_bytes = self._config.max_file_size_mb * 1024 * 1024
             self._file_handler = FileHandler(

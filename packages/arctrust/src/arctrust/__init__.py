@@ -52,6 +52,22 @@ Trust store:
     load_operator_pubkey — Load Ed25519 pubkey for an operator DID
     load_issuer_pubkey  — Load Ed25519 pubkey for a manifest-issuer DID
     invalidate_cache    — Flush the in-process TTL cache
+
+TOFU (source approval — gates capability LOAD, not tool invocation):
+    TofuDecision        — ALLOW / DENY / NEW_SIGHTING (distinct from policy.Decision)
+    TofuLayer           — Per-tier source-approval gate over a validator config
+    CapabilitySource    — Source bundle (name, source, signed) evaluated by TofuLayer
+    ValidatorEntry      — One persisted approval (name → sha256 pin)
+    ValidatorsConfig    — The ``[security.validators]`` block (auto_run + approvals)
+    hash_source         — Canonical ``sha256:<hex>`` a pin binds to
+    approve_source      — Pure ValidatorsConfig mutation: pin name → source hash
+    load_validators     — Read ``[security.validators]`` from an arcagent.toml
+    approve / disapprove — Pin / unpin a source hash in an arcagent.toml (persisted)
+    persist_validators  — Atomic tomlkit rewrite of the validators block
+
+Paths:
+    arc_home            — ``${ARC_CONFIG_DIR:-~/.arc}`` user-wide config root
+    default_operator_key_path — ``<arc_home>/operator/operator.key``
 """
 
 __version__ = "0.9.0"
@@ -94,6 +110,7 @@ from arctrust.identity import (
 )
 from arctrust.keypair import KeyPair, generate_keypair, sign, verify
 from arctrust.operator import OperatorKey, OperatorKeyIntegrityError
+from arctrust.paths import arc_home, default_operator_key_path
 from arctrust.policy import (
     ClassificationLayer,
     ClearanceContext,
@@ -117,12 +134,23 @@ from arctrust.signer import (
     build_signer,
     verify_signature,
 )
+from arctrust.tofu import CapabilitySource, TofuDecision, TofuLayer
 from arctrust.trust_store import (
     TrustStoreError,
     invalidate_cache,
     load_issuer_pubkey,
     load_operator_pubkey,
     register_operator,
+)
+from arctrust.validators import (
+    ValidatorEntry,
+    ValidatorsConfig,
+    approve,
+    approve_source,
+    disapprove,
+    hash_source,
+    load_validators,
+    persist_validators,
 )
 from arctrust.witness import (
     AppendOnlyMediumWitness,
@@ -141,6 +169,7 @@ __all__ = [
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
+    "CapabilitySource",
     "ChildIdentity",
     "Classification",
     "ClassificationLayer",
@@ -158,9 +187,13 @@ __all__ = [
     "Signer",
     "SignerConfig",
     "SignerError",
+    "TofuDecision",
+    "TofuLayer",
     "ToolCall",
     "TransparencyLogWitness",
     "TrustStoreError",
+    "ValidatorEntry",
+    "ValidatorsConfig",
     "VaultSigner",
     "VaultTransit",
     "WitnessAnchor",
@@ -168,22 +201,30 @@ __all__ = [
     "WormSink",
     "__version__",
     "algorithm_is_fips_approved",
+    "approve",
+    "approve_source",
+    "arc_home",
     "assert_fips_if_required",
     "build_pipeline",
     "build_signer",
     "canonical_json",
     "content_sha256",
+    "default_operator_key_path",
     "derive_child_identity",
+    "disapprove",
     "dominates",
     "emit",
     "fips_backend_active",
     "generate_did",
     "generate_keypair",
+    "hash_source",
     "invalidate_cache",
     "load_issuer_pubkey",
     "load_operator_pubkey",
+    "load_validators",
     "parse_classification",
     "parse_did",
+    "persist_validators",
     "read_verified_anchor",
     "register_operator",
     "sign",

@@ -61,7 +61,7 @@ def create_vault_resolver(config: ArcAgentConfig) -> Any:
     _validate_vault_backend(backend_ref)
 
     try:
-        from arcagent.modules.vault.cache import CachedVaultBackend
+        from arcagent.core.vault.cache import CachedVaultBackend
 
         module_path, class_name = backend_ref.rsplit(":", 1)
         module = importlib.import_module(module_path)

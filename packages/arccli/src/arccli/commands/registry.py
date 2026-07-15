@@ -150,6 +150,13 @@ def _blueprint_handler(args: list[str]) -> None:
     blueprint_handler(args)
 
 
+def _trust_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.trust import trust_handler
+
+    trust_handler(args)
+
+
 def _identity_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.identity import identity_handler
@@ -540,6 +547,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="[list | <id> [--deny]]",
         cli_only=True,
         handler=_approve_handler,
+    ),
+    CommandDef(
+        name="trust",
+        description="Operator approval for gated capabilities — list, approve, disapprove",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_trust_handler,
     ),
     # --- Gateway pair commands (T1.8.2) ---
     # gateway_only=True: these commands only make sense on a running gateway.
