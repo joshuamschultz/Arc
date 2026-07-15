@@ -391,12 +391,13 @@ def _register_fleet_startup(app: Any, team_root: Path) -> Any:
     async def _serve_fleet() -> None:
         from arccli.commands._serve import serve_fleet_agents
 
-        executor = getattr(app.state, "executor", None)
+        async def _warm(agent_did: str, agent: Any) -> None:
+            # Adopt the fleet's already-started instance into the executor cache
+            # so web/telegram reuse it instead of building a second one that
+            # would collide on the agent's single-writer WORM audit lock.
+            from arcui.embedded_agents import adopt_agent
 
-        async def _warm(agent_did: str) -> None:
-            factory = getattr(executor, "agent_factory", None) if executor is not None else None
-            if factory is not None:
-                await factory(agent_did)
+            adopt_agent(app, agent_did, agent)
 
         count = await serve_fleet_agents(team_root, fleet, warm=_warm)
         _write(f"  Fleet: {count} always-on agent(s) started (messaging inbox active).")

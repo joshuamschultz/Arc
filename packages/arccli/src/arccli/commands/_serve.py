@@ -145,7 +145,7 @@ async def serve_fleet_agents(
     team_root: Path,
     fleet: Any,
     *,
-    warm: Callable[[str], Awaitable[Any]] | None = None,
+    warm: Callable[[str, Any], Awaitable[Any]] | None = None,
 ) -> int:
     """Start every discovered team agent so its messaging inbox loop runs (MSG4).
 
@@ -182,7 +182,7 @@ async def serve_fleet_agents(
             continue
         if warm is not None:
             try:
-                await warm(agent.did)
+                await warm(agent.did, agent)
             except Exception:  # reason: LIVE-status is cosmetic; consuming already works
                 _logger.warning("fleet: could not warm %s for LIVE", agent.did, exc_info=True)
     return started

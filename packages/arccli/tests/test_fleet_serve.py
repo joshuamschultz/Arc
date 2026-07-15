@@ -72,8 +72,9 @@ async def test_starts_registers_and_warms_every_agent(
     fleet = FleetRegistry()
     warmed: list[str] = []
 
-    async def warm(did: str) -> None:
+    async def warm(did: str, agent: Any) -> None:
         warmed.append(did)
+        assert fleet.get(did) is agent  # warm receives the SAME started instance
 
     count = await _serve.serve_fleet_agents(team_root, fleet, warm=warm)
 
@@ -148,20 +149,31 @@ class TestRegisterFleetStartup:
     async def test_installs_fleet_and_hook_that_serves(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        warmed: list[str] = []
+        adopted: dict[str, Any] = {}
 
-        async def fake_factory(did: str) -> None:
-            warmed.append(did)
+        class _Cache:
+            def get(self, did: str) -> Any:
+                return adopted.get(did)
 
-        executor = SimpleNamespace(agent_factory=fake_factory)
-        app = SimpleNamespace(state=SimpleNamespace(_extra_startup_hooks=[], executor=executor))
+            def put(self, did: str, agent: Any) -> None:
+                adopted[did] = agent
+
+        app = SimpleNamespace(
+            state=SimpleNamespace(
+                _extra_startup_hooks=[],
+                embedded_agent_cache=_Cache(),
+                agent_registry=None,
+            )
+        )
+        fake_agent = SimpleNamespace(_config=None)
 
         seen: dict[str, Any] = {}
 
         async def fake_serve(team_root: Path, fleet: Any, *, warm: Any = None) -> int:
             seen["team_root"] = team_root
             seen["fleet"] = fleet
-            await warm("did:arc:local:agent/x")  # prove warm routes to the executor factory
+            # warm adopts the already-started instance into the executor cache
+            await warm("did:arc:local:agent/x", fake_agent)
             return 3
 
         monkeypatch.setattr(_serve, "serve_fleet_agents", fake_serve)
@@ -175,4 +187,4 @@ class TestRegisterFleetStartup:
         await app.state._extra_startup_hooks[0]()  # run the lifespan hook
         assert seen["team_root"] == team_root
         assert seen["fleet"] is fleet
-        assert warmed == ["did:arc:local:agent/x"]
+        assert adopted == {"did:arc:local:agent/x": fake_agent}

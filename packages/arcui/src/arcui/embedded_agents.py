@@ -139,6 +139,21 @@ def install_embedded_agent_hooks(app: Any, *, cache_maxsize: int = _DEFAULT_CACH
     app.state.embedded_agent_cache = cache
 
 
+def adopt_agent(app: Any, agent_did: str, agent: Any) -> None:
+    """Adopt an already-started (fleet) agent into the embedded executor cache.
+
+    The always-on fleet loader starts each agent (its own instance, holding the
+    agent's single-writer WORM audit lock). Without this, the executor's factory
+    would build a SECOND instance on first web/telegram turn and collide on that
+    lock. Seeding the started instance here guarantees one instance per agent
+    across the inbox loop and interactive chat, and marks it LIVE in the roster.
+    """
+    cache = getattr(app.state, "embedded_agent_cache", None)
+    if cache is not None and cache.get(agent_did) is None:
+        cache.put(agent_did, agent)
+    _register_in_fleet(app, agent_did, agent)
+
+
 def _register_in_fleet(app: Any, agent_did: str, agent: Any) -> None:
     """Mark a chat-loaded agent as LIVE in app.state.agent_registry.
 
