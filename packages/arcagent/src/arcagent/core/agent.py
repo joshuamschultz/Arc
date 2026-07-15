@@ -23,6 +23,7 @@ create_arcllm_bridge``) keep working unchanged.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -308,6 +309,44 @@ class ArcAgent:
         )
 
     async def startup(self) -> None:
+        """Initialize all components; release partial state on any failure.
+
+        Wraps :meth:`_startup_impl`. ``_startup_impl`` opens the single-writer
+        WORM audit lock (SPEC-034) early, then configures modules. A module that
+        fails to configure (e.g. the browser module with no Chrome installed)
+        must NOT leave that lock — or any started capability tasks — held for the
+        process lifetime, or every later instance of this agent fails to acquire
+        the lock (single-writer invariant). On failure we release what was
+        acquired and re-raise the original error.
+        """
+        try:
+            await self._startup_impl()
+        except BaseException:
+            await self._release_partial_startup()
+            raise
+
+    async def _release_partial_startup(self) -> None:
+        """Best-effort teardown of resources a failed :meth:`_startup_impl` acquired.
+
+        Mirrors :meth:`shutdown`'s resource release but does NOT require
+        ``self._started`` — a failure before that flag is set (which
+        ``shutdown`` short-circuits on) is exactly the leak this guards against.
+        """
+        loader = self._capability_loader
+        if loader is not None:
+            with contextlib.suppress(Exception):
+                await loader.shutdown()
+        registry = self._tool_registry
+        if registry is not None:
+            with contextlib.suppress(Exception):
+                await registry.shutdown()
+        worm = self._policy_worm
+        if worm is not None:
+            with contextlib.suppress(Exception):
+                worm.close()
+            self._policy_worm = None
+
+    async def _startup_impl(self) -> None:
         """Initialize all components in dependency order.
 
         1. Vault resolver (if configured)

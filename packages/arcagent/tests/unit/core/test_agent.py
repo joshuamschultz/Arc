@@ -98,6 +98,24 @@ class TestStartup:
         assert agent._tool_registry is not None
         assert agent._context is not None
 
+    async def test_failed_startup_releases_worm_lock(self, agent: ArcAgent) -> None:
+        """A module failing during startup must not leak the single-writer WORM
+        audit lock — otherwise every later instance of the agent is wedged."""
+        from arctrust.audit import WormSink
+
+        with patch(
+            "arcagent.core.agent.setup_capabilities",
+            side_effect=RuntimeError("browser: Chrome binary not found"),
+        ):
+            with pytest.raises(RuntimeError, match="Chrome binary not found"):
+                await agent.startup()
+
+        assert not agent._started
+        assert agent._policy_worm is None
+        # The flock is released: a fresh sink on the same path acquires cleanly.
+        sink = WormSink(agent._policy_audit_log_path(), agent._operator_signer)
+        sink.close()
+
     async def test_startup_generates_identity(self, agent: ArcAgent) -> None:
         await agent.startup()
         assert agent._identity is not None

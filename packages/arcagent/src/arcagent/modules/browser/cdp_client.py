@@ -53,7 +53,18 @@ _BLOCKED_FLAGS: frozenset[str] = frozenset(
     }
 )
 
-# Typical Chrome binary locations by platform
+# Binary names to probe on PATH, in preference order (covers Google Chrome and
+# every common Chromium packaging).
+_CHROME_BINARY_NAMES: tuple[str, ...] = (
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+)
+
+# Well-known absolute locations, checked when PATH lookup misses — notably the
+# Ubuntu snap path, which is frequently absent from a systemd service's PATH.
 _CHROME_PATHS: dict[str, list[str]] = {
     "Darwin": [
         "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -62,8 +73,11 @@ _CHROME_PATHS: dict[str, list[str]] = {
     "Linux": [
         "/usr/bin/google-chrome",
         "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium-browser",
         "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+        "/usr/lib/chromium/chromium",
+        "/usr/lib/chromium-browser/chromium-browser",
     ],
 }
 
@@ -87,19 +101,24 @@ atexit.register(_cleanup_chrome_processes)
 
 
 def _find_chrome() -> str:
-    """Auto-detect Chrome binary path."""
+    """Auto-detect a Chrome/Chromium binary available on this machine.
+
+    Probes PATH for every common binary name first, then well-known absolute
+    locations (including the Ubuntu snap path, which is often missing from a
+    service's PATH). Any host with Chrome or Chromium installed resolves with no
+    ``connection.chrome_path`` config.
+    """
+    for name in _CHROME_BINARY_NAMES:
+        found = shutil.which(name)
+        if found:
+            return found
     system = platform.system()
-    candidates = _CHROME_PATHS.get(system, [])
-    for path in candidates:
+    for path in _CHROME_PATHS.get(system, []):
         if Path(path).exists():
             return path
-    # Fallback: check PATH
-    which = shutil.which("google-chrome") or shutil.which("chromium")
-    if which:
-        return which
     raise CDPConnectionError(
-        message="Chrome binary not found. Set connection.chrome_path in config.",
-        details={"system": system, "searched": candidates},
+        message="No Chrome/Chromium binary found. Install chromium or set connection.chrome_path.",
+        details={"system": system, "searched_names": list(_CHROME_BINARY_NAMES)},
     )
 
 
