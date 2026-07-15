@@ -62,7 +62,7 @@ class TestThreeFileScaffold:
         assert cfg.llm.model == "anthropic/claude-sonnet-4-5-20250929"
         assert cfg.llm.max_tokens == 8192
         assert cfg.eval.max_input_tokens == 100000
-        assert cfg.arcrun.max_turns == 25
+        assert cfg.arcrun.max_turns == 40
         assert cfg.modules["memory"].config["brain"] == "arcmemory"
         # [arcstore] is parsed ad-hoc (not an ArcAgentConfig field) — verify via loader.
         from arccli.commands.agent._store_lifecycle import load_arcstore_config

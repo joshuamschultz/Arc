@@ -412,6 +412,19 @@ stuck_reclaim_seconds = 300.0  # orphaned in_progress reclaim threshold
 routing = true               # auto-route ownerless tasks to least-loaded agent
 notify = true                # operator/assignee notifications on transitions
 
+[modules.runcontrol]
+enabled = true
+priority = 100
+
+[modules.runcontrol.config]
+# Operator kill-switch watcher (SPEC-056 follow-up). Polls the shared
+# ``cancellations`` store and cooperatively cancels the matching live tracked
+# run. ``arc stop`` and the arcui cancel route WRITE cancel requests regardless,
+# but a fleet agent needs THIS block for the watcher that APPLIES them — so an
+# agent can be stopped without SSHing the box.
+data_dir = ""                # empty defers to arcstore.resolve_data_dir (shared store)
+stale_ttl_seconds = 300      # age out a cancel request that never matches a live run
+
 [modules.slack]
 enabled = false
 priority = 100
@@ -446,7 +459,7 @@ extract_provider = "firecrawl"  # parallel | firecrawl | tavily
 tier = "personal"               # drives allowlist / PII enforcement
 url_allowlist = []              # glob allowlist (federal requires non-empty)
 max_content_bytes = 1000000     # extracted-content truncation cap
-pii_redaction_enabled = true    # mandatory at federal
+pii_redaction_enabled = false   # off at personal/enterprise; federal forces it on
 request_timeout_s = 30.0        # provider HTTP timeout
 
 [modules.voice]
@@ -569,7 +582,7 @@ _DEFAULT_ARCRUN_CONFIG = """\
 # (Per-run token/cost/request ceilings live in arcllm.toml [budget]; the
 # tier-floored circuit breakers live in arcagent.toml [security].)
 
-max_turns = 25          # hard cap on agentic loop turns
+max_turns = 40          # hard cap on agentic loop turns
 # tool_timeout = 30.0   # per-tool-call wall-clock timeout (seconds); unset = none
 # allowed_strategies = ["react"]  # restrict the loop to these strategies; unset = all
 approval_opt_in = []    # tool names always requiring human approval at personal/enterprise

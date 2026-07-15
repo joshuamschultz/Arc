@@ -92,7 +92,7 @@ class TestCreate:
         arcllm = tomllib.loads((config_path.parent / "arcllm.toml").read_text())
         assert {"llm", "eval", "budget"} <= arcllm.keys()
         arcrun = tomllib.loads((config_path.parent / "arcrun.toml").read_text())
-        assert arcrun["max_turns"] == 25
+        assert arcrun["max_turns"] == 40
         # Old SPEC-021-deprecated section must not reappear.
         assert "extensions" not in config, "[extensions] block should be gone (SPEC-021)"
         # SPEC-026 AC-6.1: [arcstore] block must have secure defaults.
