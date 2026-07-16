@@ -481,3 +481,54 @@ class TestOutOfProcessAuditCustody:
         # and every record was signed via the out-of-process boundary.
         assert verify_chain(chain, operator.public_key) is True
         assert transit.sign_calls == 3
+
+
+def test_failed_lock_construction_does_not_double_close(tmp_path):
+    """A WormSink that loses the single-writer flock must fully disarm itself.
+
+    The failed constructor closes its fd but must also mark it closed
+    (_fd = -1). Otherwise the instance finalizer closes the same fd
+    NUMBER again after the OS has reused it — in the real two-process
+    demo layout the reused fd belongs to the fallback per-PID sink, so
+    every subsequent audit write failed EINVAL/EBADF and was swallowed
+    by the AU-5 fail-open path, leaving 0-byte chains on disk.
+    """
+    import gc
+    import os
+
+    from nacl.signing import SigningKey
+
+    from arctrust.signer import InProcessSigner
+
+    signer = InProcessSigner(SigningKey.generate().encode())
+    base = tmp_path / "chain.worm"
+
+    holder = WormSink(base, signer)  # holds the flock on base
+    try:
+        # Mirror blackarc _open_sink: a second sink loses the flock...
+        failed = WormSink.__new__(WormSink)
+        with pytest.raises(RuntimeError):
+            failed.__init__(base, signer)
+        # The failed instance must have disarmed its fd entirely.
+        assert failed._fd == -1, "failed constructor left a closed fd armed"
+
+        # ...and the fallback sink reuses the freed fd number. Finalizing
+        # the failed instance must not clobber it.
+        fallback = WormSink(tmp_path / "chain-fallback.worm", signer)
+        try:
+            del failed
+            gc.collect()
+            os.fstat(fallback._fd)  # raises OSError if double-closed
+            fallback.write(
+                AuditEvent(
+                    actor_did="did:arc:test:exec/aabbccdd",
+                    action="tool.call",
+                    target="read_file",
+                    outcome="allow",
+                )
+            )
+            assert (tmp_path / "chain-fallback.worm").stat().st_size > 0
+        finally:
+            fallback.close()
+    finally:
+        holder.close()

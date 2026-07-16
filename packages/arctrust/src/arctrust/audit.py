@@ -244,6 +244,10 @@ class WormSink:
                 fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
                 os.close(self._fd)
+                # Disarm the finalizer: __del__ re-closes any fd >= 0, and by
+                # then the OS may have reused this NUMBER for an unrelated
+                # file (e.g. a fallback sink) — a double close would kill it.
+                self._fd = -1
                 raise RuntimeError(
                     f"WormSink: another writer holds {self._path} (single-writer invariant)"
                 ) from exc
