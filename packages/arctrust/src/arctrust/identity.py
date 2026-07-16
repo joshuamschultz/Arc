@@ -481,8 +481,12 @@ def derive_child_identity(
     prk = hmac.new(salt, parent_sk_bytes, hashlib.sha256).digest()
     child_seed = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()  # 32 bytes
 
-    # 8 hex chars = 4 bytes (matches DID format: did:arc:delegate:child/{hex8})
-    hex_suffix = child_seed[:4].hex()
+    # The DID suffix is sha256(public_key)[:8] — the same key-fingerprint
+    # rule as generate_did. did_matches_pubkey / verify_call enforce this
+    # binding, so a suffix minted from anything else (e.g. the raw seed)
+    # produces an identity whose signed calls always fail IdentityLayer.
+    child_pub = bytes(SigningKey(child_seed).verify_key)
+    hex_suffix = hashlib.sha256(child_pub).hexdigest()[:8]
     did = f"did:arc:delegate:child/{hex_suffix}"
 
     return ChildIdentity(did=did, sk_bytes=child_seed, ttl_s=ttl, clearance=child_clearance)

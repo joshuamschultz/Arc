@@ -395,3 +395,39 @@ class TestChildIdentity:
         # Should not raise
         child_signing_key = SigningKey(child.sk_bytes)
         assert len(bytes(child_signing_key.verify_key)) == 32
+
+    def test_child_did_matches_child_pubkey(self) -> None:
+        """A child DID must be minted from the child PUBLIC key.
+
+        did_matches_pubkey / verify_call require the DID hash suffix to be
+        sha256(public_key)[:8]. A child identity that fails this check can
+        never pass IdentityLayer — every tool call it signs is denied with
+        identity.unsigned_or_invalid.
+        """
+        from arctrust.identity import did_matches_pubkey
+
+        parent_sk = SigningKey.generate().encode()
+        child = derive_child_identity(parent_sk_bytes=parent_sk, spawn_id="spawn-42")
+        child_pub = bytes(SigningKey(child.sk_bytes).verify_key)
+        assert did_matches_pubkey(child.did, child_pub)
+
+    def test_child_signed_call_verifies(self) -> None:
+        """sign_call under a child identity must pass verify_call end-to-end."""
+        from arctrust.policy import ToolCall, sign_call, verify_call
+
+        parent_sk = SigningKey.generate().encode()
+        child = derive_child_identity(parent_sk_bytes=parent_sk, spawn_id="spawn-43")
+        sk = SigningKey(child.sk_bytes)
+        ident = AgentIdentity(
+            did=child.did,
+            public_key=bytes(sk.verify_key),
+            _signing_key=sk,
+        )
+        call = ToolCall(
+            tool_name="submit_result",
+            arguments={},
+            agent_did=ident.did,
+            session_id="",
+            classification="unclassified",
+        )
+        assert verify_call(sign_call(call, ident))
