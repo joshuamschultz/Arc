@@ -491,6 +491,7 @@ enabled = false
 priority = 100
 
 [modules.browser.config]
+provider = "cdp"                 # cdp (local launch / remote attach) | browserbase
 tier = "personal"                # federal forbids local Chrome (remote CDP only)
 accessibility_tree_depth = 10
 chrome_memory_limit_mb = 512
@@ -508,12 +509,36 @@ max_screenshot_width = 1920
 max_screenshot_height = 1080
 
 [modules.browser.config.connection]
-cdp_url = ""
+cdp_url = ""                     # empty = launch local Chrome; set = attach remote CDP
+endpoint_kind = "page"           # page = direct page target | browser = managed endpoint (attaches a page target)
 chrome_path = ""
 headless = true
 remote_debugging_port = 0
 chrome_flags = []
 startup_timeout_seconds = 10
+
+# provider = "browserbase": managed remote browser. The API key resolves via
+# the tier-aware secret resolver (browserbase_api_key / BROWSERBASE_API_KEY).
+[modules.browser.config.browserbase]
+project_id = ""
+api_key_env = "BROWSERBASE_API_KEY"
+api_base = "https://api.browserbase.com/v1"
+region = ""
+proxies = false
+keep_alive = false
+request_timeout_s = 30.0
+
+# Agentic browser_task tool. Needs the 'browser-use' package (installed into the
+# deployment venv separately). Off by default; FORBIDDEN at the federal tier.
+[modules.browser.config.browser_use]
+enabled = false
+llm_provider = "anthropic"
+llm_model = ""
+max_steps = 25
+max_actions_per_step = 5
+use_vision = true
+step_timeout_s = 180
+cdp_url = ""
 
 [modules.browser.config.cookies]
 persist = false
