@@ -106,12 +106,15 @@ class TestLoaderRegistration:
 class TestBrowserCapabilityLifecycle:
     """setup() connects CDP and creates the AX manager; teardown() disconnects."""
 
-    async def test_setup_connects_cdp_and_creates_ax(self, configured: Path) -> None:
+    async def test_setup_opens_backend_and_creates_ax(self, configured: Path) -> None:
+        """setup() opens the default (cdp) backend and wires the AX manager."""
         from arcagent.modules.browser.capabilities import BrowserCapability
 
         cap = BrowserCapability()
 
-        with patch("arcagent.modules.browser.capabilities.CDPClientManager") as mock_cdp_cls:
+        # The default provider is "cdp" → CDPBackend constructs a
+        # CDPClientManager. Patch it at the backend where it now lives.
+        with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
@@ -124,6 +127,8 @@ class TestBrowserCapabilityLifecycle:
             st = _runtime.state()
             assert st.cdp_client is mock_cdp
             assert st.ax_manager is not None
+            assert st.backend is not None
+            assert st.backend.name == "cdp"
 
     async def test_setup_emits_connected_event(self, configured: Path) -> None:
         from arcagent.modules.browser.capabilities import BrowserCapability
@@ -131,7 +136,7 @@ class TestBrowserCapabilityLifecycle:
         cap = BrowserCapability()
         bus = _runtime.state().bus
 
-        with patch("arcagent.modules.browser.capabilities.CDPClientManager") as mock_cdp_cls:
+        with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
@@ -141,27 +146,28 @@ class TestBrowserCapabilityLifecycle:
 
         bus.emit.assert_any_await(
             "browser.connected",
-            {"cdp_url": "ws://localhost:9222/devtools/browser/abc"},
+            {"cdp_url": "ws://localhost:9222/devtools/browser/abc", "backend": "cdp"},
         )
 
-    async def test_teardown_disconnects_cdp(self, configured: Path) -> None:
-        """Chrome process must cleanly shut down on capability teardown."""
+    async def test_teardown_closes_backend(self, configured: Path) -> None:
+        """The backend must be closed on teardown (releases local/remote browser)."""
         from arcagent.modules.browser.capabilities import BrowserCapability
 
         cap = BrowserCapability()
-        mock_cdp = AsyncMock()
-        mock_cdp.disconnect = AsyncMock()
-        mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
+        mock_backend = AsyncMock()
+        mock_backend.close = AsyncMock()
 
-        # Inject a "connected" CDP client and AX manager directly so we
-        # don't have to mock the whole connect path again.
+        # Inject a "connected" backend + session + AX manager directly so we
+        # don't have to mock the whole open path again.
         st = _runtime.state()
-        st.cdp_client = mock_cdp
+        st.backend = mock_backend
+        st.cdp_client = AsyncMock()
         st.ax_manager = MagicMock()
 
         await cap.teardown()
 
-        mock_cdp.disconnect.assert_awaited_once()
+        mock_backend.close.assert_awaited_once()
+        assert st.backend is None
         assert st.cdp_client is None
         assert st.ax_manager is None
 
@@ -170,10 +176,11 @@ class TestBrowserCapabilityLifecycle:
 
         cap = BrowserCapability()
         bus = _runtime.state().bus
-        mock_cdp = AsyncMock()
-        mock_cdp.disconnect = AsyncMock()
+        mock_backend = AsyncMock()
+        mock_backend.close = AsyncMock()
         st = _runtime.state()
-        st.cdp_client = mock_cdp
+        st.backend = mock_backend
+        st.cdp_client = AsyncMock()
         st.ax_manager = MagicMock()
 
         await cap.teardown()
@@ -181,14 +188,15 @@ class TestBrowserCapabilityLifecycle:
         bus.emit.assert_any_await("browser.disconnected", {})
 
     async def test_teardown_without_setup_is_safe(self, configured: Path) -> None:
-        """teardown() doesn't raise when CDP was never connected."""
+        """teardown() doesn't raise when no backend was ever opened."""
         from arcagent.modules.browser.capabilities import BrowserCapability
 
         cap = BrowserCapability()
-        # No CDP client set; should be a no-op disconnect path.
+        # No backend set; should be a no-op.
         await cap.teardown()
         # State stays cleared.
         st = _runtime.state()
+        assert st.backend is None
         assert st.cdp_client is None
         assert st.ax_manager is None
 

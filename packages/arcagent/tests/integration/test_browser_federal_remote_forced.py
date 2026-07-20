@@ -45,7 +45,7 @@ class TestFederalTierLocalBrowserForbidden:
     async def test_federal_local_setup_raises_before_launch(self) -> None:
         _configure(BrowserConfig(tier="federal"))  # empty cdp_url → local launch
 
-        with patch("arcagent.modules.browser.capabilities.CDPClientManager") as mock_cdp_cls:
+        with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             with pytest.raises(LocalBrowserNotAllowedError) as exc_info:
                 await BrowserCapability().setup(None)
 
@@ -60,7 +60,7 @@ class TestFederalTierLocalBrowserForbidden:
     async def test_federal_remote_setup_connects(self) -> None:
         _configure(BrowserConfig(tier="federal", connection={"cdp_url": _REMOTE}))  # type: ignore[arg-type]
 
-        with patch("arcagent.modules.browser.capabilities.CDPClientManager") as mock_cdp_cls:
+        with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.url = _REMOTE
@@ -79,7 +79,7 @@ class TestNonFederalLocalBrowserAllowed:
     async def test_personal_local_setup_connects(self) -> None:
         _configure(BrowserConfig(tier="personal"))
 
-        with patch("arcagent.modules.browser.capabilities.CDPClientManager") as mock_cdp_cls:
+        with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
             mock_cdp.url = "ws://localhost:9222/devtools/browser/local"

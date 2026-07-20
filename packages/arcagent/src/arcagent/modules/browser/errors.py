@@ -102,3 +102,37 @@ class CapabilityDisabledError(BrowserError):
             message=f"Browser capability '{capability}' is disabled by config",
             details={"capability": capability, **(details or {})},
         )
+
+
+class AgenticBrowserForbiddenError(BrowserError):
+    """The agentic ``browser_task`` tool is forbidden at this tier.
+
+    Federal deployments may not run an opaque, self-directed browser
+    loop — the agentic executor's decisions are not individually gated by
+    the policy pipeline. Use the element-level browser tools instead.
+    """
+
+    def __init__(self, tier: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            code="BROWSER_AGENTIC_FORBIDDEN",
+            message=(
+                f"Agentic browser_task is not permitted at the '{tier}' tier; "
+                "use the element-level browser tools"
+            ),
+            details={"tier": tier, **(details or {})},
+        )
+
+
+class BrowserUseNotInstalledError(BrowserError):
+    """``browser_task`` was invoked without the optional browser-use extra."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="BROWSER_USE_NOT_INSTALLED",
+            message=(
+                "browser_task requires the 'browser-use' package. It is not a "
+                "workspace extra (its aiohttp pin conflicts with the mattermost/"
+                "slack CVE floor); install it into this deployment's venv: "
+                "pip install browser-use && browser-use install"
+            ),
+        )

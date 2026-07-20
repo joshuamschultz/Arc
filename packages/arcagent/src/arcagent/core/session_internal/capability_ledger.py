@@ -85,6 +85,9 @@ TAG_TO_LEGS: dict[str, frozenset[str]] = {
     "web": frozenset({UNTRUSTED_INPUT}),
     "browser": frozenset({UNTRUSTED_INPUT}),
     "browser_navigate": frozenset({UNTRUSTED_INPUT}),
+    # the agentic browser_task ingests untrusted web content across many
+    # autonomous steps — same untrusted-input leg as a navigation.
+    "browser_task": frozenset({UNTRUSTED_INPUT}),
     "extract": frozenset({UNTRUSTED_INPUT}),
     # a shell ingests untrusted content (command output, fetched files, curl
     # responses). NOT external_comms: at ent/fed bash runs --network=none, so

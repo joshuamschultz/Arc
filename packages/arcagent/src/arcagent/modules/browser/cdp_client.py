@@ -153,6 +153,9 @@ class CDPClientManager:
         self._ws_url = ""
         self._debug_port = 0
         self._ws_lock = asyncio.Lock()
+        # Non-empty when attached to a page target on a browser-level
+        # endpoint; every command is then routed through this session.
+        self._session_id = ""
 
     @property
     def connected(self) -> bool:
@@ -188,6 +191,8 @@ class CDPClientManager:
 
         await self._connect_ws()
         self._connected = True
+        if self._config.endpoint_kind == "browser":
+            await self._attach_to_page_target()
         await self._enable_domains()
 
     async def disconnect(self) -> None:
@@ -242,11 +247,13 @@ class CDPClientManager:
         async with self._ws_lock:
             self._cmd_id += 1
             cmd_id = self._cmd_id
-            message = {
+            message: dict[str, Any] = {
                 "id": cmd_id,
                 "method": f"{domain}.{method}",
                 "params": params or {},
             }
+            if self._session_id:
+                message["sessionId"] = self._session_id
 
             await self._ws.send(json.dumps(message))
 
@@ -284,6 +291,43 @@ class CDPClientManager:
         for domain in ("Page", "DOM", "Runtime", "Accessibility"):
             await self.send(domain, "enable")
         _logger.debug("CDP domains enabled: Page, DOM, Runtime, Accessibility")
+
+    async def _attach_to_page_target(self) -> None:
+        """Attach to a page target on a browser-level CDP endpoint.
+
+        Managed services (Browserbase, Steel, Browserless) expose a
+        browser-level WebSocket, but Page/DOM/Accessibility commands need
+        a page target. Discover the first page target (creating one if
+        none exists), attach with ``flatten`` so a single socket carries
+        every session, and route later commands through the returned
+        ``sessionId``.
+        """
+        targets_result = await self.send("Target", "getTargets")
+        page = next(
+            (t for t in targets_result.get("targetInfos", []) if t.get("type") == "page"),
+            None,
+        )
+        if page is not None:
+            target_id = page.get("targetId", "")
+        else:
+            created = await self.send("Target", "createTarget", {"url": "about:blank"})
+            target_id = created.get("targetId", "")
+        if not target_id:
+            raise CDPConnectionError(
+                message="No page target available on browser-level CDP endpoint",
+                details={"url": self._ws_url},
+            )
+        attach_result = await self.send(
+            "Target", "attachToTarget", {"targetId": target_id, "flatten": True}
+        )
+        session_id = attach_result.get("sessionId", "")
+        if not session_id:
+            raise CDPConnectionError(
+                message="Failed to attach to page target on browser endpoint",
+                details={"target_id": target_id},
+            )
+        self._session_id = session_id
+        _logger.info("Attached to page target %s (session %s)", target_id, session_id)
 
     async def _launch_chrome(self) -> None:
         """Launch headless Chrome subprocess."""
