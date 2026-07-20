@@ -55,6 +55,13 @@ azure = [
     "azure-identity>=1.15",
     "azure-keyvault-secrets>=4.7",
 ]
+# NOTE: the agentic browser_task tool needs `browser-use` (>=0.13), but it
+# hard-pins aiohttp==3.13.4, which is incompatible with the aiohttp>=3.14.1
+# CVE floor that arcgateway-mattermost and the slack extra require. So it is
+# deliberately NOT a workspace extra — install it into the deployment venv
+# separately (`pip install browser-use && browser-use install`) on boxes that
+# use it. Federal deployments must not install it — browser_task is forbidden
+# at the federal tier.
 
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
@@ -106,6 +113,12 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 # Optional extra: slack_bolt is only installed with arc-agent[slack].
 module = ["slack_bolt.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Optional dep for browser_task: browser-use is installed into the deployment
+# venv separately (not a workspace extra — aiohttp pin conflict).
+module = ["browser_use.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

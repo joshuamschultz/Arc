@@ -19,9 +19,8 @@ from typing import Any
 
 from arcagent.modules.browser import _runtime
 from arcagent.modules.browser.accessibility import AccessibilityManager
-from arcagent.modules.browser.cdp_client import CDPClientManager
+from arcagent.modules.browser.backends import BrowserSession, build_backend
 from arcagent.modules.browser.errors import CapabilityDisabledError, URLBlockedError
-from arcagent.modules.browser.policy import enforce_sandbox_policy
 from arcagent.modules.browser.url_policy import _check_url_policy, _get_current_url
 from arcagent.tools._decorator import capability, tool
 
@@ -42,30 +41,31 @@ class BrowserCapability:
     """
 
     async def setup(self, _ctx: Any) -> None:
-        """Connect CDP and prepare the accessibility manager.
+        """Open the configured backend and prepare the accessibility manager.
 
-        Enforces the federal remote-browser requirement before launching:
-        a federal deployment may not auto-launch a local headless Chrome.
+        The backend is chosen by ``config.provider`` (``build_backend``),
+        which also enforces the federal remote-browser requirement — a
+        federal deployment may not auto-launch a local headless Chrome.
         """
         st = _runtime.state()
-        enforce_sandbox_policy(st.config.tier, st.config.connection)
-        cdp = CDPClientManager(st.config.connection)
-        await cdp.connect()
-        st.cdp_client = cdp
-        st.ax_manager = AccessibilityManager(cdp, st.config)
+        backend = build_backend(st.config)
+        session = await backend.open()
+        st.backend = backend
+        st.cdp_client = session
+        st.ax_manager = AccessibilityManager(session, st.config)
         if st.bus is not None:
             await st.bus.emit(
                 "browser.connected",
-                {"cdp_url": cdp.url},
+                {"cdp_url": session.url, "backend": backend.name},
             )
-        _logger.info("Browser capability started (cdp=%s)", cdp.url)
+        _logger.info("Browser capability started (backend=%s cdp=%s)", backend.name, session.url)
 
     async def teardown(self) -> None:
-        """Disconnect CDP and reap the Chrome process."""
+        """Close the backend, releasing local or remote browser resources."""
         st = _runtime.state()
-        cdp = st.cdp_client
-        if cdp is not None:
-            await cdp.disconnect()
+        if st.backend is not None:
+            await st.backend.close()
+        st.backend = None
         st.cdp_client = None
         st.ax_manager = None
         if st.bus is not None:
@@ -76,15 +76,16 @@ class BrowserCapability:
 # --- Internal helpers ------------------------------------------------------
 
 
-def _cdp() -> CDPClientManager:
-    """Return the live CDP client. Raises if setup hasn't run."""
+def _cdp() -> BrowserSession:
+    """Return the live CDP session. Raises if setup hasn't run."""
     st = _runtime.state()
     if st.cdp_client is None:
         raise RuntimeError(
             "browser CDP client not initialised; "
             "BrowserCapability.setup() must run before tools can be used"
         )
-    return st.cdp_client
+    session: BrowserSession = st.cdp_client
+    return session
 
 
 def _ax() -> AccessibilityManager:
@@ -269,7 +270,7 @@ async def browser_screenshot() -> str:
 # --- Interaction tools -----------------------------------------------------
 
 
-async def _get_element_center(cdp: CDPClientManager, backend_node_id: int) -> tuple[float, float]:
+async def _get_element_center(cdp: BrowserSession, backend_node_id: int) -> tuple[float, float]:
     """Resolve a backendDOMNodeId to its center coordinates."""
     from arcagent.modules.browser.errors import ElementNotFoundError
 

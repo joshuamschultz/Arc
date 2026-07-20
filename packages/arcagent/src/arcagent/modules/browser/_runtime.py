@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arcagent.modules.browser.cdp_client import CDPClientManager
+from arcagent.modules.browser.backends.protocols import BrowserBackend, BrowserSession
 from arcagent.modules.browser.config import BrowserConfig
 
 _logger = logging.getLogger("arcagent.modules.browser._runtime")
@@ -30,17 +30,20 @@ _logger = logging.getLogger("arcagent.modules.browser._runtime")
 class _State:
     """Mutable runtime state shared across the browser capability + tools.
 
-    ``cdp_client`` and ``ax_manager`` are populated by the
-    :class:`BrowserCapability` ``setup()`` lifecycle hook; tool functions
-    read them lazily via :func:`state`. Both are ``None`` between
-    ``configure()`` and ``setup()``.
+    ``backend``, ``cdp_client`` (the live session), and ``ax_manager`` are
+    populated by the :class:`BrowserCapability` ``setup()`` lifecycle
+    hook; tool functions read the session + AX manager lazily via
+    :func:`state`. All three are ``None`` between ``configure()`` and
+    ``setup()``. ``backend`` is retained so ``teardown()`` can release
+    any remote resources it acquired.
     """
 
     config: BrowserConfig
     workspace: Path
     bus: Any
     telemetry: Any
-    cdp_client: CDPClientManager | None = None
+    backend: BrowserBackend | None = None
+    cdp_client: BrowserSession | None = None
     ax_manager: Any = None
 
 
