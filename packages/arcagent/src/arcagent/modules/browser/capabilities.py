@@ -1,15 +1,16 @@
 """Decorator-form browser module — SPEC-021 task 3.3.
 
-A single ``@capability(name="browser")`` class manages the CDP client +
-accessibility manager lifecycle (setup launches Chrome / connects;
-teardown closes the WebSocket and reaps the Chrome process).
+A single ``@capability(name="browser")`` class owns the browser lifecycle:
+``setup()`` builds the configured backend (choosing local Chrome,
+Browserbase, etc.), and the session opens lazily on the first browser
+tool call so a metered remote backend never holds an idle session for the
+agent's whole lifetime; ``teardown()`` closes the backend, releasing any
+local or remote browser.
 
-Module-level ``@tool`` functions delegate to
-``_runtime.state().cdp_client`` and ``ax_manager``.
+Module-level ``@tool`` functions get the live session via ``await
+_cdp()`` / ``await _ax()``, which open it on first use.
 
-State is shared via :mod:`arcagent.modules.browser._runtime`. The agent
-configures it once at startup; the capability ``setup()`` populates the
-CDP client; the @tool functions read state lazily.
+State is shared via :mod:`arcagent.modules.browser._runtime`.
 """
 
 from __future__ import annotations
@@ -32,33 +33,27 @@ _logger = logging.getLogger("arcagent.modules.browser.capabilities")
 
 @capability(name="browser")
 class BrowserCapability:
-    """Manage Chrome / CDP lifecycle for the browser module.
+    """Own the browser lifecycle for the module.
 
-    ``setup()`` connects to (or launches) Chrome via CDP and creates the
-    accessibility manager. ``teardown()`` disconnects the WebSocket and
-    terminates the Chrome process (SIGTERM with SIGKILL fallback per
-    :class:`CDPClientManager.disconnect`).
+    ``setup()`` builds the configured backend (no I/O — the session opens
+    on first tool use). ``teardown()`` closes the backend, releasing any
+    local Chrome process or remote session it acquired.
     """
 
     async def setup(self, _ctx: Any) -> None:
-        """Open the configured backend and prepare the accessibility manager.
+        """Build the configured backend. The session opens on first use.
 
         The backend is chosen by ``config.provider`` (``build_backend``),
         which also enforces the federal remote-browser requirement — a
-        federal deployment may not auto-launch a local headless Chrome.
+        federal deployment may not auto-launch a local headless Chrome —
+        at startup. The actual browser session is opened lazily on the
+        first browser tool call (:func:`_open`), not here: a metered
+        remote backend (Browserbase) must not hold an idle session for
+        the agent's whole lifetime.
         """
         st = _runtime.state()
-        backend = build_backend(st.config)
-        session = await backend.open()
-        st.backend = backend
-        st.cdp_client = session
-        st.ax_manager = AccessibilityManager(session, st.config)
-        if st.bus is not None:
-            await st.bus.emit(
-                "browser.connected",
-                {"cdp_url": session.url, "backend": backend.name},
-            )
-        _logger.info("Browser capability started (backend=%s cdp=%s)", backend.name, session.url)
+        st.backend = build_backend(st.config)
+        _logger.info("Browser capability ready (backend=%s; opens on first use)", st.backend.name)
 
     async def teardown(self) -> None:
         """Close the backend, releasing local or remote browser resources."""
@@ -76,26 +71,39 @@ class BrowserCapability:
 # --- Internal helpers ------------------------------------------------------
 
 
-def _cdp() -> BrowserSession:
-    """Return the live CDP session. Raises if setup hasn't run."""
-    st = _runtime.state()
-    if st.cdp_client is None:
+async def _open(st: _runtime._State) -> None:
+    """Open the browser session on first use and build the AX manager.
+
+    Called by :func:`_cdp` / :func:`_ax` the first time a tool needs the
+    browser. Idempotent within a turn — tools run sequentially, so no
+    lock is needed. Raises if ``setup()`` never built the backend.
+    """
+    if st.backend is None:
         raise RuntimeError(
-            "browser CDP client not initialised; "
+            "browser backend not initialised; "
             "BrowserCapability.setup() must run before tools can be used"
         )
-    session: BrowserSession = st.cdp_client
+    session = await st.backend.open()
+    st.cdp_client = session
+    st.ax_manager = AccessibilityManager(session, st.config)
+    await _emit("browser.connected", {"cdp_url": session.url, "backend": st.backend.name})
+    _logger.info("Browser session opened (backend=%s cdp=%s)", st.backend.name, session.url)
+
+
+async def _cdp() -> BrowserSession:
+    """Return the live CDP session, opening it on first use."""
+    st = _runtime.state()
+    if st.cdp_client is None:
+        await _open(st)
+    session: BrowserSession = st.cdp_client  # type: ignore[assignment]  # reason: _open sets it non-None
     return session
 
 
-def _ax() -> AccessibilityManager:
-    """Return the live accessibility manager. Raises if setup hasn't run."""
+async def _ax() -> AccessibilityManager:
+    """Return the live accessibility manager, opening the session on first use."""
     st = _runtime.state()
     if st.ax_manager is None:
-        raise RuntimeError(
-            "browser accessibility manager not initialised; "
-            "BrowserCapability.setup() must run before tools can be used"
-        )
+        await _open(st)
     ax: AccessibilityManager = st.ax_manager
     return ax
 
@@ -121,7 +129,7 @@ async def _emit(event: str, payload: dict[str, Any]) -> None:
 )
 async def browser_navigate(url: str) -> str:
     """Navigate to a URL. Returns page title after navigation."""
-    cdp = _cdp()
+    cdp = await _cdp()
     config = _runtime.state().config
     try:
         _check_url_policy(url, config.security)
@@ -156,7 +164,7 @@ async def browser_navigate(url: str) -> str:
 
 async def _history_navigate(method: str, direction: str) -> str:
     """Navigate back/forward, validate resulting URL against policy."""
-    cdp = _cdp()
+    cdp = await _cdp()
     config = _runtime.state().config
     await cdp.send("Page", method)
     current_url = await _get_current_url(cdp)
@@ -197,7 +205,8 @@ async def browser_go_forward() -> str:
 )
 async def browser_reload() -> str:
     """Reload the current page."""
-    await _cdp().send("Page", "reload")
+    cdp = await _cdp()
+    await cdp.send("Page", "reload")
     return "Page reloaded"
 
 
@@ -215,7 +224,8 @@ async def browser_reload() -> str:
 )
 async def browser_read_page() -> str:
     """Return an accessibility snapshot of the current page."""
-    snapshot = await _ax().snapshot()
+    ax = await _ax()
+    snapshot = await ax.snapshot()
     _logger.info("Page read: %d chars", len(snapshot))
     return f"[EXTERNAL WEB CONTENT]\n{snapshot}"
 
@@ -227,7 +237,7 @@ async def browser_read_page() -> str:
 )
 async def browser_get_element_text(ref: int) -> str:
     """Return the text of an element identified by its ref ID."""
-    text = _ax().get_element_text(ref)
+    text = (await _ax()).get_element_text(ref)
     return f"[EXTERNAL WEB CONTENT] {text}"
 
 
@@ -247,7 +257,8 @@ async def browser_screenshot() -> str:
     cfg = _runtime.state().config
     max_w = cfg.security.max_screenshot_width
     max_h = cfg.security.max_screenshot_height
-    result = await _cdp().send(
+    cdp = await _cdp()
+    result = await cdp.send(
         "Page",
         "captureScreenshot",
         {
@@ -293,8 +304,8 @@ async def _get_element_center(cdp: BrowserSession, backend_node_id: int) -> tupl
 )
 async def browser_click(ref: int) -> str:
     """Click an element by its ref ID."""
-    cdp = _cdp()
-    backend_id = _ax().resolve_ref(ref)
+    cdp = await _cdp()
+    backend_id = (await _ax()).resolve_ref(ref)
     x, y = await _get_element_center(cdp, backend_id)
     await cdp.send(
         "Input",
@@ -318,9 +329,9 @@ async def browser_click(ref: int) -> str:
 )
 async def browser_type(ref: int, text: str) -> str:
     """Type text into an input element by its ref ID."""
-    cdp = _cdp()
+    cdp = await _cdp()
     cfg = _runtime.state().config
-    backend_id = _ax().resolve_ref(ref)
+    backend_id = (await _ax()).resolve_ref(ref)
     await cdp.send("DOM", "focus", {"backendNodeId": backend_id})
     await cdp.send("Input", "insertText", {"text": text})
     redacted = "[REDACTED]" if cfg.security.redact_inputs else text
@@ -336,8 +347,8 @@ async def browser_type(ref: int, text: str) -> str:
 )
 async def browser_select(ref: int, value: str) -> str:
     """Select an option in a dropdown by its ref ID."""
-    cdp = _cdp()
-    backend_id = _ax().resolve_ref(ref)
+    cdp = await _cdp()
+    backend_id = (await _ax()).resolve_ref(ref)
     resolve_result = await cdp.send("DOM", "resolveNode", {"backendNodeId": backend_id})
     object_id = resolve_result.get("object", {}).get("objectId", "")
     await cdp.send(
@@ -366,8 +377,8 @@ async def browser_select(ref: int, value: str) -> str:
 )
 async def browser_hover(ref: int) -> str:
     """Hover over an element by its ref ID."""
-    cdp = _cdp()
-    backend_id = _ax().resolve_ref(ref)
+    cdp = await _cdp()
+    backend_id = (await _ax()).resolve_ref(ref)
     x, y = await _get_element_center(cdp, backend_id)
     await cdp.send(
         "Input",
@@ -393,8 +404,8 @@ async def browser_hover(ref: int) -> str:
 )
 async def browser_fill_form(fields: dict[str, str]) -> str:
     """Fill multiple form fields by label matching."""
-    cdp = _cdp()
-    ax = _ax()
+    cdp = await _cdp()
+    ax = await _ax()
     succeeded: list[str] = []
     failed: list[str] = []
     for label, value in fields.items():
@@ -438,7 +449,8 @@ async def browser_handle_dialog(action: str, text: str = "") -> str:
     params: dict[str, Any] = {"accept": accept}
     if text:
         params["promptText"] = text
-    await _cdp().send("Page", "handleJavaScriptDialog", params)
+    cdp = await _cdp()
+    await cdp.send("Page", "handleJavaScriptDialog", params)
     await _emit("browser.dialog_handled", {"action": action, "text": text})
     verb = "Accepted" if accept else "Dismissed"
     _logger.info("Dialog %s", verb.lower())
@@ -456,7 +468,8 @@ async def browser_handle_dialog(action: str, text: str = "") -> str:
 async def browser_get_cookies() -> str:
     """Return all cookies for the current page as a formatted string."""
     cfg = _runtime.state().config
-    result = await _cdp().send("Network", "getCookies")
+    cdp = await _cdp()
+    result = await cdp.send("Network", "getCookies")
     cookies = result.get("cookies", [])
     await _emit("browser.cookies_read", {"count": len(cookies)})
     _logger.info("Read %d cookies", len(cookies))
@@ -477,7 +490,8 @@ async def browser_get_cookies() -> str:
 )
 async def browser_set_cookies(cookies: list[dict[str, Any]]) -> str:
     """Set cookies in the browser."""
-    await _cdp().send("Network", "setCookies", {"cookies": cookies})
+    cdp = await _cdp()
+    await cdp.send("Network", "setCookies", {"cookies": cookies})
     await _emit("browser.cookies_set", {"count": len(cookies)})
     _logger.info("Set %d cookies", len(cookies))
     return f"Set {len(cookies)} cookie(s)"
@@ -499,7 +513,8 @@ async def browser_execute_js(expression: str) -> str:
     """Execute JavaScript in the page context, return the result."""
     if not _runtime.state().config.security.allow_js_execution:
         raise CapabilityDisabledError("browser_execute_js")
-    result = await _cdp().send(
+    cdp = await _cdp()
+    result = await cdp.send(
         "Runtime",
         "evaluate",
         {"expression": expression, "returnByValue": True},
@@ -538,7 +553,7 @@ async def browser_download_file(url: str) -> str:
     cfg = _runtime.state().config
     if not cfg.security.allow_downloads:
         raise CapabilityDisabledError("browser_download_file")
-    cdp = _cdp()
+    cdp = await _cdp()
     _check_url_policy(url, cfg.security)
     download_path = cfg.security.download_path
     await cdp.send(

@@ -57,16 +57,23 @@ class TestFederalTierLocalBrowserForbidden:
         assert err.details["tier"] == "federal"
         assert _runtime.state().cdp_client is None
 
-    async def test_federal_remote_setup_connects(self) -> None:
+    async def test_federal_remote_setup_ok_and_opens_on_use(self) -> None:
+        """Federal + remote endpoint: setup builds the backend; session opens on use."""
+        from arcagent.modules.browser.capabilities import browser_reload
+
         _configure(BrowserConfig(tier="federal", connection={"cdp_url": _REMOTE}))  # type: ignore[arg-type]
 
         with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
+            mock_cdp.send = AsyncMock(return_value={})
             mock_cdp.url = _REMOTE
             mock_cdp_cls.return_value = mock_cdp
 
             await BrowserCapability().setup(None)
+            assert _runtime.state().cdp_client is None  # not opened at setup
+
+            await browser_reload()  # first use opens the remote session
 
             mock_cdp.connect.assert_awaited_once()
             assert _runtime.state().cdp_client is mock_cdp
@@ -76,16 +83,23 @@ class TestFederalTierLocalBrowserForbidden:
 class TestNonFederalLocalBrowserAllowed:
     """Non-federal tiers may launch a local headless browser."""
 
-    async def test_personal_local_setup_connects(self) -> None:
+    async def test_personal_local_setup_ok_and_opens_on_use(self) -> None:
+        """Personal + local: setup builds the backend; local Chrome launches on use."""
+        from arcagent.modules.browser.capabilities import browser_reload
+
         _configure(BrowserConfig(tier="personal"))
 
         with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
+            mock_cdp.send = AsyncMock(return_value={})
             mock_cdp.url = "ws://localhost:9222/devtools/browser/local"
             mock_cdp_cls.return_value = mock_cdp
 
             await BrowserCapability().setup(None)
+            assert _runtime.state().cdp_client is None
+
+            await browser_reload()
 
             mock_cdp.connect.assert_awaited_once()
             assert _runtime.state().cdp_client is mock_cdp

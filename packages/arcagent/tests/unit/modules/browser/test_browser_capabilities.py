@@ -104,34 +104,30 @@ class TestLoaderRegistration:
 
 @pytest.mark.asyncio
 class TestBrowserCapabilityLifecycle:
-    """setup() connects CDP and creates the AX manager; teardown() disconnects."""
+    """setup() builds the backend; the session opens lazily on first tool use."""
 
-    async def test_setup_opens_backend_and_creates_ax(self, configured: Path) -> None:
-        """setup() opens the default (cdp) backend and wires the AX manager."""
+    async def test_setup_builds_backend_without_opening(self, configured: Path) -> None:
+        """setup() builds the backend but opens no session (no idle sessions)."""
         from arcagent.modules.browser.capabilities import BrowserCapability
 
         cap = BrowserCapability()
 
-        # The default provider is "cdp" → CDPBackend constructs a
-        # CDPClientManager. Patch it at the backend where it now lives.
         with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
-            mock_cdp = AsyncMock()
-            mock_cdp.connect = AsyncMock()
-            mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
-            mock_cdp_cls.return_value = mock_cdp
-
             await cap.setup(None)
 
-            mock_cdp_cls.assert_called_once()
-            mock_cdp.connect.assert_awaited_once()
+            # No session opened at setup — CDPClientManager not constructed.
+            mock_cdp_cls.assert_not_called()
             st = _runtime.state()
-            assert st.cdp_client is mock_cdp
-            assert st.ax_manager is not None
             assert st.backend is not None
             assert st.backend.name == "cdp"
+            assert st.cdp_client is None
+            assert st.ax_manager is None
 
-    async def test_setup_emits_connected_event(self, configured: Path) -> None:
-        from arcagent.modules.browser.capabilities import BrowserCapability
+    async def test_first_tool_use_opens_session_and_emits_connected(
+        self, configured: Path
+    ) -> None:
+        """The first browser tool call opens the session + emits browser.connected."""
+        from arcagent.modules.browser.capabilities import BrowserCapability, browser_reload
 
         cap = BrowserCapability()
         bus = _runtime.state().bus
@@ -139,15 +135,43 @@ class TestBrowserCapabilityLifecycle:
         with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
             mock_cdp = AsyncMock()
             mock_cdp.connect = AsyncMock()
+            mock_cdp.send = AsyncMock(return_value={})
             mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
             mock_cdp_cls.return_value = mock_cdp
 
             await cap.setup(None)
+            assert _runtime.state().cdp_client is None  # still not opened
+
+            await browser_reload()  # first use → opens
+
+            mock_cdp_cls.assert_called_once()
+            mock_cdp.connect.assert_awaited_once()
+            assert _runtime.state().cdp_client is mock_cdp
 
         bus.emit.assert_any_await(
             "browser.connected",
             {"cdp_url": "ws://localhost:9222/devtools/browser/abc", "backend": "cdp"},
         )
+
+    async def test_session_opened_once_across_tool_calls(self, configured: Path) -> None:
+        """A second tool call reuses the already-open session (no re-open)."""
+        from arcagent.modules.browser.capabilities import BrowserCapability, browser_reload
+
+        cap = BrowserCapability()
+
+        with patch("arcagent.modules.browser.backends.cdp.CDPClientManager") as mock_cdp_cls:
+            mock_cdp = AsyncMock()
+            mock_cdp.connect = AsyncMock()
+            mock_cdp.send = AsyncMock(return_value={})
+            mock_cdp.url = "ws://localhost:9222/devtools/browser/abc"
+            mock_cdp_cls.return_value = mock_cdp
+
+            await cap.setup(None)
+            await browser_reload()
+            await browser_reload()
+
+            mock_cdp_cls.assert_called_once()
+            mock_cdp.connect.assert_awaited_once()
 
     async def test_teardown_closes_backend(self, configured: Path) -> None:
         """The backend must be closed on teardown (releases local/remote browser)."""
@@ -215,7 +239,7 @@ class TestRuntimeContract:
         """A tool called before BrowserCapability.setup() must fail loud."""
         from arcagent.modules.browser.capabilities import browser_screenshot
 
-        with pytest.raises(RuntimeError, match="CDP client not initialised"):
+        with pytest.raises(RuntimeError, match="backend not initialised"):
             await browser_screenshot()
 
 
