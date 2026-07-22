@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from arcagent.core.module_config import ModuleConfig
 
@@ -48,6 +48,25 @@ class MemoryConfig(ModuleConfig):
     # Time-based cadence: consolidate at least this often while events are pending
     # (default hourly), so curated memory stays fresh even on a steady low volume.
     consolidate_interval_seconds: float = 3600.0
+
+    # Backend (arcmemory) settings exposed at the [modules.memory] level for
+    # operator convenience (SPEC-041 README) and folded into backend so the
+    # selected Brain receives them via build_brain(context).
+    embed_backend: str = ""
+    embed_model: str = ""
+    distill_provider: str = ""
+    distill_model: str = ""
+    dynamics: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _fold_backend_settings(self) -> "MemoryConfig":
+        for _k in ("embed_backend", "embed_model", "distill_provider", "distill_model"):
+            _v = getattr(self, _k)
+            if _v != "":
+                self.backend.setdefault(_k, _v)
+        if self.dynamics:
+            self.backend.setdefault("dynamics", self.dynamics)
+        return self
 
 
 __all__ = ["MemoryConfig"]
