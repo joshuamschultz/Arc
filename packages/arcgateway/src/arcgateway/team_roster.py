@@ -97,6 +97,19 @@ def _load_agent(
     name = agent.get("name") or _strip_agent_suffix(agent_dir.name)
     agent_id = name
     model = llm.get("model") if isinstance(llm.get("model"), str) else None
+    if not model:
+        # New arc splits [llm] into the sibling arcllm.toml; read it so the
+        # Fleet page shows the real per-agent model instead of null.
+        _arcllm_path = agent_dir / "arcllm.toml"
+        if _arcllm_path.exists():
+            try:
+                _allm = tomllib.loads(_arcllm_path.read_text(encoding="utf-8"))
+                _lm = _allm.get("llm", {}) if isinstance(_allm.get("llm"), dict) else {}
+                _m = _lm.get("model")
+                if isinstance(_m, str):
+                    model = _m
+            except (OSError, tomllib.TOMLDecodeError):
+                pass
     agent_type = agent.get("type") if isinstance(agent.get("type"), str) else None
 
     return RosterEntry(
