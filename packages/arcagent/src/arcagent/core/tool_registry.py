@@ -28,6 +28,7 @@ from contextlib import nullcontext
 from typing import Any, Literal
 from xml.sax.saxutils import escape as xml_escape
 
+from arcprompt import load_stock
 from arcrun import Tool as ArcRunTool
 from arcrun import ToolContext
 from arctrust import AgentIdentity
@@ -58,7 +59,6 @@ from arcagent.core.tool_policy_bridge import (
 )
 from arcagent.tools._policy_fill import build_clearance_context, build_provider_usage
 from arcagent.tools._transport import (
-    _DEFAULT_PREAMBLE,
     _PY_TYPE_MAP,
     RegisteredTool,
     ToolClassification,
@@ -73,7 +73,6 @@ _logger = logging.getLogger("arcagent.tool_registry")
 
 
 __all__ = [
-    "_DEFAULT_PREAMBLE",
     "_IDENTITY_ARG_NAMES",
     "_MEMORY_TOOL_PREFIXES",
     "_PY_TYPE_MAP",
@@ -144,7 +143,7 @@ class ToolRegistry:
         self._classification_strict = classification_strict
         self._tools: dict[str, RegisteredTool] = {}
         self._prompt_cache: str | None = None
-        self._preamble: str = config.preamble or _DEFAULT_PREAMBLE
+        self._preamble: str = config.preamble or load_stock("arcagent", "tool_manifest_preamble")
 
     def get_classification(self, tool_name: str) -> ToolClassification:
         """Return a tool's classification for dispatch planning.

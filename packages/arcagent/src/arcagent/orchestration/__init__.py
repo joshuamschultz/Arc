@@ -18,7 +18,6 @@ The split:
 
 from __future__ import annotations
 
-from arcagent.orchestration.prompts import SPAWN_GUIDANCE
 from arcagent.orchestration.spawn import (
     RootTokenBudget,
     SpawnResult,
@@ -30,7 +29,6 @@ from arcagent.orchestration.spawn import (
 )
 
 __all__ = [
-    "SPAWN_GUIDANCE",
     "RootTokenBudget",
     "SpawnResult",
     "SpawnSpec",

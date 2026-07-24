@@ -11,7 +11,7 @@ This module is the SOLE writer of that file. Compaction no longer flushes to it
 * ``agent:post_respond`` (priority 120) — count real (non-automated) runs and
   accumulate the turn's transcript; every ``every_n_runs`` runs, spawn a
   background eval-model call that rewrites ``context.md`` as a curated cockpit of
-  open loops (the :data:`CONTEXT_MAINTAINER_SYSTEM_PROMPT` persona).
+  open loops (the ``context_maintainer_system`` stock-prompt persona).
 * ``agent:shutdown`` (priority 60) — drain in-flight maintainer tasks.
 
 Every rewrite is sanitized (ASI-06) and written atomically so a concurrent
@@ -28,9 +28,9 @@ import time
 from typing import Any
 
 from arcllm.types import Message
+from arcprompt import load_stock
 
 from arcagent.modules.workpad import _runtime
-from arcagent.modules.workpad.prompt import CONTEXT_MAINTAINER_SYSTEM_PROMPT
 from arcagent.tools._decorator import hook
 from arcagent.utils.audit import safe_audit
 from arcagent.utils.model_helpers import get_eval_model, spawn_background
@@ -180,7 +180,10 @@ async def perform_maintenance(st: _runtime._State, model: Any, transcript_text: 
 
     response = await model.invoke(
         [
-            Message(role="system", content=CONTEXT_MAINTAINER_SYSTEM_PROMPT),
+            Message(
+                role="system",
+                content=load_stock("arcagent", "context_maintainer_system"),
+            ),
             Message(role="user", content=_render_input(current, transcript_text)),
         ]
     )
@@ -223,7 +226,6 @@ def _atomic_write(path: Any, content: str) -> None:
 
 
 __all__ = [
-    "CONTEXT_MAINTAINER_SYSTEM_PROMPT",
     "drain_on_shutdown",
     "perform_maintenance",
     "track_runs",

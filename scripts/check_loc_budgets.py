@@ -55,6 +55,9 @@ _FOUNDATION_BUDGETS: dict[str, int] = {
     "arctrust": 3_600,
     "arcllm": 7_900,
     "arcrun": 5_400,
+    # arcprompt is a leaf (imports only arctrust); keep the prompt store lean —
+    # prompt CONTENT lives in markdown, not code (editable-system-prompts T-761).
+    "arcprompt": 700,
 }
 # arccli is an advisory-only check (warned, never fails the gate) — "optional,
 # not as important". The remaining packages (memory, skill, store, team, ui, …)

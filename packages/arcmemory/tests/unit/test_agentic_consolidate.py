@@ -6,9 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from arcprompt import load_stock
 from arctrust.identity import AgentIdentity
 
-from arcmemory.agent_consolidate import CONSOLIDATION_SYSTEM_PROMPT, run_agentic_consolidation
+from arcmemory.agent_consolidate import run_agentic_consolidation
 from arcmemory.config import MemoryConfig
 from arcmemory.consolidate import Consolidator
 from arcmemory.db import MemoryDB
@@ -158,7 +159,7 @@ async def test_engine_empty_episodes_is_clean() -> None:
 def test_prompt_scopes_to_user_knowledge_and_excludes_harness_mechanics() -> None:
     """The consolidation prompt must record the USER's domain knowledge and EXPLICITLY
     exclude the agent's own operational/harness mechanics (the bad-card sources)."""
-    prompt = CONSOLIDATION_SYSTEM_PROMPT.lower()
+    prompt = load_stock("arcmemory", "consolidate_agent").lower()
     # Records the user's durable world.
     assert "do not record" in prompt
     for cue in ("people", "projects", "decisions", "preferences"):

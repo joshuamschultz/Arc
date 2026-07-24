@@ -142,6 +142,9 @@ class ArcAgent:
         self._capability_registry: Any = None
         self._capability_loader: Any = None
         self._vault_resolver: Any = None
+        # Overlay-aware prompt resolver, built once at capability setup and pinned
+        # to the operator key (editable-system-prompts COMP-006). None until setup.
+        self._prompt_resolver: Any = None
         self._model: Any = None
         self._trace_store: Any = None
         # Live steerable runs keyed by session (SPEC-031 D2). A tracked run

@@ -510,7 +510,7 @@ max_screenshot_height = 1080
 
 [modules.browser.config.connection]
 cdp_url = ""                     # empty = launch local Chrome; set = attach remote CDP
-endpoint_kind = "page"           # page = direct page target | browser = managed endpoint (attaches a page target)
+endpoint_kind = "page"           # page = direct page target | browser = managed endpoint
 chrome_path = ""
 headless = true
 remote_debugging_port = 0

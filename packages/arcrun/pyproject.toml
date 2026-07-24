@@ -23,6 +23,7 @@ dependencies = [
     "arcllm",
     "arctrust",
     "arcstore",
+    "arcprompt",
     "jsonschema>=4.0",
 ]
 
@@ -36,6 +37,8 @@ container = ["docker>=7.0,<9"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcrun"]
+# Externalized stock prompts are loaded at runtime, not optional data (REQ-140).
+artifacts = ["src/arcrun/**/*.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

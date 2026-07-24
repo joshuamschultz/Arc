@@ -41,6 +41,7 @@ def _build_arcskill(module: Any, context: dict[str, Any]) -> SkillAdapter | None
         audit_sink=context["audit_sink"],
         agent_did=context["agent_did"],
         skill_path=context["skill_path"],
+        prompt_resolve=context["prompt_resolve"],
     )
     return adapter
 
@@ -68,6 +69,7 @@ def select_skill_adapter(
     agent_did: str = "",
     skill_path: Callable[[str], Path | None] | None = None,
     adapter_allowlist: tuple[str, ...] = (),
+    prompt_resolve: Callable[[str, str], str] | None = None,
 ) -> SkillAdapter:
     """Return the configured SkillAdapter (fail-safe: any degrade path yields Null)."""
     context: dict[str, Any] = {
@@ -81,6 +83,7 @@ def select_skill_adapter(
         "audit_sink": audit_sink,
         "agent_did": agent_did,
         "skill_path": skill_path,
+        "prompt_resolve": prompt_resolve,
     }
     adapter: SkillAdapter = select_extension(
         _SKILLADAPT_POINT,

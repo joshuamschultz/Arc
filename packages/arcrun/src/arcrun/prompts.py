@@ -16,43 +16,16 @@ See ADR on strategy prompt injection for architectural rationale.
 
 from __future__ import annotations
 
+from arcprompt import PromptMissing, PromptResolve, load_stock
+
 from arcrun.strategies import STRATEGIES, _load_strategies
-
-# ---------------------------------------------------------------------------
-# Builtin tool guidance constants
-# ---------------------------------------------------------------------------
-
-CODE_EXEC_GUIDANCE = """\
-## Code Execution (execute_python)
-You have access to a sandboxed Python execution environment. Use it when
-the problem is more naturally solved by writing code than by calling
-predefined tools.
-
-Prefer execute_python when:
-- The task involves computation, math, or data transformation
-- You need to process structured data (parse JSON, CSV, etc.)
-- Logic is complex enough that reasoning alone is error-prone
-- You need to verify a hypothesis empirically
-
-Prefer other tools when:
-- A dedicated tool already handles the operation (file read/write, search)
-- The task requires external API access or credentials
-- The operation is security-sensitive or irreversible"""
-
-CONTAINED_EXEC_GUIDANCE = """\
-## Isolated Code Execution (contained_execute_python)
-You have access to a container-isolated Python execution environment.
-It runs with no network access, a read-only filesystem, and strict
-memory/CPU/PID limits. Use it for the same scenarios as execute_python
-but when stronger isolation is required — untrusted input processing,
-resource-intensive computation, or when the execution environment must
-not affect the host."""
 
 
 def get_strategy_prompts(
     *,
     allowed_strategies: list[str] | None = None,
     tool_names: list[str] | None = None,
+    resolve: PromptResolve = load_stock,
 ) -> dict[str, str]:
     """Return prompt guidance fragments keyed by section name.
 
@@ -67,6 +40,10 @@ def get_strategy_prompts(
         tool_names: Names of tools that will be available. Used to
             detect arcrun-owned tools (execute_python, contained_execute_python)
             and include their guidance.
+        resolve: Prompt-body resolver ``(package, name) -> body``. Defaults to
+            stock-only ``load_stock``; the agent passes a run-frozen,
+            overlay-aware snapshot resolver so an operator's override of a
+            strategy prompt is honored here (and audited in the provenance event).
 
     Returns:
         Dict mapping section names to prompt text. Keys are stable
@@ -86,15 +63,17 @@ def get_strategy_prompts(
     for name in effective_strategies:
         strategy = STRATEGIES.get(name)
         if strategy is not None:
-            sections[f"strategy_{name}"] = strategy.prompt_guidance
+            sections[f"strategy_{name}"] = _strategy_body(name, strategy.prompt_guidance, resolve)
 
     # --- Strategy selection guidance (when multiple available) ---
     if len(effective_strategies) > 1:
-        descriptions = "\n".join(
-            f"- **{name}**: {STRATEGIES[name].description}"
-            for name in effective_strategies
-            if name in STRATEGIES
-        )
+        lines = []
+        for name in effective_strategies:
+            strategy = STRATEGIES.get(name)
+            if strategy is not None:
+                desc = _strategy_body(f"{name}_description", strategy.description, resolve)
+                lines.append(f"- **{name}**: {desc}")
+        descriptions = "\n".join(lines)
         sections["strategy_selection"] = (
             "## Strategy Selection\n"
             "Multiple execution strategies are available. The system "
@@ -105,8 +84,22 @@ def get_strategy_prompts(
 
     # --- Code execution guidance (arcrun-owned tools only) ---
     if "execute_python" in effective_tools:
-        sections["code_exec_guidance"] = CODE_EXEC_GUIDANCE
+        sections["code_exec_guidance"] = resolve("arcrun", "code_exec_guidance")
     if "contained_execute_python" in effective_tools:
-        sections["contained_exec_guidance"] = CONTAINED_EXEC_GUIDANCE
+        sections["contained_exec_guidance"] = resolve("arcrun", "contained_exec_guidance")
 
     return sections
+
+
+def _strategy_body(prompt_name: str, fallback: str, resolve: PromptResolve) -> str:
+    """Resolve ``strategy_<prompt_name>`` through ``resolve``; fall back for a custom strategy.
+
+    Built-in strategies each ship a ``strategy_<name>[_description]`` prompt, so
+    ``resolve`` (stock or overlay-aware) returns their body. A third-party
+    strategy that ships no such prompt falls back to its in-class property, so a
+    custom strategy is never broken by the externalization.
+    """
+    try:
+        return resolve("arcrun", f"strategy_{prompt_name}")
+    except PromptMissing:
+        return fallback

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from arcllm.types import Message
+from arcprompt import load_stock
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.utils.io import format_messages
@@ -363,28 +364,6 @@ class SessionManager:
         """
         return sanitize_text(text, max_length=2000, truncation_suffix="\n[truncated]")
 
-    # Structured schema for compaction summaries. Fields (not free prose) force
-    # the model to preserve actionable state; `goal`/`constraints` are copied
-    # verbatim (they carry security-relevant instructions — LLM07/ASI01). The
-    # two fields research flags as most-dropped-yet-critical are kept explicit:
-    # `rejected_approaches` (prevents repeated dead ends) and a quantified
-    # `progress` (prevents premature "done").
-    _SUMMARY_TEMPLATE = (
-        "Summarize this conversation segment into the EXACT template below. "
-        "Copy `goal` and `constraints` VERBATIM (do not paraphrase). Use concise "
-        "bullets; leave a field blank only if truly empty. Do not invent facts.\n\n"
-        "goal: <original task, verbatim>\n"
-        "constraints: <security/user constraints, verbatim>\n"
-        "progress: <what is done so far, quantified>\n"
-        "key_facts: <durable facts learned, with provenance>\n"
-        "files_modified: <path: one-line change>\n"
-        "decisions: <decision: rationale>\n"
-        "rejected_approaches: <what was tried and failed, and why>\n"
-        "open_questions: <unresolved items blocking completion>\n"
-        "next_step: <single concrete next action>\n\n"
-        "CONVERSATION SEGMENT:\n"
-    )
-
     async def _summarize_messages(
         self,
         messages: list[dict[str, Any]],
@@ -392,10 +371,11 @@ class SessionManager:
     ) -> str:
         """Summarize messages into the structured schema via the eval model."""
         msg_text = format_messages(messages, limit=0, type_filter="message")
+        summary_template = load_stock("arcagent", "summary_template")
 
         try:
             response = await asyncio.wait_for(
-                model.invoke([Message(role="user", content=self._SUMMARY_TEMPLATE + msg_text)]),
+                model.invoke([Message(role="user", content=summary_template + msg_text)]),
                 timeout=self._config.compaction_timeout_seconds,
             )
             summary: str = response.content or ""

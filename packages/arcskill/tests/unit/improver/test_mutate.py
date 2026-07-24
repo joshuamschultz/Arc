@@ -59,7 +59,6 @@ class TestReflectionPrompt:
             SKILL_TEXT,
             weak_dimensions=["error_handling"],
             failure_patterns=["TimeoutError in bash calls"],
-            intent_header="Plan business travel efficiently.",
             token_budget=100,
         )
         assert "Check calendar" in prompt
@@ -71,7 +70,6 @@ class TestReflectionPrompt:
             SKILL_TEXT,
             weak_dimensions=["accuracy"],
             failure_patterns=[],
-            intent_header="Plan business travel efficiently.",
             token_budget=100,
         )
         assert "IMMUTABLE" in prompt or "DO NOT modify" in prompt
@@ -83,7 +81,6 @@ class TestReflectionPrompt:
             SKILL_TEXT,
             weak_dimensions=["clarity"],
             failure_patterns=[],
-            intent_header="intent",
             token_budget=150,
         )
         assert "150" in prompt
@@ -95,7 +92,6 @@ class TestReflectionPrompt:
             SKILL_TEXT,
             weak_dimensions=["error_handling", "clarity"],
             failure_patterns=[],
-            intent_header="intent",
             token_budget=100,
         )
         assert "error_handling" in prompt
@@ -229,7 +225,6 @@ class TestReflect:
         result = await r.reflect(
             SKILL_TEXT,
             failures,
-            "Plan business travel efficiently.",
             token_budget=200,
         )
         assert "timeout handling" in result.lower() or "calendar" in result.lower()
@@ -242,7 +237,7 @@ class TestReflect:
         mock_llm.invoke.side_effect = RuntimeError("LLM error")
         r = SkillReflector(config, llm=mock_llm)
         failures = [(_make_trace(), {"accuracy": _make_dim_score("accuracy", 1)})]
-        result = await r.reflect(SKILL_TEXT, failures, "intent", token_budget=100)
+        result = await r.reflect(SKILL_TEXT, failures, token_budget=100)
         assert result == ""  # Empty on error
 
 

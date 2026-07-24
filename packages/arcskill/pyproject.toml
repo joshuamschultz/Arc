@@ -16,12 +16,19 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 
+dependencies = [
+    "arctrust>=0.1",
+    "pydantic>=2.0,<3",
+    "PyYAML>=6.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/joshuamschultz/Arc"
 Repository = "https://github.com/joshuamschultz/Arc"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arcskill"]
+artifacts = ["src/arcskill/**/*.md"]
 
 [tool.mypy]
 python_version = "3.11"

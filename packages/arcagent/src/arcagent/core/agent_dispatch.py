@@ -64,20 +64,27 @@ async def build_run_context(
 
     invoke_tools = tool_registry.to_arcrun_tools()
 
+    # Freeze the complete prompt set for this run and emit one provenance event
+    # (COMP-006 / REQ-123, REQ-132). The snapshot backs an overlay-aware resolver
+    # so an operator override reaches the model — and is attributable to exact
+    # bytes. Absent a resolver (bare/test agent), fall back to stock-only loading.
+    resolve = _run_prompt_resolve(agent, telemetry)
+
     # Strategy prompt guidance — arcrun-owned strategies and tools.
     tool_names = [t.name for t in invoke_tools]
-    strategy_sections = get_strategy_prompts(tool_names=tool_names)
+    strategy_sections = get_strategy_prompts(tool_names=tool_names, resolve=resolve)
 
     # Orchestration: spawn_task is context-dependent (reads depth/budget from the
     # loop's ToolContext), so it is dispatched directly, not routed through the
     # context-free invoke() path. Children inherit spawn + the invoke tools.
     ctx_tools: list[Any] = []
     if agent._config.spawn.enabled:
-        from arcagent.orchestration import SPAWN_GUIDANCE, RootTokenBudget, make_spawn_tool
+        from arcagent.orchestration import RootTokenBudget, make_spawn_tool
 
+        spawn_guidance = resolve("arcagent", "spawn_guidance")
         child_system_prompt = await context.assemble_system_prompt(
             agent._workspace,
-            extra_sections={**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE},
+            extra_sections={**strategy_sections, "spawn_guidance": spawn_guidance},
         )
         child_tools = list(invoke_tools)  # closure ref — append makes children see spawn
         # Shared cross-child token pool (LLM10) — one per run, capping the
@@ -94,7 +101,7 @@ async def build_run_context(
         )
         child_tools.append(spawn_tool)
         ctx_tools = [spawn_tool]
-        strategy_sections = {**strategy_sections, "spawn_guidance": SPAWN_GUIDANCE}
+        strategy_sections = {**strategy_sections, "spawn_guidance": spawn_guidance}
 
     system_prompt = await context.assemble_system_prompt(
         agent._workspace, extra_sections=strategy_sections, query=task
@@ -118,6 +125,29 @@ async def build_run_context(
 
     await bus.emit("agent:pre_respond", {"task": task})
     return telemetry, bus, model, provider, system_prompt, bridge
+
+
+def _run_prompt_resolve(agent: ArcAgent, telemetry: AgentTelemetry) -> Callable[[str, str], str]:
+    """Build this run's overlay-aware prompt resolver + emit the provenance event.
+
+    Freezes the complete prompt set once (REQ-123) and audits it once
+    (REQ-132). When the agent has no resolver (bare/test construction that
+    skipped capability setup) this degrades to stock-only ``load_stock`` so a
+    minimal agent still assembles its prompt.
+    """
+    from arcprompt import load_stock
+
+    resolver = agent._prompt_resolver
+    if resolver is None:
+        return load_stock
+
+    from arcagent.core.prompt_context import snapshot_resolver, snapshot_run_prompts
+
+    actor_did = agent._identity.did if agent._identity else "did:arc:unknown"
+    snapshot = snapshot_run_prompts(
+        resolver, actor_did=actor_did, audit_event=telemetry.audit_event
+    )
+    return snapshot_resolver(snapshot)
 
 
 def _agent_skills(agent: ArcAgent) -> list[_Skill]:

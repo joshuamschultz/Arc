@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
+from arcskill.context import PromptResolve, load_prompt, load_rubric
 from arcskill.improver._util import extract_json
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.models import (
@@ -22,63 +22,19 @@ from arcskill.improver.seams import LLMInvoker
 
 _logger = logging.getLogger("arcskill.improver.evaluator")
 
-# Per-dimension evaluation rubrics
-DIMENSIONS: dict[str, dict[str, Any]] = {
-    "accuracy": {
-        "checklist": [
-            "All steps lead to correct outcomes",
-            "No incorrect or misleading instructions",
-            "Prerequisites are correctly stated",
-            "Success criteria are verifiable",
-            "Edge cases are handled correctly",
-        ],
-        "anti_inflation": (
-            "A score of 5 requires ZERO factual errors. Most procedures score 2-4."
-        ),
-    },
-    "efficiency": {
-        "checklist": [
-            "No redundant or unnecessary steps",
-            "Steps are in optimal order",
-            "No unnecessary tool calls implied",
-            "Procedure achieves goal in minimal steps",
-            "No repeated information",
-        ],
-        "anti_inflation": (
-            "A score of 5 requires every step to be essential. Most procedures score 2-4."
-        ),
-    },
-    "error_handling": {
-        "checklist": [
-            "Common failure modes are anticipated",
-            "Recovery steps are provided for errors",
-            "Fallback paths are defined",
-            "Error messages guide next actions",
-            "Partial failure scenarios are addressed",
-        ],
-        "anti_inflation": (
-            "A score of 5 requires comprehensive error coverage. Most procedures score 2-3."
-        ),
-    },
-    "clarity": {
-        "checklist": [
-            "Each step has a single unambiguous action",
-            "Technical terms are defined or standard",
-            "Conditional branches specify both paths",
-            "Success criteria are explicitly stated",
-            "A practitioner can execute without interpretation",
-        ],
-        "anti_inflation": ("A score of 5 requires ZERO ambiguity. Most procedures score 2-4."),
-    },
-}
-
 
 class SkillEvaluator:
     """Evaluate skill procedures against execution traces using LLM-as-judge."""
 
-    def __init__(self, config: ImproverConfig, llm: LLMInvoker) -> None:
+    def __init__(
+        self, config: ImproverConfig, llm: LLMInvoker, *, resolve: PromptResolve | None = None
+    ) -> None:
         self._config = config
         self._llm = llm
+        self._resolve = resolve
+        # Load the scoring rubric once per pass — overlay-aware when the arc system
+        # is present (an operator edit wins), stock otherwise. Frozen for the pass.
+        self._rubric = load_rubric(resolve=resolve)
 
     def build_judge_prompt(
         self,
@@ -87,7 +43,7 @@ class SkillEvaluator:
         dimension: str,
     ) -> str:
         """Construct the judge prompt for a single dimension evaluation."""
-        dim_config = DIMENSIONS.get(dimension, DIMENSIONS["accuracy"])
+        dim_config = self._rubric.get(dimension, self._rubric["accuracy"])
         checklist = dim_config["checklist"]
         anti_inflation = dim_config["anti_inflation"]
 
@@ -103,36 +59,17 @@ class SkillEvaluator:
             ", ".join(tc.error_type for tc in trace.tool_calls if tc.error_type) or "None"
         )
 
-        return f"""\
-You are evaluating a skill procedure document on {dimension}.
-
-CALIBRATION:
-Score 1 (Poor): Procedure fails on this dimension in most scenarios.
-Score 3 (Moderate): Procedure is adequate but has notable gaps.
-Score 5 (Excellent): Procedure excels — no issues on this dimension.
-
-{anti_inflation}
-
-CHECKLIST (answer YES or NO for each):
-{checklist_text}
-
-EXECUTION TRACE:
-Task: {trace.task_summary}
-Tool calls:
-{tool_calls_text}
-Errors: {errors_text}
-Outcome: {trace.task_outcome or "unknown"}
-Coverage: {trace.coverage_pct:.0f}%
-
-PROCEDURE TO EVALUATE:
-{skill_text}
-
-First, evaluate each checklist item with YES/NO and brief reasoning.
-Then provide your score (1-5) = count of YES answers.
-
-Respond in JSON:
-{{"checklist": [{{"item": str, "answer": bool, "reason": str}}],
-"score": int, "rationale": str}}"""
+        return load_prompt("judge_prompt", resolve=self._resolve).format(
+            dimension=dimension,
+            anti_inflation=anti_inflation,
+            checklist_text=checklist_text,
+            task_summary=trace.task_summary,
+            tool_calls_text=tool_calls_text,
+            errors_text=errors_text,
+            task_outcome=trace.task_outcome or "unknown",
+            coverage_pct=trace.coverage_pct,
+            skill_text=skill_text,
+        )
 
     def parse_score(self, response: str, dimension: str) -> DimensionScore:
         """Parse LLM judge response into a DimensionScore.

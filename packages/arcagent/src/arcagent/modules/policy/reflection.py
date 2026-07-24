@@ -21,13 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from arcprompt import load_stock
 from pydantic import BaseModel, Field
-
-_GROUNDING_HEADER = (
-    "You are reviewing an automated agent run summarized from its memory "
-    "consolidation episode (no live chat transcript exists). Evaluate the "
-    "agent's observable behavior and outcomes below."
-)
 
 
 class ReflectionGrounding(BaseModel):
@@ -50,7 +45,8 @@ class ReflectionGrounding(BaseModel):
 
     def to_messages(self) -> list[dict[str, str]]:
         """Render the grounding as the synthetic transcript the Reflector reads."""
-        lines = [_GROUNDING_HEADER, "", f"Episode: {self.episode_summary}".strip()]
+        header = load_stock("arcagent", "reflection_grounding_header")
+        lines = [header, "", f"Episode: {self.episode_summary}".strip()]
         if self.step_results:
             lines.append("Results:")
             lines.extend(f"- {r}" for r in self.step_results)

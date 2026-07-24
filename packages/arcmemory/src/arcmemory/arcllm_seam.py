@@ -30,6 +30,7 @@ from collections.abc import Callable
 from typing import Any
 
 import arcllm
+from arcprompt import load_stock
 
 from arcmemory.distill import (
     DaySummaryDraft,
@@ -82,96 +83,6 @@ class ArcLLMEmbedder:
         return [[float(x) for x in vector] for vector in response.vectors]
 
 
-_FACT_SYSTEM = (
-    "You are the memory of an executive assistant. Distill a window of raw agent "
-    "events into durable, reference-grade semantic facts about the PEOPLE, PLACES, "
-    "PROJECTS, COMPANIES, and DEALS that came up. Return ONLY a JSON object of the form "
-    '{"facts": [{"slug": str, "predicate": str, "value": str, "hits": int, '
-    '"name": str|null, "entity_type": str, "classification": str}]}. '
-    "slug is a stable lowercase entity id (e.g. 'brad-baker', 'ctgfederal'); name is "
-    "the human-readable name; entity_type is one of person/place/project/company/deal/thing. "
-    "Capture EVERY durable attribute worth referencing later as its own fact — for a "
-    "person: role, employer, location, contact info, relationships, preferences, "
-    "commitments; for a company/deal: what it is, stage, value, key contacts, dates. "
-    "Each fact is ONE predicate:value pair, specific and succinct (no vague 'is nice'). "
-    "Prefer many precise facts over one bundled sentence. Emit nothing you cannot ground "
-    "in the events; do not invent. No prose."
-)
-
-_PROCEDURE_SYSTEM = (
-    "You are the memory of an executive assistant. From the session conversation, extract "
-    "reusable PROCEDURES — the durable METHODS behind how something is done, so the same "
-    "approach can be found and reapplied next time a like situation arises.\n"
-    "Capture the method whether it is STATED explicitly (a walked-through, step-by-step "
-    "how-to) or left IMPLICIT (a consistent way of approaching, deciding, or handling a "
-    "recurring kind of situation that you can infer from how it was reasoned through here). "
-    "A procedure is domain-agnostic: any repeatable way of doing, analyzing, deciding, "
-    "creating, or handling counts — abstract the transferable method, not the one specific "
-    "instance.\n"
-    "Return ONLY a JSON object of the form "
-    '{"procedures": [{"slug": str, "title": str, "when_to_use": str, "steps": [str]}]}. '
-    "slug is a STABLE lowercase id for the method — reuse the SAME slug for the same method "
-    "across sessions so it accumulates rather than duplicates; title names the method; "
-    "when_to_use is the trigger situation to match against later (make it searchable); "
-    "steps are the ordered actions/considerations of the method. If the session refines a "
-    "method you have seen before (a step added, removed, or changed), re-emit it under its "
-    "existing slug with the FULL updated steps so the card evolves in place.\n"
-    "Only emit a method that is genuinely reusable and grounded in the conversation — never "
-    "one-off facts, chatter, or the agent's own tool/runtime mechanics. Emit nothing you "
-    "cannot ground. No prose."
-)
-
-_INSIGHT_SYSTEM = (
-    "You mint reusable INSIGHTS — abstractions that recur across situations with "
-    "little surface overlap. Return ONLY a JSON object of the form "
-    '{"insights": [{"id": str, "statement": str, "trigger": str, '
-    '"cues": [str], "instances": [str], "hits": int}]}. '
-    "'trigger' states the situation at the MECHANISM level (surface stripped). "
-    "'cues' are abstract feature tags from a small controlled vocabulary. "
-    "'instances' are the event ids the insight generalizes. No prose."
-)
-
-_DISAMBIGUATE_SYSTEM = (
-    "You resolve entity identity for a memory system. Given a NEW entity candidate "
-    "and a short list of EXISTING card slugs, decide whether the candidate is the SAME "
-    "real-world entity as one of them (e.g. 'ACME' vs 'acme-corp'), not merely similar. "
-    'Return ONLY a JSON object of the form {"slug": str|null}: the matching existing '
-    "slug if one is the same entity, or null if the candidate is genuinely new. Choose "
-    "at most one. When unsure, answer null — a wrong merge is worse than a duplicate."
-)
-
-_MERGE_CONFIRM_SYSTEM = (
-    "You decide which entity cards describe the SAME real-world entity so a memory "
-    "system can safely merge duplicates. You are given a small CANDIDATE CLUSTER of "
-    "cards (slug, name, type, and a few key facts) that share only a similar NAME. "
-    "Group together ONLY the cards that are UNAMBIGUOUSLY the same real-world person, "
-    "place, project, company, or thing — e.g. 'ACME' and 'acme-corp', or 'Austin, "
-    "Texas' and 'Austin, TX'. Different people, places, projects, or organizations "
-    "that merely sound or spell alike (e.g. 'Josh Schultz' vs 'Joshua Shubbie', or two "
-    "different projects both called 'Custom ERP' at different companies) MUST NOT be "
-    "grouped. When in doubt, keep them SEPARATE — a wrong merge is far worse than a "
-    "leftover duplicate. Use the facts, not just the names, to decide. Return ONLY a "
-    'JSON object of the form {"merge": [["slug-a", "slug-b"], ...]}: each inner list is '
-    "a set of >= 2 slugs (drawn from the input) that are the same entity. Return "
-    '{"merge": []} when none should be merged. No prose.'
-)
-
-_DAY_SYSTEM = (
-    "You are taking detailed MEETING MINUTES from one day of raw agent events (a "
-    "conversation + tool transcript). Produce rich, reference-grade notes — enough to "
-    "reconstruct WHAT happened, WHY, and WHEN. Return ONLY a JSON object of the form "
-    '{"timeline": [str], "discussions": [str], "decisions": [str], "people": [str], '
-    '"goals": [str], "tasks": [str]}. '
-    "'timeline' is chronological bullets, EACH prefixed with the time as HH:MM — what "
-    "happened or was discussed at that moment, in order. 'discussions' summarize each "
-    "topic: what was talked about, the method/approach taken, and why. 'decisions' are "
-    "choices made, each WITH its rationale. 'people' names each person/place/organization "
-    "AND what about them (role, what they said or need). 'goals' are targets/objectives "
-    "surfaced. 'tasks' are action items. Be specific and succinct; leave a list empty if "
-    "it has none. Ground everything in the events — do not invent. No prose."
-)
-
-
 class ArcLLMDistiller:
     """arcmemory ``Distiller`` seam backed by an arcllm structured completion.
 
@@ -187,23 +98,29 @@ class ArcLLMDistiller:
 
     async def extract_facts(self, events: list[Event]) -> FactExtraction:
         """One structured completion → additive semantic facts (REQ-031/032/033)."""
-        data = await self._complete(_FACT_SYSTEM, self._render_events(events))
+        data = await self._complete(
+            load_stock("arcmemory", "distill_fact"), self._render_events(events)
+        )
         return FactExtraction.model_validate(data)
 
     async def mint_insights(self, events: list[Event], facts: list[Fact]) -> InsightMint:
         """One structured completion → minted abstractions, the centerpiece (REQ-050)."""
         user = f"{self._render_events(events)}\n\nKnown facts:\n{self._render_facts(facts)}"
-        data = await self._complete(_INSIGHT_SYSTEM, user)
+        data = await self._complete(load_stock("arcmemory", "distill_insight"), user)
         return InsightMint.model_validate(data)
 
     async def extract_procedures(self, events: list[Event]) -> ProcedureExtraction:
         """One structured completion → reusable how-to procedures (findable processes)."""
-        data = await self._complete(_PROCEDURE_SYSTEM, self._render_events(events))
+        data = await self._complete(
+            load_stock("arcmemory", "distill_procedure"), self._render_events(events)
+        )
         return ProcedureExtraction.model_validate(data)
 
     async def summarize_day(self, events: list[Event]) -> DaySummaryDraft:
         """One structured completion → meeting-minutes daily notes (chronological)."""
-        data = await self._complete(_DAY_SYSTEM, self._render_events(events))
+        data = await self._complete(
+            load_stock("arcmemory", "distill_day"), self._render_events(events)
+        )
         return DaySummaryDraft.model_validate(data)
 
     async def disambiguate_entity(
@@ -212,7 +129,7 @@ class ArcLLMDistiller:
         """One bounded call → the existing slug this candidate IS, or None (new)."""
         listing = "\n".join(f"- {slug}" for slug in candidates)
         user = f"New candidate: {name} (type: {entity_type})\nExisting cards:\n{listing}"
-        data = await self._complete(_DISAMBIGUATE_SYSTEM, user)
+        data = await self._complete(load_stock("arcmemory", "distill_disambiguate"), user)
         chosen = data.get("slug")
         if not isinstance(chosen, str) or not chosen.strip():
             return None
@@ -231,7 +148,9 @@ class ArcLLMDistiller:
             if len(group) < 2:
                 continue
             slugs = {ref.slug for ref in group}
-            data = await self._complete(_MERGE_CONFIRM_SYSTEM, self._render_cards(group))
+            data = await self._complete(
+                load_stock("arcmemory", "distill_merge_confirm"), self._render_cards(group)
+            )
             for sub in data.get("merge", []):
                 if not isinstance(sub, list):
                     continue

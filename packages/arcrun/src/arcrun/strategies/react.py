@@ -9,6 +9,8 @@ import os
 import time
 from typing import Any
 
+from arcprompt import load_stock
+
 from arcrun._messages import TextBlock, ToolUseBlock, assistant_message, tool_result, user_message
 from arcrun.builtins.task_complete import (
     BudgetBreachReason,
@@ -143,32 +145,11 @@ class ReactStrategy(Strategy):
 
     @property
     def description(self) -> str:
-        return (
-            "Iterative tool-calling loop. Reasons about the task, calls tools, "
-            "observes results, and repeats until complete. Best for multi-step "
-            "problems requiring tool interaction."
-        )
+        return load_stock("arcrun", "strategy_react_description")
 
     @property
     def prompt_guidance(self) -> str:
-        return (
-            "## Execution Loop\n"
-            "You operate in a Reason-Act-Observe loop. After each tool call you "
-            "receive the result and decide the next action. The loop continues "
-            "until you produce a final response with no tool calls.\n\n"
-            "GUIDELINES:\n"
-            "- Issue independent, read-only tool calls TOGETHER in a single "
-            "step — they run in parallel and each is still traced and audited "
-            "individually. Fetching several URLs or running several searches is "
-            "one step, not one per turn. Reserve one-at-a-time calls for actions "
-            "that depend on a previous result or that modify state\n"
-            "- Examine tool results before taking dependent follow-up actions\n"
-            "- If a tool call fails, analyze the error and adapt your approach\n"
-            "- After 3 failures on the same approach, try a fundamentally "
-            "different method\n"
-            "- When your task is complete, respond with your final answer "
-            "without calling any tools"
-        )
+        return load_stock("arcrun", "strategy_react")
 
     async def __call__(
         self,

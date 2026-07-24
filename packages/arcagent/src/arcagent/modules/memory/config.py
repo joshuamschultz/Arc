@@ -59,7 +59,7 @@ class MemoryConfig(ModuleConfig):
     dynamics: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _fold_backend_settings(self) -> "MemoryConfig":
+    def _fold_backend_settings(self) -> MemoryConfig:
         for _k in ("embed_backend", "embed_model", "distill_provider", "distill_model"):
             _v = getattr(self, _k)
             if _v != "":
