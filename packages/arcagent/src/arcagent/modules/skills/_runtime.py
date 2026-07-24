@@ -122,6 +122,15 @@ def configure(
         logger=_logger,
         agent_label=f"{agent_name}/skills" if agent_name else "skills",
     )
+    # Overlay-aware prompt resolver so an operator's signed edit to an arcskill improver
+    # prompt takes effect. The agent root is <agent_root>/workspace -> ws.parent.
+    prompt_resolve = None
+    try:
+        from arcagent.core.prompt_context import agent_prompt_resolve
+
+        prompt_resolve = agent_prompt_resolve(ws.parent, cfg.tier)
+    except Exception:  # reason: prompt overlays are best-effort; never block skills startup
+        prompt_resolve = None
     adapter = select_skill_adapter(
         cfg.adapter,
         workspace=ws,
@@ -134,6 +143,7 @@ def configure(
         agent_did=agent_did,
         skill_path=_skill_path,
         adapter_allowlist=tuple(cfg.adapter_allowlist),
+        prompt_resolve=prompt_resolve,
     )
     new_state = _State(
         adapter=adapter,

@@ -28,6 +28,7 @@ dependencies = [
     "httpx>=0.27,<1",
     "mcp>=1.25,<2",
     "arcllm>=0.1",
+    "arcprompt>=0.1",
     "arcrun>=0.1",
     "arctrust>=0.1",
     "arcui>=0.1",
@@ -133,7 +134,7 @@ markers = [
 packages = ["src/arcagent"]
 # SPEC-047: guarantee the packaged blueprint presets ship in the wheel regardless of
 # VCS state (they are loaded at runtime by arcagent.blueprints — not optional data).
-artifacts = ["src/arcagent/blueprints/*.toml"]
+artifacts = ["src/arcagent/blueprints/*.toml", "src/arcagent/context/**/*.md"]
 
 [tool.coverage.run]
 source = ["arcagent"]

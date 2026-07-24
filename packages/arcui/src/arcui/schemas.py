@@ -104,6 +104,116 @@ class FileWriteResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Agent detail — prompts (COMP-010: editable system prompts)
+# ---------------------------------------------------------------------------
+
+
+class PromptListItem(BaseModel):
+    """One row in the prompts list — a stock prompt, marked stock or overridden."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    description: str
+    status: str  # "stock" | "overridden"
+
+
+class PromptListResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/prompts`` — every prompt across packages."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[PromptListItem]
+
+
+class PromptDetailResponse(BaseModel):
+    """Body of ``GET /api/agents/{id}/prompts/{package}/{name}``.
+
+    ``stock`` is the packaged body; ``effective`` is the overlay body when one is
+    present and parseable, else stock; ``diff`` is a server-computed unified diff
+    (stock → effective) so the browser ships no diff library.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    description: str
+    status: str  # "stock" | "overridden"
+    stock: str
+    effective: str
+    diff: str
+
+
+class PromptWriteResponse(BaseModel):
+    """Body of ``PUT /api/agents/{id}/prompts/{package}/{name}`` — a signed override.
+
+    ``signer_did`` is the RESOLVED principal that signed the overlay (never a
+    constant); ``sha256`` is the signed content digest recorded in the sidecar.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    signer_did: str
+    sha256: str
+    message: str
+
+
+class PromptResetResponse(BaseModel):
+    """Body of ``DELETE /api/agents/{id}/prompts/{package}/{name}`` — override removed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    message: str
+
+
+class RubricDimension(BaseModel):
+    """One judge-rubric dimension: an ordered checklist plus a calibration note.
+
+    ``checklist`` rows and ``anti_inflation`` mirror the YAML body of the
+    ``arcskill/judge_rubric`` prompt exactly; this model is the structured editing
+    surface over that same signed overlay.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    checklist: list[str]
+    anti_inflation: str
+
+
+class RubricUpdate(BaseModel):
+    """Request body of ``PUT .../prompts/{package}/{name}/rubric`` — a structured edit.
+
+    ``dimensions`` is a mapping of dimension name → :class:`RubricDimension`;
+    insertion order is preserved on serialization back to YAML (``sort_keys=False``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dimensions: dict[str, RubricDimension]
+
+
+class RubricResponse(BaseModel):
+    """Body of ``GET .../prompts/{package}/{name}/rubric`` — the parsed rubric.
+
+    ``status`` is ``stock`` or ``overridden`` (same convention as the prompt
+    detail); ``dimensions`` is the server-parsed YAML body as structured JSON.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: str
+    name: str
+    status: str  # "stock" | "overridden"
+    dimensions: dict[str, RubricDimension]
+
+
+# ---------------------------------------------------------------------------
 # Agent detail — sessions / tasks / schedules
 # ---------------------------------------------------------------------------
 

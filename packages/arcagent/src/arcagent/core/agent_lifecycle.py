@@ -22,6 +22,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from arcprompt import load_stock
+
 from arcagent.capabilities.capability_loader import CapabilityLoader
 from arcagent.capabilities.capability_registry import CapabilityRegistry
 from arcagent.core.module_bus import EventContext
@@ -33,13 +35,6 @@ if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
-
-# Per D-346/D-347 — short skill-usage instruction injected at priority 91.
-_SKILL_USAGE_INSTRUCTION = (
-    "## Skills\n"
-    "When the manifest above lists a relevant skill, read its SKILL.md "
-    "for step-by-step guidance before invoking the related tools."
-)
 
 
 async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
@@ -173,6 +168,15 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     await bridge_capability_hooks_to_bus(agent)
     setup_capability_prompt_injection(agent)
     await agent._capability_loader.start_lifecycles()
+
+    # Build the overlay-aware prompt resolver once (COMP-006), pinned to the
+    # operator key that arcui signs overlays with. Overlay root is the agent
+    # config root's context/ dir — outside the workspace tool sandbox (COMP-007).
+    from arcagent.core.prompt_context import build_prompt_resolver
+
+    agent._prompt_resolver = build_prompt_resolver(
+        agent._config_path, str(agent._config.security.tier)
+    )
 
 
 def configure_module_runtimes(
@@ -366,7 +370,7 @@ def setup_capability_prompt_injection(agent: ArcAgent) -> None:
         sections = ctx.data.get("sections")
         if not isinstance(sections, dict) or not registry._skills:
             return
-        sections["skill_usage"] = _SKILL_USAGE_INSTRUCTION
+        sections["skill_usage"] = load_stock("arcagent", "skill_usage_instruction")
 
     bus.subscribe(
         event="agent:assemble_prompt",

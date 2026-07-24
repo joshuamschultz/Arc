@@ -55,7 +55,8 @@ install:
 		-e packages/arccli \
 		-e packages/arcagent \
 		-e packages/arcllm \
-		-e packages/arcrun
+		-e packages/arcrun \
+		-e packages/arcprompt
 	@echo "Done. All packages installed."
 
 # ---------------------------------------------------------------------------

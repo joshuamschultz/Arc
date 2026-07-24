@@ -112,7 +112,6 @@ class SkillOptimizer:
         # Save seed snapshot
         self._store.save_seed(skill_name, current_text)
 
-        intent_header = self._guardrails.extract_intent(current_text)
         token_budget = int(seed.token_count * self._config.max_token_ratio)
 
         stagnation_count = 0
@@ -148,7 +147,6 @@ class SkillOptimizer:
             mutation_text = await self._reflector.reflect(
                 parent.text,
                 failures,
-                intent_header,
                 token_budget,
             )
             if not mutation_text:

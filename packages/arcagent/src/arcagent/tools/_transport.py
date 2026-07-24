@@ -24,11 +24,6 @@ from arcagent.core.errors import ToolError
 ToolClassification = Literal["read_only", "state_modifying"]
 
 
-_DEFAULT_PREAMBLE = (
-    "You have the following tools available. Use them as needed to accomplish your tasks."
-)
-
-
 class ToolTransport(Enum):
     """Transport type for tool execution."""
 

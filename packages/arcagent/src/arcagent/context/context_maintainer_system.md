@@ -1,15 +1,8 @@
-"""The context-maintainer system prompt.
-
-Held verbatim as a module constant (not read from a workspace file) so the
-maintainer's instructions cannot be poisoned by an agent free-write into the
-workspace (ASI-06 / LLM07). The runtime supplies the current ``context.md`` and
-the recent session activity as the *user* turn; this constant is the fixed
-*system* instruction that governs how the file is rewritten.
-"""
-
-from __future__ import annotations
-
-CONTEXT_MAINTAINER_SYSTEM_PROMPT = """\
+---
+name: context_maintainer_system
+description: System prompt for the background context.md maintainer persona.
+tunable: true
+---
 # CONTEXT FILE MAINTENANCE
 
 ## Role
@@ -141,6 +134,4 @@ Surface only what needs a decision or confirmation.
 Not a PM system. Not reference material. Not a completed-work archive. Not a journal.
 
 **It is a cockpit view: every open loop across every domain, nothing closed, always current.**
-"""
 
-__all__ = ["CONTEXT_MAINTAINER_SYSTEM_PROMPT"]

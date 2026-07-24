@@ -23,6 +23,7 @@ import logging
 from collections import deque
 from typing import Any
 
+from arcskill.context import PromptResolve, load_prompt
 from arcskill.improver.config import ImproverConfig
 from arcskill.improver.nudge.dedup import (
     compute_tool_sequence_hash,
@@ -57,15 +58,6 @@ _MAX_TOOL_SUFFIX_TOKENS: int = 5
 # Hard character cap on derived skill name slugs for filesystem path safety.
 _MAX_SLUG_LENGTH: int = 100
 
-# Template for the advisory nudge message (ASI-09 compliant — never commands)
-_NUDGE_TEMPLATE = (
-    "The last turn used {n_tools} tools successfully, recovered from an error, "
-    "and doesn't match any existing skill (top coverage {coverage_pct:.0%}). "
-    "If this workflow is likely to recur, consider calling "
-    "`skill_manage(action='create', ...)`. Skip if one-off. "
-    "Confirm with the user before committing."
-)
-
 
 class NudgeEmitter:
     """Evaluates post-plan turns and emits skill-creation nudge events.
@@ -89,10 +81,12 @@ class NudgeEmitter:
         telemetry: Any = None,
         *,
         bus: Any = None,
+        resolve: PromptResolve | None = None,
     ) -> None:
         self._config = config
         self._session_id = session_id
         self._telemetry = telemetry
+        self._resolve = resolve
 
         # Per-session nudge turn history for 50-turn cooldown (FIFO)
         self._nudge_turns: deque[int] = deque()
@@ -267,7 +261,7 @@ class NudgeEmitter:
     ) -> None:
         """Publish system_message_nudge event and emit telemetry audit."""
         coverage_pct = signals.max_existing_skill_coverage
-        nudge_text = _NUDGE_TEMPLATE.format(
+        nudge_text = load_prompt("nudge_template", resolve=self._resolve).format(
             n_tools=signals.tool_calls_ok,
             coverage_pct=coverage_pct,
         )

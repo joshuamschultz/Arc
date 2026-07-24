@@ -125,13 +125,19 @@ def test_arcui_is_not_an_emit_subscriber() -> None:
     No arcui source imports ``emit`` from arctrust — the UI reads the durable
     record through ``arcstore``, never the live emission path (AC-5.4).
     """
+    import re
     from pathlib import Path
 
+    # Match the real anti-pattern only: importing the ``emit`` SYMBOL from
+    # arctrust.audit, or calling ``audit.emit(...)``. The bare substring "emit"
+    # is not enough — arcui legitimately imports ``AuditEvent``/``WormSink`` and
+    # names its own producer ``emit_mutation_audit`` (which writes arcui's own
+    # records, never subscribes to arctrust.emit()). Matching the substring made
+    # this test rot into a false positive.
+    imports_emit = re.compile(r"from arctrust\.audit import[^\n]*\bemit\b")
     offenders = []
     for path in Path(_SRC).rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        if "from arctrust.audit import" in text and "emit" in text:
-            offenders.append(path.name)
-        if "audit.emit(" in text:
+        if imports_emit.search(text) or "audit.emit(" in text:
             offenders.append(path.name)
     assert not offenders, f"arcui must not call arctrust.emit(): {offenders}"

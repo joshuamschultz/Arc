@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from arcprompt import load_stock
+
 from arcagent.core.errors import ArcAgentError, ToolError
 
 # --- Import policy --------------------------------------------------------
@@ -200,14 +202,6 @@ class ASTValidationError(ArcAgentError):
         self.category = category
 
 
-# Single-place guidance appended to every authoring rejection: the agent must
-# author tools only via the signing tools, or the artifact is denied at load.
-_AUTHORING_GUIDANCE = (
-    "Author tools only via create_tool/update_tool — they sign the artifact; "
-    "files written any other way are unsigned and will be denied at load (TOFU)."
-)
-
-
 def format_authoring_rejection(exc: ASTValidationError, policy: ImportPolicy) -> str:
     """Build a self-documenting rejection string for create_tool/update_tool.
 
@@ -215,9 +209,10 @@ def format_authoring_rejection(exc: ASTValidationError, policy: ImportPolicy) ->
     (via :meth:`ImportPolicy.describe`), and the authoring guidance — the agent
     cannot read policy files outside its workspace, so the rule is taught inline.
     """
+    guidance = load_stock("arcagent", "authoring_guidance")
     return (
         f"Error: AST validation rejected source — {exc}. "
-        f"Tier {policy.tier}: {policy.describe()}. {_AUTHORING_GUIDANCE}"
+        f"Tier {policy.tier}: {policy.describe()}. {guidance}"
     )
 
 

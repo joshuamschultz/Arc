@@ -229,6 +229,64 @@ export interface FileWriteResponse {
   message: string
 }
 
+// --- Prompts (COMP-010: editable system prompts) ---------------------------
+
+export type PromptStatus = 'stock' | 'overridden'
+
+export interface PromptListItem {
+  package: string
+  name: string
+  description: string
+  status: PromptStatus
+}
+
+export interface PromptListResponse {
+  items: PromptListItem[]
+}
+
+export interface PromptDetail {
+  package: string
+  name: string
+  description: string
+  status: PromptStatus
+  stock: string
+  effective: string
+  diff: string // server-computed unified diff (stock -> effective)
+}
+
+export interface PromptWriteResponse {
+  package: string
+  name: string
+  signer_did: string
+  sha256: string
+  message: string
+}
+
+export interface PromptResetResponse {
+  package: string
+  name: string
+  message: string
+}
+
+// --- Structured rubric editor (arcskill/judge_rubric) ----------------------
+// The rubric prompt's body is YAML, not prose; the drawer edits it as a form.
+
+export interface RubricDimension {
+  checklist: string[]
+  anti_inflation: string
+}
+
+export interface RubricResponse {
+  package: string
+  name: string
+  status: PromptStatus
+  dimensions: Record<string, RubricDimension>
+}
+
+export interface RubricUpdate {
+  dimensions: Record<string, RubricDimension>
+}
+
 // --- Knowledge (arcmemory.operator facade, COMP-001/002/003) ---------------
 
 export interface MemoryRecord {

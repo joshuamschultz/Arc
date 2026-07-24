@@ -22,6 +22,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any, Protocol
 
 from arcllm import Message, Tool
+from arcprompt import load_stock
 from pydantic import BaseModel, Field, ValidationError
 
 from arcagent.modules.planning.models import (
@@ -128,13 +129,6 @@ def _validate_or_raise(plan: Plan) -> None:
         raise DecompositionError(str(exc)) from exc
 
 
-_SYSTEM = (
-    "You are a planner. Decompose the user's goal into the smallest correct DAG "
-    "of concrete steps. Use depends_on to order dependent work. Never target "
-    "identity.md or policy.md. Emit the plan via the emit_plan tool."
-)
-
-
 async def decompose(
     goal: str,
     *,
@@ -148,7 +142,7 @@ async def decompose(
 ) -> Plan:
     """Goal -> validated, grounded :class:`Plan` (ACTIVE) — never persisted here."""
     messages = [
-        Message(role="system", content=_SYSTEM),
+        Message(role="system", content=load_stock("arcagent", "planner_system")),
         Message(role="user", content=f"Goal: {goal}"),
     ]
     draft = await _invoke_for_draft(model, messages)
@@ -190,7 +184,7 @@ async def replan(
     """
     succeeded = [s for s in plan.steps if s.status is StepStatus.SUCCEEDED]
     messages = [
-        Message(role="system", content=_SYSTEM),
+        Message(role="system", content=load_stock("arcagent", "planner_system")),
         Message(
             role="user",
             content=(

@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from arcrun.prompts import (
-    CODE_EXEC_GUIDANCE,
-    CONTAINED_EXEC_GUIDANCE,
-    get_strategy_prompts,
-)
+from arcprompt import load_stock
+
+from arcrun.prompts import get_strategy_prompts
 
 
 class TestGetStrategyPromptsDefaults:
@@ -49,12 +47,12 @@ class TestCodeExecGuidance:
     def test_execute_python_tool_triggers_guidance(self) -> None:
         result = get_strategy_prompts(tool_names=["execute_python"])
         assert "code_exec_guidance" in result
-        assert result["code_exec_guidance"] == CODE_EXEC_GUIDANCE
+        assert result["code_exec_guidance"] == load_stock("arcrun", "code_exec_guidance")
 
     def test_contained_execute_python_tool_triggers_guidance(self) -> None:
         result = get_strategy_prompts(tool_names=["contained_execute_python"])
         assert "contained_exec_guidance" in result
-        assert result["contained_exec_guidance"] == CONTAINED_EXEC_GUIDANCE
+        assert result["contained_exec_guidance"] == load_stock("arcrun", "contained_exec_guidance")
 
     def test_both_exec_tools_present(self) -> None:
         result = get_strategy_prompts(tool_names=["execute_python", "contained_execute_python"])
@@ -109,15 +107,13 @@ class TestStrategyPromptGuidanceProperty:
         from arcrun.strategies.react import ReactStrategy
 
         s = ReactStrategy()
-        assert isinstance(s.prompt_guidance, str)
-        assert len(s.prompt_guidance) > 50
+        assert s.prompt_guidance == load_stock("arcrun", "strategy_react")
 
     def test_code_strategy_has_prompt_guidance(self) -> None:
         from arcrun.strategies.code import CodeExecStrategy
 
         s = CodeExecStrategy()
-        assert isinstance(s.prompt_guidance, str)
-        assert len(s.prompt_guidance) > 50
+        assert s.prompt_guidance == load_stock("arcrun", "strategy_code")
 
     def test_react_guidance_describes_loop(self) -> None:
         from arcrun.strategies.react import ReactStrategy
@@ -159,9 +155,10 @@ class TestPromptGuidanceContent:
 
     def test_code_exec_guidance_has_prefer_criteria(self) -> None:
         """Code exec guidance should say when to prefer code vs tools."""
-        assert "Prefer" in CODE_EXEC_GUIDANCE
+        assert "Prefer" in load_stock("arcrun", "code_exec_guidance")
 
     def test_all_arcrun_guidance_constants_are_nonempty(self) -> None:
-        for guidance in (CODE_EXEC_GUIDANCE, CONTAINED_EXEC_GUIDANCE):
+        for name in ("code_exec_guidance", "contained_exec_guidance"):
+            guidance = load_stock("arcrun", name)
             assert isinstance(guidance, str)
             assert len(guidance) > 100

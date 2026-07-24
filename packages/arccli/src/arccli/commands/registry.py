@@ -136,6 +136,13 @@ def _memory_handler(args: list[str]) -> None:
     memory_handler(args)
 
 
+def _prompt_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.prompt import prompt_handler
+
+    prompt_handler(args)
+
+
 def _approve_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.approve import approve_handler
@@ -546,6 +553,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_memory_handler,
+    ),
+    CommandDef(
+        name="prompt",
+        description="View + edit/overwrite editable system prompts (list/show/diff/edit/reset)",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_prompt_handler,
     ),
     CommandDef(
         name="approve",

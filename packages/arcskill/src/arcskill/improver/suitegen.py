@@ -29,6 +29,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from arcskill.context import PromptResolve, load_prompt
 from arcskill.improver.config import SuiteConfig
 from arcskill.improver.models import BundleView, EvalCase
 from arcskill.improver.seams import EvalRunner, LLMInvoker
@@ -62,10 +63,18 @@ class GenerationResult:
 class SuiteGenerator:
     """Bootstraps a skill's golden suite through the adoption cascade."""
 
-    def __init__(self, *, llm: LLMInvoker, runner: EvalRunner, config: SuiteConfig) -> None:
+    def __init__(
+        self,
+        *,
+        llm: LLMInvoker,
+        runner: EvalRunner,
+        config: SuiteConfig,
+        resolve: PromptResolve | None = None,
+    ) -> None:
         self._llm = llm
         self._runner = runner
         self._config = config
+        self._resolve = resolve
 
     async def generate(self, skill_name: str, view: BundleView) -> GenerationResult:
         """Generate, vet, and adopt golden cases for ``skill_name`` over ``view``."""
@@ -94,14 +103,10 @@ class SuiteGenerator:
         return GenerationResult(adopted=adopted, quarantined=quarantined, discarded=discarded)
 
     def _prompt(self, skill_name: str, view: BundleView) -> str:
-        return (
-            f"Generate pytest golden regression cases for the skill '{skill_name}'.\n"
-            "Ground every assertion oracle ONLY in the declared Contract, Examples, and\n"
-            "Validation sections below — never in observed behavior, so current bugs are\n"
-            "not frozen in as expectations.\n\n"
-            f"{view.text}\n\n"
-            f"Return one Python module containing at most {self._config.max_cases}\n"
-            "top-level `def test_*` functions and nothing else."
+        return load_prompt("suitegen_prompt", resolve=self._resolve).format(
+            skill_name=skill_name,
+            skill_text=view.text,
+            max_cases=self._config.max_cases,
         )
 
     async def _cascade_verdict(self, view: BundleView, case: EvalCase, source: str) -> str | None:

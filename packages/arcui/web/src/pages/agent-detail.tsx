@@ -19,6 +19,9 @@ import { RunReplayDrawer } from '@/components/run-replay-drawer'
 import { CapabilityTable } from '@/components/capability-table'
 import { ToolsTable } from '@/components/tools-table'
 import { SkillDrawer } from '@/components/skill-drawer'
+import { PromptDrawer } from '@/components/prompt-drawer'
+import { RubricEditor } from '@/components/rubric-editor'
+import { isRubricPrompt } from '@/lib/rubric'
 import { ToolDrawer } from '@/components/tool-drawer'
 import { ScheduleDrawer } from '@/components/schedule-drawer'
 import { scheduleTiming, scheduleTitle } from '@/lib/schedule-format'
@@ -32,6 +35,7 @@ import {
   useAgentConfig,
   useAgentPolicy,
   useAgentPolicyStats,
+  useAgentPrompts,
   useAgentSchedules,
   useAgentSessions,
   useAgentStats,
@@ -57,7 +61,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import type { CapabilityInventoryItem, Dict, Task } from '@/lib/types'
 
 const TABS = [
-  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'tasks', 'schedules', 'policy', 'workspace', 'files',
+  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'prompts', 'tasks', 'schedules', 'policy', 'workspace', 'files',
 ] as const
 type TabId = (typeof TABS)[number]
 
@@ -669,6 +673,72 @@ function PolicyTab({ agentId }: { agentId: string }) {
   )
 }
 
+function PromptsTab({ agentId }: { agentId: string }) {
+  const q = useAgentPrompts(agentId)
+  const items = q.data?.items ?? []
+  const [selected, setSelected] = useState<{ package: string; name: string } | null>(null)
+
+  const byPackage = new Map<string, typeof items>()
+  for (const item of items) {
+    const list = byPackage.get(item.package) ?? []
+    list.push(item)
+    byPackage.set(item.package, list)
+  }
+
+  return (
+    <>
+      <QueryState query={q} isEmpty={() => items.length === 0}
+        empty={<EmptyState title="No prompts" description="No stock prompts found across installed packages." />}>
+        {() => (
+          <div className="space-y-6">
+            {[...byPackage.entries()].map(([pkg, prompts]) => (
+              <Section key={pkg} title={pkg}>
+                <div className="divide-y divide-border rounded-md border border-border">
+                  {prompts.map((p) => (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => setSelected({ package: p.package, name: p.name })}
+                      className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-mono text-xs text-foreground">{p.name}</div>
+                        <div className="truncate text-[11px] text-muted-foreground">{p.description}</div>
+                      </div>
+                      <span
+                        className={cn(
+                          'shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide',
+                          p.status === 'overridden'
+                            ? 'border-primary/40 bg-primary/10 text-primary'
+                            : 'border-border bg-muted/40 text-muted-foreground',
+                        )}
+                      >
+                        {p.status}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </Section>
+            ))}
+          </div>
+        )}
+      </QueryState>
+      <PromptDrawer
+        agentId={agentId}
+        prompt={isRubricPrompt(selected) ? null : selected}
+        open={selected != null && !isRubricPrompt(selected)}
+        onOpenChange={(o) => !o && setSelected(null)}
+      />
+      <RubricEditor
+        agentId={agentId}
+        prompt={isRubricPrompt(selected) ? selected : null}
+        open={selected != null && isRubricPrompt(selected)}
+        onOpenChange={(o) => !o && setSelected(null)}
+      />
+    </>
+  )
+}
+
 const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   overview: (id) => <OverviewTab agentId={id} />,
   identity: (id) => <IdentityTab agentId={id} />,
@@ -676,6 +746,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   llm: (id) => <LlmTab agentId={id} />,
   skills: (id) => <SkillsTab agentId={id} />,
   tools: (id) => <ToolsTab agentId={id} />,
+  prompts: (id) => <PromptsTab agentId={id} />,
   tasks: (id) => <TasksTab agentId={id} />,
   schedules: (id) => <SchedulesTab agentId={id} />,
   policy: (id) => <PolicyTab agentId={id} />,
@@ -685,7 +756,7 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
 
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview', identity: 'Identity', sessions: 'Sessions', llm: 'LLM', skills: 'Skills',
-  tools: 'Tools', tasks: 'Tasks', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files',
+  tools: 'Tools', prompts: 'Prompts', tasks: 'Tasks', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files',
 }
 
 export function AgentDetailPage() {

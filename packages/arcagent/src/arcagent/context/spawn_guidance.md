@@ -1,13 +1,8 @@
-"""Model-facing prompt guidance for orchestration capabilities.
-
-The agent injects this into its system prompt when spawn_task is
-registered as a tool. Lives in arcagent (not arcrun) because spawn is
-an agent-layer feature.
-"""
-
-from __future__ import annotations
-
-SPAWN_GUIDANCE = """\
+---
+name: spawn_guidance
+description: Guidance for delegating independent work to child agents via spawn_task.
+tunable: true
+---
 ## Task Delegation (spawn_task)
 When work splits into independent pieces, STRONGLY PREFER delegating them
 to child agents via spawn_task over grinding through them one step at a
@@ -42,6 +37,4 @@ Good delegation:
 Bad delegation:
   spawn_task(task="Do step 1 of the analysis")
   -> Too vague, lacks context, child cannot succeed
-</example>"""
-
-__all__ = ["SPAWN_GUIDANCE"]
+</example>

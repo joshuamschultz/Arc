@@ -17,6 +17,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from arcprompt import load_stock
+
 from arcrun.parallel_dispatch import ParallelDispatcher
 from arcrun.sandbox import Sandbox
 from arcrun.state import RunState
@@ -45,20 +47,11 @@ class PlanExecuteStrategy(Strategy):
 
     @property
     def description(self) -> str:
-        return (
-            "Execute a set of independent, ready plan branches concurrently. "
-            "Best when a plan's frontier has multiple steps with no unmet "
-            "dependencies — they run in parallel, each fully gated."
-        )
+        return load_stock("arcrun", "strategy_plan_execute_description")
 
     @property
     def prompt_guidance(self) -> str:
-        return (
-            "## Plan-Execute Strategy\n"
-            "Independent ready steps are dispatched concurrently. Dependency "
-            "ordering is resolved by the planner before dispatch; you never see "
-            "the dependency graph — only the items that are ready now."
-        )
+        return load_stock("arcrun", "strategy_plan_execute")
 
     async def run_ready(
         self,

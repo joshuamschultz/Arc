@@ -18,7 +18,6 @@ from arcmemory.acl import (
     extract_acl_from_session_data,
 )
 from arcmemory.agent_consolidate import (
-    CONSOLIDATION_SYSTEM_PROMPT,
     AgenticResult,
     run_agentic_consolidation,
 )
@@ -98,7 +97,6 @@ from arcmemory.types import (
 __version__ = "0.6.0"
 
 __all__ = [
-    "CONSOLIDATION_SYSTEM_PROMPT",
     "ACLViolation",
     "AgenticResult",
     "ArcLLMDistiller",

@@ -87,21 +87,6 @@ class TestCodeExecStrategy:
         assert result.content == "Answer."
 
     @pytest.mark.asyncio
-    async def test_custom_prefix_override(self):
-        from arcrun.strategies.code import CodeExecStrategy
-
-        custom = "CUSTOM PREFIX: Use code."
-        model = MockModel([LLMResponse(content="OK", stop_reason="end_turn")])
-        bus = EventBus(run_id="test")
-        state = _make_state(bus)
-        sandbox = Sandbox(config=None, event_bus=bus)
-
-        strategy = CodeExecStrategy(system_prompt_prefix=custom)
-        await strategy(model, state, sandbox, max_turns=5)
-
-        assert custom in state.messages[0].content
-
-    @pytest.mark.asyncio
     async def test_emits_code_prompt_augmented_event(self):
         from arcrun.strategies.code import CodeExecStrategy
 

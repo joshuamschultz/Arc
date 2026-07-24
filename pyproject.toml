@@ -143,6 +143,8 @@ module = [
     "sentence_transformers.*",
     "slack_bolt",
     "slack_bolt.*",
+    "browser_use",
+    "browser_use.*",
 ]
 ignore_missing_imports = true
 

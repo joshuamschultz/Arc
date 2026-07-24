@@ -439,10 +439,15 @@ class TestGatewayHelpLines:
         from arccli.commands.registry import COMMAND_REGISTRY
         from arccli.commands.render import gateway_help_lines
 
+        # Match the rendered command TOKEN ("/name ..."), not a raw substring:
+        # a command name is a common word that legitimately appears inside another
+        # command's description (e.g. "prompt" in "Run prompts directly with arcrun").
         cli_only_names = {cmd.name for cmd in COMMAND_REGISTRY if cmd.cli_only}
-        lines_text = " ".join(gateway_help_lines())
+        lines = gateway_help_lines()
         for name in cli_only_names:
-            assert name not in lines_text, f"cli_only command '{name}' appeared in gateway help"
+            assert not any(line.startswith(f"/{name} ") for line in lines), (
+                f"cli_only command '{name}' appeared in gateway help"
+            )
 
 
 class TestTelegramBotCommands:

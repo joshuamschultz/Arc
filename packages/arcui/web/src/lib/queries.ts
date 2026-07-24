@@ -1,6 +1,14 @@
-import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { apiGet } from './api'
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from '@tanstack/react-query'
+import { apiGet, apiPut } from './api'
 import type {
+  PromptWriteResponse,
+  RubricResponse,
+  RubricUpdate,
   AgentCapabilityInventory,
   AgentsListResponse,
   AuditEventsResponse,
@@ -18,6 +26,8 @@ import type {
   MemoryPage,
   MemorySearchResponse,
   ProceduresResponse,
+  PromptDetail,
+  PromptListResponse,
   SkillDetail,
   ToolDetail,
   PolicyBulletsResponse,
@@ -411,6 +421,71 @@ export const useAgentSkillDetail = (agentId: string, skillName: string | null) =
       apiGet(`/api/agents/${agentId}/skills/${encodeURIComponent(skillName!)}/detail`, signal),
     enabled: !!skillName,
   })
+
+// COMP-010 — editable system prompts. List every prompt across packages; the
+// detail hook is lazy (only when a prompt is selected) and carries the
+// server-computed unified diff so the browser ships no diff library.
+export const useAgentPrompts = (agentId: string) =>
+  useApiQuery<PromptListResponse>(['agent', agentId, 'prompts'], `/api/agents/${agentId}/prompts`)
+
+export const useAgentPromptDetail = (
+  agentId: string,
+  prompt: { package: string; name: string } | null,
+) =>
+  useQuery<PromptDetail>({
+    queryKey: ['agent', agentId, 'prompt', prompt?.package, prompt?.name],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/prompts/${encodeURIComponent(prompt!.package)}/${encodeURIComponent(prompt!.name)}`,
+        signal,
+      ),
+    enabled: !!prompt,
+  })
+
+// COMP-010 — structured rubric editor. The arcskill/judge_rubric prompt's body
+// is YAML; this lazy hook (enabled only when that prompt is selected) fetches it
+// parsed into dimensions so the drawer renders a form, not a textarea.
+export const useRubric = (
+  agentId: string,
+  prompt: { package: string; name: string } | null,
+) =>
+  useQuery<RubricResponse>({
+    queryKey: ['agent', agentId, 'rubric', prompt?.package, prompt?.name],
+    queryFn: ({ signal }) =>
+      apiGet(
+        `/api/agents/${agentId}/prompts/${encodeURIComponent(prompt!.package)}/${encodeURIComponent(prompt!.name)}/rubric`,
+        signal,
+      ),
+    enabled: !!prompt,
+  })
+
+// PUTs the structured edit through the SAME signed-overlay path as the prose
+// editor; on success invalidates the rubric, the prose detail, and the list so
+// every view reflects the new override.
+export const useSaveRubric = (agentId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<
+    PromptWriteResponse,
+    Error,
+    { prompt: { package: string; name: string }; update: RubricUpdate }
+  >({
+    mutationFn: ({ prompt, update }) =>
+      apiPut(
+        `/api/agents/${agentId}/prompts/${encodeURIComponent(prompt.package)}/${encodeURIComponent(prompt.name)}/rubric`,
+        update,
+      ),
+    onSuccess: (_data, { prompt }) =>
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['agent', agentId, 'rubric', prompt.package, prompt.name],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['agent', agentId, 'prompt', prompt.package, prompt.name],
+        }),
+        queryClient.invalidateQueries({ queryKey: ['agent', agentId, 'prompts'] }),
+      ]),
+  })
+}
 
 export const useAgentToolDetail = (agentId: string, toolName: string | null) =>
   useQuery<ToolDetail>({

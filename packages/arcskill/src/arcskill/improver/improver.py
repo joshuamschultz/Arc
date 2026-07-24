@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from arcskill.context import PromptResolve
 from arcskill.improver._util import read_frontmatter
 from arcskill.improver.candidate_store import CandidateStore
 from arcskill.improver.codepatch import apply_bundle_patch, build_bundle_view
@@ -103,11 +104,16 @@ class ArcSkillImprover:
         reload: Callable[[], None] | None = None,
         session_id: str = "",
         max_concurrent: int = 2,
+        prompt_resolve: PromptResolve | None = None,
     ) -> None:
         self._config = config or ImproverConfig()
         # SPEC-044 §8 (tier-must-flow-through-construction): tier is bound HERE, not
         # per-call, so every ChangeBound/audit stamp carries the constructed tier.
         self._tier = tier
+        # Overlay-aware prompt resolver handed in by arcagent (arcprompt-backed) so an
+        # operator prompt edit takes effect; None → arcskill loads its shipped stock.
+        # arcskill never imports arcprompt — it merely uses this callable.
+        self._prompt_resolve = prompt_resolve
         self._llm = llm
         self._signer = signer
         # Operator-approval seam (D-10). The improver decides *when* approval is required
@@ -123,12 +129,19 @@ class ArcSkillImprover:
         self._eval_runner: EvalRunner = eval_runner or HubEvalRunner(tier=tier)
         # Code-repair mutator (SPEC-044 P4): default to the arcllm-backed proposer when an
         # LLM seam is present; provider-free, so tests inject a deterministic Mutator.
-        self._mutator: Mutator | None = mutator or (LLMCodeMutator(llm) if llm else None)
+        self._mutator: Mutator | None = mutator or (
+            LLMCodeMutator(llm, resolve=prompt_resolve) if llm else None
+        )
         # Suite trigger (SPEC-054 COMP-004): default to the production adapter over the
         # concrete SuiteGenerator when an LLM seam is present — mirrors the mutator default.
         self._suite_generator: SuiteTrigger | None = suite_generator or (
             _SuiteGeneratorTrigger(
-                SuiteGenerator(llm=llm, runner=self._eval_runner, config=self._config.suite)
+                SuiteGenerator(
+                    llm=llm,
+                    runner=self._eval_runner,
+                    config=self._config.suite,
+                    resolve=prompt_resolve,
+                )
             )
             if llm
             else None
@@ -343,8 +356,8 @@ class ArcSkillImprover:
 
         engine = SkillOptimizer(
             config=self._config,
-            evaluator=SkillEvaluator(self._config, llm=self._llm),
-            reflector=SkillReflector(self._config, llm=self._llm),
+            evaluator=SkillEvaluator(self._config, llm=self._llm, resolve=self._prompt_resolve),
+            reflector=SkillReflector(self._config, llm=self._llm, resolve=self._prompt_resolve),
             guardrails=self._guardrails,
             store=self._candidate_store,
             signer=self._signer,
