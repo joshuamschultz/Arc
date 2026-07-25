@@ -723,6 +723,19 @@ def _load_agent_config(agent_dir: Path) -> dict[str, Any]:
         return tomllib.load(f)
 
 
+def _load_agent_llm_config(agent_dir: Path) -> dict[str, Any]:
+    """Load the agent's arcllm.toml — the home of `[llm]`/`[eval]`/`[budget]`.
+
+    Returns an empty mapping when the file is absent so callers report their
+    own "not configured" verdict rather than dying on a missing file.
+    """
+    config_path = agent_dir / "arcllm.toml"
+    if not config_path.exists():
+        return {}
+    with open(config_path, "rb") as f:
+        return tomllib.load(f)
+
+
 def _import_capability_file(path: Path) -> Any:
     """Import a capability `.py` by file path (no package required)."""
     module_name = f"arccli_cap_{path.stem}"
@@ -971,6 +984,7 @@ __all__ = [
     "_iter_capability_files",
     "_iter_skill_folders",
     "_load_agent_config",
+    "_load_agent_llm_config",
     "_load_arcagent",
     "_load_env",
     "_print_kv",

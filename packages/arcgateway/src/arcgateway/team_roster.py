@@ -21,6 +21,7 @@ import logging
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from arcgateway.agent_config import load_ui_section
 
@@ -78,6 +79,22 @@ def list_team(*, team_root: Path, online_ids: set[str]) -> list[RosterEntry]:
     return entries
 
 
+def _load_llm_section(agent_dir: Path) -> dict[str, Any]:
+    """Read `[llm]` from the agent's arcllm.toml — the file that owns LLM-wire.
+
+    A missing or unparseable arcllm.toml yields an empty section (the agent
+    still shows up, just without a model) — one bad file never drops an agent
+    off the roster.
+    """
+    llm_path = agent_dir / "arcllm.toml"
+    try:
+        cfg = tomllib.loads(llm_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    llm = cfg.get("llm")
+    return llm if isinstance(llm, dict) else {}
+
+
 def _load_agent(
     agent_dir: Path,
     toml_path: Path,
@@ -91,7 +108,7 @@ def _load_agent(
 
     agent = cfg.get("agent", {}) if isinstance(cfg.get("agent"), dict) else {}
     identity = cfg.get("identity", {}) if isinstance(cfg.get("identity"), dict) else {}
-    llm = cfg.get("llm", {}) if isinstance(cfg.get("llm"), dict) else {}
+    llm = _load_llm_section(agent_dir)
     ui = load_ui_section(cfg)
 
     name = agent.get("name") or _strip_agent_suffix(agent_dir.name)

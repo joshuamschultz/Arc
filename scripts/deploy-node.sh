@@ -226,7 +226,11 @@ done
 # docs/deploy/team-building.md if you need a multi-agent roster with
 # per-agent channels.
 PRIMARY_AGENT="${AGENT_NAMES[0]}"
-AGENT_DID="$(grep -m1 '^did = ' "team/$PRIMARY_AGENT/arcagent.toml" | sed -E 's/did = "(.*)"/\1/')"
+AGENT_DID="$("$VENV_PY" -c '
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    print(tomllib.load(f).get("identity", {}).get("did", ""))
+' "team/$PRIMARY_AGENT/arcagent.toml")"
 [ -n "$AGENT_DID" ] || fail "could not read minted DID from team/$PRIMARY_AGENT/arcagent.toml"
 "$VENV_PY" scripts/deploy_node_overlays.py gateway-config \
   "$ARC_CONFIG_DIR/gateway.toml" --agent-did "$AGENT_DID"

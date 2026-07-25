@@ -10,6 +10,7 @@ from arccli.commands.agent._common import (
     _iter_capability_files,
     _iter_skill_folders,
     _load_agent_config,
+    _load_agent_llm_config,
     _print_kv,
     _resolve_agent_dir,
 )
@@ -22,7 +23,7 @@ def _status(args: argparse.Namespace) -> None:
     workspace = agent_dir / "workspace"
 
     agent_name = config.get("agent", {}).get("name", "?")
-    model_id = config.get("llm", {}).get("model", "?")
+    model_id = _load_agent_llm_config(agent_dir).get("llm", {}).get("model", "?")
     did = config.get("identity", {}).get("did", "(not set)")
 
     tool_count = len(_discover_tools(agent_dir))

@@ -25,13 +25,18 @@ def team_root(tmp_path: Path) -> Path:
         'type = "curator"\n'
         "[identity]\n"
         'did = "did:arc:agent:alice"\n'
-        "[llm]\n"
-        'model = "anthropic/claude-sonnet-4-6"\n'
         "[ui]\n"
         'display_name = "Alice the Curator"\n'
         'color = "#ff6b6b"\n'
         'role_label = "policy curator"\n'
         "hidden = false\n",
+        encoding="utf-8",
+    )
+    # LLM-wire lives in arcllm.toml, never arcagent.toml — the layout
+    # `arc agent create` writes (agent/_common.py: arcagent.toml is
+    # "everything EXCEPT LLM-wire").
+    (alice / "arcllm.toml").write_text(
+        '[llm]\nmodel = "anthropic/claude-sonnet-4-6"\n',
         encoding="utf-8",
     )
 
@@ -44,9 +49,11 @@ def team_root(tmp_path: Path) -> Path:
         'org = "ops"\n'
         'type = "responder"\n'
         "[identity]\n"
-        'did = "did:arc:agent:bob"\n'
-        "[llm]\n"
-        'model = "openai/gpt-4o"\n',
+        'did = "did:arc:agent:bob"\n',
+        encoding="utf-8",
+    )
+    (bob / "arcllm.toml").write_text(
+        '[llm]\nmodel = "openai/gpt-4o"\n',
         encoding="utf-8",
     )
 
@@ -213,3 +220,27 @@ class TestProviderInference:
         carol = next(r for r in roster if r.agent_id == "carol")
         assert carol.provider is None
         assert carol.model is None
+
+    def test_model_comes_from_arcllm_toml_not_arcagent_toml(self, team_root: Path) -> None:
+        """A stale `[llm]` in arcagent.toml must not be mistaken for the model.
+
+        The roster reported model=null for every real agent because it read
+        `[llm].model` off arcagent.toml, which the three-file config split
+        emptied. Reading the wrong file is the bug; preferring it would be the
+        regression.
+        """
+        eve = team_root / "eve"
+        eve.mkdir()
+        (eve / "arcagent.toml").write_text(
+            '[agent]\nname = "eve"\n[llm]\nmodel = "stale/should-not-be-read"\n',
+            encoding="utf-8",
+        )
+        (eve / "arcllm.toml").write_text(
+            '[llm]\nmodel = "anthropic/claude-sonnet-5"\n', encoding="utf-8"
+        )
+
+        entry = next(
+            r for r in list_team(team_root=team_root, online_ids=set()) if r.agent_id == "eve"
+        )
+        assert entry.model == "anthropic/claude-sonnet-5"
+        assert entry.provider == "anthropic"

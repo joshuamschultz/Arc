@@ -11,6 +11,7 @@ from typing import Any
 from arccli.commands.agent._common import (
     _discover_tools,
     _load_agent_config,
+    _load_agent_llm_config,
     _load_env,
     _resolve_agent_dir,
     _scaffold_workspace,
@@ -78,7 +79,7 @@ def _run_validation(agent_dir: Path) -> None:
     else:
         checks.append(("WARN", "workspace/ not found"))
 
-    model_id = config.get("llm", {}).get("model", "")
+    model_id = _load_agent_llm_config(agent_dir).get("llm", {}).get("model", "")
     if model_id:
         provider = model_id.split("/")[0] if "/" in model_id else model_id
         checks.append(("OK", f"model: {model_id}"))

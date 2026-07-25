@@ -1,0 +1,47 @@
+# Arc online — one VM, one agent, TLS on a real hostname.
+#
+#   docker compose -f deploy/cloud/docker-compose.yml up -d
+#
+# Differs from the repo-root compose in exactly two ways: Arc publishes no host
+# port (Caddy is the only ingress, so the dashboard cannot be reached over
+# plaintext), and Caddy owns :80/:443 for automatic certificates.
+
+services:
+  arc:
+    image: ${ARC_IMAGE:-arc:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TELEGRAM_BOT_TOKEN: ${ARCAGENT_TELEGRAM_BOT_TOKEN:-}
+      ARC_AGENTS: ${ARC_AGENTS:-arc_agent}
+      ARC_AGENT_MODEL: ${ARC_AGENT_MODEL:-anthropic/claude-sonnet-5}
+      ARC_TIER: ${ARC_TIER:-personal}
+      ARC_ENABLE_TELEGRAM: ${ARC_ENABLE_TELEGRAM:-0}
+      ARC_TELEGRAM_ALLOWED_USER_IDS: ${ARC_TELEGRAM_ALLOWED_USER_IDS:-}
+    volumes:
+      - arc-data:/data
+    expose:
+      - "8420"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - arc
+    environment:
+      ARC_DOMAIN: ${ARC_DOMAIN}
+      ARC_ACME_EMAIL: ${ARC_ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates must survive recreation, or a redeploy re-requests them
+      # and burns Let's Encrypt rate limit.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  arc-data:
+  caddy-data:
+  caddy-config:

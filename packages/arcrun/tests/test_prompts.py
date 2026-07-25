@@ -8,7 +8,6 @@ see arcagent.orchestration.prompts.SPAWN_GUIDANCE.
 from __future__ import annotations
 
 import pytest
-
 from arcprompt import load_stock
 
 from arcrun.prompts import get_strategy_prompts

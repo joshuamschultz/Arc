@@ -1,0 +1,32 @@
+# Arc — local and single-node deployment.
+#
+#   cp .env.example .env    # add your ANTHROPIC_API_KEY
+#   docker compose up -d
+#   docker compose logs -f arc   # the dashboard URL (with viewer token) is printed at startup
+#
+# All state lives in the arc-data volume: config, agent workspaces, memory,
+# identity keys, the store DB, and the pinned access tokens. `docker compose
+# down` keeps it; `docker compose down -v` destroys the agent permanently.
+
+services:
+  arc:
+    build: .
+    image: arc:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # ARCAGENT_TELEGRAM_BOT_TOKEN is the name .env already uses; the gateway
+      # adapter reads TELEGRAM_BOT_TOKEN (gateway.toml's token_env).
+      TELEGRAM_BOT_TOKEN: ${ARCAGENT_TELEGRAM_BOT_TOKEN:-}
+      ARC_AGENTS: ${ARC_AGENTS:-arc_agent}
+      ARC_AGENT_MODEL: ${ARC_AGENT_MODEL:-anthropic/claude-sonnet-5}
+      ARC_TIER: ${ARC_TIER:-personal}
+      ARC_ENABLE_TELEGRAM: ${ARC_ENABLE_TELEGRAM:-0}
+      ARC_TELEGRAM_ALLOWED_USER_IDS: ${ARC_TELEGRAM_ALLOWED_USER_IDS:-}
+    ports:
+      - "${ARC_UI_PORT:-8420}:8420"
+    volumes:
+      - arc-data:/data
+
+volumes:
+  arc-data:

@@ -1,0 +1,25 @@
+# Terminates TLS for one Arc instance and proxies to the container.
+#
+# Caddy provisions and renews a Let's Encrypt certificate automatically, which
+# requires ARC_DOMAIN to already resolve to this VM's public IP — the ACME
+# HTTP-01 challenge is served on :80.
+{
+	email {$ARC_ACME_EMAIL}
+}
+
+{$ARC_DOMAIN} {
+	# The Arc container is reachable only on the compose network; it publishes
+	# no host port, so this proxy is the single ingress and every request is
+	# forced through TLS.
+	reverse_proxy arc:8420
+
+	# The dashboard's chat is a WebSocket upgrade on the same origin; Caddy's
+	# reverse_proxy passes Connection/Upgrade through without extra config.
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+}
