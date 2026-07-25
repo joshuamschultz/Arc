@@ -109,7 +109,7 @@ type = "executor"        # agent role label
 workspace = "./workspace"  # workspace dir (relative to this file)
 
 [identity]
-did = ""                     # agent DID (minted by `arc agent create`)
+did = "{did}"                     # agent DID (minted by `arc agent create`)
 key_dir = "~/.arcagent/keys"  # keypair dir (env-override blocked)
 vault_path = ""              # resolve identity key via vault instead of disk
 
@@ -139,7 +139,7 @@ compaction_summary_max_chars = 2000  # cap on a compaction summary
 # 3. SECURITY & EXECUTION — the federal-first envelope (review as a unit)
 # =========================================================================
 [security]
-tier = "personal"                # federal | enterprise | personal (canonical tier)
+tier = "{tier}"                # federal | enterprise | personal (canonical tier)
 clearance = "UNCLASSIFIED"       # agent max clearance (operator-authored)
 classification_enforced = false  # fail closed on missing clearance (federal posture)
 # Loop circuit breakers (tier-floored security controls; None disables at
@@ -151,10 +151,10 @@ loop_max_parallel = 10
 policy_audit_log = ""            # WORM policy-decision chain (empty = <workspace>/audit/)
 operator_key_dir = "~/.arc/operator"  # deployment operator key dir (audit authority)
 operator_vault_path = ""         # resolve operator key via vault instead of disk
-signing_algorithm = "ed25519"    # ed25519 | ecdsa-p256 (federal forces ecdsa-p256)
-custody = "in_process"           # in_process | vault_transit (enterprise default vault_transit)
+signing_algorithm = "{signing_algorithm}"    # ed25519 | ecdsa-p256 (federal forces ecdsa-p256)
+custody = "{custody}"           # in_process | vault_transit (enterprise default vault_transit)
 notary_keystore = ""             # vault_transit keystore (empty = <operator_key_dir>/notary)
-require_fips = false             # federal floor: fail closed unless FIPS-validated crypto
+require_fips = {require_fips}             # federal floor: fail closed unless FIPS-validated crypto
 witness_medium_path = "~/.arc/witness/anchor.log"  # federal witness (outside operator_key_dir)
 witness_mode = "offline"         # offline | transparency_log
 witness_log_url = ""             # transparency-log endpoint when witness_mode = transparency_log
@@ -234,7 +234,7 @@ priority = 100
 # consolidation is a no-op and none of those curated files are ever written.
 # brain = "none" turns memory off entirely.
 brain = "arcmemory"          # none | arcmemory | auto | module:Class
-tier = "personal"            # memory-dynamics stringency tier
+tier = "{tier}"            # memory-dynamics stringency tier
 brain_allowlist = []         # operator-vetted BYO brain class-paths (above personal)
 embed_backend = "local"      # local (arcllm offline model) | none (BM25 + graph only)
 embed_model = ""             # empty → arcllm default (all-MiniLM-L6-v2)
@@ -261,7 +261,7 @@ enabled = true
 priority = 100
 
 [modules.memory_acl.config]
-tier = "personal"                          # federal | enterprise | personal
+tier = "{tier}"                          # federal | enterprise | personal
 federal_default = "private"                # cross-session visibility at federal
 enterprise_default = "shared-with-agent"   # at enterprise
 personal_default = "shared-with-agent"     # at personal
@@ -302,7 +302,7 @@ daily_notes_every_turns = 20    # grounded daily-notes reflection cadence (turns
 max_bullets = 200               # max policy bullets
 max_bullet_text_length = 500    # max chars per bullet
 flush_idle_seconds = 900        # idle-flush backstop seconds
-tier = "personal"               # federal stages to policy.pending; else auto-applies
+tier = "{tier}"               # federal stages to policy.pending; else auto-applies
 
 [modules.skills]
 enabled = true
@@ -313,7 +313,7 @@ priority = 100
 # pyproject.toml) — without this block SkillsConfig defaults to adapter = "none"
 # and the agent's scaffolded skills/improver never run.
 adapter = "arcskill"        # none | arcskill | module:Class
-tier = "personal"           # adapter tier
+tier = "{tier}"           # adapter tier
 classify_outcomes = false   # consult eval-LLM OutcomeClassifier at post_plan
 sweep_poll_seconds = 3600.0  # curator lifecycle-sweep poll cadence
 adapter_allowlist = []      # operator-vetted BYO adapter class-paths
@@ -456,7 +456,7 @@ priority = 100
 [modules.web.config]
 search_provider = "tavily"      # parallel | firecrawl | tavily
 extract_provider = "firecrawl"  # parallel | firecrawl | tavily
-tier = "personal"               # drives allowlist / PII enforcement
+tier = "{tier}"               # drives allowlist / PII enforcement
 url_allowlist = []              # glob allowlist (federal requires non-empty)
 max_content_bytes = 1000000     # extracted-content truncation cap
 pii_redaction_enabled = false   # off at personal/enterprise; federal forces it on
@@ -467,7 +467,7 @@ enabled = false
 priority = 100
 
 [modules.voice.config]
-tier = "personal"                # drives air_gap / redact_pii defaults
+tier = "{tier}"                # drives air_gap / redact_pii defaults
 stt_provider = "whisper_cpp"     # whisper_cpp | whisper_api
 tts_provider = "piper"           # piper | elevenlabs
 air_gap = false                  # local-only providers (federal always true)
@@ -492,7 +492,7 @@ priority = 100
 
 [modules.browser.config]
 provider = "cdp"                 # cdp (local launch / remote attach) | browserbase
-tier = "personal"                # federal forbids local Chrome (remote CDP only)
+tier = "{tier}"                # federal forbids local Chrome (remote CDP only)
 accessibility_tree_depth = 10
 chrome_memory_limit_mb = 512
 
@@ -567,6 +567,57 @@ rotation = "daily"          # store file rotation
 retention = ""              # retention window (empty = keep all)
 sample_rate = 1.0           # recording sample rate (0.0-1.0)
 """
+
+AGENT_TIERS = ("personal", "enterprise", "federal")
+"""Canonical deployment tiers, least to most stringent."""
+
+
+def render_agent_config(*, name: str, tier: str = "personal", did: str = "") -> str:
+    """Render the full arcagent.toml surface for one agent at one tier.
+
+    ``tier`` sets every subsystem's tier at once — [security], memory, policy,
+    skills, web, voice, browser, memory_acl. They are one decision: a config
+    that is federal in [security] but personal in [modules.web] is a hole, not
+    a preference.
+
+    ``did`` is substituted rather than blanked so a regeneration keeps the
+    identity the agent signs its capabilities with and is registered to
+    arcteam under.
+    """
+    if tier not in AGENT_TIERS:
+        raise ValueError(f"unknown tier {tier!r} — choose one of {', '.join(AGENT_TIERS)}")
+    return _DEFAULT_CONFIG.format(name=name, tier=tier, did=did, **_crypto_posture(tier))
+
+
+def _crypto_posture(tier: str) -> dict[str, str]:
+    """Tier-correct values for the crypto knobs the template states explicitly.
+
+    ``SecurityConfig`` auto-resolves federal floors only for knobs the operator
+    left unset; an explicitly *weaker* value is refused fail-closed. Because
+    this template states every knob outright — that is the point of it — a
+    federal render must state the federal floor, or the config it produces will
+    not load at all.
+
+    Federal values come from ``SECURITY_CONFIG_KNOBS`` rather than being
+    duplicated here, so moving a floor moves the template with it.
+    """
+    from arcagent.tiers import SECURITY_CONFIG_KNOBS
+
+    if tier == "federal":
+        floors = {k.name: k.federal_floor for k in SECURITY_CONFIG_KNOBS}
+        return {
+            "signing_algorithm": str(floors["signing_algorithm"]),
+            "custody": str(floors["custody"]),
+            "require_fips": "true" if floors["require_fips"] else "false",
+        }
+    return {
+        "signing_algorithm": "ed25519",
+        # REQ-007: enterprise custody defaults to vault_transit; it may relax to
+        # in_process, which is why this is a starting point and not a floor.
+        "custody": "vault_transit" if tier == "enterprise" else "in_process",
+        "require_fips": "false",
+    }
+
 
 _ARCLLM_HEADER = """\
 # ArcLLM config — everything LLM-wire for this agent. arcagent composes the
@@ -969,6 +1020,7 @@ def _print_result_json(result: Any) -> None:
 
 # Re-export asyncio for convenience in subcommand modules that call asyncio.run.
 __all__ = [
+    "AGENT_TIERS",
     "_CALCULATOR_TOOL",
     "_DEFAULT_ARCLLM_CONFIG",
     "_DEFAULT_ARCRUN_CONFIG",
@@ -994,4 +1046,5 @@ __all__ = [
     "_resolve_agent_dir",
     "_scaffold_workspace",
     "asyncio",
+    "render_agent_config",
 ]

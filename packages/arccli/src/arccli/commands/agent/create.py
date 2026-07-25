@@ -12,9 +12,9 @@ from arccli.commands.agent._common import (
     _CALCULATOR_TOOL,
     _DEFAULT_ARCLLM_CONFIG,
     _DEFAULT_ARCRUN_CONFIG,
-    _DEFAULT_CONFIG,
     _print_scaffold_summary,
     _scaffold_workspace,
+    render_agent_config,
 )
 
 
@@ -36,7 +36,7 @@ def _create(args: argparse.Namespace) -> None:
 
     # Three sibling config files compose into one effective config: arcagent.toml
     # (everything else) + arcllm.toml (LLM-wire) + arcrun.toml (loop controls).
-    (agent_dir / "arcagent.toml").write_text(_DEFAULT_CONFIG.format(name=name))
+    (agent_dir / "arcagent.toml").write_text(render_agent_config(name=name))
 
     arcllm_content = _DEFAULT_ARCLLM_CONFIG
     if model != "anthropic/claude-sonnet-4-5-20250929":

@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import tomllib
 
-from arccli.commands.agent._common import _DEFAULT_CONFIG
+from arccli.commands.agent._common import render_agent_config
 
 
 def test_default_config_declares_tasks_module_enabled() -> None:
     """The scaffold declares [modules.tasks] with the enabled/config envelope."""
-    parsed = tomllib.loads(_DEFAULT_CONFIG.format(name="scaffold-agent"))
+    parsed = tomllib.loads(render_agent_config(name="scaffold-agent"))
     tasks = parsed["modules"]["tasks"]
     assert tasks["enabled"] is True
     # nats_url mirrors messaging so assign_task can resolve @handles over the bus.
@@ -42,7 +42,7 @@ def test_default_config_tasks_block_round_trips_through_real_config_model() -> N
     from arcagent.core.config import ModuleEntry
     from arcagent.modules.tasks.config import TasksConfig
 
-    parsed = tomllib.loads(_DEFAULT_CONFIG.format(name="scaffold-agent"))
+    parsed = tomllib.loads(render_agent_config(name="scaffold-agent"))
 
     # ModuleEntry.enabled is the sole load gate (agent_lifecycle iterates
     # config.modules and registers a module's capabilities only when its entry

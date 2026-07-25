@@ -68,9 +68,9 @@ def _register_user(root: Path, handle: str) -> None:
 
 class TestMessagingEnabledByDefault:
     def test_default_config_enables_messaging_module(self) -> None:
-        from arccli.commands.agent._common import _DEFAULT_CONFIG
+        from arccli.commands.agent._common import render_agent_config
 
-        cfg = _DEFAULT_CONFIG.format(name="probe")
+        cfg = render_agent_config(name="probe")
         assert "[modules.messaging]" in cfg
         # The messaging block must be enabled, not just present.
         block = cfg.split("[modules.messaging]", 1)[1]
@@ -87,9 +87,9 @@ class TestSkillsEnabledByDefault:
     """
 
     def test_default_config_enables_skills_module(self) -> None:
-        from arccli.commands.agent._common import _DEFAULT_CONFIG
+        from arccli.commands.agent._common import render_agent_config
 
-        cfg = _DEFAULT_CONFIG.format(name="probe")
+        cfg = render_agent_config(name="probe")
         assert "[modules.skills]" in cfg
         block = cfg.split("[modules.skills]", 1)[1]
         assert block.lstrip().startswith("enabled = true")
@@ -106,9 +106,9 @@ class TestSkillsEnabledByDefault:
         from arcagent.core.config import ModuleEntry
         from arcagent.modules.skills.config import SkillsConfig
 
-        from arccli.commands.agent._common import _DEFAULT_CONFIG
+        from arccli.commands.agent._common import render_agent_config
 
-        cfg = _DEFAULT_CONFIG.format(name="probe")
+        cfg = render_agent_config(name="probe")
         parsed = tomllib.loads(cfg)
 
         skills_entry = ModuleEntry.model_validate(parsed["modules"]["skills"])

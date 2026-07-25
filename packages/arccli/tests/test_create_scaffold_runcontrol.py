@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import tomllib
 
-from arccli.commands.agent._common import _DEFAULT_CONFIG
+from arccli.commands.agent._common import render_agent_config
 
 
 def test_default_config_declares_runcontrol_module_enabled() -> None:
-    parsed = tomllib.loads(_DEFAULT_CONFIG.format(name="scaffold-agent"))
+    parsed = tomllib.loads(render_agent_config(name="scaffold-agent"))
     rc = parsed["modules"]["runcontrol"]
     assert rc["enabled"] is True
 
@@ -30,7 +30,7 @@ def test_default_config_runcontrol_block_round_trips_through_real_config_model()
     from arcagent.core.config import ModuleEntry
     from arcagent.modules.runcontrol.config import RuncontrolConfig
 
-    parsed = tomllib.loads(_DEFAULT_CONFIG.format(name="scaffold-agent"))
+    parsed = tomllib.loads(render_agent_config(name="scaffold-agent"))
     entry = ModuleEntry.model_validate(parsed["modules"]["runcontrol"])
     assert entry.enabled is True
 

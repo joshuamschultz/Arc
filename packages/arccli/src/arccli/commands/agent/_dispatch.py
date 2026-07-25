@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from arccli.commands._shared import dispatch
+from arccli.commands.agent._common import AGENT_TIERS
 from arccli.commands.agent.build import _build
 from arccli.commands.agent.chat import _chat
 from arccli.commands.agent.config import _config
@@ -74,9 +75,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", default=".", help="Agent directory (default: .)")
 
     # build
-    p = subs.add_parser("build", help="Interactive build / validate agent setup.")
+    p = subs.add_parser("build", help="Render the agent config surface / validate setup.")
     p.add_argument("path", nargs="?", default=".", help="Agent directory (default: .)")
-    p.add_argument("--check", action="store_true", help="Validate only; skip interactive setup.")
+    p.add_argument("--check", action="store_true", help="Validate only; write nothing.")
+    p.add_argument(
+        "--tier",
+        choices=AGENT_TIERS,
+        default="personal",
+        help="Deployment tier for every subsystem (default: personal).",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate an existing arcagent.toml (DID and name are preserved).",
+    )
 
     # tools
     p = subs.add_parser("tools", help="List agent tools.")

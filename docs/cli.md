@@ -38,8 +38,9 @@ Manage agent directories: scaffold, configure, run, and inspect agents.
 | Command | Purpose | Example |
 |---|---|---|
 | `arc agent create <name>` | Scaffold a new agent directory with workspace, config, and a calculator extension | `arc agent create myagent --model anthropic/claude-sonnet-4-5-20250929` |
-| `arc agent build [path]` | Interactive build wizard — prompts for model and provider | `arc agent build myagent` |
-| `arc agent build [path] --check` | Validate config and workspace without interactive prompts | `arc agent build myagent --check` |
+| `arc agent build [path]` | Render the full config surface at a tier (`--tier personal\|enterprise\|federal`, default personal) | `arc agent build myagent --tier federal` |
+| `arc agent build [path] --force` | Regenerate an existing `arcagent.toml` — DID and agent name are preserved | `arc agent build myagent --force` |
+| `arc agent build [path] --check` | Validate config and workspace; writes nothing | `arc agent build myagent --check` |
 | `arc agent chat [path]` | Start an interactive REPL chat session | `arc agent chat myagent` |
 | `arc agent chat [path] --task "<task>"` | One-shot task via chat handler | `arc agent chat myagent --task "List all files"` |
 | `arc agent run <path> <task>` | Run a single task non-interactively | `arc agent run myagent "Analyze data.csv"` |
@@ -349,7 +350,7 @@ max_tokens = 8192
 temperature = 0.7
 
 [identity]
-did = ""                        # populated by arc agent build
+did = ""                        # minted by arc agent create; preserved by arc agent build
 key_dir = "~/.arcagent/keys"
 
 [vault]
