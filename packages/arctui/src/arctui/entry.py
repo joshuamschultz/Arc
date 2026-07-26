@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from pathlib import Path
 
 _logger = logging.getLogger("arctui.entry")
 
@@ -30,7 +31,7 @@ def _tui_handler(args: list[str]) -> None:
     user explicitly asks for the TUI.  Missing arcagent config is handled
     gracefully: the TUI boots in no-agent mode with a clear message.
     """
-    main()
+    main(args)
 
 
 def _register_tui_command() -> None:
@@ -61,27 +62,89 @@ def _register_tui_command() -> None:
 _register_tui_command()
 
 
-def _load_agent() -> object | None:
-    """Attempt to load an ArcAgent from the default config path.
+def _flag_value(args: list[str], flag: str) -> str | None:
+    """Return the value after ``flag`` in ``args`` (``--flag value``), or None."""
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith(f"{flag}="):
+            return arg.split("=", 1)[1]
+    return None
 
-    Returns None (no-agent mode) if arcagent is not installed or the
-    config is missing/invalid.  The TUI boots without an agent and shows
-    a status message explaining what is missing.
+
+def _resolve_agent_config(
+    args: list[str], *, cwd: Path, team_root: Path | None = None
+) -> tuple[Path | None, str | None]:
+    """Resolve which agent config to load (SPEC-058 T-765, REQ-141/143).
+
+    Selects from the arc roster (~/.arc/team, or ``--team-root``) with an optional
+    ``--agent <id>``; falls back to a ``arcagent.toml`` in ``cwd`` when launched
+    from inside an agent dir with no roster. Returns ``(config_path, None)`` to
+    load, or ``(None, message)`` when the operator must choose / create an agent.
+    """
+    from arctui.roster import resolve_agent
+
+    name = _flag_value(args, "--agent")
+    troot_arg = _flag_value(args, "--team-root")
+    troot = Path(troot_arg) if troot_arg else team_root
+    res = resolve_agent(name=name, team_root=troot)
+
+    if res.selected is not None:
+        return res.selected.config_path, None
+    if res.reason == "empty":
+        cwd_toml = cwd / "arcagent.toml"
+        if cwd_toml.is_file():
+            return cwd_toml, None
+        return None, "No agents found. Run `arc agent create <name>` to create one."
+    available = ", ".join(a.agent_id for a in res.candidates)
+    if res.reason == "ambiguous":
+        return None, f"Multiple agents found; pass --agent <id>. Available: {available}"
+    if res.reason == "unknown":
+        return None, f"No agent named {name!r}. Available: {available}"
+    return None, None
+
+
+def _apply_folder_trust(config: object, cwd: Path) -> None:
+    """Prompt for folder trust and, on confirmation, grant it session-scoped (REQ-142).
+
+    Runs before ``ArcAgent`` startup so the grant is visible to the runtime. The
+    grant is in-memory only (never written to arcagent.toml). Non-interactive
+    stdin → do NOT grant (secure default). Anything but an explicit yes declines.
+    """
+    from arctui.trust import folder_needs_trust, grant_folder
+
+    if not folder_needs_trust(config, cwd):  # type: ignore[arg-type]  # ArcAgentConfig
+        return
+    if not sys.stdin.isatty():
+        _logger.warning("Folder %s not trusted (non-interactive); agent cannot access it.", cwd)
+        return
+    prompt = f"Trust this folder for the agent to read/write?\n  {cwd}\n[y/N] "
+    answer = input(prompt).strip().lower()
+    if answer in ("y", "yes"):
+        grant_folder(config, cwd)  # type: ignore[arg-type]  # ArcAgentConfig
+        _logger.warning("Trusted %s for this session (read/write granted).", cwd)
+    else:
+        _logger.warning("Folder %s NOT trusted; the agent cannot read/write it this session.", cwd)
+
+
+def _load_agent(args: list[str] | None = None) -> object | None:
+    """Load the resolved ArcAgent (or None for no-agent mode) — see _resolve_agent_config.
+
+    Returns None if arcagent is not installed, no agent is resolvable, or the
+    config is invalid; the TUI boots without an agent and shows the reason.
     """
     try:
-        from pathlib import Path
-
         from arcagent.core.agent import ArcAgent
         from arcagent.core.config import load_config
 
-        config_path = Path("arcagent.toml")
-        if not config_path.exists():
-            _logger.info("No arcagent.toml found at %s; starting in no-agent mode.", config_path)
+        config_path, message = _resolve_agent_config(args or [], cwd=Path.cwd())
+        if config_path is None:
+            _logger.info("%s; starting in no-agent mode.", message or "No agent resolved")
             return None
 
         config = load_config(config_path)
-        agent = ArcAgent(config, config_path=config_path)
-        return agent
+        _apply_folder_trust(config, Path.cwd())
+        return ArcAgent(config, config_path=config_path)
     except ImportError:
         _logger.debug("arcagent not installed; starting in no-agent mode.")
         return None
@@ -107,14 +170,14 @@ async def _run_tui(agent: object | None) -> None:
     await app.run_async()
 
 
-def main() -> None:
+def main(args: list[str] | None = None) -> None:
     """Script entry point for ``arc-tui``.
 
-    Loads ArcAgent from arcagent.toml if present, then runs the TUI.
+    Resolves the agent from the roster (or ``--agent``/cwd), then runs the TUI.
     Exits with code 0 on clean shutdown, 1 on unexpected error.
     """
     try:
-        agent = _load_agent()
+        agent = _load_agent(args if args is not None else sys.argv[1:])
         asyncio.run(_run_tui(agent))
         sys.exit(0)
     except KeyboardInterrupt:

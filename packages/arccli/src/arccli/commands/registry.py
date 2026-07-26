@@ -734,3 +734,15 @@ def resolve_command_and_args(argv: list[str]) -> tuple[CommandDef | None, list[s
         if cmd is not None:
             return cmd, argv[word_count:]
     return None, []
+
+
+# --- Optional UI subcommands ------------------------------------------------
+# arctui (the terminal UI) contributes the `tui` command by appending its
+# CommandDef to COMMAND_REGISTRY when `arctui.entry` is imported. arccli cannot
+# hard-depend on arctui (arctui depends on arccli), so we trigger that import
+# here — after COMMAND_REGISTRY is defined, so the append lands cleanly — guarded
+# so arccli works with or without arctui installed.
+try:
+    import arctui.entry  # noqa: F401  # registers the `tui` command on import
+except ImportError:
+    pass
