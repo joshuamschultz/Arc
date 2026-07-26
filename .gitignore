@@ -64,6 +64,11 @@ architecture/
 # guards) and must be tracked — re-include them and their contents (ALL packages).
 !packages/**/tests/architecture/
 !packages/**/tests/architecture/**
+# ...and docs/architecture/ is published documentation (ARCH-OVERVIEW, the
+# policy-module catalogue, and the ADRs the doc set cross-references), not a
+# work file. The glob above was swallowing it.
+!docs/architecture/
+!docs/architecture/**
 
 # Agent playground
 Basic_Agent/
