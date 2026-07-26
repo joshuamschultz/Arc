@@ -6,10 +6,12 @@ returns every skill / capability tool across the loader's scan roots with its
 verbatim load verdict (``source_root`` + ``status``), plus — for a live,
 chat-loaded agent — its runtime-registered tool list (REQ-093/094/095).
 
-arcagent is imported lazily inside the handler, not at module load: arcagent
-already depends on arcui (the UIBridgeSink), so a top-level import would close a
-dependency cycle. The embedded gateway already runs ArcAgent in-process, so the
-package is always importable at runtime.
+arcagent is imported lazily inside the handler, not at module load: the
+capability-inventory seam is the ONE approved arcagent import from arcui
+(SPEC-023 §2.2), and importing it at call time keeps arcui from taking a hard
+package dependency that would let the surface widen unnoticed. The embedded
+gateway already runs ArcAgent in-process, so the package is always importable
+at runtime.
 """
 
 from __future__ import annotations

@@ -64,11 +64,11 @@ def test_arcui_imports_arcagent_only_via_inventory_seam() -> None:
     Ruling (arcui-reality-mirror, Option A — team-lead approved): the capability
     views must mirror what an agent actually loads, so arcui consumes arcagent's
     real discovery + trust verdicts via ``arcagent.capabilities.inventory`` — and
-    nothing else from arcagent. A hard package dependency would close a cycle
-    (arcagent already depends on arcui for the UIBridgeSink), so the seam is
-    imported lazily at call time. This narrows, rather than deletes, the
-    SPEC-023 §2.2 boundary: every OTHER arcagent import from arcui is still a
-    forbidden layering violation.
+    nothing else from arcagent. arcui declares no package dependency on arcagent
+    at all; the seam is imported lazily at call time so the surface cannot widen
+    unnoticed. This narrows, rather than deletes, the SPEC-023 §2.2 boundary:
+    every OTHER arcagent import from arcui is still a forbidden layering
+    violation.
 
     Trust, signing, and approval live in ``arctrust`` — the leaf foundation that
     imports no siblings — so arcui imports it FREELY (operator keys, arc-home

@@ -5,7 +5,10 @@ Design (SDD §3.1 Process Model):
     Executor Protocol — the contract all executors must satisfy.
     AsyncioExecutor  — personal/enterprise: runs ArcAgent in-process via asyncio.
     SubprocessExecutor — federal-tier: spawns arc-agent-worker subprocess (T1.6).
-    NATSExecutor     — multi-instance scaling (deferred, no ETA).
+
+``NATSExecutor`` (multi-instance scaling, deferred with no ETA) lives in
+``arcgateway.executor_nats`` — split out to keep this module inside the
+arcgateway core LOC budget (ADR-004 / G1.6). Import it from there.
 
 The executor is chosen by the tier-policy layer in GatewayRunner. Callers
 only see the Executor Protocol; tier logic is not scattered through business code.
@@ -323,31 +326,3 @@ __all__ = [
     "SubprocessExecutor",
     "_make_preexec_fn",
 ]
-
-
-# ---------------------------------------------------------------------------
-# NATSExecutor — multi-instance scaling (deferred)
-# ---------------------------------------------------------------------------
-
-
-class NATSExecutor:
-    """NATS-backed executor for multi-instance gateway deployments.
-
-    Routes agent execution to worker nodes via NATS subject addressing.
-    Required when a single bot token serves multiple gateway replicas behind
-    a load balancer.
-
-    Implementation deferred — no ETA. See SDD §6 open question on
-    NATS-vs-in-process queue for >1 instance (SPEC-018).
-    """
-
-    async def run(self, event: InboundEvent) -> AsyncIterator[Delta]:
-        """Dispatch event to NATS worker and stream response.
-
-        Raises:
-            NotImplementedError: Multi-instance scaling is deferred.
-        """
-        raise NotImplementedError(
-            "NATSExecutor: multi-instance NATS-based scaling is deferred. "
-            "No implementation ETA in SPEC-018. See SDD §6."
-        )

@@ -3,15 +3,16 @@
 NATSExecutor is a deferred implementation that raises NotImplementedError.
 These tests lock in:
 - NATSExecutor.run() raises NotImplementedError (not silently drops events)
-- NATSExecutor is importable from arcgateway.executor (re-export contract)
-- NATSExecutor is importable directly from arcgateway.executor_nats
+- arcgateway.executor_nats is its single definition site — arcgateway.executor
+  must NOT carry a second copy (the two used to be independent classes)
 """
 
 from __future__ import annotations
 
 import pytest
 
-from arcgateway.executor import InboundEvent, NATSExecutor
+from arcgateway.executor import InboundEvent
+from arcgateway.executor_nats import NATSExecutor
 
 
 def _make_event() -> InboundEvent:
@@ -33,18 +34,23 @@ class TestNATSExecutorStub:
         with pytest.raises(NotImplementedError, match="multi-instance"):
             await executor.run(_make_event())
 
-    def test_nats_executor_importable_from_executor(self) -> None:
-        """NATSExecutor must be importable via the public re-export in executor.py."""
-        # Verify the re-export works — import succeeds without error
-        from arcgateway.executor import NATSExecutor as ExecutorNATS
+    def test_executor_module_carries_no_second_copy(self) -> None:
+        """``arcgateway.executor`` must NOT define its own NATSExecutor.
 
-        assert ExecutorNATS is NATSExecutor
+        Regression guard. The class was extracted into ``executor_nats`` for the
+        core LOC budget, but the original was left behind — so two independent
+        classes with the same name coexisted, and which one you got depended on
+        the import path. ``executor_nats`` is the single definition site.
+        """
+        import arcgateway.executor as executor_mod
+
+        assert not hasattr(executor_mod, "NATSExecutor")
 
     def test_nats_executor_importable_directly(self) -> None:
-        """NATSExecutor must be importable directly from executor_nats."""
+        """NATSExecutor is importable from its one home."""
         from arcgateway.executor_nats import NATSExecutor as ExecutorNATSDirect
 
-        assert ExecutorNATSDirect is not None
+        assert ExecutorNATSDirect is NATSExecutor
 
     def test_nats_executor_instantiates(self) -> None:
         """NATSExecutor can be instantiated without arguments."""

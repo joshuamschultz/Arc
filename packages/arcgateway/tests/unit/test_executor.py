@@ -24,10 +24,10 @@ from arcgateway.executor import (
     Delta,
     Executor,
     InboundEvent,
-    NATSExecutor,
     ResourceLimits,
     SubprocessExecutor,
 )
+from arcgateway.executor_nats import NATSExecutor
 
 # ---------------------------------------------------------------------------
 # InboundEvent model validation

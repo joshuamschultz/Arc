@@ -3,8 +3,8 @@
 Extracted from executor.py to keep the core executor module within the
 arcgateway core LOC budget (ADR-004 / G1.6).
 
-Public API is re-exported from arcgateway.executor so existing imports
-``from arcgateway.executor import NATSExecutor`` continue to work unchanged.
+This module is the single definition. ``arcgateway.executor`` does NOT
+re-export it — import it from here.
 """
 
 from __future__ import annotations

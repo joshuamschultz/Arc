@@ -49,6 +49,7 @@ if sys.platform != "win32":
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from arctrust.canonical import canonical_json
 from arctrust.signer import ED25519, Signer, verify_signature
 
 _logger = logging.getLogger("arctrust.audit")
@@ -158,19 +159,15 @@ class NullSink:
 def _canonical_event_hash(*, seq: int, prev_hash: str, event: dict[str, Any]) -> str:
     """Deterministic SHA-256 over (seq, prev_hash, event).
 
-    Uses ``sort_keys=True, ensure_ascii=True`` on a JSON-serialisable event dump
-    (``model_dump(mode="json")``) — RFC-8785-equivalent for the ASCII-only
-    AuditEvent schema, with no extra dependency. The hash commits the link
-    (prev_hash), the position (seq), and the content (event), so any of the
+    Serialized by :func:`arctrust.canonical.canonical_json` — the same byte form
+    every other signature in the stack commits to, so the chain cannot drift from
+    the rest of arctrust on separators or ``ensure_ascii``. The hash commits the
+    link (prev_hash), the position (seq), and the content (event), so any of the
     three changing is detectable.
     """
-    payload = json.dumps(
-        {"seq": seq, "prev_hash": prev_hash, "event": event},
-        sort_keys=True,
-        ensure_ascii=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        canonical_json({"seq": seq, "prev_hash": prev_hash, "event": event})
+    ).hexdigest()
 
 
 class WormSink:

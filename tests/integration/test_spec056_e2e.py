@@ -48,6 +48,7 @@ Scenario (mirrors the task brief 1:1):
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -59,8 +60,8 @@ from arcagent.modules.tasks.capabilities import (
     claim_task,
     create_task,
     decompose_task,
+    start_task,
 )
-from arcagent.modules.tasks.handlers import handle_task_assigned
 from arcagent.modules.tasks.store import open_store
 from arcteam.audit import AuditLogger
 from arcteam.registry import EntityRegistry
@@ -177,10 +178,15 @@ async def test_spec056_multi_agent_task_flow_e2e(
         assert "@bob" in envelope.body
         assert backlog_task["id"] in envelope.body
 
-        # 3. Feed the delivered message to bob's adopt handler — the real
-        # notify->adopt handoff.
+        # 3. Bob adopts the task the notification named — the real
+        # notify->adopt handoff. The old `handle_task_assigned` wrapper that
+        # parsed the envelope was deleted as vestigial (3ec12bf); the dispatch
+        # loop now drives adoption through `start_task`, so the test resolves
+        # the id off the envelope and calls the same tool the loop does.
         _runtime.bind(bob_state)
-        adopted = json.loads(await handle_task_assigned(envelope))
+        assigned_task_id = re.search(r"task_id=(\S+)", envelope.body)
+        assert assigned_task_id is not None, "notification must name the task"
+        adopted = json.loads(await start_task(id=assigned_task_id.group(1)))
         assert adopted["task"]["id"] == backlog_task["id"]
         assert adopted["task"]["status"] == "in_progress"
         assert adopted["task"]["owner_did"] == bob_identity.did

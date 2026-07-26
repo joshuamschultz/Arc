@@ -11,9 +11,11 @@ approval store via ``arctrust`` (arctrust owns trust/approval). It resolves
 agents from the roster, gates mutations on the operator role, records the
 approver as the on-box operator DID, and audits every mutation — mirroring
 ``routes/approvals.py`` exactly. The ``arcagent`` inventory seam is imported
-lazily inside handlers because arcagent depends on arcui (the UIBridgeSink), so a
-top-level import would close a dependency cycle; ``arctrust`` (a lower layer that
-imports no siblings) is imported at module top.
+lazily inside handlers so arcui never takes a hard package dependency on
+arcagent: the seam is the ONE approved arcagent import (SPEC-023 §2.2, enforced
+by ``test_arcui_imports_arcagent_only_via_inventory_seam``), and keeping it at
+call time means a view module cannot quietly widen that surface. ``arctrust``
+(a lower layer that imports no siblings) is imported at module top.
 """
 
 from __future__ import annotations

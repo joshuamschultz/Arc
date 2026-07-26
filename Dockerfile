@@ -102,7 +102,7 @@ RUN useradd --uid 1000 --home-dir /data --shell /usr/sbin/nologin arc \
  && chown arc:arc /data
 
 COPY --from=builder --chown=arc:arc /opt/arc /opt/arc
-COPY docker/entrypoint.sh /usr/local/bin/arc-entrypoint
+COPY deploy/entrypoint.sh /usr/local/bin/arc-entrypoint
 RUN chmod +x /usr/local/bin/arc-entrypoint
 
 USER arc
