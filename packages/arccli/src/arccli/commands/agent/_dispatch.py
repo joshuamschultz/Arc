@@ -50,6 +50,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default="anthropic/claude-sonnet-4-5-20250929",
         help="LLM model.",
     )
+    p.add_argument(
+        "--tier",
+        choices=AGENT_TIERS,
+        default="personal",
+        help="Deployment tier for every subsystem (default: personal).",
+    )
     p.add_argument("--with-code-exec", dest="with_code_exec", action="store_true")
     p.add_argument(
         "--no-register",

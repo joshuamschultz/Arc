@@ -58,6 +58,9 @@ Manage agent directories: scaffold, configure, run, and inspect agents.
 **Notes:**
 - `path` defaults to `.` (current directory) for all subcommands that accept it
 - `arc agent create` accepts `--dir <parent>` to set the parent directory (default: `.`)
+- `arc agent create` accepts `--tier personal|enterprise|federal` (default: `personal`), which
+  sets the tier for every subsystem at once — the same flag `arc agent build` takes. Federal
+  additionally pins the crypto floor (`require_fips`, `vault_transit`, `ecdsa-p256`)
 - `arc agent run` and `arc agent chat` accept `--model <provider/model>` to override the configured model
 - `arc agent run` accepts `--verbose` / `-v` for turn/cost summary and `--json` for structured output
 - `arc agent chat` accepts `--max-turns <n>` (default 10) and `--session-id <id>` to resume a session

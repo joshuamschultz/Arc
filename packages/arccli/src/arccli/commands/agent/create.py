@@ -23,6 +23,7 @@ def _create(args: argparse.Namespace) -> None:
     name: str = args.name
     parent_dir: str = getattr(args, "parent_dir", ".")
     model: str = getattr(args, "model", "anthropic/claude-sonnet-4-5-20250929")
+    tier: str = getattr(args, "tier", "personal")
     no_register: bool = getattr(args, "no_register", False)
 
     parent = Path(parent_dir).expanduser().resolve()
@@ -36,7 +37,7 @@ def _create(args: argparse.Namespace) -> None:
 
     # Three sibling config files compose into one effective config: arcagent.toml
     # (everything else) + arcllm.toml (LLM-wire) + arcrun.toml (loop controls).
-    (agent_dir / "arcagent.toml").write_text(render_agent_config(name=name))
+    (agent_dir / "arcagent.toml").write_text(render_agent_config(name=name, tier=tier))
 
     arcllm_content = _DEFAULT_ARCLLM_CONFIG
     if model != "anthropic/claude-sonnet-4-5-20250929":
@@ -68,7 +69,7 @@ def _create(args: argparse.Namespace) -> None:
     identity = _sign_scaffolded_capabilities(agent_dir)
 
     sys.stdout.write(f"Created agent: {agent_dir}\n")
-    _print_scaffold_summary(name, agent_dir)
+    _print_scaffold_summary(name, agent_dir, tier)
 
     # FIX-1: Auto-register with arcteam. Without this, the agent serves and
     # emits traces to disk correctly but stays invisible to arcui's trace

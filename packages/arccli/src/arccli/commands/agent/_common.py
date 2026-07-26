@@ -917,8 +917,10 @@ def _scaffold_workspace(agent_dir: Path, name: str) -> None:
     (workspace / "sessions").mkdir(exist_ok=True)
 
 
-def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
+def _print_scaffold_summary(display_name: str, agent_dir: Path, tier: str = "personal") -> None:
     """Print directory structure and next-steps after scaffold."""
+    sys.stdout.write("\n")
+    sys.stdout.write(f"Tier: {tier}\n")
     sys.stdout.write("\n")
     sys.stdout.write("Structure:\n")
     sys.stdout.write(f"  {display_name}/\n")
@@ -934,7 +936,9 @@ def _print_scaffold_summary(display_name: str, agent_dir: Path) -> None:
     sys.stdout.write("      memory/                # lazily created when a Brain is enabled\n")
     sys.stdout.write("\n")
     sys.stdout.write("Next steps:\n")
-    sys.stdout.write(f"  arc agent build {agent_dir}\n")
+    # --check, not a bare `build`: the config already exists, and `build`
+    # refuses to regenerate over it without --force.
+    sys.stdout.write(f"  arc agent build {agent_dir} --check\n")
     sys.stdout.write(f"  arc agent chat {agent_dir}\n")
 
 
