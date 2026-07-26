@@ -25,7 +25,8 @@ def test_init_team_scaffolds_coder_with_persona(tmp_path: Path, monkeypatch: pyt
     monkeypatch.chdir(tmp_path)
     init_handler(["--team", "coding", "--blueprint", "coding", "--name", "coder"])
 
-    agent_dir = tmp_path / ".arc" / "coding" / "coder"
+    # Fleets are GLOBAL under ~/.arc/<team> (HOME is isolated by the fixture), not cwd.
+    agent_dir = Path.home() / ".arc" / "coding" / "coder"
     assert (agent_dir / "arcagent.toml").is_file()
 
     cfg = tomllib.loads((agent_dir / "arcagent.toml").read_text(encoding="utf-8"))
@@ -40,8 +41,8 @@ def test_init_team_scaffolds_coder_with_persona(tmp_path: Path, monkeypatch: pyt
 def test_init_team_default_agent_name_is_blueprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     init_handler(["--team", "coding", "--blueprint", "coding"])
-    # No --name → agent named after the blueprint.
-    assert (tmp_path / ".arc" / "coding" / "coding" / "arcagent.toml").is_file()
+    # No --name → agent named after the blueprint; global under ~/.arc.
+    assert (Path.home() / ".arc" / "coding" / "coding" / "arcagent.toml").is_file()
 
 
 def test_init_team_unknown_blueprint_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

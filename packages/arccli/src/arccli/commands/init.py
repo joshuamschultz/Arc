@@ -326,7 +326,9 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     tier = bp.tier if bp else base_tier
     name: str = getattr(args, "name", None) or (blueprint or team)
 
-    team_root = Path.cwd() / ".arc" / team
+    # Fleets are GLOBAL under ~/.arc/<team> so a coder created once is reachable from
+    # any project (the OpenCode model: the agent's home is global; it works in your cwd).
+    team_root = Path.home() / ".arc" / team
     agent_dir = team_root / name
     if agent_dir.exists():
         sys.stderr.write(f"Error: agent already exists: {agent_dir}\n")
@@ -355,8 +357,8 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
         applied = "  (persona applied)" if (bp and bp.persona) else ""
         _write(f"  Blueprint: {blueprint}{applied}")
     _write("")
-    _write("  Start coding:")
-    _write(f"    arc tui --root .arc/{team}")
+    _write("  Start coding (from any project directory):")
+    _write(f"    arc tui --team {team}")
     _write("")
 
 

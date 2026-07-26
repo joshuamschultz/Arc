@@ -40,8 +40,13 @@ def test_resolve_team_root_explicit() -> None:
 
 
 def test_resolve_team_root_root_alias() -> None:
-    # `arc tui --root .arc/coding` — the per-project coding-folder short form.
+    # `arc tui --root <path>` — explicit path override.
     assert _resolve_team_root(["--root", ".arc/coding"]) == Path(".arc/coding")
+
+
+def test_resolve_team_root_team_is_global() -> None:
+    # `arc tui --team coding` resolves the GLOBAL fleet ~/.arc/coding (findable from any cwd).
+    assert _resolve_team_root(["--team", "coding"]) == Path.home() / ".arc" / "coding"
 
 
 # --------------------------------------------------------------------------- #

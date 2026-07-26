@@ -72,9 +72,14 @@ def _flag_value(args: list[str], flag: str) -> str | None:
 def _resolve_team_root(args: list[str]) -> Path:
     """Team root for roster lookup + gateway spawn.
 
-    Accepts ``--root`` (the short form used for a per-project coding folder, e.g.
-    ``arc tui --root .arc/coding``) or ``--team-root``; falls back to the default.
+    ``--team <name>`` resolves to the GLOBAL fleet ``~/.arc/<name>`` (the same place
+    ``arc init --team <name>`` scaffolds it), so a coder created once is reachable from
+    any project — e.g. ``arc tui --team coding``. ``--root``/``--team-root`` still accept
+    an explicit path for a non-standard location.
     """
+    team = _flag_value(args, "--team")
+    if team:
+        return Path.home() / ".arc" / team
     troot = _flag_value(args, "--root") or _flag_value(args, "--team-root")
     return Path(troot).expanduser() if troot else _DEFAULT_TEAM_ROOT
 
