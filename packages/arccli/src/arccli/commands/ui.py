@@ -84,6 +84,23 @@ def _mask_token(token: str) -> str:
     return f"{token[:8]}...{token[-8:]}"
 
 
+def _persist_local_viewer_token(token: str) -> None:
+    """Persist the loopback viewer token 0600 so a same-user ``arc tui`` can attach.
+
+    Path mirrors ``arctui.serve.default_token_path`` — a filesystem contract, not
+    shared code, so arccli need not import the optional arctui package. Only
+    called on loopback binds; never persists a token reachable off-box.
+    """
+    root = Path(os.environ.get("ARC_CONFIG_DIR", str(Path.home() / ".arc")))
+    path = root / "ui" / "viewer-token"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(token, encoding="utf-8")
+        path.chmod(0o600)
+    except OSError as exc:  # reason: best-effort DX aid — never fail startup
+        _write(f"  (note: could not persist local viewer token for `arc tui`: {exc})")
+
+
 # ---------------------------------------------------------------------------
 # Zero-config helpers
 # ---------------------------------------------------------------------------
@@ -267,6 +284,8 @@ def _start(args: argparse.Namespace) -> None:
         # never sent to the server) plus the bare token for the sign-in field
         # fallback. The operator token stays masked unless --show-tokens —
         # it grants control, and viewing the dashboard only needs the viewer.
+        # Persist the viewer token so a same-user `arc tui` attaches with no flags.
+        _persist_local_viewer_token(viewer_token_value)
         _write("ArcUI dashboard is running. Open this link (already signed in):")
         _write(f"    {_magic_link(host, port, viewer_token_value)}")
         _write("")

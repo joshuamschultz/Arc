@@ -17,18 +17,22 @@ Architecture
 │  └───────────────────────────────────┘  │
 └─────────────────────────────────────────┘
 
+arctui is a *viewpoint* onto a served agent (SPEC-058 Phase 3): it drives turns
+through a :class:`~arctui.transport.ChatTransport` (the gateway's ``/ws/chat``
+route) and never constructs an ``ArcAgent`` of its own.
+
 Event flow:
     User types → InputComposer submits → ArcTUI handlers
     Non-slash: _send_to_agent (Textual @work task)
-        → agent.run(text, session=agent.session("tui:main"))  (one entry)
-        → ArcAgent bus events → ActivityView
-        → tokens appended to TranscriptView live
+        → transport.send_turn(text) → TurnEvent stream
+        → reply text appended to TranscriptView
     Slash: _dispatch_command → registry handler or error message
 
 Streaming:
-    ``agent.run`` yields arcrun.StreamEvent objects; ``_run_stream_turn`` renders
-    each TokenEvent via start_streaming/append_delta/finish_streaming on the
-    TranscriptView for live token rendering.
+    ``transport.send_turn`` yields ``TurnEvent`` items; ``_run_stream_turn``
+    renders each via start_streaming/append_delta/finish_streaming on the
+    TranscriptView. The web transport is block-at-turn (one "message" event per
+    turn); a future streaming transport yields many without any render change.
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from arctui.activity import ActivityView
 from arctui.input_composer import InputComposer
 from arctui.theme import build_tcss
 from arctui.transcript import MessageRole, TranscriptView
+from arctui.transport import ChatTransport
 
 _logger = logging.getLogger("arctui.app")
 
@@ -54,9 +59,9 @@ class ArcTUI(App[None]):
 
     Parameters
     ----------
-    agent:
-        A started (``await agent.startup()`` already called) ArcAgent
-        instance.  Pass ``None`` in tests to boot without a real agent.
+    transport:
+        A connected ``ChatTransport`` (its ``connect()`` already awaited)
+        driving a served agent. Pass ``None`` in tests to boot without one.
     title:
         Optional application title shown in the header.
     """
@@ -74,13 +79,18 @@ class ArcTUI(App[None]):
     def __init__(
         self,
         *,
-        agent: Any = None,
+        transport: ChatTransport | None = None,
         title: str = "Arc TUI",
+        agent_label: str | None = None,
+        gateway_label: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self._agent = agent
+        self._transport = transport
         self.title = title
+        self._agent_label = agent_label
+        self._gateway_label = gateway_label
+        self._turns = 0
         self._transcript: TranscriptView | None = None
         self._activity: ActivityView | None = None
         self._composer: InputComposer | None = None
@@ -112,68 +122,24 @@ class ArcTUI(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Wire event bridges and show welcome message on first mount."""
-        self._wire_event_bus()
+        """Show the welcome message and status line on first mount."""
+        self._refresh_status()
         if self._transcript is not None:
             self._transcript.add_message(
                 MessageRole.SYSTEM,
                 "ArcTUI ready. Type a message or /help for commands.",
             )
 
-    # ------------------------------------------------------------------
-    # Event bus bridge (arcrun → ActivityView)
-    # ------------------------------------------------------------------
-
-    def _wire_event_bus(self) -> None:
-        """Register an arcrun event bridge on the agent's module bus.
-
-        If no agent is attached (test mode), this is a no-op.  The bridge
-        routes tool.start / tool.end / turn.start / turn.end / llm.call
-        events to ActivityView.handle_event which crosses back to the UI
-        thread via call_from_thread.
-
-        We subscribe at the Module Bus level so we don't duplicate the
-        bridge logic from create_arcrun_bridge in agent.py.
-        """
-        if self._agent is None:
+    def _refresh_status(self) -> None:
+        """Render the attach context into the header sub-title (agent · gateway · turns)."""
+        if self._agent_label is None:
+            self.sub_title = "no agent attached"
             return
-
-        bus = getattr(self._agent, "_bus", None)
-        if bus is None:
-            return
-
-        activity = self._activity
-        if activity is None:
-            return
-
-        # Subscribe to arcrun-mapped events on the Module Bus.
-        # These event names are the Bus-side names after the bridge mapping
-        # in create_arcrun_bridge (agent.py line ~78).
-        arcrun_bus_events = [
-            "agent:pre_tool",
-            "agent:post_tool",
-            "agent:pre_plan",
-            "agent:post_plan",
-        ]
-
-        for bus_event in arcrun_bus_events:
-            # Capture bus_event in the closure correctly.
-            def _make_subscriber(ev: str) -> Any:
-                async def _subscriber(data: dict[str, Any]) -> None:
-                    # Map bus event names back to arcrun-style names for
-                    # ActivityView which expects "tool.start" etc.
-                    name_map = {
-                        "agent:pre_tool": "tool.start",
-                        "agent:post_tool": "tool.end",
-                        "agent:pre_plan": "turn.start",
-                        "agent:post_plan": "turn.end",
-                    }
-                    arcrun_name = name_map.get(ev, ev)
-                    activity.handle_event(arcrun_name, dict(data))
-
-                return _subscriber
-
-            bus.subscribe(bus_event, _make_subscriber(bus_event), priority=999)
+        parts = [f"◆ {self._agent_label}"]
+        if self._gateway_label is not None:
+            parts.append(self._gateway_label)
+        parts.append(f"turns {self._turns}")
+        self.sub_title = "  ·  ".join(parts)
 
     # ------------------------------------------------------------------
     # Input handling
@@ -217,11 +183,11 @@ class ArcTUI(App[None]):
 
     @work(exclusive=True, thread=False)
     async def _send_to_agent(self, text: str) -> None:
-        """Run one agent turn for *text* with per-token streaming.
+        """Drive one agent turn for *text* through the transport.
 
-        The ``@work(exclusive=True)`` decorator ensures only one turn
-        runs at a time — concurrent submits queue up. Tokens are appended to
-        the transcript incrementally via ``TranscriptView.append_delta``.
+        The ``@work(exclusive=True)`` decorator ensures only one turn runs at
+        a time — concurrent submits queue up. Reply text is appended to the
+        transcript as each ``TurnEvent`` arrives.
         """
         if self._transcript is None:
             return
@@ -229,43 +195,47 @@ class ArcTUI(App[None]):
         # Show the user message immediately.
         self._transcript.add_message(MessageRole.USER, text)
 
-        if self._agent is None:
-            # Test mode / no agent attached — echo back a stub response.
+        if self._transport is None:
+            # Test mode / no transport attached — echo back a stub response.
             self._transcript.add_message(
                 MessageRole.ASSISTANT,
-                "(No agent attached. Use a real ArcAgent for live responses.)",
+                "(No agent attached. Launch with `arc tui` to reach a served agent.)",
             )
             return
 
+        self._turns += 1
+        self._refresh_status()
         await self._run_stream_turn(text)
 
     async def _run_stream_turn(self, text: str) -> None:
-        """Stream one agent turn via ``agent.run(text, session=...)``.
+        """Drive one turn via ``transport.send_turn(text)`` and render it.
 
-        Displays tokens incrementally via TranscriptView.  The streaming
-        cursor (▋) is shown while the assistant is still typing.  Called
-        from the ``@work`` task in ``_send_to_agent`` — must NOT be decorated
-        with ``@work`` itself (Workers cannot be awaited).
+        Renders each ``TurnEvent``: "message" appends reply text (the streaming
+        cursor ▋ shows while the turn is open), "error" surfaces a failure,
+        "done" closes the turn. Called from the ``@work`` task in
+        ``_send_to_agent`` — must NOT be decorated with ``@work`` (Workers
+        cannot be awaited).
 
         Args:
             text: User prompt text.
         """
-        if self._transcript is None:
+        if self._transcript is None or self._transport is None:
             return
-
-        from arcrun import TokenEvent
 
         try:
             self._transcript.start_streaming(MessageRole.ASSISTANT)
-            session = await self._agent.session("tui:main")
-            async for event in self._agent.run(text, session=session):
-                if isinstance(event, TokenEvent):
+            async for event in self._transport.send_turn(text):
+                if event.kind == "message":
                     self._transcript.append_delta(event.text)
-                # tool_start / tool_end events are handled by ActivityView
-                # via the module bus bridge — no transcript update needed.
+                elif event.kind == "error":
+                    self._transcript.finish_streaming()
+                    self._transcript.add_message(MessageRole.ERROR, event.text)
+                    return
+                elif event.kind == "done":
+                    break
             self._transcript.finish_streaming()
         except Exception as exc:  # reason: fail-open — log + continue
-            _logger.exception("Agent stream turn failed: %s", exc)
+            _logger.exception("Agent turn failed: %s", exc)
             self._transcript.finish_streaming()
             self._transcript.add_message(MessageRole.ERROR, f"Error: {exc}")
 

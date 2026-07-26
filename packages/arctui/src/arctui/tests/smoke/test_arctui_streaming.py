@@ -1,97 +1,111 @@
-"""Smoke tests: arctui per-token streaming via ``agent.run``.
+"""Smoke tests: arctui turn rendering via a ``ChatTransport``.
 
-Verifies that ArcTUI's ``_run_stream_turn`` drives the single streaming entry
-(``agent.run(text, session=agent.session(key))``) and renders each token via
-TranscriptView.start_streaming / append_delta / finish_streaming.
-
-No real ArcAgent or LLM is involved — a fake streaming agent is used.
+Verifies ArcTUI's ``_run_stream_turn`` drives ``transport.send_turn(text)`` and
+renders each ``TurnEvent`` via TranscriptView.start_streaming / append_delta /
+finish_streaming. No real ArcAgent, gateway, or LLM is involved — a fake
+transport scripts the TurnEvent stream.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from collections.abc import AsyncIterator
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Fake streaming agent — new SPEC-027 contract: session(key) + streaming run()
-# ---------------------------------------------------------------------------
+from arctui.transport import TurnEvent
 
 
-class _FakeStreamingAgent:
-    """Minimal agent exposing ``session`` + a streaming ``run``."""
+class _FakeTransport:
+    """Scripted ChatTransport: replays a fixed TurnEvent stream per turn."""
 
-    def __init__(self, tokens: list[str]) -> None:
-        self._tokens = tokens
-        self._bus = None  # _wire_event_bus() is a no-op
+    def __init__(self, events: list[TurnEvent]) -> None:
+        self._events = events
+        self.closed = False
 
-    async def session(self, key: str) -> str:
-        return key
+    async def send_turn(self, text: str) -> AsyncIterator[TurnEvent]:
+        for ev in self._events:
+            yield ev
 
-    async def run(self, input_text: str, *, session: Any) -> Any:
-        from arcrun import TokenEvent, TurnEndEvent
+    async def aclose(self) -> None:
+        self.closed = True
 
-        for t in self._tokens:
-            yield TokenEvent(text=t)
-        yield TurnEndEvent(final_text="".join(self._tokens))
+
+class _RaisingTransport:
+    """Transport whose turn raises mid-stream."""
+
+    async def send_turn(self, text: str) -> AsyncIterator[TurnEvent]:
+        raise RuntimeError("simulated transport error")
+        yield  # unreachable — makes this an async generator
+
+    async def aclose(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_appends_deltas_incrementally() -> None:
-    """_run_stream_turn drives agent.run and renders the user + streamed reply."""
+async def test_turn_appends_reply_text() -> None:
+    """_run_stream_turn renders the user message + the streamed reply chunks."""
     from arctui.app import ArcTUI
     from arctui.input_composer import InputComposer
-    from arctui.transcript import MessageRole, TranscriptView
+    from arctui.transcript import TranscriptView
 
-    agent = _FakeStreamingAgent(["hello", " ", "world"])
-    app = ArcTUI(agent=agent)
+    transport = _FakeTransport(
+        [TurnEvent("message", "hello"), TurnEvent("message", " world"), TurnEvent("done")]
+    )
+    app = ArcTUI(transport=transport)
     async with app.run_test() as pilot:
         tv: TranscriptView = pilot.app.query_one("#transcript", TranscriptView)
         pilot.app.post_message(InputComposer.SubmitMessage("say hello"))
         await asyncio.sleep(0.5)
 
-        messages = tv._messages
-        roles = [m.role for m in messages]
-        assert MessageRole.USER in roles or any("say hello" in m.content for m in messages)
+        texts = [m.content for m in tv._messages]
+        assert any("say hello" in t for t in texts)
+        assert any("hello world" in t for t in texts)
 
 
 @pytest.mark.asyncio
-async def test_stream_turn_finish_streaming_called() -> None:
-    """finish_streaming() runs after the stream ends (no dangling cursor)."""
+async def test_turn_finish_streaming_called() -> None:
+    """finish_streaming() runs after the turn ends (no dangling cursor)."""
     from arctui.app import ArcTUI
     from arctui.input_composer import InputComposer
     from arctui.transcript import TranscriptView
 
-    agent = _FakeStreamingAgent(["done"])
-    app = ArcTUI(agent=agent)
+    transport = _FakeTransport([TurnEvent("message", "done"), TurnEvent("done")])
+    app = ArcTUI(transport=transport)
     async with app.run_test() as pilot:
         tv: TranscriptView = pilot.app.query_one("#transcript", TranscriptView)
         pilot.app.post_message(InputComposer.SubmitMessage("done"))
         await asyncio.sleep(0.5)
-        assert tv._streaming_idx is None, "streaming cursor still active after stream end"
+        assert tv._streaming_idx is None, "streaming cursor still active after turn end"
 
 
 @pytest.mark.asyncio
-async def test_streaming_error_shows_error_message() -> None:
-    """When agent.run raises mid-stream, the turn finishes cleanly (no crash)."""
+async def test_error_event_shows_error_message() -> None:
+    """An error TurnEvent surfaces as an ERROR message and closes the turn."""
     from arctui.app import ArcTUI
     from arctui.input_composer import InputComposer
-    from arctui.transcript import TranscriptView
+    from arctui.transcript import MessageRole, TranscriptView
 
-    class _ErrorAgent:
-        _bus = None
-
-        async def session(self, key: str) -> str:
-            return key
-
-        async def run(self, input_text: str, *, session: Any) -> Any:
-            raise RuntimeError("simulated stream error")
-            yield  # unreachable — makes this an async generator
-
-    app = ArcTUI(agent=_ErrorAgent())
+    transport = _FakeTransport([TurnEvent("error", "boom"), TurnEvent("done")])
+    app = ArcTUI(transport=transport)
     async with app.run_test() as pilot:
         tv: TranscriptView = pilot.app.query_one("#transcript", TranscriptView)
         pilot.app.post_message(InputComposer.SubmitMessage("trigger error"))
         await asyncio.sleep(0.5)
-        assert tv._streaming_idx is None, "finish_streaming() should run even on stream errors"
+        assert tv._streaming_idx is None
+        assert any(m.role == MessageRole.ERROR and "boom" in m.content for m in tv._messages)
+
+
+@pytest.mark.asyncio
+async def test_transport_exception_finishes_cleanly() -> None:
+    """When send_turn raises, the turn finishes without crashing the app."""
+    from arctui.app import ArcTUI
+    from arctui.input_composer import InputComposer
+    from arctui.transcript import TranscriptView
+
+    app = ArcTUI(transport=_RaisingTransport())
+    async with app.run_test() as pilot:
+        tv: TranscriptView = pilot.app.query_one("#transcript", TranscriptView)
+        pilot.app.post_message(InputComposer.SubmitMessage("trigger error"))
+        await asyncio.sleep(0.5)
+        assert tv._streaming_idx is None, "finish_streaming() should run even on transport errors"

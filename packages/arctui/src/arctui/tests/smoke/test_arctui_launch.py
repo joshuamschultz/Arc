@@ -24,7 +24,7 @@ async def test_app_renders_panels() -> None:
     """ArcTUI renders transcript, activity, and composer panels."""
     from arctui.app import ArcTUI
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         # Transcript panel exists
         from arctui.transcript import TranscriptView
@@ -46,12 +46,37 @@ async def test_app_renders_panels() -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_line_shows_attach_context() -> None:
+    """The header sub-title shows the attached agent, gateway, and turn count."""
+    from arctui.app import ArcTUI
+
+    app = ArcTUI(
+        transport=None, agent_label="employee", gateway_label="http://127.0.0.1:8420"
+    )
+    async with app.run_test() as pilot:
+        sub = pilot.app.sub_title
+        assert "employee" in sub
+        assert "127.0.0.1:8420" in sub
+        assert "turns 0" in sub
+
+
+@pytest.mark.asyncio
+async def test_status_line_no_agent() -> None:
+    """With no agent attached the status line says so."""
+    from arctui.app import ArcTUI
+
+    app = ArcTUI(transport=None)
+    async with app.run_test() as pilot:
+        assert "no agent" in pilot.app.sub_title.lower()
+
+
+@pytest.mark.asyncio
 async def test_welcome_message_shown() -> None:
     """ArcTUI displays a welcome message in the transcript on mount."""
     from arctui.app import ArcTUI
     from arctui.transcript import TranscriptView
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         tv = pilot.app.query_one("#transcript", TranscriptView)
         assert len(tv._messages) > 0
@@ -68,7 +93,7 @@ async def test_slash_help_shows_completions() -> None:
     from arctui.app import ArcTUI
     from arctui.input_composer import InputComposer
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         ic = pilot.app.query_one("#composer", InputComposer)
         inp = ic.query_one("#main-input", Input)  # noqa: F841 — needed for focus
@@ -92,7 +117,7 @@ async def test_slash_help_dispatch() -> None:
     from arctui.input_composer import InputComposer
     from arctui.transcript import MessageRole, TranscriptView
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         tv = pilot.app.query_one("#transcript", TranscriptView)
         initial_count = len(tv._messages)
@@ -116,7 +141,7 @@ async def test_plain_text_no_agent_stub_response() -> None:
     from arctui.input_composer import InputComposer
     from arctui.transcript import MessageRole, TranscriptView
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         tv = pilot.app.query_one("#transcript", TranscriptView)
         ic = pilot.app.query_one("#composer", InputComposer)
@@ -138,7 +163,7 @@ async def test_clean_shutdown_via_quit() -> None:
     """App exits cleanly via action_quit with no dangling tasks."""
     from arctui.app import ArcTUI
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         # Trigger quit action
         await pilot.press("ctrl+c")
@@ -156,7 +181,7 @@ async def test_unknown_command_shows_error() -> None:
     from arctui.input_composer import InputComposer
     from arctui.transcript import TranscriptView
 
-    app = ArcTUI(agent=None)
+    app = ArcTUI(transport=None)
     async with app.run_test() as pilot:
         tv = pilot.app.query_one("#transcript", TranscriptView)
         ic = pilot.app.query_one("#composer", InputComposer)

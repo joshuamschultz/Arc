@@ -1,17 +1,20 @@
 """CLI entry point for ``arc tui``.
 
-Registers a CommandDef in the arccli registry and provides the
-``main()`` function invoked by ``arc-tui`` script entry point.
+Registers a ``tui`` CommandDef in the arccli registry and provides ``main()``,
+the ``arc-tui`` script entry point.
 
-The CommandDef is added lazily (at import time of this module) into
-``arccli.commands.registry.COMMAND_REGISTRY``.  The handler imports
-arctui lazily so that missing optional deps (Textual) do not crash
-unrelated arc subcommands.
+SPEC-058 Phase 3: ``arc tui`` is a *viewpoint* onto a served agent, never an
+agent owner. It resolves a gateway endpoint (attach to one that's running, or
+spawn ``arc ui start`` and attach), opens a :class:`GatewayChatClient`, and runs
+the TUI against it. It does not construct an ``ArcAgent`` — that would grab a
+second single-writer WORM lock (the collision ``arcgateway.fleet`` warns of).
 
 Usage::
 
-    arc tui             # via arccli REPL
-    arc-tui             # via installed script entry point
+    arc tui                          # attach to a local gateway, or spawn one
+    arc tui --agent employee         # pick a roster agent
+    arc tui --team-root ~/.arc/work  # roster + spawn root
+    arc tui --url http://host:8420 --token <viewer-token>   # attach to a remote gateway
 """
 
 from __future__ import annotations
@@ -23,26 +26,20 @@ from pathlib import Path
 
 _logger = logging.getLogger("arctui.entry")
 
+_DEFAULT_TEAM_ROOT = Path.home() / ".arc" / "team"
+_DEFAULT_HOST = "127.0.0.1"
+_DEFAULT_PORT = 8420
+
 
 def _tui_handler(args: list[str]) -> None:
-    """Launch ArcTUI — arccli CommandDef handler.
-
-    Imported lazily from the registry so Textual is only loaded when the
-    user explicitly asks for the TUI.  Missing arcagent config is handled
-    gracefully: the TUI boots in no-agent mode with a clear message.
-    """
+    """Launch ArcTUI — arccli CommandDef handler."""
     main(args)
 
 
 def _register_tui_command() -> None:
-    """Add the ``tui`` CommandDef to COMMAND_REGISTRY.
-
-    Called once at import time.  Idempotent: if ``tui`` is already
-    registered (e.g. from another import path) the duplicate is skipped.
-    """
+    """Add the ``tui`` CommandDef to COMMAND_REGISTRY (idempotent)."""
     from arccli.commands.registry import COMMAND_REGISTRY, CommandDef
 
-    # Guard against double-registration on repeated imports.
     for cmd in COMMAND_REGISTRY:
         if cmd.name == "tui":
             return
@@ -63,7 +60,7 @@ _register_tui_command()
 
 
 def _flag_value(args: list[str], flag: str) -> str | None:
-    """Return the value after ``flag`` in ``args`` (``--flag value``), or None."""
+    """Return the value after ``flag`` in ``args`` (``--flag value`` or ``--flag=v``)."""
     for i, arg in enumerate(args):
         if arg == flag and i + 1 < len(args):
             return args[i + 1]
@@ -72,117 +69,109 @@ def _flag_value(args: list[str], flag: str) -> str | None:
     return None
 
 
-def _resolve_agent_config(
-    args: list[str], *, cwd: Path, team_root: Path | None = None
-) -> tuple[Path | None, str | None]:
-    """Resolve which agent config to load (SPEC-058 T-765, REQ-141/143).
+def _resolve_team_root(args: list[str]) -> Path:
+    """Team root for roster lookup + gateway spawn (``--team-root`` or default)."""
+    troot = _flag_value(args, "--team-root")
+    return Path(troot).expanduser() if troot else _DEFAULT_TEAM_ROOT
 
-    Selects from the arc roster (~/.arc/team, or ``--team-root``) with an optional
-    ``--agent <id>``; falls back to a ``arcagent.toml`` in ``cwd`` when launched
-    from inside an agent dir with no roster. Returns ``(config_path, None)`` to
-    load, or ``(None, message)`` when the operator must choose / create an agent.
+
+async def _resolve_endpoint(args: list[str], agent_id: str, team_root: Path) -> object:
+    """Resolve the gateway to attach to (spawning one only if needed)."""
+    from arctui.serve import Endpoint, GatewayNeedsTokenError, ensure_gateway, read_persisted_token
+
+    token = _flag_value(args, "--token")
+    url = _flag_value(args, "--url")
+
+    if url:
+        # Explicit remote/local gateway — attach only, never spawn.
+        tok = token or read_persisted_token()
+        if not tok:
+            raise GatewayNeedsTokenError(url)
+        return Endpoint(url.rstrip("/"), tok, agent_id, spawned=False)
+
+    host = _flag_value(args, "--host") or _DEFAULT_HOST
+    port = int(_flag_value(args, "--port") or _DEFAULT_PORT)
+    return await ensure_gateway(
+        agent_id=agent_id,
+        team_root=team_root,
+        host=host,
+        port=port,
+        token=token,
+    )
+
+
+async def _build_transport(
+    args: list[str],
+) -> tuple[object | None, str | None, str | None, str | None]:
+    """Resolve agent + gateway and open a chat transport.
+
+    Returns ``(transport, message, agent_label, gateway_label)``. On success
+    ``message`` is None; on failure ``transport`` is None and ``message`` is the
+    reason the TUI shows in no-agent mode.
     """
+    from arctui.gateway_client import GatewayChatClient
     from arctui.roster import resolve_agent
 
-    name = _flag_value(args, "--agent")
-    troot_arg = _flag_value(args, "--team-root")
-    troot = Path(troot_arg) if troot_arg else team_root
-    res = resolve_agent(name=name, team_root=troot)
+    team_root = _resolve_team_root(args)
+    res = resolve_agent(name=_flag_value(args, "--agent"), team_root=team_root)
+    if res.selected is None:
+        available = ", ".join(a.agent_id for a in res.candidates)
+        if res.reason == "empty":
+            msg = f"No agents under {team_root}. Run `arc agent create <name>` first."
+        elif res.reason == "ambiguous":
+            msg = f"Multiple agents found; pass --agent <id>. Available: {available}"
+        else:
+            msg = f"No agent named {_flag_value(args, '--agent')!r}. Available: {available}"
+        return None, msg, None, None
 
-    if res.selected is not None:
-        return res.selected.config_path, None
-    if res.reason == "empty":
-        cwd_toml = cwd / "arcagent.toml"
-        if cwd_toml.is_file():
-            return cwd_toml, None
-        return None, "No agents found. Run `arc agent create <name>` to create one."
-    available = ", ".join(a.agent_id for a in res.candidates)
-    if res.reason == "ambiguous":
-        return None, f"Multiple agents found; pass --agent <id>. Available: {available}"
-    if res.reason == "unknown":
-        return None, f"No agent named {name!r}. Available: {available}"
-    return None, None
-
-
-def _apply_folder_trust(config: object, cwd: Path) -> None:
-    """Prompt for folder trust and, on confirmation, grant it session-scoped (REQ-142).
-
-    Runs before ``ArcAgent`` startup so the grant is visible to the runtime. The
-    grant is in-memory only (never written to arcagent.toml). Non-interactive
-    stdin → do NOT grant (secure default). Anything but an explicit yes declines.
-    """
-    from arctui.trust import folder_needs_trust, grant_folder
-
-    if not folder_needs_trust(config, cwd):  # type: ignore[arg-type]  # ArcAgentConfig
-        return
-    if not sys.stdin.isatty():
-        _logger.warning("Folder %s not trusted (non-interactive); agent cannot access it.", cwd)
-        return
-    prompt = f"Trust this folder for the agent to read/write?\n  {cwd}\n[y/N] "
-    answer = input(prompt).strip().lower()
-    if answer in ("y", "yes"):
-        grant_folder(config, cwd)  # type: ignore[arg-type]  # ArcAgentConfig
-        _logger.warning("Trusted %s for this session (read/write granted).", cwd)
-    else:
-        _logger.warning("Folder %s NOT trusted; the agent cannot read/write it this session.", cwd)
-
-
-def _load_agent(args: list[str] | None = None) -> object | None:
-    """Load the resolved ArcAgent (or None for no-agent mode) — see _resolve_agent_config.
-
-    Returns None if arcagent is not installed, no agent is resolvable, or the
-    config is invalid; the TUI boots without an agent and shows the reason.
-    """
+    agent_id = res.selected.agent_id
     try:
-        from arcagent.core.agent import ArcAgent
-        from arcagent.core.config import load_config
-
-        config_path, message = _resolve_agent_config(args or [], cwd=Path.cwd())
-        if config_path is None:
-            _logger.info("%s; starting in no-agent mode.", message or "No agent resolved")
-            return None
-
-        config = load_config(config_path)
-        _apply_folder_trust(config, Path.cwd())
-        return ArcAgent(config, config_path=config_path)
-    except ImportError:
-        _logger.debug("arcagent not installed; starting in no-agent mode.")
-        return None
-    except Exception as exc:  # reason: fail-open — log + continue
-        _logger.warning("Failed to load ArcAgent: %s; starting in no-agent mode.", exc)
-        return None
+        endpoint = await _resolve_endpoint(args, agent_id, team_root)
+        base_url: str = endpoint.base_url  # type: ignore[attr-defined]
+        client = GatewayChatClient(
+            base_url,
+            endpoint.agent_id,  # type: ignore[attr-defined]
+            endpoint.token,  # type: ignore[attr-defined]
+        )
+        await client.connect()
+    except Exception as exc:  # reason: fail-open — boot no-agent with the reason
+        _logger.error("Could not attach to gateway: %s", exc)
+        return None, f"Could not attach to a gateway: {exc}", None, None
+    return client, None, agent_id, base_url
 
 
-async def _run_tui(agent: object | None) -> None:
-    """Async entrypoint: start agent if available, then run TUI."""
-    if agent is not None:
-        startup = getattr(agent, "startup", None)
-        if callable(startup):
-            try:
-                await startup()
-            except Exception as exc:  # reason: fail-open — log + continue
-                _logger.error("ArcAgent startup failed: %s", exc)
-                agent = None
+async def _run(args: list[str]) -> None:
+    """Resolve a transport, then run the TUI against it."""
+    transport, message, agent_label, gateway_label = await _build_transport(args)
+    if message is not None:
+        _logger.info("%s Starting in no-agent mode.", message)
 
     from arctui.app import ArcTUI
 
-    app = ArcTUI(agent=agent)
-    await app.run_async()
+    app = ArcTUI(
+        transport=transport,  # type: ignore[arg-type]  # ChatTransport | None
+        agent_label=agent_label,
+        gateway_label=gateway_label,
+    )
+    try:
+        await app.run_async()
+    finally:
+        if transport is not None:
+            await transport.aclose()  # type: ignore[attr-defined]
 
 
 def main(args: list[str] | None = None) -> None:
     """Script entry point for ``arc-tui``.
 
-    Resolves the agent from the roster (or ``--agent``/cwd), then runs the TUI.
-    Exits with code 0 on clean shutdown, 1 on unexpected error.
+    Exits 0 on clean shutdown, 1 on unexpected error.
     """
+    argv = args if args is not None else sys.argv[1:]
     try:
-        agent = _load_agent(args if args is not None else sys.argv[1:])
-        asyncio.run(_run_tui(agent))
+        asyncio.run(_run(argv))
         sys.exit(0)
     except KeyboardInterrupt:
         sys.exit(0)
-    except Exception as exc:  # reason: fail-open — log + continue
+    except Exception as exc:  # reason: top-level guard — log + non-zero exit
         _logger.error("ArcTUI failed: %s", exc)
         sys.exit(1)
 
