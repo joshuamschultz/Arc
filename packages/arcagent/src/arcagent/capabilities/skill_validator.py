@@ -1,4 +1,4 @@
-"""SPEC-021 Task 2.8 — skill folder validator.
+"""Skill folder validator — one contract for both skill vocabularies.
 
 Parses ``SKILL.md``, validates frontmatter and section structure, and
 auto-generates the ``## Resources`` section from folder contents
@@ -6,17 +6,24 @@ auto-generates the ``## Resources`` section from folder contents
 errors + warnings; the caller (loader) decides how to react per
 deployment tier.
 
-Required frontmatter fields (R-011):
-  ``name``, ``description``, ``triggers``, ``tools``, ``version``
+**Reconciled contract.** Arc's original SPEC-021 format and the
+skill-creator *v2* authoring template disagreed on field and section
+names. This validator converges them so a skill authored to *either*
+vocabulary loads in the agent:
 
-Required sections (R-012, in title-case):
-  ``## Resources``, ``## Contract``, ``## Knowledge``, ``## Steps``,
-  ``## Anti Patterns``, ``## Examples``, ``## Validation``
+- Required frontmatter: ``name``, ``description``. ``version``,
+  ``triggers``, and ``tools`` are **optional** — they render as prompt
+  hints when present (``capability_registry`` already guards their
+  absence) and v2 folds trigger phrasings into the description instead.
+- Required sections are checked as **alias groups** (see
+  ``REQUIRED_SECTION_GROUPS``) by **presence, not order**: e.g. the
+  router slot is satisfied by ``## Files`` *or* ``## Resources``; the
+  anti-patterns slot by ``## Red Flags & Rationalizations`` *or*
+  ``## Anti Patterns``. ``## Output`` is accepted but not required.
 
-Filler detection (R-012): a section is flagged if its body matches
-``"N/A"``, ``"none"``, or is empty. Filler is a warning, not an
-error — federal tier may choose to block, enterprise warns,
-personal logs info.
+Filler detection: a required section whose body is ``"N/A"``, ``"none"``,
+``"tbd"``, or empty is flagged. Filler is a warning, not an error —
+federal tier may choose to block, enterprise warns, personal logs info.
 """
 
 from __future__ import annotations
@@ -30,23 +37,35 @@ import yaml
 
 from arcagent.capabilities.capability_registry import SkillEntry
 
-REQUIRED_FRONTMATTER: tuple[str, ...] = (
-    "name",
-    "description",
-    "triggers",
-    "tools",
-    "version",
+# Only identity fields are mandatory. version/triggers/tools are optional:
+# the runtime treats them as hints and works fine without them.
+REQUIRED_FRONTMATTER: tuple[str, ...] = ("name", "description")
+
+# Each tuple is one required section SLOT; any alias in the tuple satisfies it.
+# Presence is checked, not order (Arc and v2 order Examples/Validation and
+# Output differently). ``## Output`` is intentionally absent — accepted when
+# present, never required, so Arc's older builtins keep validating.
+REQUIRED_SECTION_GROUPS: tuple[tuple[str, ...], ...] = (
+    ("## Files", "## Resources"),
+    ("## Contract",),
+    ("## Knowledge",),
+    ("## Steps",),
+    (
+        "## Red Flags & Rationalizations",
+        "## Red Flags and Rationalizations",
+        "## Red Flags",
+        "## Anti Patterns",
+        "## Antipatterns",
+    ),
+    ("## Validation",),
+    ("## Examples",),
 )
 
-REQUIRED_SECTIONS: tuple[str, ...] = (
-    "## Resources",
-    "## Contract",
-    "## Knowledge",
-    "## Steps",
-    "## Anti Patterns",
-    "## Examples",
-    "## Validation",
-)
+# Canonical (first-alias) name of each required slot — for display/back-compat.
+REQUIRED_SECTIONS: tuple[str, ...] = tuple(group[0] for group in REQUIRED_SECTION_GROUPS)
+
+# Router-slot headers are auto-generated / thin routers — filler there is fine.
+_ROUTER_SECTIONS: frozenset[str] = frozenset({"## Files", "## Resources"})
 
 # Sub-folders walked when generating ``## Resources``. Order matters —
 # this is the order they appear in the rendered list.
@@ -127,10 +146,10 @@ def validate_skill_folder(
 
     result.entry = SkillEntry(
         name=str(fm["name"]),
-        version=str(fm["version"]),
+        version=str(fm.get("version", "0.0.0")),
         description=str(fm["description"]),
-        triggers=tuple(fm["triggers"]),
-        tools=tuple(fm["tools"]),
+        triggers=tuple(fm.get("triggers") or ()),
+        tools=tuple(fm.get("tools") or ()),
         location=skill_md,
         scan_root=scan_root,
         model_hint=fm.get("model_hint"),
@@ -179,7 +198,7 @@ def _parse_skill_md(text: str) -> tuple[dict[str, Any], str] | None:
 
 
 def _check_required_fields(fm: dict[str, Any], result: SkillValidationResult) -> None:
-    missing = [k for k in REQUIRED_FRONTMATTER if k not in fm]
+    missing = [k for k in REQUIRED_FRONTMATTER if not str(fm.get(k, "")).strip()]
     if missing:
         result.errors.append(
             SkillValidationError(
@@ -190,8 +209,10 @@ def _check_required_fields(fm: dict[str, Any], result: SkillValidationResult) ->
 
 
 def _check_required_sections(body: str, result: SkillValidationResult) -> None:
-    found_sections = set(_SECTION_RE.findall(body))
-    missing = [section for section in REQUIRED_SECTIONS if section not in found_sections]
+    found_sections = {header.strip() for header in _SECTION_RE.findall(body)}
+    missing = [
+        group[0] for group in REQUIRED_SECTION_GROUPS if not found_sections.intersection(group)
+    ]
     if missing:
         result.errors.append(
             SkillValidationError(
@@ -205,8 +226,8 @@ def _check_filler_sections(body: str, result: SkillValidationResult) -> None:
     """Flag sections whose body is filler ('N/A', 'none', empty)."""
     sections = _split_sections(body)
     for header, section_body in sections.items():
-        if header == "## Resources":
-            # Loader auto-generates this; filler here is fine.
+        if header in _ROUTER_SECTIONS:
+            # Router slot (auto-generated Resources / thin Files list); filler ok.
             continue
         normalized = section_body.strip().lower()
         if normalized in _FILLER_TOKENS:
@@ -253,6 +274,7 @@ def _check_tool_dependencies(
 __all__ = [
     "REQUIRED_FRONTMATTER",
     "REQUIRED_SECTIONS",
+    "REQUIRED_SECTION_GROUPS",
     "SkillValidationError",
     "SkillValidationResult",
     "SkillValidationWarning",

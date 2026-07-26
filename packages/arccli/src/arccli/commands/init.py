@@ -294,6 +294,29 @@ def _check_provider_key(provider: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Blueprint materialize — summary
+# ---------------------------------------------------------------------------
+
+
+def _materialize_summary(result: Any) -> str:
+    """One-line summary of what a blueprint materialize landed."""
+    parts = []
+    if result.wrote_identity:
+        parts.append("persona")
+    if result.prompt_overlays:
+        parts.append(f"{len(result.prompt_overlays)} prompt overlay(s)")
+    if result.capabilities:
+        parts.append(f"{len(result.capabilities)} capability(ies)")
+    if result.skills:
+        parts.append(f"{len(result.skills)} skill(s)")
+    if result.schedules:
+        parts.append(f"{result.schedules} schedule(s)")
+    body = ", ".join(parts) if parts else "config only"
+    warn = f"  (unsigned: {len(result.unsigned_warnings)})" if result.unsigned_warnings else ""
+    return f"  Materialized: {body}{warn}"
+
+
+# ---------------------------------------------------------------------------
 # Subcommand implementation
 # ---------------------------------------------------------------------------
 
@@ -306,9 +329,7 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
     applies the blueprint config UNDER it and writes the persona to ``workspace/identity.md``.
     The agent keeps an isolated workspace; project access is granted at ``arc tui`` launch.
     """
-    import tomllib
-
-    from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
+    from arccli.blueprints import resolve_blueprint
     from arccli.commands.agent.create import _create
 
     team: str = args.team
@@ -341,21 +362,32 @@ def _init_team_fleet(args: argparse.Namespace) -> None:
         )
     )
 
-    # Merge the blueprint config UNDER the created agent's config, then write the persona.
+    # Materialize the full blueprint surface UNDER the created agent's config: sibling
+    # tomls, persona, operator-signed prompt overlays, agent-signed capabilities/skills,
+    # and seeded schedules. `_create` already minted+signed the scaffold with the agent's
+    # key, so re-minting here yields the SAME key to sign blueprint-shipped capabilities.
+    result = None
     if bp is not None:
-        cfg_path = agent_dir / "arcagent.toml"
-        base = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-        merged = apply_blueprint(bp, base, deployment_tier=tier)
-        cfg_path.write_text(dumps_toml(merged), encoding="utf-8")
-        if bp.persona:
-            identity = agent_dir / "workspace" / "identity.md"
-            identity.write_text(bp.persona.rstrip() + "\n", encoding="utf-8")
+        from arccli.blueprints_materialize import (
+            agent_signer_pair,
+            materialize_blueprint,
+            operator_signer_pair,
+        )
+
+        result = materialize_blueprint(
+            bp,
+            agent_dir,
+            deployment_tier=tier,
+            operator_signer=operator_signer_pair(),
+            agent_signer=agent_signer_pair(agent_dir),
+        )
 
     _write("")
     _write(f"  Fleet '{team}' ready — agent '{name}' at {agent_dir}")
     if blueprint:
-        applied = "  (persona applied)" if (bp and bp.persona) else ""
-        _write(f"  Blueprint: {blueprint}{applied}")
+        _write(f"  Blueprint: {blueprint}")
+        if result is not None:
+            _write(_materialize_summary(result))
     _write("")
     _write("  Start coding (from any project directory):")
     _write(f"    arc tui --team {team}")

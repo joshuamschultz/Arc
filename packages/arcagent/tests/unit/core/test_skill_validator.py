@@ -56,16 +56,39 @@ class TestFrontmatterValidation:
             "---\n"
             "name: x\n"
             "version: 1.0.0\n"
-            "description: y\n"
+            # description: missing (a genuinely required field)
             "triggers: [a]\n"
-            # tools: missing
+            "tools: [read]\n"
             "---\n"
             "\n## Resources\n## Contract\n## Knowledge\n"
             "## Steps\n## Anti Patterns\n## Examples\n## Validation\n"
         )
         result = validate_skill_folder(folder, "builtins")
         assert any(e.code == "missing_frontmatter_field" for e in result.errors)
-        assert "tools" in result.errors[0].detail
+        assert "description" in result.errors[0].detail
+
+    def test_triggers_and_tools_are_optional(self, tmp_path: Path) -> None:
+        """A skill-creator v2 skill omits triggers/tools; it must still load."""
+        from arcagent.capabilities.skill_validator import validate_skill_folder
+
+        folder = tmp_path / "skill"
+        folder.mkdir()
+        (folder / "SKILL.md").write_text(
+            "---\n"
+            "name: v2-skill\n"
+            'description: "does a thing. TRIGGER: when asked. SKIP: otherwise."\n'
+            "---\n"
+            "\n## Files\n\n## Contract\n\n## Knowledge\n\n## Steps\n"
+            "do x\n## Output\n\n## Red Flags & Rationalizations\n\n"
+            "## Validation\n\n## Examples\n"
+        )
+        result = validate_skill_folder(folder, "builtins")
+        assert result.ok, result.errors
+        assert result.entry is not None
+        assert result.entry.name == "v2-skill"
+        assert result.entry.triggers == ()
+        assert result.entry.tools == ()
+        assert result.entry.version == "0.0.0"
 
 
 class TestSectionValidation:
@@ -140,6 +163,23 @@ class TestToolDependencyCheck:
             known_tools={"read", "write"},
         )
         assert not any(w.code == "tool_dependency_policy_denied" for w in result.warnings)
+
+
+class TestShippedBuiltinsStillValidate:
+    """The reconciled contract must not break Arc's own shipped skills."""
+
+    def test_all_builtin_skills_validate(self) -> None:
+        import arcagent
+        from arcagent.capabilities.skill_validator import validate_skill_folder
+
+        skills_root = (
+            Path(arcagent.__file__).parent / "builtins" / "capabilities" / "skills"
+        )
+        folders = [p for p in skills_root.iterdir() if (p / "SKILL.md").is_file()]
+        assert folders, f"no builtin skills found under {skills_root}"
+        for folder in folders:
+            result = validate_skill_folder(folder, "builtins")
+            assert result.ok, f"{folder.name}: {[e.detail for e in result.errors]}"
 
 
 class TestRenderResourcesSection:

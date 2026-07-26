@@ -36,7 +36,7 @@ import hashlib
 import logging
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,15 @@ _logger = logging.getLogger("arccli.blueprints")
 _USER_DIR = Path("~/.arc/blueprints").expanduser()
 _BLUEPRINT_TOML = "blueprint.toml"
 _PERSONA_MD = "persona.md"
+
+# v2 sibling-config tables + declarative arrays, peeled out of the arcagent overlay.
+# Everything NOT in this set stays in the arcagent.toml overlay (unchanged semantics).
+_SIBLING_TABLES: tuple[str, ...] = ("arcllm", "arcrun")
+_DECLARATIVE_ARRAYS: tuple[str, ...] = ("schedules", "questions")
+# v2 file-tree sub-directories under the blueprint folder.
+_PROMPTS_DIRNAME = "prompts"
+_CAPABILITIES_DIRNAME = "capabilities"
+_SKILLS_DIRNAME = "skills"
 
 # Trusted-admin-only keys a blueprint overlay must never set (mirror of the
 # env-override denylist in core/config.py). A lower-trust preset must not touch the
@@ -93,6 +102,20 @@ def builtin_blueprints_dir() -> Path:
 
 
 @dataclass(frozen=True)
+class PromptOverlaySpec:
+    """One prompt overlay a blueprint ships (``prompts/<package>/<name>.md``).
+
+    ``(package, name)`` is validated against the arcprompt catalog at resolve time,
+    so a typo is a hard error, never a silent no-op. ``body`` is authored + operator
+    signed into ``<agent_root>/context/<package>/<name>.md`` at materialize time.
+    """
+
+    package: str
+    name: str
+    body: str
+
+
+@dataclass(frozen=True)
 class ResolvedBlueprint:
     """A discovered, verified blueprint ready to merge (``[blueprint]`` header stripped)."""
 
@@ -107,6 +130,15 @@ class ResolvedBlueprint:
     # The agent persona (identity.md body), loaded from the blueprint's persona.md.
     # The scaffold step writes it to workspace/identity.md. None when config-only.
     persona: str | None = None
+    # --- v2 additions (all default-empty so v1 blueprints resolve unchanged) ---
+    root: Path | None = None  # the blueprint folder (source of the file trees)
+    arcllm_overlay: dict[str, Any] = field(default_factory=dict)
+    arcrun_overlay: dict[str, Any] = field(default_factory=dict)
+    prompt_overlays: tuple[PromptOverlaySpec, ...] = ()
+    schedules: tuple[dict[str, Any], ...] = ()
+    questions: tuple[dict[str, Any], ...] = ()
+    capabilities_dir: Path | None = None  # <root>/capabilities, copied + agent-signed
+    skills_dir: Path | None = None  # <root>/skills, copied + agent-signed
 
 
 def _looks_like_path(name: str) -> bool:
@@ -188,7 +220,7 @@ def list_blueprints(
     bdir = builtin_dir if builtin_dir is not None else builtin_blueprints_dir()
     if bdir.is_dir():
         for toml_path in sorted(bdir.glob(f"*/{_BLUEPRINT_TOML}")):
-            content, meta, overlay = _parse(toml_path)
+            content, meta, overlay, v2 = _parse(toml_path)
             out.append(
                 _make(
                     meta,
@@ -198,12 +230,14 @@ def list_blueprints(
                     content=content,
                     signer_did="",
                     persona=_read_persona(toml_path.parent),
+                    root=toml_path.parent,
+                    v2=v2,
                 )
             )
     udir = user_dir if user_dir is not None else _USER_DIR
     if udir.is_dir():
         for toml_path in sorted(udir.glob(f"*/{_BLUEPRINT_TOML}")):
-            content, meta, overlay = _parse(toml_path)
+            content, meta, overlay, v2 = _parse(toml_path)
             signed = verify_file(toml_path, content, trusted_public_key=operator_public_key)
             out.append(
                 _make(
@@ -214,6 +248,8 @@ def list_blueprints(
                     content=content,
                     signer_did=_signer_did(toml_path) if signed else "",
                     persona=_read_persona(toml_path.parent),
+                    root=toml_path.parent,
+                    v2=v2,
                 )
             )
     return out
@@ -245,12 +281,23 @@ def _resolve_from_toml(
     (``~/.arc/blueprints/`` or a shared ``--blueprint <path>`` folder) is verified
     fail-closed and pinned above the personal tier.
     """
-    content, meta, overlay = _parse(toml_path)
-    persona = _read_persona(toml_path.parent)
+    content, meta, overlay, v2 = _parse(toml_path)
+    root = toml_path.parent
+    persona = _read_persona(root)
+    prompt_overlays = _discover_prompt_overlays(root)
     name = str(meta.get("name", "?"))
     if source == "packaged":
         return _make(
-            meta, overlay, "packaged", signed=True, content=content, signer_did="", persona=persona
+            meta,
+            overlay,
+            "packaged",
+            signed=True,
+            content=content,
+            signer_did="",
+            persona=persona,
+            root=root,
+            v2=v2,
+            prompt_overlays=prompt_overlays,
         )
 
     above_personal = tier_rank(tier) > tier_rank("personal")
@@ -277,15 +324,74 @@ def _resolve_from_toml(
         content=content,
         signer_did=signer_did,
         persona=persona,
+        root=root,
+        v2=v2,
+        prompt_overlays=prompt_overlays,
     )
 
 
-def _parse(path: Path) -> tuple[bytes, dict[str, Any], dict[str, Any]]:
-    """Return (raw bytes, ``[blueprint]`` metadata, config overlay) for a blueprint file."""
+@dataclass(frozen=True)
+class _V2Sections:
+    """The v2 tables/arrays peeled out of a blueprint.toml (empty for a v1 blueprint)."""
+
+    arcllm: dict[str, Any]
+    arcrun: dict[str, Any]
+    schedules: tuple[dict[str, Any], ...]
+    questions: tuple[dict[str, Any], ...]
+
+
+def _parse(path: Path) -> tuple[bytes, dict[str, Any], dict[str, Any], _V2Sections]:
+    """Return (raw bytes, ``[blueprint]`` meta, arcagent overlay, v2 sections).
+
+    The arcagent overlay is *everything that is not* the ``[blueprint]`` header, the
+    ``[arcllm]``/``[arcrun]`` sibling tables, or the ``[[schedules]]``/``[[questions]]``
+    arrays — so a v1 blueprint (top level == arcagent.toml) is unchanged.
+    """
     content = path.read_bytes()
     data = tomllib.loads(content.decode("utf-8"))
     meta = data.pop("blueprint", {})
-    return content, meta, data
+    v2 = _V2Sections(
+        arcllm=dict(data.pop("arcllm", {})),
+        arcrun=dict(data.pop("arcrun", {})),
+        schedules=tuple(data.pop("schedules", [])),
+        questions=tuple(data.pop("questions", [])),
+    )
+    return content, meta, data, v2
+
+
+def _discover_prompt_overlays(root: Path) -> tuple[PromptOverlaySpec, ...]:
+    """Discover + validate ``root/prompts/<package>/<name>.md`` overlays.
+
+    Each ``(package, name)`` is checked against the arcprompt catalog; an unknown
+    prompt raises ``ValueError`` (a typo'd override must fail loud, never no-op).
+    """
+    prompts_dir = root / _PROMPTS_DIRNAME
+    if not prompts_dir.is_dir():
+        return ()
+    from arcprompt import PromptCatalog
+
+    catalog = PromptCatalog()
+    overlays: list[PromptOverlaySpec] = []
+    for md in sorted(prompts_dir.glob("*/*.md")):
+        package, name = md.parent.name, md.stem
+        if catalog.stock_path(package, name) is None:
+            raise ValueError(
+                f"blueprint ships a prompt overlay for unknown stock prompt "
+                f"{package}/{name} (no such packaged prompt); refusing (a typo'd "
+                f"override silently no-ops — the failure mode we fail loud on)"
+            )
+        overlays.append(
+            PromptOverlaySpec(package=package, name=name, body=md.read_text(encoding="utf-8"))
+        )
+    return tuple(overlays)
+
+
+def _v2_dir(root: Path, name: str) -> Path | None:
+    """Return ``root/<name>`` if it is a non-empty directory, else None."""
+    candidate = root / name
+    if candidate.is_dir() and any(candidate.iterdir()):
+        return candidate
+    return None
 
 
 def _read_persona(blueprint_dir: Path) -> str | None:
@@ -306,6 +412,9 @@ def _make(
     content: bytes,
     signer_did: str,
     persona: str | None = None,
+    root: Path,
+    v2: _V2Sections,
+    prompt_overlays: tuple[PromptOverlaySpec, ...] = (),
 ) -> ResolvedBlueprint:
     return ResolvedBlueprint(
         name=str(meta.get("name", "?")),
@@ -317,6 +426,14 @@ def _make(
         sha256=hashlib.sha256(content).hexdigest(),
         signer_did=signer_did,
         persona=persona,
+        root=root,
+        arcllm_overlay=v2.arcllm,
+        arcrun_overlay=v2.arcrun,
+        prompt_overlays=prompt_overlays,
+        schedules=v2.schedules,
+        questions=v2.questions,
+        capabilities_dir=_v2_dir(root, _CAPABILITIES_DIRNAME),
+        skills_dir=_v2_dir(root, _SKILLS_DIRNAME),
     )
 
 
@@ -367,6 +484,7 @@ def _toml_scalar(val: Any) -> str:
 
 
 __all__ = [
+    "PromptOverlaySpec",
     "ResolvedBlueprint",
     "apply_blueprint",
     "builtin_blueprints_dir",

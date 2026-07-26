@@ -1,0 +1,97 @@
+# Built-in blueprint — provenance-trusted (repo-root blueprints/).
+# Deep-merged UNDER your own values; a blueprint is a starting point, never a clobber.
+#
+# Sales Exec Assistant — a revenue-lens chief of staff. It remembers your deals,
+# contacts, companies, and meetings (interlinked), tracks every commitment as a
+# durable task, and briefs you each morning on what to focus on.
+#
+#   Spin it up:   arc init --team sales --blueprint sales-exec-assistant
+#
+# Config-only (no MCP/connectors yet): you talk to it and it captures what you tell
+# it. Email/voice-note ingestion arrives when the MCP transport lands (Phase 2).
+
+[blueprint]
+name = "sales-exec-assistant"
+version = "1.0.0"
+tier = "personal"
+description = "Relationship, pipeline, and commitment memory for a sales executive."
+author = "blackarc"
+
+# ── top level → arcagent.toml (unchanged semantics) ──────────────────────────
+
+[security]
+tier = "personal"
+
+# Durable revenue memory — deals/contacts/companies/meetings, distilled by the
+# retuned prompt overlays shipped in prompts/arcmemory/.
+[modules.memory]
+enabled = true
+
+[modules.memory.config]
+brain = "arcmemory"
+
+[modules.memory.config.backend]
+distill_provider = "anthropic"
+distill_model = "claude-sonnet-5"
+
+# Commitments become durable, tracked tasks (SPEC-056).
+[modules.tasks]
+enabled = true
+
+# The morning briefing fires from the schedule seeded below.
+[modules.scheduler]
+enabled = true
+
+[modules.scheduler.config]
+store_path = "schedules.json"
+
+# The bundled CRM verbs + sales skills are agent-loaded from the agent root.
+[modules.skills]
+enabled = true
+
+[modules.skills.config]
+adapter = "arcskill"
+
+# ── sibling config → arcllm.toml / arcrun.toml (v2) ──────────────────────────
+
+[arcllm.llm]
+model = "anthropic/claude-sonnet-5"
+
+[arcllm.budget]
+# Runaway guardrail — protects the customer's own key from a loop.
+max_cost_usd = 2.00
+
+[arcrun]
+max_turns = 40
+
+# ── declared schedules → seeded into workspace/schedules.json (v2) ───────────
+
+[[schedules]]
+type = "cron"
+expression = "0 8 * * 1-5"
+prompt = "Give me the morning briefing: top deals to focus on today, commitments due, and follow-ups now overdue."
+timeout_seconds = 600
+
+# ── guided onboarding schema → rendered by any surface (v2) ──────────────────
+
+[[questions]]
+id = "operator_name"
+prompt = "What should I call you?"
+type = "text"
+
+[[questions]]
+id = "llm_provider"
+prompt = "Which model provider is your API key for?"
+type = "choice"
+choices = ["anthropic", "openai"]
+sets = "arcllm.llm.model"
+
+[[questions]]
+id = "telegram_token"
+prompt = "Telegram bot token (so you can reach me on your phone) — optional."
+type = "secret"
+
+[[questions]]
+id = "telegram_user_id"
+prompt = "Your own Telegram user ID (I only answer to you — omitting this locks me down)."
+type = "text"

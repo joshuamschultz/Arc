@@ -70,7 +70,6 @@ def apply_to_disk(
     the operator WORM sink at enterprise/federal, else a structured log.
     """
     from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
-
     from arccli.commands.operator import operator_public_key
 
     blueprint = resolve_blueprint(
@@ -176,7 +175,6 @@ def _worm_sink(arc_dir: Path) -> Any:
 
 def _list(args: argparse.Namespace) -> None:
     from arccli.blueprints import list_blueprints
-
     from arccli.commands.operator import operator_public_key
 
     arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
@@ -198,7 +196,6 @@ def _signed_label(bp: Any) -> str:
 
 def _show(args: argparse.Namespace) -> None:
     from arccli.blueprints import dumps_toml, resolve_blueprint
-
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
@@ -210,7 +207,6 @@ def _show(args: argparse.Namespace) -> None:
 
 def _verify(args: argparse.Namespace) -> None:
     from arccli.blueprints import resolve_blueprint
-
     from arccli.commands.operator import operator_public_key
 
     tier = getattr(args, "tier", None) or "personal"
@@ -233,13 +229,21 @@ def _verify(args: argparse.Namespace) -> None:
 def _apply(args: argparse.Namespace) -> None:
     arc_dir = Path(getattr(args, "config_dir", None) or Path.home() / ".arc")
     agent_dir: str | None = getattr(args, "agent", None)
+    dry_run = getattr(args, "dry_run", False)
+
+    # With --agent (and not a dry run), materialize the FULL v2 surface into the agent
+    # home — sibling tomls, persona, signed prompt overlays, signed capabilities/skills,
+    # seeded schedules — not just arcagent.toml.
+    if agent_dir and not dry_run:
+        _apply_full(args.name, Path(agent_dir).expanduser().resolve(), arc_dir)
+        return
+
     target = (
         Path(agent_dir).expanduser().resolve() / "arcagent.toml"
         if agent_dir
         else arc_dir / "arcagent.toml"
     )
     deployment_tier = _deployment_tier(target, arc_dir)
-    dry_run = getattr(args, "dry_run", False)
 
     try:
         _, merged = apply_to_disk(
@@ -261,6 +265,40 @@ def _apply(args: argparse.Namespace) -> None:
         return
     _write(f"Applied blueprint {args.name!r} -> {target}")
     _write(f"  effective tier: {merged.get('security', {}).get('tier')}")
+
+
+def _apply_full(name: str, agent_dir: Path, arc_dir: Path) -> None:
+    """Resolve + materialize a blueprint's full surface into an existing agent home."""
+    from arccli.blueprints import resolve_blueprint
+    from arccli.blueprints_materialize import (
+        agent_signer_pair,
+        materialize_blueprint,
+        operator_signer_pair,
+    )
+    from arccli.commands.operator import operator_public_key
+
+    deployment_tier = _deployment_tier(agent_dir / "arcagent.toml", arc_dir)
+    try:
+        bp = resolve_blueprint(
+            name, tier=deployment_tier, operator_public_key=operator_public_key(arc_dir)
+        )
+        result = materialize_blueprint(
+            bp,
+            agent_dir,
+            deployment_tier=deployment_tier,
+            operator_signer=operator_signer_pair(),
+            agent_signer=agent_signer_pair(agent_dir),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        sys.exit(1)
+    audit_apply(bp, _read_existing(agent_dir / "arcagent.toml"), arc_dir)
+    _write(f"Applied blueprint {name!r} -> {agent_dir}")
+    _write(
+        f"  persona={result.wrote_identity} overlays={len(result.prompt_overlays)} "
+        f"capabilities={len(result.capabilities)} skills={len(result.skills)} "
+        f"schedules={result.schedules}"
+    )
 
 
 def _deployment_tier(target: Path, arc_dir: Path) -> str:
