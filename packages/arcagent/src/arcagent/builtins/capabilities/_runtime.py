@@ -74,6 +74,14 @@ _workspace_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
 _allowed_paths_var: contextvars.ContextVar[list[Path] | None] = contextvars.ContextVar(
     "arcagent_builtin_allowed_paths", default=None
 )
+# The directory the LLM's file/exec tools operate in (bash cwd + relative-path root).
+# None → falls back to the workspace. Set to a TRUSTED project dir only for agents that
+# opt in (tools.operate_in_launch_dir), so a coding agent works in your project while its
+# own state (memory/sessions/identity) still lives in the workspace. It is always a subset
+# of workspace + allowed_paths — never a new access path (see agent_lifecycle).
+_working_dir_var: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
+    "arcagent_builtin_working_dir", default=None
+)
 _loader_var: contextvars.ContextVar[CapabilityLoader | None] = contextvars.ContextVar(
     "arcagent_builtin_loader", default=None
 )
@@ -106,6 +114,7 @@ def configure(
     *,
     workspace: Path,
     allowed_paths: list[Path] | None = None,
+    working_dir: Path | None = None,
     loader: CapabilityLoader | None = None,
     vault_resolver: Any = None,
     identity: AgentIdentity | None = None,
@@ -124,6 +133,7 @@ def configure(
     """
     _workspace_var.set(workspace.resolve())
     _allowed_paths_var.set(allowed_paths)
+    _working_dir_var.set(working_dir.resolve() if working_dir is not None else None)
     _loader_var.set(loader)
     _vault_resolver_var.set(vault_resolver)
     _identity_var.set(identity)
@@ -151,6 +161,7 @@ class RuntimeSnapshot:
 
     workspace: Path
     allowed_paths: list[Path] | None
+    working_dir: Path | None
     loader: CapabilityLoader | None
     vault_resolver: Any
     identity: AgentIdentity | None
@@ -172,6 +183,7 @@ def snapshot() -> RuntimeSnapshot:
     return RuntimeSnapshot(
         workspace=workspace(),
         allowed_paths=_allowed_paths_var.get(),
+        working_dir=_working_dir_var.get(),
         loader=_loader_var.get(),
         vault_resolver=_vault_resolver_var.get(),
         identity=_identity_var.get(),
@@ -193,6 +205,7 @@ def bind(snap: RuntimeSnapshot) -> None:
     """
     _workspace_var.set(snap.workspace)
     _allowed_paths_var.set(snap.allowed_paths)
+    _working_dir_var.set(snap.working_dir)
     _loader_var.set(snap.loader)
     _vault_resolver_var.set(snap.vault_resolver)
     _identity_var.set(snap.identity)
@@ -304,6 +317,19 @@ def workspace() -> Path:
             "agent must call _runtime.configure(workspace=...) at startup"
         )
     return ws
+
+
+def working_dir() -> Path:
+    """Return where the LLM's file/exec tools operate (bash cwd + relative-path root).
+
+    Falls back to the workspace when no launch dir was configured — so by default a tool
+    behaves exactly as before (workspace-rooted). Only agents that opt in
+    (``tools.operate_in_launch_dir``) get a project cwd here, and only for a path already
+    inside ``workspace + allowed_paths`` (enforced in agent_lifecycle), so this never
+    widens what the sandbox can reach.
+    """
+    wd = _working_dir_var.get()
+    return wd if wd is not None else workspace()
 
 
 def allowed_paths() -> list[Path] | None:
@@ -457,6 +483,7 @@ def resolve_workspace_path(
         workspace(),
         allow_symlinks=allow_symlinks,
         allowed_paths=_allowed_paths_var.get(),
+        base_dir=working_dir(),
         tool_name=tool_name,
         caller_did=caller,
         audit_sink=_audit_sink_var.get(),

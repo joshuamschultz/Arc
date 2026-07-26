@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,34 @@ if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
 
 _logger = logging.getLogger("arcagent.agent_lifecycle")
+
+
+def _resolve_working_dir(
+    config: Any, workspace: Path, allowed_paths: list[Path] | None
+) -> Path | None:
+    """The launch dir the builtin file/exec tools operate in, or None (→ workspace).
+
+    Opt-in via ``[tools].operate_in_launch_dir`` and supplied by the launcher via
+    ``ARC_WORKING_DIR`` (arctui sets it to the trusted project cwd). Honored ONLY when
+    that dir is already inside ``workspace + allowed_paths`` — the trust prompt is what
+    puts it there — so this can never let a tool reach a path the sandbox would otherwise
+    deny. Only bash + the file tools use it; agent state (memory/sessions/identity)
+    persists directly to the workspace and is unaffected.
+    """
+    if not getattr(config.tools, "operate_in_launch_dir", False):
+        return None
+    launch = os.environ.get("ARC_WORKING_DIR")
+    if not launch:
+        return None
+    launch_path = Path(launch).expanduser().resolve()
+    roots = [workspace, *(allowed_paths or [])]
+    if any(launch_path == r or r in launch_path.parents for r in roots):
+        return launch_path
+    _logger.warning(
+        "ARC_WORKING_DIR %s is not within workspace/allowed_paths; ignoring (sandbox floor)",
+        launch_path,
+    )
+    return None
 
 
 async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
@@ -72,9 +101,13 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
         workspace, list(agent._config.tools.policy.protected_paths)
     )
     protected_audit = telemetry.audit_event if telemetry is not None else None
+    # Coding agents (opt-in) operate their file/exec tools in the trusted launch dir;
+    # everyone else stays workspace-rooted. Agent state still persists to the workspace.
+    working_dir = _resolve_working_dir(agent._config, workspace, allowed_paths)
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,
+        working_dir=working_dir,
         loader=None,
         vault_resolver=agent._vault_resolver,
         protected_paths=protected_paths,
@@ -145,6 +178,7 @@ async def setup_capabilities(agent: ArcAgent, workspace: Path) -> None:
     builtin_runtime.configure(
         workspace=workspace,
         allowed_paths=allowed_paths,
+        working_dir=working_dir,
         loader=agent._capability_loader,
         vault_resolver=agent._vault_resolver,
         identity=agent._identity,

@@ -15,3 +15,9 @@ description = "Coding agent: always-on bash + file read/write/edit, a senior-eng
 
 [security]
 tier = "personal"
+
+# Operate the file/exec tools in the launch directory (your project), not the agent's
+# workspace — the coding model: work in your code, keep the agent's own state (memory,
+# sessions, identity) in its workspace. arctui supplies the trusted cwd on launch.
+[tools]
+operate_in_launch_dir = true

@@ -31,15 +31,17 @@ async def bash(command: str, timeout: int = 120) -> str:
     shell cannot reach ``~/.arc/operator/**`` or ``.audit/**``. Personal keeps
     host bash with the advisory goal-lock guard.
     """
-    ws = _runtime.workspace()
     if _runtime.tier() in ("enterprise", "federal"):
         return await _runtime.run_sandboxed_bash(command, timeout=timeout)
     _runtime.check_shell_command(command, tool_name="bash")
+    # cwd = the working dir (the trusted project for a coding agent; the workspace
+    # otherwise). Agent state (memory/sessions) never runs through bash, so it is
+    # unaffected — it persists directly to the workspace.
     process = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=str(ws),
+        cwd=str(_runtime.working_dir()),
     )
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)

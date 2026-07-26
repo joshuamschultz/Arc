@@ -205,15 +205,19 @@ def resolve_workspace_path(
     *,
     allow_symlinks: bool = False,
     allowed_paths: list[Path] | None = None,
+    base_dir: Path | None = None,
     tool_name: str = "unknown",
     caller_did: str = "did:arc:unknown",
     audit_sink: ProtectedAuditSink | None = None,
 ) -> Path:
     """Resolve a file path within the workspace boundary.
 
-    Accepts absolute or relative paths. Relative paths are resolved
-    against the workspace root. Absolute paths must fall within the
-    workspace directory or one of the allowed_paths.
+    Accepts absolute or relative paths. Relative paths are resolved against
+    ``base_dir`` (the tool working dir; defaults to the workspace). Absolute
+    paths, and the resolved relative result, must still fall within the
+    workspace directory or one of the allowed_paths — ``base_dir`` only moves
+    the relative-path root, it never widens the boundary (a coding agent's
+    ``base_dir`` is a trusted project already inside ``allowed_paths``).
 
     This is THE choke point every built-in tool that takes a caller-supplied
     path (file tools and self-modification tools alike) must route through —
@@ -248,9 +252,10 @@ def resolve_workspace_path(
         )
 
     workspace = workspace.resolve()
+    base = base_dir.resolve() if base_dir is not None else workspace
     candidate = Path(file_path)
 
-    unresolved = candidate if candidate.is_absolute() else workspace / candidate
+    unresolved = candidate if candidate.is_absolute() else base / candidate
 
     # Symlink check: walk path components within workspace boundary.
     # Paths outside workspace are skipped (boundary check rejects them).

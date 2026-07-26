@@ -198,6 +198,13 @@ class ToolsConfig(BaseModel):
     human_gate: HumanGatePolicy = HumanGatePolicy()
     allowed_module_prefixes: list[str] = Field(default=["arcagent."])
     preamble: str = ""
+    # When true, the LLM's file/exec tools operate in the launch directory (the
+    # trusted project cwd, from ARC_WORKING_DIR) instead of the workspace — the
+    # coding-agent model (work in your project; keep the agent's own state in its
+    # workspace). Off by default: every other agent stays workspace-rooted. The
+    # launch dir is honored ONLY if already inside workspace + allowed_paths, so
+    # this never widens the sandbox (see agent_lifecycle).
+    operate_in_launch_dir: bool = False
 
 
 class ModuleEntry(BaseModel):

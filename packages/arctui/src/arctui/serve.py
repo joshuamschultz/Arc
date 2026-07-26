@@ -122,11 +122,16 @@ def _spawn_gateway(team_root: Path, host: str, port: int, token: str) -> subproc
         token,
         "--no-browser",
     ]
+    # Tell the served agent where to operate its file/exec tools: the project the user
+    # launched `arc tui` in. Honored only by opt-in (coding) agents, and only if the dir
+    # is already trusted (folder-trust added it to allowed_paths). Agent state stays home.
+    env = {**os.environ, "ARC_WORKING_DIR": str(Path.cwd().resolve())}
     return subprocess.Popen(  # noqa: S603 — fixed argv, no shell, token not logged
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
+        env=env,
     )
 
 
