@@ -108,6 +108,20 @@ def test_materialize_refuses_unsigned_prompt_overlays(tmp_path: Path) -> None:
         materialize_blueprint(blueprint, agent, deployment_tier="personal", operator_signer=None)
 
 
+def test_materialize_overwrites_the_scaffold_placeholder_identity(tmp_path: Path) -> None:
+    """A first apply over the fresh `arc agent create` placeholder installs the persona."""
+    from arccli.commands.agent._common import _DEFAULT_IDENTITY
+
+    blueprint = bp.resolve_blueprint(str(_write_v2_blueprint(tmp_path)), tier="personal")
+    agent = _agent_dir(tmp_path)
+    (agent / "workspace" / "identity.md").write_text(_DEFAULT_IDENTITY, encoding="utf-8")
+    result = materialize_blueprint(
+        blueprint, agent, deployment_tier="personal", operator_signer=("op", os.urandom(32))
+    )
+    assert result.wrote_identity
+    assert "chief of staff" in (agent / "workspace" / "identity.md").read_text()
+
+
 def test_materialize_never_clobbers_existing_identity(tmp_path: Path) -> None:
     blueprint = bp.resolve_blueprint(str(_write_v2_blueprint(tmp_path)), tier="personal")
     agent = _agent_dir(tmp_path)

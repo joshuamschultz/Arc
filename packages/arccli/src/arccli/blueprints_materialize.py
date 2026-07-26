@@ -120,15 +120,28 @@ def _read_toml(path: Path) -> dict[str, Any]:
 
 
 def _write_persona(bp: ResolvedBlueprint, agent_dir: Path, result: MaterializeResult) -> None:
-    """Write the persona to ``workspace/identity.md`` — only if it does not already exist."""
+    """Write the persona to ``workspace/identity.md`` unless a customer already edited it.
+
+    The scaffold (``arc agent create``) writes a generic placeholder identity, so
+    "already exists" is not the same as "customer-owned": a first apply over the fresh
+    scaffold MUST install the persona. We overwrite when the file is absent or still equals
+    the scaffold default, and never clobber an identity the customer has actually changed.
+    """
     if not bp.persona:
         return
     identity = agent_dir / "workspace" / "identity.md"
-    if identity.exists():
+    if identity.exists() and not _is_scaffold_default_identity(identity):
         return
     identity.parent.mkdir(parents=True, exist_ok=True)
     identity.write_text(bp.persona.rstrip() + "\n", encoding="utf-8")
     result.wrote_identity = True
+
+
+def _is_scaffold_default_identity(path: Path) -> bool:
+    """True when ``identity.md`` is still the untouched ``arc agent create`` placeholder."""
+    from arccli.commands.agent._common import _DEFAULT_IDENTITY
+
+    return path.read_text(encoding="utf-8").strip() == _DEFAULT_IDENTITY.strip()
 
 
 # ---------------------------------------------------------------------------
