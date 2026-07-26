@@ -32,7 +32,7 @@ import difflib
 import sys
 from pathlib import Path
 
-from arcagent.core.prompt_context import build_prompt_resolver, read_agent_tier
+from arcagent.core.prompt_context import build_prompt_resolver
 from arcagent.tools._secret_guard import find_secret
 from arcprompt import (
     PromptCatalog,
@@ -43,6 +43,7 @@ from arcprompt import (
     render_prompt,
 )
 from arctrust.artifact import sign_artifact
+from arctrust.policy import read_agent_tier
 
 from arccli.commands._shared import dispatch, err, print_table
 from arccli.commands._shared import write as _out

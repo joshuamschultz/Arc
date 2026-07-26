@@ -26,7 +26,6 @@ import difflib
 from pathlib import Path
 
 import yaml
-from arcagent.core.prompt_context import read_agent_tier
 from arcprompt import (
     PromptCatalog,
     PromptMissing,
@@ -34,7 +33,7 @@ from arcprompt import (
     parse_prompt,
     render_prompt,
 )
-from arctrust.policy import Decision, PolicyContext, ToolCall
+from arctrust.policy import Decision, PolicyContext, ToolCall, read_agent_tier
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -123,7 +122,7 @@ async def _evaluate_policy(
         classification="unclassified",
     )
     ctx = PolicyContext(
-        tier=read_agent_tier(agent_root),  # type: ignore[arg-type]  # reason: validated to _Tier literal
+        tier=read_agent_tier(agent_root),
         policy_version="",
         bundle_age_seconds=0.0,
     )
@@ -151,7 +150,8 @@ async def get_prompts(request: Request) -> JSONResponse:
             package=ref.package,
             name=ref.name,
             description=ref.description,
-            status="overridden" if _overlay_path(agent_root, ref.package, ref.name).is_file()
+            status="overridden"
+            if _overlay_path(agent_root, ref.package, ref.name).is_file()
             else "stock",
         )
         for ref in refs

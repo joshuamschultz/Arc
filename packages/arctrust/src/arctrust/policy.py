@@ -42,9 +42,11 @@ import hashlib
 import json
 import logging
 import time
+import tomllib
 from collections import OrderedDict
 from collections.abc import Callable
-from typing import Any, Literal, Protocol, runtime_checkable
+from pathlib import Path
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -60,6 +62,34 @@ AuditSink = Callable[[str, dict[str, Any]], None]
 MonotonicClock = Callable[[], float]
 
 _Tier = Literal["federal", "enterprise", "personal"]
+_KNOWN_TIERS: frozenset[str] = frozenset(("federal", "enterprise", "personal"))
+
+
+def read_agent_tier(agent_root: Path) -> _Tier:
+    """Read ``[security].tier`` from an agent's ``arcagent.toml`` (default ``personal``).
+
+    The single source of truth for "what tier is this agent", used by every
+    surface that builds a :class:`PolicyContext` for that agent — the arcui
+    prompts route, arccli, and the agent itself — so they all resolve the same
+    posture for the same agent.
+
+    Lives here, beside ``_Tier`` and ``PolicyContext``, because arctrust is the
+    leaf foundation every layer may import. Hosting it in arcagent forced arcui
+    to import arcagent directly, outside its one approved seam.
+
+    Anything unreadable, absent, or unrecognized degrades to the
+    least-privileged tier rather than raising: a parse miss must never weaken a
+    configured gate.
+    """
+    try:
+        data = tomllib.loads((agent_root / "arcagent.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return "personal"
+    security = data.get("security")
+    tier = security.get("tier") if isinstance(security, dict) else None
+    if isinstance(tier, str) and tier in _KNOWN_TIERS:
+        return cast("_Tier", tier)
+    return "personal"
 
 
 # ---------------------------------------------------------------------------

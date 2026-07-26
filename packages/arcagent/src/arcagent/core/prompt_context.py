@@ -13,7 +13,6 @@ to exact bytes — never silently, never per-turn-shifting.
 
 from __future__ import annotations
 
-import tomllib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -47,22 +46,6 @@ def _operator_public_key() -> bytes | None:
         return OperatorKey.load(default_operator_key_path(), generate_if_absent=False).public_key
     except (OSError, ValueError, RuntimeError):
         return None
-
-
-def read_agent_tier(agent_root: Path) -> str:
-    """Read ``[security].tier`` from an agent's ``arcagent.toml`` (default ``personal``).
-
-    The single source of truth for "what tier is this agent" used by the prompt
-    surfaces (arcui route, arccli) so they resolve the same posture for the same
-    agent. An unreadable/absent/unknown tier degrades to the least-privileged
-    label rather than raising — a parse miss must never weaken a configured gate.
-    """
-    try:
-        data = tomllib.loads((agent_root / "arcagent.toml").read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return "personal"
-    tier = str(data.get("security", {}).get("tier", "personal"))
-    return tier if tier in _KNOWN_POSTURES else "personal"
 
 
 def _resolver_for_root(agent_root: Path, tier: str) -> PromptResolver:
@@ -154,7 +137,6 @@ __all__ = [
     "AuditEmit",
     "agent_prompt_resolve",
     "build_prompt_resolver",
-    "read_agent_tier",
     "snapshot_resolver",
     "snapshot_run_prompts",
 ]
