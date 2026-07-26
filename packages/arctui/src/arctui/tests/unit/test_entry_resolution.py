@@ -39,6 +39,11 @@ def test_resolve_team_root_explicit() -> None:
     assert _resolve_team_root(["--team-root", "/data/work"]) == Path("/data/work")
 
 
+def test_resolve_team_root_root_alias() -> None:
+    # `arc tui --root .arc/coding` — the per-project coding-folder short form.
+    assert _resolve_team_root(["--root", ".arc/coding"]) == Path(".arc/coding")
+
+
 # --------------------------------------------------------------------------- #
 # _resolve_endpoint — explicit --url attaches, never spawns
 # --------------------------------------------------------------------------- #

@@ -70,8 +70,12 @@ def _flag_value(args: list[str], flag: str) -> str | None:
 
 
 def _resolve_team_root(args: list[str]) -> Path:
-    """Team root for roster lookup + gateway spawn (``--team-root`` or default)."""
-    troot = _flag_value(args, "--team-root")
+    """Team root for roster lookup + gateway spawn.
+
+    Accepts ``--root`` (the short form used for a per-project coding folder, e.g.
+    ``arc tui --root .arc/coding``) or ``--team-root``; falls back to the default.
+    """
+    troot = _flag_value(args, "--root") or _flag_value(args, "--team-root")
     return Path(troot).expanduser() if troot else _DEFAULT_TEAM_ROOT
 
 
