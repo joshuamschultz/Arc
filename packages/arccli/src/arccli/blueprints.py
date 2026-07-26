@@ -52,12 +52,20 @@ _PERSONA_MD = "persona.md"
 
 # Trusted-admin-only keys a blueprint overlay must never set (mirror of the
 # env-override denylist in core/config.py). A lower-trust preset must not touch the
-# vault backend, native tool execution, the tool preamble, identity key custody, or the
-# operator-key / federal-witness custody paths.
+# vault backend, native tool execution, the tool preamble, identity key custody, the
+# operator-key / federal-witness custody paths, or the sandbox boundary itself.
+#
+# `tools.policy.allowed_paths` is the sandbox floor: a blueprint that set it would
+# self-grant filesystem access outside the workspace (SEC-18). Filesystem grants come
+# only from the operator's own toml or the folder-trust prompt — never a shared/unsigned
+# preset. (`operate_in_launch_dir` is deliberately NOT denied: on its own it grants
+# nothing — the working_dir gate still requires the dir be inside allowed_paths, i.e.
+# already user-trusted — and the built-in coding blueprint needs to set it.)
 _DENIED_OVERLAY_PATHS: tuple[tuple[str, ...], ...] = (
     ("vault", "backend"),
     ("tools", "process"),
     ("tools", "preamble"),
+    ("tools", "policy", "allowed_paths"),
     ("identity", "key_dir"),
     ("security", "operator_key_dir"),
     ("security", "operator_vault_path"),

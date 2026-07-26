@@ -23,6 +23,18 @@ from pathlib import Path
 _ALLOWED_RE = re.compile(r"(?m)^(\s*allowed_paths\s*=\s*)\[.*?\]")
 
 
+def _toml_str(value: str) -> str:
+    """Render a string as a TOML basic string, escaping quotes/backslashes/control chars."""
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
+
+
 def _allowed_paths(config_path: Path) -> list[str]:
     """Return the agent's current ``[tools.policy].allowed_paths`` (empty on any error)."""
     try:
@@ -56,7 +68,9 @@ def grant_folder(config_path: Path, folder: Path) -> None:
     current = _allowed_paths(config_path)
     if resolved in current:
         return
-    rendered = "[" + ", ".join(f'"{p}"' for p in [*current, resolved]) + "]"
+    # Escape before interpolating into the toml — a folder name may contain a quote or
+    # backslash, and this list is security policy the runtime trusts (SEC-01: no injection).
+    rendered = "[" + ", ".join(_toml_str(p) for p in [*current, resolved]) + "]"
     text = config_path.read_text(encoding="utf-8")
     new_text, count = _ALLOWED_RE.subn(rf"\g<1>{rendered}", text, count=1)
     if count == 0:

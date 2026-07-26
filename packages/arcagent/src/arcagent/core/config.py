@@ -625,6 +625,10 @@ _ENV_DENYLIST_PREFIXES = frozenset(
         "vault__backend",
         "tools__process",
         "tools__preamble",
+        # The sandbox floor: an env var must not widen filesystem access beyond the
+        # workspace (SEC-18, mirrors the blueprint overlay denylist). Grants come from
+        # the operator's toml or the folder-trust prompt, never an ambient env var.
+        "tools__policy__allowed_paths",
         "identity__key_dir",
     }
 )

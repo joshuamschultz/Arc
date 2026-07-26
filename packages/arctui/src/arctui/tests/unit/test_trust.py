@@ -81,3 +81,21 @@ def test_grant_when_no_allowed_paths_line(tmp_path: Path) -> None:
     grant_folder(cfg, project)
     data = tomllib.loads(cfg.read_text(encoding="utf-8"))
     assert str(project.resolve()) in data["tools"]["policy"]["allowed_paths"]
+
+
+def test_grant_folder_escapes_toml_special_chars(tmp_path: Path) -> None:
+    # SEC-01: a folder name with a quote must not inject arbitrary toml into the config
+    # (which the runtime trusts as security policy). The file must still parse.
+    cfg = _write_agent(tmp_path)
+    evil = tmp_path / 'weird"dir'
+    evil.mkdir()
+    grant_folder(cfg, evil)
+    data = tomllib.loads(cfg.read_text(encoding="utf-8"))  # must not raise
+    assert str(evil.resolve()) in data["tools"]["policy"]["allowed_paths"]
+    # No stray top-level keys were injected past the intended sections.
+    assert set(data) <= {"agent", "tools"}
+
+
+def test_malformed_toml_reads_as_untrusted(tmp_path: Path) -> None:
+    cfg = _write_agent(tmp_path, "this is not valid toml = = =\n")
+    assert folder_is_trusted(cfg, tmp_path / "proj") is False

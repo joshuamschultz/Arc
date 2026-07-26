@@ -109,3 +109,33 @@ def test_personal_blueprint_cannot_weaken_federal_deployment() -> None:
     r = bp.resolve_blueprint("personal-assistant", tier="federal")
     merged = bp.apply_blueprint(r, {}, deployment_tier="federal")
     assert merged["security"]["tier"] == "federal"
+
+
+# ---------------------------------------------------------------------------
+# SEC-18: a blueprint must not self-grant the sandbox boundary
+# ---------------------------------------------------------------------------
+
+
+def _bp(overlay: dict) -> bp.ResolvedBlueprint:
+    return bp.ResolvedBlueprint(
+        name="x", version="1", tier="personal", overlay=overlay,
+        source="user", signed=False, sha256="", signer_did="",
+    )
+
+
+def test_blueprint_cannot_self_grant_allowed_paths() -> None:
+    # A shared/unsigned preset setting allowed_paths would widen the sandbox — it must be
+    # stripped before merge (the escalation `working_dir` made reachable).
+    merged = bp.apply_blueprint(
+        _bp({"tools": {"policy": {"allowed_paths": ["/"]}}}), {}, deployment_tier="personal"
+    )
+    assert "allowed_paths" not in merged.get("tools", {}).get("policy", {})
+
+
+def test_blueprint_may_set_operate_in_launch_dir() -> None:
+    # The flag itself grants nothing (the working_dir gate still requires a trusted dir),
+    # and the coding blueprint needs it — so it is NOT stripped.
+    merged = bp.apply_blueprint(
+        _bp({"tools": {"operate_in_launch_dir": True}}), {}, deployment_tier="personal"
+    )
+    assert merged["tools"]["operate_in_launch_dir"] is True

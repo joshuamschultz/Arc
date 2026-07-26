@@ -21,7 +21,7 @@ from arccli.commands._shared import print_kv as _print_kv
 from arccli.commands._shared import write as _write
 
 # ---------------------------------------------------------------------------
-# Tier / provider data (duplicated from init_wizard.py to avoid click import)
+# Tier / provider data — the canonical source for `arc init`.
 # ---------------------------------------------------------------------------
 
 _TIER_PRESETS: dict[str, dict[str, dict[str, Any]]] = {

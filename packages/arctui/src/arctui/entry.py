@@ -23,6 +23,14 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from arctui.serve import Endpoint
+    from arctui.transport import ChatTransport
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
 
 _logger = logging.getLogger("arctui.entry")
 
@@ -84,7 +92,7 @@ def _resolve_team_root(args: list[str]) -> Path:
     return Path(troot).expanduser() if troot else _DEFAULT_TEAM_ROOT
 
 
-async def _resolve_endpoint(args: list[str], agent_id: str, team_root: Path) -> object:
+async def _resolve_endpoint(args: list[str], agent_id: str, team_root: Path) -> Endpoint:
     """Resolve the gateway to attach to (spawning one only if needed)."""
     from arctui.serve import Endpoint, GatewayNeedsTokenError, ensure_gateway, read_persisted_token
 
@@ -96,6 +104,15 @@ async def _resolve_endpoint(args: list[str], agent_id: str, team_root: Path) -> 
         tok = token or read_persisted_token()
         if not tok:
             raise GatewayNeedsTokenError(url)
+        # SEC-23: the viewer token is sent as the first WS frame; over cleartext http to a
+        # non-loopback host it is exposed in transit. Warn (attach still proceeds).
+        parsed = urlparse(url)
+        if parsed.scheme == "http" and (parsed.hostname or "") not in _LOOPBACK_HOSTS:
+            _logger.warning(
+                "Sending the viewer token over cleartext http to non-loopback host %s — "
+                "use https or an SSH tunnel.",
+                parsed.hostname,
+            )
         return Endpoint(url.rstrip("/"), tok, agent_id, spawned=False)
 
     host = _flag_value(args, "--host") or _DEFAULT_HOST
@@ -133,7 +150,7 @@ def _maybe_prompt_trust(config_path: Path, cwd: Path) -> None:
 
 async def _build_transport(
     args: list[str],
-) -> tuple[object | None, str | None, str | None, str | None]:
+) -> tuple[ChatTransport | None, str | None, str | None, str | None]:
     """Resolve agent + gateway and open a chat transport.
 
     Returns ``(transport, message, agent_label, gateway_label)``. On success
@@ -161,17 +178,12 @@ async def _build_transport(
     _maybe_prompt_trust(res.selected.config_path, Path.cwd())
     try:
         endpoint = await _resolve_endpoint(args, agent_id, team_root)
-        base_url: str = endpoint.base_url  # type: ignore[attr-defined]
-        client = GatewayChatClient(
-            base_url,
-            endpoint.agent_id,  # type: ignore[attr-defined]
-            endpoint.token,  # type: ignore[attr-defined]
-        )
+        client = GatewayChatClient(endpoint.base_url, endpoint.agent_id, endpoint.token)
         await client.connect()
     except Exception as exc:  # reason: fail-open — boot no-agent with the reason
         _logger.error("Could not attach to gateway: %s", exc)
         return None, f"Could not attach to a gateway: {exc}", None, None
-    return client, None, agent_id, base_url
+    return client, None, agent_id, endpoint.base_url
 
 
 async def _run(args: list[str]) -> None:
@@ -183,7 +195,7 @@ async def _run(args: list[str]) -> None:
     from arctui.app import ArcTUI
 
     app = ArcTUI(
-        transport=transport,  # type: ignore[arg-type]  # ChatTransport | None
+        transport=transport,
         agent_label=agent_label,
         gateway_label=gateway_label,
     )
@@ -191,7 +203,7 @@ async def _run(args: list[str]) -> None:
         await app.run_async()
     finally:
         if transport is not None:
-            await transport.aclose()  # type: ignore[attr-defined]
+            await transport.aclose()
 
 
 def main(args: list[str] | None = None) -> None:
