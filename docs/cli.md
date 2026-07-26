@@ -152,7 +152,7 @@ unified `CapabilityLoader` discovers skills from four scan roots: the package bu
 Adaptation and self-improvement (golden-task-gated code repair, per-turn nudge/usage/retire
 lifecycle) is an **optional supercharger**: arcagent runs skills on its own with a no-op
 `NullSkillAdapter`; installing `arcskill` and selecting it in config
-(`[skills] adapter = "arcskill"`) turns it on. See [`arcskill`](../packages/arcskill/README.md).
+(`[skills] adapter = "arcskill"`) turns it on. See [`arcskill`](https://github.com/joshuamschultz/Arc/blob/main/packages/arcskill/README.md).
 
 ---
 

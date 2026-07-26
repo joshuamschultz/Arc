@@ -137,7 +137,7 @@ built to get you talking to a model through a chat app quickly, with a much
 smaller identity/authorization/audit surface (some have none of it). If what
 you want is a personal assistant in your group chat by this evening, one of
 those is the better tool for the job — see the full comparison table in
-[`README.md`](../README.md#%EF%B8%8F-how-arc-compares) rather than
+[`README.md`](https://github.com/joshuamschultz/Arc/blob/main/README.md#%EF%B8%8F-how-arc-compares) rather than
 duplicated here. Arc's honest tradeoff is that the accountability machinery
 that makes it fit for a regulated environment is also what makes it slower
 to stand up a first "hello world" agent than a framework that skips all of
@@ -224,7 +224,7 @@ flowchart LR
 | 3 | `pip install arc-agent` or `pip install arcmas` | The full agent — identity, tools, skills, memory, the deny-by-default policy pipeline, the audit trail | Nothing — this is the whole stack |
 
 See the package table and dependency diagram in
-[`README.md`](../README.md#-architecture) and the layering rules in
+[`README.md`](https://github.com/joshuamschultz/Arc/blob/main/README.md#-architecture) and the layering rules in
 [`docs/02-architecture.md`](02-architecture.md) for the full picture; this is
 the "which box do I even need" cut of the same stack.
 
@@ -278,7 +278,7 @@ arc ui start --team-root ./team --show-tokens
 ```
 
 Full command reference: [`docs/cli.md`](cli.md). Full multi-node / production
-deploy path (systemd, secrets, remote chat platforms): [`docs/deploy/`](deploy/).
+deploy path (systemd, secrets, remote chat platforms): [`docs/deploy/`](deploy/docker.md).
 
 ### What "asking it something" actually does
 

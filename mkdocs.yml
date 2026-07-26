@@ -1,0 +1,117 @@
+site_name: Arc Documentation
+site_description: The security-first autonomous agent stack — how it works, and where to look.
+site_url: https://joshuamschultz.github.io/Arc/
+repo_url: https://github.com/joshuamschultz/Arc
+repo_name: joshuamschultz/Arc
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+nav:
+  - Home: README.md
+  - Orientation:
+      - 1. What Arc Is: 01-what-is-arc.md
+      - 2. Architecture: 02-architecture.md
+      - 3. Anatomy of a Turn: 03-anatomy-of-a-turn.md
+  - The engine:
+      - 4. The Unified Adapter: 04-the-unified-adapter.md
+      - 5. The Agentic Run: 05-steering-and-strategies.md
+      - 6. Prompts, Tools, and Skills: 06-prompts-tools-skills.md
+      - 7. The Memory Lifecycle: 07-memory-lifecycle.md
+  - The record:
+      - 8. Where Data Lives: 08-data-and-storage.md
+      - 9. The Workflows: 09-workflows.md
+      - 10. The Security Model: 10-security-model.md
+  - Building on Arc:
+      - 11. Extension Points: 11-extension-points.md
+      - 12. Configuration: 12-configuration.md
+      - 13. Contributing: 13-contributing.md
+      - 14. Glossary: 14-glossary.md
+  - Reference:
+      - CLI: cli.md
+      - Config keys: config-reference.md
+      - Prompts: prompts.md
+      - Architecture overview: architecture/ARCH-OVERVIEW.md
+      - Policy modules: architecture/policy-modules.md
+  - Decisions (ADRs):
+      - ADR-018 No MCP, no migration, no ACP: architecture/decisions/ADR-018-no-mcp-no-migration-no-acp.md
+      - ADR-019 Four pillars universal: architecture/decisions/ADR-019-four-pillars-universal.md
+      - ADR-020 arcgateway as data plane: architecture/decisions/ADR-020-arcgateway-as-data-plane.md
+      - ADR-021 Agent self-description via TOML: architecture/decisions/ADR-021-agent-self-description-via-toml-ui-section.md
+      - ADR-022 Storage split — WORM vs operational: architecture/decisions/ADR-022-storage-split-arctrust-worm-arcstore-operational.md
+      - ADR-023 Capability resolution: architecture/decisions/ADR-023-capability-resolution-and-arcrun-provider.md
+      - ADR-024 Unified streaming run entry: architecture/decisions/ADR-024-unified-streaming-run-entry.md
+      - ADR-025 Cache control confined to Anthropic: architecture/decisions/ADR-025-cache-control-confined-to-anthropic-adapter.md
+      - ADR-026 Append-only transform_context: architecture/decisions/ADR-026-transform-context-append-only-with-emergency-valve.md
+      - ADR-027 Per-run tool-set freeze: architecture/decisions/ADR-027-per-run-tool-set-freeze-security-invariant.md
+      - ADR-028 Append-only prefix contract: architecture/decisions/ADR-028-append-only-prefix-contract-debug-gated.md
+  - Deploy:
+      - Docker: deploy/docker.md
+      - Single node: deploy/single-node.md
+      - Team building: deploy/team-building.md
+  - Gateway:
+      - Getting started: arcgateway/getting-started.md
+      - Multi-instance: arcgateway/multi-instance.md
+      - Security: arcgateway/security.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/joshuamschultz/Arc

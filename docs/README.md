@@ -58,7 +58,7 @@ flowchart TB
 | **Non-technical or semi-technical** | [01](01-what-is-arc.md) → [14](14-glossary.md) → the "In one breath" section of anything else |
 | **A security reviewer** | [10](10-security-model.md) → [08](08-data-and-storage.md) → [12](12-configuration.md) |
 | **Extending Arc without forking** | [11](11-extension-points.md) → [06](06-prompts-tools-skills.md) → [12](12-configuration.md) |
-| **Operating a deployed fleet** | [09](09-workflows.md) → [12](12-configuration.md) → [`deploy/`](deploy/) |
+| **Operating a deployed fleet** | [09](09-workflows.md) → [12](12-configuration.md) → [`deploy/`](deploy/docker.md) |
 | **Working on memory** | [07](07-memory-lifecycle.md) → [08](08-data-and-storage.md) |
 | **Working on the model layer** | [04](04-the-unified-adapter.md) → [05](05-steering-and-strategies.md) |
 
@@ -110,13 +110,13 @@ link to them rather than restating them.
 | Path | What it is |
 |---|---|
 | [`architecture/ARCH-OVERVIEW.md`](architecture/ARCH-OVERVIEW.md) | The original "how it all fits together" note. [02](02-architecture.md) expands it into a contributor map. |
-| [`architecture/decisions/`](architecture/decisions/) | Architecture Decision Records (ADR-018 onward). The binding decisions, with their reasoning. |
+| [`architecture/decisions/`](architecture/decisions/ADR-019-four-pillars-universal.md) | Architecture Decision Records (ADR-018 onward). The binding decisions, with their reasoning. |
 | [`architecture/policy-modules.md`](architecture/policy-modules.md) | The policy layer catalogue. |
 | [`cli.md`](cli.md) | Full `arc …` command reference. |
 | [`config-reference.md`](config-reference.md) | The config key reference. [12](12-configuration.md) is the *model*; this is the *keys*. |
 | [`prompts.md`](prompts.md) | Prompt authoring and the `arcprompt` catalogue. |
-| [`deploy/`](deploy/) | [single-node](deploy/single-node.md) · [docker](deploy/docker.md) · [team-building](deploy/team-building.md) |
-| [`arcgateway/`](arcgateway/) | [getting-started](arcgateway/getting-started.md) · [multi-instance](arcgateway/multi-instance.md) · [security](arcgateway/security.md) |
+| [`deploy/`](deploy/docker.md) | [single-node](deploy/single-node.md) · [docker](deploy/docker.md) · [team-building](deploy/team-building.md) |
+| [`arcgateway/`](arcgateway/getting-started.md) | [getting-started](arcgateway/getting-started.md) · [multi-instance](arcgateway/multi-instance.md) · [security](arcgateway/security.md) |
 
 ### Runnable walkthroughs
 
@@ -145,7 +145,7 @@ the relevant notebook from each section.
   toml." Treat those notes as load-bearing.
 - **Diagrams are mermaid**, rendered inline by GitHub and most editors, using one
   shared palette so the whole set reads as one system.
-- **The house rules live in [`../CLAUDE.md`](../CLAUDE.md)** — build standards,
+- **The house rules live in [`../CLAUDE.md`](https://github.com/joshuamschultz/Arc/blob/main/CLAUDE.md)** — build standards,
   the four pillars, quality gates, and the threat surfaces every component is
   designed against. [13](13-contributing.md) turns them into a checklist.
 

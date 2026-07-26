@@ -604,10 +604,10 @@ A PR should be rejected in review if it:
 
 ## Runnable references
 
-- [`walkthroughs/arctrust/01-identity-did.ipynb`](../walkthroughs/arctrust/01-identity-did.ipynb) — DID derivation, keypairs, child identity
-- [`walkthroughs/arctrust/02-keypairs-signing.ipynb`](../walkthroughs/arctrust/02-keypairs-signing.ipynb) — signing, artifact signatures, the `Signer` seam
-- [`walkthroughs/arctrust/03-policy-pipeline.ipynb`](../walkthroughs/arctrust/03-policy-pipeline.ipynb) — building a tier pipeline, first-DENY-wins
-- [`walkthroughs/arctrust/04-audit-sinks.ipynb`](../walkthroughs/arctrust/04-audit-sinks.ipynb) — `WormSink` write/verify, tamper detection
+- [`walkthroughs/arctrust/01-identity-did.ipynb`](https://github.com/joshuamschultz/Arc/blob/main/walkthroughs/arctrust/01-identity-did.ipynb) — DID derivation, keypairs, child identity
+- [`walkthroughs/arctrust/02-keypairs-signing.ipynb`](https://github.com/joshuamschultz/Arc/blob/main/walkthroughs/arctrust/02-keypairs-signing.ipynb) — signing, artifact signatures, the `Signer` seam
+- [`walkthroughs/arctrust/03-policy-pipeline.ipynb`](https://github.com/joshuamschultz/Arc/blob/main/walkthroughs/arctrust/03-policy-pipeline.ipynb) — building a tier pipeline, first-DENY-wins
+- [`walkthroughs/arctrust/04-audit-sinks.ipynb`](https://github.com/joshuamschultz/Arc/blob/main/walkthroughs/arctrust/04-audit-sinks.ipynb) — `WormSink` write/verify, tamper detection
 
 ## Where to look in the code
 

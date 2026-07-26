@@ -30,6 +30,7 @@
 [![FedRAMP](https://img.shields.io/badge/FedRAMP-aligned-003B82.svg)](#-compliance-mapping)
 [![Zero SDKs](https://img.shields.io/badge/vendor_SDKs-zero-54585C.svg)](#zero-provider-sdks)
 
+**[📚 Read the Docs](https://joshuamschultz.github.io/Arc/)** ·
 **[Quick Start](#-quick-start)** ·
 **[Architecture](#-architecture)** ·
 **[Security](#%EF%B8%8F-security-architecture)** ·
@@ -37,6 +38,30 @@
 **[CLI Reference](docs/cli.md)**
 
 </div>
+
+---
+
+## 📚 Documentation
+
+**Full documentation: [joshuamschultz.github.io/Arc](https://joshuamschultz.github.io/Arc/)** — or read it
+right here in the repo: **[`docs/`](docs/README.md)**.
+
+Fourteen documents that take you from *"what is this?"* to *"I know which file to
+open."* Every one opens with a plain-language summary anyone can finish, then goes
+to the real mechanism with diagrams, then points at the exact code.
+
+| Start here | If you are… |
+|---|---|
+| **[1. What Arc Is](docs/01-what-is-arc.md)** | New to Arc, or not an engineer — assumes nothing |
+| **[3. Anatomy of a Turn](docs/03-anatomy-of-a-turn.md)** | A contributor: one message traced through every layer |
+| **[2. Architecture](docs/02-architecture.md)** | Wondering which of the 18 packages your change belongs in |
+| **[10. The Security Model](docs/10-security-model.md)** | Evaluating identity, signing, authorization, and audit |
+| **[11. Extension Points](docs/11-extension-points.md)** | Adding a provider, platform, tool, or memory backend |
+| **[13. Contributing](docs/13-contributing.md)** | Ready to open your first PR |
+| **[14. Glossary](docs/14-glossary.md)** | Hitting an unfamiliar term |
+
+Prefer to *run* things rather than read? [`walkthroughs/`](walkthroughs/) holds
+executable notebooks per package.
 
 ---
 

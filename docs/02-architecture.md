@@ -32,7 +32,7 @@ placeholders — flagged below, not glossed over.
 | **arctrust** | `packages/arctrust/src/arctrust/` | Security nucleus: DID identity, Ed25519 keypairs, `PolicyPipeline`, WORM audit chain | nothing in `arc*` (leaf — `pynacl`, `cryptography`, `pydantic` only) | Import any other Arc package |
 | **arcllm** | `packages/arcllm/src/arcllm/` | Provider-agnostic LLM calls (16 providers), telemetry, budgets, circuit breakers | `arcstore` (spool) | Be called by anything except `arcrun` — the sole sanctioned exception is the deliberate out-of-agent `arc llm` CLI caller |
 | **arcrun** | `packages/arcrun/src/arcrun/` | The execution loop — the *only* runtime path to `arcllm` | `arcllm`, `arctrust`, `arcstore` | Import `arcagent`; call `arcllm.registry.load_model()` directly; own tool/skill/memory logic; hold per-agent state in a module-level global |
-| **arcagent** | `packages/arcagent/src/arcagent/` | The agent: identity + tools + skills + memory-as-tools + extensions. Uses `arcrun` to execute | `arctrust`, `arcllm`, `arcrun`, `arcprompt`, `mcp` — plus a stale `arcui` dependency (see below) | Import `arcgateway`; make LLM calls or run a loop itself |
+| **arcagent** | `packages/arcagent/src/arcagent/` | The agent: identity + tools + skills + memory-as-tools + extensions. Uses `arcrun` to execute | `arctrust`, `arcllm`, `arcrun`, `arcprompt`, `mcp` | Import `arcgateway` or `arcui`; make LLM calls or run a loop itself |
 | **arcstore** | `packages/arcstore/src/arcstore/` | Operational/observability storage: always-on append-only spool + `StorageBackend` query layer (SQLite) | `arctrust` | Import `arcagent`, `arcui`, `arccli`, `arcrun`, or `arcgateway` |
 | **arcgateway** | `packages/arcgateway/src/arcgateway/` | How you reach an agent from outside: channel sessions, the executor, the `web` adapter; owns the agent data-plane reads (`fs_reader`, `fs_watcher`) | `arcagent` (as `arc-agent`), transitively `arctrust` | Import `arcui`; import a platform extension package directly; ship a platform adapter module (`telegram.py`, `slack.py`, …) in its own core |
 | **arcgateway-mattermost** | `packages/arcgateway-mattermost/src/arcgateway_mattermost/` | Mattermost platform adapter plugin (air-gapped DOE/lab chat surface) | `arcgateway` | Be imported by `arcgateway` core |
@@ -127,7 +127,7 @@ open, the fix is narrowed to a single seam:
 This is enforced by an AST-based architecture test, not a comment:
 
 - **`test_arcui_imports_arcagent_only_via_inventory_seam`** in
-  [`packages/arcgateway/tests/architecture/test_imports.py:61`](../packages/arcgateway/tests/architecture/test_imports.py)
+  [`packages/arcgateway/tests/architecture/test_imports.py:61`](https://github.com/joshuamschultz/Arc/blob/main/packages/arcgateway/tests/architecture/test_imports.py)
   (it lives in the `arcgateway` package's test tree, not `arcui`'s, because it
   guards the cross-package boundary between the two). It walks every `.py`
   file under `packages/arcui/src/arcui/`, collects imported module prefixes,
