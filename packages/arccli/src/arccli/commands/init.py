@@ -238,12 +238,12 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
     (defaults win over the blueprint), the tier floored by stringency-max, and the apply
     audited. Written concretely (dict -> TOML) so the layered CLI/gateway load reads it.
     """
-    from arcagent.blueprints import dumps_toml
+    from arccli.blueprints import dumps_toml
 
     base = _arcagent_base_config(tier)
     effective = tier
     if blueprint_name:
-        from arcagent.blueprints import apply_blueprint, resolve_blueprint
+        from arccli.blueprints import apply_blueprint, resolve_blueprint
 
         from arccli.commands.blueprint import audit_apply
         from arccli.commands.operator import operator_public_key

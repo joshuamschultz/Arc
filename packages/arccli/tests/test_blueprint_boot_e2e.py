@@ -19,12 +19,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from arcagent.__main__ import _load_config
-from arcagent.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 from arcagent.core.agent import ArcAgent
 from arcagent.extension.inspect import inspect_extensions
 from arcagent.modules.memory import _runtime as memory_runtime
+
+from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 
 
 def _materialize(tmp_path: Path, blueprint_name: str, *, deployment_tier: str) -> Path:

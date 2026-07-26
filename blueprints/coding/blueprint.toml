@@ -1,0 +1,17 @@
+# Built-in blueprint — provenance-trusted (repo-root blueprints/).
+# Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
+#
+# The builtin file/exec tools (bash, read, write, edit, grep, find, ls) are always-on,
+# so a coding agent already has them — this blueprint's job is the PERSONA (persona.md,
+# written to workspace/identity.md at scaffold time) plus the personal tier. Repo access
+# (`[tools.policy].allowed_paths`) is added at launch time by the `arc tui` trust prompt,
+# because the project path is only known then, not when this preset is authored.
+
+[blueprint]
+name = "coding"
+version = "1.0.0"
+tier = "personal"
+description = "Coding agent: always-on bash + file read/write/edit, a senior-engineer persona, project-scoped file access."
+
+[security]
+tier = "personal"

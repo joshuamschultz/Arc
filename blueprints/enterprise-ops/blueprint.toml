@@ -1,4 +1,4 @@
-# SPEC-047 packaged blueprint — provenance-trusted (ships read-only in the wheel).
+# Built-in blueprint — provenance-trusted (repo-root blueprints/).
 # Deep-merged UNDER your own arcagent.toml values; a blueprint is a starting point.
 
 [blueprint]

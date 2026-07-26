@@ -69,7 +69,7 @@ def apply_to_disk(
     ``tier.relaxation_granted`` (per relaxed knob) and ``blueprint.applied`` — routed to
     the operator WORM sink at enterprise/federal, else a structured log.
     """
-    from arcagent.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
+    from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
 
     from arccli.commands.operator import operator_public_key
 
@@ -175,7 +175,7 @@ def _worm_sink(arc_dir: Path) -> Any:
 
 
 def _list(args: argparse.Namespace) -> None:
-    from arcagent.blueprints import list_blueprints
+    from arccli.blueprints import list_blueprints
 
     from arccli.commands.operator import operator_public_key
 
@@ -197,7 +197,7 @@ def _signed_label(bp: Any) -> str:
 
 
 def _show(args: argparse.Namespace) -> None:
-    from arcagent.blueprints import dumps_toml, resolve_blueprint
+    from arccli.blueprints import dumps_toml, resolve_blueprint
 
     from arccli.commands.operator import operator_public_key
 
@@ -209,7 +209,7 @@ def _show(args: argparse.Namespace) -> None:
 
 
 def _verify(args: argparse.Namespace) -> None:
-    from arcagent.blueprints import resolve_blueprint
+    from arccli.blueprints import resolve_blueprint
 
     from arccli.commands.operator import operator_public_key
 
@@ -253,7 +253,7 @@ def _apply(args: argparse.Namespace) -> None:
         sys.stderr.write(f"Error: {exc}\n")
         sys.exit(1)
 
-    from arcagent.blueprints import dumps_toml
+    from arccli.blueprints import dumps_toml
 
     if dry_run:
         _write(f"# --dry-run — merged config for {target} (not written):")

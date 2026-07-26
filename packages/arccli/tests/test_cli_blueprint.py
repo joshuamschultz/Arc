@@ -3,6 +3,9 @@
 Drives the REAL apply path (``apply_to_disk``) with a capturing audit callback so the
 audit producers — ``tier.relaxation_granted`` (REQ-023) and ``blueprint.applied``
 (REQ-015) — are proven on the production path, not a rigged fixture.
+
+A blueprint is a folder: ``<dir>/<name>/blueprint.toml`` (+ optional persona.md), so
+user presets here are written under a per-name subdirectory, not as a flat file.
 """
 
 from __future__ import annotations
@@ -25,6 +28,15 @@ def _write_agent(tmp_path: Path, tier: str = "personal") -> Path:
         encoding="utf-8",
     )
     return target
+
+
+def _write_user_blueprint(udir: Path, name: str, body: str) -> Path:
+    """Write a user blueprint at ``<udir>/<name>/blueprint.toml`` and return that path."""
+    bp_dir = udir / name
+    bp_dir.mkdir(parents=True, exist_ok=True)
+    path = bp_dir / "blueprint.toml"
+    path.write_text(body, encoding="utf-8")
+    return path
 
 
 def _operator_sign(arc_dir: Path, path: Path) -> bytes:
@@ -94,14 +106,13 @@ def test_apply_stringency_max_raises_tier(tmp_path: Path) -> None:
 def test_apply_relaxation_audit_fires_at_enterprise(tmp_path: Path) -> None:
     """A signed enterprise blueprint that relaxes a breaker floor emits tier.relaxation_granted."""
     udir = tmp_path / "blueprints"
-    udir.mkdir()
-    path = udir / "loose-ops.toml"
     # runaway_max_repeat is a "smaller-is-stricter" knob (federal floor 8); a LARGER
     # value is the relaxation. 20 > 8 → weaker than the floor, permitted at enterprise.
-    path.write_text(
+    path = _write_user_blueprint(
+        udir,
+        "loose-ops",
         '[blueprint]\nname = "loose-ops"\nversion = "1.0.0"\ntier = "enterprise"\n'
         "[security]\nrunaway_max_repeat = 20\n",
-        encoding="utf-8",
     )
     _operator_sign(tmp_path, path)
     target = _write_agent(tmp_path, tier="enterprise")
@@ -122,11 +133,11 @@ def test_apply_relaxation_audit_fires_at_enterprise(tmp_path: Path) -> None:
 
 def test_apply_unsigned_user_blueprint_above_personal_errors(tmp_path: Path) -> None:
     udir = tmp_path / "blueprints"
-    udir.mkdir()
-    (udir / "team.toml").write_text(
+    _write_user_blueprint(
+        udir,
+        "team",
         '[blueprint]\nname = "team"\nversion = "1.0.0"\ntier = "enterprise"\n'
         "[modules.memory]\nenabled = true\n",
-        encoding="utf-8",
     )
     # An operator key exists — so this genuinely exercises the unsigned-preset refusal
     # (verify against the pinned operator key fails), not the no-operator-key branch.
@@ -149,12 +160,11 @@ def test_apply_wrongkey_signed_blueprint_refused_above_personal(tmp_path: Path) 
     """HIGH-1: an attacker self-signs a preset with a RANDOM keypair — the pinned operator
     key does not match it, so apply is refused at enterprise (an unpinned floor is no floor)."""
     udir = tmp_path / "blueprints"
-    udir.mkdir()
-    path = udir / "evil.toml"
-    path.write_text(
+    path = _write_user_blueprint(
+        udir,
+        "evil",
         '[blueprint]\nname = "evil"\nversion = "1.0.0"\ntier = "enterprise"\n'
         "[modules.memory]\nenabled = true\n",
-        encoding="utf-8",
     )
     # The deployment operator key exists...
     from arccli.commands.operator import load_operator_key
@@ -180,12 +190,11 @@ def test_apply_wrongkey_signed_blueprint_refused_above_personal(tmp_path: Path) 
 def test_apply_operatorsigned_blueprint_accepted_above_personal(tmp_path: Path) -> None:
     """HIGH-1 companion: the SAME preset, signed by the operator key, IS accepted."""
     udir = tmp_path / "blueprints"
-    udir.mkdir()
-    path = udir / "team.toml"
-    path.write_text(
+    path = _write_user_blueprint(
+        udir,
+        "team",
         '[blueprint]\nname = "team"\nversion = "1.0.0"\ntier = "enterprise"\n'
         '[modules.memory]\nenabled = true\n[modules.memory.config]\nbrain = "arcmemory"\n',
-        encoding="utf-8",
     )
     _operator_sign(tmp_path, path)
     target = _write_agent(tmp_path, tier="enterprise")
@@ -204,12 +213,11 @@ def test_no_operator_key_denies_above_personal(tmp_path: Path) -> None:
     """HIGH-1 fail-closed: with NO operator key to pin against, an above-personal apply is
     denied rather than falling back to an unpinned (any-signature-accepted) verify."""
     udir = tmp_path / "blueprints"
-    udir.mkdir()
-    path = udir / "team.toml"
-    path.write_text(
+    path = _write_user_blueprint(
+        udir,
+        "team",
         '[blueprint]\nname = "team"\nversion = "1.0.0"\ntier = "enterprise"\n'
         "[modules.memory]\nenabled = true\n",
-        encoding="utf-8",
     )
     # Sign it (self-consistent) but provide NO operator key on disk → cannot pin → deny.
     attacker = AgentIdentity.generate(org="evil", agent_type="executor")
