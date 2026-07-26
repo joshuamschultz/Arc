@@ -319,7 +319,6 @@ dependencies = [
     { name = "arcprompt" },
     { name = "arcrun" },
     { name = "arctrust" },
-    { name = "arcui" },
     { name = "croniter" },
     { name = "httpx" },
     { name = "mcp" },
@@ -368,7 +367,6 @@ requires-dist = [
     { name = "arcprompt", editable = "packages/arcprompt" },
     { name = "arcrun", editable = "packages/arcrun" },
     { name = "arctrust", editable = "packages/arctrust" },
-    { name = "arcui", editable = "packages/arcui" },
     { name = "azure-identity", marker = "extra == 'azure'", specifier = ">=1.15" },
     { name = "azure-keyvault-secrets", marker = "extra == 'azure'", specifier = ">=4.7" },
     { name = "croniter", specifier = ">=2.0,<7" },
@@ -791,12 +789,14 @@ source = { editable = "packages/arctui" }
 dependencies = [
     { name = "arccmd" },
     { name = "textual" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "arccmd", editable = "packages/arccli" },
     { name = "textual", specifier = ">=0.80,<2" },
+    { name = "websockets", specifier = ">=13" },
 ]
 
 [[package]]

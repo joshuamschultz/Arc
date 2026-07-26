@@ -18,6 +18,8 @@ classifiers = [
 ]
 dependencies = [
     "textual>=0.80,<2",
+    # gateway_client uses websockets.asyncio.client (the attach transport) — added in 13.0.
+    "websockets>=13",
     "arccmd>=0.4",
 ]
 
