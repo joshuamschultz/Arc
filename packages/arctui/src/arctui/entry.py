@@ -104,6 +104,28 @@ async def _resolve_endpoint(args: list[str], agent_id: str, team_root: Path) -> 
     )
 
 
+def _maybe_prompt_trust(config_path: Path, cwd: Path) -> None:
+    """Offer to trust ``cwd`` for the agent (grant read/write), persisting to its toml.
+
+    No-op when the folder is already trusted. On a non-interactive stdin the folder is
+    left untrusted (secure default). Anything but an explicit yes declines. Runs before
+    the gateway serves the agent so the spawn path picks the grant up immediately.
+    """
+    from arctui.trust import folder_is_trusted, grant_folder
+
+    if folder_is_trusted(config_path, cwd):
+        return
+    if not sys.stdin.isatty():
+        _logger.warning("Folder %s not trusted (non-interactive); agent has no access.", cwd)
+        return
+    prompt = f"Trust this folder for the agent to read/write?\n  {cwd}\n[y/N] "
+    if input(prompt).strip().lower() in ("y", "yes"):
+        grant_folder(config_path, cwd)
+        _logger.warning("Trusted %s (added to allowed_paths); restart a running gateway.", cwd)
+    else:
+        _logger.warning("Folder %s NOT trusted; the agent cannot read/write it.", cwd)
+
+
 async def _build_transport(
     args: list[str],
 ) -> tuple[object | None, str | None, str | None, str | None]:
@@ -129,6 +151,9 @@ async def _build_transport(
         return None, msg, None, None
 
     agent_id = res.selected.agent_id
+    # Folder-trust: before the gateway serves the agent, offer to grant the launch
+    # directory so the coder can read/write this project (persisted to its toml).
+    _maybe_prompt_trust(res.selected.config_path, Path.cwd())
     try:
         endpoint = await _resolve_endpoint(args, agent_id, team_root)
         base_url: str = endpoint.base_url  # type: ignore[attr-defined]
