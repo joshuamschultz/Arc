@@ -244,7 +244,6 @@ def _generate_arcagent_toml(tier: str, blueprint_name: str | None = None) -> tup
     effective = tier
     if blueprint_name:
         from arccli.blueprints import apply_blueprint, resolve_blueprint
-
         from arccli.commands.blueprint import audit_apply
         from arccli.commands.operator import operator_public_key
 
@@ -299,8 +298,74 @@ def _check_provider_key(provider: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _init_team_fleet(args: argparse.Namespace) -> None:
+    """Scaffold a project-local fleet folder ``.arc/<team>`` with an agent from a blueprint.
+
+    team == root == fleet: ``.arc/<team>`` is a folder of agents discovered by scan
+    (``arc tui --root .arc/<team>``). Reuses ``arc agent create`` to mint the agent, then
+    applies the blueprint config UNDER it and writes the persona to ``workspace/identity.md``.
+    The agent keeps an isolated workspace; project access is granted at ``arc tui`` launch.
+    """
+    import tomllib
+
+    from arccli.blueprints import apply_blueprint, dumps_toml, resolve_blueprint
+    from arccli.commands.agent.create import _create
+
+    team: str = args.team
+    blueprint: str | None = getattr(args, "blueprint", None)
+    model: str = getattr(args, "model", None) or "anthropic/claude-sonnet-4-5-20250929"
+    base_tier: str = getattr(args, "tier", None) or "personal"
+
+    bp = None
+    if blueprint:
+        try:
+            bp = resolve_blueprint(blueprint, tier=base_tier)
+        except (FileNotFoundError, ValueError) as exc:
+            sys.stderr.write(f"Error: {exc}\n")
+            sys.exit(1)
+    tier = bp.tier if bp else base_tier
+    name: str = getattr(args, "name", None) or (blueprint or team)
+
+    team_root = Path.cwd() / ".arc" / team
+    agent_dir = team_root / name
+    if agent_dir.exists():
+        sys.stderr.write(f"Error: agent already exists: {agent_dir}\n")
+        sys.exit(1)
+
+    # Mint the agent via the existing create machinery (DID, three config files, workspace).
+    _create(
+        argparse.Namespace(
+            name=name, parent_dir=str(team_root), model=model, tier=tier, no_register=True
+        )
+    )
+
+    # Merge the blueprint config UNDER the created agent's config, then write the persona.
+    if bp is not None:
+        cfg_path = agent_dir / "arcagent.toml"
+        base = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
+        merged = apply_blueprint(bp, base, deployment_tier=tier)
+        cfg_path.write_text(dumps_toml(merged), encoding="utf-8")
+        if bp.persona:
+            identity = agent_dir / "workspace" / "identity.md"
+            identity.write_text(bp.persona.rstrip() + "\n", encoding="utf-8")
+
+    _write("")
+    _write(f"  Fleet '{team}' ready — agent '{name}' at {agent_dir}")
+    if blueprint:
+        applied = "  (persona applied)" if (bp and bp.persona) else ""
+        _write(f"  Blueprint: {blueprint}{applied}")
+    _write("")
+    _write("  Start coding:")
+    _write(f"    arc tui --root .arc/{team}")
+    _write("")
+
+
 def _init(args: argparse.Namespace) -> None:
     """Initialize Arc — configure deployment tier and write config files."""
+    if getattr(args, "team", None):
+        _init_team_fleet(args)
+        return
+
     tier: str | None = getattr(args, "tier", None)
     config_dir: str | None = getattr(args, "config_dir", None)
     provider: str | None = getattr(args, "provider", None)
@@ -443,7 +508,23 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--blueprint",
         default=None,
-        help="Bootstrap from a preset blueprint (deep-merged UNDER init defaults).",
+        help="Bootstrap from a preset blueprint (name or path to a shared folder).",
+    )
+    parser.add_argument(
+        "--team",
+        default=None,
+        help="Scaffold a project-local fleet .arc/<team> with an agent from --blueprint "
+        "(team == root == fleet). Reach it with `arc tui --root .arc/<team>`.",
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="Agent name for a --team scaffold (default: the blueprint name).",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="LLM model for a --team scaffolded agent.",
     )
     return parser
 
