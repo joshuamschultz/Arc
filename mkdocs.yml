@@ -10,6 +10,9 @@ docs_dir: docs
 theme:
   name: material
   language: en
+  # Use the brand's system fonts (Verdana body / Georgia headings) instead of
+  # Google's Roboto — brand.css sets the families.
+  font: false
   icon:
     repo: fontawesome/brands/github
   palette:
@@ -64,6 +67,9 @@ markdown_extensions:
 plugins:
   - search
 
+extra_css:
+  - stylesheets/brand.css
+
 nav:
   - Home: README.md
   - Orientation:
@@ -102,6 +108,7 @@ nav:
       - ADR-026 Append-only transform_context: architecture/decisions/ADR-026-transform-context-append-only-with-emergency-valve.md
       - ADR-027 Per-run tool-set freeze: architecture/decisions/ADR-027-per-run-tool-set-freeze-security-invariant.md
       - ADR-028 Append-only prefix contract: architecture/decisions/ADR-028-append-only-prefix-contract-debug-gated.md
+      - ADR-029 Workspace vs working_dir: architecture/decisions/ADR-029-workspace-vs-working-dir-and-state-persistence.md
   - Deploy:
       - Docker: deploy/docker.md
       - Single node: deploy/single-node.md

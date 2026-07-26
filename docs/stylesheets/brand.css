@@ -1,0 +1,103 @@
+/* CTG Federal brand skin for the Arc docs (MkDocs Material).
+ * Re-maps Material's design tokens to the brand palette + typography — no theme
+ * replacement. Source: CTG-Federal-Brand-Standard-v2. */
+
+:root {
+  --ctg-navy:        #002550;
+  --ctg-yale:        #003B82;
+  --ctg-medium:      #0055BC;
+  --ctg-azure:       #0073FE;
+  --ctg-orange:      #F68D2E;
+  --ctg-ink:         #0B1220;
+  --ctg-charcoal:    #54585C;
+  --ctg-bone:        #F4F5F6;
+  --ctg-light-gray:  #E9EAEB;
+  --ctg-white:       #FFFFFF;
+
+  --ctg-font-body:    Verdana, Geneva, "DejaVu Sans", sans-serif;
+  --ctg-font-head:    Georgia, "Times New Roman", Times, serif;
+  --ctg-font-mono:    "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
+}
+
+/* Typography — Verdana body, Georgia headings, JetBrains-Mono code. */
+:root {
+  --md-text-font-family: var(--ctg-font-body);
+  --md-code-font-family: var(--ctg-font-mono);
+}
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  font-family: var(--ctg-font-head);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Light scheme ---- */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        var(--ctg-navy);
+  --md-primary-fg-color--light: var(--ctg-yale);
+  --md-primary-fg-color--dark:  var(--ctg-ink);
+  --md-accent-fg-color:         var(--ctg-azure);
+  --md-typeset-a-color:         var(--ctg-medium);
+  --md-default-bg-color:        var(--ctg-white);
+  --md-footer-bg-color:         var(--ctg-ink);
+}
+[data-md-color-scheme="default"] .md-typeset h1,
+[data-md-color-scheme="default"] .md-typeset h2 {
+  color: var(--ctg-navy);
+}
+
+/* ---- Dark scheme (slate) ---- */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        var(--ctg-navy);
+  --md-primary-fg-color--light: var(--ctg-medium);
+  --md-primary-fg-color--dark:  var(--ctg-ink);
+  --md-accent-fg-color:         var(--ctg-azure);
+  --md-typeset-a-color:         #4da3ff;              /* azure, lifted for contrast on dark */
+  --md-default-bg-color:        var(--ctg-ink);
+  --md-default-fg-color:        #d7dde5;
+  --md-code-bg-color:           #0f1830;
+}
+[data-md-color-scheme="slate"] .md-typeset h1,
+[data-md-color-scheme="slate"] .md-typeset h2 {
+  color: var(--ctg-white);
+}
+
+/* Header: solid navy, thin azure keyline (federal, not flashy). */
+.md-header {
+  background-color: var(--ctg-navy);
+  box-shadow: inset 0 -2px 0 0 var(--ctg-azure);
+}
+.md-tabs { background-color: var(--ctg-navy); }
+
+/* Links: no underline, azure hover — matches the brand standard. */
+.md-typeset a { text-decoration: none; }
+.md-typeset a:hover { text-decoration: underline; text-decoration-color: var(--ctg-azure); }
+
+/* Section headings get a left azure rule; h2 a bottom keyline. */
+.md-typeset h2 {
+  border-bottom: 1px solid var(--ctg-light-gray);
+  padding-bottom: 0.2em;
+}
+[data-md-color-scheme="slate"] .md-typeset h2 { border-bottom-color: #24304a; }
+
+/* Admonitions: brand the common ones (note=azure, warning=orange). */
+.md-typeset .admonition.note,
+.md-typeset details.note { border-left-color: var(--ctg-azure); }
+.md-typeset .note > .admonition-title,
+.md-typeset .note > summary { background-color: rgba(0, 115, 254, 0.1); }
+.md-typeset .admonition.warning,
+.md-typeset details.warning { border-left-color: var(--ctg-orange); }
+.md-typeset .warning > .admonition-title,
+.md-typeset .warning > summary { background-color: rgba(246, 141, 46, 0.12); }
+
+/* Inline code: subtle bone chip in light, deep navy in dark. */
+[data-md-color-scheme="default"] .md-typeset code {
+  background-color: var(--ctg-bone);
+  color: var(--ctg-navy);
+}
+
+/* Buttons / primary actions pick up azure on hover via the accent var above.
+ * Search + nav active states inherit the navy primary. */
+.md-nav__item .md-nav__link--active { color: var(--ctg-medium); font-weight: 700; }
