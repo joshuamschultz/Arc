@@ -40,7 +40,14 @@ class _FailingAgent:
     async def session(self, key: str) -> str:
         return key
 
-    async def run(self, input_text: str, *, session: Any) -> AsyncIterator[StreamEvent]:
+    async def run(
+        self,
+        input_text: str,
+        *,
+        session: Any,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         yield TokenEvent(text="partial")
         raise RuntimeError("model exploded")
 
@@ -55,7 +62,14 @@ class _CountingAgent:
     async def session(self, key: str) -> str:
         return key
 
-    async def run(self, input_text: str, *, session: Any) -> AsyncIterator[StreamEvent]:
+    async def run(
+        self,
+        input_text: str,
+        *,
+        session: Any,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         for i in range(100):
             self.produced += 1
             yield TokenEvent(text=str(i))

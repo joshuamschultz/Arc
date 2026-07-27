@@ -16,6 +16,7 @@ import contextlib
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol
@@ -427,7 +428,7 @@ def _register_fleet_startup(app: Any, team_root: Path) -> Any:
         if session_router is not None:
             from arcgateway.channel_delivery import make_channel_deliver_fn
 
-            def deliver_for(agent_did: str) -> Any:
+            def deliver_for(agent_did: Callable[[], str]) -> Any:
                 return make_channel_deliver_fn(session_router, agent_did)
 
         count = await serve_fleet_agents(team_root, fleet, warm=_warm, deliver_for=deliver_for)

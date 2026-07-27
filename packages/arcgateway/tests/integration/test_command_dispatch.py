@@ -10,7 +10,6 @@ Pins the crux guarantees:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any
 
 import pytest
 
@@ -38,6 +37,7 @@ class _RecordingExecutor:
 
 class _CapturingAdapter:
     name = "web"
+    agent_did = ""  # one web adapter fronts every agent
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
@@ -97,8 +97,8 @@ async def test_message_after_new_lands_in_the_rotated_session() -> None:
 
 @pytest.mark.asyncio
 async def test_help_command_lists_new_and_does_not_rotate() -> None:
-    router = SessionRouter(executor=_RecordingExecutor(), adapter=_CapturingAdapter())
-    adapter: Any = router._adapters["web"]
+    adapter = _CapturingAdapter()
+    router = SessionRouter(executor=_RecordingExecutor(), adapter=adapter)
 
     before = router.current_session_key(_AGENT, _USER)
     await router.handle(_event("/help"))

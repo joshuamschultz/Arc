@@ -44,6 +44,7 @@ class _ConcreteAdapter:
     """
 
     name = "concrete"
+    agent_did = "did:arc:local:executor/concrete"
 
     async def connect(self) -> None:
         pass

@@ -98,6 +98,10 @@ class PythonAdapter:
 
     name: str = "python"
 
+    agent_did: str = ""
+    """One in-process adapter fronts every agent, so it claims no single DID —
+    the router's outbound key is (name, "") for it, as for web."""
+
     def __init__(self, *, max_inflight: int = _DEFAULT_MAX_INFLIGHT) -> None:
         self._max_inflight = max_inflight
         # session_key -> queue. Cleared on done-delta or on stream timeout

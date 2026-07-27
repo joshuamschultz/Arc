@@ -141,12 +141,17 @@ async def bootstrap_infra(team_root: Path) -> Any:
     return handle
 
 
+def _did_getter(agent: Any) -> Callable[[], str]:
+    """Read ``agent.did`` on demand, captured per agent (not per loop variable)."""
+    return lambda: str(agent.did)
+
+
 async def serve_fleet_agents(
     team_root: Path,
     fleet: Any,
     *,
     warm: Callable[[str, Any], Awaitable[Any]] | None = None,
-    deliver_for: Callable[[str], Any] | None = None,
+    deliver_for: Callable[[Callable[[], str]], Any] | None = None,
 ) -> int:
     """Start every discovered team agent so its messaging inbox loop runs (MSG4).
 
@@ -178,8 +183,10 @@ async def serve_fleet_agents(
             # Wire channel delivery BEFORE startup so agent:ready carries it and
             # the scheduler can deliver a fired schedule's output — bound to THIS
             # agent's DID so it goes out through this agent's bot, not another's.
+            # Late-bound: startup() is what materialises the identity, so
+            # ``agent.did`` is still "" here and must be read at send time.
             if deliver_for is not None:
-                deliver_fn = deliver_for(agent.did)
+                deliver_fn = deliver_for(_did_getter(agent))
                 if deliver_fn is not None:
                     agent.set_channel_deliver_fn(deliver_fn)
             await agent.startup()

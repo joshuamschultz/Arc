@@ -56,9 +56,7 @@ def gateway_connect_telegram_handler(args: list[str]) -> None:
     ns = parser.parse_args(args)
 
     agent_dir = Path(ns.agent).expanduser().resolve()
-    token = ns.token or getpass.getpass(
-        "Paste your Telegram bot token from @BotFather (hidden): "
-    )
+    token = ns.token or getpass.getpass("Paste your Telegram bot token from @BotFather (hidden): ")
     user_id = ns.user_id if ns.user_id is not None else _prompt_user_id()
 
     try:

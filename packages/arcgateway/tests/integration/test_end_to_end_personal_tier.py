@@ -57,7 +57,14 @@ class _EchoAgent:
     async def session(self, key: str) -> str:
         return key
 
-    async def run(self, input_text: str, *, session: Any) -> AsyncIterator[StreamEvent]:
+    async def run(
+        self,
+        input_text: str,
+        *,
+        session: Any,
+        reply_target: str | None = None,
+        reply_label: str | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         yield TokenEvent(text=f"echo: {input_text}")
         yield TurnEndEvent(final_text=f"echo: {input_text}")
 

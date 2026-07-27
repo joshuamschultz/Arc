@@ -50,6 +50,7 @@ async def test_protocol_default_calls_send_and_returns_none() -> None:
 
     class _MinimalAdapter:
         name = "minimal"
+        agent_did = ""
 
         async def connect(self) -> None:
             pass

@@ -30,15 +30,27 @@ def _clear_fleet() -> Iterator[None]:
 
 
 class _FakeAgent:
+    """Fake ArcAgent. ``did`` is empty until ``startup()`` — as in the real one,
+    where identity is materialised inside startup (``ArcAgent.did`` returns ""
+    before that). Delivery must be wired BEFORE startup so ``agent:ready``
+    carries it, so anything that snapshots ``did`` at wiring time captures "".
+    """
+
     def __init__(self, did: str, *, fail: bool = False) -> None:
-        self.did = did
+        self._real_did = did
+        self.did = ""
         self._fail = fail
         self.started = False
+        self.deliver_fn: Any = None
 
     async def startup(self) -> None:
         if self._fail:
             raise RuntimeError("boom")
+        self.did = self._real_did
         self.started = True
+
+    def set_channel_deliver_fn(self, fn: Any) -> None:
+        self.deliver_fn = fn
 
 
 def _team(tmp_path: Path, names: list[str]) -> Path:
@@ -87,6 +99,57 @@ async def test_starts_registers_and_warms_every_agent(
     # The gateway factory can now reuse the SAME started instance for web chat.
     assert fleet.get("did:arc:local:agent/josh1234") is agents["josh_agent"]
     assert sorted(warmed) == ["did:arc:local:agent/josh1234", "did:arc:local:agent/mark5678"]
+
+
+@pytest.mark.asyncio
+async def test_fired_schedule_delivers_through_the_agents_own_bot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fleet agent's scheduled output reaches ITS bot, through the real router.
+
+    The whole path: serve_fleet_agents wires delivery pre-startup → the agent's
+    DID appears at startup → a fired schedule calls the bound closure → the
+    router picks the adapter for (telegram, that agent's DID). Two telegram bots
+    are registered so the router's single-bot fallback cannot mask a wrong DID.
+    """
+    from arcgateway.channel_delivery import make_channel_deliver_fn
+    from arcgateway.delivery import DeliveryTarget
+    from arcgateway.session import SessionRouter
+
+    class _RecordingAdapter:
+        def __init__(self, agent_did: str) -> None:
+            self.name = "telegram"
+            self.agent_did = agent_did
+            self.sent: list[str] = []
+
+        async def send(self, target: DeliveryTarget, message: str) -> None:
+            self.sent.append(message)
+
+    team_root = _team(tmp_path, ["sales_agent", "josh_agent"])
+    agents = {
+        "sales_agent": _FakeAgent("did:arc:local:executor/7e3e1a09"),
+        "josh_agent": _FakeAgent("did:arc:local:executor/c0bef560"),
+    }
+    _install_loader(monkeypatch, agents)
+
+    router = SessionRouter(executor=None)
+    sales_bot = _RecordingAdapter("did:arc:local:executor/7e3e1a09")
+    josh_bot = _RecordingAdapter("did:arc:local:executor/c0bef560")
+    router.register_adapter(sales_bot)
+    router.register_adapter(josh_bot)
+
+    count = await _serve.serve_fleet_agents(
+        team_root,
+        FleetRegistry(),
+        deliver_for=lambda did: make_channel_deliver_fn(router, did),
+    )
+
+    assert count == 2
+    # The scheduler fires and delivers via the callback bound at agent:ready.
+    await agents["sales_agent"].deliver_fn("telegram:8293394811", "daily focus report")
+
+    assert sales_bot.sent == ["daily focus report"]
+    assert josh_bot.sent == []
 
 
 @pytest.mark.asyncio

@@ -23,10 +23,16 @@ _logger = logging.getLogger("arcgateway.channel_delivery")
 
 ChannelDeliverFn = Callable[[str, str], Awaitable[None]]
 
+# The delivering agent's DID, either eagerly (the gateway's per-session factory
+# already knows it) or as a callable resolved at send time (the always-on fleet
+# must wire delivery BEFORE ArcAgent.startup(), which is where the DID is
+# materialised — snapshotting it there captures "").
+AgentDidSource = str | Callable[[], str]
+
 
 def make_channel_deliver_fn(
     session_router: SessionRouter,
-    agent_did: str = "",
+    agent_did: AgentDidSource = "",
 ) -> ChannelDeliverFn:
     """Return a ``(target_str, message) -> None`` closure over ``session_router``.
 
@@ -45,9 +51,10 @@ def make_channel_deliver_fn(
         except ValueError:
             _logger.warning("channel delivery: bad target %r — dropping", target_str)
             return
-        await session_router.send(target, message, agent_did=agent_did)
+        did = agent_did() if callable(agent_did) else agent_did
+        await session_router.send(target, message, agent_did=did)
 
     return _deliver
 
 
-__all__ = ["ChannelDeliverFn", "make_channel_deliver_fn"]
+__all__ = ["AgentDidSource", "ChannelDeliverFn", "make_channel_deliver_fn"]

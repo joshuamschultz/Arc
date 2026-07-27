@@ -22,7 +22,7 @@ def test_reads_did_from_arcagent_toml(tmp_path: Path) -> None:
 
 
 def test_missing_config_raises(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="no arcagent.toml"):
+    with pytest.raises(ValueError, match=r"no arcagent\.toml"):
         _agent_did(tmp_path)
 
 

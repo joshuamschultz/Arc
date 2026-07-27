@@ -65,6 +65,11 @@ class TestPairingDmDelivery:
             store = PairingStore(db_path=db_path, tier="personal")
 
             mock_adapter = MagicMock()
+            # A MagicMock's `.name` is a child mock, not a string — set the
+            # Protocol's identity fields explicitly or the router keys its
+            # registry by a mock and pairing DMs never resolve an adapter.
+            mock_adapter.name = "telegram"
+            mock_adapter.agent_did = "did:arc:agent:bot"
             mock_adapter.send = AsyncMock()
 
             PairingInterceptor(
@@ -133,6 +138,11 @@ class TestPairingDmDelivery:
             store = PairingStore(db_path=db_path, tier="personal")
 
             mock_adapter = MagicMock()
+            # A MagicMock's `.name` is a child mock, not a string — set the
+            # Protocol's identity fields explicitly or the router keys its
+            # registry by a mock and pairing DMs never resolve an adapter.
+            mock_adapter.name = "telegram"
+            mock_adapter.agent_did = "did:arc:agent:bot"
             mock_adapter.send = AsyncMock()
 
             router = SessionRouter(
@@ -158,6 +168,11 @@ class TestPairingDmDelivery:
             store = PairingStore(db_path=db_path, tier="personal")
 
             mock_adapter = MagicMock()
+            # A MagicMock's `.name` is a child mock, not a string — set the
+            # Protocol's identity fields explicitly or the router keys its
+            # registry by a mock and pairing DMs never resolve an adapter.
+            mock_adapter.name = "telegram"
+            mock_adapter.agent_did = "did:arc:agent:bot"
             mock_adapter.send = AsyncMock()
 
             router = SessionRouter(
