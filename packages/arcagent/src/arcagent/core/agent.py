@@ -617,6 +617,7 @@ class ArcAgent:
         max_tokens: int | None = None,
         max_cost_usd: float | None = None,
         run_id: str | None = None,
+        reply_target: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Drive one agent turn. The only execution entry — always
         session-bound, always streaming.
@@ -640,6 +641,12 @@ class ArcAgent:
         ``run_id`` optionally pins the run's correlation id (the task dispatcher
         passes it so a task links its run before the loop starts); when omitted
         arcrun mints one.
+
+        ``reply_target`` is the channel this turn arrived on ("platform:chat_id"),
+        supplied by the gateway executor for interactive channel turns. It is
+        recorded in the per-turn context so a capability like the scheduler can
+        default a new schedule's delivery back to this channel. None for
+        non-channel runs (scheduler-driven, messaging inbox).
         """
         self._ensure_started()
         async for event in dispatch_stream(
@@ -650,6 +657,7 @@ class ArcAgent:
             max_tokens=max_tokens,
             max_cost_usd=max_cost_usd,
             run_id=run_id,
+            reply_target=reply_target,
         ):
             yield event
 

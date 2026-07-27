@@ -25,6 +25,7 @@ from arcrun import run_async as arcrun_run_async
 from arcrun import run_stream as arcrun_run_stream
 
 from arcagent.capabilities.provider import WORKSPACE_ROOT, AgentCapabilityProvider, _Skill
+from arcagent.core import turn_context
 from arcagent.core.agent_lifecycle import activate_runtime_bindings
 from arcagent.core.module_bus import ModuleBus
 from arcagent.core.session_internal import SessionManager
@@ -234,6 +235,7 @@ async def dispatch_stream(
     max_tokens: int | None = None,
     max_cost_usd: float | None = None,
     run_id: str | None = None,
+    reply_target: str | None = None,
 ) -> AsyncIterator[StreamEvent]:
     """The single execution path: stream one agent turn into a session.
 
@@ -250,8 +252,14 @@ async def dispatch_stream(
 
     Emits ``agent:pre_respond`` (via ``build_run_context``) before the loop and
     ``agent:post_respond`` after the stream is fully consumed.
+
+    ``reply_target`` (the inbound channel for interactive turns) is bound to the
+    per-turn context here — the same entry point that replays module runtime
+    bindings — so tool dispatches inside the loop inherit it (e.g. the scheduler
+    defaults a new schedule's delivery to this channel).
     """
     activate_runtime_bindings(agent)
+    turn_context.set_inbound_channel(reply_target)
     await session.append_message({"role": "user", "content": input_text})
     telemetry, bus, model, provider, system_prompt, bridge = await build_run_context(
         agent, input_text

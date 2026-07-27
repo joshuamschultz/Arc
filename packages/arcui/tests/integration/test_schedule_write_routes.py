@@ -125,6 +125,25 @@ class TestEdit:
         assert on_disk["metadata"]["run_count"] == 3
         assert _entry(agent_dir, "sched_interval01")["every_seconds"] == 300
 
+    def test_set_deliver_to(self, ctx: tuple[TestClient, Path]) -> None:
+        client, agent_dir = ctx
+        resp = client.patch(_URL, headers=_op(), json={"deliver_to": "telegram:12345"})
+        assert resp.status_code == 200
+        assert _entry(agent_dir, "sched_ffa77e980f06")["deliver_to"] == "telegram:12345"
+
+    def test_clear_deliver_to(self, ctx: tuple[TestClient, Path]) -> None:
+        client, agent_dir = ctx
+        client.patch(_URL, headers=_op(), json={"deliver_to": "telegram:1"})
+        resp = client.patch(_URL, headers=_op(), json={"deliver_to": ""})
+        assert resp.status_code == 200
+        assert _entry(agent_dir, "sched_ffa77e980f06")["deliver_to"] is None
+
+    def test_invalid_deliver_to_400(self, ctx: tuple[TestClient, Path]) -> None:
+        client, _ = ctx
+        resp = client.patch(_URL, headers=_op(), json={"deliver_to": "no-colon"})
+        assert resp.status_code == 400
+        assert "deliver_to" in resp.json()["error"]
+
     def test_toggle_enabled_only(self, ctx: tuple[TestClient, Path]) -> None:
         client, agent_dir = ctx
         resp = client.patch(_URL, headers=_op(), json={"enabled": False})

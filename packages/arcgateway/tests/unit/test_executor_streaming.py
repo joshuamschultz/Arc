@@ -34,12 +34,16 @@ class _StreamingAgent:
         self.agent_did = agent_did
         self._tokens = tokens
         self.session_keys: list[str] = []
+        self.reply_targets: list[str | None] = []
 
     async def session(self, key: str) -> str:
         self.session_keys.append(key)
         return key
 
-    async def run(self, input_text: str, *, session: Any) -> AsyncIterator[StreamEvent]:
+    async def run(
+        self, input_text: str, *, session: Any, reply_target: str | None = None
+    ) -> AsyncIterator[StreamEvent]:
+        self.reply_targets.append(reply_target)
         for tok in self._tokens:
             yield TokenEvent(text=tok)
         yield TurnEndEvent(final_text="".join(self._tokens))
@@ -65,6 +69,8 @@ async def test_streams_real_token_deltas() -> None:
     assert "".join(d.content for d in token_deltas) == "hello world"
     # The executor bound the event's session_key to a real agent session.
     assert agent.session_keys == ["sess-1"]
+    # The inbound channel is threaded so a mid-chat schedule can default delivery.
+    assert agent.reply_targets == ["telegram:1"]
 
 
 @pytest.mark.asyncio

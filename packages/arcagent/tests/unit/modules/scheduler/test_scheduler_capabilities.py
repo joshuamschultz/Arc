@@ -246,6 +246,52 @@ class TestCrudTools:
         assert len(listed) == 1
         assert listed[0]["id"] == created["id"]
 
+    async def test_schedule_create_explicit_deliver_to(self, configured: Path) -> None:
+        import json
+
+        from arcagent.modules.scheduler.capabilities import schedule_create
+
+        created = json.loads(
+            await schedule_create(
+                type="interval",
+                prompt="Heartbeat",
+                every_seconds=300,
+                deliver_to="telegram:42",
+            )
+        )
+        assert created["deliver_to"] == "telegram:42"
+
+    async def test_schedule_create_defaults_deliver_to_current_channel(
+        self, configured: Path
+    ) -> None:
+        import json
+
+        from arcagent.core import turn_context
+        from arcagent.modules.scheduler.capabilities import schedule_create
+
+        turn_context.set_inbound_channel("telegram:777")
+        try:
+            created = json.loads(
+                await schedule_create(
+                    type="interval", prompt="Heartbeat", every_seconds=300
+                )
+            )
+            assert created["deliver_to"] == "telegram:777"
+        finally:
+            turn_context.set_inbound_channel(None)
+
+    async def test_schedule_create_no_channel_no_deliver_to(self, configured: Path) -> None:
+        import json
+
+        from arcagent.core import turn_context
+        from arcagent.modules.scheduler.capabilities import schedule_create
+
+        turn_context.set_inbound_channel(None)
+        created = json.loads(
+            await schedule_create(type="interval", prompt="Heartbeat", every_seconds=300)
+        )
+        assert created["deliver_to"] is None
+
     async def test_schedule_update(self, configured: Path) -> None:
         import json
 

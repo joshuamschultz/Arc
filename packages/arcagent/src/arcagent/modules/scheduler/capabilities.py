@@ -25,6 +25,7 @@ import json
 import logging
 from typing import Any
 
+from arcagent.core import turn_context
 from arcagent.modules.scheduler import _runtime
 from arcagent.modules.scheduler.models import (
     ScheduleEntry,
@@ -155,7 +156,7 @@ async def schedule_create(
                 "every_seconds": every_seconds,
                 "active_hours": active_hours,
                 "timeout_seconds": resolved_timeout,
-                "deliver_to": deliver_to or _runtime.current_channel(),
+                "deliver_to": deliver_to or turn_context.inbound_channel(),
             },
             context=st.config.validation_context(),
         )

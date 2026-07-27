@@ -60,13 +60,20 @@ function ScheduleDetail({
   const [everySeconds, setEverySeconds] = useState(String(schedule.every_seconds ?? ''))
   const [at, setAt] = useState(String(schedule.at ?? ''))
   const [timeoutSeconds, setTimeoutSeconds] = useState(String(schedule.timeout_seconds ?? ''))
+  const [deliverTo, setDeliverTo] = useState(String(schedule.deliver_to ?? ''))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const save = async () => {
     setSaving(true)
     setError(null)
-    const body: Dict = { enabled, prompt, timeout_seconds: Number(timeoutSeconds) }
+    const body: Dict = {
+      enabled,
+      prompt,
+      timeout_seconds: Number(timeoutSeconds),
+      // Empty clears delivery (result stays internal); the route normalizes "" → null.
+      deliver_to: deliverTo.trim(),
+    }
     if (type === 'cron') body.expression = expression
     else if (type === 'interval') body.every_seconds = Number(everySeconds)
     else if (type === 'once') body.at = at
@@ -169,6 +176,18 @@ function ScheduleDetail({
                 onChange={(e) => setTimeoutSeconds(e.target.value)}
               />
             </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Deliver to (channel)</label>
+              <Input
+                value={deliverTo}
+                onChange={(e) => setDeliverTo(e.target.value)}
+                placeholder="telegram:12345 — blank keeps the result internal"
+              />
+              <p className="text-xs text-muted-foreground">
+                Where the run's output is sent when it fires. Format
+                <span className="font-mono"> platform:chat_id</span>. Leave blank for no delivery.
+              </p>
+            </div>
             {error && <p className="text-xs text-destructive">{error}</p>}
             <div className="flex gap-2">
               <Button size="sm" disabled={saving || !prompt.trim()} onClick={save}>
@@ -186,6 +205,7 @@ function ScheduleDetail({
               label="Timeout"
               value={schedule.timeout_seconds != null ? `${schedule.timeout_seconds}s` : '—'}
             />
+            <Field label="Deliver to" value={String(schedule.deliver_to ?? '—')} />
             <Field label="Schedule id" value={String(schedule.id ?? '—')} />
             <Field label="Created by" value={String(metadata.created_by ?? '—')} />
             <Field label="Run count" value={String(metadata.run_count ?? 0)} />

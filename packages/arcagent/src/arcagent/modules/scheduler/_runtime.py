@@ -55,24 +55,6 @@ _state_var: contextvars.ContextVar[_State | None] = contextvars.ContextVar(
     "arcagent_scheduler_state", default=None
 )
 
-# The inbound channel of the CURRENT turn ("platform:chat_id"), set by the
-# turn-dispatch entry point so ``schedule_create`` invoked during a chat can
-# default its ``deliver_to`` to the channel the request arrived on. None
-# outside an interactive turn (e.g. a scheduler-driven or idle run).
-_current_channel_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "arcagent_scheduler_current_channel", default=None
-)
-
-
-def set_current_channel(target: str | None) -> None:
-    """Record the current turn's inbound channel for ``deliver_to`` defaulting."""
-    _current_channel_var.set(target)
-
-
-def current_channel() -> str | None:
-    """The current turn's inbound channel target, or None if not in a chat turn."""
-    return _current_channel_var.get()
-
 
 def configure(
     *,
@@ -127,12 +109,4 @@ def reset() -> None:
     _state_var.set(None)
 
 
-__all__ = [
-    "AgentRunFn",
-    "bind",
-    "configure",
-    "current_channel",
-    "reset",
-    "set_current_channel",
-    "state",
-]
+__all__ = ["AgentRunFn", "bind", "configure", "reset", "state"]

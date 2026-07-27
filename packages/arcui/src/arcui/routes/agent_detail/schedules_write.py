@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 from datetime import datetime
@@ -38,6 +39,10 @@ from arcui.schemas import ErrorResponse
 _MAX_PROMPT_LENGTH = 500
 _MIN_INTERVAL_SECONDS = 60
 _MAX_TIMEOUT_SECONDS = 3600
+
+# Delivery target, mirroring arcagent's ScheduleEntry._DELIVER_TO_RE. arcui
+# can't import the agent model, so the shape is re-validated here.
+_DELIVER_TO_RE = re.compile(r"^[a-z][a-z0-9_]*:[^:]+(:[^:]+)?$")
 
 # Fields a PATCH may write. Timing fields are gated on the schedule's own type
 # below; id / type / metadata are managed by the scheduler engine, never a
@@ -72,7 +77,7 @@ def _collect_edits(body: dict[str, Any], schedule_type: str) -> dict[str, Any]:
     an interval schedule (or vice-versa) is silently dropped.
     """
     edits: dict[str, Any] = {}
-    for key in ("enabled", "prompt", "timeout_seconds"):
+    for key in ("enabled", "prompt", "timeout_seconds", "deliver_to"):
         if key in body:
             edits[key] = body[key]
     timing = _TYPE_TIMING_FIELD.get(schedule_type)
@@ -97,6 +102,13 @@ def _validate_edits(edits: dict[str, Any]) -> str | None:
             return "timeout_seconds must be a positive integer"
         if timeout > _MAX_TIMEOUT_SECONDS:
             return f"timeout_seconds exceeds maximum ({_MAX_TIMEOUT_SECONDS})"
+    if "deliver_to" in edits:
+        target = edits["deliver_to"]
+        # None / "" clears delivery (result stays internal); else validate shape.
+        if target in (None, ""):
+            edits["deliver_to"] = None
+        elif not isinstance(target, str) or not _DELIVER_TO_RE.match(target):
+            return "deliver_to must be 'platform:chat_id[:thread_id]'"
     if "expression" in edits and not croniter.is_valid(str(edits["expression"])):
         return f"invalid cron expression: {edits['expression']}"
     if "every_seconds" in edits:

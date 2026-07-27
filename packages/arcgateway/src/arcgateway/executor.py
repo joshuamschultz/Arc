@@ -136,6 +136,17 @@ class Executor(Protocol):
         ...  # Protocol body — not called
 
 
+def _reply_target(event: InboundEvent) -> str:
+    """The channel address a turn arrived on, as ``platform:chat_id[:thread_id]``.
+
+    Handed to ``agent.run`` so a schedule created mid-conversation defaults its
+    delivery back to this channel (arcagent stays string-only; it never parses
+    this). Mirrors ``DeliveryTarget``'s canonical form without importing it.
+    """
+    base = f"{event.platform}:{event.chat_id}"
+    return f"{base}:{event.thread_id}" if event.thread_id else base
+
+
 # ---------------------------------------------------------------------------
 # AsyncioExecutor — personal / enterprise tier
 # ---------------------------------------------------------------------------
@@ -263,7 +274,11 @@ class AsyncioExecutor:
             try:
                 agent = await self._agent_factory(event.agent_did)
                 session = await agent.session(event.session_key)
-                async for stream_event in agent.run(event.message, session=session):
+                async for stream_event in agent.run(
+                    event.message,
+                    session=session,
+                    reply_target=_reply_target(event),
+                ):
                     if isinstance(stream_event, TokenEvent):
                         yield Delta(
                             kind="token",
