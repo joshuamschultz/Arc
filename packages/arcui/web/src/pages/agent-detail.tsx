@@ -2,6 +2,9 @@ import { useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import { apiPost } from '@/lib/api'
 import { StatusDot } from '@/components/status-badge'
 import { StatCard } from '@/components/stat-card'
 import { DataTable } from '@/components/data-table'
@@ -61,7 +64,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import type { CapabilityInventoryItem, Dict, Task } from '@/lib/types'
 
 const TABS = [
-  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'prompts', 'tasks', 'schedules', 'policy', 'workspace', 'files',
+  'overview', 'identity', 'sessions', 'llm', 'skills', 'tools', 'prompts', 'tasks', 'schedules', 'policy', 'workspace', 'files', 'connect',
 ] as const
 type TabId = (typeof TABS)[number]
 
@@ -739,6 +742,91 @@ function PromptsTab({ agentId }: { agentId: string }) {
   )
 }
 
+function ConnectTab({ agentId }: { agentId: string }) {
+  const [operatorMode] = useOperatorMode()
+  const [token, setToken] = useState('')
+  const [userId, setUserId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    setBusy(true)
+    setError(null)
+    setDone(null)
+    try {
+      const uid = Number(userId.trim())
+      if (!Number.isInteger(uid)) throw new Error('Your Telegram user ID must be a number.')
+      const res = await apiPost<{ message?: string }>(`/api/agents/${agentId}/connect-telegram`, {
+        token: token.trim(),
+        user_id: uid,
+      })
+      setDone(res.message ?? 'Connected.')
+      setToken('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to connect Telegram')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="max-w-xl">
+      <InfoCard title="Connect Telegram">
+        {!operatorMode && (
+          <p className="mb-3 rounded-md border border-border bg-muted/40 p-2 text-sm text-muted-foreground">
+            Turn on operator mode (top-right) to connect a bot.
+          </p>
+        )}
+        <p className="mb-4 text-sm text-muted-foreground">
+          Create a bot with <span className="font-mono">@BotFather</span> (
+          <span className="font-mono">/newbot</span>), paste its token below, and add your Telegram
+          user ID (message <span className="font-mono">@userinfobot</span> to get it). The token is
+          stored securely on the server and never shown again.
+        </p>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
+              Bot token
+            </label>
+            <Input
+              type="password"
+              autoComplete="off"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="8012345678:AA…"
+              disabled={!operatorMode || busy}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
+              Your Telegram user ID
+            </label>
+            <Input
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder="8293394811"
+              disabled={!operatorMode || busy}
+            />
+          </div>
+          <Button
+            onClick={submit}
+            disabled={!operatorMode || busy || !token.trim() || !userId.trim()}
+          >
+            {busy ? 'Connecting…' : 'Connect'}
+          </Button>
+          {done && (
+            <p className="text-sm text-foreground">
+              {done} <span className="text-muted-foreground">Restart the gateway to bring the bot live.</span>
+            </p>
+          )}
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </div>
+      </InfoCard>
+    </div>
+  )
+}
+
 const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   overview: (id) => <OverviewTab agentId={id} />,
   identity: (id) => <IdentityTab agentId={id} />,
@@ -752,11 +840,12 @@ const TAB_RENDER: Record<TabId, (agentId: string) => ReactNode> = {
   policy: (id) => <PolicyTab agentId={id} />,
   workspace: (id) => <FileTree agentId={id} root="workspace" rootLabel="workspace" />,
   files: (id) => <FileTree agentId={id} root="agent" rootLabel="agent root" />,
+  connect: (id) => <ConnectTab agentId={id} />,
 }
 
 const TAB_LABEL: Record<TabId, string> = {
   overview: 'Overview', identity: 'Identity', sessions: 'Sessions', llm: 'LLM', skills: 'Skills',
-  tools: 'Tools', prompts: 'Prompts', tasks: 'Tasks', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files',
+  tools: 'Tools', prompts: 'Prompts', tasks: 'Tasks', schedules: 'Schedules', policy: 'Policy', workspace: 'Workspace', files: 'Files', connect: 'Connect',
 }
 
 export function AgentDetailPage() {

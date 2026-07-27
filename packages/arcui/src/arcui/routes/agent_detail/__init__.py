@@ -45,6 +45,7 @@ from arcui.routes.agent_detail._common import _agent_root  # noqa: F401
 from arcui.routes.agent_detail.capabilities import get_capabilities
 from arcui.routes.agent_detail.config import get_config, get_file_read, get_files_tree
 from arcui.routes.agent_detail.config_files import get_config_file, patch_config_file
+from arcui.routes.agent_detail.connect_telegram import connect_telegram_route
 from arcui.routes.agent_detail.files_write import put_file_write
 from arcui.routes.agent_detail.policy import (
     get_policy,
@@ -123,6 +124,7 @@ routes = [
     Route("/api/agents/{id}/tasks", get_tasks, methods=["GET"]),
     Route("/api/agents/{id}/schedules", get_schedules, methods=["GET"]),
     Route("/api/agents/{id}/schedules/{sid}", patch_schedule, methods=["PATCH"]),
+    Route("/api/agents/{id}/connect-telegram", connect_telegram_route, methods=["POST"]),
 ]
 
 __all__ = ["routes"]

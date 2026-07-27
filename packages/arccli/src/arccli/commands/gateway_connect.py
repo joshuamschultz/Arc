@@ -1,65 +1,29 @@
 """``arc gateway connect-telegram`` — guided, non-technical Telegram pairing.
 
 The turnkey entry point: a user pastes the bot token they got from @BotFather and
-their Telegram user-ID, and this wires a Telegram bot bound to ONE agent — the token
-goes to the env file the gateway reads (0600, never the config), and a per-agent
-``[platforms.<agent>_telegram]`` block is written to ``gateway.toml`` with
-``platform = "telegram"`` so the fleet can run one bot per agent (multi-bot, see
-``arcgateway.adapters.registry``).
+their Telegram user-ID, and this wires a Telegram bot bound to ONE agent. The wiring
+core lives in :func:`arcgateway.connect.connect_telegram` (shared with the arcui
+settings panel); this module only resolves the agent's DID, prompts for the secrets,
+and reports what happened.
 
-Security: the token is captured with a hidden prompt and written ONLY to the env
-file — never echoed, never logged, never placed in a config or (critically) routed
-through an agent chat/LLM. That is why this is a CLI/settings-form action, not an
-arcui ``/slash`` command an agent would ingest as a message.
+Security: the token is captured with a hidden prompt and handed straight to the core,
+which writes it ONLY to the env file (0600) — never echoed, logged, placed in a config,
+or routed through an agent chat/LLM. That is why this is a CLI/settings-form action, not
+an arcui ``/slash`` command an agent would ingest as a message.
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
-import re
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any
 
-from arccli.blueprints import dumps_toml
+from arcgateway.connect import connect_telegram
+
 from arccli.commands._shared import err
 from arccli.commands._shared import write as _out
-
-# Telegram bot tokens: "<bot_id>:<secret>" — digits, colon, ~35 url-safe chars.
-_TOKEN_RE = re.compile(r"^\d{5,}:[A-Za-z0-9_-]{30,}$")
-# Platform block names must satisfy arcgateway's name guard (^[a-z][a-z0-9_]{0,31}$).
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
-
-
-def connect_telegram(
-    *,
-    agent_dir: Path,
-    token: str,
-    user_id: int,
-    gateway_config: Path,
-    env_file: Path,
-) -> dict[str, str]:
-    """Wire a Telegram bot to the agent at ``agent_dir``. Returns what was written.
-
-    Stores the token in ``env_file`` under a per-agent var (0600) and adds a
-    ``[platforms.<block>]`` telegram block to ``gateway_config`` bound to the agent's
-    DID and allowlisted to ``user_id``. The token never enters the config file.
-    """
-    if not _TOKEN_RE.match(token.strip()):
-        raise ValueError(
-            "that does not look like a Telegram bot token (expected '<digits>:<letters>' "
-            "from @BotFather). Nothing was written."
-        )
-    did = _agent_did(agent_dir)
-    slug = _SLUG_RE.sub("_", agent_dir.name.lower()).strip("_") or "agent"
-    block = f"{slug}_telegram"[:32]
-    token_env = f"TELEGRAM_BOT_TOKEN_{slug.upper()}"
-
-    _upsert_env(env_file, token_env, token.strip())
-    _write_gateway_block(gateway_config, block, token_env, did, user_id)
-    return {"block": block, "token_env": token_env, "agent_did": did}
 
 
 def _agent_did(agent_dir: Path) -> str:
@@ -71,49 +35,6 @@ def _agent_did(agent_dir: Path) -> str:
     if not did:
         raise ValueError(f"{cfg} has no [identity].did — create the agent first.")
     return str(did)
-
-
-def _upsert_env(env_file: Path, key: str, value: str) -> None:
-    """Insert or replace ``KEY=value`` in the env file, keeping it owner-only (0600)."""
-    env_file.parent.mkdir(parents=True, exist_ok=True)
-    lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
-    out: list[str] = []
-    replaced = False
-    for line in lines:
-        if line.startswith(f"{key}="):
-            out.append(f"{key}={value}")
-            replaced = True
-        else:
-            out.append(line)
-    if not replaced:
-        out.append(f"{key}={value}")
-    env_file.write_text("\n".join(out) + "\n", encoding="utf-8")
-    env_file.chmod(0o600)
-
-
-def _write_gateway_block(
-    gateway_config: Path, block: str, token_env: str, agent_did: str, user_id: int
-) -> None:
-    """Add/replace the agent's telegram block in gateway.toml + ensure pairing is on."""
-    data: dict[str, Any] = {}
-    if gateway_config.is_file():
-        data = tomllib.loads(gateway_config.read_text(encoding="utf-8"))
-    platforms = data.setdefault("platforms", {})
-    platforms[block] = {
-        "enabled": True,
-        "platform": "telegram",
-        "token_env": token_env,
-        "agent_did": agent_did,
-        "allowed_user_ids": [user_id],
-    }
-    data.setdefault("security", {})["require_pairing"] = True
-    gateway_config.parent.mkdir(parents=True, exist_ok=True)
-    gateway_config.write_text(dumps_toml(data), encoding="utf-8")
-
-
-# ---------------------------------------------------------------------------
-# Interactive handler (arc gateway connect-telegram)
-# ---------------------------------------------------------------------------
 
 
 def gateway_connect_telegram_handler(args: list[str]) -> None:
@@ -142,7 +63,8 @@ def gateway_connect_telegram_handler(args: list[str]) -> None:
 
     try:
         result = connect_telegram(
-            agent_dir=agent_dir,
+            agent_slug=agent_dir.name,
+            agent_did=_agent_did(agent_dir),
             token=token,
             user_id=user_id,
             gateway_config=Path(ns.gateway_config).expanduser(),
@@ -172,4 +94,4 @@ def _prompt_user_id() -> int:
         sys.exit(1)
 
 
-__all__ = ["connect_telegram", "gateway_connect_telegram_handler"]
+__all__ = ["gateway_connect_telegram_handler"]
