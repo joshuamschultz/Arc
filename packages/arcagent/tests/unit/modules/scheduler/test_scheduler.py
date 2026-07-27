@@ -682,3 +682,43 @@ class TestLiveReload:
         finally:
             await engine.stop()
         run_fn.assert_awaited()
+
+
+class TestPoisonRowDoesNotStopTheEngine:
+    """Real-path guard for the 2026-07-27 incident.
+
+    A hand-written row with an invalid field made ``store.load()`` raise on
+    every tick. The timer loop's fail-open handler counted the errors and at 5
+    consecutive ticks tripped the breaker: ``_running = False``, every schedule
+    for that agent dead until the process restarted, with nothing shown in
+    arcui. Drives the REAL engine + REAL store against a real poisoned file.
+    """
+
+    @pytest.mark.asyncio
+    async def test_good_schedule_still_fires_beside_a_poison_row(self, tmp_path: Path) -> None:
+        import json
+
+        path = tmp_path / "schedules.json"
+        good = make_entry(id="sched_good", enabled=True, every_seconds=60).model_dump()
+        poison = make_entry(id="sched_bad", enabled=True, every_seconds=60).model_dump()
+        poison["metadata"]["created_by"] = "operator"  # closed Literal -> unloadable
+        path.write_text(json.dumps([poison, good]), encoding="utf-8")
+
+        cfg = make_config()
+        cfg.check_interval_seconds = 0.01
+
+        fired = asyncio.Event()
+        run_fn = AsyncMock(side_effect=lambda *_a, **_k: fired.set())
+        engine = SchedulerEngine(
+            store=ScheduleStore(path), config=cfg, telemetry=MagicMock(), agent_run_fn=run_fn
+        )
+        engine.set_agent_run_fn(run_fn)
+        await engine.start()
+        try:
+            # Poison row is listed FIRST — an eager loader dies before reaching
+            # the good one. Well past the 5-tick breaker window.
+            await asyncio.wait_for(fired.wait(), timeout=2.0)
+            await asyncio.sleep(0.1)
+            assert engine.running, "breaker tripped — one bad row killed the engine"
+        finally:
+            await engine.stop()
